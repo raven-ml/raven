@@ -31,7 +31,7 @@ let nodeList_to_list nl =
 
 let block_of_element (el : Dom_html.element Js.t) =
   let id_s = Js.to_string el##.id in
-  Model.next_id := 0;
+
   match String.split_on_char '-' id_s with
   | [ "block"; _ ] ->
       let txt =
@@ -43,6 +43,7 @@ let block_of_element (el : Dom_html.element Js.t) =
 let document_of_dom root =
   let editor_div = root##querySelector (Js.string "#editor") in
   let children = nodeList_to_list editor_div##.childNodes in
+  Model.next_id := 0;
   let blocks =
     List.filter_map
       (fun node ->

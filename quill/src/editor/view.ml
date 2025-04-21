@@ -81,6 +81,7 @@ and block block_id block_content =
   | Codeblock code -> codeblock block_id code
   | Heading (level, inline) -> heading block_id level inline
   | Blocks bs -> blocks block_id bs
+  | Blank_line () -> fragment []
 
 let view (model : model) : msg Vdom.vdom =
   let editor_content =
@@ -91,16 +92,7 @@ let view (model : model) : msg Vdom.vdom =
   fragment
     [
       div
-        ~a:
-          [
-            attr "id" "editor";
-            attr "contentEditable" "true";
-          ]
+        ~a:[ attr "id" "editor"; attr "contentEditable" "true" ]
         [ editor_content ];
-      div
-        ~a:
-          [
-            attr "id" "debug";
-          ]
-        [ Debug_view.view model ];
+      div ~a:[ attr "id" "debug" ] [ Debug_view.view model ];
     ]
