@@ -8,10 +8,10 @@ let handle_selectionchange mounted_app _ev =
     | None -> Js._false
     | Some range -> (
         let node = range##.startContainer in
-        match Dom_utils.map_node_to_indices node with
+        match Dom_utils.map_node_to_inline_id node with
         | None -> Js._false
-        | Some (block_idx, inline_idx) ->
-            let msg = Update.Focus_inline (block_idx, inline_idx) in
+        | Some inline_id ->
+            let msg = Update.Focus_inline_by_id inline_id in
             Vdom_blit.process mounted_app msg;
             Js._false)
 

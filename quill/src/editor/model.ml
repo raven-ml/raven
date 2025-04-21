@@ -2,8 +2,9 @@ open Cmarkit
 
 type inline_content =
   | Run of string
-  | Emph of inline_content
-  | Strong of inline_content
+  | Emph of inline
+  | Strong of inline
+  | Code_span of string
   | Seq of inline list
 
 and inline = { id : int; content : inline_content; focused : bool }
@@ -23,34 +24,30 @@ let next_id = ref 0
 let init : model = { document = [] }
 
 let rec inline_of_cmarkit inline =
-  let mk content : inline option =
+  let mk content : inline =
     let id = !next_id in
     incr next_id;
-    Some { id; content; focused = false }
+    { id; content; focused = false }
   in
   match inline with
   | Inline.Text (s, _) -> mk (Run s)
-  | Inline.Emphasis (inner, _) -> (
-      match inline_of_cmarkit (Inline.Emphasis.inline inner) with
-      | Some i -> mk (Emph i.content)
-      | None -> mk (Emph (Run "")))
-  | Inline.Strong_emphasis (inner, _) -> (
-      match inline_of_cmarkit (Inline.Emphasis.inline inner) with
-      | Some i -> mk (Strong i.content)
-      | None -> mk (Strong (Run "")))
+  | Inline.Emphasis (inner, _) ->
+      mk (Emph (inline_of_cmarkit (Inline.Emphasis.inline inner)))
+  | Inline.Strong_emphasis (inner, _) ->
+      mk (Strong (inline_of_cmarkit (Inline.Emphasis.inline inner)))
+  | Inline.Code_span (s, _) ->
+      let s = Inline.Code_span.code s in
+      mk (Code_span s)
   | Inline.Inlines (items, _) ->
-      let inlines = List.filter_map inline_of_cmarkit items in
-      if inlines = [] then None else mk (Seq inlines)
-  | _ -> None
+      let inlines = List.map inline_of_cmarkit items in
+      mk (Seq inlines)
+  | _ -> mk (Seq [])
 
 let rec block_content_of_cmarkit cb =
   match cb with
   | Block.Paragraph (p, _) ->
       let norm = Inline.normalize (Block.Paragraph.inline p) in
-      Paragraph
-        (match inline_of_cmarkit norm with
-        | Some i -> i
-        | None -> { id = !next_id; content = Run ""; focused = false })
+      Paragraph (inline_of_cmarkit norm)
   | Block.Code_block (codeblock, _) ->
       let codelines = Block.Code_block.code codeblock in
       let code =
@@ -60,11 +57,7 @@ let rec block_content_of_cmarkit cb =
   | Block.Heading (h, _) ->
       let level = Block.Heading.level h in
       let inline = Inline.normalize (Block.Heading.inline h) in
-      Heading
-        ( level,
-          match inline_of_cmarkit inline with
-          | Some i -> i
-          | None -> { id = !next_id; content = Run ""; focused = false } )
+      Heading (level, inline_of_cmarkit inline)
   | Block.Blocks (items, _) -> Blocks (List.map block_of_cmarkit items)
   | Block.Blank_line _ -> Blank_line ()
   | _ -> Paragraph { id = !next_id; content = Run ""; focused = false }
@@ -98,37 +91,42 @@ let block_of_md text =
   let normalized_block = Block.normalize block in
   block_of_cmarkit normalized_block
 
-let inline_of_md txt =
+let inline_content_of_md txt =
   let doc = Doc.of_string ~strict:true txt in
   let block = Doc.block doc in
   match Block.normalize block with
-  | Block.Paragraph (p, _) -> (
+  | Block.Paragraph (p, _) ->
       let inline = Inline.normalize (Block.Paragraph.inline p) in
-      match inline_of_cmarkit inline with
-      | Some i -> i
-      | None -> { id = !next_id; content = Run ""; focused = false })
-  | _ -> { id = !next_id; content = Run ""; focused = false }
+      let i = inline_of_cmarkit inline in
+      i.content
+  | _ -> Run ""
+
+let inline_of_md txt : inline =
+  let content = inline_content_of_md txt in
+  let id = !next_id in
+  incr next_id;
+  { id; content; focused = false }
 
 let rec cmarkit_of_inline (i : inline) : Inline.t =
   match i.content with
   | Run s -> Inline.Text (s, Meta.none)
   | Emph ic ->
-      Inline.Emphasis
-        (Inline.Emphasis.make (cmarkit_of_inline_content ic), Meta.none)
+      Inline.Emphasis (Inline.Emphasis.make (cmarkit_of_inline ic), Meta.none)
   | Strong ic ->
       Inline.Strong_emphasis
-        (Inline.Emphasis.make (cmarkit_of_inline_content ic), Meta.none)
+        (Inline.Emphasis.make (cmarkit_of_inline ic), Meta.none)
+  | Code_span s -> Inline.Code_span (Inline.Code_span.of_string s, Meta.none)
   | Seq items -> Inline.Inlines (List.map cmarkit_of_inline items, Meta.none)
 
 and cmarkit_of_inline_content (ic : inline_content) : Inline.t =
   match ic with
   | Run s -> Inline.Text (s, Meta.none)
   | Emph ic ->
-      Inline.Emphasis
-        (Inline.Emphasis.make (cmarkit_of_inline_content ic), Meta.none)
+      Inline.Emphasis (Inline.Emphasis.make (cmarkit_of_inline ic), Meta.none)
   | Strong ic ->
       Inline.Strong_emphasis
-        (Inline.Emphasis.make (cmarkit_of_inline_content ic), Meta.none)
+        (Inline.Emphasis.make (cmarkit_of_inline ic), Meta.none)
+  | Code_span s -> Inline.Code_span (Inline.Code_span.of_string s, Meta.none)
   | Seq items -> Inline.Inlines (List.map cmarkit_of_inline items, Meta.none)
 
 let rec cmarkit_of_block_content (bc : block_content) : Block.t =
