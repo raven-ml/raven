@@ -70,4 +70,6 @@ and block block_id block_content =
   | Blocks bs -> blocks block_id bs
 
 let view (model : model) : msg Vdom.vdom =
-  fragment (List.map (fun b -> block b.id b.content) model.document)
+  match model.document with
+  | [] -> p []
+  | _ -> fragment (List.map (fun b -> block b.id b.content) model.document)
