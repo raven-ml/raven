@@ -6,14 +6,15 @@ let rec inline_to_debug_string (indent : int) (i : inline) : string =
   let content =
     match i.content with
     | Run s -> Printf.sprintf "%sRun \"%s\"" indent_str s
-    | Emph ic ->
+    | Emph inline' ->
         Printf.sprintf "%sEmph (\n%s\n%s)" indent_str
-          (inline_content_to_debug_string (indent + 1) ic)
+          (inline_to_debug_string (indent + 1) inline')
           indent_str
-    | Strong ic ->
+    | Strong inline' ->
         Printf.sprintf "%sStrong (\n%s\n%s)" indent_str
-          (inline_content_to_debug_string (indent + 1) ic)
+          (inline_to_debug_string (indent + 1) inline')
           indent_str
+    | Code_span s -> Printf.sprintf "%sCode_span \"%s\"" indent_str s
     | Seq items ->
         let items_str =
           List.map (inline_to_debug_string (indent + 1)) items
@@ -24,40 +25,15 @@ let rec inline_to_debug_string (indent : int) (i : inline) : string =
   let focus_str = if i.focused then " [FOCUSED]" else "" in
   Printf.sprintf "%sid=%d %s%s" indent_str i.id content focus_str
 
-and inline_content_to_debug_string (indent : int) (ic : inline_content) : string
-    =
-  let indent_str = String.make (indent * 2) ' ' in
-  match ic with
-  | Run s -> Printf.sprintf "%sRun \"%s\"" indent_str s
-  | Emph ic ->
-      Printf.sprintf "%sEmph (\n%s\n%s)" indent_str
-        (inline_content_to_debug_string (indent + 1) ic)
-        indent_str
-  | Strong ic ->
-      Printf.sprintf "%sStrong (\n%s\n%s)" indent_str
-        (inline_content_to_debug_string (indent + 1) ic)
-        indent_str
-  | Seq items ->
-      let items_str =
-        List.map (inline_to_debug_string (indent + 1)) items
-        |> String.concat "\n"
-      in
-      Printf.sprintf "%sSeq [\n%s\n%s]" indent_str items_str indent_str
-
 let rec has_focused_inline (b : block) : bool =
   let rec check_inline (i : inline) : bool =
     i.focused
     ||
     match i.content with
     | Run _ -> false
-    | Emph ic -> check_inline_content ic
-    | Strong ic -> check_inline_content ic
-    | Seq items -> List.exists check_inline items
-  and check_inline_content (ic : inline_content) : bool =
-    match ic with
-    | Run _ -> false
-    | Emph ic -> check_inline_content ic
-    | Strong ic -> check_inline_content ic
+    | Emph inline' -> check_inline inline'
+    | Strong inline' -> check_inline inline'
+    | Code_span _ -> false
     | Seq items -> List.exists check_inline items
   in
   match b.content with

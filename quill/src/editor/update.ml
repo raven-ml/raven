@@ -1,6 +1,6 @@
 open Model
 
-type msg = Focus_inline of int * int | Set_document of block list
+type msg = Focus_inline_by_id of int | Set_document of block list
 
 let log fmt =
   Printf.ksprintf
@@ -8,86 +8,51 @@ let log fmt =
       Js_of_ocaml.Console.console##log (Js_of_ocaml.Js.string ("[update] " ^ s)))
     fmt
 
-let rec clear_focus_block (b : block) : block =
-  {
-    b with
-    focused = false;
-    content =
-      (match b.content with
-      | Paragraph inline -> Paragraph (clear_focus_inline inline)
-      | Codeblock s -> Codeblock s
-      | Heading (level, inline) -> Heading (level, clear_focus_inline inline)
-      | Blocks bs -> Blocks (List.map clear_focus_block bs)
-      | Blank_line () -> Blank_line ());
-  }
+let rec set_focused_inline_by_id (inline : inline) (target_id : int) : inline =
+  let id_match = inline.id = target_id in
+  let content =
+    match inline.content with
+    | Run s -> Run s
+    | Code_span s -> Code_span s
+    | Emph ic -> Emph (set_focused_inline_by_id ic target_id)
+    | Strong ic -> Strong (set_focused_inline_by_id ic target_id)
+    | Seq items ->
+        Seq (List.map (fun i -> set_focused_inline_by_id i target_id) items)
+  in
+  let child_focused =
+    match content with
+    | Emph ic | Strong ic -> ic.focused
+    | Seq items -> List.exists (fun (i : inline) -> i.focused) items
+    | _ -> false
+  in
+  { inline with focused = id_match || child_focused; content }
 
-and clear_focus_inline (i : inline) : inline =
-  {
-    i with
-    focused = false;
-    content =
-      (match i.content with
-      | Run s -> Run s
-      | Emph ic -> Emph (clear_focus_inline_content ic)
-      | Strong ic -> Strong (clear_focus_inline_content ic)
-      | Seq items -> Seq (List.map clear_focus_inline items));
-  }
-
-and clear_focus_inline_content (ic : inline_content) : inline_content =
-  match ic with
-  | Run s -> Run s
-  | Emph ic -> Emph (clear_focus_inline_content ic)
-  | Strong ic -> Strong (clear_focus_inline_content ic)
-  | Seq items -> Seq (List.map clear_focus_inline items)
-
-let rec set_focus_block (b : block) (target_id : int) (run_j : int) : block =
-  if b.id = target_id then
-    match b.content with
-    | Paragraph inline ->
-        let new_inline = set_focus_inline inline run_j in
-        { b with content = Paragraph new_inline }
-    | Heading (level, inline) ->
-        let new_inline = set_focus_inline inline run_j in
-        { b with content = Heading (level, new_inline) }
-    | Codeblock _ -> { b with focused = true }
-    | Blank_line () -> { b with focused = true }
+let rec set_focused_block_by_id (block : block) (target_id : int) : block =
+  let content =
+    match block.content with
+    | Paragraph inline -> Paragraph (set_focused_inline_by_id inline target_id)
+    | Heading (lvl, inline) ->
+        Heading (lvl, set_focused_inline_by_id inline target_id)
     | Blocks bs ->
-        {
-          b with
-          content =
-            Blocks (List.map (fun b' -> set_focus_block b' target_id run_j) bs);
-        }
-  else
-    match b.content with
-    | Blocks bs ->
-        {
-          b with
-          content =
-            Blocks (List.map (fun b' -> set_focus_block b' target_id run_j) bs);
-        }
-    | _ -> clear_focus_block b
+        Blocks (List.map (fun b -> set_focused_block_by_id b target_id) bs)
+    | Codeblock s -> Codeblock s
+    | Blank_line () -> Blank_line ()
+  in
+  let child_focused =
+    match content with
+    | Paragraph inline | Heading (_, inline) -> inline.focused
+    | Blocks bs -> List.exists (fun b -> b.focused) bs
+    | _ -> false
+  in
+  { block with focused = child_focused; content }
 
-and set_focus_inline (inline : inline) (run_j : int) : inline =
-  match inline.content with
-  | Seq items ->
-      let new_items =
-        List.mapi
-          (fun j item : inline -> { item with focused = j = run_j })
-          items
-      in
-      { inline with content = Seq new_items }
-  | _ -> { inline with focused = true }
-
-let set_focus_document (doc : block list) (block_id : int) (run_j : int) :
-    block list =
-  List.map (fun b -> set_focus_block b block_id run_j) doc
+let set_focused_document_by_id (doc : block list) (target_id : int) : block list
+    =
+  List.map (fun b -> set_focused_block_by_id b target_id) doc
 
 let update (m : model) (message : msg) : model =
   match message with
-  | Focus_inline (block_id, run_j) ->
-      log "Focus_inline: block_id=%d, run_j=%d" block_id run_j;
-      let new_document = set_focus_document m.document block_id run_j in
+  | Focus_inline_by_id inline_id ->
+      let new_document = set_focused_document_by_id m.document inline_id in
       { document = new_document }
-  | Set_document docs ->
-      log "Set_document: %d blocks" (List.length docs);
-      { document = docs }
+  | Set_document docs -> { document = docs }

@@ -1,93 +1,79 @@
 open Model
+open Dom_utils
 open Js_of_ocaml
 
-let nodeList_to_list nl =
-  let len = nl##.length in
-  let rec go i acc =
-    if i >= len then List.rev acc
-    else
-      let acc' =
-        match nl##item i |> Js.Opt.to_option with
-        | Some node -> node :: acc
-        | None -> acc
+let rec parse_inline (el : Dom.node Js.t) (range : Dom_html.range Js.t option) :
+    inline =
+  let is_focused =
+    match range with Some r -> is_within_range r el | None -> false
+  in
+  match get_element_tag el with
+  | Some "SPAN" ->
+      let children = nodeList_to_list el##.childNodes in
+      let content =
+        match children with
+        | [ node ] when node##.nodeType = Dom.TEXT ->
+            Run (get_text_content node)
+        | [ span1; middle; span2 ] ->
+            if is_span_with_text span1 "*" && is_span_with_text span2 "*" then
+              match get_element_tag middle with
+              | Some "EM" -> Emph (parse_inline middle range)
+              | _ -> Run (get_text_content el)
+            else if is_span_with_text span1 "**" && is_span_with_text span2 "**"
+            then
+              match get_element_tag middle with
+              | Some "STRONG" -> Strong (parse_inline middle range)
+              | _ -> Run (get_text_content el)
+            else Run (get_text_content el)
+        | _ -> Run (get_text_content el)
       in
-      go (i + 1) acc'
-  in
-  go 0 []
+      incr next_id;
+      { id = !next_id; content; focused = is_focused }
+  | Some "EM" ->
+      let children = nodeList_to_list el##.childNodes in
+      let inlines =
+        List.filter_map
+          (fun node ->
+            match Js.Opt.to_option (Dom_html.CoerceTo.element node) with
+            | Some child_el when Js.to_string child_el##.tagName = "SPAN" ->
+                Some (parse_inline (child_el :> Dom.node Js.t) range)
+            | _ -> None)
+          children
+      in
+      let content =
+        match inlines with [ single ] -> single.content | _ -> Seq inlines
+      in
+      incr next_id;
+      { id = !next_id; content; focused = is_focused }
+  | Some "STRONG" ->
+      let children = nodeList_to_list el##.childNodes in
+      let inlines =
+        List.filter_map
+          (fun node ->
+            match Js.Opt.to_option (Dom_html.CoerceTo.element node) with
+            | Some child_el when Js.to_string child_el##.tagName = "SPAN" ->
+                Some (parse_inline (child_el :> Dom.node Js.t) range)
+            | _ -> None)
+          children
+      in
+      let content =
+        match inlines with [ single ] -> single.content | _ -> Seq inlines
+      in
+      incr next_id;
+      { id = !next_id; content; focused = is_focused }
+  | _ ->
+      incr next_id;
+      {
+        id = !next_id;
+        content = Run (get_text_content el);
+        focused = is_focused;
+      }
 
-let is_span_with_text node text =
-  match Js.Opt.to_option (Dom_html.CoerceTo.element node) with
-  | Some el when Js.to_string el##.tagName = "SPAN" ->
-      Js.to_string el##.innerText = text
-  | _ -> false
+let parse_run span_el range : inline = parse_inline span_el range
 
-let get_element_tag node =
-  match Js.Opt.to_option (Dom_html.CoerceTo.element node) with
-  | Some el -> Some (Js.to_string el##.tagName)
-  | None -> None
-
-let get_inner_text node =
-  match Js.Opt.to_option (Dom_html.CoerceTo.element node) with
-  | Some el -> Js.to_string el##.innerText
-  | None -> ""
-
-let parse_run span_el range : inline =
-  let children = nodeList_to_list span_el##.childNodes in
-  let content, focused =
-    match children with
-    | [ node ] when node##.nodeType = Dom.TEXT ->
-        let text =
-          Js.Opt.case node##.nodeValue
-            (fun _ -> "")
-            (fun node_value -> Js.to_string node_value)
-        in
-        let is_focused =
-          match range with
-          | Some r -> Dom_utils.is_within_range r node
-          | None -> false
-        in
-        (Run text, is_focused)
-    | [ span1; middle; span2 ] ->
-        if is_span_with_text span1 "*" && is_span_with_text span2 "*" then
-          match get_element_tag middle with
-          | Some "EM" ->
-              let inner_text = get_inner_text middle in
-              let is_focused =
-                match range with
-                | Some r -> Dom_utils.is_within_range r middle
-                | None -> false
-              in
-              (Emph (Run inner_text), is_focused)
-          | _ -> (Run (Js.to_string span_el##.innerText), false)
-        else if is_span_with_text span1 "**" && is_span_with_text span2 "**"
-        then
-          match get_element_tag middle with
-          | Some "STRONG" ->
-              let inner_text = get_inner_text middle in
-              let is_focused =
-                match range with
-                | Some r -> Dom_utils.is_within_range r middle
-                | None -> false
-              in
-              (Strong (Run inner_text), is_focused)
-          | _ -> (Run (Js.to_string span_el##.innerText), false)
-        else (Run (Js.to_string span_el##.innerText), false)
-    | _ ->
-        let text = Js.to_string span_el##.innerText in
-        let is_focused =
-          match range with
-          | Some r -> Dom_utils.is_within_range r (span_el :> Dom.node Js.t)
-          | None -> false
-        in
-        (Run text, is_focused)
-  in
-  incr next_id;
-  { id = !next_id; content; focused }
-
-let parse_inlines (el : Dom_html.element Js.t)
-    (range : Dom_html.range Js.t option) : inline =
-  let run_spans =
-    let children = nodeList_to_list el##.childNodes in
+let parse_inlines el range : inline =
+  let children = nodeList_to_list el##.childNodes in
+  let inlines =
     List.filter_map
       (fun node ->
         match Js.Opt.to_option (Dom_html.CoerceTo.element node) with
@@ -95,13 +81,12 @@ let parse_inlines (el : Dom_html.element Js.t)
           when Js.to_string span_el##.tagName = "SPAN"
                && not (Js.to_bool (span_el##hasAttribute (Js.string "hidden")))
           ->
-            Some span_el
+            Some (parse_inline (span_el :> Dom.node Js.t) range)
         | _ -> None)
       children
   in
-  let runs = List.map (fun span_el -> parse_run span_el range) run_spans in
   incr next_id;
-  { id = !next_id; content = Seq runs; focused = false }
+  { id = !next_id; content = Seq inlines; focused = false }
 
 let rec parse_block el range =
   let tag = Js.to_string el##.tagName in
@@ -112,7 +97,7 @@ let rec parse_block el range =
       let visible_text = Js.to_string el##.innerText in
       let focused =
         match range with
-        | Some r -> Dom_utils.is_within_range r (el :> Dom.node Js.t)
+        | Some r -> is_within_range r (el :> Dom.node Js.t)
         | None -> false
       in
       match tag with
