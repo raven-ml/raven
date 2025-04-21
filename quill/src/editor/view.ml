@@ -58,6 +58,15 @@ let codeblock block_id code =
       span ~a:[ bool_prop "hidden" true ] [ text "```" ];
     ]
 
+let heading block_id level inline =
+  let id = Printf.sprintf "block-%d" block_id in
+  let tag = Printf.sprintf "h%d" level in
+  let segs = get_segments inline in
+  let children =
+    List.mapi (fun j run -> wrap_run ~block:block_id ~run_j:j run) segs
+  in
+  elt tag ~key:id ~a:[ attr "id" id ] children
+
 let rec blocks block_id blocks =
   let id = Printf.sprintf "block-%d" block_id in
   let children = List.map (fun b -> block b.id b.content) blocks in
@@ -67,6 +76,7 @@ and block block_id block_content =
   match block_content with
   | Paragraph inline -> paragraph block_id inline
   | Codeblock code -> codeblock block_id code
+  | Heading (level, inline) -> heading block_id level inline
   | Blocks bs -> blocks block_id bs
 
 let view (model : model) : msg Vdom.vdom =

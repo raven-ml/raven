@@ -1,3 +1,5 @@
+open Cmarkit
+
 type inline_content =
   | Run of string
   | Emph of inline_content
@@ -9,6 +11,7 @@ and inline = { id : int; content : inline_content; focused : bool }
 type block_content =
   | Paragraph of inline
   | Codeblock of string
+  | Heading of int * inline
   | Blocks of block list
 
 and block = { id : int; content : block_content; focused : bool }
@@ -19,7 +22,6 @@ let next_id = ref 0
 let init : model = { document = [] }
 
 let rec inline_of_cmarkit inline =
-  let open Cmarkit in
   let mk content : inline option =
     let id = !next_id in
     incr next_id;
@@ -41,30 +43,28 @@ let rec inline_of_cmarkit inline =
   | _ -> None
 
 let rec block_content_of_cmarkit cb =
-  let open Cmarkit in
   match cb with
   | Block.Paragraph (p, _) ->
       let norm = Inline.normalize (Block.Paragraph.inline p) in
-      let inline =
-        match inline_of_cmarkit norm with
+      Paragraph
+        (match inline_of_cmarkit norm with
         | Some i -> i
-        | None ->
-            let id = !next_id in
-            incr next_id;
-            { id; content = Run ""; focused = false }
-      in
-      Paragraph inline
+        | None -> { id = !next_id; content = Run ""; focused = false })
   | Block.Code_block (codeblock, _) ->
       let codelines = Block.Code_block.code codeblock in
       let code =
-        codelines
-        |> List.map (fun l -> Block_line.to_string l)
-        |> String.concat "\n"
+        List.map Block_line.to_string codelines |> String.concat "\n"
       in
       Codeblock code
-  | Block.Blocks (items, _) ->
-      let children = List.map block_of_cmarkit items in
-      Blocks children
+  | Block.Heading (h, _) ->
+      let level = Block.Heading.level h in
+      let inline = Inline.normalize (Block.Heading.inline h) in
+      Heading
+        ( level,
+          match inline_of_cmarkit inline with
+          | Some i -> i
+          | None -> { id = !next_id; content = Run ""; focused = false } )
+  | Block.Blocks (items, _) -> Blocks (List.map block_of_cmarkit items)
   | _ -> Paragraph { id = !next_id; content = Run ""; focused = false }
 
 and block_of_cmarkit cb : block =
@@ -74,20 +74,29 @@ and block_of_cmarkit cb : block =
 
 and document_of_cmarkit root =
   next_id := 0;
-  match Cmarkit.Block.normalize root with
-  | Cmarkit.Block.Blocks (items, _) -> List.map block_of_cmarkit items
+  match Block.normalize root with
+  | Block.Blocks (items, _) -> List.map block_of_cmarkit items
   | other -> [ block_of_cmarkit other ]
 
 let document_of_md text =
-  let open Cmarkit in
   let doc = Doc.of_string ~strict:true text in
   let block = Doc.block doc in
   let normalized_block = Block.normalize block in
   document_of_cmarkit normalized_block
 
 let block_content_of_md text =
-  let open Cmarkit in
   let doc = Doc.of_string ~strict:true text in
   let block = Doc.block doc in
   let normalized_block = Block.normalize block in
   block_content_of_cmarkit normalized_block
+
+let inline_of_md txt =
+  let doc = Doc.of_string ~strict:true txt in
+  let block = Doc.block doc in
+  match Block.normalize block with
+  | Block.Paragraph (p, _) -> (
+      let inline = Inline.normalize (Block.Paragraph.inline p) in
+      match inline_of_cmarkit inline with
+      | Some i -> i
+      | None -> { id = !next_id; content = Run ""; focused = false })
+  | _ -> { id = !next_id; content = Run ""; focused = false }
