@@ -1,3 +1,3 @@
 - enter is broken, duplicates block
 - codeblock not preserved after rerender
-- lost focus states, not being rendered
+- focusing code block doesn't change focus state
