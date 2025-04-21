@@ -16,25 +16,7 @@ and block = { id : int; content : block_content; focused : bool }
 type model = { document : block list }
 
 let next_id = ref 0
-
-let init : model =
-  let mk_block id content : block = { id; content; focused = false } in
-  let mk_inline id content : inline = { id; content; focused = false } in
-  {
-    document =
-      [
-        mk_block 0 (Paragraph (mk_inline 0 (Run "Welcome to Quill!")));
-        mk_block 1
-          (Paragraph
-             (mk_inline 1
-                (Seq
-                   [
-                     mk_inline 2 (Run "This is a ");
-                     mk_inline 3 (Emph (Run "rich"));
-                     mk_inline 4 (Run " text editor.");
-                   ])));
-      ];
-  }
+let init : model = { document = [] }
 
 let rec inline_of_cmarkit inline =
   let open Cmarkit in
