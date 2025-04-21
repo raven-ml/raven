@@ -90,6 +90,12 @@ let block_content_of_md text =
   let normalized_block = Block.normalize block in
   block_content_of_cmarkit normalized_block
 
+let block_of_md text =
+  let doc = Doc.of_string ~strict:true text in
+  let block = Doc.block doc in
+  let normalized_block = Block.normalize block in
+  block_of_cmarkit normalized_block
+
 let inline_of_md txt =
   let doc = Doc.of_string ~strict:true txt in
   let block = Doc.block doc in
@@ -100,3 +106,48 @@ let inline_of_md txt =
       | Some i -> i
       | None -> { id = !next_id; content = Run ""; focused = false })
   | _ -> { id = !next_id; content = Run ""; focused = false }
+
+let rec cmarkit_of_inline (i : inline) : Inline.t =
+  match i.content with
+  | Run s -> Inline.Text (s, Meta.none)
+  | Emph ic ->
+      Inline.Emphasis
+        (Inline.Emphasis.make (cmarkit_of_inline_content ic), Meta.none)
+  | Strong ic ->
+      Inline.Strong_emphasis
+        (Inline.Emphasis.make (cmarkit_of_inline_content ic), Meta.none)
+  | Seq items -> Inline.Inlines (List.map cmarkit_of_inline items, Meta.none)
+
+and cmarkit_of_inline_content (ic : inline_content) : Inline.t =
+  match ic with
+  | Run s -> Inline.Text (s, Meta.none)
+  | Emph ic ->
+      Inline.Emphasis
+        (Inline.Emphasis.make (cmarkit_of_inline_content ic), Meta.none)
+  | Strong ic ->
+      Inline.Strong_emphasis
+        (Inline.Emphasis.make (cmarkit_of_inline_content ic), Meta.none)
+  | Seq items -> Inline.Inlines (List.map cmarkit_of_inline items, Meta.none)
+
+let rec cmarkit_of_block_content (bc : block_content) : Block.t =
+  match bc with
+  | Paragraph inline ->
+      Block.Paragraph
+        (Block.Paragraph.make (cmarkit_of_inline inline), Meta.none)
+  | Codeblock code ->
+      let lines = Block_line.list_of_string code in
+      Block.Code_block (Block.Code_block.make lines, Meta.none)
+  | Heading (level, inline) ->
+      Block.Heading
+        (Block.Heading.make ~level (cmarkit_of_inline inline), Meta.none)
+  | Blocks bs -> Block.Blocks (List.map cmarkit_of_block bs, Meta.none)
+
+and cmarkit_of_block (b : block) : Block.t = cmarkit_of_block_content b.content
+
+let cmarkit_of_document (doc : block list) : Block.t =
+  Block.Blocks (List.map cmarkit_of_block doc, Meta.none)
+
+let md_of_model (model : model) : string =
+  let block = cmarkit_of_document model.document in
+  let doc = Doc.make block in
+  Cmarkit_commonmark.of_doc doc

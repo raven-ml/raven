@@ -10,8 +10,7 @@ let render () =
 </head>
 
 <body>
-  <div id="editor"></div>
-  <div id="debug"></div>
+  <div id="editor-app"></div>
   <script src="/editor/main.bc.wasm.js"></script>
 </body>
 
