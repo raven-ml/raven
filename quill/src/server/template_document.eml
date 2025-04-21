@@ -7,6 +7,8 @@ let render () =
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Quill</title>
   <link rel="stylesheet" href="/editor/styles.css">
+  <link rel="stylesheet" href="/asset/fonts/inter/inter.css">
+  <link rel="stylesheet" href="/asset/fonts/fira/fira_code.css">
 </head>
 
 <body>

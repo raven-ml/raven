@@ -15,6 +15,15 @@ module Handler = struct
           ~headers:[ ("Cache-Control", "no-store, max-age=0") ]
           asset
 
+  let asset_loader _ path req =
+    let asset_opt = Asset.read path in
+    match asset_opt with
+    | None -> not_found req
+    | Some asset ->
+        Dream.respond
+          ~headers:[ ("Cache-Control", "no-store, max-age=0") ]
+          asset
+
   let serve_document_content base_dir filename_md req =
     let full_path = Filename.concat base_dir filename_md in
     if Sys.file_exists full_path && is_safe_path base_dir full_path then
@@ -71,6 +80,7 @@ let create_router file_or_dir_path =
 
   Dream.router
     ([
+       Dream.get "/asset/**" (Dream.static ~loader:Handler.asset_loader "");
        Dream.get "/editor/**" (Dream.static ~loader:Handler.editor_loader "");
        Dream.get "/" (Handler.handle_root file_or_dir_path);
      ]

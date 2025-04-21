@@ -20,12 +20,12 @@
    asset_editor.ml
    ../editor/)))
 
-; (rule
-;  (targets asset.ml)
-;  (deps
-;   (source_tree ../asset/))
-;  (action
-;   (run %{bin:ocaml-crunch} --mode=plain -o asset.ml ../asset/)))
+(rule
+ (targets asset.ml)
+ (deps
+  (source_tree ../asset/))
+ (action
+  (run %{bin:ocaml-crunch} --mode=plain -o asset.ml ../asset/)))
 
 (rule
  (targets template_document.ml template_index.ml)
