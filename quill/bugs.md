@@ -1,3 +1,3 @@
 - enter is broken, duplicates block
-- codeblock not preserved after rerender
 - focusing code block doesn't change focus state
+- editing an inline block other than text resets cursor at the beginning of that inline after re-render
