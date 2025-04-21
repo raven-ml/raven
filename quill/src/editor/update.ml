@@ -49,13 +49,14 @@ let rec set_focus_block (b : block) (target_id : int) (run_j : int) : block =
     | Heading (level, inline) ->
         let new_inline = set_focus_inline inline run_j in
         { b with content = Heading (level, new_inline) }
+    | Codeblock _ -> { b with focused = true }
+    | Blank_line () -> { b with focused = true }
     | Blocks bs ->
         {
           b with
           content =
             Blocks (List.map (fun b' -> set_focus_block b' target_id run_j) bs);
         }
-    | _ -> b (* No inlines to focus in Codeblock or Blank_line *)
   else
     match b.content with
     | Blocks bs ->
