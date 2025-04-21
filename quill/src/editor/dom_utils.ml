@@ -27,7 +27,11 @@ let map_node_to_indices node =
   | Some span_el ->
       let id = Js.to_string span_el##.id in
       let parts = String.split_on_char '-' id in
-      if List.length parts >= 4 then (* Expecting "block-i-run-j" *)
+      if List.length parts = 2 then (* "block-i" *)
+        let block_idx = int_of_string (List.nth parts 1) in
+        Some (block_idx, 0)
+      else if List.length parts = 4 && List.nth parts 2 = "run" then
+        (* "block-i-run-j" *)
         let block_idx = int_of_string (List.nth parts 1) in
         let inline_idx = int_of_string (List.nth parts 3) in
         Some (block_idx, inline_idx)
