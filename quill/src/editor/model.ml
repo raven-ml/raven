@@ -12,6 +12,7 @@ type block_content =
   | Paragraph of inline
   | Codeblock of string
   | Heading of int * inline
+  | Blank_line of unit
   | Blocks of block list
 
 and block = { id : int; content : block_content; focused : bool }
@@ -65,6 +66,7 @@ let rec block_content_of_cmarkit cb =
           | Some i -> i
           | None -> { id = !next_id; content = Run ""; focused = false } )
   | Block.Blocks (items, _) -> Blocks (List.map block_of_cmarkit items)
+  | Block.Blank_line _ -> Blank_line ()
   | _ -> Paragraph { id = !next_id; content = Run ""; focused = false }
 
 and block_of_cmarkit cb : block =
@@ -140,6 +142,7 @@ let rec cmarkit_of_block_content (bc : block_content) : Block.t =
   | Heading (level, inline) ->
       Block.Heading
         (Block.Heading.make ~level (cmarkit_of_inline inline), Meta.none)
+  | Blank_line () -> Block.Blank_line ("", Meta.none)
   | Blocks bs -> Block.Blocks (List.map cmarkit_of_block bs, Meta.none)
 
 and cmarkit_of_block (b : block) : Block.t = cmarkit_of_block_content b.content

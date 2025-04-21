@@ -65,6 +65,7 @@ let rec has_focused_inline (b : block) : bool =
   | Heading (_, inline) -> check_inline inline
   | Codeblock _ -> false
   | Blocks bs -> List.exists has_focused_inline bs
+  | Blank_line () -> false
 
 let rec block_to_debug_string (indent : int) (b : block) : string =
   let indent_str = String.make (indent * 2) ' ' in
@@ -87,6 +88,9 @@ let rec block_to_debug_string (indent : int) (b : block) : string =
           List.map (block_to_debug_string (indent + 1)) bs |> String.concat "\n"
         in
         Printf.sprintf "%sBlocks [\n%s\n%s]" indent_str bs_str indent_str
+    | Blank_line () ->
+        Printf.sprintf "%sBlank_line ()%s" indent_str
+          (String.make ((indent + 1) * 2) ' ')
   in
   let focus_str =
     if b.focused then " [FOCUSED]"
