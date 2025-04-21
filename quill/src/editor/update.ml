@@ -17,7 +17,8 @@ let rec clear_focus_block (b : block) : block =
       | Paragraph inline -> Paragraph (clear_focus_inline inline)
       | Codeblock s -> Codeblock s
       | Heading (level, inline) -> Heading (level, clear_focus_inline inline)
-      | Blocks bs -> Blocks (List.map clear_focus_block bs));
+      | Blocks bs -> Blocks (List.map clear_focus_block bs)
+      | Blank_line () -> Blank_line ());
   }
 
 and clear_focus_inline (i : inline) : inline =
