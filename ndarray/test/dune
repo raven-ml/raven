@@ -1,0 +1,23 @@
+(rule
+ (deps test_ndarray.ml)
+ (targets test_ndarray_c.ml test_ndarray_metal.ml test_ndarray_cuda.ml)
+ (action
+  (progn
+   (copy test_ndarray.ml test_ndarray_c.ml)
+   (copy test_ndarray.ml test_ndarray_metal.ml)
+   (copy test_ndarray.ml test_ndarray_cuda.ml))))
+
+(executable
+ (name test_ndarray)
+ (modes byte native)
+ (modules test_ndarray)
+ (libraries ndarray))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (with-stdout-to
+    test_ndarray.actual
+    (run %{exe:test_ndarray.exe}))
+   (diff test_ndarray.expect test_ndarray.actual))))

@@ -1,0 +1,10 @@
+(executable
+ (name discover)
+ (modules discover)
+ (libraries str dune.configurator))
+
+(rule
+ (deps discover.exe)
+ (targets cflags.sexp clibs.sexp)
+ (action
+  (run ./discover.exe)))

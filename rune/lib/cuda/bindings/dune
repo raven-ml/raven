@@ -1,0 +1,21 @@
+(library
+ (enabled_if
+  (not
+   (= %{ocaml-config:system} "macosx")))
+ (name cuda)
+ (public_name rune.cuda.bindings)
+ (modules cuda)
+ (foreign_stubs
+  (language c)
+  (names cuda_stubs)
+  (flags :standard -I%{env:CUDA_INCLUDE_PATH=/usr/local/cuda/include}))
+ (c_library_flags
+  :standard
+  -L%{env:CUDA_LIB_PATH=/usr/local/cuda/lib64}
+  -lcuda)
+ (library_flags
+  :standard
+  -ccopt
+  -L%{env:CUDA_LIB_PATH=/usr/local/cuda/lib64}
+  -cclib
+  -lcuda))

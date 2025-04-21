@@ -1,0 +1,6 @@
+(library
+ (enabled_if
+  (= %{ocaml-config:system} "macosx"))
+ (name ndarray_metal)
+ (public_name rune.metal)
+ (libraries ndarray_core metal metallib))

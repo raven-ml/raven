@@ -1,0 +1,4 @@
+(library
+ (name npy)
+ (public_name ndarray-io.npy)
+ (libraries bigarray camlzip))

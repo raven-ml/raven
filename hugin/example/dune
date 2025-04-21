@@ -1,0 +1,19 @@
+(executable
+ (name imshow)
+ (modules imshow)
+ (libraries hugin))
+
+(executable
+ (name plot2d)
+ (modules plot2d)
+ (libraries hugin))
+
+(executable
+ (name plot3d)
+ (modules plot3d)
+ (libraries hugin))
+
+(executable
+ (name subplots)
+ (modules subplots)
+ (libraries hugin))

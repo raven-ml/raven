@@ -1,0 +1,7 @@
+(library
+ (name stb_image)
+ (public_name ndarray-cv.stb_image)
+ (libraries bigarray)
+ (foreign_stubs
+  (language c)
+  (names ml_stb_image)))

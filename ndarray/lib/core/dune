@@ -1,0 +1,4 @@
+(library
+ (name ndarray_core)
+ (public_name ndarray.internal)
+ (libraries))

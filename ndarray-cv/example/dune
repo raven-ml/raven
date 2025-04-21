@@ -1,0 +1,39 @@
+(library
+ (name common)
+ (modules common)
+ (libraries ndarray-io ndarray-cv hugin))
+
+(executable
+ (name grayscale)
+ (modules grayscale)
+ (libraries common ndarray-io ndarray-cv hugin))
+
+(executable
+ (name gaussian_blur)
+ (modules gaussian_blur)
+ (libraries common ndarray-io ndarray-cv hugin))
+
+(executable
+ (name sobel)
+ (modules sobel)
+ (libraries common ndarray-io ndarray-cv hugin))
+
+(executable
+ (name canny)
+ (modules canny)
+ (libraries common ndarray-io ndarray-cv hugin))
+
+(executable
+ (name threshold)
+ (modules threshold)
+ (libraries common ndarray-io ndarray-cv hugin))
+
+(executable
+ (name median_blur)
+ (modules median_blur)
+ (libraries common ndarray-io ndarray-cv hugin))
+
+(executable
+ (name morphology)
+ (modules morphology)
+ (libraries common ndarray-io ndarray-cv hugin))

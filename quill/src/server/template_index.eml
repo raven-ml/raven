@@ -1,0 +1,30 @@
+let render ~(files : string list) =
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quill</title>
+  <style>
+    body { font-family: sans-serif; padding: 2em; }
+    li { margin-bottom: 0.5em; }
+    a { text-decoration: none; color: blue; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+
+<body>
+  <h1>Quill Documents</h1>
+  <% if List.length files = 0 then ( %>
+    <p>No Markdown (.md) files found in this directory.</p>
+  <% ) else ( %>
+    <ul>
+      <% files |> List.iter begin fun filename_md -> %>
+      <li><a href="/<%s filename_md %>"><%s filename_md %></a></li>
+      <% end; %>
+    </ul>
+  <% ); %>
+</body>
+
+</html>

@@ -1,0 +1,22 @@
+open Rune
+
+(* Example *)
+let () =
+  let f x = mul x (mul x (mul x x)) in
+  let x = create Float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let result = eval f x in
+  Printf.printf "Result: %s\n" (to_string result);
+
+  (* eager *)
+  let result = add x x in
+  Printf.printf "Eager result: %s\n" (to_string result);
+
+  (* gradient *)
+  let gradient = (grad f) x in
+  Printf.printf "First order derivative: %s\n" (to_string gradient);
+
+  let gradient = eval (grad (grad f)) x in
+  Printf.printf "Second order derivative: %s\n" (to_string gradient);
+
+  let gradient = eval (grad (grad (grad f))) x in
+  Printf.printf "Third order derivative: %s\n" (to_string gradient)

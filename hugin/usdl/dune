@@ -1,0 +1,10 @@
+(library
+ (name usdl)
+ (public_name hugin.usdl)
+ (foreign_stubs
+  (language c)
+  (names usdl_stubs)
+  (flags
+   (:include discover/cflags.sexp)))
+ (c_library_flags
+  (:include discover/clibs.sexp)))

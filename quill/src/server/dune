@@ -1,0 +1,41 @@
+(rule
+ (targets asset_editor.ml)
+ (deps
+  ../editor/styles.css
+  ../editor/main.bc.wasm.js
+  (source_tree ../editor/main.bc.wasm.assets))
+ (action
+  (run
+   %{bin:ocaml-crunch}
+   --mode=plain
+   -e
+   css
+   -e
+   js
+   -e
+   wasm
+   -e
+   map
+   -o
+   asset_editor.ml
+   ../editor/)))
+
+; (rule
+;  (targets asset.ml)
+;  (deps
+;   (source_tree ../asset/))
+;  (action
+;   (run %{bin:ocaml-crunch} --mode=plain -o asset.ml ../asset/)))
+
+(rule
+ (targets template_document.ml template_index.ml)
+ (action
+  (progn
+   (run dream_eml %{dep:template_document.eml} --workspace %{workspace_root})
+   (run dream_eml %{dep:template_index.eml} --workspace %{workspace_root}))))
+
+(executable
+ (package quill)
+ (public_name quill)
+ (name server)
+ (libraries cmdliner dream))

@@ -1,0 +1,10 @@
+(executable
+ (name main)
+ (modes wasm)
+ (libraries vdom cmarkit js_of_ocaml)
+ (preprocess
+  (pps js_of_ocaml-ppx)))
+
+(alias
+ (name default)
+ (deps styles.css))

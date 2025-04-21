@@ -1,0 +1,6 @@
+(include_subdirs qualified)
+
+(library
+ (name hugin)
+ (public_name hugin)
+ (libraries ndarray ndarray-io cairo2 usdl))

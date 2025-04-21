@@ -1,0 +1,4 @@
+(library
+ (name ndarray_io)
+ (public_name ndarray-io)
+ (libraries npy ndarray stb_image stb_image_write))

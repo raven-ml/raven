@@ -1,0 +1,33 @@
+(rule
+ (enabled_if
+  (not
+   (= %{ocaml-config:system} "macosx")))
+ (deps elementwise.cu)
+ (targets cuda_kernels.ptx)
+ (action
+  (run nvcc -ptx -O3 %{deps} -o cuda_kernels.ptx)))
+
+(rule
+ (enabled_if
+  (not
+   (= %{ocaml-config:system} "macosx")))
+ (target cuda_kernels.ml)
+ (deps cuda_kernels.ptx)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "let data = \n\"")
+    (run
+     bash
+     -c
+     "hexdump -ve '1/1 \"%02x\"' cuda_kernels.ptx | sed 's/../\\\\x&/g'")
+    (echo "\"\n")))))
+
+(library
+ (enabled_if
+  (not
+   (= %{ocaml-config:system} "macosx")))
+ (name cuda_kernels)
+ (public_name rune.cuda.kernels)
+ (libraries))

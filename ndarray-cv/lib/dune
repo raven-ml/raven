@@ -1,0 +1,4 @@
+(library
+ (name ndarray_cv)
+ (public_name ndarray-cv)
+ (libraries ndarray))
