@@ -30,9 +30,11 @@ let nodeList_to_list nl =
   in
   go 0 []
 
+let get_node_value node =
+  Js.Opt.get node##.nodeValue (fun () -> Js.string "") |> Js.to_string
+
 let get_text_content node =
-  if node##.nodeType = Dom.TEXT then
-    Js.Opt.get node##.nodeValue (fun () -> Js.string "") |> Js.to_string
+  if node##.nodeType = Dom.TEXT then get_node_value node
   else
     match Js.Opt.to_option (Dom_html.CoerceTo.element node) with
     | Some el ->
@@ -139,6 +141,19 @@ let find_codeblock node =
     | None -> None
   else find node
 
+let rec find_first_text_node (node : Dom.node Js.t) : Dom.text Js.t option =
+  if node##.nodeType = Dom.TEXT then Some (Js.Unsafe.coerce node)
+  else
+    let children = nodeList_to_list node##.childNodes in
+    let rec search = function
+      | [] -> None
+      | child :: rest -> (
+          match find_first_text_node child with
+          | Some text -> Some text
+          | None -> search rest)
+    in
+    search children
+
 let save_cursor () =
   let sel = Dom_html.window##getSelection in
   if Js.to_bool sel##.isCollapsed then
@@ -167,19 +182,18 @@ let restore_cursor pos =
       let id = "run-" ^ string_of_int inline_id in
       match Dom_html.getElementById_opt id with
       | None -> ()
-      | Some span_el ->
-          Js.Opt.iter span_el##.firstChild (fun node ->
-              let len =
-                Js.Opt.get node##.nodeValue (fun () -> Js.string "")
-                |> Js.to_string |> String.length
-              in
+      | Some el -> (
+          match find_first_text_node (el :> Dom.node Js.t) with
+          | Some text_node ->
+              let len = get_node_value text_node |> String.length in
               let o = min offs len in
               let range = Dom_html.document##createRange in
-              ignore (range##setStart node o);
-              ignore (range##collapse Js._true);
+              range##setStart (text_node :> Dom.node Js.t) o;
+              range##collapse Js._true;
               let sel = Dom_html.window##getSelection in
               sel##removeAllRanges;
-              sel##addRange range))
+              sel##addRange range
+          | None -> ()))
   | Some (Codeblock_pos { block_id; offs }) -> (
       let code_id = "codeblock-" ^ string_of_int block_id in
       match Dom_html.getElementById_opt code_id with
@@ -192,8 +206,8 @@ let restore_cursor pos =
               in
               let o = min offs len in
               let range = Dom_html.document##createRange in
-              ignore (range##setStart node o);
-              ignore (range##collapse Js._true);
+              range##setStart node o;
+              range##collapse Js._true;
               let sel = Dom_html.window##getSelection in
               sel##removeAllRanges;
               sel##addRange range))

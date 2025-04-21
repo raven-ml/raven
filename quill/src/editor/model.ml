@@ -20,13 +20,24 @@ and block = { id : int; content : block_content; focused : bool }
 
 type model = { document : block list }
 
-let next_id = ref 0
+let next_block_id_ref = ref 0
+let next_run_id_ref = ref 0
+
+let next_block_id () =
+  let id = !next_block_id_ref in
+  incr next_block_id_ref;
+  id
+
+let next_run_id () =
+  let id = !next_run_id_ref in
+  incr next_run_id_ref;
+  id
+
 let init : model = { document = [] }
 
 let rec inline_of_cmarkit inline =
   let mk content : inline =
-    let id = !next_id in
-    incr next_id;
+    let id = next_block_id () in
     { id; content; focused = false }
   in
   match inline with
@@ -60,15 +71,13 @@ let rec block_content_of_cmarkit cb =
       Heading (level, inline_of_cmarkit inline)
   | Block.Blocks (items, _) -> Blocks (List.map block_of_cmarkit items)
   | Block.Blank_line _ -> Blank_line ()
-  | _ -> Paragraph { id = !next_id; content = Run ""; focused = false }
+  | _ -> Paragraph { id = next_run_id (); content = Run ""; focused = false }
 
 and block_of_cmarkit cb : block =
-  let id = !next_id in
-  incr next_id;
+  let id = next_block_id () in
   { id; content = block_content_of_cmarkit cb; focused = false }
 
 and document_of_cmarkit root =
-  next_id := 0;
   match Block.normalize root with
   | Block.Blocks (items, _) -> List.map block_of_cmarkit items
   | other -> [ block_of_cmarkit other ]
@@ -103,8 +112,7 @@ let inline_content_of_md txt =
 
 let inline_of_md txt : inline =
   let content = inline_content_of_md txt in
-  let id = !next_id in
-  incr next_id;
+  let id = next_run_id () in
   { id; content; focused = false }
 
 let rec cmarkit_of_inline (i : inline) : Inline.t =
