@@ -51,12 +51,10 @@ let paragraph block_id inline =
 
 let codeblock block_id code =
   let id = Printf.sprintf "block-%d" block_id in
+  let run_id = Printf.sprintf "block-%d-run-%d" block_id 0 in
   elt "pre" ~key:id
-    [
-      span ~a:[ bool_prop "hidden" true ] [ text "```" ];
-      elt "code" ~a:[ attr "id" id ] [ text code ];
-      span ~a:[ bool_prop "hidden" true ] [ text "```" ];
-    ]
+    ~a:[ attr "id" id ]
+    [ elt "code" ~a:[ attr "id" run_id ] [ text code ] ]
 
 let heading block_id level inline =
   let id = Printf.sprintf "block-%d" block_id in
@@ -70,6 +68,12 @@ let heading block_id level inline =
   in
   elt tag ~key:id ~a:[ attr "id" id ] (pre :: children)
 
+let blank_line block_id =
+  p
+    ~key:(Printf.sprintf "block-%d" block_id)
+    ~a:[ attr "id" (Printf.sprintf "block-%d" block_id) ]
+    []
+
 let rec blocks block_id blocks =
   let id = Printf.sprintf "block-%d" block_id in
   let children = List.map (fun b -> block b.id b.content) blocks in
@@ -81,7 +85,7 @@ and block block_id block_content =
   | Codeblock code -> codeblock block_id code
   | Heading (level, inline) -> heading block_id level inline
   | Blocks bs -> blocks block_id bs
-  | Blank_line () -> fragment []
+  | Blank_line () -> blank_line block_id
 
 let view (model : model) : msg Vdom.vdom =
   let editor_content =

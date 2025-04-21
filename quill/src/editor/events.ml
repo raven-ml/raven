@@ -29,15 +29,43 @@ let nodeList_to_list nl =
   in
   go 0 []
 
-let block_of_element (el : Dom_html.element Js.t) =
+let rec block_of_element (el : Dom_html.element Js.t) =
+  let open Model in
+  let tag = Js.to_string el##.tagName in
   let id_s = Js.to_string el##.id in
-
   match String.split_on_char '-' id_s with
-  | [ "block"; _ ] ->
-      let txt =
+  | [ "block"; id_str ] -> (
+      let id = int_of_string id_str in
+      let visible_text = Js.to_string el##.innerText in
+      let text =
         Js.Opt.get el##.textContent (fun () -> Js.string "") |> Js.to_string
       in
-      Some (Model.block_of_md txt)
+      match tag with
+      | "P" ->
+          if String.trim visible_text = "" then
+            Some { id; content = Blank_line (); focused = false }
+          else
+            let inline = Model.inline_of_md text in
+            Some { id; content = Paragraph inline; focused = false }
+      | "H1" | "H2" | "H3" | "H4" | "H5" | "H6" ->
+          let level = int_of_string (String.sub tag 1 1) in
+          let inline = Model.inline_of_md visible_text in
+          Some { id; content = Heading (level, inline); focused = false }
+      | "PRE" ->
+          let code = Js.to_string el##.innerText in
+          Some { id; content = Codeblock code; focused = false }
+      | "DIV" ->
+          let children = nodeList_to_list el##.childNodes in
+          let blocks =
+            List.filter_map
+              (fun node ->
+                match Js.Opt.to_option (Dom_html.CoerceTo.element node) with
+                | Some child_el -> block_of_element child_el
+                | None -> None)
+              children
+          in
+          Some { id; content = Blocks blocks; focused = false }
+      | _ -> None)
   | _ -> None
 
 let document_of_dom root =

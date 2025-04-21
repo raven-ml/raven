@@ -8,8 +8,8 @@ let starts_with str prefix =
   let len = String.length prefix in
   if String.length str < len then false else String.sub str 0 len = prefix
 
-let map_node_to_indices (node : Dom.node Js.t) : (int * int) option =
-  let rec find_span (node : Dom.node Js.t) =
+let map_node_to_indices node =
+  let rec find_span node =
     if node##.nodeType = Dom.ELEMENT then
       let el : Dom_html.element Js.t = Js.Unsafe.coerce node in
       let id = Js.to_string el##.id in
@@ -49,7 +49,7 @@ let save_cursor () =
         | Some (blk, run) -> Some { block = blk; run; offs = offset })
   else None
 
-let restore_cursor (pos : cursor_pos option) : unit =
+let restore_cursor pos =
   match pos with
   | None -> ()
   | Some { block; run; offs } -> (
