@@ -16,6 +16,7 @@ let rec clear_focus_block (b : block) : block =
       (match b.content with
       | Paragraph inline -> Paragraph (clear_focus_inline inline)
       | Codeblock s -> Codeblock s
+      | Heading (level, inline) -> Heading (level, clear_focus_inline inline)
       | Blocks bs -> Blocks (List.map clear_focus_block bs));
   }
 
@@ -58,6 +59,20 @@ let set_focus_document (doc : block list) (block_idx : int) (run_j : int) :
               | _ -> { inline with focused = true }
             in
             { b with content = Paragraph new_inline }
+        | Heading (level, inline) ->
+            let new_inline =
+              match inline.content with
+              | Seq items ->
+                  let new_items =
+                    List.mapi
+                      (fun j (item : inline) ->
+                        { item with focused = j = run_j })
+                      items
+                  in
+                  { inline with content = Seq new_items }
+              | _ -> { inline with focused = true }
+            in
+            { b with content = Heading (level, new_inline) }
         | _ -> b
       else clear_focus_block b)
     doc
