@@ -1,2 +1,1 @@
 - enter is broken, duplicates block
-- editing an inline block other than text resets cursor at the beginning of that inline after re-render
