@@ -29,52 +29,20 @@ let nodeList_to_list nl =
   in
   go 0 []
 
-let rec block_of_element (el : Dom_html.element Js.t) =
-  let tag = Js.to_string el##.tagName |> String.lowercase_ascii in
+let block_of_element (el : Dom_html.element Js.t) =
   let id_s = Js.to_string el##.id in
+  Model.next_id := 0;
   match String.split_on_char '-' id_s with
-  | [ "block"; idx ] -> (
-      let blk = int_of_string idx in
-      match tag with
-      | "p" ->
-          let txt =
-            Js.Opt.get el##.textContent (fun () -> Js.string "") |> Js.to_string
-          in
-          Some
-            Model.
-              {
-                id = blk;
-                content = Paragraph (inline_of_md txt);
-                focused = false;
-              }
-      | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" ->
-          let level = int_of_string (String.sub tag 1 1) in
-          let txt =
-            Js.Opt.get el##.textContent (fun () -> Js.string "") |> Js.to_string
-          in
-          Some
-            {
-              id = blk;
-              content = Heading (level, Model.inline_of_md txt);
-              focused = false;
-            }
-      | "pre" ->
-          let code = el##.innerText |> Js.to_string in
-          Some { id = blk; content = Codeblock code; focused = false }
-      | "div" ->
-          let children =
-            nodeList_to_list el##.childNodes
-            |> List.filter_map (fun node ->
-                   match Js.Opt.to_option (Dom_html.CoerceTo.element node) with
-                   | Some el -> block_of_element el
-                   | None -> None)
-          in
-          Some { id = blk; content = Blocks children; focused = false }
-      | _ -> None)
+  | [ "block"; _ ] ->
+      let txt =
+        Js.Opt.get el##.textContent (fun () -> Js.string "") |> Js.to_string
+      in
+      Some (Model.block_of_md txt)
   | _ -> None
 
 let document_of_dom root =
-  let children = nodeList_to_list root##.childNodes in
+  let editor_div = root##querySelector (Js.string "#editor") in
+  let children = nodeList_to_list editor_div##.childNodes in
   let blocks =
     List.filter_map
       (fun node ->

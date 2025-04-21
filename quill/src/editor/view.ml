@@ -65,7 +65,10 @@ let heading block_id level inline =
   let children =
     List.mapi (fun j run -> wrap_run ~block:block_id ~run_j:j run) segs
   in
-  elt tag ~key:id ~a:[ attr "id" id ] children
+  let pre =
+    span ~a:[ bool_prop "hidden" true ] [ text (String.make level '#' ^ " ") ]
+  in
+  elt tag ~key:id ~a:[ attr "id" id ] (pre :: children)
 
 let rec blocks block_id blocks =
   let id = Printf.sprintf "block-%d" block_id in
@@ -80,6 +83,24 @@ and block block_id block_content =
   | Blocks bs -> blocks block_id bs
 
 let view (model : model) : msg Vdom.vdom =
-  match model.document with
-  | [] -> p []
-  | _ -> fragment (List.map (fun b -> block b.id b.content) model.document)
+  let editor_content =
+    match model.document with
+    | [] -> p []
+    | _ -> fragment (List.map (fun b -> block b.id b.content) model.document)
+  in
+  fragment
+    [
+      div
+        ~a:
+          [
+            attr "id" "editor";
+            attr "contentEditable" "true";
+          ]
+        [ editor_content ];
+      div
+        ~a:
+          [
+            attr "id" "debug";
+          ]
+        [ Debug_view.view model ];
+    ]
