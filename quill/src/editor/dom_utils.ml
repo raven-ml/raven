@@ -4,6 +4,18 @@ let get_current_range () =
   let selection = Dom_html.window##getSelection in
   if selection##.rangeCount > 0 then Some (selection##getRangeAt 0) else None
 
+let is_within_range (range : Dom_html.range Js.t) (node : Dom.node Js.t) : bool
+    =
+  let container = range##.startContainer in
+  let rec is_descendant current =
+    if current = node then true
+    else
+      match Js.Opt.to_option current##.parentNode with
+      | Some parent -> is_descendant parent
+      | None -> false
+  in
+  is_descendant container
+
 let starts_with str prefix =
   let len = String.length prefix in
   if String.length str < len then false else String.sub str 0 len = prefix

@@ -22,21 +22,20 @@ let wrap_run ~block ~run_j (run : inline) =
   let id = Printf.sprintf "block-%d-run-%d" block run_j in
   let txt = inline_to_plain run in
   let focused = run.focused in
-  let attrs = [ attr "id" id; tabindex 0 ] in
   match run.content with
-  | Run s -> span ~key:id ~a:attrs [ text s ]
+  | Run s -> span ~key:id ~a:[ attr "id" id; tabindex 0 ] [ text s ]
   | Emph _ ->
-      span ~key:id ~a:attrs
+      span ~key:id
         [
           span ~a:[ bool_prop "hidden" (not focused) ] [ text "*" ];
-          elt "em" [ text txt ];
+          elt "em" ~a:[ attr "id" id; tabindex 0 ] [ text txt ];
           span ~a:[ bool_prop "hidden" (not focused) ] [ text "*" ];
         ]
   | Strong _ ->
-      span ~key:id ~a:attrs
+      span ~key:id
         [
           span ~a:[ bool_prop "hidden" (not focused) ] [ text "**" ];
-          elt "strong" [ text txt ];
+          elt "strong" ~a:[ attr "id" id; tabindex 0 ] [ text txt ];
           span ~a:[ bool_prop "hidden" (not focused) ] [ text "**" ];
         ]
   | Seq _ -> failwith "unexpected Seq in wrap_run"

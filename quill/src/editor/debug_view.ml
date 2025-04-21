@@ -99,8 +99,10 @@ let rec block_to_debug_string (indent : int) (b : block) : string =
   in
   Printf.sprintf "%sid=%d %s%s" indent_str b.id content focus_str
 
-let document_to_debug_string (model) : string =
-  let doc_ast = List.map (block_to_debug_string 0) model.document |> String.concat "\n" in
+let document_to_debug_string model : string =
+  let doc_ast =
+    List.map (block_to_debug_string 0) model.document |> String.concat "\n"
+  in
   let doc_str = Model.md_of_model model in
   Printf.sprintf "Document [\n%s\n]\n\n---\n\n%s" doc_ast doc_str
 
