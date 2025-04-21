@@ -1,3 +1,55 @@
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #2c2c2c;
+  color: #ffffff;
+  font-family: Arial, sans-serif;
+}
+
 #editor {
-  white-space: pre-line;
+  max-width: 800px;
+  width: 100%;
+  padding: 20px;
+  border: none;
+  outline: none;
+  caret-color: #ffffff;
+}
+
+#editor:focus {
+  outline: none;
+}
+
+#editor span:focus {
+  outline: none;
+}
+
+#editor p, #editor pre {
+  margin-bottom: 1em;
+}
+
+#editor pre {
+  background-color: #1e1e1e;
+  padding: 10px;
+  border-radius: 5px;
+  overflow-x: auto;
+}
+
+#editor code {
+  font-family: monospace;
+}
+
+#editor strong {
+  font-weight: bold;
+  color: #ffffff;
+}
+
+#editor em {
+  font-style: italic;
+}
+
+#editor ::selection {
+  background-color: #444444;
+  color: #ffffff;
 }
