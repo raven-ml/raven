@@ -55,12 +55,30 @@ val ones : ('a, 'b) dtype -> int array -> ('a, 'b, [ `cpu ]) t
 val rand : (float, 'a) dtype -> int array -> (float, 'a, [ `cpu ]) t
 val scalar : ('a, 'b) dtype -> 'a -> ('a, 'b, [ `cpu ]) t
 
+(** {1 Device} *)
+
+type 'dev device
+
+val device : ('a, 'b, 'dev) t -> 'dev device
+
+val create_on_device :
+  'dev device -> ('a, 'b) dtype -> int array -> 'a array -> ('a, 'b, 'dev) t
+
+val move : 'dev_to device -> ('a, 'b, 'dev_from) t -> ('a, 'b, 'dev_to) t
+
 (** {1 Properties} *)
 
 val shape : ('a, 'b, 'dev) t -> int array
 val dim : int -> ('a, 'b, 'dev) t -> int
 val size : ('a, 'b, 'dev) t -> int
 val dtype : ('a, 'b, 'dev) t -> ('a, 'b) dtype
+val itemsize : ('a, 'b, 'dev) t -> int
+val nbytes : ('a, 'b, 'dev) t -> int
+val strides : ('a, 'b, 'dev) t -> int array
+val stride : int -> ('a, 'b, 'dev) t -> int
+val offset : ('a, 'b, 'dev) t -> int
+val ndim : ('a, 'b, 'dev) t -> int
+val dims : ('a, 'b, 'dev) t -> int array
 
 (** {1 Access} *)
 
@@ -91,6 +109,24 @@ val mean : ?axes:int array -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val matmul : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val transpose : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val reshape : ('a, 'b, 'dev) t -> int array -> ('a, 'b, 'dev) t
+
+val slice :
+  ?steps:int array ->
+  int array ->
+  int array ->
+  ('a, 'b, 'dev) t ->
+  ('a, 'b, 'dev) t
+
+(* *)
+
+val stack : axis:int -> ('a, 'b, 'dev) t list -> ('a, 'b, 'dev) t
+
+val vmap :
+  (('a, 'b, 'dev) t list -> ('d, 'e, 'dev) t) ->
+  ?in_axes:int option list ->
+  ?out_axes:int ->
+  ('a, 'b, 'dev) t list ->
+  ('d, 'e, 'dev) t
 
 (** {1 Neural Network} *)
 
