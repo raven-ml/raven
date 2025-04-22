@@ -1,0 +1,13 @@
+(executable
+ (name test_rune)
+ (modules test_rune)
+ (libraries rune))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (with-stdout-to
+    test_rune.actual
+    (run %{exe:test_rune.exe}))
+   (diff test_rune.expect test_rune.actual))))
