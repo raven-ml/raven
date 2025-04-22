@@ -69,6 +69,31 @@ module Handler = struct
       && String.equal (Filename.extension filename_md) ".md"
     then serve_document_editor req
     else not_found req
+
+  let execute_code req =
+    let open Lwt.Syntax in
+    let* body = Dream.body req in
+    match Yojson.Safe.from_string body with
+    | `Assoc [ ("code", `String code) ] ->
+        let id = "default" in
+        (* Use a unique ID per session/document if needed *)
+        Quill_top.initialize_toplevel id;
+        let result = Quill_top.eval ~id code in
+        let json =
+          `Assoc
+            [
+              ("output", `String result.output);
+              ( "error",
+                match result.error with Some e -> `String e | None -> `Null );
+              ( "status",
+                `String
+                  (match result.status with
+                  | `Success -> "success"
+                  | `Error -> "error") );
+            ]
+        in
+        Dream.json (Yojson.Safe.to_string json)
+    | _ -> Dream.respond ~status:`Bad_Request "Invalid JSON"
 end
 
 let create_router file_or_dir_path =
@@ -80,6 +105,7 @@ let create_router file_or_dir_path =
 
   Dream.router
     ([
+       Dream.post "/api/execute" Handler.execute_code;
        Dream.get "/asset/**" (Dream.static ~loader:Handler.asset_loader "");
        Dream.get "/editor/**" (Dream.static ~loader:Handler.editor_loader "");
        Dream.get "/" (Handler.handle_root file_or_dir_path);

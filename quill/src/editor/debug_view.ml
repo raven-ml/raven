@@ -4,7 +4,7 @@ open Vdom
 let rec inline_to_debug_string (indent : int) (i : inline) : string =
   let indent_str = String.make (indent * 2) ' ' in
   let content =
-    match i.content with
+    match i.inline_content with
     | Run s -> Printf.sprintf "%sRun \"%s\"" indent_str s
     | Emph inline' ->
         Printf.sprintf "%sEmph (\n%s\n%s)" indent_str
@@ -29,7 +29,7 @@ let rec has_focused_inline (b : block) : bool =
   let rec check_inline (i : inline) : bool =
     i.focused
     ||
-    match i.content with
+    match i.inline_content with
     | Run _ -> false
     | Emph inline' -> check_inline inline'
     | Strong inline' -> check_inline inline'
@@ -54,7 +54,7 @@ let rec block_to_debug_string (indent : int) (b : block) : string =
     | Codeblock code ->
         Printf.sprintf "%sCodeblock (\n%s%s\n%s)" indent_str
           (String.make ((indent + 1) * 2) ' ')
-          code indent_str
+          code.code indent_str
     | Heading (level, inline) ->
         Printf.sprintf "%sHeading %d (\n%s\n%s)" indent_str level
           (inline_to_debug_string (indent + 1) inline)

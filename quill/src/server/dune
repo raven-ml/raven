@@ -38,4 +38,7 @@
  (package quill)
  (public_name quill)
  (name server)
- (libraries cmdliner dream))
+ (modes byte)
+ (libraries cmdliner dream quill_top)
+ (preprocess
+  (pps lwt_ppx)))
