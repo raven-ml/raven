@@ -1,16 +1,5 @@
 open Rune
 
-(* One-hot encoding: converts labels to one-hot vectors *)
-let one_hot labels num_classes =
-  let num_samples = dim 0 labels in
-  let one_hot = zeros Float32 [| num_samples; num_classes |] in
-  for i = 0 to num_samples - 1 do
-    let label = get [| i; 0 |] labels in
-    let label_val = Ndarray.get [||] label in
-    set one_hot [| i; label_val |] (scalar Float32 1.0)
-  done;
-  one_hot
-
 (* Get a batch of data *)
 let get_batch x y batch_size batch_idx =
   let num_samples = dim 0 x in
@@ -33,7 +22,7 @@ let forward params inputs =
 (* Softmax function: converts logits to probabilities *)
 let softmax logits =
   let exp_logits = exp logits in
-  let sum_exp = sum exp_logits ~axis:1 in
+  let sum_exp = sum exp_logits ~axes:[| 1 |] in
   let sum_exp_broadcast = reshape sum_exp [| dim 0 logits; 1 |] in
   div exp_logits sum_exp_broadcast
 
@@ -43,7 +32,7 @@ let cross_entropy_loss logits y_true =
   let epsilon = 1e-10 in
   let probs = softmax logits in
   let log_probs = log (add probs (scalar Float32 epsilon)) in
-  let loss = neg (sum (mul y_true log_probs) ~axis:1) in
+  let loss = neg (sum (mul y_true log_probs) ~axes:[| 1 |]) in
   mean loss
 
 (* Training function *)
@@ -90,16 +79,20 @@ let train_mlp x_train y_train_onehot batch_size learning_rate epochs =
 let () =
   (* Load MNIST dataset *)
   let (x_train, y_train), (x_test, y_test) = Ndarray_datasets.load_mnist () in
+  let x_train = ndarray x_train in
+  let y_train = ndarray y_train in
+  let x_test = ndarray x_test in
+  let _y_test = ndarray y_test in
 
   (* Preprocess training data *)
   let x_train = div (cast x_train Float32) (scalar Float32 255.0) in
   let x_train = reshape x_train [| 60000; 784 |] in
-  let y_train_onehot = one_hot y_train 10 in
+  let y_train_onehot = one_hot Float32 y_train 10 in
 
   (* Preprocess test data *)
   let x_test = div (cast x_test Float32) (scalar Float32 255.0) in
   let x_test = reshape x_test [| 10000; 784 |] in
-  let y_test_onehot = one_hot y_test 10 in
+  let _y_test_onehot = one_hot Float32 _y_test 10 in
 
   (* Training parameters *)
   let batch_size = 64 in
