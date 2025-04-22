@@ -14,9 +14,6 @@ val load_mnist :
     tensor of shape [|num_samples; height; width; 1|], and labels as a uint8
     tensor of shape [|num_samples; 1|].
 
-    {2 Parameters}
-    - [()]: no arguments.
-
     {2 Returns}
     - [(x_train, y_train), (x_test, y_test)]: * [x_train]: uint8 tensor of shape
       [|60000;28;28;1|] for training images. * [y_train]: uint8 tensor of shape
@@ -37,9 +34,6 @@ val load_fashion_mnist :
     [|num_samples; height; width; 1|], and labels as uint8 tensors of shape
     [|num_samples; 1|].
 
-    {2 Parameters}
-    - [()]: no arguments.
-
     {2 Returns}
     - [(x_train, y_train), (x_test, y_test)] similar to [load_mnist].
 
@@ -56,9 +50,6 @@ val load_cifar10 :
     [|num_samples; height; width; 3|], and labels are uint8 tensors of shape
     [|num_samples; 1|].
 
-    {2 Parameters}
-    - [()]: no arguments.
-
     {2 Returns}
     - [(x_train, y_train), (x_test, y_test)]: * [x_*]: uint8 tensor of shape
       [|50000| or 10000;32;32;3|]. * [y_*]: uint8 tensor of shape
@@ -73,9 +64,6 @@ val load_iris : unit -> Ndarray.float64_t * Ndarray.int32_t
     Returns features as a float64 tensor of shape [|num_samples; num_features|],
     and labels as an int32 tensor of shape [|num_samples; 1|].
 
-    {2 Parameters}
-    - [()]: no arguments.
-
     {2 Returns}
     - [features]: float64 tensor of shape [|150;4|].
     - [labels]: int32 tensor of shape [|150;1|]. *)
@@ -87,9 +75,6 @@ val load_breast_cancer :
     Returns features as a float64 tensor of shape [|num_samples; num_features|],
     and labels as an integer tensor of shape [|num_samples; 1|].
 
-    {2 Parameters}
-    - [()]: no arguments.
-
     {2 Returns}
     - [features]: float64 tensor of shape [|num_samples; num_features|].
     - [labels]: int32 tensor of shape [|num_samples;1|]. *)
@@ -99,9 +84,6 @@ val load_diabetes : unit -> Ndarray.float64_t * Ndarray.float64_t
 
     Returns features as a float64 tensor of shape [|num_samples; num_features|],
     and targets as a float64 tensor of shape [|num_samples; 1|].
-
-    {2 Parameters}
-    - [()]: no arguments.
 
     {2 Returns}
     - [features]: float64 tensor of shape [|num_samples; num_features|].
@@ -113,9 +95,6 @@ val load_california_housing : unit -> Ndarray.float64_t * Ndarray.float64_t
     Returns features as a float64 tensor and targets as a float64 tensor of
     shape [|num_samples;1|].
 
-    {2 Parameters}
-    - [()]: no arguments.
-
     {2 Returns}
     - [features]: float64 tensor of shape [|num_samples; num_features|].
     - [labels]: float64 tensor of shape [|num_samples;1|]. *)
@@ -124,9 +103,6 @@ val load_airline_passengers : unit -> Ndarray.int32_t
 (** Load the Airline Passengers monthly totals time series dataset.
 
     Returns a one-dimensional int32 tensor of monthly passenger counts.
-
-    {2 Parameters}
-    - [()]: no arguments.
 
     {2 Returns}
     - 1-D int32 tensor of shape [|num_samples|]. *)
