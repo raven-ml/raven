@@ -1,0 +1,6 @@
+(executable
+ (package quill)
+ (name main)
+ (modes byte)
+ (public_name quill)
+ (libraries cmarkit quill_server quill_top))

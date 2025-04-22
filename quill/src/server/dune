@@ -23,9 +23,9 @@
 (rule
  (targets asset.ml)
  (deps
-  (source_tree ../asset/))
+  (source_tree asset/))
  (action
-  (run %{bin:ocaml-crunch} --mode=plain -o asset.ml ../asset/)))
+  (run %{bin:ocaml-crunch} --mode=plain -o asset.ml asset/)))
 
 (rule
  (targets template_document.ml template_index.ml)
@@ -34,11 +34,9 @@
    (run dream_eml %{dep:template_document.eml} --workspace %{workspace_root})
    (run dream_eml %{dep:template_index.eml} --workspace %{workspace_root}))))
 
-(executable
- (package quill)
- (public_name quill)
- (name server)
- (modes byte)
+(library
+ (public_name quill.server)
+ (name quill_server)
  (libraries cmdliner dream quill_top)
  (preprocess
   (pps lwt_ppx)))
