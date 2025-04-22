@@ -72,6 +72,62 @@ let deriv_mean x axes =
       let n = Array.fold_left ( * ) 1 reduced_sizes in
       const (Dispatch.div_scalar grad (float_of_int n))
 
+let deriv_max x axes =
+  let input_shape = Dispatch.shape x.data in
+  let reduced_axes =
+    match axes with
+    | None -> Array.init (Array.length input_shape) (fun i -> i)
+    | Some ax -> ax
+  in
+  let max_x = Dispatch.max x.data ~axes:reduced_axes in
+  let new_shape =
+    Array.mapi
+      (fun i dim -> if Array.mem i reduced_axes then 1 else dim)
+      input_shape
+  in
+  let reshaped_max = Dispatch.reshape new_shape max_x in
+  let broadcasted_max = Dispatch.broadcast_to input_shape reshaped_max in
+  let mask = Dispatch.equal x.data broadcasted_max in
+  let mask_cast = Dispatch.astype (Dispatch.dtype x.data) mask in
+  fun twg_bv ->
+    let reshaped_grad = Dispatch.reshape new_shape twg_bv.data in
+    let broadcasted_grad = Dispatch.broadcast_to input_shape reshaped_grad in
+    let count = Dispatch.sum mask_cast ~axes:reduced_axes in
+    let reshaped_count = Dispatch.reshape new_shape count in
+    let broadcasted_count = Dispatch.broadcast_to input_shape reshaped_count in
+    let grad_x =
+      Dispatch.mul (Dispatch.div broadcasted_grad broadcasted_count) mask_cast
+    in
+    const grad_x
+
+let deriv_min x axes =
+  let input_shape = Dispatch.shape x.data in
+  let reduced_axes =
+    match axes with
+    | None -> Array.init (Array.length input_shape) (fun i -> i)
+    | Some ax -> ax
+  in
+  let min_x = Dispatch.min x.data ~axes:reduced_axes in
+  let new_shape =
+    Array.mapi
+      (fun i dim -> if Array.mem i reduced_axes then 1 else dim)
+      input_shape
+  in
+  let reshaped_min = Dispatch.reshape new_shape min_x in
+  let broadcasted_min = Dispatch.broadcast_to input_shape reshaped_min in
+  let mask = Dispatch.equal x.data broadcasted_min in
+  let mask_cast = Dispatch.astype (Dispatch.dtype x.data) mask in
+  fun twg_bv ->
+    let reshaped_grad = Dispatch.reshape new_shape twg_bv.data in
+    let broadcasted_grad = Dispatch.broadcast_to input_shape reshaped_grad in
+    let count = Dispatch.sum mask_cast ~axes:reduced_axes in
+    let reshaped_count = Dispatch.reshape new_shape count in
+    let broadcasted_count = Dispatch.broadcast_to input_shape reshaped_count in
+    let grad_x =
+      Dispatch.mul (Dispatch.div broadcasted_grad broadcasted_count) mask_cast
+    in
+    const grad_x
+
 let deriv_maximum arg x y =
   let t_ones = const (Dispatch.ones_like x.data) in
   let t_zeros = const (Dispatch.zeros_like x.data) in
@@ -199,7 +255,7 @@ let make_reverse_handler tape =
     | Div (x, y) -> Some (handle_ap2 ~deriv:deriv_div ~op:div x y)
     | Maximum (x, y) -> Some (handle_ap2 ~deriv:deriv_maximum ~op:maximum x y)
     | Minimum (x, y) -> Some (handle_ap2 ~deriv:deriv_minimum ~op:minimum x y)
-    | Sum (x, axes) ->
+    | Sum (x, axes, _keepdims) ->
         Some
           (fun k ->
             let r = sum ?axes x in
@@ -216,7 +272,7 @@ let make_reverse_handler tape =
             let deriv_fn = deriv_sum x axes in
             twg_x.bv <- add twg_x.bv (deriv_fn twg.bv);
             t)
-    | Mean (x, axes) ->
+    | Mean (x, axes, _keepdims) ->
         Some
           (fun k ->
             let r = mean ?axes x in
@@ -231,6 +287,40 @@ let make_reverse_handler tape =
             let twg_x = unwrap_t_with_grad x any_twg_x in
             let t = continue k r in
             let deriv_fn = deriv_mean x axes in
+            twg_x.bv <- add twg_x.bv (deriv_fn twg.bv);
+            t)
+    | Max (x, axes, _keepdims) ->
+        Some
+          (fun k ->
+            let r = max ?axes x in
+            let zeros = Dispatch.zeros_like r.data in
+            let twg = { v = r; bv = const zeros } in
+            Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
+            (if not (Hashtbl.mem tape x.id) then
+               let zeros_x = Dispatch.zeros_like x.data in
+               let twg_x = { v = x; bv = const zeros_x } in
+               Hashtbl.add tape x.id (Any_t_with_grad twg_x));
+            let any_twg_x = Hashtbl.find tape x.id in
+            let twg_x = unwrap_t_with_grad x any_twg_x in
+            let t = continue k r in
+            let deriv_fn = deriv_max x axes in
+            twg_x.bv <- add twg_x.bv (deriv_fn twg.bv);
+            t)
+    | Min (x, axes, _keepdims) ->
+        Some
+          (fun k ->
+            let r = min ?axes x in
+            let zeros = Dispatch.zeros_like r.data in
+            let twg = { v = r; bv = const zeros } in
+            Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
+            (if not (Hashtbl.mem tape x.id) then
+               let zeros_x = Dispatch.zeros_like x.data in
+               let twg_x = { v = x; bv = const zeros_x } in
+               Hashtbl.add tape x.id (Any_t_with_grad twg_x));
+            let any_twg_x = Hashtbl.find tape x.id in
+            let twg_x = unwrap_t_with_grad x any_twg_x in
+            let t = continue k r in
+            let deriv_fn = deriv_min x axes in
             twg_x.bv <- add twg_x.bv (deriv_fn twg.bv);
             t)
     | Matmul (x, y) ->
@@ -276,26 +366,24 @@ let make_reverse_handler tape =
         Some
           (fun k ->
             let original_shape = Dispatch.shape x.data in
-            let r = reshape x shape in
+            let r = reshape shape x in
             let zeros = Dispatch.zeros_like r.data in
             let twg = { v = r; bv = const zeros } in
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
             let any_twg_x = Hashtbl.find tape x.id in
             let twg_x = unwrap_t_with_grad x any_twg_x in
             let t = continue k r in
-            twg_x.bv <- add twg_x.bv (reshape twg.bv original_shape);
+            twg_x.bv <- add twg_x.bv (reshape original_shape twg.bv);
             t)
     | Slice (x, starts, stops, steps) ->
         Some
           (fun k ->
-            (* Forward pass: compute the sliced tensor *)
             let r_data = Dispatch.slice ?steps starts stops x.data in
             let r = create_internal r_data in
             let zeros = Dispatch.zeros_like r_data in
             let twg = { v = r; bv = const zeros } in
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
 
-            (* Initialize gradient for input tensor if not present *)
             (if not (Hashtbl.mem tape x.id) then
                let zeros_x = Dispatch.zeros_like x.data in
                let twg_x = { v = x; bv = const zeros_x } in
@@ -303,14 +391,48 @@ let make_reverse_handler tape =
             let any_twg_x = Hashtbl.find tape x.id in
             let twg_x = unwrap_t_with_grad x any_twg_x in
 
-            (* Continue computation *)
             let t = continue k r in
 
-            (* Backward pass: accumulate gradient *)
             let grad_x_data = Dispatch.zeros_like x.data in
-            Dispatch.set_slice grad_x_data starts stops steps twg.bv.data;
+            Dispatch.set_slice ?steps starts stops twg.bv.data grad_x_data;
             let grad_x = const grad_x_data in
             twg_x.bv <- add twg_x.bv grad_x;
+            t)
+    | Cast (dtype, x) ->
+        Some
+          (fun k ->
+            let r = astype dtype x in
+            let zeros = Dispatch.zeros_like r.data in
+            let twg = { v = r; bv = const zeros } in
+            Hashtbl.add tape r.id (Any_t_with_grad twg);
+            (if not (Hashtbl.mem tape x.id) then
+               let zeros_x = Dispatch.zeros_like x.data in
+               let twg_x = { v = x; bv = const zeros_x } in
+               Hashtbl.add tape x.id (Any_t_with_grad twg_x));
+            let t = continue k r in
+            let any_twg_x = Hashtbl.find tape x.id in
+            let twg_x = unwrap_t_with_grad x any_twg_x in
+            let dtype_x = Dispatch.dtype x.data in
+            let casted_grad = astype dtype_x twg.bv in
+            twg_x.bv <- add twg_x.bv casted_grad;
+            t)
+    | Move (device, x) ->
+        Some
+          (fun k ->
+            let r = move device x in
+            let zeros = Dispatch.zeros_like r.data in
+            let twg = { v = r; bv = const zeros } in
+            Hashtbl.add tape r.id (Any_t_with_grad twg);
+            (if not (Hashtbl.mem tape x.id) then
+               let zeros_x = Dispatch.zeros_like x.data in
+               let twg_x = { v = x; bv = const zeros_x } in
+               Hashtbl.add tape x.id (Any_t_with_grad twg_x));
+            let t = continue k r in
+            let any_twg_x = Hashtbl.find tape x.id in
+            let twg_x = unwrap_t_with_grad x any_twg_x in
+            let dev_from = Tensor.device x in
+            let moved_grad = move dev_from twg.bv in
+            twg_x.bv <- add twg_x.bv moved_grad;
             t)
     | _ -> None
   in

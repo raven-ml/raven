@@ -85,6 +85,10 @@ val dims : ('a, 'b, 'dev) t -> int array
 val get : int array -> ('a, 'b, 'dev) t -> 'a
 val set : int array -> 'a -> ('a, 'b, 'dev) t -> unit
 
+(** {1 Conversion} *)
+
+val astype : ('a, 'b) dtype -> ('c, 'd, 'e) t -> ('a, 'b, 'e) t
+
 (** {1 Tensor Operations} *)
 
 val add : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
@@ -104,11 +108,25 @@ val sin : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val cos : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val exp : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val log : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-val sum : ?axes:int array -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-val mean : ?axes:int array -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+
+val sum :
+  ?axes:int array -> ?keepdims:bool -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+
+val mean :
+  ?axes:int array ->
+  ?keepdims:bool ->
+  (float, 'a, 'dev) t ->
+  (float, 'a, 'dev) t
+
+val max :
+  ?axes:int array -> ?keepdims:bool -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+
+val min :
+  ?axes:int array -> ?keepdims:bool -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+
 val matmul : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val transpose : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-val reshape : ('a, 'b, 'dev) t -> int array -> ('a, 'b, 'dev) t
+val reshape : int array -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 
 val slice :
   ?steps:int array ->
@@ -130,8 +148,22 @@ val vmap :
 
 (** {1 Neural Network} *)
 
-val one_hot :
-  ('a, 'b) dtype -> ('c, 'd, [ `cpu ]) t -> int -> ('a, 'b, [ `cpu ]) t
+val one_hot : ('a, 'b) dtype -> ('c, 'd, 'dev) t -> int -> ('a, 'b, 'dev) t
+val tanh : ('a, 'b, 'c) t -> ('a, 'b, 'c) t
+val elu : ?alpha:float -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val selu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val softmax : ?axes:int array -> ('a, 'b, 'c) t -> ('a, 'b, 'c) t
+val relu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val relu6 : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val sigmoid : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val softplus : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val silu : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val log_sigmoid : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+
+val leaky_relu :
+  ?negative_slope:float -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+
+val hard_tanh : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 
 (** {1 Evaluation} *)
 

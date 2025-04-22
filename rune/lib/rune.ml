@@ -35,11 +35,12 @@ let uint16 = UInt16
 let complex32 = Complex32
 let complex64 = Complex64
 
+type 'dev device = 'dev Internal.device
 type ('a, 'b, 'dev) t = ('a, 'b, 'dev) Internal.t
 
 include Tensor
+include Neural_net
 
-let one_hot = Neural_net.one_hot
 let eval = Eval.eval
 let grad = Autodiff.grad
 let grads = Autodiff.grads

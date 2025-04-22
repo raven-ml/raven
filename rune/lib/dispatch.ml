@@ -58,6 +58,9 @@ let full_like (type a b dev) value (x : (a, b, dev) data) : (a, b, dev) data =
   match x with
   | Cpu_data (x, ctx) -> Cpu_data (Backend_cpu.full_like ctx value x, ctx)
 
+let fill (type a b dev) (value : a) (x : (a, b, dev) data) =
+  match x with Cpu_data (x, ctx) -> Backend_cpu.fill ctx value x
+
 let data x = property ~cpu_op:Backend_cpu.data x
 let ndim x = property ~cpu_op:Backend_cpu.ndim x
 let shape x = property ~cpu_op:Backend_cpu.shape x
@@ -160,6 +163,14 @@ let squeeze ?axes x = unary_op ~cpu_op:(Backend_cpu.squeeze ?axes) x
 let slice ?steps starts stops x =
   unary_op ~cpu_op:(fun ctx -> Backend_cpu.slice ctx ?steps starts stops) x
 
+let set_slice ?steps starts stops value x =
+  ignore
+    (binary_op
+       ~cpu_op:(fun ctx value x ->
+         Backend_cpu.set_slice ctx ?steps starts stops value x;
+         x)
+       value x)
+
 let pad pad_width value x =
   unary_op ~cpu_op:(fun ctx x -> Backend_cpu.pad ctx pad_width value x) x
 
@@ -169,6 +180,15 @@ let expand_dims axis x =
 let broadcast_to new_shape x =
   unary_op ~cpu_op:(fun ctx -> Backend_cpu.broadcast_to ctx new_shape) x
 
+let astype (type a b c d dev) (dtype : (a, b) dtype) (x : (c, d, dev) data) :
+    (a, b, dev) data =
+  match x with
+  | Cpu_data (v, ctx) -> Cpu_data (Backend_cpu.astype ctx dtype v, ctx)
+
+let move (type a b dev_to dev_from) (device : dev_to device)
+    (x : (a, b, dev_from) data) : (a, b, dev_to) data =
+  match (x, device) with Cpu_data (v, _), Cpu ctx -> Cpu_data (v, ctx)
+
 let where (type a b dev) (cond : (int, Ndarray_core.uint8_elt, dev) data)
     (x : (a, b, dev) data) (y : (a, b, dev) data) : (a, b, dev) data =
   match (cond, x, y) with
@@ -176,6 +196,20 @@ let where (type a b dev) (cond : (int, Ndarray_core.uint8_elt, dev) data)
     when ctx_cond = ctx_x && ctx_cond = ctx_y ->
       Cpu_data (Backend_cpu.where ctx_x cond x y, ctx_x)
   | _ -> failwith "The three tensors must be on the same device"
+
+let stack (type a b dev) ~axis (tensors : (a, b, dev) data list) :
+    (a, b, dev) data =
+  match tensors with
+  | [] -> failwith "Cannot stack empty list"
+  | hd :: _ -> (
+      let data_list =
+        List.map
+          (fun (t : (a, b, dev) data) -> match t with Cpu_data (d, _) -> d)
+          tensors
+      in
+      match hd with
+      | Cpu_data (_, ctx) ->
+          Cpu_data (Backend_cpu.stack ctx ~axis data_list, ctx))
 
 let pp fmt x =
   property_with_context ~cpu_op:(fun ctx -> Backend_cpu.pp ctx fmt) x
