@@ -69,11 +69,6 @@ val set : int array -> 'a -> ('a, 'b, 'dev) t -> unit
 
 (** {1 Tensor Operations} *)
 
-val neg : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-val sin : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
-val cos : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
-val exp : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-val log : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val add : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val add_inplace : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val sub : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
@@ -83,9 +78,16 @@ val mul_inplace : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val div : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val div_inplace : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val maximum : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val maximum_inplace : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val minimum : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-val sum : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-val mean : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val minimum_inplace : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val neg : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val sin : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val cos : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val exp : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val log : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val sum : ?axes:int array -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val mean : ?axes:int array -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val matmul : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val transpose : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val reshape : ('a, 'b, 'dev) t -> int array -> ('a, 'b, 'dev) t

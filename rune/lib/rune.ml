@@ -62,8 +62,10 @@ type _ Effect.t +=
   | Minimum : ('a, 'b, 'dev) t * ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
   | Matmul : ('a, 'b, 'dev) t * ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
   | Transpose : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
-  | Sum : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
-  | Mean : (float, 'b, 'dev) t -> (float, 'b, 'dev) t Effect.t
+  | Sum : ('a, 'b, 'dev) t * int array option -> ('a, 'b, 'dev) t Effect.t
+  | Mean :
+      (float, 'b, 'dev) t * int array option
+      -> (float, 'b, 'dev) t Effect.t
   | Reshape : ('a, 'b, 'dev) t * int array -> ('a, 'b, 'dev) t Effect.t
 
 module Dispatch = struct
@@ -81,6 +83,10 @@ module Dispatch = struct
     | Cpu_data (x, ctx_x), Cpu_data (y, ctx_y) when ctx_x = ctx_y ->
         Cpu_data (cpu_op ctx_x x y, ctx_x)
     | _ -> failwith "The two tensors must be on the same device"
+
+  let binary_op_scalar (type a b dev) ~cpu_op (x : (a, b, dev) data) (y : a) :
+      (a, b, dev) data =
+    match x with Cpu_data (x, ctx_x) -> Cpu_data (cpu_op ctx_x x y, ctx_x)
 
   let compare_op (type a b dev) ~cpu_op (x : (a, b, dev) data)
       (y : (a, b, dev) data) : (int, Ndarray_core.uint8_elt, dev) data =
@@ -156,16 +162,34 @@ module Dispatch = struct
 
   let add x y = binary_op ~cpu_op:Backend_cpu.add x y
   let add_inplace x y = binary_op ~cpu_op:Backend_cpu.add_inplace x y
+  let add_scalar x y = binary_op_scalar ~cpu_op:Backend_cpu.add_scalar x y
   let sub x y = binary_op ~cpu_op:Backend_cpu.sub x y
   let sub_inplace x y = binary_op ~cpu_op:Backend_cpu.sub_inplace x y
+  let sub_scalar x y = binary_op_scalar ~cpu_op:Backend_cpu.sub_scalar x y
   let mul x y = binary_op ~cpu_op:Backend_cpu.mul x y
   let mul_inplace x y = binary_op ~cpu_op:Backend_cpu.mul_inplace x y
+  let mul_scalar x y = binary_op_scalar ~cpu_op:Backend_cpu.mul_scalar x y
   let div x y = binary_op ~cpu_op:Backend_cpu.div x y
   let div_inplace x y = binary_op ~cpu_op:Backend_cpu.div_inplace x y
+  let div_scalar x y = binary_op_scalar ~cpu_op:Backend_cpu.div_scalar x y
   let rem x y = binary_op ~cpu_op:Backend_cpu.rem x y
+  let rem_inplace x y = binary_op ~cpu_op:Backend_cpu.rem_inplace x y
+  let rem_scalar x y = binary_op_scalar ~cpu_op:Backend_cpu.rem_scalar x y
   let pow x y = binary_op ~cpu_op:Backend_cpu.pow x y
+  let pow_scalar x y = binary_op_scalar ~cpu_op:Backend_cpu.pow_scalar x y
+  let pow_scalar x y = binary_op_scalar ~cpu_op:Backend_cpu.pow_scalar x y
   let maximum x y = binary_op ~cpu_op:Backend_cpu.maximum x y
+  let maximum_inplace x y = binary_op ~cpu_op:Backend_cpu.maximum_inplace x y
+
+  let maximum_scalar x y =
+    binary_op_scalar ~cpu_op:Backend_cpu.maximum_scalar x y
+
   let minimum x y = binary_op ~cpu_op:Backend_cpu.minimum x y
+  let minimum_inplace x y = binary_op ~cpu_op:Backend_cpu.minimum_inplace x y
+
+  let minimum_scalar x y =
+    binary_op_scalar ~cpu_op:Backend_cpu.minimum_scalar x y
+
   let exp x = unary_op ~cpu_op:Backend_cpu.exp x
   let log x = unary_op ~cpu_op:Backend_cpu.log x
   let abs x = unary_op ~cpu_op:Backend_cpu.abs x
@@ -292,10 +316,11 @@ let eval_handler : ('a, 'a) Effect.Deep.handler =
     | Matmul (x, y) -> Some (handle_ap2 Dispatch.matmul x.data y.data)
     | Transpose x ->
         Some (fun k -> continue k (create_internal (Dispatch.transpose x.data)))
-    | Sum x ->
-        Some (fun k -> continue k (create_internal (Dispatch.sum x.data)))
-    | Mean x ->
-        Some (fun k -> continue k (create_internal (Dispatch.mean x.data)))
+    | Sum (x, axes) ->
+        Some (fun k -> continue k (create_internal (Dispatch.sum ?axes x.data)))
+    | Mean (x, axes) ->
+        Some
+          (fun k -> continue k (create_internal (Dispatch.mean ?axes x.data)))
     | Reshape (x, shape) ->
         Some
           (fun k ->
@@ -458,17 +483,27 @@ let maximum x y =
   try Effect.perform (Maximum (x, y))
   with Effect.Unhandled _ -> create_internal (Dispatch.maximum x.data y.data)
 
+let maximum_inplace x y =
+  try Effect.perform (Maximum (x, y))
+  with Effect.Unhandled _ ->
+    create_internal (Dispatch.maximum_inplace x.data y.data)
+
 let minimum x y =
   try Effect.perform (Minimum (x, y))
   with Effect.Unhandled _ -> create_internal (Dispatch.minimum x.data y.data)
 
-let sum x =
-  try Effect.perform (Sum x)
-  with Effect.Unhandled _ -> create_internal (Dispatch.sum x.data)
+let minimum_inplace x y =
+  try Effect.perform (Minimum (x, y))
+  with Effect.Unhandled _ ->
+    create_internal (Dispatch.minimum_inplace x.data y.data)
 
-let mean x =
-  try Effect.perform (Mean x)
-  with Effect.Unhandled _ -> create_internal (Dispatch.mean x.data)
+let sum ?axes x =
+  try Effect.perform (Sum (x, axes))
+  with Effect.Unhandled _ -> create_internal (Dispatch.sum ?axes x.data)
+
+let mean ?axes x =
+  try Effect.perform (Mean (x, axes))
+  with Effect.Unhandled _ -> create_internal (Dispatch.mean ?axes x.data)
 
 let matmul x y =
   try Effect.perform (Matmul (x, y))
@@ -515,35 +550,62 @@ let deriv_div arg x y =
   let ones = Dispatch.ones_like x.data in
   match arg with L -> div (const ones) y | R -> neg (div x (mul y y))
 
-let deriv_sum x = const (Dispatch.ones_like x.data)
+module Set_int = Set.Make (struct
+  type t = int
 
-let deriv_mean x =
-  let n = Dispatch.size x.data in
-  if n = 0 then const (Dispatch.zeros_like x.data) (* Avoid division by zero *)
-  else
-    let scale_factor = 1.0 /. float_of_int n in
-    (* Create a tensor of shape x with all elements = scale_factor *)
-    (* We assume Ndarray provides a way to do this, e.g., mul(ones_like, scalar) *)
-    let ones = Dispatch.ones_like x.data in
-    (* Need to ensure scale_factor has the same type as elements of ones *)
-    let dtype = Dispatch.dtype ones in
-    let scalar_tensor_data =
-      create_on_device (device x) dtype [||] [| scale_factor |]
+  let compare = compare
+end)
+
+let compute_new_shape input_shape reduced_axes =
+  let ndim = Array.length input_shape in
+  let reduced_set =
+    Array.fold_left
+      (fun set ax -> Set_int.add ax set)
+      Set_int.empty reduced_axes
+  in
+  Array.init ndim (fun i ->
+      if Set_int.mem i reduced_set then 1 else input_shape.(i))
+
+let deriv_sum x axes =
+  let input_shape = Dispatch.shape x.data in
+  fun twg_bv ->
+    if axes = None then const (Dispatch.broadcast_to input_shape twg_bv.data)
+    else
+      let reduced_axes = Option.get axes in
+      let new_shape = compute_new_shape input_shape reduced_axes in
+      let reshaped_grad = Dispatch.reshape new_shape twg_bv.data in
+      const (Dispatch.broadcast_to input_shape reshaped_grad)
+
+let deriv_mean x axes =
+  let input_shape = Dispatch.shape x.data in
+  fun twg_bv ->
+    let grad =
+      if axes = None then Dispatch.broadcast_to input_shape twg_bv.data
+      else
+        let reduced_axes = Option.get axes in
+        let new_shape = compute_new_shape input_shape reduced_axes in
+        let reshaped_grad = Dispatch.reshape new_shape twg_bv.data in
+        Dispatch.broadcast_to input_shape reshaped_grad
     in
-    const (Dispatch.mul ones scalar_tensor_data.data)
+    if axes = None then
+      let n = Array.fold_left ( * ) 1 input_shape in
+      const (Dispatch.div_scalar grad (float_of_int n))
+    else
+      let reduced_axes = Option.get axes in
+      let reduced_sizes = Array.map (fun ax -> input_shape.(ax)) reduced_axes in
+      let n = Array.fold_left ( * ) 1 reduced_sizes in
+      const (Dispatch.div_scalar grad (float_of_int n))
 
 let deriv_maximum arg x y =
   let t_ones = const (Dispatch.ones_like x.data) in
   let t_zeros = const (Dispatch.zeros_like x.data) in
   match arg with
   | L ->
-      (* d(max(x,y))/dx = 1 if x >= y else 0 *)
       const
         (Dispatch.where
            (Dispatch.greater_equal x.data y.data)
            t_ones.data t_zeros.data)
   | R ->
-      (* d(max(x,y))/dy = 1 if y > x else 0 *)
       const
         (Dispatch.where
            (Dispatch.greater y.data x.data)
@@ -554,13 +616,11 @@ let deriv_minimum arg x y =
   let t_zeros = const (Dispatch.zeros_like x.data) in
   match arg with
   | L ->
-      (* d(min(x,y))/dx = 1 if x <= y else 0 *)
       const
         (Dispatch.where
            (Dispatch.less_equal x.data y.data)
            t_ones.data t_zeros.data)
   | R ->
-      (* d(min(x,y))/dy = 1 if y < x else 0 *)
       const
         (Dispatch.where (Dispatch.less y.data x.data) t_ones.data t_zeros.data)
 
@@ -574,23 +634,14 @@ type any_t_with_grad =
 
 let unwrap_t_with_grad (type a b dev) (_ : (a, b, dev) t)
     (any : any_t_with_grad) : (a, b, dev) t_with_grad =
-  match any with
-  | Any_t_with_grad m ->
-      (* Justification for Obj.magic: We retrieve `any` using `x.id`. The tape
-         construction logic (in the handler) ensures that the stored
-         `t_with_grad` value `m` corresponds *exactly* to the tensor `x` which
-         created it or participated in the operation. Therefore, `m` *must* have
-         the same type parameters `(a, b, dev)` as `x`. *)
-      Obj.magic m
+  match any with Any_t_with_grad m -> Obj.magic m
 
 let reduce_gradient grad_output input_shape output_shape =
   let ndim_output = Array.length output_shape in
   let ndim_input = Array.length input_shape in
-  (* Pad input_shape with 1s on the left to match output dimensions *)
   let padded_input_shape =
     Array.append (Array.make (ndim_output - ndim_input) 1) input_shape
   in
-  (* Identify axes where input was broadcasted (size = 1) *)
   let axes_to_sum =
     List.filter
       (fun i -> padded_input_shape.(i) = 1 && output_shape.(i) > 1)
@@ -608,7 +659,6 @@ let make_reverse_handler tape =
       let tensor = const n in
       let zeros = Dispatch.zeros_like tensor.data in
       let t_with_grad = { v = tensor; bv = const zeros } in
-      (* Printf.printf "Adding tensor.id = %d to tape in Ap0\n" tensor.id; *)
       Hashtbl.add tape tensor.id (Any_t_with_grad t_with_grad);
       continue k tensor
     in
@@ -617,18 +667,11 @@ let make_reverse_handler tape =
       let r = op x in
       let zeros = Dispatch.zeros_like r.data in
       let twg = { v = r; bv = const zeros } in
-      (* Printf.printf "Adding r.id = %d to tape in Ap1\n" r.id; *)
       Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
-
-      (* Ensure x is in the tape *)
       (if not (Hashtbl.mem tape x.id) then
          let zeros_x = Dispatch.zeros_like x.data in
          let twg_x = { v = x; bv = const zeros_x } in
-         (* Printf.printf "Adding x.id = %d to tape in Ap1 (was missing)\n"
-            x.id; *)
          Hashtbl.add tape x.id (Any_t_with_grad twg_x));
-
-      (* Printf.printf "Trying to find x.id = %d in tape in Ap1\n" x.id; *)
       let any_twg_x = Hashtbl.find tape x.id in
       let twg_x = unwrap_t_with_grad x any_twg_x in
       let t = continue k r in
@@ -640,35 +683,20 @@ let make_reverse_handler tape =
       let r = op x y in
       let zeros = Dispatch.zeros_like r.data in
       let twg = { v = r; bv = const zeros } in
-      (* Printf.printf "Adding r.id = %d to tape in Ap2\n" r.id; *)
       Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
-
-      (* Ensure x is in the tape *)
       (if not (Hashtbl.mem tape x.id) then
          let zeros_x = Dispatch.zeros_like x.data in
          let twg_x = { v = x; bv = const zeros_x } in
-         (* Printf.printf "Adding x.id = %d to tape in Ap2 (was missing)\n"
-            x.id; *)
          Hashtbl.add tape x.id (Any_t_with_grad twg_x));
-
-      (* Printf.printf "Trying to find x.id = %d in tape in Ap2\n" x.id; *)
       let any_twg_x = Hashtbl.find tape x.id in
       let twg_x = unwrap_t_with_grad x any_twg_x in
-
-      (* Ensure y is in the tape *)
       (if not (Hashtbl.mem tape y.id) then
          let zeros_y = Dispatch.zeros_like y.data in
          let twg_y = { v = y; bv = const zeros_y } in
-         (* Printf.printf "Adding y.id = %d to tape in Ap2 (was missing)\n"
-            y.id; *)
          Hashtbl.add tape y.id (Any_t_with_grad twg_y));
-
-      (* Printf.printf "Trying to find y.id = %d in tape in Ap2\n" y.id; *)
       let any_twg_y = Hashtbl.find tape y.id in
       let twg_y = unwrap_t_with_grad y any_twg_y in
       let t = continue k r in
-
-      (* Compute and reduce gradients *)
       let grad_x = mul (deriv L x y) twg.bv in
       let grad_y = mul (deriv R x y) twg.bv in
       let reduced_grad_x =
@@ -695,124 +723,90 @@ let make_reverse_handler tape =
     | Div (x, y) -> Some (handle_ap2 ~deriv:deriv_div ~op:div x y)
     | Maximum (x, y) -> Some (handle_ap2 ~deriv:deriv_maximum ~op:maximum x y)
     | Minimum (x, y) -> Some (handle_ap2 ~deriv:deriv_minimum ~op:minimum x y)
-    | Sum x -> Some (handle_ap1 ~deriv:deriv_sum ~op:sum x)
-    | Mean x ->
+    | Sum (x, axes) ->
         Some
           (fun k ->
-            let r = mean x in
+            let r = sum ?axes x in
             let zeros = Dispatch.zeros_like r.data in
             let twg = { v = r; bv = const zeros } in
-            (* Printf.printf "Adding r.id = %d to tape in Mean\n" r.id; *)
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
-
-            (* Ensure x is in the tape *)
             (if not (Hashtbl.mem tape x.id) then
                let zeros_x = Dispatch.zeros_like x.data in
                let twg_x = { v = x; bv = const zeros_x } in
-               (* Printf.printf "Adding x.id = %d to tape in Mean (was
-                  missing)\n" x.id; *)
                Hashtbl.add tape x.id (Any_t_with_grad twg_x));
-
-            (* Printf.printf "Trying to find x.id = %d in tape in Mean\n"
-               x.id; *)
             let any_twg_x = Hashtbl.find tape x.id in
             let twg_x = unwrap_t_with_grad x any_twg_x in
             let t = continue k r in
-            twg_x.bv <- add twg_x.bv (mul (deriv_mean twg_x.v) twg.bv);
+            let deriv_fn = deriv_sum x axes in
+            twg_x.bv <- add twg_x.bv (deriv_fn twg.bv);
+            t)
+    | Mean (x, axes) ->
+        Some
+          (fun k ->
+            let r = mean ?axes x in
+            let zeros = Dispatch.zeros_like r.data in
+            let twg = { v = r; bv = const zeros } in
+            Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
+            (if not (Hashtbl.mem tape x.id) then
+               let zeros_x = Dispatch.zeros_like x.data in
+               let twg_x = { v = x; bv = const zeros_x } in
+               Hashtbl.add tape x.id (Any_t_with_grad twg_x));
+            let any_twg_x = Hashtbl.find tape x.id in
+            let twg_x = unwrap_t_with_grad x any_twg_x in
+            let t = continue k r in
+            let deriv_fn = deriv_mean x axes in
+            twg_x.bv <- add twg_x.bv (deriv_fn twg.bv);
             t)
     | Matmul (x, y) ->
         Some
           (fun k ->
-            (* Perform forward pass *)
             let r = matmul x y in
             let zeros = Dispatch.zeros_like r.data in
             let twg = { v = r; bv = const zeros } in
-            (* Printf.printf "Adding r.id = %d to tape in Matmul\n" r.id; *)
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
-
-            (* Ensure x is in the tape *)
             (if not (Hashtbl.mem tape x.id) then
                let zeros_x = Dispatch.zeros_like x.data in
                let twg_x = { v = x; bv = const zeros_x } in
-               (* Printf.printf "Adding x.id = %d to tape in Matmul (was
-                  missing)\n" x.id; *)
                Hashtbl.add tape x.id (Any_t_with_grad twg_x));
-
-            (* Printf.printf "Trying to find x.id = %d in tape in Matmul\n"
-               x.id; *)
             let any_twg_x = Hashtbl.find tape x.id in
             let twg_x = unwrap_t_with_grad x any_twg_x in
-
-            (* Ensure x is in the tape *)
             (if not (Hashtbl.mem tape y.id) then
-               let zeros_y = Dispatch.zeros_like x.data in
+               let zeros_y = Dispatch.zeros_like y.data in
                let twg_y = { v = y; bv = const zeros_y } in
-               (* Printf.printf "Adding y.id = %d to tape in Matmul (was
-                  missing)\n" y.id; *)
                Hashtbl.add tape y.id (Any_t_with_grad twg_y));
-
-            (* Printf.printf "Trying to find y.id = %d in tape in Matmul\n"
-               y.id; *)
             let any_twg_y = Hashtbl.find tape y.id in
             let twg_y = unwrap_t_with_grad y any_twg_y in
-
             let t = continue k r in
-
-            (* Perform backward update (adjoint propagation) AFTER continuation *)
-            (* bv_x += matmul(bv_z, transpose(y)) *)
             twg_x.bv <- add twg_x.bv (matmul twg.bv (transpose twg_y.v));
-            (* bv_y += matmul(transpose(x), bv_z) *)
             twg_y.bv <- add twg_y.bv (matmul (transpose twg_x.v) twg.bv);
             t)
     | Transpose x ->
         Some
           (fun k ->
-            (* Perform forward pass *)
             let r = transpose x in
             let zeros = Dispatch.zeros_like r.data in
             let twg = { v = r; bv = const zeros } in
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
-
-            (* Ensure x is in the tape *)
             (if not (Hashtbl.mem tape x.id) then
                let zeros_x = Dispatch.zeros_like x.data in
                let twg_x = { v = x; bv = const zeros_x } in
-               (* Printf.printf "Adding x.id = %d to tape in Transpose (was
-                  missing)\n" x.id; *)
                Hashtbl.add tape x.id (Any_t_with_grad twg_x));
-
-            (* Printf.printf "Trying to find x.id = %d in tape in Transpose\n"
-               x.id; *)
             let any_twg_x = Hashtbl.find tape x.id in
             let twg_x = unwrap_t_with_grad x any_twg_x in
-
             let t = continue k r in
-
-            (* Perform backward update (adjoint propagation) AFTER continuation *)
-            (* bv_x += transpose(bv_z) *)
             twg_x.bv <- add twg_x.bv (transpose twg.bv);
             t)
     | Reshape (x, shape) ->
         Some
           (fun k ->
-            (* Store original shape BEFORE reshaping *)
             let original_shape = Dispatch.shape x.data in
-
-            (* Perform forward pass *)
             let r = reshape x shape in
             let zeros = Dispatch.zeros_like r.data in
             let twg = { v = r; bv = const zeros } in
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
-
-            (* Get input's t_with_grad from tape *)
             let any_twg_x = Hashtbl.find tape x.id in
             let twg_x = unwrap_t_with_grad x any_twg_x in
-
-            (* Continue computation *)
             let t = continue k r in
-
-            (* Perform backward update (adjoint propagation) AFTER continuation *)
-            (* bv_x += reshape(bv_z, original_shape) *)
             twg_x.bv <- add twg_x.bv (reshape twg.bv original_shape);
             t)
     | _ -> None
@@ -820,8 +814,6 @@ let make_reverse_handler tape =
   {
     retc =
       (fun x ->
-        (* Printf.printf "Trying to find result_tensor.id = %d in tape\n"
-           x.id; *)
         match Hashtbl.find_opt tape x.id with
         | Some any_m ->
             let m = unwrap_t_with_grad x any_m in
