@@ -7,11 +7,13 @@ type inline_content =
   | Code_span of string
   | Seq of inline list
 
-and inline = { id : int; content : inline_content; focused : bool }
+and inline = { id : int; inline_content : inline_content; focused : bool }
+
+type codeblock_content = { code : string; output : string option }
 
 type block_content =
   | Paragraph of inline
-  | Codeblock of string
+  | Codeblock of codeblock_content
   | Heading of int * inline
   | Blank_line of unit
   | Blocks of block list
@@ -36,9 +38,9 @@ let next_run_id () =
 let init : model = { document = [] }
 
 let rec inline_of_cmarkit inline =
-  let mk content : inline =
+  let mk inline_content : inline =
     let id = next_block_id () in
-    { id; content; focused = false }
+    { id; inline_content; focused = false }
   in
   match inline with
   | Inline.Text (s, _) -> mk (Run s)
@@ -64,14 +66,16 @@ let rec block_content_of_cmarkit cb =
       let code =
         List.map Block_line.to_string codelines |> String.concat "\n"
       in
-      Codeblock code
+      Codeblock { code; output = None }
   | Block.Heading (h, _) ->
       let level = Block.Heading.level h in
       let inline = Inline.normalize (Block.Heading.inline h) in
       Heading (level, inline_of_cmarkit inline)
   | Block.Blocks (items, _) -> Blocks (List.map block_of_cmarkit items)
   | Block.Blank_line _ -> Blank_line ()
-  | _ -> Paragraph { id = next_run_id (); content = Run ""; focused = false }
+  | _ ->
+      Paragraph
+        { id = next_run_id (); inline_content = Run ""; focused = false }
 
 and block_of_cmarkit cb : block =
   let id = next_block_id () in
@@ -107,16 +111,16 @@ let inline_content_of_md txt =
   | Block.Paragraph (p, _) ->
       let inline = Inline.normalize (Block.Paragraph.inline p) in
       let i = inline_of_cmarkit inline in
-      i.content
+      i.inline_content
   | _ -> Run ""
 
 let inline_of_md txt : inline =
-  let content = inline_content_of_md txt in
+  let inline_content = inline_content_of_md txt in
   let id = next_run_id () in
-  { id; content; focused = false }
+  { id; inline_content; focused = false }
 
 let rec cmarkit_of_inline (i : inline) : Inline.t =
-  match i.content with
+  match i.inline_content with
   | Run s -> Inline.Text (s, Meta.none)
   | Emph ic ->
       Inline.Emphasis (Inline.Emphasis.make (cmarkit_of_inline ic), Meta.none)
@@ -143,7 +147,7 @@ let rec cmarkit_of_block_content (bc : block_content) : Block.t =
       Block.Paragraph
         (Block.Paragraph.make (cmarkit_of_inline inline), Meta.none)
   | Codeblock code ->
-      let lines = Block_line.list_of_string code in
+      let lines = Block_line.list_of_string code.code in
       Block.Code_block (Block.Code_block.make lines, Meta.none)
   | Heading (level, inline) ->
       Block.Heading
@@ -160,3 +164,139 @@ let md_of_model (model : model) : string =
   let block = cmarkit_of_document model.document in
   let doc = Doc.make block in
   Cmarkit_commonmark.of_doc doc
+
+let rec split_inline (inline : inline) (target_id : int) (offset : int) :
+    inline option * inline option =
+  if inline.id = target_id then
+    match inline.inline_content with
+    | Run s ->
+        let before = String.sub s 0 offset in
+        let after = String.sub s offset (String.length s - offset) in
+        let before_inline =
+          if before = "" then None
+          else
+            Some
+              {
+                id = next_run_id ();
+                inline_content = Run before;
+                focused = false;
+              }
+        in
+        let after_inline =
+          if after = "" then None
+          else
+            Some
+              {
+                id = next_run_id ();
+                inline_content = Run after;
+                focused = false;
+              }
+        in
+        (before_inline, after_inline)
+    | Code_span s ->
+        let before = String.sub s 0 offset in
+        let after = String.sub s offset (String.length s - offset) in
+        let before_inline =
+          if before = "" then None
+          else
+            Some
+              {
+                id = next_run_id ();
+                inline_content = Code_span before;
+                focused = false;
+              }
+        in
+        let after_inline =
+          if after = "" then None
+          else
+            Some
+              {
+                id = next_run_id ();
+                inline_content = Code_span after;
+                focused = false;
+              }
+        in
+        (before_inline, after_inline)
+    | Emph _ | Strong _ | Seq _ ->
+        (* Cannot split non-leaf nodes directly at this ID *)
+        (Some inline, None)
+  else
+    match inline.inline_content with
+    | Emph inner ->
+        let before, after = split_inline inner target_id offset in
+        let before' =
+          Option.map
+            (fun b ->
+              { id = next_run_id (); inline_content = Emph b; focused = false })
+            before
+        in
+        let after' =
+          Option.map
+            (fun a ->
+              { id = next_run_id (); inline_content = Emph a; focused = false })
+            after
+        in
+        (before', after')
+    | Strong inner ->
+        let before, after = split_inline inner target_id offset in
+        let before' =
+          Option.map
+            (fun b ->
+              {
+                id = next_run_id ();
+                inline_content = Strong b;
+                focused = false;
+              })
+            before
+        in
+        let after' =
+          Option.map
+            (fun a ->
+              {
+                id = next_run_id ();
+                inline_content = Strong a;
+                focused = false;
+              })
+            after
+        in
+        (before', after')
+    | Seq items ->
+        let rec split_seq acc = function
+          | [] -> (List.rev acc, []) (* Target not found *)
+          | item :: rest -> (
+              let before, after = split_inline item target_id offset in
+              match (before, after) with
+              | Some b, Some a ->
+                  let before_seq = List.rev acc @ [ b ] in
+                  let after_seq = a :: rest in
+                  (before_seq, after_seq)
+              | Some b, None -> split_seq (b :: acc) rest
+              | None, Some a ->
+                  let before_seq = List.rev acc in
+                  let after_seq = a :: rest in
+                  (before_seq, after_seq)
+              | None, None -> split_seq (item :: acc) rest)
+        in
+        let before_items, after_items = split_seq [] items in
+        let before_seq =
+          if before_items = [] then None
+          else
+            Some
+              {
+                id = next_run_id ();
+                inline_content = Seq before_items;
+                focused = false;
+              }
+        in
+        let after_seq =
+          if after_items = [] then None
+          else
+            Some
+              {
+                id = next_run_id ();
+                inline_content = Seq after_items;
+                focused = false;
+              }
+        in
+        (before_seq, after_seq)
+    | Run _ | Code_span _ -> (Some inline, None)

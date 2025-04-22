@@ -1,9 +1,13 @@
 :root {
   font-family: Inter, sans-serif;
-  font-feature-settings: 'liga' 1, 'calt' 1; /* fix for Chrome */
+  font-feature-settings: 'liga' 1, 'calt' 1;
+  /* fix for Chrome */
 }
+
 @supports (font-variation-settings: normal) {
-  :root { font-family: InterVariable, sans-serif; }
+  :root {
+    font-family: InterVariable, sans-serif;
+  }
 }
 
 body {
@@ -91,4 +95,13 @@ body {
 #editor ::selection {
   background-color: #444444;
   color: #ffffff;
+}
+
+#editor .execution-output {
+  background-color: #252525;
+  padding: 10px;
+  border-radius: 5px;
+  margin-top: 5px;
+  color: #d4d4d4;
+  white-space: pre-wrap;
 }

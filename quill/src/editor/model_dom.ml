@@ -22,7 +22,12 @@ let rec parse_block el range =
           Some (block_of_md (get_text_content el))
       | "PRE" ->
           let code = Js.to_string el##.innerText in
-          Some { id = next_block_id (); content = Codeblock code; focused }
+          Some
+            {
+              id = next_block_id ();
+              content = Codeblock { code; output = None };
+              focused;
+            }
       | "DIV" ->
           let children = nodeList_to_list el##.childNodes in
           let blocks =
