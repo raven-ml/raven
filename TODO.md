@@ -52,3 +52,10 @@ improvements
 - better slicing function api
 - infix operators
 - add ?out argument to all functions? replace inplace functions?
+
+optim
+- add support for scalar ops in run - review operations with scalar in rune and replace with scalar variants
+
+new libs
+- neural network library on top of rune?
+- dataframe library
