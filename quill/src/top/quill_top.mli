@@ -10,5 +10,5 @@ type execution_result = {
 val eval : id:string -> string -> execution_result
 (** Evaluate a code phrase in the top-level identified by [id] *)
 
-val initialize_toplevel : ?libraries:string list -> string -> unit
+val initialize_toplevel : string -> unit
 (** Initialize a new top-level identified by [id] *)

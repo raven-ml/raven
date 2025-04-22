@@ -4,7 +4,6 @@ type execution_result = {
   status : [ `Success | `Error ];
 }
 
-(* Borrowed from Mdx *)
 let redirect f =
   let stdout_backup = Unix.dup ~cloexec:true Unix.stdout in
   let stderr_backup = Unix.dup ~cloexec:true Unix.stderr in
@@ -12,6 +11,8 @@ let redirect f =
   let fd_out =
     Unix.openfile filename Unix.[ O_WRONLY; O_CREAT; O_TRUNC; O_CLOEXEC ] 0o600
   in
+  flush stdout;
+  flush stderr;
   Unix.dup2 ~cloexec:false fd_out Unix.stdout;
   Unix.dup2 ~cloexec:false fd_out Unix.stderr;
   let ic = open_in filename in
@@ -28,6 +29,8 @@ let redirect f =
     (fun () -> f ~capture)
     ~finally:(fun () ->
       close_in_noerr ic;
+      flush stdout;
+      flush stderr;
       Unix.close fd_out;
       Unix.dup2 ~cloexec:false stdout_backup Unix.stdout;
       Unix.dup2 ~cloexec:false stderr_backup Unix.stderr;
@@ -37,41 +40,6 @@ let redirect f =
 
 let toplevels : (string, Env.t) Hashtbl.t =
   Hashtbl.create 10 (* Map document_id to toplevel *)
-
-let load_dynamic_library filename =
-  try
-    let ppf = Format.std_formatter in
-    Topdirs.dir_load ppf filename;
-
-    (* Register the module *)
-    let module_name =
-      Filename.basename filename |> Filename.chop_extension
-      |> String.capitalize_ascii
-    in
-    let mod_id = Ident.create_persistent module_name in
-    let cmi_file = Filename.chop_extension filename ^ ".cmi" in
-    let unit_info = Unit_info.Artifact.from_filename cmi_file in
-    let signature = Env.read_signature unit_info in
-    let mod_type = Types.Mty_signature signature in
-    let updated_env =
-      Env.add_module mod_id Mp_present mod_type !Toploop.toplevel_env
-    in
-    Toploop.toplevel_env := updated_env;
-
-    true
-  with exn ->
-    Printf.sprintf "Failed to load %s: %s\n" filename (Printexc.to_string exn)
-    |> print_endline;
-    false
-
-let initialize_toplevel ?(libraries = []) id =
-  if not (Hashtbl.mem toplevels id) then (
-    let env = Compmisc.initial_env () in
-    Toploop.toplevel_env := env;
-
-    List.iter (fun lib_path -> ignore (load_dynamic_library lib_path)) libraries;
-
-    Hashtbl.add toplevels id !Toploop.toplevel_env)
 
 (* Parse a string into a toplevel phrase *)
 let parse_phrase str =
@@ -94,6 +62,19 @@ let is_unit_type ty =
   match ty with
   | Outcometree.Otyp_constr (Oide_ident { printed_name = "unit" }, []) -> true
   | _ -> false
+
+let initialize_toplevel id =
+  if not (Hashtbl.mem toplevels id) then (
+    let env = Compmisc.initial_env () in
+    Toploop.toplevel_env := env;
+    (* Initialize findlib *)
+    (match parse_phrase "#use \"topfind\";;" with
+    | Ok phrase ->
+        let _ = Toploop.execute_phrase false Format.err_formatter phrase in
+        ()
+    | Error err ->
+        prerr_endline ("Warning: Failed to initialize findlib: " ^ err));
+    Hashtbl.add toplevels id !Toploop.toplevel_env)
 
 let eval ~id code =
   let env = Hashtbl.find toplevels id in
