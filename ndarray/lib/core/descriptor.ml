@@ -341,7 +341,7 @@ let broadcast_shapes shape1 shape2 =
     else if d1 = 1 then out_shape.(i) <- d2
     else if d2 = 1 then out_shape.(i) <- d1
     else
-      failwith
+      invalid_arg
         (Format.asprintf "Shapes %a and %a cannot be broadcast together"
            pp_int_array padded_shape1 pp_int_array padded_shape2)
   done;
