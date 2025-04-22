@@ -816,6 +816,35 @@ val slice :
       (* b has shape [|3;2|] with rows [[0.;2.];[3.;5.];[6.;8.]] *)
     ]} *)
 
+val set_slice :
+  ?steps:int array -> int array -> int array -> ('a, 'b) t -> ('a, 'b) t -> unit
+(** [set_slice ?steps starts stops src dst].
+
+    Assigns elements from [src] into [dst] at positions specified by slicing
+    each axis from [starts.(i)] (inclusive) to [stops.(i)] (exclusive) with
+    optional [steps.(i)]. The shape of [src] must match the view of [dst]
+    defined by the slice. Data is copied element-wise in-place.
+
+    {2 Parameters}
+    - [steps]: optional strides array per axis; default all ones
+    - [starts]: start indices for each dimension
+    - [stops]: stop indices (exclusive) for each dimension
+    - [src]: source tensor of values to assign
+    - [dst]: target tensor to modify
+
+    {2 Raises}
+    - [Invalid_argument] if lengths of [starts], [stops], or [steps] (if
+      provided) mismatch [ndim dst], if any step is zero, or if computed indices
+      are invalid
+
+    {2 Examples}
+    {[
+      let a = create float32 [| 3; 3 |] data in
+      let b = zeros float32 [| 3; 3 |] in
+      set_slice ~steps:[| 1; 2 |] [| 0; 0 |] [| 3; 3 |] a b
+      (* now b has rows [[0.;2.];[3.;5.];[6.;8.]] *)
+    ]} *)
+
 (** {1 Array Manipulation}
 
     Reshaping, slicing, stacking, padding, broadcasting, tiling, repeating,

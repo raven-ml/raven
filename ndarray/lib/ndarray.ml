@@ -265,6 +265,10 @@ let broadcast_to new_shape t = B.broadcast_to context new_shape t
 let squeeze ?axes t = B.squeeze context ?axes t
 let expand_dims axis t = B.expand_dims context axis t
 let slice ?steps starts stops t = B.slice context ?steps starts stops t
+
+let set_slice ?steps starts stops value t =
+  B.set_slice context ?steps starts stops value t
+
 let astype dtype t = B.astype context dtype t
 let array_split ?(axis = 0) sections t = B.array_split context ~axis sections t
 let split ?(axis = 0) sections t = B.split context ~axis sections t
