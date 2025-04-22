@@ -12,3 +12,6 @@ dev-tools.locks/
 
 # Python virtual environment directory
 .venv/
+
+# Environment variable files
+.env
