@@ -531,6 +531,15 @@ module Make : (B : Backend_intf) -> sig
     ('a, 'b) t ->
     ('a, 'b) t
 
+  val set_slice :
+    context ->
+    ?steps:int array ->
+    int array ->
+    int array ->
+    ('a, 'b) t ->
+    ('a, 'b) t ->
+    unit
+
   (** {1 Array Manipulation} *)
 
   val flatten : context -> ('a, 'b) t -> ('a, 'b) t

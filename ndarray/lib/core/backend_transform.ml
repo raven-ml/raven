@@ -22,6 +22,30 @@ module Make (B : Backend_intf.S) = struct
     let desc = slice ?steps starts stops (B.descriptor t) in
     B.view desc t
 
+  let set_slice ctx ?steps starts stops src dst =
+    let d_dst = B.descriptor dst in
+    let ndim = Array.length d_dst.shape in
+    let actual_steps =
+      match steps with
+      | None -> Array.make ndim 1
+      | Some s ->
+          if Array.length s <> ndim then
+            invalid_arg "set_slice: steps length mismatch with tensor rank";
+          s
+    in
+    if Array.length starts <> ndim || Array.length stops <> ndim then
+      invalid_arg "set_slice: starts or stops length mismatch with tensor rank";
+    Array.iter
+      (fun st -> if st = 0 then invalid_arg "set_slice: step cannot be zero")
+      actual_steps;
+    let slice = slice ctx ~steps:actual_steps starts stops dst in
+    let d_slice = B.descriptor slice in
+    let d_src = B.descriptor src in
+    if not (d_slice.shape = d_src.shape) then
+      invalid_arg "set_slice: shape mismatch between src and slice";
+    let dst_view = B.view d_slice dst in
+    B.blit ctx src dst_view
+
   let split _ctx ?(axis = 0) sections t =
     let descs = split ~axis sections (B.descriptor t) in
     List.map (fun d -> B.view d t) descs
