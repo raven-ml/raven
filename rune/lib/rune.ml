@@ -523,6 +523,45 @@ let pp fmt x = Dispatch.pp fmt x.data
 let to_string x = Dispatch.to_string x.data
 let print x = Dispatch.print x.data
 
+(* nn *)
+
+(* one-hot encoding: converts integer labels to one-hot vectors *)
+let one_hot (type a b c d) (dtype : (a, b) dtype) (labels : (c, d, [ `cpu ]) t)
+    depth =
+  let input_shape = shape labels in
+  let n = size labels in
+  let labels_flat = reshape labels [| n |] in
+  let oh_flat = zeros dtype [| n; depth |] in
+  let lbl_dtype = Dispatch.dtype labels.data in
+  for i = 0 to n - 1 do
+    let idx : int =
+      match lbl_dtype with
+      | Int8 -> get [| i |] labels_flat
+      | UInt8 -> get [| i |] labels_flat
+      | Int16 -> get [| i |] labels_flat
+      | UInt16 -> get [| i |] labels_flat
+      | Int32 -> Int32.to_int (get [| i |] labels_flat)
+      | Int64 -> Int64.to_int (get [| i |] labels_flat)
+      | _ -> failwith "one_hot: labels must have integer dtype"
+    in
+    let one : a =
+      match dtype with
+      | Float16 -> 1.
+      | Float32 -> 1.
+      | Float64 -> 1.
+      | Int8 -> 1
+      | UInt8 -> 1
+      | Int16 -> 1
+      | UInt16 -> 1
+      | Int32 -> Int32.of_int 1
+      | Int64 -> Int64.of_int 1
+      | Complex32 -> Complex.{ re = 1.; im = 0. }
+      | Complex64 -> Complex.{ re = 1.; im = 0. }
+    in
+    set [| i; idx |] one oh_flat
+  done;
+  reshape oh_flat (Array.append input_shape [| depth |])
+
 (* autodiff *)
 
 type arg = L | R

@@ -92,6 +92,11 @@ val matmul : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val transpose : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val reshape : ('a, 'b, 'dev) t -> int array -> ('a, 'b, 'dev) t
 
+(** {1 Neural Network} *)
+
+val one_hot :
+  ('a, 'b) dtype -> ('c, 'd, [ `cpu ]) t -> int -> ('a, 'b, [ `cpu ]) t
+
 (** {1 Evaluation} *)
 
 val eval : ('a -> 'b) -> 'a -> 'b
