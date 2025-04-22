@@ -4,7 +4,7 @@ open Rune
 let get_batch x y batch_size batch_idx =
   let num_samples = dim 0 x in
   let start = batch_idx * batch_size in
-  let end_ = min (start + batch_size) num_samples in
+  let end_ = Stdlib.min (start + batch_size) num_samples in
   let x_batch = slice [| start; 0 |] [| end_ - start; dim 1 x |] x in
   let y_batch = slice [| start; 0 |] [| end_ - start; dim 1 y |] y in
   (x_batch, y_batch)
@@ -18,13 +18,6 @@ let forward params inputs =
       let z2 = add (matmul a1 w2) b2 in
       z2
   | _ -> failwith "Invalid parameters"
-
-(* Softmax function: converts logits to probabilities *)
-let softmax logits =
-  let exp_logits = exp logits in
-  let sum_exp = sum exp_logits ~axes:[| 1 |] in
-  let sum_exp_broadcast = reshape sum_exp [| dim 0 logits; 1 |] in
-  div exp_logits sum_exp_broadcast
 
 (* Cross-entropy loss: computes loss between predicted probabilities and true
    labels *)
@@ -75,7 +68,6 @@ let train_mlp x_train y_train_onehot batch_size learning_rate epochs =
   done;
   params
 
-(* Main function *)
 let () =
   (* Load MNIST dataset *)
   let (x_train, y_train), (x_test, y_test) = Ndarray_datasets.load_mnist () in
@@ -85,13 +77,13 @@ let () =
   let _y_test = ndarray y_test in
 
   (* Preprocess training data *)
-  let x_train = div (cast x_train Float32) (scalar Float32 255.0) in
-  let x_train = reshape x_train [| 60000; 784 |] in
+  let x_train = div (astype Float32 x_train) (scalar Float32 255.0) in
+  let x_train = reshape [| 60000; 784 |] x_train in
   let y_train_onehot = one_hot Float32 y_train 10 in
 
   (* Preprocess test data *)
-  let x_test = div (cast x_test Float32) (scalar Float32 255.0) in
-  let x_test = reshape x_test [| 10000; 784 |] in
+  let x_test = div (astype Float32 x_test) (scalar Float32 255.0) in
+  let x_test = reshape [| 10000; 784 |] x_test in
   let _y_test_onehot = one_hot Float32 _y_test 10 in
 
   (* Training parameters *)

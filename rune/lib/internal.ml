@@ -36,10 +36,18 @@ type _ Effect.t +=
   | Minimum : ('a, 'b, 'dev) t * ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
   | Matmul : ('a, 'b, 'dev) t * ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
   | Transpose : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
-  | Sum : ('a, 'b, 'dev) t * int array option -> ('a, 'b, 'dev) t Effect.t
+  | Sum :
+      ('a, 'b, 'dev) t * int array option * bool option
+      -> ('a, 'b, 'dev) t Effect.t
   | Mean :
-      (float, 'b, 'dev) t * int array option
+      (float, 'b, 'dev) t * int array option * bool option
       -> (float, 'b, 'dev) t Effect.t
+  | Max :
+      ('a, 'b, 'dev) t * int array option * bool option
+      -> ('a, 'b, 'dev) t Effect.t
+  | Min :
+      ('a, 'b, 'dev) t * int array option * bool option
+      -> ('a, 'b, 'dev) t Effect.t
   | Reshape : ('a, 'b, 'dev) t * int array -> ('a, 'b, 'dev) t Effect.t
   | Slice :
       ('a, 'b, 'dev) t * int array * int array * int array option
@@ -58,3 +66,17 @@ let create_internal data =
 
 let const x =
   try Effect.perform (Const x) with Effect.Unhandled _ -> create_internal x
+
+let cast_float (type a b) (dtype : (a, b) dtype) (v : float) : a =
+  match dtype with
+  | Float16 -> v
+  | Float32 -> v
+  | Float64 -> v
+  | Int8 -> int_of_float v
+  | Int16 -> int_of_float v
+  | Int32 -> Int32.of_float v
+  | Int64 -> Int64.of_float v
+  | UInt8 -> int_of_float v
+  | UInt16 -> int_of_float v
+  | Complex32 -> Complex.{ re = v; im = 0.0 }
+  | Complex64 -> Complex.{ re = v; im = 0.0 }

@@ -21,12 +21,19 @@ let dims x = Dispatch.dims x.data
 
 (* device *)
 
+let empty_on_device (type a b c) (device : c device) (dtype : (a, b) dtype)
+    shape : (a, b, c) t =
+  match device with
+  | Cpu ctx -> const (Cpu_data (Backend_cpu.empty ctx dtype shape, ctx))
+
 let create_on_device (type a b c) (device : c device) (dtype : (a, b) dtype)
     shape x : (a, b, c) t =
   match device with
   | Cpu ctx -> const (Cpu_data (Backend_cpu.create ctx dtype shape x, ctx))
 
-let move device x = failwith "todo"
+let move device x =
+  try Effect.perform (Move (device, x))
+  with Effect.Unhandled _ -> create_internal (Dispatch.move device x.data)
 
 (* creation *)
 
@@ -85,9 +92,18 @@ let scalar dtype x =
   let context = Backend_cpu.create_context () in
   const (Cpu_data (Backend_cpu.scalar context dtype x, context))
 
+let scalar_like (type a b dev) (x : (a, b, dev) t) (v : float) : (a, b, dev) t =
+  let dtype = Dispatch.dtype x.data in
+  let v_casted = cast_float dtype v in
+  match x.data with
+  | Cpu_data (_, ctx) ->
+      const (Cpu_data (Backend_cpu.scalar ctx dtype v_casted, ctx))
+
 (* conversion *)
 
-let astype dtype x = failwith "todo"
+let astype dtype x =
+  try Effect.perform (Cast (dtype, x))
+  with Effect.Unhandled _ -> create_internal (Dispatch.astype dtype x.data)
 
 (* access *)
 
@@ -170,13 +186,25 @@ let minimum_inplace x y =
   with Effect.Unhandled _ ->
     create_internal (Dispatch.minimum_inplace x.data y.data)
 
-let sum ?axes x =
-  try Effect.perform (Sum (x, axes))
-  with Effect.Unhandled _ -> create_internal (Dispatch.sum ?axes x.data)
+let sum ?axes ?keepdims x =
+  try Effect.perform (Sum (x, axes, keepdims))
+  with Effect.Unhandled _ ->
+    create_internal (Dispatch.sum ?axes ?keepdims x.data)
 
-let mean ?axes x =
-  try Effect.perform (Mean (x, axes))
-  with Effect.Unhandled _ -> create_internal (Dispatch.mean ?axes x.data)
+let mean ?axes ?keepdims x =
+  try Effect.perform (Mean (x, axes, keepdims))
+  with Effect.Unhandled _ ->
+    create_internal (Dispatch.mean ?axes ?keepdims x.data)
+
+let max ?axes ?keepdims x =
+  try Effect.perform (Max (x, axes, keepdims))
+  with Effect.Unhandled _ ->
+    create_internal (Dispatch.max ?axes ?keepdims x.data)
+
+let min ?axes ?keepdims x =
+  try Effect.perform (Min (x, axes, keepdims))
+  with Effect.Unhandled _ ->
+    create_internal (Dispatch.min ?axes ?keepdims x.data)
 
 let matmul x y =
   try Effect.perform (Matmul (x, y))
@@ -186,7 +214,7 @@ let transpose x =
   try Effect.perform (Transpose x)
   with Effect.Unhandled _ -> create_internal (Dispatch.transpose x.data)
 
-let reshape x shape =
+let reshape shape x =
   try Effect.perform (Reshape (x, shape))
   with Effect.Unhandled _ -> create_internal (Dispatch.reshape shape x.data)
 
@@ -208,21 +236,20 @@ let select_along_axis tensor axis index =
   Dispatch.squeeze ~axes:[| axis |] sliced
 
 let stack ~axis tensors =
-  match tensors with
-  | [] -> failwith "Cannot stack empty list"
-  | hd :: _ ->
-      let data_list =
-        List.map (fun t -> match t.data with Cpu_data (d, _) -> d) tensors
-      in
-      let ctx = match hd.data with Cpu_data (_, ctx) -> ctx in
-      let stacked_data = Backend_cpu.stack ctx ~axis data_list in
-      const (Cpu_data (stacked_data, ctx))
+  let data_list = List.map (fun t -> t.data) tensors in
+  create_internal (Dispatch.stack ~axis data_list)
 
-let vmap fun_ ~in_axes ~out_axes inputs =
+let vmap fun_ ?in_axes ?out_axes inputs =
   let n = List.length inputs in
-  if List.length in_axes <> n then
-    failwith "in_axes length mismatch with inputs";
-
+  let in_axes =
+    match in_axes with
+    | None -> List.init n (fun _ -> Some 0)
+    | Some axes ->
+        if List.length axes <> n then
+          failwith "in_axes length mismatch with inputs";
+        axes
+  in
+  let out_axes = match out_axes with None -> 0 | Some ax -> ax in
   (* Determine batch_size from inputs with mapped axes *)
   let batch_size_opts =
     List.mapi
@@ -239,7 +266,6 @@ let vmap fun_ ~in_axes ~out_axes inputs =
     if List.for_all (fun x -> x = bs) opts then bs
     else failwith "Inconsistent batch sizes across mapped inputs"
   in
-
   (* Apply fun_ for each index along the batch axis *)
   let outputs =
     List.init batch_size (fun b ->
@@ -253,7 +279,6 @@ let vmap fun_ ~in_axes ~out_axes inputs =
         in
         fun_ args)
   in
-
   (* Stack results along out_axes *)
   stack ~axis:out_axes outputs
 
