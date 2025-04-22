@@ -5,8 +5,8 @@ let get_batch x y batch_size batch_idx =
   let num_samples = dim 0 x in
   let start = batch_idx * batch_size in
   let end_ = min (start + batch_size) num_samples in
-  let x_batch = slice x [| start; 0 |] [| end_ - start; dim 1 x |] in
-  let y_batch = slice y [| start; 0 |] [| end_ - start; dim 1 y |] in
+  let x_batch = slice [| start; 0 |] [| end_ - start; dim 1 x |] x in
+  let y_batch = slice [| start; 0 |] [| end_ - start; dim 1 y |] y in
   (x_batch, y_batch)
 
 (* Forward pass: computes the MLP output (logits) *)
@@ -38,12 +38,12 @@ let cross_entropy_loss logits y_true =
 (* Training function *)
 let train_mlp x_train y_train_onehot batch_size learning_rate epochs =
   (* MLP architecture dimensions *)
-  let d = 784 in
   (* Input: 28*28 *)
-  let h = 128 in
+  let d = 784 in
   (* Hidden layer size *)
-  let c = 10 in
+  let h = 128 in
   (* Output: 10 classes *)
+  let c = 10 in
 
   (* Initialize parameters *)
   let w1 = rand Float32 [| d; h |] in
