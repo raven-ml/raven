@@ -1,0 +1,3 @@
+(executable
+ (name statistics)
+ (libraries ndarray))
