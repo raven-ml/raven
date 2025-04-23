@@ -58,11 +58,6 @@ let parse_phrase str =
     in
     Error error_msg
 
-let is_unit_type ty =
-  match ty with
-  | Outcometree.Otyp_constr (Oide_ident { printed_name = "unit" }, []) -> true
-  | _ -> false
-
 let initialize_toplevel id =
   if not (Hashtbl.mem toplevels id) then (
     let env = Compmisc.initial_env () in
@@ -74,6 +69,28 @@ let initialize_toplevel id =
         ()
     | Error err ->
         prerr_endline ("Warning: Failed to initialize findlib: " ^ err));
+    (* Load libraries and install printers *)
+    let phrases =
+      [
+        "#require \"ndarray\";;";
+        "#install_printer Ndarray.print;;";
+        "#require \"ndarray-io\";;";
+        "#require \"ndarray-cv\";;";
+        "#require \"ndarray-datasets\";;";
+        "#require \"hugin\";;";
+        "#require \"rune\";;";
+        "#install_printer Rune.print;;";
+      ]
+    in
+    List.iter
+      (fun code ->
+        match parse_phrase code with
+        | Ok phrase ->
+            let _ = Toploop.execute_phrase false Format.err_formatter phrase in
+            ()
+        | Error err ->
+            prerr_endline ("Warning: Failed to execute phrase: " ^ err))
+      phrases;
     Hashtbl.add toplevels id !Toploop.toplevel_env)
 
 let eval ~id code =
@@ -88,14 +105,6 @@ let eval ~id code =
       let phrase_buffer = Buffer.create 1024 in
       let phrase_ppf = Format.formatter_of_buffer phrase_buffer in
 
-      (* Store the phrase output for later processing *)
-      let phrase_output = ref None in
-      let custom_out_phrase _ppf phr =
-        phrase_output := Some phr (* Store the out_phrase instead of printing *)
-      in
-      let old_out_phrase = !Oprint.out_phrase in
-      Oprint.out_phrase := custom_out_phrase;
-
       let result =
         redirect (fun ~capture ->
             try
@@ -104,7 +113,8 @@ let eval ~id code =
               let old_warnings = !Location.formatter_for_warnings in
               Location.formatter_for_warnings := Format.err_formatter;
 
-              (* Execute phrase, storing output in phrase_output *)
+              (* Execute phrase and print to phrase_ppf using default
+                 out_phrase *)
               let success = Toploop.execute_phrase true phrase_ppf phrase in
 
               (* Restore warnings *)
@@ -114,30 +124,10 @@ let eval ~id code =
               capture side_effect_buffer;
               let side_effect_output = Buffer.contents side_effect_buffer in
 
-              (* Process phrase output *)
-              let phrase_output_str =
-                match !phrase_output with
-                | Some (Outcometree.Ophr_eval (value, ty)) ->
-                    if is_unit_type ty && side_effect_output <> "" then ""
-                      (* Suppress () if there are side effects *)
-                    else
-                      (* Print the value *)
-                      let buf = Buffer.create 1024 in
-                      let ppf = Format.formatter_of_buffer buf in
-                      let _ = !Oprint.out_value ppf value in
-                      Format.pp_print_flush ppf ();
-                      Buffer.contents buf
-                | Some (Outcometree.Ophr_signature _) ->
-                    "" (* Suppress output for definitions *)
-                | Some (Outcometree.Ophr_exception (exn, _)) ->
-                    (* Print exception message *)
-                    let buf = Buffer.create 1024 in
-                    let ppf = Format.formatter_of_buffer buf in
-                    Location.report_exception ppf exn;
-                    Format.pp_print_flush ppf ();
-                    Buffer.contents buf
-                | None -> "" (* No phrase output *)
-              in
+              (* Capture phrase output *)
+              Format.pp_print_flush phrase_ppf ();
+              let phrase_output_str = Buffer.contents phrase_buffer in
+
               (* Combine outputs *)
               let output = side_effect_output ^ phrase_output_str in
               {
@@ -148,7 +138,6 @@ let eval ~id code =
             with exn ->
               (* Handle uncaught exceptions *)
               capture side_effect_buffer;
-              (* Capture any output before the exception *)
               let side_effect_output = Buffer.contents side_effect_buffer in
               let error_msg =
                 match Location.error_of_exn exn with
@@ -162,7 +151,5 @@ let eval ~id code =
                 status = `Error;
               })
       in
-      (* Restore original out_phrase *)
-      Oprint.out_phrase := old_out_phrase;
       Hashtbl.replace toplevels id !Toploop.toplevel_env;
       result

@@ -75,10 +75,6 @@ let exec file =
     exit 1);
   let id = "exec" in
   Quill_top.initialize_toplevel id;
-  let _ = Quill_top.eval ~id {|
-#require "ndarray";;
-#require "hugin";;
-|} in
   let original_md = Utils.read_text_from_file file in
   let new_md = process_md id original_md in
   if new_md <> original_md then (

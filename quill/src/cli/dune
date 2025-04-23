@@ -5,10 +5,4 @@
  (public_name quill)
  (link_flags
   (:standard -linkall))
- (libraries cmarkit quill_server quill_top ndarray hugin))
-
-; (rule
-;  (targets lib.ml)
-;  (deps lib/ndarray.cma lib/ndarray.cmi lib/hugin.cma lib/hugin.cmi)
-;  (action
-;   (run %{bin:ocaml-crunch} --mode=plain -o lib.ml -e cma -e cmi lib/)))
+ (libraries cmarkit quill_server quill_top))

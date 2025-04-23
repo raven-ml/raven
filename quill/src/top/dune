@@ -2,4 +2,12 @@
  (name quill_top)
  (public_name quill.top)
  (modes byte)
- (libraries unix compiler-libs.toplevel))
+ (libraries
+  unix
+  compiler-libs.toplevel
+  ndarray
+  ndarray_cv
+  ndarray_io
+  ndarray_datasets
+  hugin
+  rune))

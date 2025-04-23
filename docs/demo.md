@@ -1,20 +1,30 @@
 # Hello World
 
-This is a simple example of a markdown file that can be used with Quill.
-
-Support for **bold**, *italic*, and `inline code` is included.
-
 ```ocaml
-open Ndarray
+open Ndarray;;
 
-let () = 
-  let arr = Ndarray.eye Ndarray.float32 4 in
-  Ndarray.print arr
+```
+```output
+
+```
+```ocaml
+eye float32 4
 ```
 ```output
 [[1, 0, 0, 0],
  [0, 1, 0, 0],
  [0, 0, 1, 0],
  [0, 0, 0, 1]]
+- : (float, Ndarray.float32_elt) Ndarray.t = 
+
+```
+
+
+```ocaml
+print_endline "Hello World";;
+```
+```output
+Hello World
+- : unit = ()
 
 ```
