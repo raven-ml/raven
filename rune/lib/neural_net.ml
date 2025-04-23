@@ -48,6 +48,13 @@ let sigmoid x =
   let denom = add one exp_neg_x in
   div one denom
 
+(** Hard Sigmoid: relu6(x + 3) / 6 *)
+let hard_sigmoid x =
+  let three = scalar_like x 3.0 in
+  let six   = scalar_like x 6.0 in
+  let y = relu6 (add x three) in
+  div y six
+
 (** Softplus: log(1 + exp(x)) *)
 let softplus x =
   let one = scalar_like x 1. in
@@ -59,6 +66,11 @@ let softplus x =
 let silu x =
   let sig_x = sigmoid x in
   mul x sig_x
+
+(** Hard SiLU: x * hard_sigmoid(x) *)
+let hard_silu x =
+  let y = hard_sigmoid x in
+  mul x y
 
 (** Log-Sigmoid: log(sigmoid(x)) *)
 let log_sigmoid x =
@@ -111,3 +123,27 @@ let softmax ?(axes = [| -1 |]) x =
   let exp_x = exp x_shifted in
   let sum_exp = sum exp_x ~axes ~keepdims:true in
   div exp_x sum_exp
+
+(** Approximated Gaussian Error Linear Unit: 0.5 * x * (1 + tanh(x * 0.7978845608 * (1 + 0.044715 * x * x))) *)
+let gelu_approx x =
+  let one = scalar_like x 1.0 in
+  let half = scalar_like x 0.5 in
+  let sqrt2_pi = scalar_like x 0.7978845608 in
+  let coeff = scalar_like x 0.044715 in
+  let x2 = mul x x in
+  let inner = add one (mul coeff x2) in
+  let arg = mul (mul x sqrt2_pi) inner in
+  let y = tanh arg in
+  mul half (mul x (add one y))
+
+(** Soft-sign: x / (|x| + 1)*)
+let softsign x =
+  let one = scalar_like x 1.0 in
+  let abs_x = maximum x (neg x) in
+  div x (add one abs_x)
+
+(** Mish: x * tanh(softplus(x)) *)
+let mish x =
+  let arg = softplus x in
+  let y  = tanh arg in
+  mul x y
