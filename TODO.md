@@ -1,12 +1,5 @@
 # todo
 
-## quill examples
-
-- fix empty output
-- make output non codeblock
-- printer for hugin figures
-- restore removing signature from code blocks (make it optional)
-
 ## alpha release
 
 ndarray
@@ -34,6 +27,10 @@ quill
 - native support for ndarray/rune/hugin
 - support for visualization with hugin
 - fix bugs, enter is broken now
+- fix empty output
+- make output non codeblock
+- printer for hugin figures
+- restore removing signature from code blocks (make it optional)
 
 rune
 - train mnist
