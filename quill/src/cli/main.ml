@@ -1,33 +1,4 @@
-(* let populate_embedded_libraries libs = let dir = Filename.temp_dir "quill_"
-   "" in let write_library (name, cma_contents, cmi_contents) = let cma_path =
-   Filename.concat dir (name ^ ".cma") in let cmi_path = Filename.concat dir
-   (name ^ ".cmi") in Utils.write_text_to_file cma_path cma_contents;
-   Utils.write_text_to_file cmi_path cmi_contents; cma_path in List.map
-   write_library libs
-
-   let libraries = populate_embedded_libraries [ ( "ndarray", Option.get
-   (Lib.read "ndarray.cma"), Option.get (Lib.read "ndarray.cmi") ); ( "hugin",
-   Option.get (Lib.read "hugin.cma"), Option.get (Lib.read "hugin.cmi") ); ] *)
-
-let start path = Quill_server.start path
-
-open Cmdliner
-
-let path_arg =
-  Arg.(
-    required
-    & pos 0 (some string) None
-    & info [] ~docv:"PATH"
-        ~doc:"Path to a Markdown (.md) file or a directory containing them.")
-
-let file_arg =
-  Arg.(
-    required
-    & pos 0 (some file) None
-    & info [] ~docv:"FILE" ~doc:"Markdown file to execute.")
-
-let watch_flag =
-  Arg.(value & flag & info [ "w"; "watch" ] ~doc:"Enable watch mode.")
+let serve path = Quill_server.start path
 
 let watch_exec file =
   let id = "exec" in
@@ -66,6 +37,26 @@ let watch_exec file =
   | Some initial_mtime -> loop initial_mtime
   | None -> ()
 
+let exec file = Exec.exec file
+
+open Cmdliner
+
+let path_arg =
+  Arg.(
+    required
+    & pos 0 (some string) None
+    & info [] ~docv:"PATH"
+        ~doc:"Path to a Markdown (.md) file or a directory containing them.")
+
+let file_arg =
+  Arg.(
+    required
+    & pos 0 (some file) None
+    & info [] ~docv:"FILE" ~doc:"Markdown file to execute.")
+
+let watch_flag =
+  Arg.(value & flag & info [ "w"; "watch" ] ~doc:"Enable watch mode.")
+
 let exec_term =
   let exec watch file =
     if not (Sys.file_exists file) then (
@@ -74,13 +65,13 @@ let exec_term =
     if not (String.ends_with ~suffix:".md" file) then (
       Printf.eprintf "Error: File '%s' must be a Markdown (.md) file.\n" file;
       exit 1);
-    if watch then watch_exec file else Exec.exec file
+    if watch then watch_exec file else exec file
   in
   Term.(const exec $ watch_flag $ file_arg)
 
-let start_cmd =
+let serve_cmd =
   let doc = "Start the Quill web server." in
-  Cmd.v (Cmd.info "start" ~doc) Term.(const start $ path_arg)
+  Cmd.v (Cmd.info "serve" ~doc) Term.(const serve $ path_arg)
 
 let exec_cmd =
   let doc =
@@ -91,6 +82,6 @@ let exec_cmd =
 let quill_cmd =
   let doc = "Serve or execute Quill documents." in
   let info = Cmd.info "quill" ~version:"0.1.0" ~doc in
-  Cmd.group info [ start_cmd; exec_cmd ]
+  Cmd.group info [ serve_cmd; exec_cmd ]
 
 let () = exit (Cmd.eval quill_cmd)
