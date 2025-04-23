@@ -141,19 +141,3 @@ let start path =
 
   Dream.run ~interface:"localhost" ~port:8080
   @@ Dream.logger @@ create_router path
-
-open Cmdliner
-
-let path_arg =
-  Arg.(
-    required
-    & pos 0 (some string) None
-    & info [] ~docv:"PATH"
-        ~doc:"Path to a Markdown (.md) file or a directory containing them.")
-
-let quill_cmd =
-  let doc = "Serve Quill documents." in
-  let info = Cmd.info "quill" ~version:"0.1.0" ~doc in
-  Cmd.v info Term.(const start $ path_arg)
-
-let () = exit (Cmd.eval quill_cmd)

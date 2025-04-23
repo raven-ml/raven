@@ -1,0 +1,8 @@
+(executable
+ (package quill)
+ (name main)
+ (modes byte)
+ (public_name quill)
+ (link_flags
+  (:standard -linkall))
+ (libraries cmarkit quill_server quill_top))

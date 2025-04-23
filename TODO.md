@@ -22,10 +22,15 @@ hugin
 
 quill
 - cover more markdown
+- make execution output streamable
 - execute code blocks
 - native support for ndarray/rune/hugin
 - support for visualization with hugin
 - fix bugs, enter is broken now
+- fix empty output
+- make output non codeblock
+- printer for hugin figures
+- restore removing signature from code blocks (make it optional)
 
 rune
 - train mnist

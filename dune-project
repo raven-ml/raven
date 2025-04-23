@@ -94,9 +94,18 @@
   dream
   crunch
   cmarkit
-  ppx_deriving
   vdom
   (ndarray
+   (= :version))
+  (hugin
+   (= :version))
+  (rune
+   (= :version))
+  (ndarray-io
+   (= :version))
+  (ndarray-cv
+   (= :version))
+  (ndarray-datasets
    (= :version))
   (alcotest :with-test)
   (odoc :with-doc))
