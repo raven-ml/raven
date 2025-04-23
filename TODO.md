@@ -6,6 +6,7 @@ ndarray
 - use Random.State for random functions
 - reshape should make a copy
 - fix tests marked with todo
+- fix broken examples
 - tests for all api
 
 ndarray-cv

@@ -12,19 +12,36 @@ Raven aims to make training models, running data science tasks, and building pip
 
 Raven is currently in **pre-alpha** and we're seeking user feedback:
 
-- **Ndarray** and **Hugin**: Scope is feature-complete for the first alpha release, though feedback may influence refinements.
-- **Rune**: Proof-of-concept stage.
-- **Quill**: Early prototyping phase.
+- **[Ndarray](ndarray/)** and **[Hugin](hugin/)**: Scope is feature-complete for the first alpha release, though feedback may influence refinements.
+- **[Rune](rune/)**: Proof-of-concept stage.
+- **[Quill](quill/)**: Early prototyping phase.
 
 ## The Ecosystem
 
 Raven is a constellation of sub-projects, each addressing a specific aspect of the machine learning and data science workflow:
 
-- **Ndarray**: The core of Raven, providing high-performance numerical computation with multi-device support (CPU, GPU), similar to NumPy but with OCaml's type safety.
-- **Quill**: An interactive notebook application for data exploration, prototyping, and knowledge sharing.
-- **Hugin**: A visualization library that produces publication-quality plots and charts.
-- **Rune**: A library for automatic differentiation and JIT compilation, inspired by JAX.
+- **[Ndarray](ndarray/)**: The core of Raven, providing high-performance numerical computation with multi-device support (CPU, GPU), similar to NumPy but with OCaml's type safety.
+  - **[Ndarray-CV](ndarray-cv/)**: A collection of computer vision utilities built on top of Ndarray.
+  - **[Ndarray-IO](ndarray-io/)**: A library for reading and writing Ndarray data in various formats.
+  - **[Ndarray-Datasets](ndarray-datasets/)**: Easy access to popular machine learning and data.
+science datasets as Ndarrays.
+- **[Quill](quill/)**: An interactive notebook application for data exploration, prototyping, and knowledge sharing.
+- **[Hugin](hugin/)**: A visualization library that produces publication-quality plots and charts.
+- **[Rune](rune/)**: A library for automatic differentiation and JIT compilation, inspired by JAX.
 - **(More to come!)**: Raven is an evolving ecosystem, and we have exciting plans for additional libraries and tools to make OCaml a premier choice for machine learning and data science.
+
+## Python vs Raven: A Comparison
+
+The table below compares Python's popular data science libraries with their Raven counterparts. For detailed code examples, see the linked documentation files.
+
+| Task                      | Python Ecosystem    | Raven Ecosystem     | Comparison Guide                                   | Examples                     |
+| ------------------------- | ------------------- | ------------------- | -------------------------------------------------- | ---------------------------- |
+| Numerical Computing       | NumPy               | [Ndarray](ndarray/) | [Comparison Guide](docs/compare_python_ndarray.md) | [Examples](ndarray/example/) |
+| Visualization             | Matplotlib, Seaborn | [Hugin](hugin/)     | [Comparison Guide](docs/compare_python_hugin.md)   | [Examples](hugin/example/)   |
+| Notebooks                 | Jupyter             | [Quill](quill/)     | N/A                                                | N/A                          |
+| Automatic Differentiation | JAX                 | [Rune](rune/)       | *In progress*                                      | *In progress*                |
+| Dataframe Manipulation    | Pandas              | *Not yet*           | N/A                                                | N/A                          |
+| Deep Learning             | Pytorch, Tensorflow | *Not yet*           | N/A                                                | N/A                          |
 
 ## Contributing
 

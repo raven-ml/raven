@@ -51,7 +51,7 @@ let sigmoid x =
 (** Hard Sigmoid: relu6(x + 3) / 6 *)
 let hard_sigmoid x =
   let three = scalar_like x 3.0 in
-  let six   = scalar_like x 6.0 in
+  let six = scalar_like x 6.0 in
   let y = relu6 (add x three) in
   div y six
 
@@ -124,7 +124,8 @@ let softmax ?(axes = [| -1 |]) x =
   let sum_exp = sum exp_x ~axes ~keepdims:true in
   div exp_x sum_exp
 
-(** Approximated Gaussian Error Linear Unit: 0.5 * x * (1 + tanh(x * 0.7978845608 * (1 + 0.044715 * x * x))) *)
+(** Approximated Gaussian Error Linear Unit: 0.5 * x * (1 + tanh(x *
+    0.7978845608 * (1 + 0.044715 * x * x))) *)
 let gelu_approx x =
   let one = scalar_like x 1.0 in
   let half = scalar_like x 0.5 in
@@ -145,5 +146,5 @@ let softsign x =
 (** Mish: x * tanh(softplus(x)) *)
 let mish x =
   let arg = softplus x in
-  let y  = tanh arg in
+  let y = tanh arg in
   mul x y
