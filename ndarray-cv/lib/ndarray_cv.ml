@@ -432,7 +432,7 @@ let threshold ~thresh ~maxval ~type_ (img : uint8_t) : uint8_t =
   match get_dims img with
   | `Color _ ->
       failwith "Threshold currently only supports grayscale (2D) images"
-  | `Gray (_h, _w) -> (
+  | `Gray (h, w) ->
       if Ndarray.dtype img <> Ndarray.uint8 then
         failwith "Threshold currently only supports uint8 images";
 
@@ -441,16 +441,27 @@ let threshold ~thresh ~maxval ~type_ (img : uint8_t) : uint8_t =
       if thresh_val < 0 || maxval_val < 0 then
         invalid_arg "Threshold and maxval must be non-negative";
 
-      let thresh_scalar = Ndarray.scalar Ndarray.uint8 thresh_val in
-      let maxval_scalar = Ndarray.scalar Ndarray.uint8 maxval_val in
-      let zero_scalar = Ndarray.scalar Ndarray.uint8 0 in
-      let mask = Ndarray.greater img thresh_scalar in
-      match type_ with
-      | Binary -> Ndarray.where mask maxval_scalar zero_scalar
-      | BinaryInv -> Ndarray.where mask zero_scalar maxval_scalar
-      | Trunc -> Ndarray.minimum img thresh_scalar
-      | ToZero -> Ndarray.where mask img zero_scalar
-      | ToZeroInv -> Ndarray.where mask zero_scalar img)
+      let out_img = Ndarray.empty_like img in
+      let data_in = Ndarray.data img in
+      let data_out = Ndarray.data out_img in
+      let row_stride = w in
+      for i = 0 to h - 1 do
+        let i_offset = i * row_stride in
+        for j = 0 to w - 1 do
+          let idx = i_offset + j in
+          let pixel = Array1.unsafe_get data_in idx in
+          let value =
+            match type_ with
+            | Binary -> if pixel > thresh_val then maxval_val else 0
+            | BinaryInv -> if pixel > thresh_val then 0 else maxval_val
+            | Trunc -> min pixel thresh_val
+            | ToZero -> if pixel > thresh_val then pixel else 0
+            | ToZeroInv -> if pixel > thresh_val then 0 else pixel
+          in
+          Array1.unsafe_set data_out idx value
+        done
+      done;
+      out_img
 
 let box_filter : type a b.
     ksize:int * int -> (a, b) Ndarray.t -> (a, b) Ndarray.t =

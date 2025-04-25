@@ -6,7 +6,7 @@ ndarray
 - OK
 
 ndarray-cv
-- morphology and threshold broken
+- OK
 
 ndarray-dataset
 - OK
