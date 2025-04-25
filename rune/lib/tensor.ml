@@ -76,17 +76,31 @@ let create dtype shape x =
   let context = Backend_cpu.create_context () in
   const (Cpu_data (Backend_cpu.create context dtype shape x, context))
 
+let empty dtype shape =
+  let context = Backend_cpu.create_context () in
+  const (Cpu_data (Backend_cpu.empty context dtype shape, context))
+
+let empty_like x = const (Dispatch.empty_like x.data)
+
 let zeros dtype shape =
   let context = Backend_cpu.create_context () in
   const (Cpu_data (Backend_cpu.zeros context dtype shape, context))
+
+let zeros_like x = const (Dispatch.zeros_like x.data)
 
 let ones dtype shape =
   let context = Backend_cpu.create_context () in
   const (Cpu_data (Backend_cpu.ones context dtype shape, context))
 
+let ones_like x = const (Dispatch.ones_like x.data)
+
 let rand dtype shape =
   let context = Backend_cpu.create_context () in
   const (Cpu_data (Backend_cpu.rand context dtype shape, context))
+
+let randn dtype shape =
+  let context = Backend_cpu.create_context () in
+  const (Cpu_data (Backend_cpu.randn context dtype shape, context))
 
 let scalar dtype x =
   let context = Backend_cpu.create_context () in
@@ -131,6 +145,10 @@ let exp x =
 let log x =
   try Effect.perform (Log x)
   with Effect.Unhandled _ -> create_internal (Dispatch.log x.data)
+
+let abs x =
+  try Effect.perform (Abs x)
+  with Effect.Unhandled _ -> create_internal (Dispatch.abs x.data)
 
 let add x y =
   try Effect.perform (Add (x, y))
@@ -281,6 +299,10 @@ let vmap fun_ ?in_axes ?out_axes inputs =
   in
   (* Stack results along out_axes *)
   stack ~axis:out_axes outputs
+
+(* logic *)
+
+let array_equal x y = Dispatch.array_equal x.data y.data
 
 (* utils *)
 

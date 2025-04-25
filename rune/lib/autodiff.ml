@@ -26,6 +26,8 @@ let deriv_div arg x y =
   let ones = Dispatch.ones_like x.data in
   match arg with L -> div (const ones) y | R -> neg (div x (mul y y))
 
+let deriv_abs x = const (Dispatch.sign x.data)
+
 module Set_int = Set.Make (struct
   type t = int
 
@@ -135,7 +137,7 @@ let deriv_maximum arg x y =
   | L ->
       const
         (Dispatch.where
-           (Dispatch.greater_equal x.data y.data)
+           (Dispatch.greater x.data y.data)
            t_ones.data t_zeros.data)
   | R ->
       const
@@ -171,8 +173,11 @@ let unwrap_t_with_grad (type a b dev) (_ : (a, b, dev) t)
 let reduce_gradient grad_output input_shape output_shape =
   let ndim_output = Array.length output_shape in
   let ndim_input = Array.length input_shape in
+  if ndim_input > ndim_output then
+    failwith
+      "reduce_gradient: input shape has more dimensions than output shape";
   let padded_input_shape =
-    Array.append (Array.make (ndim_output - ndim_input) 1) input_shape
+    Array.concat [ Array.make (ndim_output - ndim_input) 1; input_shape ]
   in
   let axes_to_sum =
     List.filter
@@ -182,7 +187,7 @@ let reduce_gradient grad_output input_shape output_shape =
   if axes_to_sum = [] then grad_output
   else
     let axes_array = Array.of_list axes_to_sum in
-    const (Dispatch.sum grad_output.data ~axes:axes_array)
+    const (Dispatch.sum grad_output.data ~axes:axes_array ~keepdims:true)
 
 let make_reverse_handler tape =
   let open Effect.Deep in
@@ -207,7 +212,12 @@ let make_reverse_handler tape =
       let any_twg_x = Hashtbl.find tape x.id in
       let twg_x = unwrap_t_with_grad x any_twg_x in
       let t = continue k r in
-      twg_x.bv <- add twg_x.bv (mul (deriv twg_x.v) twg.bv);
+      let grad_x = mul (deriv x) twg.bv in
+      let reduced_grad_x =
+        reduce_gradient grad_x (Dispatch.shape x.data) (Dispatch.shape r.data)
+      in
+      let reduced_grad_x = reshape (Dispatch.shape x.data) reduced_grad_x in
+      twg_x.bv <- add twg_x.bv reduced_grad_x;
       t
     in
 
@@ -237,6 +247,8 @@ let make_reverse_handler tape =
       let reduced_grad_y =
         reduce_gradient grad_y (Dispatch.shape y.data) (Dispatch.shape r.data)
       in
+      let reduced_grad_x = reshape (Dispatch.shape x.data) reduced_grad_x in
+      let reduced_grad_y = reshape (Dispatch.shape y.data) reduced_grad_y in
       twg_x.bv <- add twg_x.bv reduced_grad_x;
       twg_y.bv <- add twg_y.bv reduced_grad_y;
       t
@@ -245,6 +257,7 @@ let make_reverse_handler tape =
     function
     | Const v -> Some (handle_ap0 v)
     | Neg x -> Some (handle_ap1 ~deriv:deriv_neg ~op:neg x)
+    | Abs x -> Some (handle_ap1 ~deriv:deriv_abs ~op:abs x)
     | Exp x -> Some (handle_ap1 ~deriv:deriv_exp ~op:exp x)
     | Log x -> Some (handle_ap1 ~deriv:deriv_log ~op:log x)
     | Sin x -> Some (handle_ap1 ~deriv:deriv_sin ~op:sin x)
@@ -255,10 +268,10 @@ let make_reverse_handler tape =
     | Div (x, y) -> Some (handle_ap2 ~deriv:deriv_div ~op:div x y)
     | Maximum (x, y) -> Some (handle_ap2 ~deriv:deriv_maximum ~op:maximum x y)
     | Minimum (x, y) -> Some (handle_ap2 ~deriv:deriv_minimum ~op:minimum x y)
-    | Sum (x, axes, _keepdims) ->
+    | Sum (x, axes, keepdims) ->
         Some
           (fun k ->
-            let r = sum ?axes x in
+            let r = sum ?axes ?keepdims x in
             let zeros = Dispatch.zeros_like r.data in
             let twg = { v = r; bv = const zeros } in
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
@@ -272,10 +285,10 @@ let make_reverse_handler tape =
             let deriv_fn = deriv_sum x axes in
             twg_x.bv <- add twg_x.bv (deriv_fn twg.bv);
             t)
-    | Mean (x, axes, _keepdims) ->
+    | Mean (x, axes, keepdims) ->
         Some
           (fun k ->
-            let r = mean ?axes x in
+            let r = mean ?axes ?keepdims x in
             let zeros = Dispatch.zeros_like r.data in
             let twg = { v = r; bv = const zeros } in
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
@@ -289,10 +302,10 @@ let make_reverse_handler tape =
             let deriv_fn = deriv_mean x axes in
             twg_x.bv <- add twg_x.bv (deriv_fn twg.bv);
             t)
-    | Max (x, axes, _keepdims) ->
+    | Max (x, axes, keepdims) ->
         Some
           (fun k ->
-            let r = max ?axes x in
+            let r = max ?axes ?keepdims x in
             let zeros = Dispatch.zeros_like r.data in
             let twg = { v = r; bv = const zeros } in
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
@@ -306,10 +319,10 @@ let make_reverse_handler tape =
             let deriv_fn = deriv_max x axes in
             twg_x.bv <- add twg_x.bv (deriv_fn twg.bv);
             t)
-    | Min (x, axes, _keepdims) ->
+    | Min (x, axes, keepdims) ->
         Some
           (fun k ->
-            let r = min ?axes x in
+            let r = min ?axes ?keepdims x in
             let zeros = Dispatch.zeros_like r.data in
             let twg = { v = r; bv = const zeros } in
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
@@ -383,16 +396,13 @@ let make_reverse_handler tape =
             let zeros = Dispatch.zeros_like r_data in
             let twg = { v = r; bv = const zeros } in
             Hashtbl.add tape twg.v.id (Any_t_with_grad twg);
-
             (if not (Hashtbl.mem tape x.id) then
                let zeros_x = Dispatch.zeros_like x.data in
                let twg_x = { v = x; bv = const zeros_x } in
                Hashtbl.add tape x.id (Any_t_with_grad twg_x));
             let any_twg_x = Hashtbl.find tape x.id in
             let twg_x = unwrap_t_with_grad x any_twg_x in
-
             let t = continue k r in
-
             let grad_x_data = Dispatch.zeros_like x.data in
             Dispatch.set_slice ?steps starts stops twg.bv.data grad_x_data;
             let grad_x = const grad_x_data in

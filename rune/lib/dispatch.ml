@@ -211,6 +211,13 @@ let stack (type a b dev) ~axis (tensors : (a, b, dev) data list) :
       | Cpu_data (_, ctx) ->
           Cpu_data (Backend_cpu.stack ctx ~axis data_list, ctx))
 
+let array_equal (type a b dev) (x : (a, b, dev) data) (y : (a, b, dev) data) :
+    bool =
+  match (x, y) with
+  | Cpu_data (x, ctx_x), Cpu_data (y, ctx_y) when ctx_x = ctx_y ->
+      Backend_cpu.array_equal ctx_x x y
+  | _ -> failwith "The two tensors must be on the same device"
+
 let pp fmt x =
   property_with_context ~cpu_op:(fun ctx -> Backend_cpu.pp ctx fmt) x
 

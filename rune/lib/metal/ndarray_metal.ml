@@ -92,7 +92,6 @@ module B : Backend_intf = struct
   (* Indexing *)
 
   let where _ _ _ _ = failwith "todo"
-  let nonzero _ _ _ = failwith "todo"
 
   (* Sorting & selection *)
 

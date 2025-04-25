@@ -1,15 +1,24 @@
 open Rune
 
+let () = Printexc.record_backtrace true
+
 (* Get a batch of data *)
 let get_batch x y batch_size batch_idx =
   let num_samples = dim 0 x in
   let start = batch_idx * batch_size in
   let end_ = Stdlib.min (start + batch_size) num_samples in
-  let x_batch = slice [| start; 0 |] [| end_ - start; dim 1 x |] x in
-  let y_batch = slice [| start; 0 |] [| end_ - start; dim 1 y |] y in
-  (x_batch, y_batch)
+  let batch_size_actual = end_ - start in
+  if batch_size_actual <= 0 then failwith "Empty batch encountered"
+  else
+    let x_batch =
+      slice [| start; 0 |] [| start + batch_size_actual; dim 1 x |] x
+    in
+    let y_batch =
+      slice [| start; 0 |] [| start + batch_size_actual; dim 1 y |] y
+    in
+    (x_batch, y_batch)
 
-(* Forward pass: computes the MLP output (logits) *)
+(* Forward pass: computes the MLP output (logits) with shape logging *)
 let forward params inputs =
   match params with
   | [ w1; b1; w2; b2 ] ->
@@ -19,29 +28,31 @@ let forward params inputs =
       z2
   | _ -> failwith "Invalid parameters"
 
-(* Cross-entropy loss: computes loss between predicted probabilities and true
-   labels *)
+(* Cross-entropy loss: computes loss with shape logging *)
 let cross_entropy_loss logits y_true =
   let epsilon = 1e-10 in
   let probs = softmax logits in
   let log_probs = log (add probs (scalar Float32 epsilon)) in
-  let loss = neg (sum (mul y_true log_probs) ~axes:[| 1 |]) in
-  mean loss
+  let mul_term = mul y_true log_probs in
+  let sum_term = sum mul_term ~axes:[| 1 |] in
+  let neg_term = neg sum_term in
+  let loss = mean neg_term in
+  loss
 
 (* Training function *)
 let train_mlp x_train y_train_onehot batch_size learning_rate epochs =
   (* MLP architecture dimensions *)
-  (* Input: 28*28 *)
   let d = 784 in
-  (* Hidden layer size *)
+  (* Input: 28*28 *)
   let h = 128 in
-  (* Output: 10 classes *)
+  (* Hidden layer size *)
   let c = 10 in
+  (* Output: 10 classes *)
 
   (* Initialize parameters *)
-  let w1 = rand Float32 [| d; h |] in
+  let w1 = div (randn Float32 [| d; h |]) (scalar Float32 (sqrt (float d))) in
   let b1 = zeros Float32 [| h |] in
-  let w2 = rand Float32 [| h; c |] in
+  let w2 = div (randn Float32 [| h; c |]) (scalar Float32 (sqrt (float h))) in
   let b2 = zeros Float32 [| c |] in
   let params = [ w1; b1; w2; b2 ] in
 
@@ -58,8 +69,9 @@ let train_mlp x_train y_train_onehot batch_size learning_rate epochs =
         cross_entropy_loss logits y_batch
       in
       let loss, grad_params = value_and_grads loss_fn params in
-      Printf.printf "Epoch %d, Batch %d: Loss = %f\n" epoch batch_idx
-        (get [||] loss);
+      print_endline
+      @@ Printf.sprintf "Epoch %d, Batch %d: Loss = %f\n" epoch batch_idx
+           (get [||] loss);
       List.combine params grad_params
       |> List.iter (fun (param, grad) ->
              sub_inplace param (mul (scalar Float32 learning_rate) grad)
@@ -79,16 +91,18 @@ let () =
   (* Preprocess training data *)
   let x_train = div (astype Float32 x_train) (scalar Float32 255.0) in
   let x_train = reshape [| 60000; 784 |] x_train in
+  let y_train = reshape [| dim 0 y_train |] y_train in
   let y_train_onehot = one_hot Float32 y_train 10 in
 
   (* Preprocess test data *)
   let x_test = div (astype Float32 x_test) (scalar Float32 255.0) in
   let x_test = reshape [| 10000; 784 |] x_test in
+  let _y_test = reshape [| dim 0 _y_test |] _y_test in
   let _y_test_onehot = one_hot Float32 _y_test 10 in
 
   (* Training parameters *)
   let batch_size = 64 in
-  let learning_rate = 0.01 in
+  let learning_rate = 0.1 in
   let epochs = 10 in
 
   (* Train the MLP *)

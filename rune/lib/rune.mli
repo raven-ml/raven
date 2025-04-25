@@ -50,9 +50,13 @@ val complex64 : (Complex.t, complex64_elt) dtype
 
 val ndarray : ('a, 'b) Ndarray.t -> ('a, 'b, [ `cpu ]) t
 val create : ('a, 'b) dtype -> int array -> 'a array -> ('a, 'b, [ `cpu ]) t
+val empty_like : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val zeros : ('a, 'b) dtype -> int array -> ('a, 'b, [ `cpu ]) t
+val zeros_like : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val ones : ('a, 'b) dtype -> int array -> ('a, 'b, [ `cpu ]) t
+val ones_like : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val rand : (float, 'a) dtype -> int array -> (float, 'a, [ `cpu ]) t
+val randn : (float, 'a) dtype -> int array -> (float, 'a, [ `cpu ]) t
 val scalar : ('a, 'b) dtype -> 'a -> ('a, 'b, [ `cpu ]) t
 
 (** {1 Device} *)
@@ -108,6 +112,7 @@ val sin : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val cos : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val exp : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val log : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val abs : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 
 val sum :
   ?axes:int array -> ?keepdims:bool -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
@@ -146,13 +151,17 @@ val vmap :
   ('a, 'b, 'dev) t list ->
   ('d, 'e, 'dev) t
 
+(** {1 Logic Operations} *)
+
+val array_equal : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> bool
+
 (** {1 Neural Network} *)
 
 val one_hot : ('a, 'b) dtype -> ('c, 'd, 'dev) t -> int -> ('a, 'b, 'dev) t
-val tanh : ('a, 'b, 'c) t -> ('a, 'b, 'c) t
+val tanh : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val elu : ?alpha:float -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val selu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
-val softmax : ?axes:int array -> ('a, 'b, 'c) t -> ('a, 'b, 'c) t
+val softmax : ?axes:int array -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val relu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val relu6 : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val sigmoid : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t

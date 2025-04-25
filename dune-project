@@ -24,7 +24,7 @@
   (ocaml
    (>= 5.0.0))
   dune
-  (odoc :with-doc))
+  (alcotest :with-test))
  (tags
   (numerical-computation tensor-library machine-learning)))
 
@@ -39,8 +39,7 @@
   dune
   camlzip
   (ndarray
-   (= :version))
-  (odoc :with-doc))
+   (= :version)))
  (tags
   (io data-format serialization deserialization)))
 
@@ -55,8 +54,7 @@
   dune
   (ndarray
    (= :version))
-  (alcotest :with-test)
-  (odoc :with-doc))
+  (alcotest :with-test))
  (tags
   (computer-vision image-processing feature-detection machine-learning)))
 
@@ -73,8 +71,7 @@
   ocurl
   csv
   (ndarray
-   (= :version))
-  (odoc :with-doc))
+   (= :version)))
  (tags
   (datasets machine-learning data-science image-classification regression)))
 
@@ -107,8 +104,7 @@
    (= :version))
   (ndarray-datasets
    (= :version))
-  (alcotest :with-test)
-  (odoc :with-doc))
+  (alcotest :with-test))
  (tags
   (notebook interactive-computing data-science literate-programming)))
 
@@ -128,8 +124,7 @@
    (>= 0.21.0))
   (ctypes-foreign
    (>= 0.21.0))
-  (alcotest :with-test)
-  (odoc :with-doc))
+  (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
 
@@ -137,4 +132,10 @@
  (name rune)
  (synopsis "")
  (description "")
- (depends))
+ (depends
+  (ocaml
+   (>= 5.0.0))
+  dune
+  (ndarray
+   (= :version))
+  (alcotest :with-test)))
