@@ -1,4 +1,0 @@
-(test
- (name test_quill_top)
- (modes byte)
- (libraries alcotest quill.top))

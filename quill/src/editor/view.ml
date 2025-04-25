@@ -6,82 +6,140 @@ let span ?key ?a l = elt "span" ?key ?a l
 let p ?key ?a l = elt "p" ?key ?a l
 let tabindex = int_attr "tabindex"
 
+(* Helper functions for inline rendering *)
 let get_segments (inline : inline) =
   match inline.inline_content with Seq rs -> rs | _ -> [ inline ]
-
-let rec inline_content_to_plain (inline_content : inline_content) =
-  match inline_content with
-  | Run s -> s
-  | Emph i -> inline_to_plain i
-  | Strong i -> inline_to_plain i
-  | Code_span s -> s
-  | Seq items -> String.concat "" (List.map inline_to_plain items)
 
 and inline_to_plain (inline : inline) =
   inline_content_to_plain inline.inline_content
 
 let rec wrap_run ~block (run : inline) =
-  let id = "run-" ^ string_of_int run.id in
   let focused = run.focused in
   match run.inline_content with
-  | Run s -> span ~key:id ~a:[ attr "id" id ] [ text s ]
-  | Code_span s ->
+  | Run s ->
+      let id = "run-" ^ string_of_int run.id in
       span ~key:id
+        ~a:[ attr "id" id; attr "class" "inline-text" ]
+        [ (if s = "" then elt "br" [] else text s) ]
+  | Code_span s ->
+      let id = "codespan-" ^ string_of_int run.id in
+      elt "code" ~key:id
+        ~a:[ attr "id" id ]
         [
           span ~a:[ bool_prop "hidden" (not focused) ] [ text "`" ];
-          span ~a:[ attr "id" id ] [ elt "code" [ text s ] ];
+          span
+            ~a:[ attr "class" "inline-content inline-text" ]
+            [ (if s = "" then elt "br" [] else text s) ];
           span ~a:[ bool_prop "hidden" (not focused) ] [ text "`" ];
         ]
   | Emph inner ->
-      span ~key:(string_of_int run.id)
+      let id = "emph-" ^ string_of_int run.id in
+      elt "em" ~key:id
         ~a:[ attr "id" id ]
         [
-          span ~a:[ bool_prop "hidden" (not focused) ] [ text "*" ];
-          elt "em" ~a:[ attr "id" id ] (render_inline_content ~block inner);
-          span ~a:[ bool_prop "hidden" (not focused) ] [ text "*" ];
+          span
+            ~a:
+              [
+                bool_prop "hidden" (not focused);
+                bool_prop "contenteditable" false;
+              ]
+            [ text "*" ];
+          fragment @@ render_inline_content ~block inner;
+          span
+            ~a:
+              [
+                bool_prop "hidden" (not focused);
+                bool_prop "contenteditable" false;
+              ]
+            [ text "*" ];
         ]
   | Strong inner ->
-      span ~key:(string_of_int run.id)
+      let id = "strong-" ^ string_of_int run.id in
+      elt "strong" ~key:id
         ~a:[ attr "id" id ]
         [
-          span ~a:[ bool_prop "hidden" (not focused) ] [ text "**" ];
-          elt "strong" (render_inline_content ~block inner);
-          span ~a:[ bool_prop "hidden" (not focused) ] [ text "**" ];
+          span
+            ~a:
+              [
+                bool_prop "hidden" (not focused);
+                bool_prop "contenteditable" false;
+              ]
+            [ text "**" ];
+          fragment @@ render_inline_content ~block inner;
+          span
+            ~a:
+              [
+                bool_prop "hidden" (not focused);
+                bool_prop "contenteditable" false;
+              ]
+            [ text "**" ];
         ]
-  | Seq inlines -> fragment (List.map (wrap_run ~block) inlines)
+  | Seq inlines ->
+      let id = "seq-" ^ string_of_int run.id in
+      span ~key:id ~a:[ attr "id" id ] (List.map (wrap_run ~block) inlines)
+  | Break typ -> (
+      let id = "break-" ^ string_of_int run.id in
+      match typ with
+      | `Hard ->
+          span ~key:id
+            ~a:[ attr "id" id ]
+            [ text "\n" (* Hard breaks render as newlines *) ]
+      | `Soft ->
+          span ~key:id
+            ~a:[ attr "id" id ]
+            [ text " " (* Soft breaks render as a space *) ])
+  | Image { alt; src } ->
+      let id = "image-" ^ string_of_int run.id in
+      if focused then
+        span ~key:id
+          ~a:[ attr "id" id ]
+          [
+            text "![";
+            fragment (render_inline_content ~block alt);
+            text "](";
+            text src;
+            text ")";
+          ]
+      else
+        let alt_text = inline_to_plain alt in
+        elt "img" ~key:id
+          ~a:[ attr "id" id; attr "src" src; attr "alt" alt_text ]
+          []
+  | Link { text = text'; href } ->
+      let id = "link-" ^ string_of_int run.id in
+      if focused then
+        span ~key:id
+          ~a:[ attr "id" id ]
+          [
+            text "[";
+            fragment (render_inline_content ~block text');
+            text "](";
+            text href;
+            text ")";
+          ]
+      else
+        elt "a" ~key:id
+          ~a:[ attr "id" id; attr "href" href ]
+          (render_inline_content ~block text')
+  | Raw_html html ->
+      let id = "rawhtml-" ^ string_of_int run.id in
+      if focused then span ~key:id ~a:[ attr "id" id ] [ text html ]
+      else
+        (* Assuming Vdom supports raw HTML; adjust as needed *)
+        span ~key:id ~a:[ attr "id" id; attr "dangerouslySetInnerHTML" html ] []
 
 and render_inline_content ~block (inline : inline) =
   match inline.inline_content with
   | Seq items -> List.map (wrap_run ~block) items
   | _ -> [ wrap_run ~block inline ]
 
-let paragraph block_id inline =
-  (* on empty paragraphs, render br *)
-  match inline.inline_content with
-  | Run "" ->
-      let id = Printf.sprintf "block-%d" block_id in
-      p ~key:id ~a:[ attr "id" id ] [ elt "br" [] ]
-  | _ ->
-      let children = render_inline_content ~block:block_id inline in
-      let id = Printf.sprintf "block-%d" block_id in
-      p ~key:id ~a:[ attr "id" id ] children
+let newline = span ~a:[ bool_prop "hidden" true ] [ text "\n" ]
+let with_newline el = fragment [ el; newline ]
 
-let codeblock block_id content =
+let paragraph block_id inline =
   let id = Printf.sprintf "block-%d" block_id in
-  let code_id = Printf.sprintf "codeblock-%d" block_id in
-  let code_el = elt "code" ~a:[ attr "id" code_id ] [ text content.code ] in
-  let pre_el = elt "pre" ~key:id ~a:[ attr "id" id ] [ code_el ] in
-  match content.output with
-  | None -> pre_el
-  | Some output ->
-      let output_id = Printf.sprintf "output-%d" block_id in
-      fragment
-        [
-          pre_el;
-          div ~key:output_id
-            ~a:[ attr "id" output_id; attr "class" "execution-output" ]
-            [ text output ];
-        ]
+  let children = render_inline_content ~block:block_id inline in
+  p ~key:id ~a:[ attr "id" id ] children |> with_newline
 
 let heading block_id level inline =
   let id = Printf.sprintf "block-%d" block_id in
@@ -93,15 +151,59 @@ let heading block_id level inline =
       ~a:[ bool_prop "hidden" (not inline.focused) ]
       [ text (String.make level '#' ^ " ") ]
   in
-  elt tag ~key:id ~a:[ attr "id" id ] (pre :: children)
+  elt tag ~key:id ~a:[ attr "id" id ] (pre :: children) |> with_newline
 
 let blank_line block_id =
   p
     ~key:(Printf.sprintf "block-%d" block_id)
-    ~a:[ attr "id" (Printf.sprintf "block-%d" block_id) ]
-    []
+    ~a:
+      [
+        attr "id" (Printf.sprintf "block-%d" block_id); bool_prop "hidden" true;
+      ]
+    [ text "\n" ]
 
-let rec blocks block_id blocks =
+let rec codeblock block_id content =
+  let id = Printf.sprintf "block-%d" block_id in
+  let code_id = Printf.sprintf "codeblock-%d" block_id in
+  let code_el = elt "code" ~a:[ attr "id" code_id ] [ text content.code ] in
+  let pre_node =
+    (* Capture the <pre> node without the trailing newline wrapper *)
+    elt "pre" ~key:id
+      ~a:[ attr "id" id ]
+      [
+        span ~a:[ bool_prop "hidden" true ] [ text "```\n" ];
+        code_el;
+        span ~a:[ bool_prop "hidden" true ] [ text "\n```\n" ];
+        (* Ensure PRE block has trailing newline in source *)
+      ]
+  in
+  match content.output with
+  | None -> pre_node
+  | Some output_block ->
+      let output_id = Printf.sprintf "output-%d" block_id in
+      let start_comment =
+        span
+          ~a:[ bool_prop "hidden" true ]
+          [ text "<!-- quill=output_start -->\n" ]
+      in
+      let end_comment =
+        span
+          ~a:[ bool_prop "hidden" true ]
+          [ text "<!-- quill=output_end -->\n" ]
+      in
+      let output_el =
+        div ~key:output_id
+          ~a:
+            [
+              attr "id" output_id;
+              attr "class" "execution-output";
+              bool_prop "contenteditable" false;
+            ]
+          [ block output_block.id output_block.content ]
+      in
+      fragment [ pre_node; start_comment; output_el; end_comment ]
+
+and blocks block_id blocks =
   let id = Printf.sprintf "block-%d" block_id in
   let children = List.map (fun b -> block b.id b.content) blocks in
   div ~key:id ~a:[ attr "id" id ] children
@@ -125,5 +227,5 @@ let view (model : model) : msg Vdom.vdom =
       div
         ~a:[ attr "id" "editor"; attr "contentEditable" "true" ]
         [ editor_content ];
-      div ~a:[ attr "id" "debug" ] [ Debug_view.view model ];
+      div ~a:[ attr "id" "debug" ] [ View_debug.view model ];
     ]

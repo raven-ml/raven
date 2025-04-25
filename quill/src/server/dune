@@ -1,5 +1,45 @@
+(library
+ (public_name quill.server)
+ (name quill_server)
+ (libraries cmdliner dream quill_top_unix quill_api dune-site)
+ (preprocess
+  (pps lwt_ppx)))
+
+(generate_sites_module
+ (module quill_sites)
+ (sites quill))
+
+(rule
+ (target mode.txt)
+ (enabled_if
+  (= %{profile} dev))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "false"))))
+
+(rule
+ (target mode.txt)
+ (enabled_if
+  (= %{profile} release))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "true"))))
+
+(rule
+ (targets config.ml)
+ (mode promote)
+ (action
+  (with-stdout-to
+   %{targets}
+   (echo "let is_release_mode = %{read-lines:./mode.txt}"))))
+
 (rule
  (targets asset_editor.ml)
+ (enabled_if
+  (= %{profile} release))
+ ; Only crunch in release mode
  (deps
   ../editor/styles.css
   ../editor/main.bc.wasm.js
@@ -21,11 +61,40 @@
    ../editor/)))
 
 (rule
- (targets asset.ml)
+ (target asset.ml)
+ (enabled_if
+  (= %{profile} release))
+ ; Only crunch in release mode
  (deps
   (source_tree asset/))
  (action
   (run %{bin:ocaml-crunch} --mode=plain -o asset.ml asset/)))
+
+(rule
+ (target asset_editor.ml)
+ (enabled_if
+  (= %{profile} dev))
+ (deps
+  ../editor/styles.css
+  ../editor/main.bc.wasm.js
+  (source_tree ../editor/main.bc.wasm.assets))
+ ; Generate stub in dev mode
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "(* Generated stub for dev mode *) \nlet read _ = None"))))
+
+(rule
+ (target asset.ml)
+ (enabled_if
+  (= %{profile} dev))
+ (deps
+  (source_tree asset/))
+ ; Generate stub in dev mode
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "(* Generated stub for dev mode *) \nlet read _ = None"))))
 
 (rule
  (targets template_document.ml template_index.ml)
@@ -33,10 +102,3 @@
   (progn
    (run dream_eml %{dep:template_document.eml} --workspace %{workspace_root})
    (run dream_eml %{dep:template_index.eml} --workspace %{workspace_root}))))
-
-(library
- (public_name quill.server)
- (name quill_server)
- (libraries cmdliner dream quill_top)
- (preprocess
-  (pps lwt_ppx)))

@@ -21,8 +21,20 @@ let rec inline_to_debug_string (indent : int) (i : inline) : string =
           |> String.concat "\n"
         in
         Printf.sprintf "%sSeq [\n%s\n%s]" indent_str items_str indent_str
+    | Break typ ->
+        let typ_str = match typ with `Hard -> "Hard" | `Soft -> "Soft" in
+        Printf.sprintf "%sBreak %s" indent_str typ_str
+    | Image { alt; src } ->
+        Printf.sprintf "%sImage { alt = (\n%s\n%s); src = \"%s\" }" indent_str
+          (inline_to_debug_string (indent + 1) alt)
+          indent_str src
+    | Link { text; href } ->
+        Printf.sprintf "%sLink { text = (\n%s\n%s); href = \"%s\" }" indent_str
+          (inline_to_debug_string (indent + 1) text)
+          indent_str href
+    | Raw_html html -> Printf.sprintf "%sRaw_html \"%s\"" indent_str html
   in
-  let focus_str = if i.focused then " [FOCUSED]" else "" in
+  let focus_str = if i.focused then "[FOCUSED]" else "" in
   Printf.sprintf "%sid=%d %s%s" indent_str i.id content focus_str
 
 let rec has_focused_inline (b : block) : bool =
@@ -35,6 +47,10 @@ let rec has_focused_inline (b : block) : bool =
     | Strong inline' -> check_inline inline'
     | Code_span _ -> false
     | Seq items -> List.exists check_inline items
+    | Break _ -> false
+    | Image { alt; _ } -> check_inline alt
+    | Link { text; _ } -> check_inline text
+    | Raw_html _ -> false
   in
   match b.content with
   | Paragraph inline -> check_inline inline
@@ -51,10 +67,27 @@ let rec block_to_debug_string (indent : int) (b : block) : string =
         Printf.sprintf "%sParagraph (\n%s\n%s)" indent_str
           (inline_to_debug_string (indent + 1) inline)
           indent_str
-    | Codeblock code ->
-        Printf.sprintf "%sCodeblock (\n%s%s\n%s)" indent_str
-          (String.make ((indent + 1) * 2) ' ')
-          code.code indent_str
+    | Codeblock { code; output } ->
+        let inner_parts =
+          [
+            Printf.sprintf "%sCode: %s"
+              (String.make ((indent + 1) * 2) ' ')
+              code;
+          ]
+        in
+        let inner_parts =
+          match output with
+          | None -> inner_parts
+          | Some output_block ->
+              inner_parts
+              @ [
+                  Printf.sprintf "%sOutput:"
+                    (String.make ((indent + 1) * 2) ' ');
+                  block_to_debug_string (indent + 2) output_block;
+                ]
+        in
+        let inner_str = String.concat "\n" inner_parts in
+        Printf.sprintf "%sCodeblock (\n%s\n%s)" indent_str inner_str indent_str
     | Heading (level, inline) ->
         Printf.sprintf "%sHeading %d (\n%s\n%s)" indent_str level
           (inline_to_debug_string (indent + 1) inline)

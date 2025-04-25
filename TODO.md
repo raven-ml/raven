@@ -18,16 +18,25 @@ hugin
 - OK
 
 quill
-- cover more markdown
-- make execution output streamable
-- execute code blocks
-- native support for ndarray/rune/hugin
-- support for visualization with hugin
-- fix bugs, enter is broken now
-- fix empty output
-- make output non codeblock
-- printer for hugin figures
+- editor bugs:
+  - minor:rendering an image opens a window?
+  - minor: select end of paragraph and delete removes the line break
+  - major: cannot create a new paragraph from a an empty paragraph
+  - major: delete the whole document preserves hidden elements
+  - major: typing ``` creates a new code block with the rest of the document
+- save changes to file
 - restore removing signature from code blocks (make it optional)
+- syntax highlighting for ocaml
+- cover more markdown
+  - Block_quote
+  - Html_block
+  - Link_reference_definition
+  - List
+  - Thematic_break
+- make execution output streamable
+- make it work on serverless
+- run button
+- run all
 
 rune
 - train mnist

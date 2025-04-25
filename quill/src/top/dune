@@ -1,13 +1,17 @@
 (library
  (name quill_top)
  (public_name quill.top)
- (modes byte)
- (libraries
-  unix
-  compiler-libs.toplevel
-  ndarray
-  ndarray_cv
-  ndarray_io
-  ndarray_datasets
-  hugin
-  rune))
+ (modules quill_top)
+ (libraries compiler-libs.bytecomp compiler-libs.toplevel))
+
+(library
+ (name quill_top_unix)
+ (public_name quill.top-unix)
+ (modules quill_top_unix)
+ (libraries quill_top unix))
+
+(library
+ (name quill_top_js)
+ (public_name quill.top-js)
+ (modules quill_top_js)
+ (libraries quill_top js_of_ocaml js_of_ocaml-compiler))

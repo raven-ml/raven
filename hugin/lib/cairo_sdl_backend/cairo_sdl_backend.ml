@@ -73,3 +73,25 @@ let save ?dpi ?(format = "png") figure filename _canvas =
         format);
 
   Cairo.Surface.finish surface
+
+let save_to_buffer ?(format = "png") figure =
+  if format <> "png" then failwith "Only PNG format is supported";
+  let target_width = figure.Figure.width in
+  let target_height = figure.Figure.height in
+  let surface = Cairo.Image.(create ARGB32 ~w:target_width ~h:target_height) in
+  let cr = Cairo.create surface in
+  Cairo.set_source_rgb cr 1.0 1.0 1.0;
+  Cairo.paint cr;
+  Figure_renderer.render_figure cr (float target_width) (float target_height)
+    figure;
+  let buf = Buffer.create 1024 in
+  let write_func s = Buffer.add_string buf s in
+  (match String.lowercase_ascii format with
+  | "png" -> Cairo.PNG.write_to_stream surface write_func
+  | _ ->
+      Printf.eprintf
+        "Warning: Saving format '%s' not supported. Only PNG is implemented.\n\
+         %!"
+        format);
+  Cairo.Surface.finish surface;
+  Buffer.contents buf

@@ -6,12 +6,7 @@ let render ~(files : string list) =
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Quill</title>
-  <style>
-    body { font-family: sans-serif; padding: 2em; }
-    li { margin-bottom: 0.5em; }
-    a { text-decoration: none; color: blue; }
-    a:hover { text-decoration: underline; }
-  </style>
+  <link rel="stylesheet" href="/asset/styles.css">
 </head>
 
 <body>

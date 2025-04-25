@@ -1,0 +1,17 @@
+body {
+  font-family: sans-serif;
+  padding: 2em;
+}
+
+li {
+  margin-bottom: 0.5em;
+}
+
+a {
+  text-decoration: none;
+  color: blue;
+}
+
+a:hover {
+  text-decoration: underline;
+}

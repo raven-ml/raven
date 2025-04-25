@@ -1,0 +1,6 @@
+(library
+ (name quill_api)
+ (public_name quill.api)
+ (libraries yojson ppx_deriving_yojson.runtime)
+ (preprocess
+  (pps ppx_deriving_yojson)))
