@@ -5,8 +5,9 @@ let broadcast_to desc target_shape =
   let orig_ndim = Array.length desc.shape in
 
   if ndim < orig_ndim then
-    failwith
-      (Format.asprintf "Cannot broadcast shape %a to fewer dimensions (%a)"
+    invalid_arg
+      (Format.asprintf
+         "broadcast_to: cannot broadcast shape %a to fewer dimensions (%a)"
          pp_int_array desc.shape pp_int_array target_shape);
 
   let diff = ndim - orig_ndim in
@@ -24,10 +25,11 @@ let broadcast_to desc target_shape =
       if orig_dim = target_dim then new_strides.(i) <- desc.strides.(orig_i)
       else if orig_dim = 1 && target_dim >= 0 then new_strides.(i) <- 0
       else
-        failwith
+        invalid_arg
           (Format.asprintf
-             "Shapes %a and %a are not compatible for broadcasting at \
-              dimension %d (original size %d vs target size %d)"
+             "broadcast_to: shapes %a and %a are not compatible for \
+              broadcasting at dimension %d (original size %d vs target size \
+              %d)"
              pp_int_array desc.shape pp_int_array target_shape i orig_dim
              target_dim)
   done;

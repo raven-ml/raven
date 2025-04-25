@@ -853,36 +853,40 @@ val set_slice :
 val flatten : ('a, 'b) t -> ('a, 'b) t
 (** [flatten t].
 
-    Return a 1-D view of [t] by collapsing all dimensions into one, sharing the
-    underlying buffer. Does not allocate or copy data.
+    Return a 1-D tensor that is a copy of [t] with all dimensions collapsed into
+    one. Always allocates new memory and copies the data.
 
     {2 Parameters}
     - [t]: input tensor
 
     {2 Returns}
-    - a 1-D tensor view of [t]
+    - a new 1-D tensor with the same data as [t], but flattened
 
     {2 Examples}
     {[
       let a = create float32 [|2;3|] [|1.;2.;3.;4.;5.;6.|] in
       let b = flatten a in
-      (* b = [|1.;2.;3.;4.;5.;6.|] *)
+      (* b is a new tensor [|1.;2.;3.;4.;5.;6.|] *)
     ]} *)
 
 val ravel : ('a, 'b) t -> ('a, 'b) t
 (** [ravel t].
 
-    Alias for [flatten t]; returns a 1-D view of [t] sharing the same data.
+    Return a 1-D tensor that is a view of [t] if [t] is C-contiguous, otherwise
+    a copy. If [t] is C-contiguous, shares the underlying buffer; otherwise,
+    allocates new memory.
 
     {2 Parameters}
     - [t]: input tensor
 
     {2 Returns}
-    - a 1-D tensor view of [t]
+    - a 1-D tensor representing the flattened view or copy of [t]
 
     {2 Examples}
     {[
-      let b = ravel a (* equivalent to flatten a *)
+      let a = create float32 [|2;3|] [|1.;2.;3.;4.;5.;6.|] in
+      let b = ravel a in
+      (* if a is C-contiguous, b is a view; else, b is a copy *)
     ]} *)
 
 val reshape : int array -> ('a, 'b) t -> ('a, 'b) t
@@ -3154,21 +3158,21 @@ val nonzero : ('a, 'b) t -> (int64, int64_elt) t
 val rand : (float, 'b) dtype -> ?seed:int -> int array -> (float, 'b) t
 (** [rand dtype ?seed shape].
 
-      Generate a tensor of the given [shape] with random values sampled uniformly
-      from [0., 1.) of the specified floating-point [dtype].
+    Generate a tensor of the given [shape] with random values sampled uniformly
+    from \[0., 1.) of the specified floating-point [dtype].
 
-      {2 Parameters}
-      - [dtype]: floating-point dtype (Float32 or Float64)
-      - [seed]: optional random seed; default uses system entropy
-      - [shape]: array of dimensions for output tensor
+    {2 Parameters}
+    - [dtype]: floating-point dtype (Float32 or Float64)
+    - [seed]: optional random seed; default uses system entropy
+    - [shape]: array of dimensions for output tensor
 
-      {2 Returns}
-      - a new tensor of shape [shape] and dtype [dtype] with uniform random values
+    {2 Returns}
+    - a new tensor of shape [shape] and dtype [dtype] with uniform random values
 
-      {2 Examples}
-      {[
-        let a = rand Float32 [|2;3|] in
-      ]} *)
+    {2 Examples}
+    {[
+      let a = rand Float32 [|2;3|] in
+    ]} *)
 
 val randn : (float, 'b) dtype -> ?seed:int -> int array -> (float, 'b) t
 (** [randn dtype ?seed shape].

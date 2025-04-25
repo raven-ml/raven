@@ -269,7 +269,7 @@ module Make (B : Backend_intf.S) = struct
     let b_op = B.view b_op_desc b in
     let cond = B.empty context uint8 out_shape in
     B.less context a_op b_op cond;
-    B.where context cond b_op a_op a;
+    B.where context cond a_op b_op a;
     a
 
   let minimum_scalar context a value =
@@ -527,9 +527,28 @@ module Make (B : Backend_intf.S) = struct
     let mask_desc = B.descriptor mask in
     let a_desc = B.descriptor a in
     let b_desc = B.descriptor b in
-    let shape1 = broadcast_shapes (shape mask_desc) (shape a_desc) in
-    let out_shape = broadcast_shapes shape1 (shape b_desc) in
-    let mask_op = B.view (broadcast_to mask_desc out_shape) mask in
+    (* Compute output shape by broadcasting mask, a, and b shapes *)
+    let out_shape =
+      broadcast_shapes (shape mask_desc)
+        (broadcast_shapes (shape a_desc) (shape b_desc))
+    in
+    let out_ndim = Array.length out_shape in
+    let mask_shape = shape mask_desc in
+    let mask_ndim = Array.length mask_shape in
+    (* Prepare mask by adding dimensions on the right if needed *)
+    let mask_op =
+      if mask_ndim < out_ndim then
+        (* Add ones on the right to match out_shape's dimensions *)
+        let new_mask_shape =
+          Array.append mask_shape (Array.make (out_ndim - mask_ndim) 1)
+        in
+        let mask_reshaped = Transform.reshape context new_mask_shape mask in
+        B.view
+          (broadcast_to (B.descriptor mask_reshaped) out_shape)
+          mask_reshaped
+      else B.view (broadcast_to mask_desc out_shape) mask
+    in
+    (* Broadcast a and b to out_shape *)
     let a_op = B.view (broadcast_to a_desc out_shape) a in
     let b_op = B.view (broadcast_to b_desc out_shape) b in
     let out = B.empty context (dtype a_desc) out_shape in
@@ -537,10 +556,43 @@ module Make (B : Backend_intf.S) = struct
     out
 
   let nonzero context a =
-    let desc = B.descriptor a in
-    let out_shape = Array.init (Array.length (shape desc)) Fun.id in
+    (* Extract tensor properties *)
+    let desc_a = B.descriptor a in
+    let shape_a = shape desc_a in
+    let ndim = Array.length shape_a in
+    let total = size desc_a in
+    let buf_a = B.buffer a in
+    let off_a = offset desc_a in
+    let dtype_a = dtype desc_a in
+    let zero_val = zero dtype_a in
+
+    (* First pass: count nonzero elements *)
+    let count = ref 0 in
+    for k = 0 to total - 1 do
+      let v = Bigarray.Array1.unsafe_get buf_a (off_a + k) in
+      if v <> zero_val then incr count
+    done;
+    let m = !count in
+
+    (* Create output tensor with shape (ndim, m) *)
+    let out_shape = [| ndim; m |] in
     let out = B.empty context int64 out_shape in
-    B.nonzero context a out;
+    let desc_out = B.descriptor out in
+    let buf_out = B.buffer out in
+    let off_out = offset desc_out in
+
+    (* Second pass: fill output with indices *)
+    let count = ref 0 in
+    for k = 0 to total - 1 do
+      let v = Bigarray.Array1.unsafe_get buf_a (off_a + k) in
+      if v <> zero_val then (
+        let idxs = linear_to_md_c_contig k shape_a in
+        for axis = 0 to ndim - 1 do
+          let out_lin = off_out + (axis * m) + !count in
+          Bigarray.Array1.unsafe_set buf_out out_lin (Int64.of_int idxs.(axis))
+        done;
+        incr count)
+    done;
     out
 
   let sum context ?axes ?(keepdims = false) t =
@@ -715,6 +767,7 @@ module Make (B : Backend_intf.S) = struct
     let a_desc = B.descriptor a in
     let b_desc = B.descriptor b in
     if shape a_desc <> shape b_desc then false
+    else if size a_desc = 0 then true
     else
       let eq = equal context a b in
       let min_eq = min context eq in
@@ -782,8 +835,17 @@ module Make (B : Backend_intf.S) = struct
     if axis < 0 || axis >= ndim then invalid_arg "argmax: axis out of bounds";
     (* output drops that dimension *)
     let out_shape =
-      Array.init ndim (fun i -> if i = axis then 1 else d.shape.(i)) |> fun a ->
-      if Array.for_all (( = ) 1) a then [||] else a
+      let new_ndim = ndim - 1 in
+      if new_ndim = 0 then [||]
+      else
+        let out = Array.make new_ndim 0 in
+        let j = ref 0 in
+        for i = 0 to ndim - 1 do
+          if i <> axis then (
+            out.(!j) <- d.shape.(i);
+            incr j)
+        done;
+        out
     in
     let out = B.empty context Int64 out_shape in
     B.argmax context ~axis t out;
@@ -795,8 +857,17 @@ module Make (B : Backend_intf.S) = struct
     let axis = if axis < 0 then ndim + axis else axis in
     if axis < 0 || axis >= ndim then invalid_arg "argmin: axis out of bounds";
     let out_shape =
-      Array.init ndim (fun i -> if i = axis then 1 else d.shape.(i)) |> fun a ->
-      if Array.for_all (( = ) 1) a then [||] else a
+      let new_ndim = ndim - 1 in
+      if new_ndim = 0 then [||]
+      else
+        let out = Array.make new_ndim 0 in
+        let j = ref 0 in
+        for i = 0 to ndim - 1 do
+          if i <> axis then (
+            out.(!j) <- d.shape.(i);
+            incr j)
+        done;
+        out
     in
     let out = B.empty context Int64 out_shape in
     B.argmin context ~axis t out;

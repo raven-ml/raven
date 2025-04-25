@@ -130,14 +130,17 @@ let is_scalar desc =
 
 let linear_to_md_c_contig k shape =
   let n = Array.length shape in
-  let md_index = Array.make n 0 in
-  let temp = ref k in
-  for i = n - 1 downto 1 do
-    md_index.(i) <- !temp mod shape.(i);
-    temp := !temp / shape.(i)
-  done;
-  md_index.(0) <- !temp;
-  md_index
+  if n = 0 then
+    if k = 0 then [||] else invalid_arg "linear index out of bounds for scalar"
+  else
+    let md_index = Array.make n 0 in
+    let temp = ref k in
+    for i = n - 1 downto 1 do
+      md_index.(i) <- !temp mod shape.(i);
+      temp := !temp / shape.(i)
+    done;
+    md_index.(0) <- !temp;
+    md_index
 
 let md_to_linear md_index strides =
   let n = Array.length md_index in
@@ -328,9 +331,14 @@ let broadcast_shapes shape1 shape2 =
   let ndim1 = Array.length shape1 in
   let ndim2 = Array.length shape2 in
   let max_ndim = max ndim1 ndim2 in
+
+  (* Pad shapes with ones on the left by adjusting indices *)
   let padded_shape1 = Array.make max_ndim 1 in
   let padded_shape2 = Array.make max_ndim 1 in
+
+  (* Copy shape1 into padded_shape1, aligning from the right *)
   Array.blit shape1 0 padded_shape1 (max_ndim - ndim1) ndim1;
+  (* Copy shape2 into padded_shape2, aligning from the right *)
   Array.blit shape2 0 padded_shape2 (max_ndim - ndim2) ndim2;
 
   let out_shape = Array.make max_ndim 0 in
@@ -342,7 +350,8 @@ let broadcast_shapes shape1 shape2 =
     else if d2 = 1 then out_shape.(i) <- d1
     else
       invalid_arg
-        (Format.asprintf "Shapes %a and %a cannot be broadcast together"
-           pp_int_array padded_shape1 pp_int_array padded_shape2)
+        (Format.asprintf
+           "broadcast_shapes: shapes %a and %a cannot be broadcast together"
+           pp_int_array shape1 pp_int_array shape2)
   done;
   out_shape

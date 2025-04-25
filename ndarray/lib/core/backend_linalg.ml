@@ -27,7 +27,7 @@ module Make (B : Backend_intf.S) = struct
       if a_is_1d then Transform.reshape context [| 1; a_shape.(0) |] a else a
     in
     let b_op =
-      if b_is_1d then Transform.reshape context [| b_shape.(0); 1 |] a else b
+      if b_is_1d then Transform.reshape context [| b_shape.(0); 1 |] b else b
     in
 
     let a_op_shape = shape (B.descriptor a_op) in
@@ -321,7 +321,7 @@ module Make (B : Backend_intf.S) = struct
     let d = B.descriptor t in
     let shape = d.shape in
     if Array.length shape <> 2 || shape.(0) <> shape.(1) then
-      invalid_arg "inv: input must be square 2D"
+      invalid_arg "inv: input must be a square matrix"
     else
       let n = shape.(0) in
       let buf = B.buffer t in
@@ -349,7 +349,7 @@ module Make (B : Backend_intf.S) = struct
             (0.0, k)
             (Array.init (n - k) (fun i -> i + k))
         in
-        if pivot = 0. then invalid_arg "inv: singular matrix";
+        if pivot = 0. then invalid_arg "inv: matrix is singular";
         (* swap rows k and piv_row in both a_work and inv_work *)
         if piv_row <> k then (
           let tmp = a_work.(k) in
@@ -399,7 +399,7 @@ module Make (B : Backend_intf.S) = struct
     let ad = B.descriptor a in
     let shape = ad.shape in
     if Array.length shape <> 2 || shape.(0) <> shape.(1) then
-      invalid_arg "inv: input must be square 2D";
+      invalid_arg "inv: input must be a square matrix";
     let out = zeros context (dtype ad) shape in
     inv_inner context a out;
     out
@@ -440,17 +440,15 @@ module Make (B : Backend_intf.S) = struct
   let matmul_local a b =
     let n = Array.length a in
     let c = Array.init n (fun _ -> Array.make n 0.) in
-    let pool = Parallel.get_or_setup_pool () in
-    Parallel.parallel_for pool 0 (n - 1) (fun i_start i_end ->
-        for i = i_start to i_end do
-          for j = 0 to n - 1 do
-            let sum = ref 0. in
-            for k = 0 to n - 1 do
-              sum := !sum +. (a.(i).(k) *. b.(k).(j))
-            done;
-            c.(i).(j) <- !sum
-          done
-        done);
+    for i = 0 to n - 1 do
+      for j = 0 to n - 1 do
+        let sum = ref 0. in
+        for k = 0 to n - 1 do
+          sum := !sum +. (a.(i).(k) *. b.(k).(j))
+        done;
+        c.(i).(j) <- !sum
+      done
+    done;
     c
 
   (* Eigen-decomposition for general (possibly non-symmetric) via unshifted
@@ -460,7 +458,7 @@ module Make (B : Backend_intf.S) = struct
     let desc = B.descriptor t in
     let shape = desc.shape in
     if Array.length shape <> 2 || shape.(0) <> shape.(1) then
-      invalid_arg "eig: input must be square 2D";
+      invalid_arg "eig: input must be a square matrix";
     let n = shape.(0) in
     (* Load into local 2D array *)
     let a_mat =
@@ -508,7 +506,7 @@ module Make (B : Backend_intf.S) = struct
     let ad = B.descriptor a in
     let shape = ad.shape in
     if Array.length shape <> 2 || shape.(0) <> shape.(1) then
-      invalid_arg "eig: input must be square 2D";
+      invalid_arg "eig: input must be a square matrix";
     let n = shape.(0) in
     let w = B.empty context ad.dtype [| n |] in
     let vr = B.empty context ad.dtype [| n; n |] in
@@ -521,7 +519,7 @@ module Make (B : Backend_intf.S) = struct
     let desc = B.descriptor t in
     let shape = desc.shape in
     if Array.length shape <> 2 || shape.(0) <> shape.(1) then
-      invalid_arg "eigh: input must be square 2D";
+      invalid_arg "eigh: input must be a square matrix";
     let n = shape.(0) in
     (* Load symmetric matrix and init V=I *)
     let a_mat =
@@ -591,7 +589,7 @@ module Make (B : Backend_intf.S) = struct
     let ad = B.descriptor a in
     let shape = ad.shape in
     if Array.length shape <> 2 || shape.(0) <> shape.(1) then
-      invalid_arg "eigh: input must be square 2D";
+      invalid_arg "eigh: input must be a square matrix";
     let n = shape.(0) in
     let w = B.empty context ad.dtype [| n |] in
     let vr = B.empty context ad.dtype [| n; n |] in
@@ -635,7 +633,7 @@ module Make (B : Backend_intf.S) = struct
     let w_desc = B.descriptor w_full in
     let v_full = B.empty context Float64 [| n; n |] in
     let v_desc = B.descriptor v_full in
-    eig_inner ata w_full v_full;
+    eigh_inner context ata w_full v_full;
 
     (* 5) singular values = sqrt(eigenvalues) *)
     let s_buf = B.buffer s in
@@ -727,25 +725,66 @@ module Make (B : Backend_intf.S) = struct
 
   let solve context (a : (float, _) B.b_t) (b : (float, _) B.b_t) =
     let ad = B.descriptor a in
+    let bd = B.descriptor b in
     let shape_a = ad.shape in
+    let shape_b = shape bd in
     if Array.length shape_a <> 2 then invalid_arg "solve: A must be 2D";
+    let b_op =
+      if Array.length shape_b = 1 then
+        Transform.reshape context [| shape_b.(0); 1 |] b
+      else b
+    in
     let u, s, v = svd context a in
-    let sd = B.descriptor s in
-    let r = sd.shape.(0) in
     let u_t = Transform.transpose context ~axes:[| 1; 0 |] u in
-    let c = matmul context u_t b in
-    let dt = dtype sd in
+    let c = matmul context u_t b_op in
+    let dt = dtype (B.descriptor s) in
+    let r = (shape (B.descriptor s)).(0) in
     let ones = B.empty context dt [| r |] in
     B.fill context (one dt) ones;
     let s_inv = B.empty context dt [| r |] in
     B.div context ones s s_inv;
     let c_desc = B.descriptor c in
-    let c_shape = c_desc.shape in
-    let s_inv_b = Transform.broadcast_to context c_shape s_inv in
+    let c_shape = shape c_desc in
+    let k = c_shape.(1) in
     let c_scaled = B.empty context dt c_shape in
-    B.mul context s_inv_b c c_scaled;
+    let c_buf = B.buffer c in
+    let c_offset = c_desc.offset in
+    let c_strides = c_desc.strides in
+    let s_inv_buf = B.buffer s_inv in
+    let s_inv_desc = B.descriptor s_inv in
+    let s_inv_offset = s_inv_desc.offset in
+    let s_inv_strides = s_inv_desc.strides in
+    let c_scaled_buf = B.buffer c_scaled in
+    let c_scaled_desc = B.descriptor c_scaled in
+    let c_scaled_offset = c_scaled_desc.offset in
+    let c_scaled_strides = c_scaled_desc.strides in
+    for i = 0 to r - 1 do
+      let s_inv_i =
+        Bigarray.Array1.unsafe_get s_inv_buf
+          (s_inv_offset + (i * s_inv_strides.(0)))
+      in
+      for j = 0 to k - 1 do
+        let c_ij =
+          Bigarray.Array1.unsafe_get c_buf
+            (c_offset + (i * c_strides.(0)) + (j * c_strides.(1)))
+        in
+        let value = s_inv_i *. c_ij in
+        Bigarray.Array1.unsafe_set c_scaled_buf
+          (c_scaled_offset
+          + (i * c_scaled_strides.(0))
+          + (j * c_scaled_strides.(1)))
+          value
+      done
+    done;
     let v_desc = B.descriptor v in
     let n_v = v_desc.shape.(0) in
     let v_red = Transform.slice context [| 0; 0 |] [| n_v; r |] v in
-    matmul context v_red c_scaled
+    let x = matmul context v_red c_scaled in
+    if Array.length shape_b = 1 then
+      let x_desc = B.descriptor x in
+      let x_shape = shape x_desc in
+      if Array.length x_shape = 2 && x_shape.(1) = 1 then
+        Transform.reshape context [| x_shape.(0) |] x
+      else x
+    else x
 end

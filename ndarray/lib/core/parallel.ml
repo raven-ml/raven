@@ -89,6 +89,7 @@ let parallel_execute pool tasks =
 let parallel_for pool start end_ compute_chunk =
   let total_iterations = end_ - start + 1 in
   if total_iterations <= 0 then ()
+  else if total_iterations <= 1 then compute_chunk start (start + 1)
   else
     let total_domains = get_num_domains pool in
     let chunk_size = total_iterations / total_domains in

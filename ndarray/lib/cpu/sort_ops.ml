@@ -114,11 +114,7 @@ let arg_extreme ~is_max _context ~axis (t : ('a, 'b) t)
         base_offset_of_slice ~axis ~shape ~strides:strides_t ~offset:off_t
           slice_idx
       in
-      let out_lin =
-        base_offset_of_slice ~axis ~shape ~strides:strides_o ~offset:off_o
-          slice_idx
-      in
-
+      let out_lin = off_o + md_to_linear slice_idx strides_o in
       let best_j = ref 0 in
       let best_v = ref (Array1.unsafe_get buf_t base_i) in
       for j = 1 to len - 1 do

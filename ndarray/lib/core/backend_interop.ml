@@ -23,22 +23,27 @@ module Make (B : Backend_intf.S) = struct
     let shape = desc.shape in
     let dtype = desc.dtype in
     let kind = Buffer.kind_of_dtype dtype in
-    let size = Array.fold_left ( * ) 1 desc.shape in
+    let total_size = Array.fold_left ( * ) 1 shape in
+    let expected_strides = compute_c_strides shape in
 
-    let dest_genarray = Genarray.create kind c_layout shape in
-    let dest_buffer = reshape_1 dest_genarray size in
-
-    let flat_idx = ref 0 in
-    iter_multi_indices shape (fun md_index ->
-        let src_linear_offset =
-          md_to_linear md_index desc.strides + desc.offset
-        in
-        let value = Bigarray.Array1.unsafe_get src_buffer src_linear_offset in
-        (* Since dest is C-contiguous, the flat_idx corresponds to the C-order
-           linear index *)
-        Bigarray.Array1.unsafe_set dest_buffer !flat_idx value;
-        incr flat_idx);
-    dest_genarray
+    if desc.strides = expected_strides then
+      let dest_genarray = Bigarray.genarray_of_array1 src_buffer in
+      reshape dest_genarray shape
+    else
+      let dest_genarray =
+        Bigarray.Genarray.create kind Bigarray.c_layout shape
+      in
+      let dest_buffer = reshape_1 dest_genarray total_size in
+      (* Tensor is not C-contiguous; copy element by element *)
+      let flat_idx = ref 0 in
+      iter_multi_indices shape (fun md_index ->
+          let src_linear_offset =
+            md_to_linear md_index desc.strides + desc.offset
+          in
+          let value = Bigarray.Array1.unsafe_get src_buffer src_linear_offset in
+          Bigarray.Array1.unsafe_set dest_buffer !flat_idx value;
+          incr flat_idx);
+      dest_genarray
 
   let of_bigarray context ba =
     let size = Array.fold_left ( * ) 1 (Genarray.dims ba) in

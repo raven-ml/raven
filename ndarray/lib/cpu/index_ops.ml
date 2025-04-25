@@ -11,35 +11,8 @@ let where (type a b) context (cond : (int, uint8_elt) t) (x : (a, b) t)
   let x_shape = shape x in
   let y_shape = shape y in
 
-  let broadcast_shape s1 s2 =
-    let n1 = Array.length s1 in
-    let n2 = Array.length s2 in
-    let n = max n1 n2 in
-    let res = Array.make n 0 in
-    try
-      for i = 0 to n - 1 do
-        let i1 = n1 - 1 - i in
-        let i2 = n2 - 1 - i in
-        let d1 = if i1 >= 0 then s1.(i1) else 1 in
-        let d2 = if i2 >= 0 then s2.(i2) else 1 in
-        if d1 <> d2 && d1 <> 1 && d2 <> 1 then
-          raise (Invalid_argument "where: shapes cannot be broadcast together")
-        else res.(n - 1 - i) <- max d1 d2
-      done;
-      res
-    with Invalid_argument msg ->
-      let shape_to_string s =
-        "["
-        ^ String.concat "; " (List.map string_of_int (Array.to_list s))
-        ^ "]"
-      in
-      invalid_arg
-        (Printf.sprintf "%s (%s vs %s)" msg (shape_to_string s1)
-           (shape_to_string s2))
-  in
-
   let out_shape =
-    try broadcast_shape cond_shape (broadcast_shape x_shape y_shape)
+    try broadcast_shapes cond_shape (broadcast_shapes x_shape y_shape)
     with Invalid_argument msg -> invalid_arg msg
   in
 
@@ -110,36 +83,3 @@ let where (type a b) context (cond : (int, uint8_elt) t) (x : (a, b) t)
           for i = idx_start to idx_end do
             process_element i
           done)
-
-let nonzero _context (t : ('a, 'b) t) (out : (int64, Bigarray.int64_elt) t) =
-  let dims = shape t in
-  let ndim = Array.length dims in
-  let total = size t in
-  let buf_in = buffer t in
-  let buf_out = buffer out in
-  let off_in = offset t in
-
-  (* output descriptor strata for indexing *)
-  let out_desc = descriptor out in
-  let strides_o = out_desc.strides in
-  let off_out = out_desc.offset in
-
-  let count = ref 0 in
-
-  for k = 0 to total - 1 do
-    let v = Array1.unsafe_get buf_in (off_in + k) in
-    if v <> zero (dtype t) then (
-      (* compute multi-index in C-order *)
-      let idxs = linear_to_md_c_contig k dims in
-      (* scatter into out[:, count] *)
-      for axis = 0 to ndim - 1 do
-        let out_lin =
-          off_out
-          + (idxs.(axis) * strides_o.(axis))
-          + (!count * strides_o.(axis + 1))
-          (* next dim *)
-        in
-        Array1.unsafe_set buf_out out_lin (Int64.of_int idxs.(axis))
-      done;
-      incr count)
-  done

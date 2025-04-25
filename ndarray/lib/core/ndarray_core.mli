@@ -365,9 +365,6 @@ module type Backend_intf = sig
     ('a, 'b) b_t ->
     unit
 
-  val nonzero :
-    context -> ('a, 'b) b_t -> (int64, Bigarray.int64_elt) b_t -> unit
-
   (** Sorting & selection kernels **)
 
   val sort : context -> axis:int -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit

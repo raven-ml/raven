@@ -81,7 +81,6 @@ module B = struct
   (* Indexing *)
 
   let where context cond t1 t2 out = Index_ops.where context cond t1 t2 out
-  let nonzero context t out = Index_ops.nonzero context t out
 
   (* Sorting & selection *)
 

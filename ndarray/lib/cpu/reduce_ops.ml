@@ -22,14 +22,23 @@ let reduction_output_shape (in_shape : int array) (axes : int list)
 let initial_input_md_index (out_md_index : int array) (axes : int list)
     (rank : int) : int array =
   let in_md_index = Array.make rank 0 in
-  let out_idx_pos = ref 0 in
-  for d = 0 to rank - 1 do
-    if List.mem d axes then in_md_index.(d) <- 0
-    else (
-      in_md_index.(d) <- out_md_index.(!out_idx_pos);
-      incr out_idx_pos)
-  done;
-  in_md_index
+  if Array.length out_md_index = rank then (
+    (* keepdims = true *)
+    for d = 0 to rank - 1 do
+      if List.mem d axes then in_md_index.(d) <- 0
+      else in_md_index.(d) <- out_md_index.(d)
+    done;
+    in_md_index)
+  else
+    (* keepdims = false *)
+    let non_reduced_pos = ref 0 in
+    for d = 0 to rank - 1 do
+      if List.mem d axes then in_md_index.(d) <- 0
+      else (
+        in_md_index.(d) <- out_md_index.(!non_reduced_pos);
+        incr non_reduced_pos)
+    done;
+    in_md_index
 
 (* Increments the input multi-dimensional index, primarily along the reduction
    axes. *)
@@ -64,13 +73,13 @@ let add_dtype (type a b) (dtype : (a, b) dtype) (a : a) (b : a) : a =
   | Complex32 -> Complex.add a b
   | Complex64 -> Complex.add a b
 
-let kernel_sum_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
+let kernel_sum_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
     start_out_idx end_out_idx =
   let a_buf = buffer a in
-  let c_buf = buffer c in
+  let out_buf = buffer out in
   let a_shape = shape a in
   let a_strides = strides a in
-  let c_shape = shape c in
+  let out_shape = shape out in
   let rank = Array.length a_shape in
 
   let axes =
@@ -79,8 +88,8 @@ let kernel_sum_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
   in
 
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = linear_to_md_c_contig k c_shape in
-    let current_sum = ref (zero (dtype c)) in
+    let out_md_index = linear_to_md_c_contig k out_shape in
+    let current_sum = ref (zero (dtype out)) in
     let in_md_index = initial_input_md_index out_md_index axes rank in
     let continue_reduction = ref true in
     while !continue_reduction do
@@ -90,7 +99,7 @@ let kernel_sum_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
       continue_reduction :=
         increment_input_md_index_for_reduction in_md_index a_shape axes
     done;
-    Array1.unsafe_set c_buf k !current_sum
+    Array1.unsafe_set out_buf k !current_sum
   done
 
 let kernel_sum_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
@@ -156,12 +165,10 @@ let sum (type a b) context ~axes ~keepdims (a : (a, b) t) (out : (a, b) t) =
       let total_sum_value : a = parallel_sum_all context a in
       let out_buf = buffer out in
       Array1.unsafe_set out_buf (offset out) total_sum_value
-    else
-      let c = zeros (dtype a) out_shape in
-      if num_output_elements > 0 && num_input_elements > 0 then
-        Parallel.parallel_for context.pool 0 (num_output_elements - 1)
-          (fun start_idx end_idx ->
-            kernel_sum_axis a c axes_to_reduce start_idx end_idx)
+    else if num_output_elements > 0 && num_input_elements > 0 then
+      Parallel.parallel_for context.pool 0 (num_output_elements - 1)
+        (fun start_idx end_idx ->
+          kernel_sum_axis a out axes_to_reduce start_idx end_idx)
 
 (* prod *)
 
@@ -179,13 +186,13 @@ let mul_dtype (type a b) (dtype : (a, b) dtype) (a : a) (b : a) : a =
   | Complex32 -> Complex.mul a b
   | Complex64 -> Complex.mul a b
 
-let kernel_prod_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
-    start_out_idx end_out_idx =
+let kernel_prod_axis (type a b) (a : (a, b) t) (out : (a, b) t)
+    (axes : int list) start_out_idx end_out_idx =
   let a_buf = buffer a in
-  let c_buf = buffer c in
+  let out_buf = buffer out in
   let a_shape = shape a in
   let a_strides = strides a in
-  let c_shape = shape c in
+  let out_shape = shape out in
   let rank = Array.length a_shape in
 
   let axes =
@@ -194,8 +201,8 @@ let kernel_prod_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
   in
 
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = linear_to_md_c_contig k c_shape in
-    let current_prod = ref (one (dtype c)) in
+    let out_md_index = linear_to_md_c_contig k out_shape in
+    let current_prod = ref (one (dtype out)) in
     let in_md_index = initial_input_md_index out_md_index axes rank in
     let continue_reduction = ref true in
     while !continue_reduction do
@@ -205,7 +212,7 @@ let kernel_prod_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
       continue_reduction :=
         increment_input_md_index_for_reduction in_md_index a_shape axes
     done;
-    Array1.unsafe_set c_buf k !current_prod
+    Array1.unsafe_set out_buf k !current_prod
   done
 
 let kernel_prod_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
@@ -272,13 +279,12 @@ let prod (type a b) context ~axes ~keepdims (a : (a, b) t) (out : (a, b) t) =
         else parallel_prod_all context a
       in
       fill value out
-    else
-      let c = zeros (dtype a) out_shape in
-      if num_input_elements = 0 then fill (one (dtype a)) c
-      else if num_output_elements > 0 then
+    else if num_output_elements > 0 && num_input_elements > 0 then
+      if num_input_elements = 0 then fill (one (dtype a)) out
+      else if num_output_elements > 0 && num_input_elements > 0 then
         Parallel.parallel_for context.pool 0 (num_output_elements - 1)
           (fun start_idx end_idx ->
-            kernel_prod_axis a c axes_to_reduce start_idx end_idx)
+            kernel_prod_axis a out axes_to_reduce start_idx end_idx)
 
 (* min *)
 
@@ -304,13 +310,13 @@ let min_dtype (type a b) (dtype : (a, b) dtype) (a : a) (b : a) : a =
       else if a.im < b.im then a
       else b
 
-let kernel_min_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
+let kernel_min_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
     start_out_idx end_out_idx =
   let a_buf = buffer a in
-  let c_buf = buffer c in
+  let out_buf = buffer out in
   let a_shape = shape a in
   let a_strides = strides a in
-  let c_shape = shape c in
+  let out_shape = shape out in
   let rank = Array.length a_shape in
   let axes =
     List.sort_uniq compare
@@ -318,7 +324,7 @@ let kernel_min_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
   in
 
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = linear_to_md_c_contig k c_shape in
+    let out_md_index = linear_to_md_c_contig k out_shape in
     let current_min = ref None in
     let is_first = ref true in
     let in_md_index = initial_input_md_index out_md_index axes rank in
@@ -338,7 +344,7 @@ let kernel_min_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
     done;
 
     match !current_min with
-    | Some final_val -> Array1.unsafe_set c_buf k final_val
+    | Some final_val -> Array1.unsafe_set out_buf k final_val
     | None ->
         invalid_arg
           "kernel_min_axis: Reduction over zero elements resulted in no value."
@@ -439,11 +445,10 @@ let min (type a b) context ~axes ~keepdims (a : (a, b) t) (out : (a, b) t) =
     if num_output_elements = 1 then
       let total_min_value : a = parallel_min_all context a in
       fill total_min_value out
-    else
-      let c = zeros (dtype a) out_shape in
+    else if num_output_elements > 0 && num_input_elements > 0 then
       Parallel.parallel_for context.pool 0 (num_output_elements - 1)
         (fun start_idx end_idx ->
-          kernel_min_axis a c axes_to_reduce start_idx end_idx)
+          kernel_min_axis a out axes_to_reduce start_idx end_idx)
 
 (* max *)
 
@@ -483,13 +488,13 @@ let max_dtype (type a b) (dtype : (a, b) dtype) (a : a) (b : a) : a =
       else if a.im > b.im then a
       else b
 
-let kernel_max_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
+let kernel_max_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
     start_out_idx end_out_idx =
   let a_buf = buffer a in
-  let c_buf = buffer c in
+  let out_buf = buffer out in
   let a_shape = shape a in
   let a_strides = strides a in
-  let c_shape = shape c in
+  let out_shape = shape out in
   let rank = Array.length a_shape in
   let axes =
     List.sort_uniq compare
@@ -498,7 +503,7 @@ let kernel_max_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
   let min_identity_val = min_identity (dtype a) in
 
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = linear_to_md_c_contig k c_shape in
+    let out_md_index = linear_to_md_c_contig k out_shape in
     let current_max = ref min_identity_val in
     let is_first = ref true in
     let in_md_index = initial_input_md_index out_md_index axes rank in
@@ -520,7 +525,7 @@ let kernel_max_axis (type a b) (a : (a, b) t) (c : (a, b) t) (axes : int list)
     if not !has_value then
       invalid_arg
         "kernel_max_axis: Reduction over zero elements resulted in no value."
-    else Array1.unsafe_set c_buf k !current_max
+    else Array1.unsafe_set out_buf k !current_max
   done
 
 let kernel_max_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
@@ -617,11 +622,10 @@ let max (type a b) context ~axes ~keepdims (a : (a, b) t) (out : (a, b) t) =
     if num_output_elements = 1 then
       let total_max_value : a = parallel_max_all context a in
       fill total_max_value out
-    else
-      let c = zeros (dtype a) out_shape in
+    else if num_output_elements > 0 && num_input_elements > 0 then
       Parallel.parallel_for context.pool 0 (num_output_elements - 1)
         (fun start_idx end_idx ->
-          kernel_max_axis a c axes_to_reduce start_idx end_idx)
+          kernel_max_axis a out axes_to_reduce start_idx end_idx)
 
 (* var *)
 
@@ -719,13 +723,13 @@ let kernel_sum_sq_count_partial (type a b) (a : (a, b) t)
 
   (!partial_sum, !partial_sum_sq, !count)
 
-let kernel_var_axis (type b) (a : (float, b) t) (c : (float, b) t)
+let kernel_var_axis (type b) (a : (float, b) t) (out : (float, b) t)
     (axes : int list) (ddof : int) start_out_idx end_out_idx =
   let a_buf = buffer a in
-  let c_buf = buffer c in
+  let out_buf = buffer out in
   let a_shape = shape a in
   let a_strides = strides a in
-  let c_shape = shape c in
+  let out_shape = shape out in
   let rank = Array.length a_shape in
   let axes =
     List.sort_uniq compare
@@ -735,7 +739,7 @@ let kernel_var_axis (type b) (a : (float, b) t) (c : (float, b) t)
   let ddof_float = float_of_int ddof in
 
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = linear_to_md_c_contig k c_shape in
+    let out_md_index = linear_to_md_c_contig k out_shape in
     let current_sum = ref (zero (dtype a)) in
     let current_sum_sq = ref (zero (dtype a)) in
     let current_count = ref 0 in
@@ -766,7 +770,7 @@ let kernel_var_axis (type b) (a : (float, b) t) (c : (float, b) t)
         (* Apply Bessel's correction if count > ddof, clamp negative variance *)
         Stdlib.max 0.0 (variance *. (count_float /. adjusted_count_float))
     in
-    Array1.unsafe_set c_buf k final_var
+    Array1.unsafe_set out_buf k final_var
   done
 
 let parallel_var_all (type a b) context (a : (a, b) t) (ddof : int) : float =
@@ -810,7 +814,6 @@ let var (type b) context ~axes ~keepdims ?(ddof : int = 0) (a : (float, b) t)
   let in_shape = shape a in
   let rank = Array.length in_shape in
   let num_input_elements = Array.fold_left ( * ) 1 in_shape in
-  let out_dtype = dtype a in
   let nan_val = Float.nan in
 
   let axes_to_reduce =
@@ -840,8 +843,7 @@ let var (type b) context ~axes ~keepdims ?(ddof : int = 0) (a : (float, b) t)
     else if num_output_elements = 1 then
       let total_var_value : float = parallel_var_all context a ddof in
       fill total_var_value out
-    else
-      let c = zeros out_dtype out_shape in
+    else if num_output_elements > 0 && num_input_elements > 0 then
       Parallel.parallel_for context.pool 0 (num_output_elements - 1)
         (fun start_idx end_idx ->
-          kernel_var_axis a c axes_to_reduce ddof start_idx end_idx)
+          kernel_var_axis a out axes_to_reduce ddof start_idx end_idx)

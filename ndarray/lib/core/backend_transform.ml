@@ -210,10 +210,25 @@ module Make (B : Backend_intf.S) = struct
           contiguous_t
 
   let flatten ctx t =
-    let t_desc = B.descriptor t in
+    let contiguous_copy = B.copy ctx t in
+    let t_desc = B.descriptor contiguous_copy in
     let s = size t_desc in
     let new_shape = if s = 0 then [| 0 |] else [| s |] in
+    let new_strides = compute_c_strides new_shape in
+    B.view
+      {
+        t_desc with
+        shape = new_shape;
+        strides = new_strides;
+        layout = C_contiguous;
+      }
+      contiguous_copy
+
+  let ravel ctx t =
+    let t_desc = B.descriptor t in
     if is_c_contiguous t_desc then
+      let s = size t_desc in
+      let new_shape = if s = 0 then [| 0 |] else [| s |] in
       let new_strides = compute_c_strides new_shape in
       B.view
         {
@@ -225,17 +240,18 @@ module Make (B : Backend_intf.S) = struct
         t
     else
       let contiguous_copy = B.copy ctx t in
+      let copy_desc = B.descriptor contiguous_copy in
+      let s = size copy_desc in
+      let new_shape = if s = 0 then [| 0 |] else [| s |] in
       let new_strides = compute_c_strides new_shape in
       B.view
         {
-          (B.descriptor contiguous_copy) with
+          copy_desc with
           shape = new_shape;
           strides = new_strides;
           layout = C_contiguous;
         }
         contiguous_copy
-
-  let ravel = flatten
 
   (* Circularly roll array elements along a given axis. *)
   let rec roll ctx ?axis shift t =

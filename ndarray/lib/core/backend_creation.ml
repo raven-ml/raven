@@ -325,12 +325,11 @@ module Make (B : Backend_intf.S) = struct
     if n = 0 && Array.length shape > 0 then B.empty context dtype shape
     else
       let host_buffer = Buffer.create_buffer dtype n in
-      let () =
+      let state =
         match seed with
-        | None -> Random.self_init ()
-        | Some seed -> Random.init seed
+        | None -> Random.State.make_self_init ()
+        | Some s -> Random.State.make [| s |]
       in
-      (* Check dtype before generating *)
       let set_val_func =
         match dtype with
         | Float16 | Float32 | Float64 -> fun r -> make_rand_float_value dtype r
@@ -338,7 +337,7 @@ module Make (B : Backend_intf.S) = struct
       in
       if n > 0 then
         for i = 0 to n - 1 do
-          let rand_val = Random.float 1.0 in
+          let rand_val = Random.State.float state 1.0 in
           Bigarray.Array1.unsafe_set host_buffer i (set_val_func rand_val)
         done;
       let strides = compute_c_strides shape in
@@ -353,12 +352,11 @@ module Make (B : Backend_intf.S) = struct
     if n = 0 && Array.length shape > 0 then B.empty context dtype shape
     else
       let host_buffer = Buffer.create_buffer dtype n in
-      let () =
+      let state =
         match seed with
-        | None -> Random.self_init ()
-        | Some seed -> Random.init seed
+        | None -> Random.State.make_self_init ()
+        | Some s -> Random.State.make [| s |]
       in
-      (* Box-Muller transform state *)
       let cache = ref None in
       let random_normal () =
         match !cache with
@@ -366,11 +364,10 @@ module Make (B : Backend_intf.S) = struct
             cache := None;
             z
         | None ->
-            let u1 = ref (Random.float 1.0) in
-            let u2 = ref (Random.float 1.0) in
-            (* Ensure u1 is not zero for log *)
+            let u1 = ref (Random.State.float state 1.0) in
+            let u2 = ref (Random.State.float state 1.0) in
             while !u1 = 0.0 do
-              u1 := Random.float 1.0
+              u1 := Random.State.float state 1.0
             done;
             let r = Stdlib.sqrt (-2. *. Stdlib.log !u1) in
             let theta = 2. *. Float.pi *. !u2 in
@@ -379,7 +376,6 @@ module Make (B : Backend_intf.S) = struct
             cache := Some z1;
             z0
       in
-      (* Check dtype before generating *)
       let set_val_func =
         match dtype with
         | Float16 | Float32 | Float64 -> fun r -> make_rand_float_value dtype r
@@ -403,17 +399,15 @@ module Make (B : Backend_intf.S) = struct
     else
       let host_buffer = Buffer.create_buffer dtype n in
       let actual_high, low_val =
-        match high with
-        | None -> (low, 0 (* If high is None, range is [0, low) *))
-        | Some h -> (h, low)
+        match high with None -> (low, 0) | Some h -> (h, low)
       in
       if low_val >= actual_high then
         failwith "randint: high must be strictly greater than low";
-
-      let () =
-        match seed with None -> Random.self_init () | Some s -> Random.init s
+      let state =
+        match seed with
+        | None -> Random.State.make_self_init ()
+        | Some s -> Random.State.make [| s |]
       in
-
       let fill_random : unit -> a =
         let range_int = actual_high - low_val in
         if range_int <= 0 then failwith "randint: range must be positive";
@@ -421,24 +415,22 @@ module Make (B : Backend_intf.S) = struct
         | Int32 ->
             let low32 = Int32.of_int low_val in
             let range32 = Int32.of_int range_int in
-            fun () -> Int32.add low32 (Random.int32 range32)
+            fun () -> Int32.add low32 (Random.State.int32 state range32)
         | Int64 ->
             let low64 = Int64.of_int low_val in
             let range64 = Int64.of_int range_int in
-            fun () -> Int64.add low64 (Random.int64 range64)
-        | Int8 -> fun () -> Random.int range_int + low_val
-        | Int16 -> fun () -> Random.int range_int + low_val
-        | UInt8 -> fun () -> Random.int range_int + low_val
-        | UInt16 -> fun () -> Random.int range_int + low_val
+            fun () -> Int64.add low64 (Random.State.int64 state range64)
+        | Int8 -> fun () -> Random.State.int state range_int + low_val
+        | Int16 -> fun () -> Random.State.int state range_int + low_val
+        | UInt8 -> fun () -> Random.State.int state range_int + low_val
+        | UInt16 -> fun () -> Random.State.int state range_int + low_val
         | Float16 | Float32 | Float64 | Complex32 | Complex64 ->
             failwith "randint requires an integer dtype"
       in
-
       if n > 0 then
         for i = 0 to n - 1 do
           Bigarray.Array1.unsafe_set host_buffer i (fill_random ())
         done;
-
       let strides = compute_c_strides shape in
       let descriptor =
         { dtype; shape; layout = C_contiguous; strides; offset = 0 }
