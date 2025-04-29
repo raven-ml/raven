@@ -22,7 +22,7 @@ module My_sites = struct
   let cmas =
     [
       lookup_file "ndarray_core.cma";
-      lookup_file "ndarray_cpu.cma";
+      lookup_file "ndarray_native.cma";
       lookup_file "ndarray.cma";
       lookup_file "ndarray_metal.cma";
       lookup_file "bigarray.cma";

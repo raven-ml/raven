@@ -57,6 +57,7 @@ roadmap
 
 refactorings
 - consider having descriptor in Ndarray_core.t instead of backend to simplify code. can we remove descriptor from backend entirely (unlikely)
+- extract automatic device dispatching from run to an ndarray library
 
 improvements
 - implement buffer pool for the metal bindings

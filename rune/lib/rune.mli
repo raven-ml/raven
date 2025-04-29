@@ -63,6 +63,7 @@ val scalar : ('a, 'b) dtype -> 'a -> ('a, 'b, [ `cpu ]) t
 
 type 'dev device
 
+val cpu : [ `cpu ] device
 val device : ('a, 'b, 'dev) t -> 'dev device
 
 val create_on_device :
