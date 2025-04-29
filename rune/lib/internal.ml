@@ -1,4 +1,4 @@
-module Backend_cpu = Ndarray_core.Make (Ndarray_cpu)
+module Backend_cpu = Ndarray_core.Make (Ndarray_native)
 
 type float16_elt = Bigarray.float16_elt
 type float32_elt = Bigarray.float32_elt
@@ -19,6 +19,9 @@ type ('a, 'b, 'c) data =
       -> ('a, 'b, [ `cpu ]) data
 
 type 'dev device = Cpu : Backend_cpu.context -> [ `cpu ] device
+
+let cpu = Cpu (Backend_cpu.create_context ())
+
 type ('a, 'b, 'dev) t = { id : int; data : ('a, 'b, 'dev) data }
 
 type _ Effect.t +=

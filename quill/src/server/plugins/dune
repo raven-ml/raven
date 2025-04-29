@@ -4,7 +4,7 @@
   %{lib:ndarray:ndarray.cmi}
   %{lib-private:ndarray:ndarray.cma}
   %{lib-private:ndarray_core:ndarray_core.cma}
-  %{lib-private:ndarray_cpu:ndarray_cpu.cma}
+  %{lib-private:ndarray_native:ndarray_native.cma}
   ; ndarray-io
   %{lib:ndarray-io:ndarray_io.cmi}
   %{lib-private:ndarray_io:ndarray_io.cma}
@@ -39,7 +39,7 @@
   ndarray.cmi
   ndarray.cma
   ndarray_core.cma
-  ndarray_cpu.cma
+  ndarray_native.cma
   ndarray_io.cmi
   ndarray_io.cma
   ; bigarray.cma
@@ -68,7 +68,7 @@
    (copy %{lib:ndarray:ndarray.cmi} ndarray.cmi)
    (copy %{lib-private:ndarray:ndarray.cma} ndarray.cma)
    (copy %{lib-private:ndarray_core:ndarray_core.cma} ndarray_core.cma)
-   (copy %{lib-private:ndarray_cpu:ndarray_cpu.cma} ndarray_cpu.cma)
+   (copy %{lib-private:ndarray_native:ndarray_native.cma} ndarray_native.cma)
    (copy %{lib:ndarray-io:ndarray_io.cmi} ndarray_io.cmi)
    (copy %{lib-private:ndarray_io:ndarray_io.cma} ndarray_io.cma)
    ;  (copy %{lib:bigarray:bigarray.cma} bigarray.cma)
@@ -113,7 +113,7 @@
   ndarray.cmi
   ndarray.cma
   ndarray_core.cma
-  ndarray_cpu.cma
+  ndarray_native.cma
   ndarray_io.cmi
   ndarray_io.cma
   ; bigarray.cma

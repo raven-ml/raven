@@ -1,9 +1,9 @@
-module B = Ndarray_core.Make (Ndarray_cpu)
+module B = Ndarray_core.Make (Ndarray_native)
 
 type ('a, 'b) t = ('a, 'b) B.t
 type layout = Ndarray_core.layout = C_contiguous | Strided
 
-let context = Ndarray_cpu.create_context ()
+let context = Ndarray_native.create_context ()
 
 (* Concrete types for dtypes *)
 

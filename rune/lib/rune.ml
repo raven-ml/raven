@@ -36,6 +36,9 @@ let complex32 = Complex32
 let complex64 = Complex64
 
 type 'dev device = 'dev Internal.device
+
+let cpu = Internal.cpu
+
 type ('a, 'b, 'dev) t = ('a, 'b, 'dev) Internal.t
 
 include Tensor
