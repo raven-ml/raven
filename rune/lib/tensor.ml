@@ -94,13 +94,13 @@ let ones dtype shape =
 
 let ones_like x = const (Dispatch.ones_like x.data)
 
-let rand dtype shape =
+let rand dtype ?seed shape =
   let context = Backend_cpu.create_context () in
-  const (Cpu_data (Backend_cpu.rand context dtype shape, context))
+  const (Cpu_data (Backend_cpu.rand context dtype ?seed shape, context))
 
-let randn dtype shape =
+let randn dtype ?seed shape =
   let context = Backend_cpu.create_context () in
-  const (Cpu_data (Backend_cpu.randn context dtype shape, context))
+  const (Cpu_data (Backend_cpu.randn context dtype ?seed shape, context))
 
 let scalar dtype x =
   let context = Backend_cpu.create_context () in
