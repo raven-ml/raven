@@ -13,6 +13,8 @@
 
 (using directory-targets 0.1)
 
+(using dune_site 0.1)
+
 (version 0.1.0)
 
 (package
@@ -81,17 +83,23 @@
  (synopsis "Interactive notebook for OCaml data science")
  (description
   "Quill is an interactive notebook application for data exploration, prototyping, and knowledge sharing in OCaml. It provides a Jupyter-like experience with rich visualization and documentation capabilities.")
+ (sites
+  (lib toplevel_libs))
  (depends
   (ocaml
    (>= 4.14.0))
   dune
+  dune-site
   cmdliner
-  js_of_ocaml-ppx
   wasm_of_ocaml-compiler
+  js_of_ocaml-toplevel
   dream
+  ppx_deriving_yojson
   crunch
   cmarkit
   vdom
+  brr
+  base64
   (ndarray
    (= :version))
   (hugin

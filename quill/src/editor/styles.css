@@ -1,7 +1,13 @@
 :root {
+  --bg-color: #2c2c2c;
+  --text-color: #ffffff;
+  --debug-bg: #1e1e1e;
+  --code-bg: #1e1e1e;
+  --output-bg: #252525;
+  --selection-bg: #444444;
+  --debug-width: 600px;
   font-family: Inter, sans-serif;
   font-feature-settings: 'liga' 1, 'calt' 1;
-  /* fix for Chrome */
 }
 
 @supports (font-variation-settings: normal) {
@@ -10,22 +16,93 @@
   }
 }
 
+html,
 body {
+  height: 100%;
   margin: 0;
   padding: 0;
+}
+
+body {
   width: 100%;
-  background-color: #2c2c2c;
-  color: #ffffff;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  overflow: hidden;
 }
 
 #editor-app {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr minmax(auto, 900px) 1fr;
   height: 100vh;
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 100vh;
+  align-items: stretch;
+  padding-right: var(--debug-width);
+  box-sizing: border-box;
+}
+
+#editor {
+  grid-column: 2 / 3;
+  height: 100%;
+  overflow: auto;
+  padding: 20px 40px;
+  box-sizing: border-box;
+  caret-color: var(--text-color);
+
+  /* Masking for fade effect */
+  mask-image: linear-gradient(to bottom,
+      transparent 0,
+      black 20px,
+      black calc(100% - 20px),
+      transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom,
+      transparent 0,
+      black 20px,
+      black calc(100% - 20px),
+      transparent 100%);
+  mask-repeat: no-repeat;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+}
+
+#editor:focus {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3);
+  outline: none;
+}
+
+#editor p,
+#editor pre {
+  margin-bottom: 1em;
+}
+
+#editor pre {
+  background-color: var(--code-bg);
+  padding: 10px;
+  border-radius: 5px;
+  overflow-x: auto;
+}
+
+#editor code {
+  font-family: 'Fira Code', monospace;
+}
+
+#editor .execution-output {
+  background-color: var(--output-bg);
+  padding: 10px;
+  border-radius: 5px;
+  white-space: pre-wrap;
+}
+
+#editor ::selection {
+  background-color: var(--selection-bg);
+  color: var(--text-color);
+}
+
+#editor img {
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  display: block;
+  margin: 1em auto;
 }
 
 #debug {
@@ -33,8 +110,8 @@ body {
   right: 0;
   top: 0;
   bottom: 0;
-  width: 600px;
-  background-color: #1e1e1e;
+  width: var(--debug-width);
+  background-color: var(--debug-bg);
   padding: 10px;
   box-sizing: border-box;
   overflow: auto;
@@ -46,62 +123,8 @@ body {
   margin: 0;
 }
 
-#editor {
-  flex: 1;
-  max-width: 800px;
-  margin-right: 600px;
-  width: 100%;
-  padding: 20px;
-  box-sizing: border-box;
-  overflow: auto;
-  border: none;
-  outline: none;
-  caret-color: #ffffff;
-}
-
-#editor:focus {
-  outline: none;
-}
-
-#editor span:focus {
-  outline: none;
-}
-
-#editor p,
-#editor pre {
-  margin-bottom: 1em;
-}
-
-#editor pre {
-  background-color: #1e1e1e;
-  padding: 10px;
-  border-radius: 5px;
-  overflow-x: auto;
-}
-
-#editor code {
-  font-family: 'Fira Code', monospace;
-}
-
-#editor strong {
-  font-weight: bold;
-  color: #ffffff;
-}
-
-#editor em {
-  font-style: italic;
-}
-
-#editor ::selection {
-  background-color: #444444;
-  color: #ffffff;
-}
-
-#editor .execution-output {
-  background-color: #252525;
-  padding: 10px;
-  border-radius: 5px;
-  margin-top: 5px;
-  color: #d4d4d4;
-  white-space: pre-wrap;
+@media (max-width: 1200px) {
+  :root {
+    --debug-width: 300px;
+  }
 }

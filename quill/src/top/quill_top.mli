@@ -1,14 +1,10 @@
-(** Quill top-level interface *)
-
 type execution_result = {
   output : string;
   error : string option;
   status : [ `Error | `Success ];
 }
-(** The result of executing a phrase *)
-
-val eval : id:string -> string -> execution_result
-(** Evaluate a code phrase in the top-level identified by [id] *)
-
-val initialize_toplevel : string -> unit
-(** Initialize a new top-level identified by [id] *)
+val refill_lexbuf :
+  string -> int ref -> Format.formatter option -> bytes -> int -> int
+val initialize_toplevel : unit -> unit
+val ensure_terminator : string -> string
+val execute : bool -> Format.formatter -> Format.formatter -> string -> bool

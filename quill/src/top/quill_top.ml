@@ -1,155 +1,70 @@
 type execution_result = {
-  output : string;
-  error : string option;
+  output : string; (* Captured stdout + value results *)
+  error : string option; (* Captured stderr (errors and warnings) *)
   status : [ `Success | `Error ];
 }
 
-let redirect f =
-  let stdout_backup = Unix.dup ~cloexec:true Unix.stdout in
-  let stderr_backup = Unix.dup ~cloexec:true Unix.stderr in
-  let filename = Filename.temp_file "quill-" ".stdout" in
-  let fd_out =
-    Unix.openfile filename Unix.[ O_WRONLY; O_CREAT; O_TRUNC; O_CLOEXEC ] 0o600
-  in
-  flush stdout;
-  flush stderr;
-  Unix.dup2 ~cloexec:false fd_out Unix.stdout;
-  Unix.dup2 ~cloexec:false fd_out Unix.stderr;
-  let ic = open_in filename in
-  let read_up_to = ref 0 in
-  let capture buf =
-    flush stdout;
-    flush stderr;
-    let pos = Unix.lseek fd_out 0 Unix.SEEK_CUR in
-    let len = pos - !read_up_to in
-    read_up_to := pos;
-    Buffer.add_channel buf ic len
-  in
+let refill_lexbuf s p ppf buffer len =
+  if !p = String.length s then 0
+  else
+    let len', nl =
+      try (String.index_from s !p '\n' - !p + 1, false)
+      with _ -> (String.length s - !p, true)
+    in
+    let len'' = min len len' in
+    StringLabels.blit ~src:s ~src_pos:!p ~dst:buffer ~dst_pos:0 ~len:len'';
+    (match ppf with
+    | Some ppf ->
+        Format.fprintf ppf "%s"
+          (BytesLabels.sub_string buffer ~pos:0 ~len:len'');
+        if nl then Format.pp_print_newline ppf ();
+        Format.pp_print_flush ppf ()
+    | None -> ());
+    p := !p + len'';
+    len''
+
+let initialize_toplevel () =
+  Sys.interactive := false;
+  Toploop.initialize_toplevel_env ();
+  Toploop.input_name := "//toplevel//";
+  Sys.interactive := true
+
+let ensure_terminator code =
+  let trimmed_code = String.trim code in
+  if trimmed_code = "" || String.ends_with ~suffix:";;" trimmed_code then code
+  else code ^ ";;"
+
+let execute printval pp_out pp_err s =
+  let s = ensure_terminator s in
+
+  let lb = Lexing.from_function (refill_lexbuf s (ref 0) None) in
+  let overall_success = ref true in
+
+  let old_warnings_formatter = !Location.formatter_for_warnings in
+  Location.formatter_for_warnings := pp_err;
+
   Fun.protect
-    (fun () -> f ~capture)
+    (fun () ->
+      try
+        while true do
+          try
+            let phr = !Toploop.parse_toplevel_phrase lb in
+            let exec_success = Toploop.execute_phrase printval pp_out phr in
+            overall_success := !overall_success && exec_success
+          with
+          | End_of_file -> raise End_of_file
+          | Sys.Break ->
+              overall_success := false;
+              Format.fprintf pp_err "Interrupted.@.";
+              raise End_of_file
+          | x ->
+              overall_success := false;
+              Errors.report_error pp_err x
+        done
+      with End_of_file -> ())
     ~finally:(fun () ->
-      close_in_noerr ic;
-      flush stdout;
-      flush stderr;
-      Unix.close fd_out;
-      Unix.dup2 ~cloexec:false stdout_backup Unix.stdout;
-      Unix.dup2 ~cloexec:false stderr_backup Unix.stderr;
-      Unix.close stdout_backup;
-      Unix.close stderr_backup;
-      Sys.remove filename)
+      Location.formatter_for_warnings := old_warnings_formatter;
+      Format.pp_print_flush pp_out ();
+      Format.pp_print_flush pp_err ());
 
-let toplevels : (string, Env.t) Hashtbl.t =
-  Hashtbl.create 10 (* Map document_id to toplevel *)
-
-(* Parse a string into a toplevel phrase *)
-let parse_phrase str =
-  let lexbuf = Lexing.from_string (str ^ ";;") in
-  (* Set pos_fname to an empty string to suppress the file reference *)
-  lexbuf.Lexing.lex_curr_p <-
-    { lexbuf.Lexing.lex_curr_p with pos_fname = "//toplevel//" };
-  lexbuf.Lexing.lex_start_p <-
-    { lexbuf.Lexing.lex_start_p with pos_fname = "//toplevel//" };
-  try Ok (!Toploop.parse_toplevel_phrase lexbuf)
-  with exn ->
-    let error_msg =
-      match Location.error_of_exn exn with
-      | Some (`Ok error) -> Format.asprintf "%a" Location.print_report error
-      | _ -> Printexc.to_string exn
-    in
-    Error error_msg
-
-let initialize_toplevel id =
-  if not (Hashtbl.mem toplevels id) then (
-    let env = Compmisc.initial_env () in
-    Toploop.toplevel_env := env;
-    (* Initialize findlib *)
-    (match parse_phrase "#use \"topfind\";;" with
-    | Ok phrase ->
-        let _ = Toploop.execute_phrase false Format.err_formatter phrase in
-        ()
-    | Error err ->
-        prerr_endline ("Warning: Failed to initialize findlib: " ^ err));
-    (* Load libraries and install printers *)
-    let phrases =
-      [
-        "#require \"ndarray\";;";
-        "#install_printer Ndarray.print;;";
-        "#require \"ndarray-io\";;";
-        "#require \"ndarray-cv\";;";
-        "#require \"ndarray-datasets\";;";
-        "#require \"hugin\";;";
-        "#require \"rune\";;";
-        "#install_printer Rune.print;;";
-      ]
-    in
-    List.iter
-      (fun code ->
-        match parse_phrase code with
-        | Ok phrase ->
-            let _ = Toploop.execute_phrase false Format.err_formatter phrase in
-            ()
-        | Error err ->
-            prerr_endline ("Warning: Failed to execute phrase: " ^ err))
-      phrases;
-    Hashtbl.add toplevels id !Toploop.toplevel_env)
-
-let eval ~id code =
-  let env = Hashtbl.find toplevels id in
-  Toploop.toplevel_env := env;
-
-  match parse_phrase code with
-  | Error error -> { output = ""; error = Some error; status = `Error }
-  | Ok phrase ->
-      (* Buffers for side-effecting output and phrase output *)
-      let side_effect_buffer = Buffer.create 1024 in
-      let phrase_buffer = Buffer.create 1024 in
-      let phrase_ppf = Format.formatter_of_buffer phrase_buffer in
-
-      let result =
-        redirect (fun ~capture ->
-            try
-              (* Redirect warnings to stderr, which goes to
-                 side_effect_buffer *)
-              let old_warnings = !Location.formatter_for_warnings in
-              Location.formatter_for_warnings := Format.err_formatter;
-
-              (* Execute phrase and print to phrase_ppf using default
-                 out_phrase *)
-              let success = Toploop.execute_phrase true phrase_ppf phrase in
-
-              (* Restore warnings *)
-              Location.formatter_for_warnings := old_warnings;
-
-              (* Capture side-effecting output *)
-              capture side_effect_buffer;
-              let side_effect_output = Buffer.contents side_effect_buffer in
-
-              (* Capture phrase output *)
-              Format.pp_print_flush phrase_ppf ();
-              let phrase_output_str = Buffer.contents phrase_buffer in
-
-              (* Combine outputs *)
-              let output = side_effect_output ^ phrase_output_str in
-              {
-                output;
-                error = None;
-                status = (if success then `Success else `Error);
-              }
-            with exn ->
-              (* Handle uncaught exceptions *)
-              capture side_effect_buffer;
-              let side_effect_output = Buffer.contents side_effect_buffer in
-              let error_msg =
-                match Location.error_of_exn exn with
-                | Some (`Ok error) ->
-                    Format.asprintf "%a" Location.print_report error
-                | _ -> Printexc.to_string exn
-              in
-              {
-                output = side_effect_output;
-                error = Some error_msg;
-                status = `Error;
-              })
-      in
-      Hashtbl.replace toplevels id !Toploop.toplevel_env;
-      result
+  !overall_success

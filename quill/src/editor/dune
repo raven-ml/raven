@@ -1,9 +1,14 @@
+(library
+ (name quill_editor)
+ (public_name quill.editor)
+ (modules :standard \ main)
+ (libraries vdom cmarkit brr quill_api))
+
 (executable
  (name main)
  (modes wasm)
- (libraries vdom cmarkit js_of_ocaml)
- (preprocess
-  (pps js_of_ocaml-ppx)))
+ (modules main)
+ (libraries quill_editor brr))
 
 (alias
  (name default)

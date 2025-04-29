@@ -1701,10 +1701,32 @@ val savefig : ?dpi:int -> ?format:string -> string -> figure -> unit
     - [fig]: figure to save.
 
     {2 Notes}
-    - Supported formats depend on the Cairo and writer backends.
+    - Only PNG format is supported in the current implementation.
 
     {2 Examples}
     {[
       let fig = plot x_arr y_arr in
       savefig ~dpi:300 "highres.png" fig
+    ]} *)
+
+val render : ?format:string -> figure -> string
+(** [render ?format fig]
+
+    Render to an in-memory buffer and return the image data as a string.
+
+    {2 Parameters}
+    - [?format]: output format (default "png").
+    - [fig]: figure to save.
+
+    {2 Returns}
+    - A string containing the image data in the specified format.
+
+    {2 Notes}
+    - Only PNG format is supported in the current implementation.
+
+    {2 Examples}
+    {[
+      let fig = plot x_arr y_arr in
+      let png_data = save_to_buffer fig in
+      (* Use png_data, e.g., for network transmission or further processing *)
     ]} *)

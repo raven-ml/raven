@@ -128,3 +128,11 @@ let savefig ?dpi ?format filename fig =
   in
   Cairo_sdl_backend.render fig canvas;
   Cairo_sdl_backend.save ?dpi ?format fig filename canvas
+
+let render ?(format = "png") fig =
+  let canvas =
+    Cairo_sdl_backend.create_canvas ~width:fig.Figure.width
+      ~height:fig.Figure.height ()
+  in
+  Cairo_sdl_backend.render fig canvas;
+  Cairo_sdl_backend.save_to_buffer ~format fig
