@@ -55,8 +55,13 @@ val zeros : ('a, 'b) dtype -> int array -> ('a, 'b, [ `cpu ]) t
 val zeros_like : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val ones : ('a, 'b) dtype -> int array -> ('a, 'b, [ `cpu ]) t
 val ones_like : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-val rand : (float, 'a) dtype -> int array -> (float, 'a, [ `cpu ]) t
-val randn : (float, 'a) dtype -> int array -> (float, 'a, [ `cpu ]) t
+
+val rand :
+  (float, 'a) dtype -> ?seed:int -> int array -> (float, 'a, [ `cpu ]) t
+
+val randn :
+  (float, 'a) dtype -> ?seed:int -> int array -> (float, 'a, [ `cpu ]) t
+
 val scalar : ('a, 'b) dtype -> 'a -> ('a, 'b, [ `cpu ]) t
 
 (** {1 Device} *)
