@@ -22,7 +22,6 @@
   (not
    (= %{ocaml-config:system} "macosx")))
  (name ndarray_cuda_impl)
- (public_name rune.cuda)
  (libraries ndarray_cuda)
  (modules ndarray)
  (implements ndarray))
