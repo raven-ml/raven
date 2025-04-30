@@ -1,34 +1,39 @@
 open Kaun
 
-(* Define the MLP structure *)
-type ('layout, 'dev) mlp = {
-  l1 : ('layout, 'dev) Linear.params; (* Input to hidden *)
-  l2 : ('layout, 'dev) Linear.params; (* Hidden to output *)
-}
+module Mlp = struct
+  type ('layout, 'dev) t = {
+    l1 : ('layout, 'dev) Linear.t; (* Input to hidden *)
+    l2 : ('layout, 'dev) Linear.t; (* Hidden to output *)
+  }
 
-let mlp_to_params mlp = Linear.params mlp.l1 @ Linear.params mlp.l2
+  let init ~rng ~dtype ~device input_size hidden_size output_size =
+    let l1 = Linear.init ~rng ~dtype ~device input_size hidden_size in
+    let l2 = Linear.init ~rng ~dtype ~device hidden_size output_size in
+    { l1; l2 }
 
-let params_to_mlp params =
-  match params with
-  | [ w1; b1; w2; b2 ] ->
-      let l1 = Linear.{ w = w1; b = Some b1 } in
-      let l2 = Linear.{ w = w2; b = Some b2 } in
-      { l1; l2 }
-  | _ ->
-      failwith
-        "Expected 4 parameters (2 weights and 2 biases), but got a different \
-         number."
+  let forward mlp input =
+    input |> Linear.forward mlp.l1 |> Activation.tanh |> Linear.forward mlp.l2
 
-(* Forward pass *)
-let forward mlp input =
-  let h = Linear.forward mlp.l1 input |> Activation.tanh in
-  Linear.forward mlp.l2 h (* Returns logits *)
+  let params { l1; l2 } =
+    Record [ ("l1", Linear.params l1); ("l2", Linear.params l2) ]
 
-(* Loss function: mean sigmoid binary cross-entropy *)
-let loss mlp input target =
-  let logits = forward mlp input in
-  let per_sample_loss = Loss.sigmoid_binary_cross_entropy logits target in
-  Rune.mean per_sample_loss
+  let of_ptree = function
+    | Record [ ("l1", p1); ("l2", p2) ] ->
+        { l1 = Linear.of_ptree p1; l2 = Linear.of_ptree p2 }
+    | _ -> invalid_arg "Mlp.of_ptree"
+
+  let lens = { to_ptree = params; of_ptree }
+end
+
+let train_step model optimizer input target =
+  let loss_fn model =
+    let logits = Mlp.forward model input in
+    let per_sample_loss = Loss.sigmoid_binary_cross_entropy logits target in
+    Rune.mean per_sample_loss
+  in
+  let loss_value, grad = value_and_grad ~lens:Mlp.lens loss_fn model in
+  Optimizer.update optimizer grad;
+  loss_value
 
 (* Training function *)
 let train_mlp input y_true learning_rate epochs =
@@ -37,35 +42,25 @@ let train_mlp input y_true learning_rate epochs =
   let dtype = Rune.float32 in
   let device = Rune.cpu in
 
-  (* Initialize linear layers *)
-  let l1 = Linear.init ~rng ~dtype ~device 2 4 in
-  (* 2 inputs -> 2 hidden *)
-  let l2 = Linear.init ~rng ~dtype ~device 4 1 in
-  (* 2 hidden -> 1 output *)
-  let mlp = { l1; l2 } in
+  (* Create MLP model *)
+  let mlp = Mlp.init ~rng ~dtype ~device 2 4 1 in
 
-  (* Use a reference for the MLP parameters *)
-  let mlp_ref = ref mlp in
+  (* Create optimizer *)
+  let sgd = Optimizer.sgd ~lr:learning_rate in
+  (* Initialize optimizer with the model parameters *)
+  let optimizer = Optimizer.init ~lens:Mlp.lens mlp sgd in
 
   (* Training loop *)
   for epoch = 1 to epochs do
-    let mlp = !mlp_ref in
-    (* Compute loss and gradients *)
-    let loss_func params = loss (params_to_mlp params) input y_true in
-    let loss_value, grads =
-      Rune.value_and_grads loss_func (mlp_to_params mlp)
-    in
-    let grad_mlp = params_to_mlp grads in
-    (* Update parameters using Linear.update *)
-    let updated_l1 = Linear.update ~lr:learning_rate mlp.l1 grad_mlp.l1 in
-    let updated_l2 = Linear.update ~lr:learning_rate mlp.l2 grad_mlp.l2 in
-    mlp_ref := { l1 = updated_l1; l2 = updated_l2 };
+    let loss = train_step mlp optimizer input y_true in
     (* Print loss every 100 epochs *)
     if epoch mod 100 = 0 then
       print_endline
-        (Printf.sprintf "Epoch %d: Loss = %f" epoch (Rune.get [||] loss_value))
+        (Printf.sprintf "Epoch %d: Loss = %f" epoch (Rune.get [||] loss))
   done;
-  !mlp_ref
+
+  (* Return the trained model *)
+  mlp
 
 (* Main execution *)
 let () =
@@ -82,7 +77,7 @@ let () =
   let trained_mlp = train_mlp input y_true learning_rate epochs in
 
   (* Make predictions *)
-  let logits = forward trained_mlp input in
+  let logits = Mlp.forward trained_mlp input in
   let probs = Activation.sigmoid logits in
   print_endline "Predictions after training (should be close to [0; 1; 1; 0]):";
   Rune.print probs

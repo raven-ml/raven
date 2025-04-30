@@ -3,6 +3,16 @@
 type ('layout, 'dev) tensor = (float, 'layout, [ `cpu ]) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 
+type ('layout, 'dev) ptree =
+  | Tensor of ('layout, 'dev) tensor
+  | List of ('layout, 'dev) ptree list
+  | Record of (string * ('layout, 'dev) ptree) list
+
+type ('model, 'layout, 'dev) lens = {
+  to_ptree : 'model -> ('layout, 'dev) ptree;
+  of_ptree : ('layout, 'dev) ptree -> 'model;
+}
+
 module Rng : sig
   type t
 
@@ -27,11 +37,16 @@ module Activation : sig
   val softplus : float -> ('layout, 'dev) t
 end
 
+module Initializer : sig
+  type ('layout, 'dev) t =
+    Rng.t -> int array -> 'layout dtype -> ('layout, 'dev) tensor
+
+  val constant : float -> ('layout, 'dev) t
+  val glorot_uniform : in_axis:int -> out_axis:int -> ('layout, 'dev) t
+end
+
 module Linear : sig
-  type ('layout, 'dev) params = {
-    w : ('layout, 'dev) tensor;
-    b : ('layout, 'dev) tensor option;
-  }
+  type ('layout, 'dev) t
 
   val init :
     rng:Rng.t ->
@@ -40,39 +55,18 @@ module Linear : sig
     device:[ `cpu ] Rune.device ->
     int ->
     int ->
-    ('layout, 'dev) params
+    ('layout, 'dev) t
   (** [init ~rng ?use_bias ~dtype ~device in_features out_features] *)
 
   val forward :
-    ('layout, 'dev) params -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+    ('layout, 'dev) t -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
 
   val update :
-    lr:float ->
-    ('layout, 'dev) params ->
-    ('layout, 'dev) params ->
-    ('layout, 'dev) params
+    lr:float -> ('layout, 'dev) t -> ('layout, 'dev) t -> ('layout, 'dev) t
 
-  val params : ('layout, 'dev) params -> ('layout, 'dev) tensor list
-  (** [params p] returns the parameters of the layer as a list of tensors. *)
-end
-
-module Optimizer : sig
-  type 'op t
-  type 'op state
-
-  val sgd : float -> [ `sgd ] t
-  val init : 'op t -> ('layout, 'dev) tensor list -> 'op state
-
-  val update :
-    'op t ->
-    'op state ->
-    ('layout, 'dev) tensor list ->
-    'op state * ('layout, 'dev) tensor list
-
-  val apply_updates :
-    ('layout, 'dev) tensor list ->
-    ('layout, 'dev) tensor list ->
-    ('layout, 'dev) tensor list
+  val params : ('a, 'b) t -> ('a, 'c) ptree
+  val of_ptree : ('a, 'b) ptree -> ('a, 'c) t
+  val lens : (('a, 'b) t, 'a, 'c) lens
 end
 
 module Loss : sig
@@ -81,3 +75,18 @@ module Loss : sig
   val sigmoid_binary_cross_entropy :
     ('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
 end
+
+module Optimizer : sig
+  type 'op spec
+  type (_, _, _, _) t
+
+  val sgd : lr:float -> [ `sgd ] spec
+  val init : lens:('m, 'l, 'd) lens -> 'm -> 'op spec -> ('op, 'm, 'l, 'd) t
+  val update : ('op, 'a, 'b, 'c) t -> ('b, 'c) ptree -> unit
+end
+
+val value_and_grad :
+  lens:('model, 'l, 'd) lens ->
+  ('model -> ('v_l, 'v_d, [ `cpu ]) Rune.t) ->
+  'model ->
+  ('v_l, 'v_d, [ `cpu ]) Rune.t * ('l, 'd) ptree

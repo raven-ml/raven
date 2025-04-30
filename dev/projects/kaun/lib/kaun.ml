@@ -1,6 +1,70 @@
 type ('layout, 'dev) tensor = (float, 'layout, [ `cpu ]) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 
+(* Parameter tree to represent model parameters hierarchically *)
+type ('layout, 'dev) ptree =
+  | Tensor of ('layout, 'dev) tensor
+  | List of ('layout, 'dev) ptree list
+  | Record of (string * ('layout, 'dev) ptree) list
+
+type ('model, 'layout, 'dev) lens = {
+  to_ptree : 'model -> ('layout, 'dev) ptree;
+  of_ptree : ('layout, 'dev) ptree -> 'model;
+}
+
+let split_at n lst =
+  let rec aux i acc = function
+    | [] -> (List.rev acc, [])
+    | h :: t as l ->
+        if i = 0 then (List.rev acc, l) else aux (i - 1) (h :: acc) t
+  in
+  aux n [] lst
+
+(* Updated flatten_ptree to handle parameter trees and silence pattern match
+   warning *)
+let rec flatten_ptree = function
+  | Tensor t ->
+      ( [ t ],
+        function
+        | [ t' ] -> Tensor t'
+        | _ -> failwith "Invalid number of tensors" )
+  | List l ->
+      let pairs = List.map flatten_ptree l in
+      let tensors = List.concat (List.map fst pairs) in
+      let rebuild =
+       fun tensors ->
+        let rec aux tensors acc pairs =
+          match pairs with
+          | [] -> List.rev acc
+          | (tensors_pt, rebuild_pt) :: pairs' ->
+              let n = List.length tensors_pt in
+              let tensors_for_pt, tensors_rest = split_at n tensors in
+              let pt' = rebuild_pt tensors_for_pt in
+              aux tensors_rest (pt' :: acc) pairs'
+        in
+        List (aux tensors [] pairs)
+      in
+      (tensors, rebuild)
+  | Record r ->
+      let pairs = List.map (fun (k, pt) -> (k, flatten_ptree pt)) r in
+      let tensors =
+        List.concat (List.map (fun (_, (tensors_pt, _)) -> tensors_pt) pairs)
+      in
+      let rebuild =
+       fun tensors ->
+        let rec aux tensors acc pairs =
+          match pairs with
+          | [] -> List.rev acc
+          | (k, (tensors_pt, rebuild_pt)) :: pairs' ->
+              let n = List.length tensors_pt in
+              let tensors_for_pt, tensors_rest = split_at n tensors in
+              let pt' = rebuild_pt tensors_for_pt in
+              aux tensors_rest ((k, pt') :: acc) pairs'
+        in
+        Record (aux tensors [] pairs)
+      in
+      (tensors, rebuild)
+
 module Rng = struct
   type t = int
 
@@ -28,23 +92,34 @@ module Activation = struct
   let softplus _beta = Rune.softplus (* TODO: Rune’s softplus lacks beta *)
 end
 
+module Initializer = struct
+  type ('layout, 'dev) t =
+    Rng.t -> int array -> 'layout dtype -> ('layout, 'dev) tensor
+
+  let constant value = fun _rng shape dtype -> Rune.full dtype shape value
+
+  let glorot_uniform ~in_axis ~out_axis =
+   fun rng shape dtype ->
+    let din = shape.(in_axis) in
+    let dout = shape.(out_axis) in
+    let fan_in = din in
+    let fan_out = dout in
+    let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
+    let u01 = Rng.uniform rng ~dtype ~shape in
+    let scale = Rune.scalar dtype (2.0 *. limit) in
+    let shift = Rune.scalar dtype limit in
+    Rune.(sub (mul u01 scale) shift)
+end
+
 module Linear = struct
-  type ('layout, 'dev) params = {
+  type ('layout, 'dev) t = {
     w : ('layout, 'dev) tensor;
     b : ('layout, 'dev) tensor option;
   }
 
-  let glorot_uniform ~rng ~dtype ~din ~dout =
-    let limit = sqrt (6.0 /. float_of_int (din + dout)) in
-    let u01 = Rng.uniform rng ~dtype ~shape:[| din; dout |] in
-    let scale = Rune.scalar dtype (2.0 *. limit)
-    and shift = Rune.scalar dtype limit in
-    Rune.(sub (mul u01 scale) shift)
-
   let init ~rng ?(use_bias = true) ~dtype ~device in_features out_features =
-    let w_cpu =
-      glorot_uniform ~rng ~dtype ~din:in_features ~dout:out_features
-    in
+    let glorot_uniform = Initializer.glorot_uniform ~in_axis:0 ~out_axis:1 in
+    let w_cpu = glorot_uniform rng [| in_features; out_features |] dtype in
     let w = Rune.move device w_cpu in
     let b =
       if use_bias then
@@ -69,50 +144,60 @@ module Linear = struct
     in
     { w = w'; b = b' }
 
-  let params { w; b } = match b with Some b -> [ w; b ] | None -> [ w ]
+  let params { w; b } =
+    match b with
+    | Some b -> Record [ ("w", Tensor w); ("b", Tensor b) ]
+    | None -> Record [ ("w", Tensor w) ]
+
+  let of_ptree = function
+    | Record [ ("w", Tensor w); ("b", Tensor b) ] -> { w; b = Some b }
+    | Record [ ("w", Tensor w) ] -> { w; b = None }
+    | _ -> failwith "Invalid param_tree for Linear"
+
+  let lens = { to_ptree = params; of_ptree }
 end
 
 module Optimizer = struct
   module Sgd = struct
-    type config = { lr : float }
+    type cfg = { lr : float }
 
-    let create ~lr = { lr }
-    let init _params = ()
+    let make ~lr = { lr }
 
-    let update (type layout dev) (config : config)
-        (grads : (layout, dev) tensor list) : unit * (layout, dev) tensor list =
-      let updates =
-        List.map
-          (fun (g : (layout, dev) tensor) ->
-            let dtype = Rune.dtype g in
-            let neg_lr = Rune.scalar dtype (-.config.lr) in
-            Rune.mul g neg_lr)
-          grads
-      in
-      ((), updates)
+    let updates { lr } (grads : ('l, 'd) tensor list) =
+      List.map
+        (fun g ->
+          let dtype = Rune.dtype g in
+          let scale = Rune.scalar dtype (-.lr) in
+          Rune.mul g scale)
+        grads
   end
 
-  type 'op t = Sgd : Sgd.config -> [ `sgd ] t
-  type 'op state = Sgd_state : unit -> 'op state
+  type _ spec = Sgd : Sgd.cfg -> [ `sgd ] spec
 
-  let sgd lr = Sgd (Sgd.create ~lr)
+  let sgd ~lr : [ `sgd ] spec = Sgd (Sgd.make ~lr)
 
-  let init (type op) (optimizer : op t) (params : ('layout, 'dev) tensor list) :
-      op state =
-    match optimizer with
-    | Sgd _config ->
-        Sgd.init params;
-        Sgd_state ()
+  type (_, _, _, _) t =
+    | Sgd : {
+        cfg : Sgd.cfg;
+        lens : ('m, 'l, 'd) lens;
+        model : 'm ref;
+      }
+        -> ([ `sgd ], 'm, 'l, 'd) t
 
-  let update (type op) (optimizer : op t) (state : op state) grads :
-      op state * ('layout, 'dev) tensor list =
-    match (optimizer, state) with
-    | Sgd config, Sgd_state () ->
-        let (), updates = Sgd.update config grads in
-        (Sgd_state (), updates)
+  let init ~(lens : ('m, 'l, 'd) lens) (model : 'm) (type op) (spec : op spec) :
+      (op, 'm, 'l, 'd) t =
+    match spec with Sgd cfg -> Sgd { cfg; lens; model = ref model }
 
-  let apply_updates params updates =
-    List.map2 (fun p u -> Rune.add p u) params updates
+  let update (type op m l d) (opt : (op, m, l, d) t) (grads : (l, d) ptree) :
+      unit =
+    match opt with
+    | Sgd { cfg; lens; model } ->
+        let params_pt = lens.to_ptree !model in
+        let p_list, rebuild = flatten_ptree params_pt in
+        let g_list, _ = flatten_ptree grads in
+        let updates = Sgd.updates cfg g_list in
+        let new_params = List.map2 Rune.add_inplace p_list updates in
+        model := lens.of_ptree (rebuild new_params)
 end
 
 module Loss = struct
@@ -128,3 +213,13 @@ module Loss = struct
     let loss_per_example = Rune.neg (Rune.add term1 term2) in
     Rune.mean loss_per_example
 end
+
+let value_and_grad ~(lens : ('model, 'l, 'd) lens)
+    (f : 'model -> ('v_l, 'v_d, [ `cpu ]) Rune.t) (model : 'model) :
+    ('v_l, 'v_d, [ `cpu ]) Rune.t * ('l, 'd) ptree =
+  let ptree = lens.to_ptree model in
+  let tensors, rebuild = flatten_ptree ptree in
+  let f_on_list ts = f (lens.of_ptree (rebuild ts)) in
+  let value, grads_list = Rune.value_and_grads f_on_list tensors in
+  let grad_ptree = rebuild grads_list in
+  (value, grad_ptree)

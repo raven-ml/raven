@@ -82,6 +82,12 @@ let empty dtype shape =
 
 let empty_like x = const (Dispatch.empty_like x.data)
 
+let full dtype shape value =
+  let context = Backend_cpu.create_context () in
+  const (Cpu_data (Backend_cpu.full context dtype shape value, context))
+
+let full_like value x = const (Dispatch.full_like value x.data)
+
 let zeros dtype shape =
   let context = Backend_cpu.create_context () in
   const (Cpu_data (Backend_cpu.zeros context dtype shape, context))

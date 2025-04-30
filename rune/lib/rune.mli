@@ -50,8 +50,11 @@ val complex64 : (Complex.t, complex64_elt) dtype
 
 val ndarray : ('a, 'b) Ndarray.t -> ('a, 'b, [ `cpu ]) t
 val create : ('a, 'b) dtype -> int array -> 'a array -> ('a, 'b, [ `cpu ]) t
+val empty : ('a, 'b) Ndarray_core.dtype -> int array -> ('a, 'b, [ `cpu ]) t
 val empty_like : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val zeros : ('a, 'b) dtype -> int array -> ('a, 'b, [ `cpu ]) t
+val full : ('a, 'b) dtype -> int array -> 'a -> ('a, 'b, [ `cpu ]) t
+val full_like : 'a -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val zeros_like : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val ones : ('a, 'b) dtype -> int array -> ('a, 'b, [ `cpu ]) t
 val ones_like : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
@@ -173,6 +176,11 @@ val relu6 : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val sigmoid : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val softplus : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val silu : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val hard_sigmoid : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val hard_silu : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val gelu_approx : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val softsign : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val mish : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val log_sigmoid : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 
 val leaky_relu :
