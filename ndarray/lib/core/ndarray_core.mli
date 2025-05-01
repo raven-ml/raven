@@ -429,7 +429,7 @@ module type Backend_intf = sig
   val matmul : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
 end
 
-module Make : (B : Backend_intf) -> sig
+module Make : functor (B : Backend_intf) -> sig
   type ('a, 'b) t = ('a, 'b) B.b_t
   type context = B.context
 
