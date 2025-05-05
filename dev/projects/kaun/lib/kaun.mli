@@ -81,6 +81,7 @@ module Optimizer : sig
   type (_, _, _, _) t
 
   val sgd : lr:float -> [ `sgd ] spec
+  val adam : lr:float -> ?beta1:float -> ?beta2:float -> ?eps:float -> ?weight_decay:float -> unit -> [ `adam ] spec
   val init : lens:('m, 'l, 'd) lens -> 'm -> 'op spec -> ('op, 'm, 'l, 'd) t
   val update : ('op, 'a, 'b, 'c) t -> ('b, 'c) ptree -> unit
 end
