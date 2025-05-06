@@ -1,0 +1,3 @@
+(library
+ (name rune)
+ (libraries nx_native nx_core))

@@ -1,0 +1,3 @@
+(library
+ (name nx_native)
+ (libraries nx_core))
