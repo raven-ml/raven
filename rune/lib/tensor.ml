@@ -156,6 +156,10 @@ let abs x =
   try Effect.perform (Abs x)
   with Effect.Unhandled _ -> create_internal (Dispatch.abs x.data)
 
+let sqrt x =
+  try Effect.perform (Sqrt x)
+  with Effect.Unhandled _ -> create_internal (Dispatch.sqrt x.data)
+
 let add x y =
   try Effect.perform (Add (x, y))
   with Effect.Unhandled _ -> create_internal (Dispatch.add x.data y.data)

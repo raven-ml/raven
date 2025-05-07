@@ -17,6 +17,8 @@ let eval_handler : ('a, 'a) Effect.Deep.handler =
         Some (fun k -> continue k (create_internal (Dispatch.log x.data)))
     | Abs x ->
         Some (fun k -> continue k (create_internal (Dispatch.abs x.data)))
+    | Sqrt x ->
+        Some (fun k -> continue k (create_internal (Dispatch.sqrt x.data)))
     | Sin x ->
         Some (fun k -> continue k (create_internal (Dispatch.sin x.data)))
     | Cos x ->

@@ -30,6 +30,7 @@ type _ Effect.t +=
   | Exp : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
   | Log : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
   | Abs : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t
+  | Sqrt : (float, 'b, 'dev) t -> (float, 'b, 'dev) t Effect.t
   | Sin : (float, 'b, 'dev) t -> (float, 'b, 'dev) t Effect.t
   | Cos : (float, 'b, 'dev) t -> (float, 'b, 'dev) t Effect.t
   | Add : ('a, 'b, 'dev) t * ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t Effect.t

@@ -28,6 +28,11 @@ let deriv_div arg x y =
 
 let deriv_abs x = const (Dispatch.sign x.data)
 
+let deriv_sqrt x =
+  let ones = Dispatch.ones_like x.data in
+  let two = scalar_like x 2.0 in
+  div (const ones) (mul two (sqrt x))
+
 module Set_int = Set.Make (struct
   type t = int
 
@@ -258,6 +263,7 @@ let make_reverse_handler tape =
     | Const v -> Some (handle_ap0 v)
     | Neg x -> Some (handle_ap1 ~deriv:deriv_neg ~op:neg x)
     | Abs x -> Some (handle_ap1 ~deriv:deriv_abs ~op:abs x)
+    | Sqrt x -> Some (handle_ap1 ~deriv:deriv_sqrt ~op:sqrt x)
     | Exp x -> Some (handle_ap1 ~deriv:deriv_exp ~op:exp x)
     | Log x -> Some (handle_ap1 ~deriv:deriv_log ~op:log x)
     | Sin x -> Some (handle_ap1 ~deriv:deriv_sin ~op:sin x)

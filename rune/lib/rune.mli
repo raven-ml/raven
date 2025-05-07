@@ -122,6 +122,7 @@ val cos : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 val exp : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val log : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val abs : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+val sqrt : (float, 'b, 'dev) t -> (float, 'b, 'dev) t
 
 val sum :
   ?axes:int array -> ?keepdims:bool -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t

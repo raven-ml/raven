@@ -20,12 +20,6 @@ let split_at n lst =
   in
   aux n [] lst
 
-let _sqrt x =
-  let dtype = Rune.dtype x in
-  let dev = Rune.device x in
-  let half = Rune.scalar dtype 0.5 |> Rune.move dev in
-  x |> Rune.log |> fun l -> Rune.mul l half |> Rune.exp
-
 (* Updated flatten_ptree to handle parameter trees and silence pattern match
    warning *)
 let rec flatten_ptree = function
@@ -273,7 +267,9 @@ module Optimizer = struct
               let v_hat = Rune.div v_new bc2_t in
               let lr_t = Rune.scalar dtype lr |> Rune.move dev in
               let eps_t = Rune.scalar dtype eps |> Rune.move dev in
-              let upd = Rune.(mul lr_t (div m_hat (add (_sqrt v_hat) eps_t))) in
+              let upd =
+                Rune.(mul lr_t (div m_hat (add (Rune.sqrt v_hat) eps_t)))
+              in
               let upd =
                 if weight_decay = 0. then upd
                 else
