@@ -46,7 +46,7 @@ let train_mlp input y_true learning_rate epochs =
   let mlp = Mlp.init ~rng ~dtype ~device 2 4 1 in
 
   (* Create optimizer *)
-  let sgd = Optimizer.sgd ~lr:learning_rate in
+  let sgd = Optimizer.adam ~lr:learning_rate () in
   (* Initialize optimizer with the model parameters *)
   let optimizer = Optimizer.init ~lens:Mlp.lens mlp sgd in
 
