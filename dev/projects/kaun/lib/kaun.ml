@@ -190,9 +190,9 @@ module Optimizer = struct
     let make ~lr ~beta1 ~beta2 ~eps ~weight_decay =
       { lr; beta1; beta2; eps; weight_decay }
 
-    type ('l,'d) state = {
-      mutable m : ('l,'d) ptree;
-      mutable v : ('l,'d) ptree;
+    type ('l, 'd) state = {
+      mutable m : ('l, 'd) ptree;
+      mutable v : ('l, 'd) ptree;
       mutable t : int;
     }
   end
@@ -203,8 +203,8 @@ module Optimizer = struct
 
   let sgd ~lr : [ `sgd ] spec = Sgd (Sgd.make ~lr)
 
-  let adam ~lr ?(beta1 = 0.9) ?(beta2 = 0.999) ?(eps = 1e-8) ?(weight_decay = 0.) () :
-      [ `adam ] spec =
+  let adam ~lr ?(beta1 = 0.9) ?(beta2 = 0.999) ?(eps = 1e-8)
+      ?(weight_decay = 0.) () : [ `adam ] spec =
     Adam (Adam.make ~lr ~beta1 ~beta2 ~eps ~weight_decay)
 
   type (_, _, _, _) t =
@@ -218,7 +218,7 @@ module Optimizer = struct
         cfg : Adam.cfg;
         lens : ('m, 'l, 'd) lens;
         model : 'm ref;
-        state : ('l,'d) Adam.state;
+        state : ('l, 'd) Adam.state;
       }
         -> ([ `adam ], 'm, 'l, 'd) t
 
@@ -230,8 +230,9 @@ module Optimizer = struct
         let p_ts, rebuild = flatten_ptree (lens.to_ptree model) in
         let m_ts = List.map Rune.zeros_like p_ts in
         let v_ts = List.map Rune.zeros_like p_ts in
-        let state : ('l,'d) Adam.state =
-          { Adam.m = rebuild m_ts; v = rebuild v_ts; t = 0 } in
+        let state : ('l, 'd) Adam.state =
+          { Adam.m = rebuild m_ts; v = rebuild v_ts; t = 0 }
+        in
         Adam { cfg; lens; model = ref model; state }
 
   let update (type op m l d) (opt : (op, m, l, d) t) (grads : (l, d) ptree) :
@@ -244,7 +245,6 @@ module Optimizer = struct
         let updates = Sgd.updates cfg g_list in
         let new_params = List.map2 Rune.add_inplace p_list updates in
         model := lens.of_ptree (rebuild new_params)
-
     | Adam { cfg; lens; model; state } ->
         let p_ts, _ = flatten_ptree (lens.to_ptree !model) in
         let g_ts, _ = flatten_ptree grads in
@@ -276,12 +276,17 @@ module Optimizer = struct
               let upd = Rune.(mul lr_t (div m_hat (add (_sqrt v_hat) eps_t))) in
               let upd =
                 if weight_decay = 0. then upd
-                else let wd_t =
-                  Rune.scalar dtype (lr *. weight_decay) |> Rune.move dev in
-                Rune.(add upd (mul wd_t p)) in
-              aux ps' gs' ms' vs' (m_new :: acc_m) (v_new :: acc_v) (upd :: acc_u)
+                else
+                  let wd_t =
+                    Rune.scalar dtype (lr *. weight_decay) |> Rune.move dev
+                  in
+                  Rune.(add upd (mul wd_t p))
+              in
+              aux ps' gs' ms' vs' (m_new :: acc_m) (v_new :: acc_v)
+                (upd :: acc_u)
           | [], [], [], [] -> (List.rev acc_m, List.rev acc_v, List.rev acc_u)
-          | _ -> failwith "Mismatched list lengths" in
+          | _ -> failwith "Mismatched list lengths"
+        in
         let m_ts', v_ts', us = aux p_ts g_ts m_ts v_ts [] [] [] in
         state.m <- rebuild_m m_ts';
         state.v <- rebuild_v v_ts';
