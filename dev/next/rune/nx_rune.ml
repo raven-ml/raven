@@ -19,6 +19,12 @@ type _ Effect.t +=
   | Reshape : ('a, 'b) t * int array -> ('a, 'b) t Effect.t
   | Expand : ('a, 'b) t * int array -> ('a, 'b) t Effect.t
   | Add : ('a, 'b) t * ('a, 'b) t * ('a, 'b) t -> unit Effect.t
+  | Reduce_sum : {
+      x : ('a, 'b) t;
+      axis : int array;
+      keepdims : bool;
+    }
+      -> ('a, 'b) t Effect.t
 
 let const context shape buffer =
   try Effect.perform (Const (shape, buffer))
