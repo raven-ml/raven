@@ -1,6 +1,6 @@
 module Dtype = Dtype
 module View = View
 
-module type Backend_intf = Backend_intf.S
+module Backend_intf = Backend_intf
 
-module Make_backend = Backend.Make
+module Make_frontend = Frontend.Make

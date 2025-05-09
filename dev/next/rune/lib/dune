@@ -1,3 +1,3 @@
 (library
- (name rune)
+ (name rune_next)
  (libraries nx_native nx_core))

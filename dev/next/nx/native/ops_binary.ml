@@ -6,7 +6,7 @@ open Internal
 let kernel_add_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -44,7 +44,7 @@ let kernel_add_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
 let kernel_add_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -82,7 +82,7 @@ let kernel_add_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
 let kernel_add_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -120,7 +120,7 @@ let kernel_add_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
 let kernel_add_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -158,7 +158,7 @@ let kernel_add_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
 let kernel_add_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -196,7 +196,7 @@ let kernel_add_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
 let kernel_add_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -234,7 +234,7 @@ let kernel_add_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
 let kernel_add_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -272,7 +272,7 @@ let kernel_add_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
 let kernel_add_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -310,7 +310,7 @@ let kernel_add_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
 let kernel_add_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -348,7 +348,7 @@ let kernel_add_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
 let kernel_add_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -387,7 +387,7 @@ let kernel_add_nativeint (a : (nativeint, nativeint_elt) t)
     (b : (nativeint, nativeint_elt) t) (out : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -426,7 +426,7 @@ let kernel_add_complex32 (a : (Complex.t, complex32_elt) t)
     (b : (Complex.t, complex32_elt) t) (out : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -465,7 +465,7 @@ let kernel_add_complex64 (a : (Complex.t, complex64_elt) t)
     (b : (Complex.t, complex64_elt) t) (out : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -503,7 +503,7 @@ let kernel_add_complex64 (a : (Complex.t, complex64_elt) t)
 let kernel_sub_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -541,7 +541,7 @@ let kernel_sub_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
 let kernel_sub_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -579,7 +579,7 @@ let kernel_sub_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
 let kernel_sub_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -617,7 +617,7 @@ let kernel_sub_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
 let kernel_sub_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -655,7 +655,7 @@ let kernel_sub_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
 let kernel_sub_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -693,7 +693,7 @@ let kernel_sub_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
 let kernel_sub_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -731,7 +731,7 @@ let kernel_sub_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
 let kernel_sub_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -769,7 +769,7 @@ let kernel_sub_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
 let kernel_sub_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -807,7 +807,7 @@ let kernel_sub_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
 let kernel_sub_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -845,7 +845,7 @@ let kernel_sub_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
 let kernel_sub_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -884,7 +884,7 @@ let kernel_sub_nativeint (a : (nativeint, nativeint_elt) t)
     (b : (nativeint, nativeint_elt) t) (out : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -923,7 +923,7 @@ let kernel_sub_complex32 (a : (Complex.t, complex32_elt) t)
     (b : (Complex.t, complex32_elt) t) (out : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -962,7 +962,7 @@ let kernel_sub_complex64 (a : (Complex.t, complex64_elt) t)
     (b : (Complex.t, complex64_elt) t) (out : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1000,7 +1000,7 @@ let kernel_sub_complex64 (a : (Complex.t, complex64_elt) t)
 let kernel_mul_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1038,7 +1038,7 @@ let kernel_mul_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
 let kernel_mul_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1076,7 +1076,7 @@ let kernel_mul_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
 let kernel_mul_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1114,7 +1114,7 @@ let kernel_mul_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
 let kernel_mul_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1152,7 +1152,7 @@ let kernel_mul_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
 let kernel_mul_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1190,7 +1190,7 @@ let kernel_mul_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
 let kernel_mul_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1228,7 +1228,7 @@ let kernel_mul_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
 let kernel_mul_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1266,7 +1266,7 @@ let kernel_mul_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
 let kernel_mul_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1304,7 +1304,7 @@ let kernel_mul_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
 let kernel_mul_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1342,7 +1342,7 @@ let kernel_mul_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
 let kernel_mul_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1381,7 +1381,7 @@ let kernel_mul_nativeint (a : (nativeint, nativeint_elt) t)
     (b : (nativeint, nativeint_elt) t) (out : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1420,7 +1420,7 @@ let kernel_mul_complex32 (a : (Complex.t, complex32_elt) t)
     (b : (Complex.t, complex32_elt) t) (out : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1459,7 +1459,7 @@ let kernel_mul_complex64 (a : (Complex.t, complex64_elt) t)
     (b : (Complex.t, complex64_elt) t) (out : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1497,7 +1497,7 @@ let kernel_mul_complex64 (a : (Complex.t, complex64_elt) t)
 let kernel_div_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1535,7 +1535,7 @@ let kernel_div_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
 let kernel_div_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1573,7 +1573,7 @@ let kernel_div_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
 let kernel_div_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1611,7 +1611,7 @@ let kernel_div_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
 let kernel_div_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1649,7 +1649,7 @@ let kernel_div_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
 let kernel_div_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1687,7 +1687,7 @@ let kernel_div_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
 let kernel_div_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1725,7 +1725,7 @@ let kernel_div_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
 let kernel_div_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1763,7 +1763,7 @@ let kernel_div_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
 let kernel_div_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1801,7 +1801,7 @@ let kernel_div_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
 let kernel_div_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1839,7 +1839,7 @@ let kernel_div_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
 let kernel_div_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1878,7 +1878,7 @@ let kernel_div_nativeint (a : (nativeint, nativeint_elt) t)
     (b : (nativeint, nativeint_elt) t) (out : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1917,7 +1917,7 @@ let kernel_div_complex32 (a : (Complex.t, complex32_elt) t)
     (b : (Complex.t, complex32_elt) t) (out : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1956,7 +1956,7 @@ let kernel_div_complex64 (a : (Complex.t, complex64_elt) t)
     (b : (Complex.t, complex64_elt) t) (out : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_contiguous a && is_contiguous b then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
