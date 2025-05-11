@@ -2,4 +2,4 @@
 
 (library
  (name rune_next)
- (libraries nx_native nx_core))
+ (libraries rune_jit nx_native nx_core unix))
