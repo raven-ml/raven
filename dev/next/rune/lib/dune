@@ -1,3 +1,5 @@
+(include_subdirs qualified)
+
 (library
  (name rune_next)
  (libraries nx_native nx_core))

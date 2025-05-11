@@ -167,39 +167,4 @@ module type S = sig
       tensor's associated view metadata. It does not move data if the reshape is
       compatible with the existing layout. Returns a *new* tensor handle that
       shares the underlying buffer with [t] but has the modified view. *)
-
-  (* jit *)
-
-  (* These are primarily hooks for JIT graph building. In an eager backend, they
-     might be identity functions or raise errors. *)
-
-  val op_define_global :
-    context -> string (*name_for_codegen*) -> ('a, 'b) t -> ('a, 'b) t
-  (** [op_define_global ctx name_for_codegen t] Corresponds to the
-      [DEFINE_GLOBAL] UOp. Marks the tensor [t] as a global buffer argument for
-      a JIT-compiled kernel, using [name_for_codegen] as its identifier in the
-      generated code. Eager Execution: Typically returns [t] unchanged
-      (identity). JIT Compilation: Records [t] as an input/output dependency for
-      the kernel graph. *)
-
-  val op_range :
-    context ->
-    string (*name_hint*) ->
-    (int, 'b) t (*scalar_bound*) ->
-    (int, 'b) t (*loop_variable*)
-  (** [op_range ctx name_hint bound] Corresponds to the [RANGE] UOp. For JIT
-      compilation, this defines a loop induction variable that iterates from 0
-      up to (but not including) the value specified by the scalar integer tensor
-      [bound]. [name_hint] provides a suggestion for the variable name in
-      generated code. Returns a scalar integer tensor representing the symbolic
-      loop variable. Eager Execution: Raises an error, as loops are handled by
-      standard OCaml control flow. *)
-
-  val op_special :
-    context -> string (*name_hint*) -> special_kind -> (int, 'b) t
-  (** [op_special ctx name_hint kind] Corresponds to the [SPECIAL] UOp. For JIT
-      compilation, this retrieves a special hardware index specified by [kind].
-      [name_hint] provides a naming suggestion. Returns a scalar integer tensor
-      representing the requested index. Eager Execution: Raises an error or
-      returns a default value (e.g., 0). *)
 end

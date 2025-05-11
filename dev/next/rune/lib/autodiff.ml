@@ -236,10 +236,9 @@ let make_reverse_handler (grad_ctx : context)
             twg_in.bv <-
               T.add effect_ctx twg_in.bv grad_contrib_to_original_input;
             original_forward_val_from_continuation)
-    (* E_load, E_store, E_define_global, E_range, E_special gradients are not
-       handled yet. They will pass through to be handled by JIT or eager
-       execution. AD for them is more complex. *)
-    | E_load _ | E_store _ | E_define_global _ | E_range _ | E_special _ -> None
+    (* E_load, E_store gradients are not handled yet. They will pass through to
+       be handled by JIT or eager execution. AD for them is more complex. *)
+    | E_load _ | E_store _ -> None
     | _ -> None (* Unknown effect, pass to other handlers *)
   in
 

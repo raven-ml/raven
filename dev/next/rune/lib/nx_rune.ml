@@ -1,7 +1,28 @@
 open Nx_core
 
+module Symbolic_id = struct
+  type t = int
+
+  let counter = ref 0
+
+  let fresh () =
+    incr counter;
+    !counter
+
+  let compare = Int.compare
+  let equal = Int.equal
+  let hash = Hashtbl.hash
+  let pp fmt v = Format.fprintf fmt "sym%d" v
+end
+
 type ('a, 'b) buffer =
   | Cpu_buffer : ('a, 'b) Nx_native.buffer -> ('a, 'b) buffer
+  | Symbolic_buffer : {
+      id : Symbolic_id.t;
+      dtype_repr : ('a, 'b) Dtype.t; (* To reconstruct type if needed *)
+      shape_repr : int array;
+    }
+      -> ('a, 'b) buffer
 
 type context = Cpu_context : Nx_native.context -> context
 
@@ -73,36 +94,29 @@ type _ Effect.t +=
       new_shape : int array;
     }
       -> ('a, 'b) t Effect.t
-  | E_define_global : {
-      context : context;
-      name : string;
-      t_in : ('a, 'b) t;
-    }
-      -> ('a, 'b) t Effect.t
-  | E_range : {
-      context : context;
-      name_hint : string;
-      bound : (int, 'c) t;
-    }
-      -> (int, 'c) t Effect.t
-  | E_special : {
-      context : context;
-      name_hint : string;
-      kind : Backend_intf.special_kind;
-    }
-      -> (int, 'c) t Effect.t
 
 let unwrap_to_nx_native (rune_t : ('a, 'b) t) : ('a, 'b) Nx_native.t =
   match rune_t.buffer with
   | Cpu_buffer native_buf ->
-      (* Construct the Nx_native.t record directly using its internal
-         structure *)
       Nx_native.
         { dtype = rune_t.dtype; buffer = native_buf; view = rune_t.view }
-(* Example for a future GPU backend: | B_Gpu _ -> failwith "unwrap_to_nx_native:
-   Expected B_Cpu buffer for this Nx_native operation" *)
+  | Symbolic_buffer sb ->
+      (* Construct a descriptive error message *)
+      let sym_id_str =
+        Symbolic_id.pp Format.str_formatter sb.id;
+        Format.flush_str_formatter ()
+      in
+      let dtype_str = Dtype.to_string sb.dtype_repr in
+      let shape_str = View.pp_int_array_for_error_msg sb.shape_repr in
+      failwith
+        (Printf.sprintf
+           "Nx_rune.unwrap_to_nx_native: Attempted to unwrap a symbolic tensor \
+            (ID: %s, Dtype: %s, Shape: %s) to a concrete Nx_native tensor. \
+            Symbolic tensors cannot be used in eager/concrete backend \
+            execution without a handler."
+           sym_id_str dtype_str shape_str)
 
-(** Wraps an Nx_native.t into an Nx_rune.t. *)
+(* wrap_from_nx_native remains the same *)
 let wrap_from_nx_native (native_t : ('a, 'b) Nx_native.t) : ('a, 'b) t =
   {
     dtype = Nx_native.dtype native_t;
@@ -110,17 +124,42 @@ let wrap_from_nx_native (native_t : ('a, 'b) Nx_native.t) : ('a, 'b) t =
     view = Nx_native.view native_t;
   }
 
-(** Unwraps an Nx_rune.context to its corresponding Nx_native.context. Raises
-    Failure if the context is not for Nx_native. *)
+(* unwrap_to_nx_native_context remains the same *)
 let unwrap_to_nx_native_context (rune_ctx : context) : Nx_native.context =
   match rune_ctx with Cpu_context native_ctx -> native_ctx
-(* Example for a future GPU backend: | Ctx_Gpu _ -> failwith
-   "unwrap_to_nx_native_context: Expected Ctx_Cpu for this Nx_native
-   operation" *)
+
+(** [get_symbolic_info t] returns (SymbolicId, Dtype, Shape) if [t] is symbolic,
+    else None. The Dtype and Shape returned are those stored with the symbolic
+    buffer, which should represent its abstract properties. The view on the
+    tensor [t] might be different due to subsequent lazy movement operations. *)
+let get_symbolic_info (type a b) (t : (a, b) t) :
+    (Symbolic_id.t * (a, b) Dtype.t * int array) option =
+  match t.buffer with
+  | Symbolic_buffer sb ->
+      (* Ensure type consistency. This check is more for sanity; GADT should
+         enforce. *)
+      if Dtype.eq sb.dtype_repr t.dtype then
+        Some (sb.id, sb.dtype_repr, sb.shape_repr)
+      else
+        (* This case should ideally not happen if Symbolic_buffer is constructed
+           correctly relative to the outer t.dtype. It's a potential internal
+           inconsistency. *)
+        failwith
+          (Printf.sprintf
+             "Nx_rune.get_symbolic_info: Dtype mismatch between tensor shell \
+              (%s) and symbolic buffer metadata (%s) for ID %s."
+             (Dtype.to_string t.dtype)
+             (Dtype.to_string sb.dtype_repr)
+             (Symbolic_id.pp Format.str_formatter sb.id;
+              Format.flush_str_formatter ()))
+  | _ -> None
 
 (* Lenses *)
 let view (t : ('a, 'b) t) : View.t = t.view
 let dtype (t : ('a, 'b) t) : ('a, 'b) Dtype.t = t.dtype
+
+let is_symbolic (t : ('a, 'b) t) : bool =
+  match t.buffer with Symbolic_buffer _ -> true | _ -> false
 
 (* Context creation *)
 let create_context () : context =
@@ -232,41 +271,4 @@ let op_reshape (rune_ctx : context) (t_in : ('a, 'b) t) (new_shape : int array)
     let native_ctx = unwrap_to_nx_native_context rune_ctx in
     let native_t_in = unwrap_to_nx_native t_in in
     let native_result = Nx_native.op_reshape native_ctx native_t_in new_shape in
-    wrap_from_nx_native native_result
-
-(* JIT specific ops *)
-let op_define_global (rune_ctx : context) (name : string) (t_in : ('a, 'b) t) :
-    ('a, 'b) t =
-  try Effect.perform (E_define_global { context = rune_ctx; name; t_in })
-  with Effect.Unhandled _ ->
-    (* In eager mode, Nx_native.op_define_global is identity. We still call it
-       for consistency and to allow Nx_native to do any (future) eager-mode
-       bookkeeping. *)
-    let native_ctx = unwrap_to_nx_native_context rune_ctx in
-    let native_t_in = unwrap_to_nx_native t_in in
-    let native_result =
-      Nx_native.op_define_global native_ctx name native_t_in
-    in
-    if native_result == native_t_in then t_in
-      (* Physical equality optimization if Nx_native returns same tensor *)
-    else wrap_from_nx_native native_result
-
-let op_range (rune_ctx : context) (name_hint : string) (bound : (int, 'b) t) :
-    (int, 'b) t =
-  try Effect.perform (E_range { context = rune_ctx; name_hint; bound })
-  with Effect.Unhandled _ ->
-    let native_ctx = unwrap_to_nx_native_context rune_ctx in
-    let native_bound = unwrap_to_nx_native bound in
-    (* Nx_native.op_range correctly raises an error in eager mode. *)
-    let native_result = Nx_native.op_range native_ctx name_hint native_bound in
-    wrap_from_nx_native native_result
-
-let op_special (rune_ctx : context) (name_hint : string)
-    (kind : Backend_intf.special_kind) : (int, 'b) t =
-  try Effect.perform (E_special { context = rune_ctx; name_hint; kind })
-  with Effect.Unhandled _ ->
-    let native_ctx = unwrap_to_nx_native_context rune_ctx in
-    (* Nx_native.op_special correctly raises an error or returns a default in
-       eager mode. *)
-    let native_result = Nx_native.op_special native_ctx name_hint kind in
     wrap_from_nx_native native_result

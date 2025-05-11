@@ -329,7 +329,6 @@ let op_sum ctx ~(axes : int array) ~(keepdims : bool)
 
   (* Delegate to specialized reduction function *)
   Ops_reduce.sum ctx ~axes:axes_to_reduce ~keepdims input_tensor output_tensor;
-  (* FIX 3 *)
   output_tensor
 
 (* Movement Ops: These just update the view *)
@@ -365,15 +364,3 @@ let op_flip _ctx (t : ('a, 'b) t) (axes_to_flip : bool array) : ('a, 'b) t =
   match View.flip t.view axes_to_flip with
   | new_view -> { t with view = new_view }
   | exception Invalid_argument msg -> invalid_arg ("op_flip: " ^ msg)
-
-(* Add other binary ops similarly (sub, mul, div, etc.) *)
-(* op_sub, op_mul, op_div ... *)
-
-(* JIT Ops - Raise errors or are identity in eager mode *)
-let op_define_global _ctx _name t = t (* Identity for eager *)
-
-let op_range _ctx _name _bound =
-  failwith "op_range not supported in eager native backend"
-
-let op_special _ctx _name _kind =
-  failwith "op_special not supported in eager native backend"
