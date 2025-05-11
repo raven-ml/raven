@@ -15,10 +15,8 @@ module type S = sig
     val max_shared_memory : t -> int
     val max_workgroup_size : t -> int array (* e.g., [|1024; 1024; 64|] *)
 
-    val supports_dtype :
-      t -> Ir.Types.Ir_Dtype.any -> bool (* <<< CHANGED HERE *)
-    (** Checks if the backend supports a given Rune_jit.Ir.Types.Ir_Dtype.any.
-    *)
+    val supports_dtype : t -> Ir.Dtype.any -> bool
+    (** Checks if the backend supports a given Rune_jit.Ir.Dtype.any. *)
 
     val renderer_float4_str :
       t -> string option (* e.g., Some "(float4)" or None *)
@@ -36,13 +34,11 @@ module type S = sig
   type ('a_elt, 'b_layout_phantom) device_buffer = {
     native_buffer : device_buffer_native;
     size_in_bytes : int;
-    dtype : ('a_elt, 'b_layout_phantom) Ir.Types.Ir_Dtype.t;
-        (* <<< CHANGED HERE *)
+    dtype : ('a_elt, 'b_layout_phantom) Ir.Dtype.t;
     device_info : Device_info.t;
   }
-  (** Represents a buffer on the device, using Rune_jit.Ir.Types.Ir_Dtype.t. The
-      type parameters ('a_elt, 'b_layout_phantom) match those in
-      Ir.Types.Ir_Dtype.t. *)
+  (** Represents a buffer on the device, using Rune_jit.Ir.Dtype.t. The type
+      parameters ('a_elt, 'b_layout_phantom) match those in Ir.Dtype.t. *)
 
   type compiled_artifact_native
   (** Opaque type representing a compiled kernel artifact. *)
@@ -88,19 +84,15 @@ module type S = sig
     val allocate_buffer :
       device_info:Device_info.t ->
       size_in_bytes:int ->
-      dtype:('a_elt, 'b_layout_phantom) Ir.Types.Ir_Dtype.t ->
-      (* <<< CHANGED HERE *)
+      dtype:('a_elt, 'b_layout_phantom) Ir.Dtype.t ->
       (('a_elt, 'b_layout_phantom) device_buffer, string) result
-    (** Allocates a buffer on the device. Uses Rune_jit.Ir.Types.Ir_Dtype.t for
+    (** Allocates a buffer on the device. Uses Rune_jit.Ir.Dtype.t for
         specifying the data type. *)
-    (* <<< CHANGED HERE *)
 
-    val deallocate_buffer :
-      ('a_elt, 'b_layout_phantom) device_buffer -> unit (* <<< CHANGED HERE *)
+    val deallocate_buffer : ('a_elt, 'b_layout_phantom) device_buffer -> unit
 
     val copy_to_device :
       dest_buffer:('a_elt, 'b_layout_phantom) device_buffer ->
-      (* <<< CHANGED HERE *)
       host_data:nativeint ->
       host_data_offset_bytes:int ->
       copy_size_bytes:int ->
@@ -108,7 +100,6 @@ module type S = sig
 
     val copy_from_device :
       src_buffer:('a_elt, 'b_layout_phantom) device_buffer ->
-      (* <<< CHANGED HERE *)
       host_dest_ptr:nativeint ->
       device_data_offset_bytes:int ->
       copy_size_bytes:int ->

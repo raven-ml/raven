@@ -1,52 +1,95 @@
-(* lib/jit.ml *)
+(* lib/jit.ml (or lib/rune_next/jit.ml) - This file uses Rune_jit.Ir *)
 open Nx_core
 open Nx_rune
-module Var = Ir.Var (* Use Var from the Ir module for consistency *)
+open Rune_jit (* For Rune_jit.Ir *)
 
-(* The state managed by the JIT tracer. *)
+(* Alias Var from Rune_jit.Ir for convenience *)
+module Var = Ir.Var
+
+(*** Dtype Conversion Helper ***)
+
+(** * Converts an Nx_core.Dtype.t to the corresponding Rune_jit.Ir.Dtype.t * and
+    wraps it in Rune_jit.Ir.Dtype.any. * * This function is crucial for bridging
+    the Nx world with the independent Rune JIT IR. * The GADT matching ensures
+    type safety during the conversion. *)
+let nx_dtype_to_ir_any_dtype (type a b) (nx_dt : (a, b) Nx_core.Dtype.t) :
+    Ir.Dtype.any =
+  match nx_dt with
+  | Dtype.Float32 -> Ir.Dtype.Any_Dtype Ir.Dtype.Float32
+  | Dtype.Int32 -> Ir.Dtype.Any_Dtype Ir.Dtype.Int32
+  | Dtype.UInt8 -> Ir.Dtype.Any_Dtype Ir.Dtype.Uint8
+  (* Add other conversions as needed, e.g.: *)
+  (* | Dtype.Float16 -> Ir.Dtype.Any_Dtype Ir.Dtype.Float16 *)
+  (* | Dtype.Int64 -> Ir.Dtype.Any_Dtype Ir.Dtype.Int64 *)
+  | _ ->
+      failwith
+        ("JIT Error: Unsupported Nx_core.Dtype encountered during conversion \
+          to IR Dtype: " ^ Dtype.to_string nx_dt)
+
+(** * A version of the converter that preserves the GADT type parameters. * This
+    is useful when you need the specific ('a_elt, 'b_layout_phantom) Dtype.t *
+    for constructing typed IR nodes. *)
+let nx_dtype_to_ir_dtype (type a b) (nx_dt : (a, b) Nx_core.Dtype.t) :
+    ('c, 'd) Ir.Dtype.t =
+  match nx_dt with
+  | Dtype.Float32 ->
+      Obj.magic Ir.Dtype.Float32
+      (* ('a, 'b) -> ('c, 'd) requires Obj.magic here *)
+  | Dtype.Int32 -> Obj.magic Ir.Dtype.Int32
+  | Dtype.UInt8 -> Obj.magic Ir.Dtype.Uint8
+  | _ ->
+      failwith
+        ("JIT Error: Unsupported Nx_core.Dtype encountered during specific \
+          conversion to IR Dtype: " ^ Dtype.to_string nx_dt)
+(* Note on Obj.magic in nx_dtype_to_ir_dtype: The input is ('a, 'b) Dtype.t from
+   Nx_core. The output is ('c, 'd) Ir.Dtype.t from Rune_jit. While conceptually
+   Float32 maps to Float32, their phantom type parameters ('b and 'd) are
+   different and unrelated. Obj.magic is used here to bridge this. The type
+   safety relies on the correct mapping within the match cases. The 'a and 'c
+   (element types) should align (e.g., float for Float32). *)
+
+(*** JIT Tracer State and Helpers ***)
+
 type jit_tracer_state = {
   concrete_tensor_to_var_map : (Obj.t, Var.t) Hashtbl.t;
-      (** Maps concrete tensor objects (if encountered) to their Var IDs. *)
   vars_metadata : (Var.t, Ir.var_metadata) Hashtbl.t;
-      (** Stores metadata (dtype, shape) for each Var ID. *)
-  recorded_nodes : Ir.any_node list ref;
-      (** Accumulates the IR nodes in reverse execution order. *)
+      (* Uses Rune_jit.Ir.var_metadata *)
+  recorded_nodes : Ir.any_node list ref; (* Uses Rune_jit.Ir.any_node *)
   mutable input_vars_acc : Var.t list;
-      (** Accumulates Var IDs of tensors identified as graph inputs. *)
 }
 
-(** [record_var_and_make_symbolic_rune_tensor tracer_state out_var
-     dtype_specific shape] Records metadata for [out_var] and creates a symbolic
-    [Nx_rune.t] representing it. *)
 let record_var_and_make_symbolic_rune_tensor (tracer_state : jit_tracer_state)
-    (out_var : Var.t) (dtype_specific : ('a, 'b) Dtype.t) (shape : int array) :
-    ('a, 'b) Nx_rune.t =
+    (out_var : Var.t) (nx_dtype_specific : ('a, 'b) Dtype.t) (shape : int array)
+    : ('a, 'b) Nx_rune.t =
+  (* Convert Nx Dtype to IR Dtype for metadata storage *)
+  let ir_any_dt = nx_dtype_to_ir_any_dtype nx_dtype_specific in
   Hashtbl.replace tracer_state.vars_metadata out_var
-    { Ir.dtype = Ir.Any_Dtype dtype_specific; Ir.shape };
+    { Ir.dtype = ir_any_dt; Ir.shape };
+
+  (* Store IR Dtype in metadata *)
   let view = View.create shape in
-  (* The symbolic tensor uses the out_var as its ID. The shape_repr in
-     Symbolic_buffer should match the initial shape associated with this var. *)
   let symbolic_tensor : ('a, 'b) Nx_rune.t =
     {
-      dtype = dtype_specific;
+      dtype = nx_dtype_specific;
+      (* Nx_rune.t still uses Nx_core.Dtype *)
       buffer =
         Symbolic_buffer
-          { id = out_var; dtype_repr = dtype_specific; shape_repr = shape };
+          {
+            id = out_var;
+            dtype_repr = nx_dtype_specific;
+            (* Store original Nx Dtype for Nx_rune *)
+            shape_repr = shape;
+          };
       view;
     }
   in
   symbolic_tensor
 
-(** [get_jit_var_for_rune_tensor tracer_state tensor] Retrieves or creates a Var
-    ID and its metadata for a given [Nx_rune.t]. If the tensor is concrete and
-    not yet seen, it's added as a Placeholder node. *)
 let get_jit_var_for_rune_tensor (tracer_state : jit_tracer_state)
     (tensor : ('c, 'd) Nx_rune.t) : Var.t * Ir.var_metadata =
   match Nx_rune.get_symbolic_info tensor with
-  | Some (sid, _symbolic_dtype, _symbolic_buffer_shape) -> (
+  | Some (sid, _symbolic_nx_dtype, _symbolic_buffer_shape) -> (
       try
-        (* The metadata for 'sid' reflects the current logical shape/dtype of
-           the tensor/view that 'sid' represents. *)
         let meta = Hashtbl.find tracer_state.vars_metadata sid in
         (sid, meta)
       with Not_found ->
@@ -57,40 +100,44 @@ let get_jit_var_for_rune_tensor (tracer_state : jit_tracer_state)
              (Var.pp Format.str_formatter sid;
               Format.flush_str_formatter ())))
   | None -> (
-      (* Tensor is concrete, not yet part of the symbolic graph. *)
       let tensor_obj = Obj.repr tensor in
       match
         Hashtbl.find_opt tracer_state.concrete_tensor_to_var_map tensor_obj
       with
       | Some existing_sid ->
-          (* Already encountered this concrete tensor, reuse its Var ID. *)
           let meta = Hashtbl.find tracer_state.vars_metadata existing_sid in
           (existing_sid, meta)
       | None ->
-          (* New concrete tensor: create a Placeholder for it. *)
           let new_sid = Var.fresh () in
           let concrete_view = Nx_rune.view tensor in
           let concrete_shape = View.shape concrete_view in
-          let concrete_dtype_specific = Nx_rune.dtype tensor in
+          let concrete_nx_dtype = Nx_rune.dtype tensor in
+          let concrete_ir_any_dtype =
+            nx_dtype_to_ir_any_dtype concrete_nx_dtype
+          in
+
           let meta : Ir.var_metadata =
-            {
-              Ir.dtype = Ir.Any_Dtype concrete_dtype_specific;
-              Ir.shape = concrete_shape;
-            }
+            (* This is Rune_jit.Ir.var_metadata *)
+            { Ir.dtype = concrete_ir_any_dtype; Ir.shape = concrete_shape }
+          in
+          (* When creating IR.Placeholder, we need the specific IR Dtype *)
+          let concrete_ir_dtype : ('val_t, 'layout_t) Ir.Dtype.t =
+            nx_dtype_to_ir_dtype concrete_nx_dtype
           in
           tracer_state.recorded_nodes :=
             Ir.Any_Node
+              (* This is Rune_jit.Ir.Any_Node *)
               (Ir.Placeholder
                  {
                    out_var = new_sid;
-                   dtype = concrete_dtype_specific;
+                   dtype = concrete_ir_dtype;
+                   (* Use specific IR Dtype *)
                    shape = concrete_shape;
                  })
             :: !(tracer_state.recorded_nodes);
           Hashtbl.replace tracer_state.vars_metadata new_sid meta;
           Hashtbl.replace tracer_state.concrete_tensor_to_var_map tensor_obj
             new_sid;
-          (* Add to graph inputs if not already there (shouldn't be). *)
           if not (List.exists (Var.equal new_sid) tracer_state.input_vars_acc)
           then
             tracer_state.input_vars_acc <-
@@ -145,44 +192,50 @@ let calculate_reduction_output_shape (in_shape : int array)
       [||]
     else Array.of_list result_list
 
-(** [make_jit_handler tracer_state] Creates the effect handler for JIT tracing.
-    This handler intercepts [Nx_rune] effects and translates them into
-    [Ir.node_t] graph nodes. *)
+(*** JIT Effect Handler ***)
 let make_jit_handler (tracer_state : jit_tracer_state) =
   let open Effect.Deep in
   let effc : type a. a Effect.t -> ((a, _) continuation -> _) option = function
-    | E_buffer { context = _; dtype = dt_specific; size_in_elements } ->
+    | E_buffer { context = _; dtype = nx_dt_specific; size_in_elements } ->
         Some
           (fun k ->
             let out_var = Var.fresh () in
+            let ir_dt_specific : ('val_t, 'layout_t) Ir.Dtype.t =
+              nx_dtype_to_ir_dtype
+                nx_dt_specific (* Convert to specific IR Dtype *)
+            in
             let node =
-              Ir.Buffer { dtype = dt_specific; size_in_elements; out_var }
+              Ir.Buffer { dtype = ir_dt_specific; size_in_elements; out_var }
             in
             tracer_state.recorded_nodes :=
               Ir.Any_Node node :: !(tracer_state.recorded_nodes);
-            (* Buffers are initially 1D. Reshape will give them structure. *)
             let initial_shape =
               if size_in_elements = 0 then [| 0 |] else [| size_in_elements |]
             in
             let symbolic_tensor =
               record_var_and_make_symbolic_rune_tensor tracer_state out_var
-                dt_specific initial_shape
+                nx_dt_specific initial_shape
             in
             continue k symbolic_tensor)
-    | E_const_scalar { context = _; value; dtype = dt_specific } ->
+    | E_const_scalar { context = _; value; dtype = nx_dt_specific } ->
         Some
           (fun k ->
             let out_var = Var.fresh () in
+            let ir_dt_specific = nx_dtype_to_ir_dtype nx_dt_specific in
             let node =
-              Ir.Const_Scalar { value; dtype = dt_specific; out_var }
+              Ir.Const_Scalar
+                {
+                  value (* 'a matches 'val_t due to Obj.magic in converter *);
+                  dtype = ir_dt_specific;
+                  out_var;
+                }
             in
             tracer_state.recorded_nodes :=
               Ir.Any_Node node :: !(tracer_state.recorded_nodes);
             let scalar_shape = [||] in
-            (* Const_Scalar represents a 0-D tensor. *)
             let symbolic_tensor =
               record_var_and_make_symbolic_rune_tensor tracer_state out_var
-                dt_specific scalar_shape
+                nx_dt_specific scalar_shape
             in
             continue k symbolic_tensor)
     | E_add { context = _; a; b } ->
@@ -190,48 +243,44 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
           (fun k ->
             let var_a, meta_a = get_jit_var_for_rune_tensor tracer_state a in
             let var_b, meta_b = get_jit_var_for_rune_tensor tracer_state b in
-            (* Assume type promotion is handled, or dtypes are compatible.
-               Result dtype is taken from 'a'. *)
-            let res_dtype_specific = Nx_rune.dtype a in
-            let res_shape = View.broadcast_shapes meta_a.shape meta_b.shape in
+            let res_nx_dtype = Nx_rune.dtype a in
+            let res_ir_dtype : ('val_t, 'layout_t) Ir.Dtype.t =
+              nx_dtype_to_ir_dtype res_nx_dtype
+            in
+            let res_shape =
+              View.broadcast_shapes meta_a.Ir.shape meta_b.Ir.shape
+            in
             let res_numel = View.prod res_shape in
 
-            (* 1. Create a Buffer node for the output tensor's memory. *)
             let out_buffer_var = Var.fresh () in
             tracer_state.recorded_nodes :=
               Ir.Any_Node
                 (Ir.Buffer
                    {
-                     dtype = res_dtype_specific;
+                     dtype = res_ir_dtype;
                      size_in_elements = res_numel;
                      out_var = out_buffer_var;
                    })
               :: !(tracer_state.recorded_nodes);
-            (* The metadata for out_buffer_var uses the result shape. *)
+            let res_ir_any_dtype = nx_dtype_to_ir_any_dtype res_nx_dtype in
             Hashtbl.replace tracer_state.vars_metadata out_buffer_var
-              {
-                Ir.dtype = Ir.Any_Dtype res_dtype_specific;
-                Ir.shape = res_shape;
-              };
+              { Ir.dtype = res_ir_any_dtype; Ir.shape = res_shape };
 
-            (* 2. Create the Add node, linking inputs to the output buffer
-               var. *)
             let add_node =
               Ir.Add
                 {
                   in_a_var = var_a;
                   in_b_var = var_b;
                   out_var = out_buffer_var;
-                  dtype = res_dtype_specific;
+                  dtype = res_ir_dtype;
                 }
             in
             tracer_state.recorded_nodes :=
               Ir.Any_Node add_node :: !(tracer_state.recorded_nodes);
 
-            (* 3. Create the symbolic tensor representing the result. *)
             let symbolic_result_tensor =
               record_var_and_make_symbolic_rune_tensor tracer_state
-                out_buffer_var res_dtype_specific res_shape
+                out_buffer_var res_nx_dtype res_shape
             in
             continue k symbolic_result_tensor)
     | E_mul { context = _; a; b } ->
@@ -239,8 +288,13 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
           (fun k ->
             let var_a, meta_a = get_jit_var_for_rune_tensor tracer_state a in
             let var_b, meta_b = get_jit_var_for_rune_tensor tracer_state b in
-            let res_dtype_specific = Nx_rune.dtype a in
-            let res_shape = View.broadcast_shapes meta_a.shape meta_b.shape in
+            let res_nx_dtype = Nx_rune.dtype a in
+            let res_ir_dtype : ('val_t, 'layout_t) Ir.Dtype.t =
+              nx_dtype_to_ir_dtype res_nx_dtype
+            in
+            let res_shape =
+              View.broadcast_shapes meta_a.Ir.shape meta_b.Ir.shape
+            in
             let res_numel = View.prod res_shape in
 
             let out_buffer_var = Var.fresh () in
@@ -248,16 +302,14 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
               Ir.Any_Node
                 (Ir.Buffer
                    {
-                     dtype = res_dtype_specific;
+                     dtype = res_ir_dtype;
                      size_in_elements = res_numel;
                      out_var = out_buffer_var;
                    })
               :: !(tracer_state.recorded_nodes);
+            let res_ir_any_dtype = nx_dtype_to_ir_any_dtype res_nx_dtype in
             Hashtbl.replace tracer_state.vars_metadata out_buffer_var
-              {
-                Ir.dtype = Ir.Any_Dtype res_dtype_specific;
-                Ir.shape = res_shape;
-              };
+              { Ir.dtype = res_ir_any_dtype; Ir.shape = res_shape };
 
             let mul_node =
               Ir.Mul
@@ -265,7 +317,7 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
                   in_a_var = var_a;
                   in_b_var = var_b;
                   out_var = out_buffer_var;
-                  dtype = res_dtype_specific;
+                  dtype = res_ir_dtype;
                 }
             in
             tracer_state.recorded_nodes :=
@@ -273,7 +325,7 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
 
             let symbolic_result_tensor =
               record_var_and_make_symbolic_rune_tensor tracer_state
-                out_buffer_var res_dtype_specific res_shape
+                out_buffer_var res_nx_dtype res_shape
             in
             continue k symbolic_result_tensor)
     | E_sum { context = _; t_in; axes; keepdims } ->
@@ -282,9 +334,12 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
             let var_in, meta_in =
               get_jit_var_for_rune_tensor tracer_state t_in
             in
-            let dtype_in_specific = Nx_rune.dtype t_in in
+            let dtype_in_nx = Nx_rune.dtype t_in in
+            let dtype_in_ir : ('val_t, 'layout_t) Ir.Dtype.t =
+              nx_dtype_to_ir_dtype dtype_in_nx
+            in
             let res_shape =
-              calculate_reduction_output_shape meta_in.shape
+              calculate_reduction_output_shape meta_in.Ir.shape
                 (Array.to_list axes) keepdims
             in
             let res_numel = View.prod res_shape in
@@ -294,26 +349,23 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
               Ir.Any_Node
                 (Ir.Buffer
                    {
-                     dtype = dtype_in_specific;
+                     dtype = dtype_in_ir;
                      size_in_elements = res_numel;
                      out_var = out_buffer_var;
                    })
               :: !(tracer_state.recorded_nodes);
+            let dtype_in_ir_any = nx_dtype_to_ir_any_dtype dtype_in_nx in
             Hashtbl.replace tracer_state.vars_metadata out_buffer_var
-              {
-                Ir.dtype = Ir.Any_Dtype dtype_in_specific;
-                Ir.shape = res_shape;
-              };
+              { Ir.dtype = dtype_in_ir_any; Ir.shape = res_shape };
 
             let reduce_node =
               Ir.Reduce_Axis
                 {
                   in_var = var_in;
                   reduce_op_kind = Ir.Reduce_Sum;
-                  (* For E_sum *)
                   axes;
                   out_var = out_buffer_var;
-                  dtype = dtype_in_specific;
+                  dtype = dtype_in_ir;
                 }
             in
             tracer_state.recorded_nodes :=
@@ -321,7 +373,7 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
 
             let symbolic_tensor =
               record_var_and_make_symbolic_rune_tensor tracer_state
-                out_buffer_var dtype_in_specific res_shape
+                out_buffer_var dtype_in_nx res_shape
             in
             continue k symbolic_tensor)
     | E_expand { context = _; t_in; new_target_shape } ->
@@ -330,10 +382,10 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
             let var_in, _meta_in =
               get_jit_var_for_rune_tensor tracer_state t_in
             in
-            let dtype_in_specific = Nx_rune.dtype t_in in
-            (* Expand creates a new view, represented by a new Var. This new Var
-               does not get a new Buffer node; it reuses in_var's buffer. The
-               metadata for out_view_var will store the new_target_shape. *)
+            let dtype_in_nx = Nx_rune.dtype t_in in
+            let dtype_in_ir : ('val_t, 'layout_t) Ir.Dtype.t =
+              nx_dtype_to_ir_dtype dtype_in_nx
+            in
             let out_view_var = Var.fresh () in
             let expand_node =
               Ir.Expand
@@ -341,7 +393,7 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
                   in_var = var_in;
                   new_target_shape;
                   out_var = out_view_var;
-                  dtype = dtype_in_specific;
+                  dtype = dtype_in_ir;
                 }
             in
             tracer_state.recorded_nodes :=
@@ -349,7 +401,7 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
 
             let symbolic_tensor =
               record_var_and_make_symbolic_rune_tensor tracer_state out_view_var
-                dtype_in_specific new_target_shape
+                dtype_in_nx new_target_shape
             in
             continue k symbolic_tensor)
     | E_reshape { context = _; t_in; new_shape } ->
@@ -358,7 +410,10 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
             let var_in, _meta_in =
               get_jit_var_for_rune_tensor tracer_state t_in
             in
-            let dtype_in_specific = Nx_rune.dtype t_in in
+            let dtype_in_nx = Nx_rune.dtype t_in in
+            let dtype_in_ir : ('val_t, 'layout_t) Ir.Dtype.t =
+              nx_dtype_to_ir_dtype dtype_in_nx
+            in
             let out_view_var = Var.fresh () in
             let reshape_node =
               Ir.Reshape
@@ -366,41 +421,37 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
                   in_var = var_in;
                   new_shape;
                   out_var = out_view_var;
-                  dtype = dtype_in_specific;
+                  dtype = dtype_in_ir;
                 }
             in
             tracer_state.recorded_nodes :=
               Ir.Any_Node reshape_node :: !(tracer_state.recorded_nodes);
             let symbolic_tensor =
               record_var_and_make_symbolic_rune_tensor tracer_state out_view_var
-                dtype_in_specific new_shape
+                dtype_in_nx new_shape
             in
             continue k symbolic_tensor)
-    | _ -> None (* For any other effects not explicitly handled. *)
+    | _ -> None
   in
   { retc = (fun result_val -> result_val); exnc = raise; effc }
 
-(** [trace _ f input_tensor] Traces the execution of function [f] with
-    [input_tensor], producing an [Ir.graph_t] and the symbolic result tensor. *)
+(*** Trace Function ***)
 let trace (_trace_infra_context : Nx_rune.context)
     (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t)
     (input_argument_concrete_tensor : ('a, 'b) Nx_rune.t) :
     Ir.graph_t * ('c, 'd) Nx_rune.t =
+  (* Ir.graph_t is Rune_jit.Ir.graph_t *)
   let tracer_state =
     {
       concrete_tensor_to_var_map = Hashtbl.create 16;
       vars_metadata = Hashtbl.create (32 * 2);
-      (* Increased default size slightly *)
       recorded_nodes = ref [];
       input_vars_acc = [];
     }
   in
-  (* Process the initial concrete input tensor. *)
   let initial_sid_for_input, initial_meta_for_input =
     get_jit_var_for_rune_tensor tracer_state input_argument_concrete_tensor
   in
-  (* Create the initial symbolic tensor that will be passed to 'f'. This uses
-     the SID of the Placeholder node created for the input. *)
   let input_arg_for_f : ('a, 'b) Nx_rune.t =
     record_var_and_make_symbolic_rune_tensor tracer_state initial_sid_for_input
       (Nx_rune.dtype input_argument_concrete_tensor)
@@ -408,12 +459,10 @@ let trace (_trace_infra_context : Nx_rune.context)
   in
 
   let handler = make_jit_handler tracer_state in
-  (* Execute the function 'f' under the JIT handler's control. *)
   let final_symbolic_result_tensor =
     Effect.Deep.match_with f input_arg_for_f handler
   in
 
-  (* The Var ID of the final result tensor/view. *)
   let output_var_sid, _final_result_meta =
     get_jit_var_for_rune_tensor tracer_state final_symbolic_result_tensor
   in
@@ -422,12 +471,12 @@ let trace (_trace_infra_context : Nx_rune.context)
   let final_input_vars = List.rev tracer_state.input_vars_acc in
 
   let graph : Ir.graph_t =
+    (* This is Rune_jit.Ir.graph_t *)
     {
       Ir.nodes = final_nodes;
       Ir.vars_metadata = tracer_state.vars_metadata;
       Ir.input_vars = final_input_vars;
       Ir.output_vars = [ output_var_sid ];
-      (* SID of the final result var. *)
     }
   in
   (graph, final_symbolic_result_tensor)
