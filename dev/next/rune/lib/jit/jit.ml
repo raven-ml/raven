@@ -376,12 +376,6 @@ let make_jit_handler (tracer_state : jit_tracer_state) =
                 dtype_in_specific new_shape
             in
             continue k symbolic_tensor)
-    (* Direct calls to op_load/op_store within a JITted block are unusual for
-       typical high-level tensor code. If they *must* be supported, they'd need
-       their own Ir.Node types (e.g., Ir.Direct_Load) or would be an error, as
-       they bypass the high-level op abstraction. For now, we assume they won't
-       be directly JITted from user code, so the handler can return None. *)
-    | E_load _ | E_store _ -> None
     | _ -> None (* For any other effects not explicitly handled. *)
   in
   { retc = (fun result_val -> result_val); exnc = raise; effc }

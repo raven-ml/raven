@@ -1,11 +1,6 @@
 (* lowered_ir.ml *)
 open Nx_core (* For Dtype *)
 open Ir
-(* For reusing Var, any_dtype, var_metadata if they are identical *)
-(* Or, if you want Lowered_ir to be fully standalone, redefine them: *)
-(* module Var = Nx_rune.Symbolic_id *)
-(* type any_dtype = Any_Dtype : ('a, 'b) Dtype.t -> any_dtype [@@unboxed] *)
-(* type var_metadata = { dtype: any_dtype; shape: int array; } *)
 
 (** Specifies the type of scalar Arithmetic Logic Unit operation. *)
 type scalar_alu_op_type =

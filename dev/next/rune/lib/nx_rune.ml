@@ -186,44 +186,6 @@ let op_const_scalar (rune_ctx : context) (value : 'a) (dt : ('a, 'b) Dtype.t) :
     let native_result = Nx_native.op_const_scalar native_ctx value dt in
     wrap_from_nx_native native_result
 
-let op_load (rune_ctx : context) ?valid_mask (buffer_source : ('a, 'b) t)
-    (logical_indices : (int, Dtype.int32_elt) t list) : ('a, 'b) t =
-  try
-    Effect.perform
-      (E_load { context = rune_ctx; buffer_source; logical_indices; valid_mask })
-  with Effect.Unhandled _ ->
-    let native_ctx = unwrap_to_nx_native_context rune_ctx in
-    let native_source = unwrap_to_nx_native buffer_source in
-    let native_indices = List.map unwrap_to_nx_native logical_indices in
-    let native_valid_mask = Option.map unwrap_to_nx_native valid_mask in
-    let native_result =
-      Nx_native.op_load native_ctx ?valid_mask:native_valid_mask native_source
-        native_indices
-    in
-    wrap_from_nx_native native_result
-
-let op_store (rune_ctx : context) ?valid_mask (buffer_target : ('a, 'b) t)
-    (logical_indices : (int, Dtype.int32_elt) t list)
-    (scalar_value_to_store : ('a, 'b) t) : unit =
-  try
-    Effect.perform
-      (E_store
-         {
-           context = rune_ctx;
-           buffer_target;
-           logical_indices;
-           scalar_value_to_store;
-           valid_mask;
-         })
-  with Effect.Unhandled _ ->
-    let native_ctx = unwrap_to_nx_native_context rune_ctx in
-    let native_target = unwrap_to_nx_native buffer_target in
-    let native_indices = List.map unwrap_to_nx_native logical_indices in
-    let native_value_to_store = unwrap_to_nx_native scalar_value_to_store in
-    let native_valid_mask = Option.map unwrap_to_nx_native valid_mask in
-    Nx_native.op_store native_ctx ?valid_mask:native_valid_mask native_target
-      native_indices native_value_to_store
-
 let op_add (rune_ctx : context) (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
   try Effect.perform (E_add { context = rune_ctx; a; b })
   with Effect.Unhandled _ ->

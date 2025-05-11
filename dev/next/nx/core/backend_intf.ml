@@ -78,39 +78,6 @@ module type S = sig
       [(1,)]. Broadcasting this value requires subsequent [op_expand] calls
       coordinated by the frontend. *)
 
-  val op_load :
-    context ->
-    ?valid_mask:(int, Dtype.uint8_t) t ->
-    ('a, 'b) t (* buffer_source, its view() dictates access pattern *) ->
-    (int, Dtype.int32_elt) t list (* logical_indices matching the rank *) ->
-    (* Combined validity mask *)
-    ('a, 'b) t (* loaded_value_scalar_tensor *)
-  (** [op_load ctx buffer_source logical_indices ?valid_mask] Corresponds to the
-      [LOAD] UOp. Reads element(s) from the [buffer_source] tensor. The access
-      pattern is determined by the [buffer_source]'s associated [view].
-      [logical_indices] is a list of scalar integer tensors representing the
-      index for each logical dimension defined by the [buffer_source]'s view. If
-      the view defines a scalar, this list might be empty. [?valid_mask] is an
-      optional boolean tensor indicating if the access at these indices is valid
-      (used for masking, padding representation). If invalid, the behaviour is
-      backend-defined (e.g., load 0, load default, or rely on hardware). Returns
-      a new *scalar* tensor containing the loaded value. Vector loads would
-      require a different signature or convention. *)
-
-  val op_store :
-    context ->
-    ?valid_mask:(int, Dtype.uint8_t) t ->
-    ('a, 'b) t (* buffer_target, its view() dictates access pattern *) ->
-    (int, Dtype.int32_elt) t list (* logical_indices matching the rank *) ->
-    ('a, 'b) t (* scalar_value_to_store *) ->
-    unit
-  (** [op_store ctx buffer_target logical_indices value_to_store ?valid_mask]
-      Corresponds to the [STORE] UOp. Writes the *scalar* tensor
-      [value_to_store] into the [buffer_target] tensor. The write location is
-      determined by the [buffer_target]'s associated [view] and the
-      [logical_indices] (a list of scalar integer tensors). [?valid_mask]
-      optionally prevents the store if false. *)
-
   val op_add :
     context ->
     ('a, 'b) t (* op1 *) ->
