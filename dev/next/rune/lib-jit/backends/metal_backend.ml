@@ -1,6 +1,6 @@
 (* lib/jit/metal_backend.ml *)
 open Nx_core
-open Jit_backend
+open Backend_intf
 
 (* Minimal ObjC FFI bindings using ocaml-objc *)
 module Objc_runtime = Objc.Runtime
