@@ -1,0 +1,128 @@
+(library
+ (name runtime)
+ (libraries)
+ (c_library_flags :standard %{read-lines:flags.txt})
+ (foreign_stubs
+  (language c)
+  (names objc_stubs))
+ ;  (ctypes
+ ;   (external_library_name libobjc)
+ ;   (build_flags_resolver
+ ;    (vendored
+ ;     (c_flags :standard %{read-lines:cflags.txt})
+ ;     (c_library_flags :standard %{read-lines:flags.txt})))
+ ;   (headers (include "objc/runtime.h"))
+ ;   (type_description
+ ;    (instance Types)
+ ;    (functor Type_description))
+ ;   (function_description
+ ;    (concurrency unlocked)
+ ;    (instance Functions)
+ ;    (functor Function_description))
+ ;   (generated_types Types_generated)
+ ;   (generated_entry_point C))
+ (flags :standard -linkall))
+
+; (rule
+;  (enabled_if (= %{system} macosx))
+;  (target cflags.txt)
+;  (action (with-stdout-to %{target}
+;   (echo ""))))
+
+; (rule
+;  (enabled_if (= %{system} linux))
+;  (target cflags.txt)
+;  (action (with-stdout-to %{target}
+;   (echo
+;    "-I/usr/GNUstep/System/Library/Headers/\n\
+;     -I/usr/GNUstep/Local/Library/Headers/"))))
+
+(rule
+ (enabled_if
+  (and
+   (= %{system} macosx)
+   (<> %{context_name} default.ios)
+   (<> %{context_name} device.ios)
+   (<> %{context_name} simulator.ios)
+   (<> %{context_name} simulator-arm.ios)))
+ (targets flags.txt platform.ml)
+ (deps flags.macos platform.macos)
+ (action
+  (progn
+   (copy flags.macos flags.txt)
+   (copy platform.macos platform.ml))))
+
+(rule
+ (enabled_if
+  (or
+   (= %{context_name} default.ios)
+   (= %{context_name} device.ios)
+   (= %{context_name} simulator.ios)
+   (= %{context_name} simulator-arm.ios)))
+ (targets flags.txt platform.ml)
+ (deps flags.ios platform.ios)
+ (action
+  (progn
+   (copy flags.ios flags.txt)
+   (copy platform.ios platform.ml))))
+
+(rule
+ (enabled_if
+  (and
+   %{lib-available:conf-maccatalyst}
+   (or
+    (= %{context_name} default.ios)
+    (= %{context_name} catalyst.ios))))
+ (targets flags.txt platform.ml)
+ (action
+  (progn
+   (copy flags.catalyst flags.txt)
+   (copy platform.catalyst platform.ml))))
+
+(rule
+ (enabled_if
+  (<> %{system} macosx))
+ (targets flags.txt platform.ml)
+ (deps flags.gnustep platform.gnustep)
+ (action
+  (progn
+   (copy flags.gnustep flags.txt)
+   (copy platform.gnustep platform.ml))))
+
+(rule
+ (enabled_if
+  (or
+   (= %{context_name} default.ios)
+   (= %{context_name} device.ios)
+   (= %{context_name} simulator.ios)
+   (= %{context_name} simulator-arm.ios)))
+ (action
+  (with-stdout-to
+   arch.txt
+   (run opam var conf-ios:arch))))
+
+(rule
+ (enabled_if
+  (or
+   (= %{context_name} default.ios)
+   (= %{context_name} device.ios)
+   (= %{context_name} simulator.ios)
+   (= %{context_name} simulator-arm.ios)))
+ (action
+  (with-stdout-to
+   arch.ml
+   (system
+    "arch=%{read:arch.txt}\n    echo \"type t = Amd64 | Arm64\n    let current = $(echo $arch | awk '{print toupper(substr($0, 1, 1)) substr($0, 2)}')\""))))
+
+(rule
+ (enabled_if
+  (and
+   (<> %{context_name} default.ios)
+   (<> %{context_name} device.ios)
+   (<> %{context_name} simulator.ios)
+   (<> %{context_name} simulator-arm.ios)))
+ (action
+  (with-stdout-to
+   arch.ml
+   (system
+    "cat <<END\n    type t = Amd64 | Arm64\n    let current = $(echo %{architecture} | awk '{print toupper(substr($0, 1, 1)) substr($0, 2)}')\nEND"))))

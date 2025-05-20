@@ -1,0 +1,16 @@
+(rule
+ (deps config/discover.exe)
+ (targets compiler_flags.sexp linker_flags.sexp os_config.ml ccomp_config.ml)
+ (action
+  (run ./config/discover.exe)))
+
+(library
+ (name objc)
+ (libraries)
+ (foreign_stubs
+  (language c)
+  (names objc_stubs)
+  (flags
+   (:include compiler_flags.sexp)))
+ (c_library_flags
+  (:include linker_flags.sexp)))
