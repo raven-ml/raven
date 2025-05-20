@@ -1,9 +1,9 @@
 open Ctypes
-open C.Types
-open C.Functions
+open Objc_c.Types
+open Objc_c.Functions
 
 module Objc = struct
-  include Objc
+  include Objc_c.Functions.Objc
 
   (** Returns the names of all the loaded Objective-C frameworks and dynamic
       libraries. *)

@@ -1,14 +1,11 @@
 open Ctypes
-open Foreign
-open Type_description.Types
-
-(* module Types = Types_generated
+module Types = Types_generated
 
 module Functions (F : Ctypes.FOREIGN) = struct
   open Types
-  open F *)
+  open F
 
-module Functions = struct
+  (* module Functions = struct *)
   module Objc = struct
     (** Returns the class definition of a specified class. *)
     let get_class = foreign "objc_getClass" (string @-> returning _Class)
@@ -49,11 +46,9 @@ module Functions = struct
     (** Creates a new class and metaclass. extra_bytes: the number of bytes to
         allocate for indexed ivars at the end of the class and metaclass
         objects. *)
-    let allocate_class ?(extra_bytes = Unsigned.Size_t.of_int 0) ~superclass
-        name =
+    let allocate_class =
       foreign "objc_allocateClassPair"
         (_Class @-> string @-> size_t @-> returning _Class)
-        superclass name extra_bytes
   end
 
   module Class = struct

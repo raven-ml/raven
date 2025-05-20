@@ -1,4 +1,4 @@
-open C.Types
+open Objc_c.Types
 open Ctypes
 
 type 'a method_spec = {

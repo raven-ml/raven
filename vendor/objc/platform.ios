@@ -1,3 +1,0 @@
-type t = MacOS | IOS | Catalyst | GNUStep
-
-let current = IOS

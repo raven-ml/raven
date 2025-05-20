@@ -1,9 +1,6 @@
-open Ctypes
+module Types (F : Ctypes.TYPE) = struct
+  open Ctypes
 
-(* module Types (F : Ctypes.TYPE) = struct
-  open F *)
-
-module Types = struct
   type objc_class
 
   let objc_class : objc_class structure typ = structure "objc_class"
@@ -63,6 +60,5 @@ module Types = struct
   let _Ivar = ptr objc_ivar
   let _Method = ptr objc_method
 
-  (* let c_id = constant "_C_ID" char
-  let c_uchar = constant "_C_UCHR" char *)
+  (* let c_id = constant "_C_ID" char let c_uchar = constant "_C_UCHR" char *)
 end

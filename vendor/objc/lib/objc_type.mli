@@ -1,8 +1,8 @@
 (** Represents an Objective-C type. *)
 type _ t =
-  | Id : C.Types.object_t t
-  | Class : C.Types.object_t t
-  | Sel : C.Types.selector_t t
+  | Id : Objc_c.Types.object_t t
+  | Class : Objc_c.Types.object_t t
+  | Sel : Objc_c.Types.selector_t t
   | Void : unit t
   | Str : string t
   | Char : char t
@@ -20,9 +20,9 @@ type _ t =
   | Struc : 'a Ctypes.structure Ctypes.typ -> 'a Ctypes.structure t
   | Union : 'a t -> 'a Ctypes.union t
   | Imp : unit Ctypes.ptr t
-  | Enc : C.Types._Enc t
-  | Proto : C.Types.protocol_t t
-  | Ivar : C.Types.ivar_t t
+  | Enc : Objc_c.Types._Enc t
+  | Proto : Objc_c.Types.protocol_t t
+  | Ivar : Objc_c.Types.ivar_t t
 
 (** Represents a tuple of Objective-C types. *)
 type (_, _) tlist =
@@ -46,15 +46,15 @@ val encode_value : 'a t -> string
 val noargs : ('a, 'a) tlist
 (** The method accepts only the implicit [self] and [cmd] arguments. *)
 
-val id : C.Types.object_t t
+val id : Objc_c.Types.object_t t
 (** A reference to any Objective-C object regardless of its class. *)
 
-val _Class : C.Types.object_t t
-val _SEL : C.Types.selector_t t
+val _Class : Objc_c.Types.object_t t
+val _SEL : Objc_c.Types.selector_t t
 val _IMP : unit Ctypes.ptr t
-val _Enc : C.Types._Enc t
-val _Protocol : C.Types.protocol_t t
-val _Ivar : C.Types.ivar_t t
+val _Enc : Objc_c.Types._Enc t
+val _Protocol : Objc_c.Types.protocol_t t
+val _Ivar : Objc_c.Types.ivar_t t
 val void : unit t
 val string : string t
 val char : char t

@@ -1,0 +1,4 @@
+(library
+ (name metal)
+ (flags :standard -ccopt "-framework CoreGraphics" -ccopt "-framework Metal")
+ (libraries objc))

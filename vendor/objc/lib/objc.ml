@@ -1,15 +1,15 @@
-open C.Types
+open Objc_c.Types
 open Ctypes
 open Foreign
 open Unsigned
 module Platform = Platform
-module Protocol = C.Functions.Protocol
+module Protocol = Objc_c.Functions.Protocol
 module Inspect = Inspect
 module Objc_type = Objc_type
 module Define = Define
 
 module Sel = struct
-  include C.Functions.Sel
+  include Objc_c.Functions.Sel
 
   let register_typed_name =
     match Platform.current with
@@ -19,7 +19,7 @@ module Sel = struct
 end
 
 module Object = struct
-  include C.Functions.Object
+  include Objc_c.Functions.Object
 
   (** Reads the value of an Id instance variable in an object. *)
   let get_ivar ~self ~ivar =
@@ -47,8 +47,8 @@ module Object = struct
 
   (** Returns pointer to an ivar in object [self] *)
   let ivar_ptr ~self ~ivar_name =
-    C.Functions.Class.get_instance_variable (get_class self) ivar_name
-    |> C.Functions.Ivar.get_offset |> Ptrdiff.to_nativeint
+    Objc_c.Functions.Class.get_instance_variable (get_class self) ivar_name
+    |> Objc_c.Functions.Ivar.get_offset |> Ptrdiff.to_nativeint
     |> Nativeint.add (self |> to_voidp |> raw_address_of_ptr)
     |> ptr_of_raw_address
 
@@ -67,9 +67,9 @@ let string_of_selector = Sel.get_name
 
 let to_selector p = to_voidp p |> coerce (ptr void) _SEL
 
-module Objc = struct
-  include C.Functions.Objc
-  include C.Types
+module Runtime = struct
+  include Objc_c.Functions.Objc
+  include Objc_c.Types
   include Ctypes
   include Unsigned
   include Signed
@@ -87,10 +87,10 @@ module Objc = struct
 
     let make self =
       let self_class = Object.get_class self in
-      let sup_cls = C.Functions.Class.get_superclass self_class
+      let sup_cls = Objc_c.Functions.Class.get_superclass self_class
       and d = make t in
       setf d receiver self;
-      (if C.Functions.Class.is_meta_class self_class then
+      (if Objc_c.Functions.Class.is_meta_class self_class then
          Object.get_class sup_cls
        else sup_cls)
       |> setf d super_class;
@@ -114,8 +114,8 @@ module Objc = struct
     | GNUStep ->
         let self_class = Object.get_class self in
         let imp =
-          C.Functions.Class.get_method_implementation
-            (C.Functions.Class.get_superclass self_class)
+          Objc_c.Functions.Class.get_method_implementation
+            (Objc_c.Functions.Class.get_superclass self_class)
             cmd
         in
         let imp_fun = coerce _IMP (funptr (id @-> _SEL @-> typ)) imp in
@@ -141,6 +141,10 @@ module Objc = struct
         | 2 | 4 | 8 | 16 -> msg_send ~self ~cmd ~typ
         | _ -> foreign "objc_msgSend_stret" (id @-> _SEL @-> typ) self cmd)
     | Arm64 -> msg_send ~self ~cmd ~typ
+    | _ ->
+        failwith
+          "msg_send_stret: not supported on this architecture. Use msg_send \
+           instead."
 
   (** Returns a pointer to the C value named by [name] or [null] if the symbol
       cannot be resolved. *)
@@ -148,35 +152,35 @@ module Objc = struct
     try foreign_value name ty with _ -> from_voidp ty null
 end
 
-let nsstring_class = Objc.get_class "NSString"
-let nil = coerce (ptr void) Objc.id null
+let nsstring_class = Runtime.get_class "NSString"
+let nil = coerce (ptr void) Runtime.id null
 let is_nil = is_null
 
 (** Returns a new instance of the receiving class. *)
-let alloc self = Objc.msg_send_vo ~self ~cmd:(selector "alloc")
+let alloc self = Runtime.msg_send_vo ~self ~cmd:(selector "alloc")
 
 (** Allocates a new instance of the receiving class, sends it an init message,
     and returns the initialized object. *)
-let _new_ self = Objc.msg_send_vo ~self ~cmd:(selector "new")
+let _new_ self = Runtime.msg_send_vo ~self ~cmd:(selector "new")
 
 (** Implemented by subclasses to initialize a new object (the receiver)
     immediately after memory for it has been allocated. *)
-let init self = Objc.msg_send_vo ~self ~cmd:(selector "init")
+let init self = Runtime.msg_send_vo ~self ~cmd:(selector "init")
 
 (** Returns the object returned by copyWithZone: *)
-let _copy_ self = Objc.msg_send_vo ~self ~cmd:(selector "copy")
+let _copy_ self = Runtime.msg_send_vo ~self ~cmd:(selector "copy")
 
 (** Increments the receiver’s reference count. *)
-let retain self = Objc.msg_send_vo ~self ~cmd:(selector "retain")
+let retain self = Runtime.msg_send_vo ~self ~cmd:(selector "retain")
 
 (** Decrements the receiver’s reference count. *)
 let release self =
-  Objc.msg_send ~self ~cmd:(selector "release") ~typ:(returning void)
+  Runtime.msg_send ~self ~cmd:(selector "release") ~typ:(returning void)
 
 (** Decrements the receiver’s retain count at the end of the current autorelease
     pool block. *)
 let autorelease self =
-  Objc.msg_send ~self ~cmd:(selector "autorelease") ~typ:(returning void)
+  Runtime.msg_send ~self ~cmd:(selector "autorelease") ~typ:(returning void)
 
 (** Release ObjC object when OCaml ptr is garbage collected. *)
 let gc_autorelease self =
@@ -184,14 +188,14 @@ let gc_autorelease self =
   self
 
 (** Allocates an object given a class name. *)
-let alloc_object class_name = alloc (Objc.get_class class_name)
+let alloc_object class_name = alloc (Runtime.get_class class_name)
 
 (** Allocates an object and sends it [init] and [gc_autorelease]. *)
 let new_object class_name = alloc_object class_name |> init |> gc_autorelease
 
 (** Creates a new NSString object autoreleased by OCaml's GC. *)
 let new_string str =
-  Objc.msg_send ~self:nsstring_class
+  Runtime.msg_send ~self:nsstring_class
     ~cmd:(selector "stringWithUTF8String:")
     ~typ:(string @-> returning id)
     str
@@ -203,29 +207,30 @@ let new_string str =
     your program. *)
 let to_string self =
   let conv instance =
-    Objc.msg_send ~self:instance ~cmd:(selector "UTF8String")
+    Runtime.msg_send ~self:instance ~cmd:(selector "UTF8String")
       ~typ:(returning string)
   in
   if is_nil self then ""
   else if
-    Objc.msg_send ~self
+    Runtime.msg_send ~self
       ~cmd:(selector "isKindOfClass:")
       ~typ:(_Class @-> returning bool)
       nsstring_class
   then conv self
   else
-    conv (Objc.msg_send ~self ~cmd:(selector "description") ~typ:(returning id))
+    conv
+      (Runtime.msg_send ~self ~cmd:(selector "description") ~typ:(returning id))
 
 (** Sends a message with a simple return value to an instance of a class. *)
 let msg_send cmd ~self ~args ~return =
   let typ = Objc_type.method_typ ~args return in
-  Objc.msg_send ~self ~cmd ~typ
+  Runtime.msg_send ~self ~cmd ~typ
 
 (** Sends a message with a simple return value to the superclass of an instance
     of a class. *)
 let msg_super cmd ~self ~args ~return =
   let typ = Objc_type.method_typ ~args return in
-  Objc.msg_send_super ~self ~cmd ~typ
+  Runtime.msg_send_super ~self ~cmd ~typ
 
 (** Returns the value of an ivar reading it directly. *)
 let get_ivar : type a. string -> a Objc_type.t -> object_t -> a =
@@ -233,7 +238,7 @@ let get_ivar : type a. string -> a Objc_type.t -> object_t -> a =
   match t with
   | Objc_type.Id ->
       let ivar =
-        C.Functions.Class.get_instance_variable (Object.get_class self)
+        Objc_c.Functions.Class.get_instance_variable (Object.get_class self)
           ivar_name
       in
       Object.get_ivar ~self ~ivar
@@ -247,7 +252,7 @@ let set_ivar : type a. string -> a -> a Objc_type.t -> object_t -> unit =
   match t with
   | Objc_type.Id ->
       let ivar =
-        C.Functions.Class.get_instance_variable (Object.get_class self)
+        Objc_c.Functions.Class.get_instance_variable (Object.get_class self)
           ivar_name
       and typ = Objc_type.value_typ t in
       Object.set_ivar ~self ~ivar (coerce typ id value)
@@ -256,14 +261,14 @@ let set_ivar : type a. string -> a -> a Objc_type.t -> object_t -> unit =
       Object.ivar_ptr ~self ~ivar_name |> from_voidp typ <-@ value
 
 let get_property prop_name typ self =
-  Objc.(msg_send ~self ~cmd:(selector prop_name) ~typ:(returning typ))
+  Runtime.(msg_send ~self ~cmd:(selector prop_name) ~typ:(returning typ))
 
 let set_property prop_name value typ self =
   let cmd = selector (Object.setter_name_of_ivar prop_name) in
-  Objc.(msg_send ~self ~cmd ~typ:(typ @-> returning void)) value
+  Runtime.(msg_send ~self ~cmd ~typ:(typ @-> returning void)) value
 
 module Property = struct
-  open Objc
+  open Runtime
   open Object
   open Define
 
@@ -300,7 +305,7 @@ module Property = struct
     let cmd = selector ivar_name
     and imp self _cmd =
       let ivar =
-        C.Functions.Class.get_instance_variable (Object.get_class self)
+        Objc_c.Functions.Class.get_instance_variable (Object.get_class self)
           ivar_name
       in
       Object.get_ivar ~self ~ivar
@@ -317,7 +322,7 @@ module Property = struct
 
       (* release old object *)
       let ivar =
-        C.Functions.Class.get_instance_variable (Object.get_class self)
+        Objc_c.Functions.Class.get_instance_variable (Object.get_class self)
           ivar_name
       in
       assert (not (is_null ivar));
@@ -369,7 +374,7 @@ module Property = struct
 end
 
 module Class = struct
-  include C.Functions.Class
+  include Objc_c.Functions.Class
 
   (* keep alive OCaml closures for defined methods *)
   let defined_method_roots = ref []
@@ -399,10 +404,14 @@ module Class = struct
       self name size (alignment_of_size size) enc
 
   (** Defines a new class and registers it with the Objective-C runtime. *)
-  let define ?(superclass = C.Functions.Objc.get_class "NSObject")
+  let define ?(superclass = Objc_c.Functions.Objc.get_class "NSObject")
       ?(protocols = []) ?(ivars = []) ?(properties = []) ?(methods = [])
       ?(class_methods = []) name =
-    let self = C.Functions.Objc.allocate_class ~superclass name in
+    let allocate_class ?(extra_bytes = Unsigned.Size_t.of_int 0) ~superclass
+        name =
+      Objc_c.Functions.Objc.allocate_class superclass name extra_bytes
+    in
+    let self = allocate_class ~superclass name in
     let add_method'
         (Define.MethodSpec
            { cmd; typ; imp; enc; runtime_lock; thread_registration }) =
@@ -447,10 +456,10 @@ module Class = struct
            let size = Size_t.of_int (sizeof typ) in
            assert (add_ivar ~self ~name ~size ~enc));
 
-    C.Functions.Objc.register_class self;
+    Objc_c.Functions.Objc.register_class self;
 
     if List.length class_methods > 0 then (
-      let metaclass = C.Functions.Objc.get_meta_class name in
+      let metaclass = Objc_c.Functions.Objc.get_meta_class name in
       assert (not (is_null metaclass));
       class_methods
       |> List.iter
@@ -506,7 +515,7 @@ module Block = struct
   let size = sizeof t
   let desc_ptr = allocate Block_descriptor.t (Block_descriptor.make size)
   let block_is_global = Int.(shift_left one 28)
-  let self = Objc.get_class "__NSGlobalBlock"
+  let self = Runtime.get_class "__NSGlobalBlock"
 
   let make' f =
     let b = make t in
@@ -525,7 +534,7 @@ module Block = struct
 end
 
 module Method = struct
-  include C.Functions.Method
+  include Objc_c.Functions.Method
 
   let invoke ~typ ~self m =
     foreign "method_invoke" (id @-> _Method @-> typ) self m
@@ -538,7 +547,7 @@ module Method = struct
 end
 
 module Ivar = struct
-  include C.Functions.Ivar
+  include Objc_c.Functions.Ivar
 
   let define name typ =
     let typ = Objc_type.value_typ typ and enc = Objc_type.encode_value typ in
@@ -555,7 +564,7 @@ let set_uncaught_exception_handler =
     (funptr (id @-> returning void) @-> returning void)
 
 let default_uncaught_exception_handler ex =
-  let open Objc in
+  let open Runtime in
   let name = msg_send ~self:ex ~cmd:(selector "name") ~typ:(returning id)
   and reason = msg_send ~self:ex ~cmd:(selector "reason") ~typ:(returning id)
   and to_string self =
