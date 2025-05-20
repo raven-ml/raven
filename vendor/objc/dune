@@ -1,10 +1,7 @@
 (library
  (name runtime)
- (libraries)
+ (libraries ctypes ctypes.foreign)
  (c_library_flags :standard %{read-lines:flags.txt})
- (foreign_stubs
-  (language c)
-  (names objc_stubs))
  ;  (ctypes
  ;   (external_library_name libobjc)
  ;   (build_flags_resolver

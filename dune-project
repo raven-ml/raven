@@ -15,6 +15,8 @@
 
 (using dune_site 0.1)
 
+(using ctypes 0.3)
+
 (version 0.1.0)
 
 (package
@@ -146,4 +148,5 @@
   dune
   (ndarray
    (= :version))
+   ctypes
   (alcotest :with-test)))

@@ -56,8 +56,10 @@ and _ typ =
   | View : ('a, 'b) view_spec -> 'a typ
 
 and (_, _) fn =
-  | Returns : 'rt typ -> ('rt, 'rt) fn
-  | Function : 'arg typ * ('b, 'rt) fn -> ('arg -> 'b, 'rt) fn
+  (* Base case: a method that takes no additional Objective-C arguments. *)
+  | Returns : 'rt typ -> (unit, 'rt) fn
+  (* Recursive case: prepend one argument to the tuple-chain. *)
+  | Function : 'arg typ * ('b, 'rt) fn -> ('arg * 'b, 'rt) fn
 
 module Arch_details = struct
   let char_size = 1

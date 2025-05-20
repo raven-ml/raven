@@ -34,3 +34,5 @@ let get_object_class obj =
      The C stub 'caml_object_getClass' handles this by returning Class.null if
      the input 'obj' is Id.null, so no explicit Id.is_null check here. *)
   caml_object_getClass obj
+
+let msg_send = Runtime_msg_send.msg_send
