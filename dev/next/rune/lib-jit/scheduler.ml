@@ -41,7 +41,9 @@ let is_boundary_node (Any_Node node) =
 
 let is_fusible_elementwise (Any_Node node) =
   match node with
-  | Binop _ | Const_Scalar _ | Expand _ | Reshape _ | Permute _ -> true
+  | Binop _ | Const_Scalar _ | Expand _ | Reshape _ | Permute _ | Placeholder _
+    ->
+      true
   | _ -> false
 
 (* ────────── main scheduling pass ────────── *)
@@ -70,11 +72,26 @@ let schedule (graph : Ir.graph_t) : kernel_spec_t list =
     if !current <> [] then (
       let nodes = List.rev !current in
 
-      let produced = List.map get_node_output_var nodes |> Var.Set.of_list in
-      let inputs =
-        List.concat_map get_node_input_vars nodes
-        |> Var.Set.of_list |> Var.Set.diff produced
+      let produced =
+        List.filter
+          (function Ir.Any_Node (Placeholder _) -> false | _ -> true)
+          nodes
+        |> List.map get_node_output_var
+        |> Var.Set.of_list
       in
+      let node_inputs =
+        List.concat_map get_node_input_vars nodes |> Var.Set.of_list
+      in
+      let inputs = Var.Set.diff node_inputs produced in
+      let placeholder_inputs =
+        List.filter_map
+          (function
+            | Ir.Any_Node (Placeholder { out_var; _ }) -> Some out_var
+            | _ -> None)
+          nodes
+        |> Var.Set.of_list
+      in
+      let inputs = Var.Set.union inputs placeholder_inputs in
 
       (* vars metadata used inside kernel *)
       let vars_md = Hashtbl.create 16 in

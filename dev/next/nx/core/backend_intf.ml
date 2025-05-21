@@ -1,13 +1,5 @@
 (* backend_intf.ml *)
 
-(** [special_kind] Enumerates types of special indices available within a
-    compute kernel, typically provided by the hardware/runtime (e.g., thread ID,
-    block ID). *)
-type special_kind =
-  | Global_task_idx of int  (** Global work item ID in dimension 0, 1, or 2 *)
-  | Local_thread_idx of int
-      (** Local work item (thread) ID in dimension 0, 1, or 2 *)
-
 (** Defines the low-level operations that a backend must implement. These
     operations closely mirror the Universal Operations (UOps) used in tinygrad.
     Each backend provides a concrete implementation of this signature, enabling

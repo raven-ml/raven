@@ -240,6 +240,11 @@ module B : Backend_intf.S = struct
           }
       with ex -> Error (Printexc.to_string ex)
 
+    (* helper: byte-wise pointer arithmetic on a void* *)
+    let[@inline] voidp_with_byte_offset vp ~bytes =
+      (* cast void* → char* → add → cast back *)
+      Ctypes.(to_voidp (from_voidp char vp +@ bytes))
+
     let copy_to_device ~dest_buffer ~host_data ~host_data_offset_bytes
         ~copy_size_bytes =
       if copy_size_bytes = 0 then Ok ()
@@ -248,8 +253,8 @@ module B : Backend_intf.S = struct
       else
         let dst = Metal.Buffer.contents dest_buffer.native_buffer in
         let src =
-          Ctypes.(
-            to_voidp (ptr_of_raw_address host_data +@ host_data_offset_bytes))
+          Ctypes.ptr_of_raw_address host_data
+          |> voidp_with_byte_offset ~bytes:host_data_offset_bytes
         in
         memcpy_bytes ~dst ~src ~len:copy_size_bytes;
         Ok ()
@@ -262,11 +267,10 @@ module B : Backend_intf.S = struct
       then Error "range overflow"
       else
         let src =
-          Ctypes.(
-            Metal.Buffer.contents src_buffer.native_buffer
-            +@ device_data_offset_bytes)
+          Metal.Buffer.contents src_buffer.native_buffer
+          |> voidp_with_byte_offset ~bytes:device_data_offset_bytes
         in
-        let dst = Ctypes.to_voidp (Ctypes.ptr_of_raw_address host_dest_ptr) in
+        let dst = Ctypes.ptr_of_raw_address host_dest_ptr |> Ctypes.to_voidp in
         memcpy_bytes ~dst ~src ~len:copy_size_bytes;
         Ok ()
 

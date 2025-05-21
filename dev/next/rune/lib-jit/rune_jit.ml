@@ -183,3 +183,12 @@ let copy_from_device (type device_buffer_native)
     in
     B.Runtime.copy_from_device ~src_buffer ~host_dest_ptr:ptr
       ~device_data_offset_bytes:0 ~copy_size_bytes:bytes
+
+module Debug = struct
+  let schedule = schedule
+
+  let lower_kernel ~kernel_spec ~original_graph_vars_metadata =
+    lower ~kernel_spec ~original_graph_vars_metadata
+
+  let render_metal = Metal_backend.Renderer.render
+end
