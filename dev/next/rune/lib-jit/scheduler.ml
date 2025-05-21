@@ -1,18 +1,23 @@
+(* scheduler.ml *)
+
 open Ir
+
+(* ────────── kernel-spec record ────────── *)
 
 type kernel_spec_t = {
   name : string;
   nodes : any_node list;
-  inputs : Var.t list; (* HL Vars *)
-  outputs : Var.t list; (* HL Vars *)
+  inputs : Var.t list; (* HL vars *)
+  outputs : Var.t list; (* HL vars *)
   vars_metadata : (Var.t, var_metadata) Hashtbl.t;
 }
+
+(* ────────── helpers on nodes ────────── *)
 
 let get_node_input_vars (Any_Node node) : Var.t list =
   match node with
   | Placeholder _ | Const_Scalar _ | Buffer _ -> []
-  | Add { in_a_var; in_b_var; _ } | Mul { in_a_var; in_b_var; _ } ->
-      [ in_a_var; in_b_var ]
+  | Binop { a_var; b_var; _ } -> [ a_var; b_var ]
   | Reduce_Axis { in_var; _ }
   | Expand { in_var; _ }
   | Reshape { in_var; _ }
@@ -24,139 +29,116 @@ let get_node_output_var (Any_Node node) : Var.t =
   | Placeholder { out_var; _ }
   | Const_Scalar { out_var; _ }
   | Buffer { out_var; _ }
-  | Add { out_var; _ }
-  | Mul { out_var; _ }
+  | Binop { out_var; _ }
   | Reduce_Axis { out_var; _ }
   | Expand { out_var; _ }
   | Reshape { out_var; _ }
   | Permute { out_var; _ } ->
       out_var
 
-let is_boundary_node (Any_Node node) : bool =
+let is_boundary_node (Any_Node node) =
+  match node with Reduce_Axis _ | Buffer _ -> true | _ -> false
+
+let is_fusible_elementwise (Any_Node node) =
   match node with
-  | Reduce_Axis _ -> true
-  | Buffer _ ->
-      true (* Assuming global buffers, not shared memory, mark boundaries *)
+  | Binop _ | Const_Scalar _ | Expand _ | Reshape _ | Permute _ -> true
   | _ -> false
 
-let is_fusible_elementwise (Any_Node node) : bool =
-  match node with
-  | Add _ | Mul _ | Const_Scalar _ | Expand _ | Reshape _ | Permute _ -> true
-  | _ -> false
+(* ────────── main scheduling pass ────────── *)
 
-let schedule (graph : Ir.graph_t) : (kernel_spec_t list, string) result =
-  let scheduled_kernels = ref [] in
-  let current_kernel_nodes = ref [] in
-  let kernel_idx = ref 0 in
+let schedule (graph : Ir.graph_t) : kernel_spec_t list =
+  let scheduled = ref [] in
+  let current = ref [] in
+  let kidx = ref 0 in
 
+  (* Map var -> list of nodes that read it (for output detection) *)
   let var_consumers : (Var.t, any_node list) Hashtbl.t =
     Hashtbl.create (List.length graph.nodes)
   in
   List.iter
-    (fun consumer_node ->
+    (fun consumer ->
       List.iter
-        (fun in_var ->
-          let current_consumers =
-            Hashtbl.find_opt var_consumers in_var |> Option.value ~default:[]
+        (fun v ->
+          let lst =
+            Option.value ~default:[] (Hashtbl.find_opt var_consumers v)
           in
-          Hashtbl.replace var_consumers in_var
-            (consumer_node :: current_consumers))
-        (get_node_input_vars consumer_node))
+          Hashtbl.replace var_consumers v (consumer :: lst))
+        (get_node_input_vars consumer))
     graph.nodes;
 
-  let finalize_current_kernel () =
-    if List.length !current_kernel_nodes > 0 then (
-      let nodes_in_kernel = List.rev !current_kernel_nodes in
-      let kernel_produced_vars =
-        List.map get_node_output_var nodes_in_kernel |> Var.Set.of_list
+  let flush_current () =
+    if !current <> [] then (
+      let nodes = List.rev !current in
+
+      let produced = List.map get_node_output_var nodes |> Var.Set.of_list in
+      let inputs =
+        List.concat_map get_node_input_vars nodes
+        |> Var.Set.of_list |> Var.Set.diff produced
       in
 
-      let kernel_vars_metadata = Hashtbl.create 16 in
-      let all_vars_in_kernel_nodes = ref Var.Set.empty in
-
+      (* vars metadata used inside kernel *)
+      let vars_md = Hashtbl.create 16 in
       List.iter
-        (fun node ->
+        (fun (Any_Node n) ->
           Var.Set.iter
             (fun v ->
-              all_vars_in_kernel_nodes :=
-                Var.Set.add v !all_vars_in_kernel_nodes)
+              match Hashtbl.find_opt graph.vars_metadata v with
+              | Some m -> Hashtbl.replace vars_md v m
+              | None -> ())
             (Var.Set.of_list
-               (get_node_output_var node :: get_node_input_vars node)))
-        nodes_in_kernel;
+               (get_node_output_var (Any_Node n)
+               :: get_node_input_vars (Any_Node n))))
+        nodes;
 
-      Var.Set.iter
-        (fun v ->
-          match Hashtbl.find_opt graph.vars_metadata v with
-          | Some meta -> Hashtbl.replace kernel_vars_metadata v meta
-          | None -> () (* Should be an error for missing metadata *))
-        !all_vars_in_kernel_nodes;
-
-      let inputs_to_kernel_nodes =
-        List.concat_map get_node_input_vars nodes_in_kernel |> Var.Set.of_list
+      (* outputs: graph outputs OR consumed outside kernel *)
+      let outputs =
+        Var.Set.filter
+          (fun v ->
+            List.mem v graph.output_vars
+            ||
+            match Hashtbl.find_opt var_consumers v with
+            | None -> false
+            | Some readers ->
+                List.exists (fun n -> not (List.memq n nodes)) readers)
+          produced
+        |> Var.Set.elements
       in
-      let final_kernel_inputs_set =
-        Var.Set.diff inputs_to_kernel_nodes kernel_produced_vars
-      in
 
-      let potential_outputs = ref Var.Set.empty in
-      Var.Set.iter
-        (fun v_prod ->
-          let is_graph_output = List.mem v_prod graph.output_vars in
-          let consumers =
-            Hashtbl.find_opt var_consumers v_prod |> Option.value ~default:[]
-          in
-          let consumed_outside =
-            List.exists
-              (fun cons_node -> not (List.memq cons_node nodes_in_kernel))
-              consumers
-          in
-          if is_graph_output || consumed_outside then
-            potential_outputs := Var.Set.add v_prod !potential_outputs)
-        kernel_produced_vars;
-
-      let spec =
+      scheduled :=
         {
-          name = "kernel_" ^ string_of_int !kernel_idx;
-          nodes = nodes_in_kernel;
-          inputs =
-            Var.Set.elements final_kernel_inputs_set
-            |> List.sort_uniq Var.compare;
-          outputs =
-            Var.Set.elements !potential_outputs |> List.sort_uniq Var.compare;
-          vars_metadata = kernel_vars_metadata;
+          name = Printf.sprintf "kernel_%d" !kidx;
+          nodes;
+          inputs = Var.Set.elements inputs;
+          outputs;
+          vars_metadata = vars_md;
         }
-      in
-      scheduled_kernels := spec :: !scheduled_kernels;
-      incr kernel_idx;
-      current_kernel_nodes := [])
+        :: !scheduled;
+      incr kidx;
+      current := [])
   in
 
   List.iter
     (fun node ->
-      let can_fuse_with_current_kernel =
-        match !current_kernel_nodes with
+      let can_fuse =
+        match !current with
         | [] -> true
-        | _prev_nodes ->
-            if is_boundary_node node then false
-            else if is_fusible_elementwise node then
-              let current_kernel_produced_vars =
-                List.map get_node_output_var !current_kernel_nodes
-                |> Var.Set.of_list
-              in
-              List.for_all
-                (fun invar ->
-                  List.mem invar
-                    graph.input_vars (* Global graph inputs are available *)
-                  || Var.Set.mem invar current_kernel_produced_vars)
-                (get_node_input_vars node)
-            else false
+        | _ ->
+            (not (is_boundary_node node))
+            && is_fusible_elementwise node
+            &&
+            (* check all inputs are either kernel inputs or already produced *)
+            let produced =
+              List.map get_node_output_var !current |> Var.Set.of_list
+            in
+            List.for_all
+              (fun v -> List.mem v graph.input_vars || Var.Set.mem v produced)
+              (get_node_input_vars node)
       in
-      if can_fuse_with_current_kernel then
-        current_kernel_nodes := node :: !current_kernel_nodes
+      if can_fuse then current := node :: !current
       else (
-        finalize_current_kernel ();
-        current_kernel_nodes := [ node ]))
+        flush_current ();
+        current := [ node ]))
     graph.nodes;
 
-  finalize_current_kernel ();
-  Ok (List.rev !scheduled_kernels)
+  flush_current ();
+  List.rev !scheduled

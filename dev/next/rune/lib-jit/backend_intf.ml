@@ -1,112 +1,87 @@
-(* This file is now part of the rune_jit library and independent of Nx_core. *)
-(* It refers to types defined in `ir.ml` within the same library. *)
+(* backend_intf.ml *)
+
+open Ir
+
+type 'a compiled_artifact = { native_artifact : 'a; entry_points : string list }
+type 'a callable_kernel = { native_kernel : 'a; name : string }
+
+type ('a, 'b) device_buffer = {
+  native_buffer : 'b;
+  size_in_bytes : int;
+  dtype : 'a Dtype.t;
+}
+
+type 'b any_device_buffer =
+  | Any_Device_Buffer : ('a, 'b) device_buffer -> 'b any_device_buffer
+[@@unboxed]
 
 module type S = sig
   val name : string
-  (** The unique name of this backend (e.g., "CLANG_CPU", "METAL_GPU"). *)
 
-  (** Information and capabilities of the target device for this backend. *)
+  (* ─────────── shared opaque handles ─────────── *)
+
+  type device_info
+  type device_buffer_native
+  type compiled_artifact_native
+  type callable_kernel_native
+
+  (* ─────────── high-level buffer wrappers ─────────── *)
+
+  type nonrec 'a device_buffer = ('a, device_buffer_native) device_buffer
+  type nonrec any_device_buffer = device_buffer_native any_device_buffer
+  type nonrec compiled_artifact = compiled_artifact_native compiled_artifact
+  type nonrec callable_kernel = callable_kernel_native callable_kernel
+
+  (* ─────────── sub-module interfaces ─────────── *)
+
   module Device_info : sig
-    type t
+    val get_default : unit -> device_info
+    val max_shared_memory : device_info -> int
+    val max_workgroup_size : device_info -> int array
+    val supports_dtype : device_info -> Dtype.any -> bool
 
-    val get_default :
-      unit -> t (* Get the default configuration for this backend *)
-
-    val max_shared_memory : t -> int
-    val max_workgroup_size : t -> int array (* e.g., [|1024; 1024; 64|] *)
-
-    val supports_dtype : t -> Ir.Dtype.any -> bool
-    (** Checks if the backend supports a given Rune_jit.Ir.Dtype.any. *)
-
-    val renderer_float4_str :
-      t -> string option (* e.g., Some "(float4)" or None *)
-
-    val renderer_smem_prefix :
-      t -> string (* e.g., "__local " or "__shared__ " *)
-
-    val renderer_barrier_str : t -> string
-    (* e.g., "barrier(CLK_LOCAL_MEM_FENCE);" *)
+    (* helpers for the renderer *)
+    val renderer_float4_str : device_info -> string option
+    val renderer_smem_prefix : device_info -> string
+    val renderer_barrier_str : device_info -> string
   end
 
-  type device_buffer_native
-  (** Opaque type representing a native device buffer for this backend. *)
-
-  type ('a_elt, 'b_layout_phantom) device_buffer = {
-    native_buffer : device_buffer_native;
-    size_in_bytes : int;
-    dtype : ('a_elt, 'b_layout_phantom) Ir.Dtype.t;
-    device_info : Device_info.t;
-  }
-  (** Represents a buffer on the device, using Rune_jit.Ir.Dtype.t. The type
-      parameters ('a_elt, 'b_layout_phantom) match those in Ir.Dtype.t. *)
-
-  type any_device_buffer =
-    | Any_Device_Buffer :
-        ('a_elt, 'b_layout_phantom) device_buffer
-        -> any_device_buffer
-  [@@unboxed]
-
-  type compiled_artifact_native
-  (** Opaque type representing a compiled kernel artifact. *)
-
-  type compiled_artifact = {
-    native_artifact : compiled_artifact_native;
-    entry_points : string list; (* Names of callable kernels within *)
-  }
-
-  type callable_kernel_native
-  (** Opaque type representing a callable kernel function. *)
-
-  type callable_kernel = {
-    native_kernel : callable_kernel_native;
-    name : string;
-    device_info : Device_info.t;
-  }
-
-  (** Renders the lowered IR (from Rune_jit.Ir) into source code. *)
   module Renderer : sig
     val render :
-      device_info:Device_info.t ->
+      device_info:device_info ->
       lowered_ir:Ir.Lowered.graph_t ->
-      (* Uses Rune_jit.Ir.Lowered.graph_t *)
       kernel_name:string ->
       string
   end
 
-  (** Compiles source code into a loadable artifact. *)
   module Compiler : sig
     type compile_options
 
-    val default_options : Device_info.t -> compile_options
+    val default_options : device_info -> compile_options
 
     val compile :
-      device_info:Device_info.t ->
+      device_info:device_info ->
       source_code:string ->
       options:compile_options ->
       (compiled_artifact, string) result
   end
 
-  (** Manages device interaction: memory, kernel launch. *)
   module Runtime : sig
     val allocate_buffer :
-      device_info:Device_info.t ->
+      device_info:device_info ->
       size_in_bytes:int ->
-      dtype:('a_elt, 'b_layout_phantom) Ir.Dtype.t ->
-      (('a_elt, 'b_layout_phantom) device_buffer, string) result
-    (** Allocates a buffer on the device. Uses Rune_jit.Ir.Dtype.t for
-        specifying the data type. *)
-
-    val deallocate_buffer : ('a_elt, 'b_layout_phantom) device_buffer -> unit
+      dtype:'a Dtype.t ->
+      ('a device_buffer, string) result
 
     val copy_to_device :
-      dest_buffer:('a_elt, 'b_layout_phantom) device_buffer ->
+      dest_buffer:'a device_buffer ->
       host_data:nativeint ->
       host_data_offset_bytes:int ->
       copy_size_bytes:int ->
       (unit, string) result
 
     val copy_from_device :
-      src_buffer:('a_elt, 'b_layout_phantom) device_buffer ->
+      src_buffer:'a device_buffer ->
       host_dest_ptr:nativeint ->
       device_data_offset_bytes:int ->
       copy_size_bytes:int ->
@@ -118,12 +93,13 @@ module type S = sig
       (callable_kernel, string) result
 
     val launch_kernel :
-      kernel:callable_kernel ->
-      global_dims:int array ->
-      local_dims:int array option ->
+      ?local_dims:int array (* None = let backend pick *) ->
+      device_info:device_info ->
+      global_dims:int array (* [|gx; gy; gz|] *) ->
       args:any_device_buffer list ->
+      callable_kernel ->
       (unit, string) result
 
-    val synchronize : device_info:Device_info.t -> unit
+    val synchronize : device_info:device_info -> unit
   end
 end
