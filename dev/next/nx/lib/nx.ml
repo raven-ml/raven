@@ -84,7 +84,7 @@ let fill value t = B.fill context value t
 
 (* range *)
 
-let arange dtype start stop step = B.arange context dtype start stop step
+(* let arange dtype start stop step = B.arange context dtype start stop step
 let arange_f dtype start stop step = B.arange_f context dtype start stop step
 
 let linspace dtype ?endpoint start stop num =
@@ -94,7 +94,7 @@ let logspace dtype ?endpoint ?base start stop num =
   B.logspace context dtype ?endpoint ?base start stop num
 
 let geomspace dtype ?endpoint start stop num =
-  B.geomspace context dtype ?endpoint start stop num
+  B.geomspace context dtype ?endpoint start stop num *)
 
 (* accessors *)
 

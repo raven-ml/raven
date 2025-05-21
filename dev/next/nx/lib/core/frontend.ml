@@ -116,14 +116,152 @@ module Make (B : Backend_intf.S) = struct
     in
     broadcast_to ctx x new_shape
 
-  let add ctx a b =
+  let cast ctx (x : ('a, 'b) t) (dt : ('c, 'd) Dtype.t) : ('c, 'd) t =
+    B.op_cast ctx x dt
+
+  (* --- Element-wise Binary Ops --- *)
+
+  let add ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
     let a', b' = broadcasted ctx a b in
-    (* Assuming B.op_add handles type promotion or they are compatible *)
     B.op_add ctx a' b'
 
   let mul ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
     let a', b' = broadcasted ctx a b in
     B.op_mul ctx a' b'
+
+  let neg ctx (x : ('a, 'b) t) : ('a, 'b) t = B.op_neg ctx x
+
+  let sub ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
+    let a', b' = broadcasted ctx a b in
+    let neg_b = B.op_neg ctx b' in
+    B.op_add ctx a' neg_b
+
+  let fdiv ctx (a : (float, 'b) t) (b : (float, 'b) t) : (float, 'b) t =
+    let a_broad, b_broad = broadcasted ctx a b in
+    B.op_fdiv ctx a_broad b_broad
+
+  let idiv (type a b) ctx (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+    (match dtype a with
+    | Dtype.Int8 | Dtype.UInt8 | Dtype.Int16 | Dtype.UInt16 | Dtype.Int32
+    | Dtype.Int64 | Dtype.Int | Dtype.NativeInt ->
+        ()
+    | _ -> failwith "idiv: operands must be integer types.");
+    let a_broad, b_broad = broadcasted ctx a b in
+    B.op_idiv ctx a_broad b_broad
+
+  let pow ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
+    let a', b' = broadcasted ctx a b in
+    B.op_pow ctx a' b'
+
+  let maximum ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
+    let a', b' = broadcasted ctx a b in
+    B.op_max ctx a' b'
+
+  let minimum ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
+    let a_neg = neg ctx a in
+    let b_neg = neg ctx b in
+    let max_neg = maximum ctx a_neg b_neg in
+    neg ctx max_neg
+
+  let modulus ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
+    let a', b' = broadcasted ctx a b in
+    B.op_mod ctx a' b'
+
+  (* --- Comparison Ops --- *)
+
+  let cmplt ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : (int, Dtype.uint8_elt) t =
+    if not (Dtype.eq (dtype a) (dtype b)) then
+      failwith "cmplt: operands must have the same dtype. Cast explicitly.";
+    let a', b' = broadcasted ctx a b in
+    B.op_cmplt ctx a' b'
+
+  let cmpne ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : (int, Dtype.uint8_elt) t =
+    if not (Dtype.eq (dtype a) (dtype b)) then
+      failwith "cmpne: operands must have the same dtype. Cast explicitly.";
+    let a', b' = broadcasted ctx a b in
+    B.op_cmpne ctx a' b'
+
+  let logical_not ctx (a : (int, Dtype.uint8_elt) t) : (int, Dtype.uint8_elt) t
+      =
+    B.op_neg ctx a (* Assumes op_neg on uint8 means logical not (0->1, 1->0) *)
+
+  let cmpeq ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : (int, Dtype.uint8_elt) t =
+    if not (Dtype.eq (dtype a) (dtype b)) then
+      failwith "cmpeq: operands must have the same dtype. Cast explicitly.";
+    let ne_result = cmpne ctx a b in
+    logical_not ctx ne_result
+
+  let cmpgt ctx a b = cmplt ctx b a
+  let cmple ctx a b = logical_not ctx (cmpgt ctx a b)
+  let cmpge ctx a b = logical_not ctx (cmplt ctx a b)
+
+  (* --- Logical Ops --- *)
+
+  let logical_and ctx (a : (int, Dtype.uint8_elt) t)
+      (b : (int, Dtype.uint8_elt) t) : (int, Dtype.uint8_elt) t =
+    let a_b, b_b = broadcasted ctx a b in
+    B.op_and ctx a_b b_b
+
+  let logical_or ctx (a : (int, Dtype.uint8_elt) t)
+      (b : (int, Dtype.uint8_elt) t) : (int, Dtype.uint8_elt) t =
+    let a_b, b_b = broadcasted ctx a b in
+    B.op_or ctx a_b b_b
+
+  let logical_xor ctx (a : (int, Dtype.uint8_elt) t)
+      (b : (int, Dtype.uint8_elt) t) : (int, Dtype.uint8_elt) t =
+    let a_b, b_b = broadcasted ctx a b in
+    B.op_xor ctx a_b b_b
+
+  (* --- Unary Ops requiring specific (usually float) input types for backend
+     --- *)
+  (* User must cast to an appropriate float type (e.g. float32) if input is not already float. *)
+  (* Backend ops op_log2, op_exp2 etc. are typed to produce (float, Dtype.float32_elt) t. *)
+  (* Their input type ('a,'b)t means they *could* take anything, but practically they'll work on floats. *)
+  (* We will require the user to ensure the input `x` is already a float type the backend op expects. *)
+
+  let log2 ctx x = B.op_log2 ctx x
+  let exp2 ctx x = B.op_exp2 ctx x
+  let sin ctx x = B.op_sin ctx x
+  let sqrt ctx x = B.op_sqrt ctx x
+  let recip ctx x = B.op_recip ctx x
+
+  let log ctx x =
+    let log2_x = log2 ctx x in
+    let ln_2_val = log 2.0 in
+    let ln_2_tensor = B.op_const_scalar ctx ln_2_val Dtype.Float32 in
+    let ln_2_b = broadcast_to ctx ln_2_tensor (shape log2_x) in
+    B.op_mul ctx log2_x ln_2_b
+
+  let exp ctx x =
+    let one_over_ln_2_val = 1.0 /. Stdlib.log 2.0 in
+    (* The factor should be of the same float type as x_float *)
+    let factor_tensor = B.op_const_scalar ctx one_over_ln_2_val (dtype x) in
+    let factor_b = broadcast_to ctx factor_tensor (shape x) in
+    let x_scaled = B.op_mul ctx x factor_b in
+    B.op_exp2 ctx x_scaled
+
+  let cos ctx x =
+    let pi_half = Stdlib.acos 0.0 in
+    let pi_half_tensor = B.op_const_scalar ctx pi_half (dtype x) in
+    let pi_half_b = broadcast_to ctx pi_half_tensor (shape x) in
+    let arg_to_sin = sub ctx pi_half_b x in
+    B.op_sin ctx arg_to_sin
+
+  let tan ctx x =
+    let sin_x = B.op_sin ctx x in
+    let cos_x = cos ctx x in
+    (* cos will also ensure input is float, and its output is float32 *)
+    B.op_fdiv ctx sin_x cos_x
+
+  let relu ctx (x : ('a, 'b) t) : ('a, 'b) t =
+    let x_dt = dtype x in
+    let zero_val = Dtype.zero x_dt in
+    let zero_tensor = B.op_const_scalar ctx zero_val x_dt in
+    let zero_b = broadcast_to ctx zero_tensor (shape x) in
+    let cond = cmpgt ctx x zero_b in
+    B.op_where ctx cond x zero_b
+
+  (* --- Reduction Ops --- *)
 
   let sum ctx ?(axes : int array option) ?(keepdims = false) (x : ('a, 'b) t) :
       ('a, 'b) t =
@@ -131,69 +269,215 @@ module Make (B : Backend_intf.S) = struct
     let rank = Array.length current_shape in
     let axes_to_reduce =
       match axes with
-      | None -> Array.init rank Fun.id (* Reduce all axes *)
+      | None -> Array.init rank Fun.id
       | Some ax_list ->
           Array.map (fun ax -> if ax < 0 then ax + rank else ax) ax_list
     in
-    (* Backend op_sum will handle further validation and logic *)
-    B.op_sum ctx x ~axes:axes_to_reduce ~keepdims
+    B.op_reduce_sum ctx x ~axes:axes_to_reduce ~keepdims
 
-  (* Add other binary ops: sub, mul, div, etc. *)
-  (* let sub ctx a b = ... *)
-  (* let mul ctx a b = ... *)
-  (* let div ctx a b = ... *)
+  let max ctx ?(axes : int array option) ?(keepdims = false) (x : ('a, 'b) t) :
+      ('a, 'b) t =
+    let rank = Array.length (shape x) in
+    let axes_to_reduce =
+      match axes with
+      | None -> Array.init rank Fun.id
+      | Some ax_list ->
+          Array.map (fun ax -> if ax < 0 then ax + rank else ax) ax_list
+    in
+    B.op_reduce_max ctx x ~axes:axes_to_reduce ~keepdims
 
-  let empty ctx ?(dtype = Dtype.float32) shape =
-    let numel = View.prod shape in
+  let prod ctx ?(axes : int array option) ?(keepdims = false) (x : ('a, 'b) t) :
+      ('a, 'b) t =
+    let rank = Array.length (shape x) in
+    let axes_to_reduce =
+      match axes with
+      | None -> Array.init rank Fun.id
+      | Some ax_list ->
+          Array.map (fun ax -> if ax < 0 then ax + rank else ax) ax_list
+    in
+    B.op_reduce_prod ctx x ~axes:axes_to_reduce ~keepdims
+
+  (* --- Movement Ops --- *)
+  let permute ctx (x : ('a, 'b) t) (axes_param : int array) : ('a, 'b) t =
+    let rank = ndim x in
+    let axes =
+      Array.map (fun ax -> if ax < 0 then ax + rank else ax) axes_param
+    in
+    B.op_permute ctx x axes
+
+  let pad ctx (x : ('a, 'b) t) (padding_config : (int * int) array)
+      (fill_value : 'a) : ('a, 'b) t =
+    B.op_pad ctx x padding_config fill_value
+
+  let shrink ctx (x : ('a, 'b) t) (shrink_args : (int * int) array) : ('a, 'b) t
+      =
+    B.op_shrink ctx x shrink_args
+
+  let flip ctx (x : ('a, 'b) t) (flip_axes_bools : bool array) : ('a, 'b) t =
+    B.op_flip ctx x flip_axes_bools
+
+  let contiguous ctx (x : ('a, 'b) t) : ('a, 'b) t = B.op_contiguous ctx x
+
+  (* --- Ternary Ops --- *)
+  let where ctx (cond : (int, Dtype.uint8_elt) t) (if_true : ('a, 'b) t)
+      (if_false : ('a, 'b) t) : ('a, 'b) t =
+    if not (Dtype.eq (dtype if_true) (dtype if_false)) then
+      failwith
+        "where: if_true and if_false must have the same dtype. Cast explicitly.";
+
+    let s_true = shape if_true in
+    let s_false = shape if_false in
+    let s_cond = shape cond in
+    let target_shape_val = View.broadcast_shapes s_true s_false in
+    let final_target_shape = View.broadcast_shapes target_shape_val s_cond in
+
+    let cond_b = broadcast_to ctx cond final_target_shape in
+    let if_true_b = broadcast_to ctx if_true final_target_shape in
+    let if_false_b = broadcast_to ctx if_false final_target_shape in
+    B.op_where ctx cond_b if_true_b if_false_b
+
+  (* --- Creation Ops --- *)
+
+  let empty ctx dtype shape_arr =
+    let numel = View.prod shape_arr in
     let buf = B.op_buffer ctx dtype numel in
-    (* Give the buffer the correct logical shape *)
-    reshape ctx buf shape
+    reshape ctx buf shape_arr
 
-  let full ctx ~dtype:(dt : ('a, 'b) Dtype.t) (target_shape : int array)
+  let full ctx (dt : ('a, 'b) Dtype.t) (target_shape : int array)
       (fill_value : 'a) : ('a, 'b) t =
     let scalar_tensor = B.op_const_scalar ctx fill_value dt in
-    let rank = Array.length target_shape in
-    (* intermediate_shape will be [||] if rank is 0, e.g. for a scalar
-       target_shape *)
-    let intermediate_shape = Array.make rank 1 in
-    (* Reshape scalar_tensor to intermediate_shape. If rank=0,
-       intermediate_shape=[||], so this is a no-op if scalar_tensor is already
-       0-D. *)
-    let reshaped_scalar = B.op_reshape ctx scalar_tensor intermediate_shape in
-    (* Expand to target_shape. If rank=0, target_shape=[||], so this is also a
-       no-op. *)
-    B.op_expand ctx reshaped_scalar target_shape
+    if Array.length target_shape = 0 then scalar_tensor
+    else
+      let rank = Array.length target_shape in
+      let intermediate_shape = Array.make rank 1 in
+      let reshaped_scalar = reshape ctx scalar_tensor intermediate_shape in
+      expand ctx reshaped_scalar target_shape
 
-  let zeros ctx ~(dtype : ('a, 'b) Dtype.t) (shape_arr : int array) : ('a, 'b) t
+  let zeros ctx (dtype : ('a, 'b) Dtype.t) (shape_arr : int array) : ('a, 'b) t
       =
     let zero_val = Dtype.zero dtype in
-    full ctx ~dtype shape_arr zero_val
+    full ctx dtype shape_arr zero_val
 
-  let ones ctx ~(dtype : ('a, 'b) Dtype.t) (shape_arr : int array) : ('a, 'b) t
-      =
+  let ones ctx (dtype : ('a, 'b) Dtype.t) (shape_arr : int array) : ('a, 'b) t =
     let one_val = Dtype.one dtype in
-    full ctx ~dtype shape_arr one_val
+    full ctx dtype shape_arr one_val
 
-  let full_like ctx (x : ('a, 'b) t) (fill_value : 'c) : ('c, 'd) t =
-    let target_shape = shape x in
-    let self_dtype = B.dtype x in
-    (* This is ('a, 'b) Dtype.t *)
-    full ctx ~dtype:self_dtype target_shape fill_value
+  (* Changed fill_value type to 'a to match x_ref's element type *)
+  let full_like ctx (x_ref : ('a, 'b) t) (fill_value : 'a) : ('a, 'b) t =
+    let target_shape = shape x_ref in
+    let self_dtype = B.dtype x_ref in
+    full ctx self_dtype target_shape fill_value
 
-  let zeros_like ctx (x : ('a, 'b) t) : ('c, 'd) t =
-    (* If opt_dt_param is None: - Result type of zeros_like is ('a, 'b) t (by
-       unification 'c := 'a, 'd := 'b). - We need a fill_value of type 'a. - The
-       dtype to use is `B.dtype x : ('a, 'b) Dtype.t`. *)
+  let zeros_like ctx (x : ('a, 'b) t) : ('a, 'b) t =
     let self_dtype = B.dtype x in
     let zero_val = Dtype.zero self_dtype in
-    (* zero_val has type 'a *)
-    (* Call `full_like ctx x zero_val` where `zero_val` is 'a. This
-           specializes `full_like`'s 'c to 'a. Result is ('a, 'b) t. *)
-    full_like ctx x zero_val (* ~dtype:None is implicit *)
+    full_like ctx x zero_val
 
-  let ones_like ctx (x : ('a, 'b) t) : ('c, 'd) t =
+  let ones_like ctx (x : ('a, 'b) t) : ('a, 'b) t =
     let self_dtype = B.dtype x in
     let one_val = Dtype.one self_dtype in
-    (* one_val has type 'a *)
-    full_like ctx x one_val (* ~dtype:None is implicit *)
+    full_like ctx x one_val
+
+  let flatten ctx ?(start_dim = 0) ?(end_dim = -1) (x : ('a, 'b) t) : ('a, 'b) t
+      =
+    let sh = shape x in
+    let r = Array.length sh in
+    let s_orig = start_dim in
+    let e_orig = end_dim in
+    let s = if s_orig < 0 then s_orig + r else s_orig in
+    let e = if e_orig < 0 then e_orig + r else e_orig in
+
+    if
+      not
+        ((s >= 0 && s < r && e >= 0 && e < r)
+        || (r = 0 && (s = 0 || s_orig = 0) && (e = -1 || e_orig = -1)))
+    then
+      invalid_arg
+        (Printf.sprintf
+           "flatten: start_dim %d or end_dim %d out of bounds for rank %d"
+           start_dim end_dim r);
+    if s > e then invalid_arg "flatten: start_dim must be <= end_dim";
+
+    let new_shape_list =
+      if r = 0 then [ 1 ]
+      else
+        let pre = Array.to_list (Array.sub sh 0 s) in
+        let mid_slice = Array.sub sh s (e - s + 1) in
+        let mid_prod =
+          if Array.length mid_slice = 0 then 1 else View.prod mid_slice
+        in
+        (* handle empty mid_slice for 0-dim parts *)
+        let post = Array.to_list (Array.sub sh (e + 1) (r - (e + 1))) in
+        pre @ [ mid_prod ] @ post
+    in
+    reshape ctx x (Array.of_list new_shape_list)
+
+  let squeeze ctx ?(axis : int option) (x : ('a, 'b) t) : ('a, 'b) t =
+    let sh = shape x in
+    match axis with
+    | None ->
+        let new_shape_list = List.filter (( <> ) 1) (Array.to_list sh) in
+        let new_shape = Array.of_list new_shape_list in
+        if Array.length new_shape = 0 && Array.length sh > 0 then
+          reshape ctx x [| 1 |]
+        else if Array.length new_shape = 0 && Array.length sh = 0 then x
+        else reshape ctx x new_shape
+    | Some ax_val ->
+        let r = Array.length sh in
+        if r = 0 then x (* Cannot squeeze a scalar *)
+        else
+          let ax = if ax_val < 0 then ax_val + r else ax_val in
+          if ax < 0 || ax >= r then invalid_arg "squeeze: axis out of bounds"
+          else if sh.(ax) <> 1 then x
+          else
+            let sh_list = Array.to_list sh in
+            let new_shape_list = List.filteri (fun i _ -> i <> ax) sh_list in
+            let new_shape = Array.of_list new_shape_list in
+            if Array.length new_shape = 0 && Array.length sh > 0 then
+              reshape ctx x [| 1 |]
+            else if Array.length new_shape = 0 && Array.length sh = 0 then x
+            else reshape ctx x new_shape
+
+  let unsqueeze ctx ?(axis : int option) (x : ('a, 'b) t) : ('a, 'b) t =
+    let sh = shape x in
+    let r = Array.length sh in
+    let ax_val =
+      match axis with
+      | None -> invalid_arg "unsqueeze: axis must be specified"
+      | Some ax_v -> ax_v
+    in
+    let ax = if ax_val < 0 then ax_val + r + 1 else ax_val in
+
+    if ax < 0 || ax > r then
+      invalid_arg
+        (Printf.sprintf "unsqueeze: axis %d out of bounds for rank %d" ax_val r);
+
+    let sh_list = Array.to_list sh in
+    let rec insert_at_idx current_idx target_idx lst item =
+      match lst with
+      | [] ->
+          if current_idx = target_idx then [ item ]
+          else invalid_arg "insert_at_idx: target_idx too large"
+      | h :: t ->
+          if current_idx = target_idx then item :: lst
+          else h :: insert_at_idx (current_idx + 1) target_idx t item
+    in
+    let new_shape_list = insert_at_idx 0 ax sh_list 1 in
+    reshape ctx x (Array.of_list new_shape_list)
+
+  let transpose ctx ?(dim0 = -2) ?(dim1 = -1) (x : ('a, 'b) t) : ('a, 'b) t =
+    let r = ndim x in
+    if r < 2 then x
+    else
+      let d0 = if dim0 < 0 then dim0 + r else dim0 in
+      let d1 = if dim1 < 0 then dim1 + r else dim1 in
+      if d0 < 0 || d0 >= r || d1 < 0 || d1 >= r then
+        invalid_arg "transpose: dims out of bounds";
+      if d0 = d1 then x
+      else
+        let axes = Array.init r Fun.id in
+        let temp = axes.(d0) in
+        axes.(d0) <- axes.(d1);
+        axes.(d1) <- temp;
+        permute ctx x axes
 end

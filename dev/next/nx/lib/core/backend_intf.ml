@@ -96,9 +96,9 @@ module type S = sig
   (** [op_fdiv ctx op1 op2] Corresponds to the [FDIV] UOp (float division).
       Frontend ensures broadcast and type compatibility (float types). *)
 
-  val op_max_binary : context -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [op_max_binary ctx op1 op2] Corresponds to the [MAX] UOp (element-wise).
-      Frontend ensures broadcast and type compatibility. *)
+  val op_max : context -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [op_max ctx op1 op2] Corresponds to the [MAX] UOp (element-wise). Frontend
+      ensures broadcast and type compatibility. *)
 
   val op_mod : context -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** [op_mod ctx op1 op2] Corresponds to the [MOD] UOp. Frontend ensures
@@ -137,19 +137,19 @@ module type S = sig
   (** [op_neg ctx t] Corresponds to the [NEG] UOp. For bools, it's logical not.
       Output dtype is same as input. *)
 
-  val op_log2 : context -> ('a, 'b) t -> (float, Dtype.float32_elt) t
+  val op_log2 : context -> (float, 'b) t -> (float, 'b) t
   (** [op_log2 ctx t] Corresponds to the [LOG2] UOp. Output is float32. *)
 
-  val op_exp2 : context -> ('a, 'b) t -> (float, Dtype.float32_elt) t
+  val op_exp2 : context -> (float, 'b) t -> (float, 'b) t
   (** [op_exp2 ctx t] Corresponds to the [EXP2] UOp. Output is float32. *)
 
-  val op_sin : context -> ('a, 'b) t -> (float, Dtype.float32_elt) t
+  val op_sin : context -> (float, 'b) t -> (float, 'b) t
   (** [op_sin ctx t] Corresponds to the [SIN] UOp. Output is float32. *)
 
-  val op_sqrt : context -> ('a, 'b) t -> (float, Dtype.float32_elt) t
+  val op_sqrt : context -> (float, 'b) t -> (float, 'b) t
   (** [op_sqrt ctx t] Corresponds to the [SQRT] UOp. Output is float32. *)
 
-  val op_recip : context -> ('a, 'b) t -> (float, Dtype.float32_elt) t
+  val op_recip : context -> (float, 'b) t -> (float, 'b) t
   (** [op_recip ctx t] Corresponds to the [RECIP] UOp. Output is float32. *)
 
   (* Ternary Op *)
@@ -166,17 +166,17 @@ module type S = sig
 
   (* Reduction Ops *)
 
-  val op_sum :
+  val op_reduce_sum :
     context ->
     axes:int array (* axes to reduce along *) ->
     keepdims:bool ->
     ('a, 'b) t (* input_tensor *) ->
     ('a, 'b) t (* result_tensor *)
-  (** [op_sum ctx t ~axis ~keepdims] Corresponds to the [SUM] UOp (reduction).
-      Sums elements of [t] along the specified [axis]. If [keepdims] is true,
-      the reduced axes are kept with dimension 1. Otherwise, they are removed.
-      Returns a *new* tensor with the summed values. The dtype remains the same.
-  *)
+  (** [op_reduce_sum ctx t ~axis ~keepdims] Corresponds to the [SUM] UOp
+      (reduction). Sums elements of [t] along the specified [axis]. If
+      [keepdims] is true, the reduced axes are kept with dimension 1. Otherwise,
+      they are removed. Returns a *new* tensor with the summed values. The dtype
+      remains the same. *)
 
   val op_reduce_max :
     context -> axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
@@ -241,6 +241,12 @@ module type S = sig
       dimensions of [t] where [flip_axes_booleans] is true. Updates view
       metadata. Returns a *new* tensor handle sharing the buffer. *)
 
+  val op_cat : context -> ('a, 'b) t list -> int (* axis *) -> ('a, 'b) t
+  (** [op_cat ctx tensors axis] Corresponds to the [CAT] UOp. Concatenates a
+      list of [tensors] along the specified [axis]. All tensors must have the
+      same shape except in the dimension [axis], and must have the same dtype.
+      Returns a *new* tensor. *)
+
   (* Other Ops *)
 
   val op_cast : context -> ('a, 'b) t -> ('c, 'd) Dtype.t -> ('c, 'd) t
@@ -253,6 +259,11 @@ module type S = sig
       output tensor [t'] has a C-contiguous memory layout. If [t] is already
       contiguous and has a standard view, [t'] might be [t]. Otherwise, [t'] is
       a new tensor with data copied from [t]. *)
+
+  val op_copy : context -> ('a, 'b) t -> ('a, 'b) t
+  (** [op_copy ctx t] Corresponds to the [COPY] UOp. Creates a new tensor with
+      its own buffer, containing a copy of the data from tensor [t]. This is
+      used for cloning or ensuring a tensor has its own data. *)
 
   val op_threefry :
     context ->
