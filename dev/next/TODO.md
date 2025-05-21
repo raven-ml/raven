@@ -6,4 +6,4 @@ poc
 
 next
 - symbolic shapes for jit
-- memory planner during lowering
+- memory planner during lowering (scheduling)

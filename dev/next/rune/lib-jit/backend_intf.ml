@@ -40,6 +40,12 @@ module type S = sig
   (** Represents a buffer on the device, using Rune_jit.Ir.Dtype.t. The type
       parameters ('a_elt, 'b_layout_phantom) match those in Ir.Dtype.t. *)
 
+  type any_device_buffer =
+    | Any_Device_Buffer :
+        ('a_elt, 'b_layout_phantom) device_buffer
+        -> any_device_buffer
+  [@@unboxed]
+
   type compiled_artifact_native
   (** Opaque type representing a compiled kernel artifact. *)
 
@@ -54,6 +60,7 @@ module type S = sig
   type callable_kernel = {
     native_kernel : callable_kernel_native;
     name : string;
+    device_info : Device_info.t;
   }
 
   (** Renders the lowered IR (from Rune_jit.Ir) into source code. *)
@@ -114,7 +121,7 @@ module type S = sig
       kernel:callable_kernel ->
       global_dims:int array ->
       local_dims:int array option ->
-      args:nativeint list ->
+      args:any_device_buffer list ->
       (unit, string) result
 
     val synchronize : device_info:Device_info.t -> unit

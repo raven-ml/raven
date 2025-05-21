@@ -1,3 +1,4 @@
+module C = Objc_c
 open Ctypes
 open C.Types
 

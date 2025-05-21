@@ -6,7 +6,7 @@ module Block = struct
 
   let make' f ~typ =
     let b = Ctypes_memory.make t in
-    setf b isa (Runtime.get_class "__NSStackBlock__");
+    setf b isa (Objc.get_class "__NSStackBlock__");
     setf b descriptor desc_ptr;
     setf b invoke
       (coerce
@@ -22,32 +22,28 @@ module Block = struct
     make' f ~typ
 end
 
-module Runtime = struct
-  include Objc.Runtime
-
-  let msg_send_suspended ~self ~cmd ~typ =
-    Foreign.foreign ~release_runtime_lock:true "objc_msgSend"
-      (id @-> _SEL @-> typ)
-      self cmd
-end
+let msg_send_suspended ~self ~cmd ~typ =
+  Foreign.foreign ~release_runtime_lock:true "objc_msgSend"
+    (id @-> _SEL @-> typ)
+    self cmd
 
 let msg_send ~self ~select ~typ =
   let cmd = selector select in
-  Runtime.msg_send ~self ~cmd ~typ
+  Objc.Low_level.send_message ~self ~cmd ~typ
 
 let msg_send_suspended ~self ~select ~typ =
   let cmd = selector select in
-  Runtime.msg_send_suspended ~self ~cmd ~typ
+  msg_send_suspended ~self ~cmd ~typ
 
 type lifetime = Lifetime : 'a -> lifetime
 
 (* While we could use Foreign.funptr to attach lifetimes to ARC objects, we'd
    need to do this for every function pointer type, and it's easier to just use
    a custom type. *)
-type payload = { id : Runtime.object_t; mutable lifetime : lifetime }
+type payload = { id : Objc.object_t; mutable lifetime : lifetime }
 
-let nil_ptr : Runtime.object_t ptr = coerce (ptr void) (ptr Runtime.id) null
-let nil : Runtime.object_t = nil
+let nil_ptr : Objc.object_t ptr = coerce (ptr void) (ptr Objc.id) null
+let nil : Objc.object_t = nil
 
 (* Helper to convert NSString to OCaml string *)
 let ocaml_string_from_nsstring nsstring_id =
@@ -64,25 +60,25 @@ let from_nsarray nsarray_id =
     Array.init count_int (fun i ->
         let obj_id =
           msg_send ~self:nsarray_id ~select:"objectAtIndex:"
-            ~typ:(ulong @-> returning Runtime.id)
+            ~typ:(ulong @-> returning Objc.id)
             (Unsigned.ULong.of_int i)
         in
         obj_id (* Or further processing if needed *))
 
 let to_nsarray ?count buffer =
-  let nsarray_class = Runtime.get_class "NSArray" in
+  let nsarray_class = Objc.get_class "NSArray" in
   let count = match count with Some c -> c | None -> List.length buffer in
   if count = 0 then
     (* Create empty array *)
-    msg_send ~self:nsarray_class ~select:"array" ~typ:(returning Runtime.id)
+    msg_send ~self:nsarray_class ~select:"array" ~typ:(returning Objc.id)
   else
     (* Create array with contents *)
     let array_with_objects_count =
       msg_send ~self:nsarray_class ~select:"arrayWithObjects:count:"
-        ~typ:(ptr Runtime.id @-> size_t @-> returning Runtime.id)
+        ~typ:(ptr Objc.id @-> size_t @-> returning Objc.id)
     in
     (* Note: the buffer is copied, so no need to keep the array alive. *)
-    let buffer_ptr = CArray.start (CArray.of_list Runtime.id buffer) in
+    let buffer_ptr = CArray.start (CArray.of_list Objc.id buffer) in
     array_with_objects_count buffer_ptr (Unsigned.Size_t.of_int count)
 
 (* Error Handling Helper *)
@@ -91,7 +87,7 @@ let get_error_description nserror =
   else
     let localized_description =
       msg_send ~self:nserror ~select:"localizedDescription"
-        ~typ:(returning Runtime.id)
+        ~typ:(returning Objc.id)
     in
     if is_nil localized_description then "Unknown error (no description)"
     else ocaml_string_from_nsstring localized_description
@@ -110,7 +106,7 @@ let check_error label err_ptr =
 (* === Basic Structures === *)
 
 module Size = struct
-  type t = { width : int; height : int; depth : int } [@@deriving sexp_of]
+  type t = { width : int; height : int; depth : int }
   type mtlsize
   type mtl = mtlsize structure ptr
 
@@ -141,7 +137,7 @@ module Size = struct
 end
 
 module Origin = struct
-  type t = { x : int; y : int; z : int } [@@deriving sexp_of]
+  type t = { x : int; y : int; z : int }
   type mtlorigin
   type mtl = mtlorigin structure ptr
 
@@ -171,7 +167,7 @@ module Origin = struct
 end
 
 module Region = struct
-  type t = { origin : Origin.t; size : Size.t } [@@deriving sexp_of]
+  type t = { origin : Origin.t; size : Size.t }
   type mtlregion
   type mtl = mtlregion structure ptr
 
@@ -199,7 +195,7 @@ module Region = struct
 end
 
 module Range = struct
-  type t = { location : int; length : int } [@@deriving sexp_of]
+  type t = { location : int; length : int }
   type nsrange
   type ns = nsrange structure ptr
 
@@ -228,7 +224,7 @@ let gc ~select obj =
   if is_nil obj then failwith @@ "Failed to create object via " ^ select;
   obj |> gc_autorelease
 
-(* Same as Runtime.new_object, but with nil check and autoreleases the object *)
+(* Same as Objc.new_object, but with nil check and autoreleases the object *)
 let new_gc ~class_name =
   let obj = alloc_object class_name in
   if is_nil obj then
@@ -236,16 +232,16 @@ let new_gc ~class_name =
   obj |> init |> gc_autorelease
 
 module Device = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let create_system_default () =
     let select = "MTLCreateSystemDefaultDevice" in
-    gc ~select (Foreign.foreign select (void @-> returning Runtime.id) ())
+    gc ~select (Foreign.foreign select (void @-> returning Objc.id) ())
 
   let copy_all_devices () =
     let select = "MTLCopyAllDevices" in
     let devices_nsarray =
-      gc ~select (Foreign.foreign select (void @-> returning Runtime.id) ())
+      gc ~select (Foreign.foreign select (void @-> returning Objc.id) ())
     in
     from_nsarray devices_nsarray
 
@@ -268,7 +264,6 @@ module Device = struct
       | MacCatalyst1
       | MacCatalyst2
       | Metal3
-    [@@deriving sexp_of]
 
     let to_int = function
       | Apple1 -> 1001
@@ -316,7 +311,7 @@ module Device = struct
       (Signed.Long.of_int (GPUFamily.to_int family))
 
   module ArgumentBuffersTier = struct
-    type t = Tier1 | Tier2 [@@deriving sexp_of]
+    type t = Tier1 | Tier2
 
     let from_ulong (i : Unsigned.ULong.t) =
       if Unsigned.ULong.equal i Unsigned.ULong.zero then Tier1
@@ -349,12 +344,11 @@ module Device = struct
     peer_group_id : ullong;
     supported_gpu_families : GPUFamily.t list;
   }
-  [@@deriving sexp_of]
 
   let get_attributes (self : t) : attributes =
     let name =
       ocaml_string_from_nsstring
-        (msg_send ~self ~select:"name" ~typ:(returning Runtime.id))
+        (msg_send ~self ~select:"name" ~typ:(returning Objc.id))
     in
     let registry_id =
       msg_send ~self ~select:"registryID" ~typ:(returning ullong)
@@ -364,7 +358,7 @@ module Device = struct
       (* Use the locally defined mtlsize_t struct *)
       let size_struct : Size.mtlsize Ctypes.structure =
         (* Use Size.mtlsize *)
-        Runtime.msg_send_stret ~self
+        Objc.Low_level.send_message_stret ~self
           ~cmd:(selector "maxThreadsPerThreadgroup")
           ~typ:(returning Size.mtlsize_t) (* Return the local struct type *)
           ~return_type:Size.mtlsize_t
@@ -493,7 +487,7 @@ module PipelineOption = struct
 end
 
 module CompileOptions = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let init () = new_gc ~class_name:"MTLCompileOptions"
 
@@ -628,12 +622,12 @@ module CompileOptions = struct
   let set_install_name (self : t) (name : string) : unit =
     let ns_name = new_string name in
     msg_send ~self ~select:"setInstallName:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       ns_name
 
   let get_install_name (self : t) : string =
     let ns_name =
-      msg_send ~self ~select:"installName" ~typ:(returning Runtime.id)
+      msg_send ~self ~select:"installName" ~typ:(returning Objc.id)
     in
     ocaml_string_from_nsstring ns_name
 
@@ -649,23 +643,23 @@ end
 (* === Resources === *)
 
 module Resource = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let set_label (self : t) label =
     let ns_label = new_string label in
     msg_send ~self ~select:"setLabel:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       ns_label
 
   let get_label (self : t) =
-    let ns_label = msg_send ~self ~select:"label" ~typ:(returning Runtime.id) in
+    let ns_label = msg_send ~self ~select:"label" ~typ:(returning Objc.id) in
     ocaml_string_from_nsstring ns_label
 
   let get_device (self : t) : Device.t =
-    msg_send ~self ~select:"device" ~typ:(returning Runtime.id)
+    msg_send ~self ~select:"device" ~typ:(returning Objc.id)
 
   module PurgeableState = struct
-    type t = KeepCurrent | NonVolatile | Volatile | Empty [@@deriving sexp_of]
+    type t = KeepCurrent | NonVolatile | Volatile | Empty
 
     let to_int = function
       | KeepCurrent -> 1
@@ -690,7 +684,7 @@ module Resource = struct
     PurgeableState.from_int (Unsigned.ULong.to_int prev_state_ulong)
 
   module CPUCacheMode = struct
-    type t = DefaultCache | WriteCombined [@@deriving sexp_of]
+    type t = DefaultCache | WriteCombined
 
     let from_ulong i =
       match Unsigned.ULong.to_int i with
@@ -704,7 +698,7 @@ module Resource = struct
   end
 
   module StorageMode = struct
-    type t = Shared | Managed | Private | Memoryless [@@deriving sexp_of]
+    type t = Shared | Managed | Private | Memoryless
 
     let from_ulong i =
       match Unsigned.ULong.to_int i with
@@ -722,7 +716,7 @@ module Resource = struct
   end
 
   module HazardTrackingMode = struct
-    type t = Default | Untracked | Tracked [@@deriving sexp_of]
+    type t = Default | Untracked | Tracked
 
     let from_ulong i =
       match Unsigned.ULong.to_int i with
@@ -760,7 +754,7 @@ module Resource = struct
 
   let get_heap (self : t) =
     (* Returns id, needs Heap module *)
-    msg_send ~self ~select:"heap" ~typ:(returning Runtime.id)
+    msg_send ~self ~select:"heap" ~typ:(returning Objc.id)
 
   let get_heap_offset (self : t) : int =
     let offset = msg_send ~self ~select:"heapOffset" ~typ:(returning ulong) in
@@ -788,7 +782,7 @@ module Buffer = struct
     let select = "newBufferWithLength:options:" in
     let id =
       msg_send ~self:device ~select
-        ~typ:(ulong @-> ulong @-> returning Runtime.id)
+        ~typ:(ulong @-> ulong @-> returning Objc.id)
         (Unsigned.ULong.of_int length)
         options
     in
@@ -798,7 +792,7 @@ module Buffer = struct
     let select = "newBufferWithBytes:length:options:" in
     let id =
       msg_send ~self:device ~select
-        ~typ:(ptr void @-> ulong @-> ulong @-> returning Runtime.id)
+        ~typ:(ptr void @-> ulong @-> ulong @-> returning Objc.id)
         bytes
         (Unsigned.ULong.of_int length)
         options
@@ -817,7 +811,7 @@ module Buffer = struct
     let select = "newBufferWithBytesNoCopy:length:options:deallocator:" in
     let id =
       msg_send ~self:device ~select
-        ~typ:(ptr void @-> ulong @-> ulong @-> ptr void @-> returning Runtime.id)
+        ~typ:(ptr void @-> ulong @-> ulong @-> ptr void @-> returning Objc.id)
         bytes
         (Unsigned.ULong.of_int length)
         options dealloc_block
@@ -841,7 +835,7 @@ module Buffer = struct
     let ns_marker = new_string marker in
     let ns_range = Range.to_value range in
     msg_send ~self:self.id ~select:"addDebugMarker:range:"
-      ~typ:(Runtime.id @-> Range.nsrange_t @-> returning void)
+      ~typ:(Objc.id @-> Range.nsrange_t @-> returning void)
       ns_marker !@ns_range
 
   let remove_all_debug_markers (self : t) =
@@ -858,7 +852,6 @@ end
 
 module FunctionType = struct
   type t = Vertex | Fragment | Kernel | Visible | Intersection | Mesh | Object
-  [@@deriving sexp_of]
 
   let from_ulong i =
     match Unsigned.ULong.to_int i with
@@ -882,7 +875,7 @@ module FunctionType = struct
 end
 
 module Function = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let set_label (self : t) label = Resource.set_label self label
   let get_label (self : t) = Resource.get_label self
@@ -896,7 +889,7 @@ module Function = struct
      stageInputAttributes as they are graphics/tessellation related *)
 
   let get_name (self : t) : string =
-    let ns_name = msg_send ~self ~select:"name" ~typ:(returning Runtime.id) in
+    let ns_name = msg_send ~self ~select:"name" ~typ:(returning Objc.id) in
     ocaml_string_from_nsstring ns_name
 
   (* Skipping functionConstantsDictionary for brevity, can add if needed *)
@@ -919,22 +912,21 @@ module Library = struct
   let on_device (device : Device.t) ~source options : t =
     let select = "newLibraryWithSource:options:error:" in
     let ns_source = new_string source in
-    let err_ptr = allocate Runtime.id nil in
+    let err_ptr = allocate Objc.id nil in
     let lib =
       msg_send ~self:device ~select
-        ~typ:
-          (Runtime.id @-> Runtime.id @-> ptr Runtime.id @-> returning Runtime.id)
+        ~typ:(Objc.id @-> Objc.id @-> ptr Objc.id @-> returning Objc.id)
         ns_source options err_ptr
     in
     check_error select err_ptr;
     { id = gc ~select lib; lifetime = Lifetime () }
 
   let on_device_with_data (device : Device.t) data : t =
-    let err_ptr = allocate Runtime.id nil in
+    let err_ptr = allocate Objc.id nil in
     let select = "newLibraryWithData:error:" in
     let lib =
       msg_send ~self:device ~select
-        ~typ:(ptr void @-> ptr Runtime.id @-> returning Runtime.id)
+        ~typ:(ptr void @-> ptr Objc.id @-> returning Objc.id)
           (* dispatch_data_t maps to ptr void? Check C *)
         (coerce (ptr void) (ptr void) data)
         (* Assuming data is already a ptr void representing dispatch_data_t *)
@@ -948,7 +940,7 @@ module Library = struct
     let ns_name = new_string name in
     let func =
       msg_send ~self:self.id ~select
-        ~typ:(Runtime.id @-> returning Runtime.id)
+        ~typ:(Objc.id @-> returning Objc.id)
         ns_name
     in
     gc ~select func
@@ -959,7 +951,7 @@ module Library = struct
 
   let get_function_names (self : t) : string array =
     let ns_array =
-      msg_send ~self:self.id ~select:"functionNames" ~typ:(returning Runtime.id)
+      msg_send ~self:self.id ~select:"functionNames" ~typ:(returning Objc.id)
     in
     let id_array = from_nsarray ns_array in
     Array.map ocaml_string_from_nsstring id_array
@@ -970,7 +962,7 @@ module Library = struct
 
   let get_install_name (self : t) : string option =
     let ns_name =
-      msg_send ~self:self.id ~select:"installName" ~typ:(returning Runtime.id)
+      msg_send ~self:self.id ~select:"installName" ~typ:(returning Objc.id)
     in
     if is_nil ns_name then None else Some (ocaml_string_from_nsstring ns_name)
 end
@@ -978,7 +970,7 @@ end
 (* === Compute Pipeline === *)
 
 module ComputePipelineDescriptor = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let create () = new_gc ~class_name:"MTLComputePipelineDescriptor"
   let set_label (self : t) label = Resource.set_label self label
@@ -986,11 +978,11 @@ module ComputePipelineDescriptor = struct
 
   let set_compute_function (self : t) (func : Function.t) =
     msg_send ~self ~select:"setComputeFunction:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       func
 
   let get_compute_function (self : t) : Function.t =
-    msg_send ~self ~select:"computeFunction" ~typ:(returning Runtime.id)
+    msg_send ~self ~select:"computeFunction" ~typ:(returning Objc.id)
 
   let set_support_indirect_command_buffers (self : t) support =
     msg_send ~self ~select:"setSupportIndirectCommandBuffers:"
@@ -1005,22 +997,22 @@ module ComputePipelineDescriptor = struct
 end
 
 module ComputePipelineState = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let on_device_with_function (device : Device.t)
       ?(options = PipelineOption.none) ?(reflection = false) func : t * _ =
     let select =
       "newComputePipelineStateWithFunction:options:reflection:error:"
     in
-    let err_ptr = allocate Runtime.id nil in
+    let err_ptr = allocate Objc.id nil in
     let maybe_reflection_ptr =
-      if reflection then allocate Runtime.id nil else nil_ptr
+      if reflection then allocate Objc.id nil else nil_ptr
     in
     let pso =
       msg_send ~self:device ~select
         ~typ:
-          (Runtime.id @-> ulong @-> ptr Runtime.id @-> ptr Runtime.id
-         @-> returning Runtime.id)
+          (Objc.id @-> ulong @-> ptr Objc.id @-> ptr Objc.id
+         @-> returning Objc.id)
         func options maybe_reflection_ptr err_ptr
     in
     check_error select err_ptr;
@@ -1031,15 +1023,15 @@ module ComputePipelineState = struct
     let select =
       "newComputePipelineStateWithDescriptor:options:reflection:error:"
     in
-    let err_ptr = allocate Runtime.id nil in
+    let err_ptr = allocate Objc.id nil in
     let maybe_reflection_ptr =
-      if reflection then allocate Runtime.id nil else nil_ptr
+      if reflection then allocate Objc.id nil else nil_ptr
     in
     let pso =
       msg_send ~self:device ~select
         ~typ:
-          (Runtime.id @-> ulong @-> ptr Runtime.id @-> ptr Runtime.id
-         @-> returning Runtime.id)
+          (Objc.id @-> ulong @-> ptr Objc.id @-> ptr Objc.id
+         @-> returning Objc.id)
         desc options maybe_reflection_ptr err_ptr
     in
     check_error select err_ptr;
@@ -1077,7 +1069,6 @@ end
 
 module LogLevel = struct
   type t = Undefined | Debug | Info | Notice | Error | Fault
-  [@@deriving sexp_of]
 
   let from_long i =
     let i64 = Signed.Long.to_int64 i in
@@ -1100,7 +1091,7 @@ module LogLevel = struct
 end
 
 module LogStateDescriptor = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let create () = new_gc ~class_name:"MTLLogStateDescriptor"
 
@@ -1129,10 +1120,10 @@ module LogState = struct
   let on_device_with_descriptor (device : Device.t)
       (descriptor : LogStateDescriptor.t) : t =
     let select = "newLogStateWithDescriptor:error:" in
-    let err_ptr = allocate Runtime.id nil in
+    let err_ptr = allocate Objc.id nil in
     let id =
       msg_send ~self:device ~select
-        ~typ:(Runtime.id @-> ptr Runtime.id @-> returning Runtime.id)
+        ~typ:(Objc.id @-> ptr Objc.id @-> returning Objc.id)
         descriptor err_ptr
     in
     check_error select err_ptr;
@@ -1211,13 +1202,13 @@ module CommandQueueDescriptor = struct
           ls.id
     in
     msg_send ~self:self.id ~select:"setLogState:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       log_state_id
 
   (* Returns LogState.t option because the property is nullable *)
   let get_log_state (self : t) : LogState.t option =
     let log_state_id =
-      msg_send ~self:self.id ~select:"logState" ~typ:(returning Runtime.id)
+      msg_send ~self:self.id ~select:"logState" ~typ:(returning Objc.id)
     in
     (* NOTE: This is defensive and might leak a bit of memory if the log state
        is reused. *)
@@ -1228,11 +1219,11 @@ end
 (* === Command Infrastructure === *)
 
 module CommandQueue = struct
-  type t = payload (* Changed from Runtime.object_t to payload *)
+  type t = payload (* Changed from Objc.object_t to payload *)
 
   let on_device (device : Device.t) : t =
     let select = "newCommandQueue" in
-    let queue_id = msg_send ~self:device ~select ~typ:(returning Runtime.id) in
+    let queue_id = msg_send ~self:device ~select ~typ:(returning Objc.id) in
     { id = gc ~select queue_id; lifetime = Lifetime () }
   (* Provide an empty lifetime *)
 
@@ -1240,7 +1231,7 @@ module CommandQueue = struct
     let select = "newCommandQueueWithMaxCommandBufferCount:" in
     let queue_id =
       msg_send ~self:device ~select
-        ~typ:(ulong @-> returning Runtime.id)
+        ~typ:(ulong @-> returning Objc.id)
         (Unsigned.ULong.of_int max_count)
     in
     { id = gc ~select queue_id; lifetime = Lifetime () }
@@ -1251,7 +1242,7 @@ module CommandQueue = struct
     let select = "newCommandQueueWithDescriptor:" in
     let queue_id =
       msg_send ~self:device ~select
-        ~typ:(Runtime.id @-> returning Runtime.id)
+        ~typ:(Objc.id @-> returning Objc.id)
         descriptor.id
     in
     (* The crucial change: The new CommandQueue.t OCaml value now holds onto the
@@ -1278,7 +1269,7 @@ module CommandBuffer = struct
   let get_command_queue (self : t) : CommandQueue.t =
     (* Return type is still CommandQueue.t, which is now payload *)
     let cq_id =
-      msg_send ~self:self.id ~select:"commandQueue" ~typ:(returning Runtime.id)
+      msg_send ~self:self.id ~select:"commandQueue" ~typ:(returning Objc.id)
     in
     (* If we need to return a CommandQueue.t (payload), we must also attach its
        lifetime. The command buffer's lifetime should ideally include the
@@ -1307,14 +1298,14 @@ module CommandBuffer = struct
   let on_queue (queue : CommandQueue.t) : t =
     (* queue is now payload *)
     let select = "commandBuffer" in
-    let id = msg_send ~self:queue.id ~select ~typ:(returning Runtime.id) in
+    let id = msg_send ~self:queue.id ~select ~typ:(returning Objc.id) in
     (* The command buffer should keep the queue's lifetime alive *)
     { id = gc ~select id; lifetime = queue.lifetime }
 
   let on_queue_with_unretained_references (queue : CommandQueue.t) : t =
     (* queue is now payload *)
     let select = "commandBufferWithUnretainedReferences" in
-    let id = msg_send ~self:queue.id ~select ~typ:(returning Runtime.id) in
+    let id = msg_send ~self:queue.id ~select ~typ:(returning Objc.id) in
     (* The command buffer should keep the queue's lifetime alive *)
     { id = gc ~select id; lifetime = queue.lifetime }
 
@@ -1367,7 +1358,6 @@ module CommandBuffer = struct
       | Scheduled
       | Completed
       | Error
-    [@@deriving sexp_of]
 
     let from_ulong i =
       match Unsigned.ULong.to_int i with
@@ -1396,9 +1386,7 @@ module CommandBuffer = struct
 
   let get_error (self : t) : string option =
     (* NSError *)
-    let err =
-      msg_send ~self:self.id ~select:"error" ~typ:(returning Runtime.id)
-    in
+    let err = msg_send ~self:self.id ~select:"error" ~typ:(returning Objc.id) in
     if is_nil err then None else Some (get_error_description err)
 
   let get_gpu_start_time (self : t) : float =
@@ -1409,18 +1397,18 @@ module CommandBuffer = struct
 
   let encode_wait_for_event self event value =
     msg_send ~self:self.id ~select:"encodeWaitForEvent:value:"
-      ~typ:(Runtime.id @-> ullong @-> returning void)
+      ~typ:(Objc.id @-> ullong @-> returning void)
       event value
 
   let encode_signal_event self event value =
     msg_send ~self:self.id ~select:"encodeSignalEvent:value:"
-      ~typ:(Runtime.id @-> ullong @-> returning void)
+      ~typ:(Objc.id @-> ullong @-> returning void)
       event value
 
   let push_debug_group (self : t) group_name =
     let ns_group = new_string group_name in
     msg_send ~self:self.id ~select:"pushDebugGroup:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       ns_group
 
   let pop_debug_group (self : t) =
@@ -1431,7 +1419,7 @@ module CommandBuffer = struct
 end
 
 module CommandEncoder = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let set_label (self : t) label = Resource.set_label self label
   let get_label (self : t) = Resource.get_label self
@@ -1443,13 +1431,13 @@ module CommandEncoder = struct
   let insert_debug_signpost (self : t) signpost =
     let ns_signpost = new_string signpost in
     msg_send ~self ~select:"insertDebugSignpost:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       ns_signpost
 
   let push_debug_group (self : t) group_name =
     let ns_group = new_string group_name in
     msg_send ~self ~select:"pushDebugGroup:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       ns_group
 
   let pop_debug_group (self : t) =
@@ -1465,7 +1453,7 @@ module ResourceUsage = struct
 end
 
 module ComputeCommandEncoder = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let set_label (self : t) label = CommandEncoder.set_label self label
   let get_label (self : t) = CommandEncoder.get_label self
@@ -1474,11 +1462,11 @@ module ComputeCommandEncoder = struct
   let on_buffer (self : CommandBuffer.t) : t =
     (* Returns ComputeCommandEncoder.t *)
     let select = "computeCommandEncoder" in
-    let encoder = msg_send ~self:self.id ~select ~typ:(returning Runtime.id) in
+    let encoder = msg_send ~self:self.id ~select ~typ:(returning Objc.id) in
     gc ~select encoder
 
   module DispatchType = struct
-    type t = Serial | Concurrent [@@deriving sexp_of]
+    type t = Serial | Concurrent
 
     let to_ulong = function
       | Serial -> Unsigned.ULong.zero
@@ -1490,7 +1478,7 @@ module ComputeCommandEncoder = struct
     let select = "computeCommandEncoderWithDispatchType:" in
     let encoder =
       msg_send ~self:self.id ~select
-        ~typ:(ulong @-> returning Runtime.id)
+        ~typ:(ulong @-> returning Objc.id)
         (DispatchType.to_ulong dispatch_type)
     in
     gc ~select encoder
@@ -1507,12 +1495,12 @@ module ComputeCommandEncoder = struct
 
   let set_compute_pipeline_state (self : t) (pso : ComputePipelineState.t) =
     msg_send ~self ~select:"setComputePipelineState:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       pso
 
   let set_buffer (self : t) ?(offset = 0) ~index buffer =
     msg_send ~self ~select:"setBuffer:offset:atIndex:"
-      ~typ:(Runtime.id @-> ulong @-> ulong @-> returning void)
+      ~typ:(Objc.id @-> ulong @-> ulong @-> returning void)
       buffer.id
       (Unsigned.ULong.of_int offset)
       (Unsigned.ULong.of_int index)
@@ -1528,7 +1516,7 @@ module ComputeCommandEncoder = struct
     in
     let range = Range.make ~location:index ~length:(List.length buffers) in
     msg_send ~self ~select:"setBuffers:offsets:withRange:"
-      ~typ:(Runtime.id @-> ptr ulong @-> Range.nsrange_t @-> returning void)
+      ~typ:(Objc.id @-> ptr ulong @-> Range.nsrange_t @-> returning void)
       ns_array_buffers offsets_ptr !@range;
     ignore (Sys.opaque_identity lifetime)
 
@@ -1555,14 +1543,14 @@ module ComputeCommandEncoder = struct
 
   let use_resource (self : t) resource usage =
     msg_send ~self ~select:"useResource:usage:"
-      ~typ:(Runtime.id @-> ulong @-> returning void)
+      ~typ:(Objc.id @-> ulong @-> returning void)
       resource usage
 
   let use_resources (self : t) resources usage =
     let count = List.length resources in
     let ns_array = to_nsarray ~count resources in
     msg_send ~self ~select:"useResources:count:usage:"
-      ~typ:(Runtime.id @-> ulong @-> ulong @-> returning void)
+      ~typ:(Objc.id @-> ulong @-> ulong @-> returning void)
       ns_array
       (Unsigned.ULong.of_int count)
       usage
@@ -1570,7 +1558,7 @@ module ComputeCommandEncoder = struct
   let execute_commands_in_buffer (self : t) buffer range =
     let ns_range = Range.to_value range in
     msg_send ~self ~select:"executeCommandsInBuffer:withRange:"
-      ~typ:(Runtime.id @-> Range.nsrange_t @-> returning void)
+      ~typ:(Objc.id @-> Range.nsrange_t @-> returning void)
       buffer !@ns_range
 
   (* Skipping many other methods (textures, samplers, barriers, events, etc.)
@@ -1578,7 +1566,7 @@ module ComputeCommandEncoder = struct
 end
 
 module BlitCommandEncoder = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let set_label (self : t) label = CommandEncoder.set_label self label
   let get_label (self : t) = CommandEncoder.get_label self
@@ -1588,9 +1576,7 @@ module BlitCommandEncoder = struct
     (* Correct argument type to CommandBuffer.t *)
     (* Returns BlitCommandEncoder.t *)
     let select = "blitCommandEncoder" in
-    let encoder =
-      msg_send ~self:cmdbuf.id ~select ~typ:(returning Runtime.id)
-    in
+    let encoder = msg_send ~self:cmdbuf.id ~select ~typ:(returning Objc.id) in
     gc ~select encoder
 
   let end_encoding (self : t) = CommandEncoder.end_encoding self
@@ -1607,9 +1593,7 @@ module BlitCommandEncoder = struct
       ~(destination_buffer : Buffer.t) ~destination_offset ~size =
     msg_send ~self
       ~select:"copyFromBuffer:sourceOffset:toBuffer:destinationOffset:size:"
-      ~typ:
-        (Runtime.id @-> ulong @-> Runtime.id @-> ulong @-> ulong
-       @-> returning void)
+      ~typ:(Objc.id @-> ulong @-> Objc.id @-> ulong @-> ulong @-> returning void)
       source_buffer.id
       (Unsigned.ULong.of_int source_offset)
       destination_buffer.id
@@ -1620,24 +1604,24 @@ module BlitCommandEncoder = struct
     if value < 0 || value > 255 then failwith "Invalid value for fill_buffer";
     let ns_range = Range.to_value range in
     msg_send ~self ~select:"fillBuffer:range:value:"
-      ~typ:(Runtime.id @-> Range.nsrange_t @-> uchar @-> returning void)
+      ~typ:(Objc.id @-> Range.nsrange_t @-> uchar @-> returning void)
       buffer.id !@ns_range
       (Unsigned.UChar.of_int value);
     ignore (Sys.opaque_identity ns_range)
 
   let synchronize_resource (self : t) resource =
     msg_send ~self ~select:"synchronizeResource:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       resource
 
   let update_fence (self : t) fence =
     msg_send ~self ~select:"updateFence:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       fence
 
   let wait_for_fence (self : t) fence =
     msg_send ~self ~select:"waitForFence:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       fence
 
   (* Skipping texture copies for now, add if needed *)
@@ -1647,7 +1631,7 @@ end
 (* === Synchronization === *)
 
 module Event = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let get_device (self : t) : Device.t = Resource.get_device self
   let set_label (self : t) label = Resource.set_label self label
@@ -1658,18 +1642,16 @@ module SharedEvent = struct
   type t = payload
 
   module SharedEventListener = struct
-    type t = Runtime.object_t
+    type t = Objc.object_t
 
     let init () = new_gc ~class_name:"MTLSharedEventListener"
   end
 
   module SharedEventHandle = struct
-    type t = Runtime.object_t
+    type t = Objc.object_t
 
     let get_label self =
-      let ns_label =
-        msg_send ~self ~select:"label" ~typ:(returning Runtime.id)
-      in
+      let ns_label = msg_send ~self ~select:"label" ~typ:(returning Objc.id) in
       if is_nil ns_label then None
       else Some (ocaml_string_from_nsstring ns_label)
   end
@@ -1678,7 +1660,7 @@ module SharedEvent = struct
 
   let on_device (device : Device.t) : t =
     let select = "newSharedEvent" in
-    let id = msg_send ~self:device ~select ~typ:(returning Runtime.id) in
+    let id = msg_send ~self:device ~select ~typ:(returning Objc.id) in
     { id = gc ~select id; lifetime = Lifetime () }
 
   let get_device (self : t) : Device.t =
@@ -1705,12 +1687,12 @@ module SharedEvent = struct
       Objc_type.(Block.make block_impl ~args:[ id; ullong ] ~return:void)
     in
     msg_send ~self:self.id ~select:"notifyListener:atValue:block:"
-      ~typ:(Runtime.id @-> ullong @-> ptr void @-> returning void)
+      ~typ:(Objc.id @-> ullong @-> ptr void @-> returning void)
       listener value block_ptr
 
   let new_shared_event_handle (self : t) : SharedEventHandle.t =
     let select = "newSharedEventHandle" in
-    let handle = msg_send ~self:self.id ~select ~typ:(returning Runtime.id) in
+    let handle = msg_send ~self:self.id ~select ~typ:(returning Objc.id) in
     gc ~select handle
 
   let wait_until_signaled_value (self : t) ~value ~timeout_ms : bool =
@@ -1720,11 +1702,11 @@ module SharedEvent = struct
 end
 
 module Fence = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let on_device (device : Device.t) : t =
     let select = "newFence" in
-    let fence = msg_send ~self:device ~select ~typ:(returning Runtime.id) in
+    let fence = msg_send ~self:device ~select ~typ:(returning Objc.id) in
     gc ~select fence
 
   let get_device (self : t) : Device.t = Resource.get_device self
@@ -1747,7 +1729,7 @@ module IndirectCommandType = struct
 end
 
 module IndirectCommandBufferDescriptor = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let create () = new_gc ~class_name:"MTLIndirectCommandBufferDescriptor"
 
@@ -1791,16 +1773,16 @@ module IndirectCommandBufferDescriptor = struct
 end
 
 module IndirectComputeCommand = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let set_compute_pipeline_state (self : t) (pso : ComputePipelineState.t) =
     msg_send ~self ~select:"setComputePipelineState:"
-      ~typ:(Runtime.id @-> returning void)
+      ~typ:(Objc.id @-> returning void)
       pso
 
   let set_kernel_buffer (self : t) ?(offset = 0) ~index buffer =
     msg_send ~self ~select:"setKernelBuffer:offset:atIndex:"
-      ~typ:(Runtime.id @-> ulong @-> ulong @-> returning void)
+      ~typ:(Objc.id @-> ulong @-> ulong @-> returning void)
       buffer.id
       (Unsigned.ULong.of_int offset)
       (Unsigned.ULong.of_int index)
@@ -1822,7 +1804,7 @@ module IndirectComputeCommand = struct
 end
 
 module IndirectCommandBuffer = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   let on_device_with_descriptor (device : Device.t) descriptor
       ~max_command_count ~options : t =
@@ -1831,7 +1813,7 @@ module IndirectCommandBuffer = struct
     in
     let icb =
       msg_send ~self:device ~select
-        ~typ:(Runtime.id @-> ulong @-> ulong @-> returning Runtime.id)
+        ~typ:(Objc.id @-> ulong @-> ulong @-> returning Objc.id)
         descriptor
         (Unsigned.ULong.of_int max_command_count)
         options
@@ -1847,7 +1829,7 @@ module IndirectCommandBuffer = struct
     let select = "indirectComputeCommandAtIndex:" in
     let cmd =
       msg_send ~self ~select
-        ~typ:(ulong @-> returning Runtime.id)
+        ~typ:(ulong @-> returning Objc.id)
         (Unsigned.ULong.of_int index)
     in
     gc ~select cmd
@@ -1864,7 +1846,7 @@ end
 (* === Dynamic Library Placeholder === *)
 (* Binding MTLDynamicLibrary requires more setup (compile options, linking) *)
 module DynamicLibrary = struct
-  type t = Runtime.object_t
+  type t = Objc.object_t
 
   (* Add bindings here if needed *)
 end

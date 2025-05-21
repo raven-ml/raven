@@ -15,6 +15,7 @@
 
 (library
  (name objc)
+ (public_name rune.objc)
  (libraries objc_c ctypes ctypes.foreign)
  (c_library_flags
   :standard

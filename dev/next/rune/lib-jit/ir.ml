@@ -20,9 +20,7 @@ module Dtype = struct
     | Bool : (bool_elt, _x_layout_phantom) t
     | Uint8 :
         (int_elt, _x_layout_phantom) t (* OCaml int represents uint8 values *)
-    (* Add other necessary types like Float16, Int64, Uint32, etc. as needed *)
     | Unit : (unit_elt, unit_layout_phantom) t
-  (* For GADT parameters of effectful ops like Store *)
 
   let to_string (type a b) (dt : (a, b) t) : string =
     match dt with
@@ -35,6 +33,14 @@ module Dtype = struct
   type any = Any_Dtype : ('a, 'b) t -> any [@@unboxed]
 
   let any_to_string (Any_Dtype dt) = to_string dt
+
+  let sizeof_elt (type a b) (dt : (a, b) t) : int =
+    match dt with
+    | Float32 -> 4
+    | Int32 -> 4
+    | Bool -> 1 (* Often packed, but treated as 1 byte for buffer sizing *)
+    | Uint8 -> 1
+    | Unit -> 0
 end
 
 module Var = struct
@@ -50,6 +56,20 @@ module Var = struct
   let equal = Int.equal
   let hash = Hashtbl.hash
   let pp fmt v = Format.fprintf fmt "ir_var%d" v
+  let to_string v = Format.asprintf "%a" pp v
+
+  module Set = struct
+    include Set.Make (struct
+      type nonrec t = t
+
+      let compare = compare
+    end)
+
+    let pp fmt set =
+      Format.fprintf fmt "{%a}"
+        (Format.pp_print_list ~pp_sep:Format.pp_print_space pp)
+        (elements set)
+  end
 end
 
 module Special_index_kind = struct
@@ -57,22 +77,15 @@ module Special_index_kind = struct
     | Global_task_idx of int (* dimension index, e.g., 0 for x, 1 for y *)
     | Local_thread_idx of int
     | Workgroup_idx of int
-  (* This mirrors Backend_intf.special_kind previously used from Nx ecosystem *)
 end
 
-type any_dtype = Dtype.any
-(** Existential wrapper for Dtype.t, allowing heterogeneous collections. *)
-
-let any_dtype_to_string = Dtype.any_to_string
-
 type var_metadata = {
-  dtype : any_dtype; (* Uses the self-contained Dtype.any *)
+  dtype : Dtype.any; (* Uses the self-contained Dtype.any *)
   shape : int array; (* The logical shape of the tensor/view *)
 }
 
 (** Specifies the kind of reduction operation. *)
 type reduce_op_kind_t = Reduce_Sum | Reduce_Max
-(* Add others like Reduce_Min, Reduce_Prod as needed *)
 
 (** Defines the nodes in the high-level Intermediate Representation graph. The
     GADT parameters ('a_elt, 'b_layout_phantom) refer to the OCaml element type
@@ -157,7 +170,6 @@ module Lowered = struct
     | Scalar_Mul
     | Scalar_Max
     | Scalar_CmpLt
-  (* Add others as needed *)
 
   (** Defines the low-level, imperative UOp-like instructions. GADT parameters
       ('a_elt, 'b_layout_phantom) refer to the output of the instruction, if it
@@ -181,6 +193,8 @@ module Lowered = struct
         out_var : Var.t; (* Loop index variable, always an integer *)
       }
         -> (Dtype.int_elt, Dtype._x_layout_phantom) instruction_t
+    | LI_End_Range :
+        (Dtype.unit_elt, Dtype.unit_layout_phantom) instruction_t (* NEW *)
     | LI_Special_Index : {
         name_hint : string;
         kind : Special_index_kind.t;
@@ -201,7 +215,6 @@ module Lowered = struct
         scalar_value_to_store_var : Var.t;
         valid_mask_var : Var.t option;
       }
-        (* No output var, this is an effect. GADT params reflect this. *)
         -> (Dtype.unit_elt, Dtype.unit_layout_phantom) instruction_t
     | LI_Scalar_ALU : {
         op_type : scalar_alu_op_type;
@@ -219,7 +232,7 @@ module Lowered = struct
   type graph_t = {
     instructions : any_instruction list;
     vars_metadata : (Var.t, var_metadata) Hashtbl.t;
-    kernel_input_vars : Var.t list;
-    kernel_output_vars : Var.t list;
+    kernel_input_vars : Var.t list; (* Ordered LL vars for kernel inputs *)
+    kernel_output_vars : Var.t list; (* Ordered LL vars for kernel outputs *)
   }
 end

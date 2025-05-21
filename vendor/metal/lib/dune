@@ -1,4 +1,5 @@
 (library
  (name metal)
+ (public_name rune.metal)
  (flags :standard -ccopt "-framework CoreGraphics" -ccopt "-framework Metal")
  (libraries objc))

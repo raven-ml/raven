@@ -377,7 +377,7 @@ module Resource : sig
   val get_hazard_tracking_mode : t -> HazardTrackingMode.t
   val get_resource_options : t -> ResourceOptions.t
 
-  val get_heap : t -> Objc.Runtime.object_t
+  val get_heap : t -> Objc.object_t
   (** Gets the heap the resource was allocated from (if any). Result type needs
       Heap module. *)
 
@@ -531,7 +531,7 @@ module ComputePipelineState : sig
     ?options:PipelineOption.t ->
     ?reflection:bool ->
     Function.t ->
-    t * Objc.Runtime.object_t Ctypes.ptr
+    t * Objc.object_t Ctypes.ptr
   (** Creates a pipeline state from a function. See
       {{:https://developer.apple.com/documentation/metal/mtldevice/makecomputepipelinestate(function:options:reflection:)?language=objc}
        newComputePipelineStateWithFunction:options:reflection:error:}. *)
@@ -542,7 +542,7 @@ module ComputePipelineState : sig
     ?options:PipelineOption.t ->
     ?reflection:bool ->
     ComputePipelineDescriptor.t ->
-    t * Objc.Runtime.object_t Ctypes.ptr
+    t * Objc.object_t Ctypes.ptr
   (** Creates a pipeline state from a descriptor. See
       {{:https://developer.apple.com/documentation/metal/mtldevice/makecomputepipelinestate(descriptor:options:reflection:)?language=objc}
        newComputePipelineStateWithDescriptor:options:reflection:error:}. *)

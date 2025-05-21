@@ -1,582 +1,146 @@
-open Objc_c.Types
-open Ctypes
-open Foreign
-open Unsigned
+(* In your toplevel module (e.g., Objc.ml) *)
+
+(* Core modules from other parts of the library or generated files *)
 module Platform = Platform
-module Protocol = Objc_c.Functions.Protocol
 module Inspect = Inspect
 module Objc_type = Objc_type
 module Define = Define
+module C = Objc_c (* Assuming this is your Ctypes bindings root *)
 
-module Sel = struct
-  include Objc_c.Functions.Sel
+(* Re-export Ctypes types for convenience *)
+type objc_object = C.Types.objc_object
+type objc_class = C.Types.objc_class
+type class_t = C.Types.class_t
+type object_t = C.Types.object_t
+type imp_t = C.Types.imp_t
+type selector_t = C.Types.selector_t
+type protocol_t = C.Types.protocol_t
+type ivar_t = C.Types.ivar_t
+type _Enc = C.Types._Enc (* If this is a distinct type alias *)
 
-  let register_typed_name =
-    match Platform.current with
-    | GNUStep ->
-        foreign "sel_registerTypedName_np" (string @-> _Enc @-> returning _SEL)
-    | _ -> fun _ _ -> assert false
+(* Ctypes.typ values *)
+let id = C.Types.id
+let _Class = C.Types._Class
+let _SEL = C.Types._SEL
+let _IMP = C.Types._IMP
+
+(* let _Enc = C.Types._Enc (* If this is also a Ctypes.typ, careful with name
+   shadowing if different from the type alias above *) *)
+let _Protocol = C.Types._Protocol
+let _Ivar = C.Types._Ivar
+
+(* These seem redundant if you already have id, _Class above, but harmless *)
+(* let objc_object = C.Types.objc_object *)
+(* let objc_class = C.Types.objc_class *)
+
+(* Re-export Objc runtime functions from C.Functions.Objc *)
+let get_class = C.Functions.Objc.get_class
+let get_meta_class = C.Functions.Objc.get_meta_class
+let get_protocol = C.Functions.Objc.get_protocol
+let register_class = C.Functions.Objc.register_class
+let get_class_list = C.Functions.Objc.get_class_list
+let get_protocol_list = C.Functions.Objc.get_protocol_list
+let allocate_class = C.Functions.Objc.allocate_class
+
+(* Re-export from the Runtime module *)
+
+(* Basic utilities & common operations *)
+let selector = Runtime.selector
+let string_of_selector = Runtime.string_of_selector
+let to_selector = Runtime.to_selector
+let nil = Runtime.nil
+let is_nil = Runtime.is_nil
+
+(* Object lifecycle *)
+let alloc = Runtime.alloc
+let new_ = Runtime._new_
+let init = Runtime.init
+let copy = Runtime._copy_
+let retain = Runtime.retain
+let release = Runtime.release
+let autorelease = Runtime.autorelease
+let gc_autorelease = Runtime.gc_autorelease
+let alloc_object = Runtime.alloc_object
+let new_object = Runtime.new_object
+
+(* String conversion *)
+let new_string = Runtime.new_string
+let to_string = Runtime.to_string
+
+(** {1 High-Level Message Sending}
+    These functions use [Objc_type.t] for type safety and abstraction over
+    Objective-C method type encodings. This is the recommended way to send
+    messages for most use cases. *)
+
+let msg_send = Runtime.msg_send
+let msg_super = Runtime.msg_super
+
+(** {1 Low-Level Message Sending}
+    These functions provide more direct access to the underlying [objc_msgSend]
+    family of functions. They require manual specification of [Ctypes.typ] for
+    arguments and return values. Use these when the high-level functions are not
+    suitable, or for performance-critical sections where [Objc_type] overhead is
+    a concern, or when dealing with very complex/unusual method signatures not
+    easily representable by [Objc_type]. *)
+module Low_level = struct
+  (** Sends a message with a user-specified Ctypes signature. Corresponds to
+      [objc_msgSend]. *)
+  let send_message = Runtime.Raw.send
+
+  (** Sends a message, potentially releasing the OCaml runtime lock. Corresponds
+      to [objc_msgSend]. *)
+  let send_message_gilesc = Runtime.Raw.send_gilesc
+
+  (** Sends a message to the superclass of an instance. Corresponds to
+      [objc_msgSendSuper]. *)
+  let send_super_message = Runtime.Raw.send_super
+
+  (** Sends a message with a struct return value, handling architecture-specific
+      ABI. Corresponds to [objc_msgSend_stret] or [objc_msgSend] on
+      architectures where they are equivalent for certain struct sizes. *)
+  let send_message_stret = Runtime.Raw.send_stret
+
+  (** Shortcut for [send_message] with signature [id -> SEL -> returning id]. *)
+  let send_message_returning_id = Runtime.Raw.send_returning_id
+
+  (** Shortcut for [send_message] with signature
+      [id -> SEL -> id -> returning void]. *)
+  let send_message_with_id_arg = Runtime.Raw.send_with_id_arg
+
+  (* You could also re-export _SEL and id here if they are often needed when
+     constructing the `typ` argument for the functions above, though they are
+     already in the toplevel scope. let _SEL = _SEL let id = id *)
 end
 
-module Object = struct
-  include Objc_c.Functions.Object
-
-  (** Reads the value of an Id instance variable in an object. *)
-  let get_ivar ~self ~ivar =
-    foreign "object_getIvar" (id @-> _Ivar @-> returning id) self ivar
-
-  (** Sets the value of an instance variable in an object. object_setIvar is
-      faster than object_setInstanceVariable if the Ivar for the instance
-      variable is already known. *)
-  let set_ivar ~self ~ivar value =
-    foreign "object_setIvar"
-      (id @-> _Ivar @-> id @-> returning void)
-      self ivar value
-
-  (** Obtains the value of an instance variable of a class instance. *)
-  let get_instance_variable ~self ~name ~value_ptr ~typ =
-    foreign "object_getInstanceVariable"
-      (id @-> string @-> ptr typ @-> returning _Ivar)
-      self name value_ptr
-
-  (** Changes the value of an instance variable of a class instance. *)
-  let set_instance_variable ~self ~name ~value =
-    foreign "object_setInstanceVariable"
-      (id @-> string @-> ptr void @-> returning _Ivar)
-      self name value
-
-  (** Returns pointer to an ivar in object [self] *)
-  let ivar_ptr ~self ~ivar_name =
-    Objc_c.Functions.Class.get_instance_variable (get_class self) ivar_name
-    |> Objc_c.Functions.Ivar.get_offset |> Ptrdiff.to_nativeint
-    |> Nativeint.add (self |> to_voidp |> raw_address_of_ptr)
-    |> ptr_of_raw_address
-
-  (** Returns the ivar name capitalized, prefixed by "set", suffixed by ":" *)
-  let setter_name_of_ivar ivar_name =
-    "set" ^ String.capitalize_ascii ivar_name ^ ":"
-end
-
-(** Registers a method with the Objective-C runtime system, maps the method name
-    to a selector, and returns the selector value. If the method name has
-    already been registered, this function simply returns the selector. *)
-let selector = Sel.register_name
-
-(** Returns the selector name as string. *)
-let string_of_selector = Sel.get_name
-
-let to_selector p = to_voidp p |> coerce (ptr void) _SEL
-
-module Runtime = struct
-  include Objc_c.Functions.Objc
-  include Objc_c.Types
-  include Ctypes
-  include Unsigned
-  include Signed
-
-  (** This module extends Ctypes with types and functions specific to
-      Objective-C. *)
-
-  module Objc_super = struct
-    type t
-
-    let t : t structure typ = structure "objc_super"
-    let receiver = field t "receiver" id
-    let super_class = field t "super_class" _Class
-    let () = seal t
-
-    let make self =
-      let self_class = Object.get_class self in
-      let sup_cls = Objc_c.Functions.Class.get_superclass self_class
-      and d = make t in
-      setf d receiver self;
-      (if Objc_c.Functions.Class.is_meta_class self_class then
-         Object.get_class sup_cls
-       else sup_cls)
-      |> setf d super_class;
-      allocate t d
-  end
-
-  (** Sends a message with a simple return value to an instance of a class. *)
-  let msg_send ~self ~cmd ~typ =
-    foreign "objc_msgSend" (id @-> _SEL @-> typ) self cmd
-
-  (** Sends a message with a simple return value to an instance of a class. *)
-  let msg_send' ?(release_runtime_lock = false) ~self ~typ cmd =
-    foreign ~release_runtime_lock "objc_msgSend"
-      (id @-> _SEL @-> typ)
-      self (selector cmd)
-
-  (** Sends a message with a simple return value to the superclass of an
-      instance of a class. *)
-  let msg_send_super ~self ~cmd ~typ =
-    match Platform.current with
-    | GNUStep ->
-        let self_class = Object.get_class self in
-        let imp =
-          Objc_c.Functions.Class.get_method_implementation
-            (Objc_c.Functions.Class.get_superclass self_class)
-            cmd
-        in
-        let imp_fun = coerce _IMP (funptr (id @-> _SEL @-> typ)) imp in
-        imp_fun self cmd
-    | _ ->
-        let objc_super = Objc_super.make self in
-        foreign "objc_msgSendSuper"
-          (ptr Objc_super.t @-> _SEL @-> typ)
-          objc_super cmd
-
-  (** Shortcut for type [void @-> id] *)
-  let msg_send_vo = msg_send ~typ:(returning id)
-
-  (** Shortcut for type [id @-> void] *)
-  let msg_send_ov = msg_send ~typ:(id @-> returning void)
-
-  (** Sends a message with a data-structure return value to an instance of a
-      class. *)
-  let msg_send_stret ~self ~cmd ~typ ~return_type =
-    match Arch.current with
-    | Amd64 -> (
-        match sizeof return_type with
-        | 2 | 4 | 8 | 16 -> msg_send ~self ~cmd ~typ
-        | _ -> foreign "objc_msgSend_stret" (id @-> _SEL @-> typ) self cmd)
-    | Arm64 -> msg_send ~self ~cmd ~typ
-    | _ ->
-        failwith
-          "msg_send_stret: not supported on this architecture. Use msg_send \
-           instead."
-
-  (** Returns a pointer to the C value named by [name] or [null] if the symbol
-      cannot be resolved. *)
-  let foreign_value_or_null name ty =
-    try foreign_value name ty with _ -> from_voidp ty null
-end
-
-let nsstring_class = Runtime.get_class "NSString"
-let nil = coerce (ptr void) Runtime.id null
-let is_nil = is_null
-
-(** Returns a new instance of the receiving class. *)
-let alloc self = Runtime.msg_send_vo ~self ~cmd:(selector "alloc")
-
-(** Allocates a new instance of the receiving class, sends it an init message,
-    and returns the initialized object. *)
-let _new_ self = Runtime.msg_send_vo ~self ~cmd:(selector "new")
-
-(** Implemented by subclasses to initialize a new object (the receiver)
-    immediately after memory for it has been allocated. *)
-let init self = Runtime.msg_send_vo ~self ~cmd:(selector "init")
-
-(** Returns the object returned by copyWithZone: *)
-let _copy_ self = Runtime.msg_send_vo ~self ~cmd:(selector "copy")
-
-(** Increments the receiver’s reference count. *)
-let retain self = Runtime.msg_send_vo ~self ~cmd:(selector "retain")
-
-(** Decrements the receiver’s reference count. *)
-let release self =
-  Runtime.msg_send ~self ~cmd:(selector "release") ~typ:(returning void)
-
-(** Decrements the receiver’s retain count at the end of the current autorelease
-    pool block. *)
-let autorelease self =
-  Runtime.msg_send ~self ~cmd:(selector "autorelease") ~typ:(returning void)
-
-(** Release ObjC object when OCaml ptr is garbage collected. *)
-let gc_autorelease self =
-  Gc.finalise release self;
-  self
-
-(** Allocates an object given a class name. *)
-let alloc_object class_name = alloc (Runtime.get_class class_name)
-
-(** Allocates an object and sends it [init] and [gc_autorelease]. *)
-let new_object class_name = alloc_object class_name |> init |> gc_autorelease
-
-(** Creates a new NSString object autoreleased by OCaml's GC. *)
-let new_string str =
-  Runtime.msg_send ~self:nsstring_class
-    ~cmd:(selector "stringWithUTF8String:")
-    ~typ:(string @-> returning id)
-    str
-  |> gc_autorelease
-
-(** Converts a NSString instance to an OCaml string. If the instance is not an
-    NSString, it will be sent the message [NSObject.description] first. Prefer
-    this to [NSString._UTF8String] as sending "UTF8String" to nil will crash
-    your program. *)
-let to_string self =
-  let conv instance =
-    Runtime.msg_send ~self:instance ~cmd:(selector "UTF8String")
-      ~typ:(returning string)
-  in
-  if is_nil self then ""
-  else if
-    Runtime.msg_send ~self
-      ~cmd:(selector "isKindOfClass:")
-      ~typ:(_Class @-> returning bool)
-      nsstring_class
-  then conv self
-  else
-    conv
-      (Runtime.msg_send ~self ~cmd:(selector "description") ~typ:(returning id))
-
-(** Sends a message with a simple return value to an instance of a class. *)
-let msg_send cmd ~self ~args ~return =
-  let typ = Objc_type.method_typ ~args return in
-  Runtime.msg_send ~self ~cmd ~typ
-
-(** Sends a message with a simple return value to the superclass of an instance
-    of a class. *)
-let msg_super cmd ~self ~args ~return =
-  let typ = Objc_type.method_typ ~args return in
-  Runtime.msg_send_super ~self ~cmd ~typ
-
-(** Returns the value of an ivar reading it directly. *)
-let get_ivar : type a. string -> a Objc_type.t -> object_t -> a =
- fun ivar_name t self ->
-  match t with
-  | Objc_type.Id ->
-      let ivar =
-        Objc_c.Functions.Class.get_instance_variable (Object.get_class self)
-          ivar_name
-      in
-      Object.get_ivar ~self ~ivar
-  | _ ->
-      let typ = Objc_type.value_typ t in
-      !@(Object.ivar_ptr ~self ~ivar_name |> coerce (ptr void) (ptr typ))
-
-(** Sets the value of an ivar writing it directly. *)
-let set_ivar : type a. string -> a -> a Objc_type.t -> object_t -> unit =
- fun ivar_name value t self ->
-  match t with
-  | Objc_type.Id ->
-      let ivar =
-        Objc_c.Functions.Class.get_instance_variable (Object.get_class self)
-          ivar_name
-      and typ = Objc_type.value_typ t in
-      Object.set_ivar ~self ~ivar (coerce typ id value)
-  | _ ->
-      let typ = Objc_type.value_typ t in
-      Object.ivar_ptr ~self ~ivar_name |> from_voidp typ <-@ value
-
-let get_property prop_name typ self =
-  Runtime.(msg_send ~self ~cmd:(selector prop_name) ~typ:(returning typ))
-
-let set_property prop_name value typ self =
-  let cmd = selector (Object.setter_name_of_ivar prop_name) in
-  Runtime.(msg_send ~self ~cmd ~typ:(typ @-> returning void)) value
-
-module Property = struct
-  open Runtime
-  open Object
-  open Define
-
-  (** Get the value of a property. *)
-  let get prop_name typ = get_property prop_name (Objc_type.value_typ typ)
-
-  (** Set the value of a property. *)
-  let set prop_name value typ =
-    set_property prop_name value (Objc_type.value_typ typ)
-
-  (** Getter for non-object values. *)
-  let getter ~typ ~enc ivar_name =
-    let cmd = selector ivar_name
-    and imp self _cmd = !@(ivar_ptr ~self ~ivar_name |> from_voidp typ) in
-    method_spec ~cmd ~typ:(returning typ) ~enc imp
-
-  (** Setter for non-object values. *)
-  let setter ?(notify_change = false) ~typ ~enc ivar_name =
-    let cmd = selector (setter_name_of_ivar ivar_name)
-    and key = new_string ivar_name in
-    let imp self _cmd value =
-      if notify_change then
-        msg_send_ov ~self ~cmd:(selector "willChangeValueForKey:") key;
-
-      ivar_ptr ~self ~ivar_name |> from_voidp typ <-@ value;
-
-      if notify_change then
-        msg_send_ov ~self ~cmd:(selector "didChangeValueForKey:") key
-    in
-    method_spec ~cmd ~typ:(typ @-> returning void) ~enc imp
-
-  (** Getter for object values. *)
-  let obj_getter ~typ ~enc ivar_name =
-    let cmd = selector ivar_name
-    and imp self _cmd =
-      let ivar =
-        Objc_c.Functions.Class.get_instance_variable (Object.get_class self)
-          ivar_name
-      in
-      Object.get_ivar ~self ~ivar
-    in
-    method_spec ~cmd ~typ:(returning typ) ~enc imp
-
-  (** Setter for object values. *)
-  let obj_setter ?(assign = false) ?(copy = false) ?(notify_change = false) ~typ
-      ~enc ivar_name =
-    let cmd = selector (setter_name_of_ivar ivar_name)
-    and key = new_string ivar_name in
-    let imp self _cmd value =
-      if (not assign) && not copy then value |> retain |> ignore;
-
-      (* release old object *)
-      let ivar =
-        Objc_c.Functions.Class.get_instance_variable (Object.get_class self)
-          ivar_name
-      in
-      assert (not (is_null ivar));
-      Object.get_ivar ~self ~ivar |> release;
-
-      if notify_change then
-        msg_send_ov ~self ~cmd:(selector "willChangeValueForKey:") key;
-
-      Object.set_ivar ~self ~ivar (if copy then _copy_ value else value);
-
-      if notify_change then
-        msg_send_ov ~self ~cmd:(selector "didChangeValueForKey:") key
-    in
-    method_spec ~cmd ~typ:(typ @-> returning void) ~enc imp
-
-  (** Define a property getter and setter (unless [readonly] is [true]). *)
-  let accessor_methods : type a.
-      ?assign:bool ->
-      ?copy:bool ->
-      ?readonly:bool ->
-      ?notify_change:bool ->
-      string ->
-      a Objc_type.t ->
-      method_spec' list =
-   fun ?(assign = false) ?(copy = false) ?(readonly = false)
-       ?(notify_change = false) ivar_name t ->
-    let typ = Objc_type.value_typ t and enc = Objc_type.encode_value t in
-    match t with
-    | Objc_type.Id ->
-        if readonly then [ obj_getter ~typ ~enc ivar_name ]
-        else
-          [
-            obj_getter ~typ ~enc ivar_name;
-            obj_setter ~assign ~copy ~notify_change ~typ ~enc ivar_name;
-          ]
-    | _ ->
-        if readonly then [ getter ~typ ~enc ivar_name ]
-        else
-          [
-            getter ~typ ~enc ivar_name;
-            setter ~typ ~enc ~notify_change ivar_name;
-          ]
-
-  (** Define a property with an ivar, getter, and setter (unless [readonly] is
-      [true]). *)
-  let define ?(retain = true) ?(copy = false) ?(readonly = false)
-      ?(notify_change = false) name typ =
-    prop_spec ~retain ~copy ~readonly ~notify_change ~typ name
-end
-
-module Class = struct
-  include Objc_c.Functions.Class
-
-  (* keep alive OCaml closures for defined methods *)
-  let defined_method_roots = ref []
-
-  let alignment_of_size size =
-    let open Float in
-    Size_t.to_int size |> of_int |> log2 |> round |> to_int |> UInt8.of_int
-
-  let create_instance ?(extra_bytes = Size_t.of_int 0) cls =
-    create_instance cls extra_bytes
-
-  (** Adds a new method to a class with a given name and implementation. *)
-  let add_method ~self ~cmd ~typ ~enc ?(runtime_lock = false)
-      ?(thread_registration = false) imp =
-    let method_t = id @-> _SEL @-> typ in
-    let ty =
-      _Class @-> _SEL
-      @-> funptr ~runtime_lock ~thread_registration method_t
-      @-> _Enc @-> returning bool
-    in
-    foreign "class_addMethod" ty self cmd imp enc
-
-  (** Adds a new instance variable to a class. *)
-  let add_ivar ~self ~name ~size ~enc =
-    foreign "class_addIvar"
-      (_Class @-> string @-> size_t @-> uint8_t @-> _Enc @-> returning bool)
-      self name size (alignment_of_size size) enc
-
-  (** Defines a new class and registers it with the Objective-C runtime. *)
-  let define ?(superclass = Objc_c.Functions.Objc.get_class "NSObject")
-      ?(protocols = []) ?(ivars = []) ?(properties = []) ?(methods = [])
-      ?(class_methods = []) name =
-    let allocate_class ?(extra_bytes = Unsigned.Size_t.of_int 0) ~superclass
-        name =
-      Objc_c.Functions.Objc.allocate_class superclass name extra_bytes
-    in
-    let self = allocate_class ~superclass name in
-    let add_method'
-        (Define.MethodSpec
-           { cmd; typ; imp; enc; runtime_lock; thread_registration }) =
-      (match Platform.current with
-      | GNUStep ->
-          let cmd = Sel.register_typed_name (Sel.get_name cmd) enc in
-          assert (
-            add_method ~self ~runtime_lock ~thread_registration ~cmd ~typ ~enc
-              imp)
-      | _ ->
-          assert (
-            add_method ~self ~runtime_lock ~thread_registration ~cmd ~typ ~enc
-              imp));
-      defined_method_roots := Root.create imp :: !defined_method_roots
-    in
-    assert (not (is_null self));
-
-    methods |> List.iter add_method';
-
-    properties
-    |> List.iter
-         (fun
-           (Define.PropSpec
-              { name; typ = t; retain; copy; readonly; notify_change })
-         ->
-           let typ = Objc_type.value_typ t
-           and enc = Objc_type.encode_value t
-           and assign = not retain in
-           let size = Size_t.of_int (sizeof typ) in
-           assert (add_ivar ~self ~name ~size ~enc);
-           Property.accessor_methods ~assign ~copy ~readonly ~notify_change name
-             t
-           |> List.iter add_method');
-
-    protocols
-    |> List.iter (fun proto ->
-           assert (not (is_null proto));
-           assert (add_protocol self proto));
-
-    ivars
-    |> List.iter (fun (Define.IvarSpec { name; typ; enc }) ->
-           let size = Size_t.of_int (sizeof typ) in
-           assert (add_ivar ~self ~name ~size ~enc));
-
-    Objc_c.Functions.Objc.register_class self;
-
-    if List.length class_methods > 0 then (
-      let metaclass = Objc_c.Functions.Objc.get_meta_class name in
-      assert (not (is_null metaclass));
-      class_methods
-      |> List.iter
-         @@
-         fun (Define.MethodSpec
-                { cmd; typ; imp; enc; runtime_lock; thread_registration })
-         ->
-         assert (
-           add_method ~self:metaclass ~runtime_lock ~thread_registration ~cmd
-             ~typ ~enc imp);
-         defined_method_roots := Root.create imp :: !defined_method_roots);
-
-    self
-end
-
-module Bitmask = struct
-  (** Represents a set of options or flags using a single integer value. *)
-
-  let of_list = List.fold_left Int.logor Int.zero
-  let of_list' = List.fold_left ULLong.logor ULLong.zero
-  let ( + ) = Int.logor
-end
-
-module Block_descriptor = struct
-  type t
-
-  let t : t structure typ = structure "Block_descriptor"
-  let reserved = field t "reserved" ullong
-  let size = field t "size" ullong
-  let () = seal t
-
-  let make sz =
-    let d = make t in
-    setf d reserved (ULLong.of_int 0);
-    setf d size (ULLong.of_int sz);
-    d
-end
-
-module Block = struct
-  (** Represents a single task or unit of behavior. Blocks are Objective-C
-      objects, which means they can be added to collections like [NSArray] or
-      [NSDictionary]. *)
-
-  type t
-
-  let t : t structure typ = structure "Block_literal_1"
-  let isa = field t "isa" _Class
-  let flags = field t "flags" int
-  let reserved = field t "reserved" int
-  let invoke = field t "invoke" (ptr void)
-  let descriptor = field t "descriptor" (ptr Block_descriptor.t)
-  let () = seal t
-  let size = sizeof t
-  let desc_ptr = allocate Block_descriptor.t (Block_descriptor.make size)
-  let block_is_global = Int.(shift_left one 28)
-  let self = Runtime.get_class "__NSGlobalBlock"
-
-  let make' f =
-    let b = make t in
-    setf b isa self;
-    setf b descriptor desc_ptr;
-    setf b invoke f;
-    setf b flags block_is_global;
-    allocate t b |> coerce (ptr t) (ptr void)
-
-  (** Create a global block which encapsulates the code for execution at a later
-      time. *)
-  let make ?(thread_registration = false) ?(runtime_lock = false) f ~args
-      ~return =
-    let typ = Objc_type.method_typ ~args:(Objc_type.id :: args) return in
-    make' (coerce (funptr ~thread_registration ~runtime_lock typ) (ptr void) f)
-end
-
-module Method = struct
-  include Objc_c.Functions.Method
-
-  let invoke ~typ ~self m =
-    foreign "method_invoke" (id @-> _Method @-> typ) self m
-
-  let define ~cmd ~args ~return ?(runtime_lock = false)
-      ?(thread_registration = false) imp =
-    let typ = Objc_type.method_typ ~args return
-    and enc = Objc_type.encode_method ~args return in
-    Define.method_spec ~cmd ~typ ~enc ~runtime_lock ~thread_registration imp
-end
-
-module Ivar = struct
-  include Objc_c.Functions.Ivar
-
-  let define name typ =
-    let typ = Objc_type.value_typ typ and enc = Objc_type.encode_value typ in
-    Define.ivar_spec ~name ~typ ~enc
-end
+(* High-level ivar access *)
+let get_ivar = Runtime.get_ivar
+let set_ivar = Runtime.set_ivar
+
+(* Property access *)
+let get_property = Runtime.get_property
+let set_property = Runtime.set_property
+
+(* Re-export modules from Runtime *)
+module Sel = Runtime.Sel
+module Object = Runtime.Object
+module Class = Runtime.Class
+module Property = Runtime.Property
+module Bitmask = Runtime.Bitmask
+module Block_descriptor = Runtime.Block_descriptor
+module Block = Runtime.Block
+module Method = Runtime.Method
+module Ivar = Runtime.Ivar (* This is the one with define *)
 
 (* Exception handling *)
+exception CamlNSException = Runtime.CamlNSException
 
-exception CamlNSException of string * string
+let set_uncaught_exception_handler = Runtime.set_uncaught_exception_handler
 
-(** Changes the top-level error handler. *)
-let set_uncaught_exception_handler =
-  foreign ~stub:true "NSSetUncaughtExceptionHandler"
-    (funptr (id @-> returning void) @-> returning void)
+let default_uncaught_exception_handler =
+  Runtime.default_uncaught_exception_handler
 
-let default_uncaught_exception_handler ex =
-  let open Runtime in
-  let name = msg_send ~self:ex ~cmd:(selector "name") ~typ:(returning id)
-  and reason = msg_send ~self:ex ~cmd:(selector "reason") ~typ:(returning id)
-  and to_string self =
-    msg_send ~self ~cmd:(selector "UTF8String") ~typ:(returning string)
-  in
-  Printf.eprintf "CamlNSException: %s -- %s\n%!" (to_string name)
-    (to_string reason);
-  raise @@ CamlNSException (to_string name, to_string reason)
+let setup_default_uncaught_exception_handler =
+  Runtime.setup_default_uncaught_exception_handler
 
-let () =
-  match Sys.backend_type with
-  | Native -> (
-      try set_uncaught_exception_handler default_uncaught_exception_handler
-      with _ -> ())
-  | _ -> ()
+(* Setup exception handler by default when this module is initialized *)
+let () = Runtime.setup_default_uncaught_exception_handler ()
