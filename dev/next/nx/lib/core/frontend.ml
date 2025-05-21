@@ -3,12 +3,21 @@ module Make (B : Backend_intf.S) = struct
   type context = B.context
 
   let create_context () = B.create_context ()
+
+  (* let data t = View.data (B.view t) *)
   let shape t = View.shape (B.view t)
-  let size t = View.size (B.view t)
-  let numel t = View.numel (B.view t)
   let dtype t = B.dtype t
-  let view t = B.view t
+  let strides t = View.strides (B.view t)
+  let stride i t = View.stride i (B.view t)
+  let dims t = View.dims (B.view t)
+  let dim i t = View.dim i (B.view t)
   let ndim t = View.ndim (B.view t)
+  let itemsize t = Dtype.itemsize (B.dtype t)
+  let size t = View.size (B.view t)
+  let numel t = size t
+  let nbytes t = numel t * itemsize t
+  let offset t = View.offset (B.view t)
+  let layout t = View.layout (B.view t)
 
   let resolve_neg_one_shape current_shape new_shape_spec =
     let new_shape_spec_l = Array.to_list new_shape_spec in
@@ -45,60 +54,50 @@ module Make (B : Backend_intf.S) = struct
     let new_shape = resolve_neg_one_shape (shape x) shape_spec in
     if shape x = new_shape then x (* No-op *) else B.op_reshape ctx x new_shape
 
-  (* Internal broadcast helper matching tinygrad's _broadcast_to *)
   let broadcast_to ctx (x : ('a, 'b) t) (new_shape : int array) : ('a, 'b) t =
     let current_shape = shape x in
-    if current_shape = new_shape then x (* No-op *)
+    if current_shape = new_shape then x
     else
       let rank_current = Array.length current_shape in
       let rank_new = Array.length new_shape in
       if rank_current > rank_new then
-        invalid_arg
-          (Printf.sprintf "Cannot broadcast tensor to fewer dimensions")
+        invalid_arg "Cannot broadcast tensor to fewer dimensions"
       else
-        (* 1. Align shapes by padding with 1s *)
         let padded_shape =
           if rank_current < rank_new then
             Array.append (Array.make (rank_new - rank_current) 1) current_shape
           else current_shape
         in
-        (* 2. Check broadcast compatibility *)
         let compatible = ref true in
         for i = 0 to rank_new - 1 do
           if not (padded_shape.(i) = new_shape.(i) || padded_shape.(i) = 1) then
             compatible := false
         done;
         if not !compatible then
-          invalid_arg (Printf.sprintf "Cannot broadcast shape");
-
-        (* 3. Reshape if needed to add leading 1s *)
+          invalid_arg
+            (Printf.sprintf "Cannot broadcast shape %s to %s (padded: %s)"
+               (View.pp_int_array current_shape)
+               (View.pp_int_array new_shape)
+               (View.pp_int_array padded_shape));
         let x_reshaped =
-          if padded_shape <> current_shape then
-            (* Need reshape if rank increased *)
-            reshape ctx x padded_shape
+          if padded_shape <> current_shape then reshape ctx x padded_shape
           else x
         in
-        (* 4. Call backend expand *)
         B.op_expand ctx x_reshaped new_shape
 
   (* Internal helper matching tinygrad's _broadcasted *)
   let broadcasted ctx ?(reverse = false) x y =
     let a, b = if reverse then (y, x) else (x, y) in
-
-    (* Actual Broadcasting via backend *)
     let broadcast_shape = View.broadcast_shapes (shape a) (shape b) in
     let a_broad = broadcast_to ctx a broadcast_shape in
     let b_broad = broadcast_to ctx b broadcast_shape in
     (a_broad, b_broad)
 
   let expand ctx (x : ('a, 'b) t) (shape_spec : int array) : ('a, 'b) t =
-    (* Resolve -1 to keep original dimension size *)
     let current_shape = shape x in
     let rank_current = Array.length current_shape in
     let rank_spec = Array.length shape_spec in
     let rank_new = max rank_current rank_spec in
-
-    (* Align shapes first *)
     let current_aligned =
       if rank_current < rank_new then
         Array.append (Array.make (rank_new - rank_current) 1) current_shape
@@ -109,7 +108,6 @@ module Make (B : Backend_intf.S) = struct
         Array.append (Array.make (rank_new - rank_spec) (-1)) shape_spec
       else shape_spec
     in
-
     let new_shape =
       Array.mapi
         (fun i spec_dim ->

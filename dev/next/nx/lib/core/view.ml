@@ -1,11 +1,11 @@
 (* Shared definitions and helpers for the new V2 *)
-type layout_type = C_contiguous | Strided
+type layout = C_contiguous | Strided
 
 let prod arr = Array.fold_left ( * ) 1 arr
 let all_eq a b = Array.length a = Array.length b && Array.for_all2 ( = ) a b
 
 (* For error messages in offset_to_index_contig *)
-let pp_int_array_for_error_msg arr =
+let pp_int_array arr =
   "["
   ^ (Array.to_list arr |> List.map string_of_int |> String.concat "; ")
   ^ "]"
@@ -65,17 +65,15 @@ let offset_to_index_contig k shape_arr =
     else
       invalid_arg
         ("offset_to_index_contig: k (" ^ string_of_int k
-       ^ ") > 0 for zero-size shape "
-        ^ pp_int_array_for_error_msg shape_arr)
+       ^ ") > 0 for zero-size shape " ^ pp_int_array shape_arr)
   else
     (* Standard case: all dimensions in shape_arr > 0 *)
     let total_elements = prod shape_arr in
     if k < 0 || k >= total_elements then
       invalid_arg
         ("offset_to_index_contig: k (" ^ string_of_int k
-       ^ ") out of bounds for C-contiguous shape "
-        ^ pp_int_array_for_error_msg shape_arr
-        ^ " (size "
+       ^ ") out of bounds for C-contiguous shape " ^ pp_int_array shape_arr
+       ^ " (size "
         ^ string_of_int total_elements
         ^ ")");
 
@@ -107,7 +105,7 @@ type t = {
   strides : int array;
   offset : int;
   mask : (int * int) array option; (* Array of (min, max) pairs per dimension *)
-  layout : layout_type; (* Changed from contiguous: bool *)
+  layout : layout; (* Changed from contiguous: bool *)
 }
 
 let shape v = v.shape

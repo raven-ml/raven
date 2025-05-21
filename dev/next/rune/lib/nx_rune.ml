@@ -107,7 +107,7 @@ let unwrap_to_nx_native (rune_t : ('a, 'b) t) : ('a, 'b) Nx_native.t =
         Format.flush_str_formatter ()
       in
       let dtype_str = Dtype.to_string sb.dtype_repr in
-      let shape_str = View.pp_int_array_for_error_msg sb.shape_repr in
+      let shape_str = View.pp_int_array sb.shape_repr in
       failwith
         (Printf.sprintf
            "Nx_rune.unwrap_to_nx_native: Attempted to unwrap a symbolic tensor \

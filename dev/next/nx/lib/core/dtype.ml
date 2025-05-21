@@ -52,8 +52,8 @@ let int16 = Int16
 let uint16 = UInt16
 let int32 = Int32
 let int64 = Int64
-let int = Int (* ADDED *)
-let nativeint = NativeInt (* ADDED *)
+let int = Int
+let nativeint = NativeInt
 let complex32 = Complex32
 let complex64 = Complex64
 
