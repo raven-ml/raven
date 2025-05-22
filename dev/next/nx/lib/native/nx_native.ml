@@ -163,64 +163,64 @@ let op_and ctx a b =
 
 (* Unary Ops *)
 
-let op_neg ctx input_t =
-  let out_shape = Internal.shape input_t in
-  let out_size = Internal.size input_t in
+let op_neg ctx x =
+  let out_shape = Internal.shape x in
+  let out_size = Internal.size x in
   let out_tensor =
-    op_buffer ctx input_t.dtype out_size |> fun t ->
+    op_buffer ctx x.dtype out_size |> fun t ->
     with_view t (View.create out_shape)
   in
-  Ops_unary.neg ctx input_t out_tensor;
+  Ops_unary.neg ctx x out_tensor;
   out_tensor
 
-let op_log2 ctx input_t =
-  let out_shape = Internal.shape input_t in
-  let out_size = Internal.size input_t in
+let op_log2 ctx x =
+  let out_shape = Internal.shape x in
+  let out_size = Internal.size x in
   let out_tensor =
-    op_buffer ctx Dtype.float32 out_size |> fun t ->
+    op_buffer ctx x.dtype out_size |> fun t ->
     with_view t (View.create out_shape)
   in
-  Ops_unary.log2 ctx input_t out_tensor;
+  Ops_unary.log2 ctx x out_tensor;
   out_tensor
 
-let op_exp2 ctx input_t =
-  let out_shape = Internal.shape input_t in
-  let out_size = Internal.size input_t in
+let op_exp2 ctx x =
+  let out_shape = Internal.shape x in
+  let out_size = Internal.size x in
   let out_tensor =
-    op_buffer ctx Dtype.float32 out_size |> fun t ->
+    op_buffer ctx x.dtype out_size |> fun t ->
     with_view t (View.create out_shape)
   in
-  Ops_unary.exp2 ctx input_t out_tensor;
+  Ops_unary.exp2 ctx x out_tensor;
   out_tensor
 
-let op_sin ctx input_t =
-  let out_shape = Internal.shape input_t in
-  let out_size = Internal.size input_t in
+let op_sin ctx x =
+  let out_shape = Internal.shape x in
+  let out_size = Internal.size x in
   let out_tensor =
-    op_buffer ctx Dtype.float32 out_size |> fun t ->
+    op_buffer ctx x.dtype out_size |> fun t ->
     with_view t (View.create out_shape)
   in
-  Ops_unary.sin ctx input_t out_tensor;
+  Ops_unary.sin ctx x out_tensor;
   out_tensor
 
-let op_sqrt ctx input_t =
-  let out_shape = Internal.shape input_t in
-  let out_size = Internal.size input_t in
+let op_sqrt ctx x =
+  let out_shape = Internal.shape x in
+  let out_size = Internal.size x in
   let out_tensor =
-    op_buffer ctx Dtype.float32 out_size |> fun t ->
+    op_buffer ctx x.dtype out_size |> fun t ->
     with_view t (View.create out_shape)
   in
-  Ops_unary.sqrt ctx input_t out_tensor;
+  Ops_unary.sqrt ctx x out_tensor;
   out_tensor
 
-let op_recip ctx input_t =
-  let out_shape = Internal.shape input_t in
-  let out_size = Internal.size input_t in
+let op_recip ctx x =
+  let out_shape = Internal.shape x in
+  let out_size = Internal.size x in
   let out_tensor =
-    op_buffer ctx Dtype.float32 out_size |> fun t ->
+    op_buffer ctx x.dtype out_size |> fun t ->
     with_view t (View.create out_shape)
   in
-  Ops_unary.recip ctx input_t out_tensor;
+  Ops_unary.recip ctx x out_tensor;
   out_tensor
 
 (* Ternary Op *)
@@ -239,8 +239,8 @@ let fill_buffer_with_identity buf count identity_val =
     Bigarray.Array1.unsafe_set buf i identity_val
   done
 
-let op_sum ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
-  let input_shape = Internal.shape input_tensor in
+let op_reduce_sum ctx ~(axes : int array) ~(keepdims : bool) xensor =
+  let input_shape = Internal.shape xensor in
   let input_rank = Array.length input_shape in
   let axes_to_reduce_normalized =
     Array.map (fun ax -> if ax < 0 then ax + input_rank else ax) axes
@@ -267,21 +267,20 @@ let op_sum ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
 
   let output_numel = View.prod output_shape_final in
   let output_tensor =
-    op_buffer ctx input_tensor.dtype output_numel |> fun t ->
+    op_buffer ctx xensor.dtype output_numel |> fun t ->
     with_view t (View.create output_shape_final)
   in
 
   if output_numel > 0 then
     fill_buffer_with_identity
       (Internal.buffer output_tensor)
-      output_numel
-      (Dtype.zero input_tensor.dtype);
+      output_numel (Dtype.zero xensor.dtype);
 
-  Ops_reduce.sum ctx ~axes:axes_to_reduce ~keepdims input_tensor output_tensor;
+  Ops_reduce.sum ctx ~axes:axes_to_reduce ~keepdims xensor output_tensor;
   output_tensor
 
-let op_reduce_max ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
-  let input_shape = Internal.shape input_tensor in
+let op_reduce_max ctx ~(axes : int array) ~(keepdims : bool) xensor =
+  let input_shape = Internal.shape xensor in
   let input_rank = Array.length input_shape in
   let axes_to_reduce_normalized =
     Array.map (fun ax -> if ax < 0 then ax + input_rank else ax) axes
@@ -306,7 +305,7 @@ let op_reduce_max ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
 
   let output_numel = View.prod output_shape_final in
   let output_tensor =
-    op_buffer ctx input_tensor.dtype output_numel |> fun t ->
+    op_buffer ctx xensor.dtype output_numel |> fun t ->
     with_view t (View.create output_shape_final)
   in
 
@@ -314,13 +313,13 @@ let op_reduce_max ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
     fill_buffer_with_identity
       (Internal.buffer output_tensor)
       output_numel
-      (Dtype.min_val input_tensor.dtype);
+      (Dtype.min_val xensor.dtype);
 
-  Ops_reduce.max ctx ~axes:axes_to_reduce ~keepdims input_tensor output_tensor;
+  Ops_reduce.max ctx ~axes:axes_to_reduce ~keepdims xensor output_tensor;
   output_tensor
 
-let op_reduce_prod ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
-  let input_shape = Internal.shape input_tensor in
+let op_reduce_prod ctx ~(axes : int array) ~(keepdims : bool) xensor =
+  let input_shape = Internal.shape xensor in
   let input_rank = Array.length input_shape in
   let axes_to_reduce_normalized =
     Array.map (fun ax -> if ax < 0 then ax + input_rank else ax) axes
@@ -345,17 +344,16 @@ let op_reduce_prod ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
 
   let output_numel = View.prod output_shape_final in
   let output_tensor =
-    op_buffer ctx input_tensor.dtype output_numel |> fun t ->
+    op_buffer ctx xensor.dtype output_numel |> fun t ->
     with_view t (View.create output_shape_final)
   in
 
   if output_numel > 0 then
     fill_buffer_with_identity
       (Internal.buffer output_tensor)
-      output_numel
-      (Dtype.one input_tensor.dtype);
+      output_numel (Dtype.one xensor.dtype);
 
-  Ops_reduce.prod ctx ~axes:axes_to_reduce ~keepdims input_tensor output_tensor;
+  Ops_reduce.prod ctx ~axes:axes_to_reduce ~keepdims xensor output_tensor;
   output_tensor
 
 (* Movement Ops: These just update the view *)
@@ -488,49 +486,15 @@ let op_cat ctx tensors axis =
   output_t
 
 (* Other Ops *)
-let op_cast ctx input_t target_dt =
-  let out_shape = Internal.shape input_t in
-  let out_size = Internal.size input_t in
+let op_cast ctx x target_dt =
+  let out_shape = Internal.shape x in
+  let out_size = Internal.size x in
   let out_tensor =
     op_buffer ctx target_dt out_size |> fun t ->
     with_view t (View.create out_shape)
   in
-  (* For cast, we need a specific iteration that applies the Dtype.cast_element
-     function *)
-  let view_in = Internal.view input_t in
-  let view_out = Internal.view out_tensor in
-  let buf_in = Internal.buffer input_t in
-  let buf_out = Internal.buffer out_tensor in
-  let cast_fn = Dtype.cast_element (Internal.dtype input_t) target_dt in
-
-  let iter_func logical_indices =
-    let phys_idx_in =
-      View.offset view_in
-      + View.index_to_offset logical_indices (View.strides view_in)
-    in
-    let phys_idx_out =
-      View.offset view_out
-      + View.index_to_offset logical_indices (View.strides view_out)
-    in
-    let val_in = Bigarray.Array1.unsafe_get buf_in phys_idx_in in
-    Bigarray.Array1.unsafe_set buf_out phys_idx_out (cast_fn val_in)
-  in
-  let n_dims = Array.length out_shape in
-  (if View.numel view_out = 0 then ()
-   else if n_dims = 0 then
-     let val_in = Bigarray.Array1.unsafe_get buf_in (View.offset view_in) in
-     Bigarray.Array1.unsafe_set buf_out (View.offset view_out) (cast_fn val_in)
-   else
-     let current_md_idx = Array.make n_dims 0 in
-     let rec loop dim =
-       if dim = n_dims then iter_func current_md_idx
-       else
-         for i = 0 to out_shape.(dim) - 1 do
-           current_md_idx.(dim) <- i;
-           loop (dim + 1)
-         done
-     in
-     loop 0);
+  (* Use the optimized cast implementation from Ops_cast *)
+  Ops_cast.cast ctx x out_tensor;
   out_tensor
 
 let op_contiguous _ctx t =
@@ -546,25 +510,13 @@ let op_assign _ctx target_t source_t =
   Internal.blit source_t target_t;
   target_t (* Return the modified target *)
 
-let op_threefry ctx data_t seed_t =
-  (* Placeholder for actual Threefry PRNG. This would involve bitwise
-     operations, rotations, XORs, and additions, typically implemented in a
-     custom kernel for performance. Simulating it with generic iter_binary_op
-     would be very slow and complex due to the specific sequence of operations.
-     For an eager backend, this would call a C/Fortran/Rust implementation. For
-     a JIT backend, this would be a specific effect. *)
-  if not (Internal.shape data_t = Internal.shape seed_t) then
-    failwith "op_threefry: data and seed shapes must match after broadcasting";
-
-  let out_shape = Internal.shape data_t in
-  let out_size = Internal.size data_t in
+let op_threefry ctx data seed =
+  let out_shape = Internal.shape data in
+  let out_size = Internal.size data in
   let out_tensor =
     op_buffer ctx Dtype.int32 out_size |> fun t ->
     with_view t (View.create out_shape)
   in
+  Ops_threefry.threefry ctx data seed out_tensor;
 
-  (* Extremely simplified placeholder - NOT a real Threefry. This just XORs data
-     with seed for demonstration. *)
-  let placeholder_threefry d s = Int32.logxor d s in
-  Ops_binary.iter_binary_op ctx data_t seed_t out_tensor placeholder_threefry;
   out_tensor

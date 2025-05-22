@@ -374,3 +374,37 @@ let broadcast_shapes shape_a shape_b =
     else invalid_arg "broadcast_shapes: Incompatible dimensions"
   done;
   out_shape
+
+let compute_broadcast_index target_multi_idx source_shape =
+  let target_ndim = Array.length target_multi_idx in
+  let source_ndim = Array.length source_shape in
+  let source_multi_idx = Array.make source_ndim 0 in
+  for i = 0 to source_ndim - 1 do
+    let target_idx_pos = target_ndim - source_ndim + i in
+    let source_idx_pos = i in
+    if source_idx_pos < 0 || target_idx_pos < 0 then ()
+    else if source_shape.(source_idx_pos) = 1 then
+      source_multi_idx.(source_idx_pos) <- 0
+    else source_multi_idx.(source_idx_pos) <- target_multi_idx.(target_idx_pos)
+  done;
+  source_multi_idx
+
+let multi_index_from_linear linear_idx shape =
+  let ndim = Array.length shape in
+  let index = Array.make ndim 0 in
+  if ndim = 0 then index
+  else if Array.exists (( = ) 0) shape then index
+  else
+    let current_linear_idx = ref linear_idx in
+    let strides = Array.make ndim 1 in
+    for i = ndim - 2 downto 0 do
+      strides.(i) <- strides.(i + 1) * shape.(i + 1)
+    done;
+
+    for i = 0 to ndim - 1 do
+      if strides.(i) = 0 then index.(i) <- 0
+      else (
+        index.(i) <- !current_linear_idx / strides.(i);
+        current_linear_idx := !current_linear_idx mod strides.(i))
+    done;
+    index

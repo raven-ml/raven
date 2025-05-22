@@ -53,7 +53,7 @@ module type S = sig
   val op_idiv : context -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** Integer division, truncating. *)
 
-  val op_fdiv : context -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+  val op_fdiv : context -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** Floating-point division. *)
 
   val op_max : context -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
@@ -85,19 +85,19 @@ module type S = sig
   val op_neg : context -> ('a, 'b) t -> ('a, 'b) t
   (** Negation (logical not for bools). *)
 
-  val op_log2 : context -> (float, 'b) t -> (float, 'b) t
+  val op_log2 : context -> ('a, 'b) t -> ('a, 'b) t
   (** Base-2 logarithm. *)
 
-  val op_exp2 : context -> (float, 'b) t -> (float, 'b) t
+  val op_exp2 : context -> ('a, 'b) t -> ('a, 'b) t
   (** Exponential base 2. *)
 
-  val op_sin : context -> (float, 'b) t -> (float, 'b) t
+  val op_sin : context -> ('a, 'b) t -> ('a, 'b) t
   (** Sine. *)
 
-  val op_sqrt : context -> (float, 'b) t -> (float, 'b) t
+  val op_sqrt : context -> ('a, 'b) t -> ('a, 'b) t
   (** Square root. *)
 
-  val op_recip : context -> (float, 'b) t -> (float, 'b) t
+  val op_recip : context -> ('a, 'b) t -> ('a, 'b) t
   (** Reciprocal. *)
 
   (* Ternary Op *)

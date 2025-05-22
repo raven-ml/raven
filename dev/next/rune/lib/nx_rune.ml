@@ -211,7 +211,7 @@ let op_sum (rune_ctx : context) ~(axes : int array) ~keepdims
     let native_ctx = unwrap_to_nx_native_context rune_ctx in
     let native_t_in = unwrap_to_nx_native t_in in
     let native_result =
-      Nx_native.op_sum native_ctx ~axes ~keepdims native_t_in
+      Nx_native.op_reduce_sum native_ctx ~axes ~keepdims native_t_in
     in
     wrap_from_nx_native native_result
 

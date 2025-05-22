@@ -9,6 +9,7 @@ refactor nx
 - [ ] matmul and dot
 - [ ] convolve1d
 - [ ] convolve2d
+- not sure we need non-polymorphic functions for perf of where, we should benchmark
 
 poc jit
 - placeholder? not in tinygrad
