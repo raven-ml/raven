@@ -1,3 +1,5 @@
+(* Runtime representations of scalar types. *)
+
 type float16_elt = Bigarray.float16_elt
 type float32_elt = Bigarray.float32_elt
 type float64_elt = Bigarray.float64_elt
@@ -26,6 +28,8 @@ type ('a, 'b) t =
   | NativeInt : (nativeint, nativeint_elt) t
   | Complex32 : (Complex.t, complex32_elt) t
   | Complex64 : (Complex.t, complex64_elt) t
+(* The type parameter ['a] is the OCaml representation and ['b] is the
+   corresponding Bigarray element kind (layout). *)
 
 type float16_t = (float, float16_elt) t
 type float32_t = (float, float32_elt) t
@@ -43,6 +47,7 @@ type complex64_t = (Complex.t, complex64_elt) t
 type 'b float_t = (float, 'b) t
 type 'b int_based_t = (int, 'b) t
 
+(* Constructor shortcuts *)
 let float16 = Float16
 let float32 = Float32
 let float64 = Float64
@@ -57,6 +62,7 @@ let nativeint = NativeInt
 let complex32 = Complex32
 let complex64 = Complex64
 
+(* Additive identity for a given dtype. *)
 let zero : type a b. (a, b) t -> a =
  fun dtype ->
   match dtype with
@@ -74,6 +80,7 @@ let zero : type a b. (a, b) t -> a =
   | Complex32 -> Complex.zero
   | Complex64 -> Complex.zero
 
+(* Multiplicative identity for a given dtype. *)
 let one : type a b. (a, b) t -> a =
  fun dtype ->
   match dtype with
@@ -91,6 +98,7 @@ let one : type a b. (a, b) t -> a =
   | Complex32 -> Complex.one
   | Complex64 -> Complex.one
 
+(* Size in bytes of one element of the dtype. *)
 let itemsize : type a b. (a, b) t -> int = function
   | Float16 -> 2
   | Float32 -> 4
@@ -106,6 +114,7 @@ let itemsize : type a b. (a, b) t -> int = function
   | Complex32 -> 8
   | Complex64 -> 16
 
+(* Map a dtype to the corresponding Bigarray kind. *)
 let kind_of_dtype : type a b. (a, b) t -> (a, b) Bigarray.kind =
  fun dtype ->
   match dtype with
@@ -118,11 +127,12 @@ let kind_of_dtype : type a b. (a, b) t -> (a, b) Bigarray.kind =
   | UInt16 -> Bigarray.Int16_unsigned
   | Int32 -> Bigarray.Int32
   | Int64 -> Bigarray.Int64
-  | Int -> Bigarray.Int (* ADDED *)
-  | NativeInt -> Bigarray.Nativeint (* ADDED *)
+  | Int -> Bigarray.Int
+  | NativeInt -> Bigarray.Nativeint
   | Complex32 -> Bigarray.Complex32
   | Complex64 -> Bigarray.Complex64
 
+(* Inverse of [kind_of_dtype]. Raises when the kind is not supported. *)
 let dtype_of_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Float16 -> Float16
   | Bigarray.Float32 -> Float32
@@ -139,6 +149,7 @@ let dtype_of_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Complex64 -> Complex64
   | _ -> failwith "dtype_of_kind: Unsupported Bigarray kind"
 
+(* Printable name of the dtype. *)
 let to_string : type a b. (a, b) t -> string = function
   | Float16 -> "float16"
   | Float32 -> "float32"
@@ -154,8 +165,7 @@ let to_string : type a b. (a, b) t -> string = function
   | Complex32 -> "complex32"
   | Complex64 -> "complex64"
 
-(* Basic equality check for dtypes. Does not prove type equality to GADT level
-   for free. *)
+(* Shallow equality on constructors. Useful for runtime checks. *)
 let eq (type a b c d) (dt1 : (a, b) t) (dt2 : (c, d) t) : bool =
   match (dt1, dt2) with
   | Float16, Float16 -> true

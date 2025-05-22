@@ -1,10 +1,11 @@
+(* High-level tensor operations built on backend [B]. The type parameters ['a]
+   and ['b] come from the backend tensor type. *)
+
 module Make (B : Backend_intf.S) = struct
   type ('a, 'b) t = ('a, 'b) B.t
   type context = B.context
 
   let create_context () = B.create_context ()
-
-  (* let data t = View.data (B.view t) *)
   let shape t = View.shape (B.view t)
   let dtype t = B.dtype t
   let strides t = View.strides (B.view t)
@@ -19,10 +20,10 @@ module Make (B : Backend_intf.S) = struct
   let offset t = View.offset (B.view t)
   let layout t = View.layout (B.view t)
 
+  (* infer the dimension corresponding to [-1] in [new_shape_spec] *)
   let resolve_neg_one_shape current_shape new_shape_spec =
     let new_shape_spec_l = Array.to_list new_shape_spec in
     let current_numel = View.prod current_shape in
-    (* Dummy tensor for numel *)
     let neg_one_count =
       new_shape_spec_l |> List.filter (( = ) (-1)) |> List.length
     in
@@ -33,7 +34,8 @@ module Make (B : Backend_intf.S) = struct
       let specified_numel =
         List.filter (( <> ) (-1)) new_shape_spec_l |> Array.of_list |> View.prod
       in
-      if specified_numel = 0 then (* Handle case where 0 is present *)
+      (* when shape_spec includes zero dimensions *)
+      if specified_numel = 0 then
         if current_numel = 0 then
           Array.map (fun x -> if x = -1 then 0 else x) new_shape_spec
         else
@@ -52,8 +54,9 @@ module Make (B : Backend_intf.S) = struct
 
   let reshape ctx (x : ('a, 'b) t) (shape_spec : int array) : ('a, 'b) t =
     let new_shape = resolve_neg_one_shape (shape x) shape_spec in
-    if shape x = new_shape then x (* No-op *) else B.op_reshape ctx x new_shape
+    if shape x = new_shape then x else B.op_reshape ctx x new_shape
 
+  (* reshape and expand [x] to [new_shape] following numpy-style rules *)
   let broadcast_to ctx (x : ('a, 'b) t) (new_shape : int array) : ('a, 'b) t =
     let current_shape = shape x in
     if current_shape = new_shape then x
@@ -85,7 +88,7 @@ module Make (B : Backend_intf.S) = struct
         in
         B.op_expand ctx x_reshaped new_shape
 
-  (* Internal helper matching tinygrad's _broadcasted *)
+  (* return [x] and [y] broadcasted to a common shape *)
   let broadcasted ctx ?(reverse = false) x y =
     let a, b = if reverse then (y, x) else (x, y) in
     let broadcast_shape = View.broadcast_shapes (shape a) (shape b) in
@@ -93,6 +96,7 @@ module Make (B : Backend_intf.S) = struct
     let b_broad = broadcast_to ctx b broadcast_shape in
     (a_broad, b_broad)
 
+  (* like [broadcast_to] but [-1] keeps the original dimension *)
   let expand ctx (x : ('a, 'b) t) (shape_spec : int array) : ('a, 'b) t =
     let current_shape = shape x in
     let rank_current = Array.length current_shape in
@@ -119,7 +123,7 @@ module Make (B : Backend_intf.S) = struct
   let cast ctx (x : ('a, 'b) t) (dt : ('c, 'd) Dtype.t) : ('c, 'd) t =
     B.op_cast ctx x dt
 
-  (* --- Element-wise Binary Ops --- *)
+  (* ────────── element-wise ops ────────── *)
 
   let add ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
     let a', b' = broadcasted ctx a b in
@@ -167,7 +171,7 @@ module Make (B : Backend_intf.S) = struct
     let a', b' = broadcasted ctx a b in
     B.op_mod ctx a' b'
 
-  (* --- Comparison Ops --- *)
+  (* ────────── comparison ops ────────── *)
 
   let cmplt ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : (int, Dtype.uint8_elt) t =
     if not (Dtype.eq (dtype a) (dtype b)) then
@@ -195,7 +199,7 @@ module Make (B : Backend_intf.S) = struct
   let cmple ctx a b = logical_not ctx (cmpgt ctx a b)
   let cmpge ctx a b = logical_not ctx (cmplt ctx a b)
 
-  (* --- Logical Ops --- *)
+  (* ────────── logical ops ────────── *)
 
   let logical_and ctx (a : (int, Dtype.uint8_elt) t)
       (b : (int, Dtype.uint8_elt) t) : (int, Dtype.uint8_elt) t =
@@ -212,12 +216,7 @@ module Make (B : Backend_intf.S) = struct
     let a_b, b_b = broadcasted ctx a b in
     B.op_xor ctx a_b b_b
 
-  (* --- Unary Ops requiring specific (usually float) input types for backend
-     --- *)
-  (* User must cast to an appropriate float type (e.g. float32) if input is not already float. *)
-  (* Backend ops op_log2, op_exp2 etc. are typed to produce (float, Dtype.float32_elt) t. *)
-  (* Their input type ('a,'b)t means they *could* take anything, but practically they'll work on floats. *)
-  (* We will require the user to ensure the input `x` is already a float type the backend op expects. *)
+  (* ────────── float-only unary ops ────────── *)
 
   let log2 ctx x = B.op_log2 ctx x
   let exp2 ctx x = B.op_exp2 ctx x
@@ -225,6 +224,7 @@ module Make (B : Backend_intf.S) = struct
   let sqrt ctx x = B.op_sqrt ctx x
   let recip ctx x = B.op_recip ctx x
 
+  (* natural logarithm via [log2] *)
   let log ctx x =
     let log2_x = log2 ctx x in
     let ln_2_val = log 2.0 in
@@ -232,14 +232,16 @@ module Make (B : Backend_intf.S) = struct
     let ln_2_b = broadcast_to ctx ln_2_tensor (shape log2_x) in
     B.op_mul ctx log2_x ln_2_b
 
+  (* natural exponent via [exp2] *)
   let exp ctx x =
     let one_over_ln_2_val = 1.0 /. Stdlib.log 2.0 in
-    (* The factor should be of the same float type as x_float *)
+    (* scale input so that [exp2] matches [exp] *)
     let factor_tensor = B.op_const_scalar ctx one_over_ln_2_val (dtype x) in
     let factor_b = broadcast_to ctx factor_tensor (shape x) in
     let x_scaled = B.op_mul ctx x factor_b in
     B.op_exp2 ctx x_scaled
 
+  (* cosine via [sin] shift *)
   let cos ctx x =
     let pi_half = Stdlib.acos 0.0 in
     let pi_half_tensor = B.op_const_scalar ctx pi_half (dtype x) in
@@ -247,12 +249,13 @@ module Make (B : Backend_intf.S) = struct
     let arg_to_sin = sub ctx pi_half_b x in
     B.op_sin ctx arg_to_sin
 
+  (* tangent as sin/cos *)
   let tan ctx x =
     let sin_x = B.op_sin ctx x in
     let cos_x = cos ctx x in
-    (* cos will also ensure input is float, and its output is float32 *)
     B.op_fdiv ctx sin_x cos_x
 
+  (* zero out negative values *)
   let relu ctx (x : ('a, 'b) t) : ('a, 'b) t =
     let x_dt = dtype x in
     let zero_val = Dtype.zero x_dt in
@@ -261,7 +264,7 @@ module Make (B : Backend_intf.S) = struct
     let cond = cmpgt ctx x zero_b in
     B.op_where ctx cond x zero_b
 
-  (* --- Reduction Ops --- *)
+  (* ────────── reduction ops ────────── *)
 
   let sum ctx ?(axes : int array option) ?(keepdims = false) (x : ('a, 'b) t) :
       ('a, 'b) t =
@@ -297,7 +300,7 @@ module Make (B : Backend_intf.S) = struct
     in
     B.op_reduce_prod ctx x ~axes:axes_to_reduce ~keepdims
 
-  (* --- Movement Ops --- *)
+  (* ────────── movement ops ────────── *)
   let permute ctx (x : ('a, 'b) t) (axes_param : int array) : ('a, 'b) t =
     let rank = ndim x in
     let axes =
@@ -318,7 +321,8 @@ module Make (B : Backend_intf.S) = struct
 
   let contiguous ctx (x : ('a, 'b) t) : ('a, 'b) t = B.op_contiguous ctx x
 
-  (* --- Ternary Ops --- *)
+  (* ────────── ternary ops ────────── *)
+  (* select between [if_true] and [if_false] based on [cond] *)
   let where ctx (cond : (int, Dtype.uint8_elt) t) (if_true : ('a, 'b) t)
       (if_false : ('a, 'b) t) : ('a, 'b) t =
     if not (Dtype.eq (dtype if_true) (dtype if_false)) then
@@ -336,7 +340,7 @@ module Make (B : Backend_intf.S) = struct
     let if_false_b = broadcast_to ctx if_false final_target_shape in
     B.op_where ctx cond_b if_true_b if_false_b
 
-  (* --- Creation Ops --- *)
+  (* ────────── creation ops ────────── *)
 
   let empty ctx dtype shape_arr =
     let numel = View.prod shape_arr in
@@ -362,7 +366,6 @@ module Make (B : Backend_intf.S) = struct
     let one_val = Dtype.one dtype in
     full ctx dtype shape_arr one_val
 
-  (* Changed fill_value type to 'a to match x_ref's element type *)
   let full_like ctx (x_ref : ('a, 'b) t) (fill_value : 'a) : ('a, 'b) t =
     let target_shape = shape x_ref in
     let self_dtype = B.dtype x_ref in
@@ -378,6 +381,7 @@ module Make (B : Backend_intf.S) = struct
     let one_val = Dtype.one self_dtype in
     full_like ctx x one_val
 
+  (* collapse dimensions between [start_dim] and [end_dim] *)
   let flatten ctx ?(start_dim = 0) ?(end_dim = -1) (x : ('a, 'b) t) : ('a, 'b) t
       =
     let sh = shape x in
@@ -406,12 +410,13 @@ module Make (B : Backend_intf.S) = struct
         let mid_prod =
           if Array.length mid_slice = 0 then 1 else View.prod mid_slice
         in
-        (* handle empty mid_slice for 0-dim parts *)
+        (* treat missing middle slice as scalar *)
         let post = Array.to_list (Array.sub sh (e + 1) (r - (e + 1))) in
         pre @ [ mid_prod ] @ post
     in
     reshape ctx x (Array.of_list new_shape_list)
 
+  (* drop axes of size 1; [axis] restricts the squeeze *)
   let squeeze ctx ?(axis : int option) (x : ('a, 'b) t) : ('a, 'b) t =
     let sh = shape x in
     match axis with
@@ -438,6 +443,7 @@ module Make (B : Backend_intf.S) = struct
             else if Array.length new_shape = 0 && Array.length sh = 0 then x
             else reshape ctx x new_shape
 
+  (* insert a size‑1 dimension at [axis] *)
   let unsqueeze ctx ?(axis : int option) (x : ('a, 'b) t) : ('a, 'b) t =
     let sh = shape x in
     let r = Array.length sh in
@@ -465,6 +471,7 @@ module Make (B : Backend_intf.S) = struct
     let new_shape_list = insert_at_idx 0 ax sh_list 1 in
     reshape ctx x (Array.of_list new_shape_list)
 
+  (* swap two dimensions *)
   let transpose ctx ?(dim0 = -2) ?(dim1 = -1) (x : ('a, 'b) t) : ('a, 'b) t =
     let r = ndim x in
     if r < 2 then x
