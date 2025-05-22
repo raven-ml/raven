@@ -118,11 +118,11 @@ module type S = sig
 
   val op_reduce_max :
     context -> axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-  (** Maximum over [axes]. *)
+  (** Maximum over [axes]. Keeps reduced dimensions if [keepdims] is true. *)
 
   val op_reduce_prod :
     context -> axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-  (** Product over [axes]. *)
+  (** Product over [axes]. Keeps reduced dimensions if [keepdims] is true. *)
 
   (* Movement Ops - manipulate view metadata *)
 

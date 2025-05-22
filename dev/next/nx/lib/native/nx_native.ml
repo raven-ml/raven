@@ -21,8 +21,7 @@ let create_context () = Internal.{ pool = Parallel.get_or_setup_pool () }
 
 (* --- Backend Ops --- *)
 
-let op_buffer (_ctx : context) (dt : ('a, 'b) Dtype.t) (size_in_elements : int)
-    : ('a, 'b) t =
+let op_buffer _ctx dt size_in_elements =
   let kind = Dtype.kind_of_dtype dt in
   let ba = Bigarray.Array1.create kind Bigarray.c_layout size_in_elements in
   let initial_view =
@@ -32,8 +31,7 @@ let op_buffer (_ctx : context) (dt : ('a, 'b) Dtype.t) (size_in_elements : int)
   in
   Internal.{ dtype = dt; buffer = ba; view = initial_view }
 
-let op_const_scalar (_ctx : context) (value : 'a) (dt : ('a, 'b) Dtype.t) :
-    ('a, 'b) t =
+let op_const_scalar _ctx (value : 'a) dt =
   let kind = Dtype.kind_of_dtype dt in
   let ba = Bigarray.Array1.create kind Bigarray.c_layout 1 in
   Bigarray.Array1.set ba 0 value;
@@ -43,10 +41,7 @@ let op_const_scalar (_ctx : context) (value : 'a) (dt : ('a, 'b) Dtype.t) :
 
 (* Binary Ops *)
 
-let op_add ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
-  if not (View.shape a.view = View.shape b.view) then
-    failwith
-      "op_add: Shapes must match after broadcasting (frontend responsibility)";
+let op_add ctx a b =
   let out_shape = View.shape a.view in
   let out_size = View.numel a.view in
   let out_tensor =
@@ -56,10 +51,7 @@ let op_add ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
   Ops_binary.add ctx a b out_tensor;
   out_tensor
 
-let op_mul ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_mul: Shapes must match after broadcasting (frontend responsibility)";
+let op_mul ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -69,10 +61,7 @@ let op_mul ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
   Ops_binary.mul ctx a b out_tensor;
   out_tensor
 
-let op_idiv ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_idiv: Shapes must match after broadcasting (frontend responsibility)";
+let op_idiv ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -82,10 +71,7 @@ let op_idiv ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
   Ops_binary.idiv ctx a b out_tensor;
   out_tensor
 
-let op_fdiv ctx (a : (float, 'b) t) (b : (float, 'b) t) : (float, 'b) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_fdiv: Shapes must match after broadcasting (frontend responsibility)";
+let op_fdiv ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -95,10 +81,7 @@ let op_fdiv ctx (a : (float, 'b) t) (b : (float, 'b) t) : (float, 'b) t =
   Ops_binary.fdiv ctx a b out_tensor;
   out_tensor
 
-let op_max ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_max: Shapes must match after broadcasting (frontend responsibility)";
+let op_max ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -108,10 +91,7 @@ let op_max ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
   Ops_binary.max ctx a b out_tensor;
   out_tensor
 
-let op_mod ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_mod: Shapes must match after broadcasting (frontend responsibility)";
+let op_mod ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -121,10 +101,7 @@ let op_mod ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
   Ops_binary.modulo ctx a b out_tensor;
   out_tensor
 
-let op_pow ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_pow: Shapes must match after broadcasting (frontend responsibility)";
+let op_pow ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -134,10 +111,7 @@ let op_pow ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
   Ops_binary.pow ctx a b out_tensor;
   out_tensor
 
-let op_cmplt ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : (int, Dtype.uint8_elt) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_cmplt: Shapes must match after broadcasting (frontend responsibility)";
+let op_cmplt ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -147,10 +121,7 @@ let op_cmplt ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : (int, Dtype.uint8_elt) t =
   Ops_binary.cmplt ctx a b out_tensor;
   out_tensor
 
-let op_cmpne ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : (int, Dtype.uint8_elt) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_cmpne: Shapes must match after broadcasting (frontend responsibility)";
+let op_cmpne ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -160,10 +131,7 @@ let op_cmpne ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : (int, Dtype.uint8_elt) t =
   Ops_binary.cmpne ctx a b out_tensor;
   out_tensor
 
-let op_xor ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_xor: Shapes must match after broadcasting (frontend responsibility)";
+let op_xor ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -173,10 +141,7 @@ let op_xor ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
   Ops_binary.bit_xor ctx a b out_tensor;
   out_tensor
 
-let op_or ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_or: Shapes must match after broadcasting (frontend responsibility)";
+let op_or ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -186,10 +151,7 @@ let op_or ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
   Ops_binary.bit_or ctx a b out_tensor;
   out_tensor
 
-let op_and ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
-  if not (Internal.shape a = Internal.shape b) then
-    failwith
-      "op_and: Shapes must match after broadcasting (frontend responsibility)";
+let op_and ctx a b =
   let out_shape = Internal.shape a in
   let out_size = Internal.size a in
   let out_tensor =
@@ -201,7 +163,7 @@ let op_and ctx (a : ('a, 'b) t) (b : ('a, 'b) t) : ('a, 'b) t =
 
 (* Unary Ops *)
 
-let op_neg ctx (input_t : ('a, 'b) t) : ('a, 'b) t =
+let op_neg ctx input_t =
   let out_shape = Internal.shape input_t in
   let out_size = Internal.size input_t in
   let out_tensor =
@@ -211,7 +173,7 @@ let op_neg ctx (input_t : ('a, 'b) t) : ('a, 'b) t =
   Ops_unary.neg ctx input_t out_tensor;
   out_tensor
 
-let op_log2 ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
+let op_log2 ctx input_t =
   let out_shape = Internal.shape input_t in
   let out_size = Internal.size input_t in
   let out_tensor =
@@ -221,7 +183,7 @@ let op_log2 ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
   Ops_unary.log2 ctx input_t out_tensor;
   out_tensor
 
-let op_exp2 ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
+let op_exp2 ctx input_t =
   let out_shape = Internal.shape input_t in
   let out_size = Internal.size input_t in
   let out_tensor =
@@ -231,7 +193,7 @@ let op_exp2 ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
   Ops_unary.exp2 ctx input_t out_tensor;
   out_tensor
 
-let op_sin ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
+let op_sin ctx input_t =
   let out_shape = Internal.shape input_t in
   let out_size = Internal.size input_t in
   let out_tensor =
@@ -241,7 +203,7 @@ let op_sin ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
   Ops_unary.sin ctx input_t out_tensor;
   out_tensor
 
-let op_sqrt ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
+let op_sqrt ctx input_t =
   let out_shape = Internal.shape input_t in
   let out_size = Internal.size input_t in
   let out_tensor =
@@ -251,7 +213,7 @@ let op_sqrt ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
   Ops_unary.sqrt ctx input_t out_tensor;
   out_tensor
 
-let op_recip ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
+let op_recip ctx input_t =
   let out_shape = Internal.shape input_t in
   let out_size = Internal.size input_t in
   let out_tensor =
@@ -262,15 +224,7 @@ let op_recip ctx (input_t : ('a, 'b) t) : (float, Dtype.float32_elt) t =
   out_tensor
 
 (* Ternary Op *)
-let op_where ctx (cond : (int, Dtype.uint8_elt) t) (if_true : ('a, 'b) t)
-    (if_false : ('a, 'b) t) : ('a, 'b) t =
-  if
-    not
-      (View.shape cond.view = View.shape if_true.view
-      && View.shape if_true.view = View.shape if_false.view)
-  then
-    failwith
-      "op_where: Shapes must match after broadcasting (frontend responsibility)";
+let op_where ctx cond if_true if_false =
   let out_shape = View.shape cond.view in
   let out_size = View.numel cond.view in
   let out_tensor =
@@ -280,14 +234,12 @@ let op_where ctx (cond : (int, Dtype.uint8_elt) t) (if_true : ('a, 'b) t)
   Ops_ternary.where ctx cond if_true if_false out_tensor;
   out_tensor
 
-let fill_buffer_with_identity (type a b) (dt : (a, b) Dtype.t)
-    (buf : (a, b) Internal.buffer) (count : int) (identity_val : a) =
+let fill_buffer_with_identity buf count identity_val =
   for i = 0 to count - 1 do
     Bigarray.Array1.unsafe_set buf i identity_val
   done
 
-let op_sum ctx ~(axes : int array) ~(keepdims : bool)
-    (input_tensor : ('a, 'b) t) : ('a, 'b) t =
+let op_sum ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
   let input_shape = Internal.shape input_tensor in
   let input_rank = Array.length input_shape in
   let axes_to_reduce_normalized =
@@ -320,7 +272,7 @@ let op_sum ctx ~(axes : int array) ~(keepdims : bool)
   in
 
   if output_numel > 0 then
-    fill_buffer_with_identity output_tensor.dtype
+    fill_buffer_with_identity
       (Internal.buffer output_tensor)
       output_numel
       (Dtype.zero input_tensor.dtype);
@@ -328,8 +280,7 @@ let op_sum ctx ~(axes : int array) ~(keepdims : bool)
   Ops_reduce.sum ctx ~axes:axes_to_reduce ~keepdims input_tensor output_tensor;
   output_tensor
 
-let op_reduce_max ctx ~(axes : int array) ~(keepdims : bool)
-    (input_tensor : ('a, 'b) t) : ('a, 'b) t =
+let op_reduce_max ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
   let input_shape = Internal.shape input_tensor in
   let input_rank = Array.length input_shape in
   let axes_to_reduce_normalized =
@@ -360,7 +311,7 @@ let op_reduce_max ctx ~(axes : int array) ~(keepdims : bool)
   in
 
   if output_numel > 0 then
-    fill_buffer_with_identity output_tensor.dtype
+    fill_buffer_with_identity
       (Internal.buffer output_tensor)
       output_numel
       (Dtype.min_val input_tensor.dtype);
@@ -368,8 +319,7 @@ let op_reduce_max ctx ~(axes : int array) ~(keepdims : bool)
   Ops_reduce.max ctx ~axes:axes_to_reduce ~keepdims input_tensor output_tensor;
   output_tensor
 
-let op_reduce_prod ctx ~(axes : int array) ~(keepdims : bool)
-    (input_tensor : ('a, 'b) t) : ('a, 'b) t =
+let op_reduce_prod ctx ~(axes : int array) ~(keepdims : bool) input_tensor =
   let input_shape = Internal.shape input_tensor in
   let input_rank = Array.length input_shape in
   let axes_to_reduce_normalized =
@@ -400,7 +350,7 @@ let op_reduce_prod ctx ~(axes : int array) ~(keepdims : bool)
   in
 
   if output_numel > 0 then
-    fill_buffer_with_identity output_tensor.dtype
+    fill_buffer_with_identity
       (Internal.buffer output_tensor)
       output_numel
       (Dtype.one input_tensor.dtype);
@@ -409,25 +359,23 @@ let op_reduce_prod ctx ~(axes : int array) ~(keepdims : bool)
   output_tensor
 
 (* Movement Ops: These just update the view *)
-let op_reshape _ctx (t : ('a, 'b) t) (new_shape : int array) : ('a, 'b) t =
+let op_reshape _ctx t (new_shape : int array) =
   match View.reshape t.view new_shape with
   | new_view -> { t with view = new_view }
   | exception Invalid_argument msg -> invalid_arg ("op_reshape: " ^ msg)
   | exception Failure msg -> failwith ("op_reshape: " ^ msg)
 
-let op_expand _ctx (t : ('a, 'b) t) (new_target_shape : int array) : ('a, 'b) t
-    =
+let op_expand _ctx t (new_target_shape : int array) =
   match View.expand t.view new_target_shape with
   | new_view -> { t with view = new_view }
   | exception Invalid_argument msg -> invalid_arg ("op_expand: " ^ msg)
 
-let op_permute _ctx (t : ('a, 'b) t) (axes : int array) : ('a, 'b) t =
+let op_permute _ctx t (axes : int array) =
   match View.permute t.view axes with
   | new_view -> { t with view = new_view }
   | exception Invalid_argument msg -> invalid_arg ("op_permute: " ^ msg)
 
-let op_pad _ctx (t : ('a, 'b) t) (padding_config : (int * int) array)
-    (fill_value : 'a) : ('a, 'b) t =
+let op_pad _ctx t padding_config (fill_value : 'a) =
   (* Native backend's op_pad for eager mode needs to handle fill_value. The view
      operation itself doesn't store the fill_value. If the padding results in
      accessing outside the original buffer, a new buffer is needed and filled
@@ -472,17 +420,17 @@ let op_pad _ctx (t : ('a, 'b) t) (padding_config : (int * int) array)
     (* Use Internal.blit for view-aware copy *)
     new_t
 
-let op_shrink _ctx (t : ('a, 'b) t) (limits : (int * int) array) : ('a, 'b) t =
+let op_shrink _ctx t limits =
   match View.shrink t.view limits with
   | new_view -> { t with view = new_view }
   | exception Invalid_argument msg -> invalid_arg ("op_shrink: " ^ msg)
 
-let op_flip _ctx (t : ('a, 'b) t) (axes_to_flip : bool array) : ('a, 'b) t =
+let op_flip _ctx t axes_to_flip =
   match View.flip t.view axes_to_flip with
   | new_view -> { t with view = new_view }
   | exception Invalid_argument msg -> invalid_arg ("op_flip: " ^ msg)
 
-let op_cat ctx (tensors : ('a, 'b) t list) (axis : int) : ('a, 'b) t =
+let op_cat ctx tensors axis =
   if List.length tensors = 0 then
     invalid_arg "op_cat: tensor list cannot be empty";
   let first_t = List.hd tensors in
@@ -540,8 +488,7 @@ let op_cat ctx (tensors : ('a, 'b) t list) (axis : int) : ('a, 'b) t =
   output_t
 
 (* Other Ops *)
-let op_cast ctx (input_t : ('a, 'b) t) (target_dt : ('c, 'd) Dtype.t) :
-    ('c, 'd) t =
+let op_cast ctx input_t target_dt =
   let out_shape = Internal.shape input_t in
   let out_size = Internal.size input_t in
   let out_tensor =
@@ -556,7 +503,7 @@ let op_cast ctx (input_t : ('a, 'b) t) (target_dt : ('c, 'd) Dtype.t) :
   let buf_out = Internal.buffer out_tensor in
   let cast_fn = Dtype.cast_element (Internal.dtype input_t) target_dt in
 
-  let iter_func (logical_indices : int array) : unit =
+  let iter_func logical_indices =
     let phys_idx_in =
       View.offset view_in
       + View.index_to_offset logical_indices (View.strides view_in)
@@ -586,22 +533,20 @@ let op_cast ctx (input_t : ('a, 'b) t) (target_dt : ('c, 'd) Dtype.t) :
      loop 0);
   out_tensor
 
-let op_contiguous _ctx (t : ('a, 'b) t) : ('a, 'b) t =
+let op_contiguous _ctx t =
   if Internal.is_contiguous t && View.offset t.view = 0 then t
     (* Already contiguous and offset 0 *)
   else Internal.copy t (* Internal.copy creates a new C-contiguous tensor *)
 
-let op_copy _ctx (t : ('a, 'b) t) : ('a, 'b) t = Internal.copy t
+let op_copy _ctx t = Internal.copy t
 
-let op_assign _ctx (target_t : ('a, 'b) t) (source_t : ('a, 'b) t) : ('a, 'b) t
-    =
+let op_assign _ctx target_t source_t =
   (* Frontend ensures source_t is broadcast to target_t's shape and dtypes
      match. This means source_t's view matches target_t's view's shape. *)
   Internal.blit source_t target_t;
   target_t (* Return the modified target *)
 
-let op_threefry ctx (data_t : (int32, Dtype.int32_elt) t)
-    (seed_t : (int32, Dtype.int32_elt) t) : (int32, Dtype.int32_elt) t =
+let op_threefry ctx data_t seed_t =
   (* Placeholder for actual Threefry PRNG. This would involve bitwise
      operations, rotations, XORs, and additions, typically implemented in a
      custom kernel for performance. Simulating it with generic iter_binary_op

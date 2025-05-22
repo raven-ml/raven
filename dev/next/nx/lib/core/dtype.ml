@@ -62,6 +62,22 @@ let nativeint = NativeInt
 let complex32 = Complex32
 let complex64 = Complex64
 
+(* Printable name of the dtype. *)
+let to_string : type a b. (a, b) t -> string = function
+  | Float16 -> "float16"
+  | Float32 -> "float32"
+  | Float64 -> "float64"
+  | Int8 -> "int8"
+  | UInt8 -> "uint8"
+  | Int16 -> "int16"
+  | UInt16 -> "uint16"
+  | Int32 -> "int32"
+  | Int64 -> "int64"
+  | Int -> "int"
+  | NativeInt -> "nativeint"
+  | Complex32 -> "complex32"
+  | Complex64 -> "complex64"
+
 (* Additive identity for a given dtype. *)
 let zero : type a b. (a, b) t -> a =
  fun dtype ->
@@ -97,6 +113,65 @@ let one : type a b. (a, b) t -> a =
   | NativeInt -> 1n
   | Complex32 -> Complex.one
   | Complex64 -> Complex.one
+
+let minus_one : type a b. (a, b) t -> a =
+ fun dtype ->
+  match dtype with
+  | Float16 -> -1.0
+  | Float32 -> -1.0
+  | Float64 -> -1.0
+  | Int8 -> -1
+  | UInt8 ->
+      (* Interpreting -1 as all bits set for uint8 *)
+      255
+  | Int16 -> -1
+  | UInt16 -> -1
+  | Int32 -> -1l
+  | Int64 -> -1L
+  | Int -> -1
+  | NativeInt -> -1n
+  | Complex32 -> Complex.{ re = -1.0; im = 0.0 }
+  | Complex64 -> Complex.{ re = -1.0; im = 0.0 }
+
+let two : type a b. (a, b) t -> a =
+ fun dtype ->
+  match dtype with
+  | Float16 -> 2.0
+  | Float32 -> 2.0
+  | Float64 -> 2.0
+  | Int8 -> 2
+  | UInt8 -> 2
+  | Int16 -> 2
+  | UInt16 -> 2
+  | Int32 -> 2l
+  | Int64 -> 2L
+  | Int -> 2
+  | NativeInt -> 2n
+  | Complex32 -> Complex.{ re = 2.0; im = 0.0 }
+  | Complex64 -> Complex.{ re = 2.0; im = 0.0 }
+
+(* Create a power of 2 for integer shift operations *)
+let power_of_two : type a b. (a, b) t -> int -> a =
+ fun dtype shift_val ->
+  if shift_val < 0 then
+    invalid_arg "power_of_two: shift_val must be non-negative";
+  match dtype with
+  | Int8 | UInt8 | Int16 | UInt16 | Int | NativeInt -> (
+      let power = 1 lsl shift_val in
+      match dtype with
+      | Int8 -> power
+      | UInt8 -> power land 0xFF
+      | Int16 -> power
+      | UInt16 -> power land 0xFFFF
+      | Int -> power
+      | NativeInt -> Nativeint.shift_left Nativeint.one shift_val
+      | _ -> failwith "Unreachable")
+  | Int32 -> Int32.shift_left Int32.one shift_val
+  | Int64 -> Int64.shift_left Int64.one shift_val
+  | _ ->
+      failwith
+        ("power_of_two: unsupported dtype: " ^ to_string dtype
+       ^ ". Expected integer type.")
 
 (* Size in bytes of one element of the dtype. *)
 let itemsize : type a b. (a, b) t -> int = function
@@ -149,22 +224,6 @@ let dtype_of_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Complex64 -> Complex64
   | _ -> failwith "dtype_of_kind: Unsupported Bigarray kind"
 
-(* Printable name of the dtype. *)
-let to_string : type a b. (a, b) t -> string = function
-  | Float16 -> "float16"
-  | Float32 -> "float32"
-  | Float64 -> "float64"
-  | Int8 -> "int8"
-  | UInt8 -> "uint8"
-  | Int16 -> "int16"
-  | UInt16 -> "uint16"
-  | Int32 -> "int32"
-  | Int64 -> "int64"
-  | Int -> "int"
-  | NativeInt -> "nativeint"
-  | Complex32 -> "complex32"
-  | Complex64 -> "complex64"
-
 (* Shallow equality on constructors. Useful for runtime checks. *)
 let eq (type a b c d) (dt1 : (a, b) t) (dt2 : (c, d) t) : bool =
   match (dt1, dt2) with
@@ -182,3 +241,56 @@ let eq (type a b c d) (dt1 : (a, b) t) (dt2 : (c, d) t) : bool =
   | Complex32, Complex32 -> true
   | Complex64, Complex64 -> true
   | _ -> false
+
+type (_, _) eq = Refl : ('x, 'x) eq
+
+let eq_gadt : type a b c d.
+    (a, b) t -> (c, d) t -> ((a, b) t, (c, d) t) eq option =
+ fun dt1 dt2 ->
+  match (dt1, dt2) with
+  | Float16, Float16 -> Some Refl
+  | Float32, Float32 -> Some Refl
+  | Float64, Float64 -> Some Refl
+  | Int8, Int8 -> Some Refl
+  | UInt8, UInt8 -> Some Refl
+  | Int16, Int16 -> Some Refl
+  | UInt16, UInt16 -> Some Refl
+  | Int32, Int32 -> Some Refl
+  | Int64, Int64 -> Some Refl
+  | Int, Int -> Some Refl
+  | NativeInt, NativeInt -> Some Refl
+  | Complex32, Complex32 -> Some Refl
+  | Complex64, Complex64 -> Some Refl
+  | _ -> None
+
+let is_float (type a b) (dt : (a, b) t) : bool =
+  match dt with Float16 | Float32 | Float64 -> true | _ -> false
+
+let is_complex (type a b) (dt : (a, b) t) : bool =
+  match dt with Complex32 | Complex64 -> true | _ -> false
+
+let is_int (type a b) (dt : (a, b) t) : bool =
+  match dt with
+  | Int8 | UInt8 | Int16 | UInt16 | Int32 | Int64 | Int | NativeInt -> true
+  | _ -> false
+
+let is_uint (type a b) (dt : (a, b) t) : bool =
+  match dt with UInt8 | UInt16 -> true | _ -> false
+
+(* Minimum value for each dtype (identity for max reduction) *)
+let min_val : type a b. (a, b) t -> a =
+ fun dtype ->
+  match dtype with
+  | Float16 -> Float.neg_infinity
+  | Float32 -> Float.neg_infinity
+  | Float64 -> Float.neg_infinity
+  | Int8 -> -128
+  | UInt8 -> 0
+  | Int16 -> -32768
+  | UInt16 -> 0
+  | Int32 -> Int32.min_int
+  | Int64 -> Int64.min_int
+  | Int -> Int.min_int
+  | NativeInt -> Nativeint.min_int
+  | Complex32 -> Complex.{ re = Float.neg_infinity; im = Float.neg_infinity }
+  | Complex64 -> Complex.{ re = Float.neg_infinity; im = Float.neg_infinity }
