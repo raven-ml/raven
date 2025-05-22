@@ -4,8 +4,11 @@ refactor nx
 - allocate buffers outside of the backend?
 - how do we implement create?
 - how do we do slicing and element access now?
-- matmul and convolution
 - access to buffer as bigarray (data)
+- [ ] cast
+- [ ] matmul and dot
+- [ ] convolve1d
+- [ ] convolve2d
 
 poc jit
 - placeholder? not in tinygrad

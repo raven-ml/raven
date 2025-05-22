@@ -69,8 +69,8 @@ let zero : type a b. (a, b) t -> a =
   | UInt16 -> 0
   | Int32 -> 0l
   | Int64 -> 0L
-  | Int -> 0 (* ADDED *)
-  | NativeInt -> 0n (* ADDED *)
+  | Int -> 0
+  | NativeInt -> 0n
   | Complex32 -> Complex.zero
   | Complex64 -> Complex.zero
 
