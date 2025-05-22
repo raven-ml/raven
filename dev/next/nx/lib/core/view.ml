@@ -91,6 +91,38 @@ let offset_to_index_contig k shape_arr =
         ^ "). This indicates an issue with k or logic.");
     idx
 
+(* infer the dimension corresponding to [-1] in [new_shape_spec] *)
+let resolve_neg_one_shape current_shape new_shape_spec =
+  let new_shape_spec_l = Array.to_list new_shape_spec in
+  let current_numel = prod current_shape in
+  let neg_one_count =
+    new_shape_spec_l |> List.filter (( = ) (-1)) |> List.length
+  in
+  if neg_one_count > 1 then
+    invalid_arg "Reshape target shape can only contain one -1"
+  else if neg_one_count = 0 then new_shape_spec
+  else
+    let specified_numel =
+      List.filter (( <> ) (-1)) new_shape_spec_l |> Array.of_list |> prod
+    in
+    (* when shape_spec includes zero dimensions *)
+    if specified_numel = 0 then
+      if current_numel = 0 then
+        Array.map (fun x -> if x = -1 then 0 else x) new_shape_spec
+      else
+        invalid_arg
+          "Reshape cannot infer -1 when other dimensions multiply to 0 but \
+           total size is non-zero"
+    else if current_numel mod specified_numel <> 0 then
+      invalid_arg
+        (Printf.sprintf
+           "Reshape size mismatch: Cannot reshape %d elements into shape with \
+            specified elements %d"
+           current_numel specified_numel)
+    else
+      let inferred_dim = current_numel / specified_numel in
+      Array.map (fun s -> if s = -1 then inferred_dim else s) new_shape_spec
+
 (* ────────── accessors ────────── *)
 
 let shape v = v.shape

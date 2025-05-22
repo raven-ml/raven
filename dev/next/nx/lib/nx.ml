@@ -2,6 +2,11 @@ module B = Nx_core.Make_frontend (Nx_native)
 
 type ('a, 'b) t = ('a, 'b) B.t
 type layout = Nx_core.View.layout = C_contiguous | Strided
+
+let context = Nx_native.create_context ()
+
+(* Concrete types for dtypes *)
+
 type float16_elt = Bigarray.float16_elt
 type float32_elt = Bigarray.float32_elt
 type float64_elt = Bigarray.float64_elt
@@ -45,6 +50,7 @@ type std_nativeint_t = (nativeint, nativeint_elt) dtype
 type complex32_t = (Complex.t, complex32_elt) dtype
 type complex64_t = (Complex.t, complex64_elt) dtype
 
+(* Constructor shortcuts *)
 let float16 = Float16
 let float32 = Float32
 let float64 = Float64
@@ -59,11 +65,7 @@ let nativeint = NativeInt
 let complex32 = Complex32
 let complex64 = Complex64
 
-(* context *)
-
-let context = B.create_context ()
-
-(* creation functions *)
+(* Creation Function *)
 
 let create dtype shape arr = B.create context dtype shape arr
 let init dtype shape f = B.init context dtype shape f
@@ -77,14 +79,17 @@ let full_like value t = B.full_like context value t
 let scalar dtype v = B.scalar context dtype v
 let eye ?m ?k dtype n = B.eye context ?m ?k dtype n
 let identity dtype n = B.identity context dtype n
+
+(* Native Creation / Basic Ops *)
+
 let empty dtype shape = B.empty context dtype shape
 let copy t = B.copy context t
 let blit src dst = B.blit context src dst
 let fill value t = B.fill context value t
 
-(* range *)
+(* Range Generation *)
 
-(* let arange dtype start stop step = B.arange context dtype start stop step
+let arange dtype start stop step = B.arange context dtype start stop step
 let arange_f dtype start stop step = B.arange_f context dtype start stop step
 
 let linspace dtype ?endpoint start stop num =
@@ -94,9 +99,9 @@ let logspace dtype ?endpoint ?base start stop num =
   B.logspace context dtype ?endpoint ?base start stop num
 
 let geomspace dtype ?endpoint start stop num =
-  B.geomspace context dtype ?endpoint start stop num *)
+  B.geomspace context dtype ?endpoint start stop num
 
-(* accessors *)
+(* Property Access *)
 
 let data t = B.buffer t
 let shape t = B.shape t
@@ -112,17 +117,244 @@ let nbytes t = B.nbytes t
 let offset t = B.offset t
 let layout t = B.layout t
 
-(* element-wise *)
+(* Element-wise Binary Operations *)
 
-let add a b = B.add context a b
-let mul a b = B.mul context a b
+let add t1 t2 = B.add context t1 t2
 
-(* reductions *)
+let add_inplace t1 t2 =
+  let _ = B.add_inplace context t1 t2 in
+  t1
 
-let sum ?axes ?(keepdims = false) x = B.sum context ?axes ~keepdims x
+let add_scalar s t = B.add_scalar context s t
+let sub t1 t2 = B.sub context t1 t2
 
-(* transformations *)
+let sub_inplace t1 t2 =
+  let _ = B.sub_inplace context t1 t2 in
+  t1
 
-let broadcast_to x target_shape = B.broadcast_to context x target_shape
-let reshape t new_shape = B.reshape context t new_shape
-let expand t new_shape = B.expand context t new_shape
+let sub_scalar s t = B.sub_scalar context s t
+let mul t1 t2 = B.mul context t1 t2
+
+let mul_inplace t1 t2 =
+  let _ = B.mul_inplace context t1 t2 in
+  t1
+
+let mul_scalar s t = B.mul_scalar context s t
+let div t1 t2 = B.div context t1 t2
+
+let div_inplace t1 t2 =
+  let _ = B.div_inplace context t1 t2 in
+  t1
+
+let div_scalar s t = B.div_scalar context s t
+let pow t1 t2 = B.pow context t1 t2
+
+let pow_inplace t1 t2 =
+  let _ = B.pow_inplace context t1 t2 in
+  t1
+
+let pow_scalar s t = B.pow_scalar context s t
+let rem t1 t2 = B.rem context t1 t2
+
+let rem_inplace t1 t2 =
+  let _ = B.rem_inplace context t1 t2 in
+  t1
+
+let rem_scalar s t = B.rem_scalar context s t
+let maximum t1 t2 = B.maximum context t1 t2
+
+let maximum_inplace t1 t2 =
+  let _ = B.maximum_inplace context t1 t2 in
+  t1
+
+let maximum_scalar s t = B.maximum_scalar context s t
+let minimum t1 t2 = B.minimum context t1 t2
+
+let minimum_inplace t1 t2 =
+  let _ = B.minimum_inplace context t1 t2 in
+  t1
+
+let minimum_scalar s t = B.minimum_scalar context s t
+
+(* Fused and special math *)
+
+let fma t1 t2 t3 = B.fma context t1 t2 t3
+let fma_inplace t1 t2 t3 = B.fma_inplace context t1 t2 t3
+
+(* Comparison Operations *)
+
+let equal t1 t2 = B.equal context t1 t2
+let greater t1 t2 = B.greater context t1 t2
+let greater_equal t1 t2 = B.greater_equal context t1 t2
+let less t1 t2 = B.less context t1 t2
+let less_equal t1 t2 = B.less_equal context t1 t2
+
+(* Element-wise Unary Operations *)
+
+let square t = B.square context t
+let neg t = B.neg context t
+let abs t = B.abs context t
+let sign t = B.sign context t
+let sqrt t = B.sqrt context t
+let exp t = B.exp context t
+let log t = B.log context t
+let sin t = B.sin context t
+let cos t = B.cos context t
+let tan t = B.tan context t
+let asin t = B.asin context t
+let acos t = B.acos context t
+let atan t = B.atan context t
+let sinh t = B.sinh context t
+let cosh t = B.cosh context t
+let tanh t = B.tanh context t
+let asinh t = B.asinh context t
+let acosh t = B.acosh context t
+let atanh t = B.atanh context t
+let round t = B.round context t
+let floor t = B.floor context t
+let ceil t = B.ceil context t
+let clip ~min ~max t = B.clip context ~min ~max t
+
+(* Indexing *)
+
+let where cond t2 t3 = B.where context cond t2 t3
+
+(* Reductions *)
+
+let sum ?axes ?keepdims t = B.sum context ?axes ?keepdims t
+let prod ?axes ?keepdims t = B.prod context ?axes ?keepdims t
+let max ?axes ?keepdims t = B.max context ?axes ?keepdims t
+let min ?axes ?keepdims t = B.min context ?axes ?keepdims t
+
+(* Linear Algebra *)
+
+let matmul t1 t2 = B.matmul context t1 t2
+let convolve1d ?mode t1 t2 = B.convolve1d context ?mode t1 t2
+let dot t1 t2 = B.dot context t1 t2
+
+(* Logic functions *)
+
+let array_equal t1 t2 = B.array_equal context t1 t2
+
+(* Interoperability *)
+
+let to_bigarray t = B.to_bigarray context t
+let of_bigarray ba = B.of_bigarray context ba
+let to_array t = B.to_array context t
+
+(* Random Generation *)
+
+let rand dtype ?seed shape = B.rand context dtype ?seed shape
+let randn dtype ?seed shape = B.randn context dtype ?seed shape
+
+let randint dtype ?seed ?high shape low =
+  B.randint context dtype ?seed ?high shape low
+
+(* Element Access *)
+
+let get_item indices t = B.get_item context indices t
+let set_item indices v t = B.set_item context indices v t
+let get indices t = B.get context indices t
+let set indices t1 t2 = B.set context indices t1 t2
+
+(* Higher-Order Function *)
+
+let map f t = B.map context f t
+let iter f t = B.iter context f t
+let fold f acc t = B.fold context f acc t
+
+(* Transformation *)
+
+let reshape new_shape t = B.reshape context new_shape t
+let flatten t = B.flatten context t
+let ravel t = B.ravel context t
+let pad padding value t = B.pad context padding value t
+let transpose ?axes t = B.transpose context ?axes t
+let broadcast_to new_shape t = B.broadcast_to context new_shape t
+let squeeze ?axes t = B.squeeze context ?axes t
+let expand_dims axis t = B.expand_dims context axis t
+let slice ?steps starts stops t = B.slice context ?steps starts stops t
+
+let set_slice ?steps starts stops value t =
+  B.set_slice context ?steps starts stops value t
+
+let astype dtype t = B.astype context dtype t
+let array_split ?(axis = 0) sections t = B.array_split context ~axis sections t
+let split ?(axis = 0) sections t = B.split context ~axis sections t
+
+(* Stacking and concatenation *)
+
+let concatenate ?axis ts = B.concatenate context ?axis ts
+let stack ?axis ts = B.stack context ?axis ts
+let vstack ts = B.vstack context ts
+let hstack ts = B.hstack context ts
+let dstack ts = B.dstack context ts
+
+(* Shape and broadcast helpers *)
+
+let broadcast_arrays ts = B.broadcast_arrays context ts
+let tile reps t = B.tile context reps t
+let repeat ?axis reps t = B.repeat context ?axis reps t
+
+(* Reordering *)
+
+let flip ?axes t = B.flip context ?axes t
+let roll ?axis shift t = B.roll context ?axis shift t
+let moveaxis src dst t = B.moveaxis context src dst t
+let swapaxes i j t = B.swapaxes context i j t
+
+(* Bitwise and logical *)
+
+let bitwise_and t1 t2 = B.bitwise_and context t1 t2
+let bitwise_or t1 t2 = B.bitwise_or context t1 t2
+let bitwise_xor t1 t2 = B.bitwise_xor context t1 t2
+let invert t = B.invert context t
+
+(* Statistical and histogram *)
+
+let mean ?axes ?keepdims t = B.mean context ?axes ?keepdims t
+let var ?axes ?keepdims t = B.var context ?axes ?keepdims t
+let std ?axes ?keepdims t = B.std context ?axes ?keepdims t
+
+(* Linear algebra extras *)
+
+let inv t = B.inv context t
+let solve a b = B.solve context a b
+let svd t = B.svd context t
+let eig t = B.eig context t
+let eigh t = B.eigh context t
+
+(* Sorting and selection *)
+
+let sort ?axis t = B.sort context ?axis t
+let argsort ?axis t = B.argsort context ?axis t
+let argmax ?axis t = B.argmax context ?axis t
+let argmin ?axis t = B.argmin context ?axis t
+let unique t = B.unique context t
+let nonzero t = B.nonzero context t
+
+(* Logical functions *)
+
+let logical_and t1 t2 = B.logical_and context t1 t2
+let logical_or t1 t2 = B.logical_or context t1 t2
+let logical_not t = B.logical_not context t
+let logical_xor t1 t2 = B.logical_xor context t1 t2
+
+(* NaN/Inf handling *)
+
+let isnan t = B.isnan context t
+let isinf t = B.isinf context t
+let isfinite t = B.isfinite context t
+
+(* Formatting *)
+
+let pp_dtype fmt dtype = B.pp_dtype context fmt dtype
+let dtype_to_string dtype = B.dtype_to_string context dtype
+let pp_shape fmt shape = B.pp_shape context fmt shape
+let shape_to_string shape = B.shape_to_string context shape
+let pp fmt t = B.pp context fmt t
+let pp_info fmt t = B.pp_info context fmt t
+let print t = B.print context t
+let print_info t = B.print_info context t
+let to_string t = B.to_string context t
+let to_string_info t = B.to_string_info context t
