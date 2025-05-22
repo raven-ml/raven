@@ -12,7 +12,7 @@ type ('a, 'b) t = ('a, 'b) Internal.t = {
 
 let view t = t.view
 let dtype t = t.dtype
-let buffer t = t.buffer
+let data t = t.buffer
 let with_view t view = { t with view }
 
 type context = Internal.context
@@ -505,10 +505,7 @@ let op_contiguous _ctx t =
 let op_copy _ctx t = Internal.copy t
 
 let op_assign _ctx target_t source_t =
-  (* Frontend ensures source_t is broadcast to target_t's shape and dtypes
-     match. This means source_t's view matches target_t's view's shape. *)
-  Internal.blit source_t target_t;
-  target_t (* Return the modified target *)
+  Internal.blit source_t target_t
 
 let op_threefry ctx data seed =
   let out_shape = Internal.shape data in

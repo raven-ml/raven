@@ -25,6 +25,9 @@ module type S = sig
   val dtype : ('a, 'b) t -> ('a, 'b) Dtype.t
   (** Element type of [t]. *)
 
+  val data : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
+  (** Return the raw buffer of [t]. *)
+
   (* context *)
 
   val create_context : unit -> context
@@ -157,6 +160,9 @@ module type S = sig
 
   val op_copy : context -> ('a, 'b) t -> ('a, 'b) t
   (** Duplicate [t]. Result has its own buffer. *)
+
+  val op_assign : context -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** Store [src] into [dst] at the given logical indices. *)
 
   val op_threefry :
     context ->

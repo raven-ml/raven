@@ -270,21 +270,34 @@ let permute view axes =
   in
   create ~offset:view.offset ?mask:new_mask ~strides:new_strides new_shape
 
+(* In view.ml *)
 let reshape view new_shape =
+  let current_numel = prod view.shape in
+  let new_numel = prod new_shape in
   if view.shape = new_shape then view
+  else if current_numel <> new_numel && current_numel <> 0 && new_numel <> 0
+  then
+    (* Allow 0-size to be reshaped if one of them is 0-size *)
+    invalid_arg
+      (Printf.sprintf "reshape: Total size mismatch: %d vs %d" current_numel
+         new_numel)
   else if Array.exists (( < ) 0) new_shape then
-    invalid_arg "reshape: Negative dimensions not allowed"
+    (* Allow new_shape to contain -1 if it's resolved by frontend *)
+    invalid_arg
+      "reshape: Negative dimensions not allowed in final shape for View.reshape"
+  else if Array.exists (( = ) 0) view.shape || Array.exists (( = ) 0) new_shape
+  then
+    create ~offset:0
+      new_shape (* Handle zero-size tensors: new C-contig view, offset 0*)
+  else if view.layout = C_contiguous && view.mask = None then
+    (* Simplest C-contiguous case *)
+    create ~offset:view.offset new_shape (* Preserve offset, new C-strides *)
   else
-    let total_old = numel view in
-    let total_new = prod new_shape in
-    if total_old <> total_new && total_old <> 0 && total_new <> 0 then
-      invalid_arg
-        "reshape: Total size must remain unchanged for non-zero shapes";
-
-    if Array.exists (( = ) 0) view.shape || Array.exists (( = ) 0) new_shape
-    then create new_shape
-    else if view.layout = C_contiguous then create ~offset:0 new_shape
-    else failwith "reshape: non-contiguous reshape not supported"
+    (* For now, non-trivial cases are not handled by this specific utility.
+       Backends op_reshape would need more advanced logic. *)
+    failwith
+      "View.reshape: only supports reshaping of basic C-contiguous unmasked \
+       views or zero-sized views."
 
 (* helper used by [pad] and [shrink] *)
 let unsafe_resize view arg new_mask_opt =

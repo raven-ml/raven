@@ -103,7 +103,7 @@ let geomspace dtype ?endpoint start stop num =
 
 (* Property Access *)
 
-let data t = B.buffer t
+let data t = B.data t
 let shape t = B.shape t
 let dtype t = B.dtype t
 let strides t = B.strides t
@@ -121,65 +121,60 @@ let layout t = B.layout t
 
 let add t1 t2 = B.add context t1 t2
 
-let add_inplace t1 t2 =
-  let _ = B.add_inplace context t1 t2 in
+let iadd t1 t2 =
+  let _ = B.iadd context t1 t2 in
   t1
 
-let add_scalar s t = B.add_scalar context s t
+let add_s s t = B.add_s context s t
 let sub t1 t2 = B.sub context t1 t2
 
-let sub_inplace t1 t2 =
-  let _ = B.sub_inplace context t1 t2 in
+let isub t1 t2 =
+  let _ = B.isub context t1 t2 in
   t1
 
-let sub_scalar s t = B.sub_scalar context s t
+let sub_s s t = B.sub_s context s t
 let mul t1 t2 = B.mul context t1 t2
 
-let mul_inplace t1 t2 =
-  let _ = B.mul_inplace context t1 t2 in
+let imul t1 t2 =
+  let _ = B.imul context t1 t2 in
   t1
 
-let mul_scalar s t = B.mul_scalar context s t
+let mul_s s t = B.mul_s context s t
 let div t1 t2 = B.div context t1 t2
 
-let div_inplace t1 t2 =
-  let _ = B.div_inplace context t1 t2 in
+let idiv t1 t2 =
+  let _ = B.idiv context t1 t2 in
   t1
 
-let div_scalar s t = B.div_scalar context s t
+let div_s s t = B.div_s context s t
 let pow t1 t2 = B.pow context t1 t2
 
-let pow_inplace t1 t2 =
-  let _ = B.pow_inplace context t1 t2 in
+let ipow t1 t2 =
+  let _ = B.ipow context t1 t2 in
   t1
 
-let pow_scalar s t = B.pow_scalar context s t
-let rem t1 t2 = B.rem context t1 t2
+let pow_s s t = B.pow_s context s t
+let mod_ t1 t2 = B.mod_ context t1 t2
 
-let rem_inplace t1 t2 =
-  let _ = B.rem_inplace context t1 t2 in
+let imod t1 t2 =
+  let _ = B.imod context t1 t2 in
   t1
 
-let rem_scalar s t = B.rem_scalar context s t
+let mod_s s t = B.mod_s context s t
 let maximum t1 t2 = B.maximum context t1 t2
 
-let maximum_inplace t1 t2 =
-  let _ = B.maximum_inplace context t1 t2 in
+let imaximum t1 t2 =
+  let _ = B.imaximum context t1 t2 in
   t1
 
-let maximum_scalar s t = B.maximum_scalar context s t
+let maximum_s s t = B.maximum_s context s t
 let minimum t1 t2 = B.minimum context t1 t2
 
-let minimum_inplace t1 t2 =
-  let _ = B.minimum_inplace context t1 t2 in
+let iminimum t1 t2 =
+  let _ = B.iminimum context t1 t2 in
   t1
 
-let minimum_scalar s t = B.minimum_scalar context s t
-
-(* Fused and special math *)
-
-let fma t1 t2 t3 = B.fma context t1 t2 t3
-let fma_inplace t1 t2 t3 = B.fma_inplace context t1 t2 t3
+let minimum_s s t = B.minimum_s context s t
 
 (* Comparison Operations *)
 
@@ -348,13 +343,9 @@ let isfinite t = B.isfinite context t
 
 (* Formatting *)
 
-let pp_dtype fmt dtype = B.pp_dtype context fmt dtype
-let dtype_to_string dtype = B.dtype_to_string context dtype
-let pp_shape fmt shape = B.pp_shape context fmt shape
-let shape_to_string shape = B.shape_to_string context shape
+let pp_data fmt t = B.pp_data context fmt t
+let data_to_string t = B.data_to_string context t
+let print_data t = B.print_data context t
 let pp fmt t = B.pp context fmt t
-let pp_info fmt t = B.pp_info context fmt t
 let print t = B.print context t
-let print_info t = B.print_info context t
 let to_string t = B.to_string context t
-let to_string_info t = B.to_string_info context t

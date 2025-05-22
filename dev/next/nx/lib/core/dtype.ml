@@ -294,3 +294,21 @@ let min_val : type a b. (a, b) t -> a =
   | NativeInt -> Nativeint.min_int
   | Complex32 -> Complex.{ re = Float.neg_infinity; im = Float.neg_infinity }
   | Complex64 -> Complex.{ re = Float.neg_infinity; im = Float.neg_infinity }
+
+(* Helper function to convert a float to the OCaml representation ('a) of a
+   given Dtype. *)
+let float_to_dtype (type a b) (dtype : (a, b) t) (v_float : float) : a =
+  match dtype with
+  | Float16 -> v_float
+  | Float32 -> v_float
+  | Float64 -> v_float
+  | Int8 -> int_of_float v_float
+  | UInt8 -> int_of_float v_float
+  | Int16 -> int_of_float v_float
+  | UInt16 -> int_of_float v_float
+  | Int32 -> Int32.of_float v_float
+  | Int64 -> Int64.of_float v_float
+  | Int -> int_of_float v_float
+  | NativeInt -> Nativeint.of_float v_float
+  | Complex32 -> Complex.{ re = v_float; im = 0. }
+  | Complex64 -> Complex.{ re = v_float; im = 0. }
