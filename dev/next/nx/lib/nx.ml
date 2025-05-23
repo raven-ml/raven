@@ -224,7 +224,7 @@ let min ?axes ?keepdims t = B.min context ?axes ?keepdims t
 (* Linear Algebra *)
 
 let matmul t1 t2 = B.matmul context t1 t2
-let convolve1d ?mode t1 t2 = B.convolve1d context ?mode t1 t2
+let convolve1d ?padding_mode t1 t2 = B.convolve1d context ?padding_mode t1 t2
 let dot t1 t2 = B.dot context t1 t2
 
 (* Logic functions *)
@@ -273,7 +273,7 @@ let slice ?steps starts stops t = B.slice context ?steps starts stops t
 let set_slice ?steps starts stops value t =
   B.set_slice context ?steps starts stops value t
 
-let astype dtype t = B.astype context dtype t
+let cast dtype t = B.cast context dtype t
 let array_split ?(axis = 0) sections t = B.array_split context ~axis sections t
 let split ?(axis = 0) sections t = B.split context ~axis sections t
 
@@ -308,8 +308,12 @@ let invert t = B.invert context t
 (* Statistical and histogram *)
 
 let mean ?axes ?keepdims t = B.mean context ?axes ?keepdims t
-let var ?axes ?keepdims t = B.var context ?axes ?keepdims t
-let std ?axes ?keepdims t = B.std context ?axes ?keepdims t
+
+let var ?axes ?keepdims ?correction t =
+  B.var context ?axes ?keepdims ?correction t
+
+let std ?axes ?keepdims ?correction t =
+  B.std context ?axes ?keepdims ?correction t
 
 (* Linear algebra extras *)
 
