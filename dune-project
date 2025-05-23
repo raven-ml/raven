@@ -19,6 +19,13 @@
 
 (version 0.1.0)
 
+; (generate_opam_files true)
+
+(package
+ (name dev)
+ (allow_empty)
+ (depends odoc odoc-driver))
+
 (package
  (name ndarray)
  (synopsis "High-performance N-dimensional array library for OCaml")
@@ -148,5 +155,5 @@
   dune
   (ndarray
    (= :version))
-   ctypes
+  ctypes
   (alcotest :with-test)))
