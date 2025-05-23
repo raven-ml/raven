@@ -21,6 +21,11 @@
 
 ; (generate_opam_files true)
 
+(pin
+ (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
+ (package
+  (name soupault)))
+
 (package
  (name dev)
  (allow_empty)

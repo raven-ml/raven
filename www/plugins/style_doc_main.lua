@@ -1,38 +1,46 @@
 -- plugins/style_doc_main.lua
+local page_file_str = page_file
 
--- Get the <main> element. The selector is configured in the widget.
+Log.info("style_doc_main: Plugin CALLED for page: " .. page_file_str)
+Log.info("style_doc_main: Widget selector is: " .. config["selector"])
+
 local main_element = HTML.select_one(page, config["selector"])
 
 if not main_element then
-  Log.debug("style_doc_main: main element not found with selector: " .. config["selector"])
+  Log.info("style_doc_main: [PAGE: " .. page_file_str .. "] Main element NOT FOUND with selector: " .. config["selector"])
   Plugin.exit()
 end
+Log.info("style_doc_main: [PAGE: " .. page_file_str .. "] Main element found.")
 
--- Determine if this is a "doc" page that needs prose styling.
--- You can make this logic more sophisticated.
-local is_doc_page = false
+local is_doc_page_flag = nil -- Use nil as false, "t" (or any non-nil) as true
+local matched_condition = "none"
 
--- Check if it's in a /guides/ or /api/ subdirectory or is a markdown file
-if Regex.match(page_file, "/guides/") or Regex.match(page_file, "/api/") or Regex.match(page_file, "\\.md$") then
-  is_doc_page = true
+if Regex.match(page_file_str, "/guides/") ~= nil then
+  Log.info("style_doc_main: [PAGE: " .. page_file_str .. "] Matched /guides/")
+  matched_condition = "/guides/"
+  is_doc_page_flag = "t" -- Set to a non-nil value
+elseif Regex.match(page_file_str, "/api/") ~= nil then
+  Log.info("style_doc_main: [PAGE: " .. page_file_str .. "] Matched /api/")
+  matched_condition = "/api/"
+  is_doc_page_flag = "t"
+elseif Regex.match(page_file_str, "\\.md$") ~= nil then
+  Log.info("style_doc_main: [PAGE: " .. page_file_str .. "] Matched \\.md$")
+  matched_condition = "\\.md$"
+  is_doc_page_flag = "t"
 end
 
--- Alternative: Check for specific page patterns if needed
--- local doc_page_regex = config["doc_page_regex"] -- Get from widget config
--- if doc_page_regex and Regex.match(page_file, doc_page_regex) then
---   is_doc_page = true
--- end
+Log.info("style_doc_main: [PAGE: " .. page_file_str .. "] Final Matched condition: " .. matched_condition .. "; is_doc_page_flag = " .. Value.repr(is_doc_page_flag))
 
--- Add classes if it's a doc page
-if is_doc_page then
-  Log.debug("style_doc_main: Applying prose styling to " .. page_file)
-  HTML.add_class(main_element, "max-w-4xl") -- Tailwind class
-  HTML.add_class(main_element, "mx-auto")   -- Tailwind class
-  HTML.add_class(main_element, "px-6")      -- Tailwind class
-  HTML.add_class(main_element, "py-8")      -- Tailwind class
-  HTML.add_class(main_element, "prose")     -- Tailwind Typography class
-  -- Add any other classes specific to documentation pages
-  HTML.add_class(main_element, "lg:prose-xl") -- Example: larger prose on large screens
+-- In Lua 2.5, if condition treats nil and false as false, anything else as true.
+if is_doc_page_flag then -- This will be true if is_doc_page_flag is "t"
+  Log.info("style_doc_main: [PAGE: " .. page_file_str .. "] APPLYING prose styling.")
+  HTML.add_class(main_element, "max-w-4xl")
+  HTML.add_class(main_element, "mx-auto")
+  HTML.add_class(main_element, "px-6")
+  HTML.add_class(main_element, "py-8")
+  HTML.add_class(main_element, "prose")
+  HTML.add_class(main_element, "lg:prose-xl")
+  Log.info("style_doc_main: [PAGE: " .. page_file_str .. "] Classes supposedly added.")
 else
-  Log.debug("style_doc_main: Not a doc page, skipping prose styling for " .. page_file)
+  Log.info("style_doc_main: [PAGE: " .. page_file_str .. "] SKIPPING prose styling (is_doc_page_flag was nil).")
 end
