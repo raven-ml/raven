@@ -5,7 +5,7 @@ refactor nx
   - create
   - rand functions
   - sort functions
-  - slicing and element access
+  - functions that realize tensors (array_equal, element access, etc.)
 - allocate buffers outside of the backend?
 - not sure we need non-polymorphic functions for perf of where, we should benchmark
 

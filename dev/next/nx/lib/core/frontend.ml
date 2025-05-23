@@ -1056,75 +1056,147 @@ module Make (B : Backend_intf.S) = struct
 
   let ravel ctx t = flatten ctx t
 
-  (* drop axes of size 1; [axis] restricts the squeeze *)
-  let squeeze ctx ?axis x =
+  module IntSet = Set.Make (Int)
+
+  (* drop axes of size 1; [axes] restricts which axes to squeeze *)
+  let squeeze ctx ?axes x =
     let sh = shape x in
-    match axis with
+    let r = Array.length sh in
+
+    match axes with
     | None ->
+        (* Squeeze all dimensions of size 1 *)
         let new_shape_list = List.filter (( <> ) 1) (Array.to_list sh) in
         let new_shape = Array.of_list new_shape_list in
         if Array.length new_shape = 0 && Array.length sh > 0 then
-          (* Squeezing all dims of a non-scalar results in a tensor of shape [1]
-             (scalar-like but still a tensor view) *)
-          reshape ctx x [||]
-          (* Actually, should be scalar shape. If backend handles shape [| |] as
-             scalar. *)
+          reshape ctx x [||] (* Result is scalar *)
         else if Array.length new_shape = 0 && Array.length sh = 0 then x
           (* scalar to scalar *)
         else reshape ctx x new_shape
-    | Some ax_val ->
-        let r = Array.length sh in
+    | Some axes_arr ->
         if r = 0 then x (* Cannot squeeze a scalar *)
         else
-          let ax = if ax_val < 0 then ax_val + r else ax_val in
-          if ax < 0 || ax >= r then invalid_arg "squeeze: axis out of bounds"
-          else if sh.(ax) <> 1 then x
-          else
-            let sh_list = Array.to_list sh in
-            let new_shape_list = List.filteri (fun i _ -> i <> ax) sh_list in
-            let new_shape = Array.of_list new_shape_list in
-            if Array.length new_shape = 0 && Array.length sh > 0 then
-              reshape ctx x [||]
-            else if Array.length new_shape = 0 && Array.length sh = 0 then x
-            else reshape ctx x new_shape
+          (* Normalize negative indices and validate *)
+          let normalized_axes =
+            Array.map (fun ax -> if ax < 0 then ax + r else ax) axes_arr
+          in
 
-  (* insert a size‑1 dimension at [axis] *)
-  let unsqueeze ctx ?axis x =
+          (* Check for duplicates *)
+          let seen = Array.make r false in
+          Array.iter
+            (fun ax ->
+              if ax < 0 || ax >= r then
+                invalid_arg
+                  (Printf.sprintf "squeeze: axis %d out of bounds for rank %d"
+                     ax r);
+              if seen.(ax) then
+                invalid_arg (Printf.sprintf "squeeze: duplicate axis %d" ax);
+              seen.(ax) <- true)
+            normalized_axes;
+
+          (* Check that all specified axes have size 1 *)
+          Array.iter
+            (fun ax ->
+              if sh.(ax) <> 1 then
+                invalid_arg
+                  (Printf.sprintf
+                     "squeeze: cannot squeeze axis %d of size %d (!= 1)" ax
+                     sh.(ax)))
+            normalized_axes;
+
+          (* Build new shape by filtering out squeezed dimensions *)
+          let axes_set =
+            Array.fold_left
+              (fun set ax -> IntSet.add ax set)
+              IntSet.empty normalized_axes
+          in
+
+          let new_shape_list =
+            List.filteri
+              (fun i _ -> not (IntSet.mem i axes_set))
+              (Array.to_list sh)
+          in
+
+          let new_shape = Array.of_list new_shape_list in
+
+          if Array.length new_shape = 0 && Array.length sh > 0 then
+            reshape ctx x [||] (* Result is scalar *)
+          else if Array.length new_shape = 0 && Array.length sh = 0 then x
+            (* scalar to scalar *)
+          else reshape ctx x new_shape
+
+  (* insert size-1 dimensions at specified axes *)
+  let unsqueeze ctx ?axes x =
     let sh = shape x in
     let r = Array.length sh in
-    let ax_val =
-      match axis with
-      | None -> invalid_arg "unsqueeze: axis must be specified"
-      | Some ax_v -> ax_v
-    in
-    let ax = if ax_val < 0 then ax_val + r + 1 else ax_val in
 
-    if ax < 0 || ax > r then
-      invalid_arg
-        (Printf.sprintf "unsqueeze: axis %d out of bounds for rank %d tensor"
-           ax_val r);
-
-    let sh_list = Array.to_list sh in
-    let rec insert_at_idx current_idx target_idx lst item =
-      match lst with
-      | [] ->
-          if current_idx = target_idx then [ item ]
-          else
-            (* This case implies target_idx was > length of original list if we
-               started at 0 *)
-            [ item ]
-            (* Insert at end if target_idx == current_idx ==
-               len(original_list) *)
-      | h :: t ->
-          if current_idx = target_idx then item :: lst
-          else h :: insert_at_idx (current_idx + 1) target_idx t item
+    let axes_arr =
+      match axes with
+      | None -> invalid_arg "unsqueeze: axes must be specified"
+      | Some arr -> arr
     in
-    let new_shape_list =
-      if r = 0 && ax = 0 then [ 1 ] else insert_at_idx 0 ax sh_list 1
-    in
-    reshape ctx x (Array.of_list new_shape_list)
 
-  let expand_dims ctx t axis = unsqueeze ctx ~axis t
+    if Array.length axes_arr = 0 then x (* No dimensions to add *)
+    else
+      let output_rank = r + Array.length axes_arr in
+
+      (* Normalize negative indices (relative to output shape) *)
+      let normalized_axes =
+        Array.map (fun ax -> if ax < 0 then ax + output_rank else ax) axes_arr
+      in
+
+      (* Validate axes *)
+      let seen = Array.make output_rank false in
+      Array.iter
+        (fun ax ->
+          if ax < 0 || ax >= output_rank then
+            invalid_arg
+              (Printf.sprintf
+                 "unsqueeze: axis %d out of bounds for output rank %d" ax
+                 output_rank);
+          if seen.(ax) then
+            invalid_arg (Printf.sprintf "unsqueeze: duplicate axis %d" ax);
+          seen.(ax) <- true)
+        normalized_axes;
+
+      (* Sort axes to process in order *)
+      let sorted_axes = Array.copy normalized_axes in
+      Array.sort compare sorted_axes;
+
+      (* Build mapping from output position to input position *)
+      let axes_set =
+        Array.fold_left
+          (fun set ax -> IntSet.add ax set)
+          IntSet.empty normalized_axes
+      in
+
+      (* Create new shape *)
+      let new_shape_list = ref [] in
+      let input_idx = ref 0 in
+
+      for output_idx = 0 to output_rank - 1 do
+        if IntSet.mem output_idx axes_set then
+          new_shape_list :=
+            1 :: !new_shape_list (* Insert dimension of size 1 *)
+        else if !input_idx < r then (
+          new_shape_list := sh.(!input_idx) :: !new_shape_list;
+          incr input_idx)
+      done;
+
+      let new_shape = Array.of_list (List.rev !new_shape_list) in
+      reshape ctx x new_shape
+
+  (* For backward compatibility, you might want to add these helper
+     functions: *)
+
+  (* squeeze a single axis *)
+  let squeeze_axis ctx axis x = squeeze ctx ~axes:[| axis |] x
+
+  (* unsqueeze a single axis *)
+  let unsqueeze_axis ctx axis x = unsqueeze ctx ~axes:[| axis |] x
+
+  (* expand_dims is an alias for unsqueeze *)
+  let expand_dims ctx t axes = unsqueeze ctx ~axes t
 
   let transpose ctx ?axes x =
     let r = ndim x in
@@ -1373,7 +1445,7 @@ module Make (B : Backend_intf.S) = struct
       if axis = None then repeated_scalar (* Already flat *)
       else reshape ctx repeated_scalar (shape orig_t)
     else
-      let x_unsqueezed = unsqueeze ctx ~axis:(ax_idx_eff + 1) t in
+      let x_unsqueezed = unsqueeze ctx ~axes:[| ax_idx_eff + 1 |] t in
       let expand_shape_arr = Array.copy (shape x_unsqueezed) in
       expand_shape_arr.(ax_idx_eff + 1) <- count;
       let x_expanded = expand ctx x_unsqueezed expand_shape_arr in
@@ -1457,7 +1529,9 @@ module Make (B : Backend_intf.S) = struct
         in
 
         (* Add new dimension to each array *)
-        let expanded = List.map (fun t -> unsqueeze ctx ~axis t) ts in
+        let expanded =
+          List.map (fun t -> unsqueeze ctx ~axes:[| axis |] t) ts
+        in
 
         (* Concatenate along the new axis *)
         B.op_cat ctx expanded axis
@@ -1851,7 +1925,7 @@ module Make (B : Backend_intf.S) = struct
                           if i = 0 then (idx', idx' + 1)
                           else (0, (shape tensor).(dim + i)))
                     in
-                    squeeze ctx ~axis:dim (shrink ctx tensor config)
+                    squeeze ctx ~axes:[| dim |] (shrink ctx tensor config)
                 | R range ->
                     let start, stop, step = expand_range_spec dim_size range in
                     let s, e =
@@ -1896,7 +1970,7 @@ module Make (B : Backend_intf.S) = struct
                       let tensor' =
                         if List.length indices = dim_size then tensor
                         else if List.length indices = 1 then
-                          squeeze ctx ~axis:0
+                          squeeze ctx ~axes:[| 0 |]
                             (shrink ctx tensor
                                [| (List.hd indices, List.hd indices + 1) |])
                         else
@@ -1926,7 +2000,7 @@ module Make (B : Backend_intf.S) = struct
                       List.fold_left2
                         (fun t spec indices ->
                           if List.length indices = 1 then
-                            squeeze ctx ~axis:0
+                            squeeze ctx ~axes:[| 0 |]
                               (shrink ctx t
                                  [| (List.hd indices, List.hd indices + 1) |])
                           else
@@ -2268,13 +2342,13 @@ module Make (B : Backend_intf.S) = struct
     let a, b =
       if ndim_a_orig = 1 && ndim_b_orig = 1 then
         (* (k), (k) -> a becomes (1,k), b becomes (k,1) *)
-        (unsqueeze ctx ~axis:0 a_orig, unsqueeze ctx ~axis:1 b_orig)
+        (unsqueeze ctx ~axes:[| 0 |] a_orig, unsqueeze ctx ~axes:[| 1 |] b_orig)
       else if ndim_a_orig = 1 then
         (* (k), (...,k,n) -> a becomes (1,k) *)
-        (unsqueeze ctx ~axis:0 a_orig, b_orig)
+        (unsqueeze ctx ~axes:[| 0 |] a_orig, b_orig)
       else if ndim_b_orig = 1 then
         (* (...,m,k), (k) -> b becomes (k,1) *)
-        (a_orig, unsqueeze ctx ~axis:1 b_orig)
+        (a_orig, unsqueeze ctx ~axes:[| 1 |] b_orig)
       else
         (* Both are >= 2D, no promotion needed for matmul semantics *)
         (a_orig, b_orig)
@@ -2293,11 +2367,11 @@ module Make (B : Backend_intf.S) = struct
            If b was (k,n), dot result (1,n). Squeeze axis 0.
            If b was (B,k,n), dot result (B,1,n). Squeeze axis ndim-2.
         *)
-      squeeze ctx ~axis:(ndim result_intermediate - 2) result_intermediate
+      squeeze ctx ~axes:[| ndim result_intermediate - 2 |] result_intermediate
     else if ndim_b_orig = 1 then
       (* Original (...,m,k) @ (k) -> result (...,m,1) from dot -> squeeze last
          matrix dim *)
-      squeeze ctx ~axis:(ndim result_intermediate - 1) result_intermediate
+      squeeze ctx ~axes:[| ndim result_intermediate - 1 |] result_intermediate
     else
       (* Both original inputs were >= 2D, result from dot is already
          (...,m,n) *)
@@ -2422,7 +2496,9 @@ module Make (B : Backend_intf.S) = struct
             let rec squeeze_dims tensor dim_offset = function
               | [] -> tensor
               | _ :: rest ->
-                  let squeezed = squeeze ctx ~axis:(dims + dim_offset) tensor in
+                  let squeezed =
+                    squeeze ctx ~axes:[| dims + dim_offset |] tensor
+                  in
                   squeeze_dims squeezed dim_offset rest
             in
             squeeze_dims sliced 0 indices
@@ -2704,7 +2780,7 @@ module Make (B : Backend_intf.S) = struct
 
     (* Element-wise multiplication in transform space *)
     let y_transformed =
-      let x_exp = unsqueeze ctx ~axis:1 x_reshaped in
+      let x_exp = unsqueeze ctx ~axes:[| 1 |] x_reshaped in
       let w_exp =
         expand ctx w_reshaped [| 1; cout; cin; tile_h * tile_w; 6; 6 |]
       in
@@ -3248,7 +3324,9 @@ module Make (B : Backend_intf.S) = struct
     if not (Dtype.is_int index_dt || Dtype.is_uint index_dt) then
       invalid_arg "one_hot_nd: index_tensor must be an integer type";
 
-    let index_expanded = unsqueeze ctx index_tensor ~axis:(ndim index_tensor) in
+    let index_expanded =
+      unsqueeze ctx index_tensor ~axes:[| ndim index_tensor |]
+    in
     (* Add new last dim *)
 
     let arange_t = arange ctx index_dt 0 num_classes 1 in
@@ -3298,7 +3376,7 @@ module Make (B : Backend_intf.S) = struct
       one_hot ctx indices_t ~num_classes:prod_output_spatial_size
     in
 
-    let input_expanded = unsqueeze ctx input_t ~axis:(ndim input_t) in
+    let input_expanded = unsqueeze ctx input_t ~axes:[| ndim input_t |] in
 
     let multiplied = mul ctx one_hot_mask_for_indices input_expanded in
 
