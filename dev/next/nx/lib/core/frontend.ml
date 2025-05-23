@@ -1794,10 +1794,10 @@ module Make (B : Backend_intf.S) = struct
 
   (** Helper for N-dim one-hot encoding. Creates a new last dimension for
       classes. *)
-  let one_hot_nd ctx index_tensor ~num_classes =
+  let one_hot ctx index_tensor ~num_classes =
     let index_dt = dtype index_tensor in
     if not (Dtype.is_int index_dt || Dtype.is_uint index_dt) then
-      invalid_arg "_one_hot_nd: index_tensor must be an integer type";
+      invalid_arg "one_hot_nd: index_tensor must be an integer type";
 
     let index_expanded = unsqueeze ctx index_tensor ~axis:(ndim index_tensor) in
     (* Add new last dim *)
@@ -2502,7 +2502,7 @@ module Make (B : Backend_intf.S) = struct
     let prod_output_spatial_size = View.prod output_spatial_shape in
 
     let one_hot_mask_for_indices =
-      one_hot_nd ctx indices_t ~num_classes:prod_output_spatial_size
+      one_hot ctx indices_t ~num_classes:prod_output_spatial_size
     in
 
     let input_expanded = unsqueeze ctx input_t ~axis:(ndim input_t) in

@@ -1,9 +1,12 @@
 # to do
 
 refactor nx
+- complete frontend
+  - create
+  - rand functions
+  - sort functions
+  - slicing and element access
 - allocate buffers outside of the backend?
-- how do we implement create?
-- how do we do slicing and element access now?
 - not sure we need non-polymorphic functions for perf of where, we should benchmark
 
 poc jit
