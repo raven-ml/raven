@@ -1792,6 +1792,28 @@ module Make (B : Backend_intf.S) = struct
     done;
     pads_adj
 
+  (** Helper for N-dim one-hot encoding. Creates a new last dimension for
+      classes. *)
+  let one_hot_nd ctx index_tensor ~num_classes =
+    let index_dt = dtype index_tensor in
+    if not (Dtype.is_int index_dt || Dtype.is_uint index_dt) then
+      invalid_arg "_one_hot_nd: index_tensor must be an integer type";
+
+    let index_expanded = unsqueeze ctx index_tensor ~axis:(ndim index_tensor) in
+    (* Add new last dim *)
+
+    let arange_t = arange ctx index_dt 0 num_classes 1 in
+    (* Classes 0 to num_classes-1 *)
+
+    (* Reshape arange to be (1, ..., 1, num_classes) to align with new last dim
+       of index_expanded *)
+    let ndim_expanded = ndim index_expanded in
+    let shape_for_arange = Array.make ndim_expanded 1 in
+    shape_for_arange.(ndim_expanded - 1) <- num_classes;
+    let arange_b = reshape ctx arange_t shape_for_arange in
+
+    cmpeq ctx index_expanded arange_b (* Broadcasts to one-hot mask *)
+
   (** Internal N-Dimensional pooling core. Analogous to tinygrad's
       `Tensor._pool`. x_padded_input: Assumed to be ALREADY padded by the
       caller. *)
@@ -2228,9 +2250,8 @@ module Make (B : Backend_intf.S) = struct
       [| fst dilation; snd dilation |]
       ?fillvalue ?bias 2 x w
 
-  (** Internal N-Dimensional average pooling. *)
-  let avg_pool_nd ctx x_orig ~kernel_size ~stride ~dilation ~padding_spec
-      ~ceil_mode ~count_include_pad ~num_spatial_dims =
+  let avg_pool_nd ctx ~kernel_size ?stride ?dilation ~padding_spec ~ceil_mode
+      ~count_include_pad ~num_spatial_dims x_orig =
     let x_ndim = ndim x_orig in
     let input_spatial_shape =
       Array.sub (shape x_orig) (x_ndim - num_spatial_dims) num_spatial_dims
@@ -2254,7 +2275,10 @@ module Make (B : Backend_intf.S) = struct
         [ Array.make (x_ndim - num_spatial_dims) (0, 0); current_pads_pairs ]
     in
     let reduction_axes =
-      Array.init num_spatial_dims (fun i -> x_ndim - num_spatial_dims + i)
+      let pooled_ndim =
+        x_ndim - num_spatial_dims + num_spatial_dims + num_spatial_dims
+      in
+      Array.init num_spatial_dims (fun i -> pooled_ndim - num_spatial_dims + i)
     in
 
     if not count_include_pad then
@@ -2337,8 +2361,8 @@ module Make (B : Backend_intf.S) = struct
       ~padding_spec ~ceil_mode ~count_include_pad ~num_spatial_dims:2
 
   (** Internal N-Dimensional max pooling. *)
-  let max_pool_nd ctx x_orig ~kernel_size ~stride ~dilation ~padding_spec
-      ~ceil_mode ~return_indices ~num_spatial_dims =
+  let max_pool_nd ctx ~kernel_size ?stride ?dilation ~padding_spec ~ceil_mode
+      ~return_indices ~num_spatial_dims x_orig =
     let x_ndim = ndim x_orig in
     let input_spatial_shape =
       Array.sub (shape x_orig) (x_ndim - num_spatial_dims) num_spatial_dims
@@ -2362,7 +2386,10 @@ module Make (B : Backend_intf.S) = struct
         [ Array.make (x_ndim - num_spatial_dims) (0, 0); current_pads_pairs ]
     in
     let reduction_axes =
-      Array.init num_spatial_dims (fun i -> x_ndim - num_spatial_dims + i)
+      let pooled_ndim =
+        x_ndim - num_spatial_dims + num_spatial_dims + num_spatial_dims
+      in
+      Array.init num_spatial_dims (fun i -> pooled_ndim - num_spatial_dims + i)
     in
 
     let fill_value = Dtype.min_val (dtype x_orig) in
@@ -2379,28 +2406,18 @@ module Make (B : Backend_intf.S) = struct
       in
       let prod_spatial_size = View.prod input_spatial_shape_arr in
 
-      (* Create indices tensor matching original spatial shape *)
-      let indices_flat = arange ctx Dtype.int32 0 prod_spatial_size 1 in
+      let indices_flat =
+        arange ctx Dtype.int32 (prod_spatial_size - 1) (-1) (-1)
+      in
+      (* N-1, ..., 0 *)
       let indices_spatial = reshape ctx indices_flat input_spatial_shape_arr in
 
-      (* Pad indices tensor *)
-      (* Indices for padding should be distinct and not confusable with valid indices.
-     Using a value outside the valid range, e.g., -1 or a very large number.
-     Since max is used later to find the "first" max index (tinygrad uses reversed arange and max),
-     for padding we should use a value that won't be picked by max.
-     Let's use Dtype.min_val for int32.
-  *)
       let idx_fill_value = Dtype.min_val Dtype.int32 in
+      (* Smallest value for indices padding *)
       let indices_spatial_padded =
-        pad ctx indices_spatial full_pad_config idx_fill_value
+        pad ctx indices_spatial current_pads_pairs idx_fill_value
       in
 
-      (* Pool the padded indices tensor. We need to replicate non-spatial dims of x_orig for indices. *)
-      (* Target shape for indices_spatial_padded needs to be (1, ..., 1, spatial_dims_padded) to broadcast with x_padded.
-     This is complex. Easier: pool handles prefix dimensions.
-     So, create `idx_template` with shape like `x_orig` but spatial dims replaced by `indices_spatial_padded`'s shape,
-     and prefix dims filled by broadcasting `indices_spatial_padded`.
-  *)
       let shape_prefix_template =
         Array.sub (shape x_orig) 0 (x_ndim - num_spatial_dims)
       in
@@ -2415,24 +2432,26 @@ module Make (B : Backend_intf.S) = struct
         pool ctx indices_broadcast_for_pool ~k_s:kernel_size ~s_s ~d_s
       in
 
-      (* Create mask for max values *)
       let max_values_kept_dims =
         B.op_reduce_max ctx pooled ~axes:reduction_axes ~keepdims:true
       in
       let is_max_mask = equal ctx pooled max_values_kept_dims in
 
-      (* Apply mask to pooled_indices. Where not max, put a value that won't be
-         chosen by max. *)
       let masked_pooled_indices =
         where ctx is_max_mask pooled_indices
           (full_like ctx pooled_indices idx_fill_value)
       in
 
-      (* Find the max of these masked indices. This corresponds to the first
-         occurrence due to arange. *)
-      let final_indices =
+      let final_indices_from_end =
         B.op_reduce_max ctx masked_pooled_indices ~axes:reduction_axes
           ~keepdims:false
+      in
+
+      let spatial_size_minus_1_tensor =
+        scalar ctx Dtype.int32 (Int32.of_int (prod_spatial_size - 1))
+      in
+      let final_indices =
+        sub ctx spatial_size_minus_1_tensor final_indices_from_end
       in
       (max_values, Some final_indices)
 
@@ -2451,32 +2470,9 @@ module Make (B : Backend_intf.S) = struct
     max_pool_nd ctx x ~kernel_size:ks_arr ?stride:s_arr_opt ?dilation:d_arr_opt
       ~padding_spec ~ceil_mode ~return_indices ~num_spatial_dims:2
 
-  (** Helper for N-dim one-hot encoding. Creates a new last dimension for
-      classes. *)
-  let _one_hot_nd ctx index_tensor ~num_classes =
-    let index_dt = dtype index_tensor in
-    if not (Dtype.is_int index_dt || Dtype.is_uint index_dt) then
-      invalid_arg "_one_hot_nd: index_tensor must be an integer type";
-
-    let index_expanded = unsqueeze ctx index_tensor ~axis:(ndim index_tensor) in
-    (* Add new last dim *)
-
-    let arange_t = arange ctx index_dt 0 num_classes 1 in
-    (* Classes 0 to num_classes-1 *)
-
-    (* Reshape arange to be (1, ..., 1, num_classes) to align with new last dim
-       of index_expanded *)
-    let ndim_expanded = ndim index_expanded in
-    let shape_for_arange = Array.make ndim_expanded 1 in
-    shape_for_arange.(ndim_expanded - 1) <- num_classes;
-    let arange_b = reshape ctx arange_t shape_for_arange in
-
-    cmpeq ctx index_expanded arange_b (* Broadcasts to one-hot mask *)
-
   (** Internal N-Dimensional max unpooling. *)
-  let max_unpool_nd ctx input_t indices_t ~kernel_size ~stride ~dilation
-      ~padding_spec ~output_size_opt ~num_spatial_dims =
-    (* Should be bs, c, pooled_spatial_dims... *)
+  let max_unpool_nd ctx ~kernel_size ?stride ?dilation ~padding_spec
+      ?output_size_opt ~num_spatial_dims input_t indices_t =
     let bs = dim 0 input_t in
     let c = dim 1 input_t in
     let pooled_spatial_shape = Array.sub (shape input_t) 2 num_spatial_dims in
@@ -2485,8 +2481,6 @@ module Make (B : Backend_intf.S) = struct
       match output_size_opt with
       | Some os_arr -> os_arr
       | None ->
-          (* Calculate output_size based on Tinygrad logic (inverse of pooling
-             formula) *)
           let s_s = Option.value stride ~default:kernel_size in
           let d_s =
             Option.value dilation ~default:(Array.make num_spatial_dims 1)
@@ -2494,7 +2488,7 @@ module Make (B : Backend_intf.S) = struct
           let pads_pairs =
             resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
               ~input_spatial_shape:pooled_spatial_shape
-                (* This is an approximation, needs careful thought *)
+                (* Placeholder, see note in thought process *)
               ~k_s:kernel_size ~s_s ~d_s
           in
           Array.init num_spatial_dims (fun i ->
@@ -2507,29 +2501,18 @@ module Make (B : Backend_intf.S) = struct
     in
     let prod_output_spatial_size = View.prod output_spatial_shape in
 
-    (* Reshape inputs for broadcasting:
-   indices_t: (bs, c, pooled_spatial_dims...)
-   input_t: (bs, c, pooled_spatial_dims...)
-*)
-    (* Target one_hot_mask shape: (bs, c, pooled_spatial_dims..., prod_output_spatial_size) *)
     let one_hot_mask_for_indices =
-      _one_hot_nd ctx indices_t ~num_classes:prod_output_spatial_size
+      one_hot_nd ctx indices_t ~num_classes:prod_output_spatial_size
     in
 
     let input_expanded = unsqueeze ctx input_t ~axis:(ndim input_t) in
-    (* input_expanded shape: (bs, c, pooled_spatial_dims..., 1) *)
 
     let multiplied = mul ctx one_hot_mask_for_indices input_expanded in
-    (* multiplied shape: (bs, c, pooled_spatial_dims...,
-       prod_output_spatial_size) *)
 
-    (* Sum over the pooled_spatial_dims. These are axes 2 to 2 +
-       num_spatial_dims - 1 *)
     let sum_axes = Array.init num_spatial_dims (fun i -> 2 + i) in
     let result_flat_spatial =
       sum ctx multiplied ~axes:sum_axes ~keepdims:false
     in
-    (* result_flat_spatial shape: (bs, c, prod_output_spatial_size) *)
 
     let final_shape = Array.concat [ [| bs; c |]; output_spatial_shape ] in
     reshape ctx result_flat_spatial final_shape
