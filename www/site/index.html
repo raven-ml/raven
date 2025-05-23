@@ -1,0 +1,138 @@
+<section class="py-12 bg-blue-50">
+  <div class="max-w-6xl mx-auto px-6">
+    <h2 class="text-3xl font-bold text-center mb-8">From Python to OCaml</h2>
+    <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-xl font-semibold mb-4 text-gray-800">Python Stack</h3>
+        <ul class="space-y-2 text-gray-600">
+          <li>NumPy → Arrays & Linear Algebra</li>
+          <li>Matplotlib → Plotting & Visualization</li>
+          <li>JAX → Auto-diff & JIT</li>
+          <li>Jupyter → Interactive Notebooks</li>
+        </ul>
+      </div>
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-xl font-semibold mb-4 text-gray-800">Raven Ecosystem</h3>
+        <ul class="space-y-2 text-gray-600">
+          <li><strong>ndarray</strong> → N-dimensional arrays</li>
+          <li><strong>hugin</strong> → Publication-quality plots</li>
+          <li><strong>rune</strong> → Auto-diff & JIT compilation</li>
+          <li><strong>quill</strong> → Interactive documents</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Core Libraries -->
+<section class="py-12">
+  <div class="max-w-6xl mx-auto px-6">
+    <h2 class="text-3xl font-bold text-center mb-12">Core Libraries</h2>
+    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <!-- ndarray -->
+      <div class="bg-white p-6 rounded-lg shadow hover:shadow-lg transition-shadow">
+        <div class="flex items-center mb-4">
+          <h3 class="text-xl font-semibold">ndarray</h3>
+          <span class="ml-2 px-2 py-1 bg-green-100 text-green-800 text-xs rounded">Production</span>
+        </div>
+        <p class="text-gray-600 mb-4">N-dimensional arrays with linear algebra operations. The foundation of the
+          ecosystem.</p>
+        <a href="ndarray/" class="text-blue-600 hover:text-blue-800 font-medium">Learn more →</a>
+      </div>
+      <!-- hugin -->
+      <div class="bg-white p-6 rounded-lg shadow hover:shadow-lg transition-shadow">
+        <div class="flex items-center mb-4">
+          <h3 class="text-xl font-semibold">hugin</h3>
+          <span class="ml-2 px-2 py-1 bg-green-100 text-green-800 text-xs rounded">Production</span>
+        </div>
+        <p class="text-gray-600 mb-4">Publication-quality 2D/3D plotting with Cairo backend integration.</p>
+        <a href="hugin/" class="text-blue-600 hover:text-blue-800 font-medium">Learn more →</a>
+      </div>
+      <!-- rune -->
+      <div class="bg-white p-6 rounded-lg shadow hover:shadow-lg transition-shadow">
+        <div class="flex items-center mb-4">
+          <h3 class="text-xl font-semibold">rune</h3>
+          <span class="ml-2 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded">Beta</span>
+        </div>
+        <p class="text-gray-600 mb-4">Automatic differentiation and JIT compilation with composable transformations.
+        </p>
+        <a href="rune/" class="text-blue-600 hover:text-blue-800 font-medium">Learn more →</a>
+      </div>
+      <!-- quill -->
+      <div class="bg-white p-6 rounded-lg shadow hover:shadow-lg transition-shadow">
+        <div class="flex items-center mb-4">
+          <h3 class="text-xl font-semibold">quill</h3>
+          <span class="ml-2 px-2 py-1 bg-red-100 text-red-800 text-xs rounded">Alpha</span>
+        </div>
+        <p class="text-gray-600 mb-4">Interactive notebook environment with markdown-based editing.</p>
+        <a href="quill/" class="text-blue-600 hover:text-blue-800 font-medium">Learn more →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Rune Ecosystem -->
+<section class="py-12 bg-gray-100">
+  <div class="max-w-6xl mx-auto px-6">
+    <h2 class="text-3xl font-bold text-center mb-12">Rune Ecosystem</h2>
+    <p class="text-lg text-gray-600 text-center mb-8 max-w-3xl mx-auto">
+      High-level libraries built on Rune for specialized machine learning and computer vision tasks.
+    </p>
+    <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+      <div class="bg-white p-8 rounded-lg shadow-lg">
+        <div class="flex items-center mb-4">
+          <h3 class="text-2xl font-semibold text-orange-600">Kaun</h3>
+          <span class="ml-3 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded">Beta</span>
+        </div>
+        <p class="text-gray-600 mb-4">Neural network library with high-level APIs for deep learning. The Flax
+          equivalent for OCaml.</p>
+        <ul class="text-sm text-gray-600 space-y-1 mb-6">
+          <li>• Pre-built layers and models</li>
+          <li>• Training loops and optimizers</li>
+          <li>• Model serialization</li>
+          <li>• Transfer learning support</li>
+        </ul>
+        <a href="rune/kaun/" class="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 transition-colors">
+          Learn more →
+        </a>
+      </div>
+      <div class="bg-white p-8 rounded-lg shadow-lg">
+        <div class="flex items-center mb-4">
+          <h3 class="text-2xl font-semibold text-blue-600">Sowilo</h3>
+          <span class="ml-3 px-2 py-1 bg-red-100 text-red-800 text-xs rounded">Alpha</span>
+        </div>
+        <p class="text-gray-600 mb-4">Computer vision library with JIT-compiled operations and GPU acceleration.</p>
+        <ul class="text-sm text-gray-600 space-y-1 mb-6">
+          <li>• Image processing pipelines</li>
+          <li>• Object detection models</li>
+          <li>• Differentiable computer vision</li>
+          <li>• Real-time processing</li>
+        </ul>
+        <a href="rune/sowilo/" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors">
+          Learn more →
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Quick Start -->
+<section class="py-12">
+  <div class="max-w-4xl mx-auto px-6">
+    <h2 class="text-3xl font-bold text-center mb-8">Quick Start</h2>
+    <div class="bg-gray-900 text-green-400 p-6 rounded-lg font-mono text-sm">
+      <div class="mb-4"># Install with opam</div>
+      <div class="mb-4">$ opam install ndarray hugin</div>
+      <div class="mb-6"># Or build from source</div>
+      <div class="mb-4">$ git clone https://github.com/your-org/raven.git</div>
+      <div class="mb-4">$ cd raven</div>
+      <div>$ dune build</div>
+    </div>
+    <div class="text-center mt-8">
+      <a href="docs/guides/getting-started/"
+        class="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors">
+        Get Started
+      </a>
+    </div>
+  </div>
+</section>

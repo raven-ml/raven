@@ -1,64 +1,70 @@
+# soupault.toml
+
 [settings]
-site_dir = "."
-build_dir = "build"
-default_template = "main.html"
+  site_dir = "site"
+  build_dir = "build"
+  default_template_file = "templates/main.html"
+  default_content_selector = "main"
+  complete_page_selector = "html"
+  generator_mode = true
+  clean_urls = true
+  page_file_extensions = ["htm", "html"]
+  markdown_extensions = ["md"]
+  keep_doctype = true
+  pretty_print_html = true
 
-[preprocessors]
+# Define specific templates for different pages/sections
+[templates.landing_page]
+  file = "templates/landing.html"
+  page = "index.html" # Applies only to site/index.html
+  content_selector = "main"
 
-[widgets]
+[templates.project_main_page]
+  file = "templates/project.html"
+  path_regex = "^(ndarray|hugin|quill|rune)/index\\.html$" # Targets project root index.html files
+  content_selector = "main"
 
-# Navigation breadcrumbs
+[templates.project_sub_page]
+  file = "templates/project.html" # Assuming sub-projects use the same template
+  path_regex = "^rune/(kaun|sowilo)/index\\.html$" # Targets sub-project root index.html files
+  content_selector = "main"
+
 [widgets.breadcrumbs]
   widget = "breadcrumbs"
   selector = "#breadcrumbs"
-  prepend_index = false
+  # min_depth = 1 # Optional: if you don't want breadcrumbs on pages like /foo.html (depth 0)
   between = " / "
+  exclude_page = "index.html" # Exclude from the main site landing page
 
-# Page title from h1
 [widgets.page_title]
   widget = "title"
   selector = "h1"
-  default = "Raven"
+  default = "Raven Ecosystem"
   append = " - Raven"
+  # keep = false # Add if you want to force overwrite existing <title> tags
 
-# Clean up empty paragraphs
-[widgets.clean_empty]
+[widgets.clean_empty_paragraphs]
   widget = "delete_element"
   selector = "p:empty"
 
-# Template selection based on page path
-[widgets.template_selector]
-  widget = "template"
-  default_template = "main.html"
-
+# The [index] table is for metadata extraction and rendering index *listings*.
+# It does not define what file constitutes a section's index page (that's by convention, e.g., index.html).
+# If you are not extracting metadata to build custom index pages (e.g., a list of blog posts),
+# this section can be minimal or even omitted.
 [index]
-# Don't generate index pages automatically
-index_page = "index.html"
-index_file = "index.html"
-section_index_file = "index.html"
+  # To enable metadata extraction and processing, set `index = true`
+  # index = true
 
-[templates]
-# Template settings
-default_template_file = "main.html"
-template_dir = "templates"
-content_selector = "main"
+  # Example: if you were to extract metadata:
+  # [index.fields.title]
+  #   selector = "h1"
+  # [index.views.some_listing]
+  #   index_selector = "#some-list-container"
+  #   index_item_template = "<li><a href='{{url}}'>{{title}}</a></li>"
+  #   section = "blog/" # Only create this listing for the blog section's index page
 
-# Use landing template for home page
-[page.index]
-  template = "landing.html"
+# Preprocessors (if any)
+[preprocessors]
 
-# Use project template for project pages
-[page.ndarray/index]
-  template = "project.html"
-  
-[page.hugin/index]
-  template = "project.html"
-  
-[page.rune/index]
-  template = "project.html"
-  
-[page.quill/index]
-  template = "project.html"
-
+# Lua plugins (if any)
 [plugins]
-# Site-wide plugins can be configured here
