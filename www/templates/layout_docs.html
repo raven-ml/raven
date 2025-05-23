@@ -16,7 +16,7 @@
         <div class="flex items-center space-x-4">
           <a href="../" class="text-2xl font-bold text-gray-900">Raven</a>
           <span class="text-gray-400">/</span>
-          <h1 class="text-2xl font-bold text-gray-700">docs</h1>
+          <span class="text-2xl font-bold text-gray-700">docs</span>
         </div>
         <div class="flex items-center space-x-6">
           <a href="../community/" class="text-gray-600 hover:text-gray-900">Community</a>
@@ -32,61 +32,80 @@
     <!-- Fixed Sidebar -->
     <nav class="w-64 bg-gray-50 border-r border-gray-200 min-h-screen flex-shrink-0">
       <div class="p-6">
-        <h3 class="font-semibold mb-4 text-gray-900">Documentation</h3>
-        <ul class="space-y-1">
-          <li><a href="/docs/"
-              class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Overview</a>
-          </li>
-          <li><a href="/docs/from-python/"
-              class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Python
-              Migration</a></li>
-          <li><a href="/docs/workflows/"
-              class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Common
-              Workflows</a></li>
-          <li><a href="/docs/roadmap/"
-              class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Roadmap</a>
-          </li>
-        </ul>
+        <!-- Library Selector -->
+        <div class="mb-6">
+          <h3 class="font-semibold mb-3 text-gray-900">Library Selector</h3>
+          <select onchange="if(this.value) window.location.href=this.value"
+            class="w-full p-2 border border-gray-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-blue-500">
+            <option value="">Choose a library...</option>
+            <option value="/docs/ndarray/">🔵 ndarray (Arrays)</option>
+            <option value="/docs/hugin/">🟣 hugin (Plotting)</option>
+            <option value="/docs/rune/">🟠 rune (Auto-diff)</option>
+            <option value="/docs/kaun/">🔴 kaun (Neural Networks)</option>
+            <option value="/docs/sowilo/">🟦 sowilo (Computer Vision)</option>
+            <option value="/docs/quill/">🟢 quill (Notebooks)</option>
+          </select>
+        </div>
+        <div id="sidebar-links">
+          <h3 class="font-semibold mb-4 text-gray-900">Documentation</h3>
+          <ul class="space-y-1">
+            <li><a href="/docs/"
+                class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Overview</a>
+            </li>
+            <li><a href="/docs/from-python/"
+                class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Python
+                Migration</a></li>
+            <li><a href="/docs/workflows/"
+                class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Common
+                Workflows</a></li>
+            <li><a href="/docs/roadmap/"
+                class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Roadmap</a>
+            </li>
+          </ul>
 
-        <h3 class="font-semibold mb-4 mt-8 text-gray-900">Library Docs</h3>
-        <ul class="space-y-1">
-          <li><a href="/ndarray/"
-              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">ndarray</a>
-          </li>
-          <li><a href="/hugin/"
-              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">hugin</a>
-          </li>
-          <li><a href="/rune/"
-              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">rune</a>
-          </li>
-          <li><a href="/kaun/"
-              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">kaun</a>
-          </li>
-          <li><a href="/sowilo/"
-              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">sowilo</a>
-          </li>
-          <li><a href="/quill/"
-              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">quill</a>
-          </li>
-        </ul>
+          <h3 class="font-semibold mb-4 mt-8 text-gray-900">Library Docs</h3>
+          <ul class="space-y-1">
+            <li><a href="/ndarray/"
+                class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">ndarray</a>
+            </li>
+            <li><a href="/hugin/"
+                class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">hugin</a>
+            </li>
+            <li><a href="/rune/"
+                class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">rune</a>
+            </li>
+            <li><a href="/kaun/"
+                class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">kaun</a>
+            </li>
+            <li><a href="/sowilo/"
+                class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">sowilo</a>
+            </li>
+            <li><a href="/quill/"
+                class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">quill</a>
+            </li>
+          </ul>
 
-        <h3 class="font-semibold mb-4 mt-8 text-gray-900">Community</h3>
-        <ul class="space-y-1">
-          <li><a href="/community/"
-              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Join Us</a>
-          </li>
-          <li><a href="#"
-              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">GitHub</a>
-          </li>
-          <li><a href="#"
-              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Issues</a>
-          </li>
-        </ul>
+          <h3 class="font-semibold mb-4 mt-8 text-gray-900">Community</h3>
+          <ul class="space-y-1">
+            <li><a href="/community/"
+                class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Join
+                Us</a>
+            </li>
+            <li><a href="#"
+                class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">GitHub</a>
+            </li>
+            <li><a href="#"
+                class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Issues</a>
+            </li>
+          </ul>
+        </div>
       </div>
     </nav>
 
     <!-- Main Content Area -->
-    <div class="min-h-screen bg-gray-50">
+    <div class="min-h-screen">
+      <div id="breadcrumbs" class="max-w-7xl mx-auto px-6 pt-4 pb-2 text-sm border-b border-gray-200 bg-white"></div>
+
       <!-- Documentation container with proper constraints -->
       <div class="max-w-7xl mx-auto px-6 py-8 bg-white">
         <div class="flex gap-8">
