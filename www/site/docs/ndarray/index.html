@@ -1,0 +1,41 @@
+<h1>ndarray Documentation</h1>
+
+<p class="lead">
+  This is the documentation section for ndarray, the foundation array library of the Raven ecosystem.
+</p>
+
+<h2>Getting Started</h2>
+<p>
+  ndarray provides N-dimensional arrays with linear algebra operations, similar to NumPy but with OCaml's type safety.
+</p>
+
+<h3>Quick Example</h3>
+<pre><code>open Ndarray
+
+(* Create a 3x3 matrix *)
+let a = Ndarray.ones [3; 3] float32
+
+(* Matrix operations *)
+let b = Ndarray.random [3; 3] float32
+let c = Ndarray.matmul a b</code></pre>
+
+<h2>Core Concepts</h2>
+<ul>
+  <li><strong>Array Creation</strong> - Various methods to create arrays</li>
+  <li><strong>Indexing & Slicing</strong> - Access and modify array elements</li>
+  <li><strong>Broadcasting</strong> - Operations between arrays of different shapes</li>
+  <li><strong>Linear Algebra</strong> - Matrix operations and decompositions</li>
+</ul>
+
+<h2>API Reference</h2>
+<p>
+  For complete API documentation, see the <a href="/ndarray/" class="text-blue-600">ndarray library page</a>.
+</p>
+
+<div class="bg-blue-50 border-l-4 border-blue-400 p-4 mt-8">
+  <p class="text-blue-800">
+    <strong>Note:</strong> This is the documentation section. Visit the
+    <a href="/ndarray/" class="text-blue-600 underline">ndarray library homepage</a>
+    for installation, examples, and getting started guides.
+  </p>
+</div>

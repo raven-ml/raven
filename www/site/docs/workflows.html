@@ -1,0 +1,205 @@
+<!-- Header -->
+<div class="mb-8">
+  <h1 class="text-3xl font-bold text-gray-900 mb-4">Common Workflows</h1>
+  <p class="text-lg text-gray-600">
+    End-to-end examples showing how Raven libraries work together.
+  </p>
+</div>
+
+<!-- Workflow Overview -->
+<section class="mb-12">
+  <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+
+    <div class="bg-white p-6 rounded-lg shadow text-center">
+      <div class="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+          </path>
+        </svg>
+      </div>
+      <h3 class="font-semibold">Data Analysis</h3>
+      <p class="text-sm text-gray-600">Load, analyze, visualize</p>
+    </div>
+
+    <div class="bg-white p-6 rounded-lg shadow text-center">
+      <div class="bg-orange-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+        <svg class="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z">
+          </path>
+        </svg>
+      </div>
+      <h3 class="font-semibold">Machine Learning</h3>
+      <p class="text-sm text-gray-600">Train and evaluate models</p>
+    </div>
+
+    <div class="bg-white p-6 rounded-lg shadow text-center">
+      <div class="bg-purple-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+        <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z">
+          </path>
+        </svg>
+      </div>
+      <h3 class="font-semibold">Computer Vision</h3>
+      <p class="text-sm text-gray-600">Image processing pipelines</p>
+    </div>
+
+    <div class="bg-white p-6 rounded-lg shadow text-center">
+      <div class="bg-green-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
+          </path>
+        </svg>
+      </div>
+      <h3 class="font-semibold">Interactive</h3>
+      <p class="text-sm text-gray-600">Notebook-based exploration</p>
+    </div>
+  </div>
+</section>
+
+<!-- Workflow 1: Data Analysis -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Data Analysis Pipeline</h2>
+  <p class="text-gray-600 mb-6">Load CSV data, perform analysis, and create visualizations.</p>
+
+  <div class="bg-white rounded-lg shadow p-6">
+    <div class="flex flex-wrap gap-2 mb-4">
+      <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">ndarray</span>
+      <span class="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-sm">hugin</span>
+    </div>
+
+    <div class="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">
+      <pre
+        class="text-sm"><code><span class="text-gray-500">(* Complete data analysis workflow *)</span>
+<span class="text-blue-400">open</span> Ndarray
+<span class="text-blue-400">open</span> Hugin
+
+<span class="text-gray-500">(* Load and analyze data *)</span>
+<span class="text-green-400">let</span> data = Ndarray.Io.load_csv <span class="text-yellow-400">"sales_data.csv"</span>
+<span class="text-green-400">let</span> sales = Ndarray.get_column data <span class="text-yellow-400">0</span>
+<span class="text-green-400">let</span> mean_sales = Ndarray.mean sales
+
+<span class="text-gray-500">(* Create visualization *)</span>
+<span class="text-green-400">let</span> fig = Figure.create ()
+<span class="text-green-400">let</span> ax = Figure.add_subplot fig <span class="text-yellow-400">1</span> <span class="text-yellow-400">1</span> <span class="text-yellow-400">1</span>
+<span class="text-green-400">let</span> _ = Axes.plot ax months sales ~label:<span class="text-yellow-400">"Sales"</span>
+<span class="text-green-400">let</span> _ = Figure.savefig fig <span class="text-yellow-400">"analysis.png"</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- Workflow 2: Machine Learning -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Machine Learning Pipeline</h2>
+  <p class="text-gray-600 mb-6">Train a neural network with automatic differentiation.</p>
+
+  <div class="bg-white rounded-lg shadow p-6">
+    <div class="flex flex-wrap gap-2 mb-4">
+      <span class="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm">rune</span>
+      <span class="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm">kaun</span>
+    </div>
+
+    <div class="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">
+      <pre class="text-sm"><code><span class="text-gray-500">(* Neural network training *)</span>
+<span class="text-blue-400">open</span> Rune
+<span class="text-blue-400">open</span> Kaun
+
+<span class="text-gray-500">(* Define model *)</span>
+<span class="text-green-400">let</span> model = Sequential.[
+Dense.create ~units:<span class="text-yellow-400">128</span> ~activation:Relu;
+Dense.create ~units:<span class="text-yellow-400">10</span> ~activation:Softmax;
+]
+
+<span class="text-gray-500">(* Training with auto-differentiation *)</span>
+<span class="text-green-400">let</span> train_step model x y =
+<span class="text-green-400">let</span> loss_fn params = loss (Model.forward model params x) y <span class="text-blue-400">in</span>
+<span class="text-green-400">let</span> grads = grad loss_fn (Model.parameters model) <span class="text-blue-400">in</span>
+Optimizer.apply grads</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- Workflow 3: Computer Vision -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Computer Vision Pipeline</h2>
+  <p class="text-gray-600 mb-6">Process images with GPU-accelerated operations.</p>
+
+  <div class="bg-white rounded-lg shadow p-6">
+    <div class="flex flex-wrap gap-2 mb-4">
+      <span class="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-sm">sowilo</span>
+      <span class="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm">rune</span>
+    </div>
+
+    <div class="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">
+      <pre class="text-sm"><code><span class="text-gray-500">(* Differentiable image processing *)</span>
+<span class="text-blue-400">open</span> Sowilo
+<span class="text-blue-400">open</span> Rune
+
+<span class="text-gray-500">(* Define processing pipeline *)</span>
+<span class="text-green-400">let</span> enhance_image params img =
+img
+|> gaussian_blur ~sigma:params.blur
+|> edge_enhance ~strength:params.edge
+
+<span class="text-gray-500">(* Optimize pipeline parameters *)</span>
+<span class="text-green-400">let</span> train_step params batch =
+<span class="text-green-400">let</span> loss_fn p = enhancement_loss p batch <span class="text-blue-400">in</span>
+<span class="text-green-400">let</span> grads = grad loss_fn params <span class="text-blue-400">in</span>
+Adam.update params grads</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- Workflow 4: Interactive Notebook -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Interactive Notebook</h2>
+  <p class="text-gray-600 mb-6">Combine analysis, visualization, and documentation.</p>
+
+  <div class="bg-white rounded-lg shadow p-6">
+    <div class="flex flex-wrap gap-2 mb-4">
+      <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm">quill</span>
+    </div>
+
+    <div class="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">
+      <pre class="text-sm"><code><span class="text-gray-500"># Data Analysis Notebook</span>
+
+<span class="text-gray-500">```ocaml</span>
+<span class="text-blue-400">open</span> Ndarray
+<span class="text-blue-400">open</span> Hugin
+
+<span class="text-gray-500">(* Load and visualize data *)</span>
+<span class="text-green-400">let</span> data = Iris.load ()
+<span class="text-green-400">let</span> fig = Figure.create ()
+<span class="text-green-400">let</span> _ = Axes.scatter fig.ax data.x data.y ~c:data.labels
+<span class="text-green-400">let</span> _ = Figure.show fig
+<span class="text-gray-500">```</span></code></pre>
+    </div>
+
+    <div class="mt-4 text-sm text-gray-600">
+      <strong>Usage:</strong> <code>quill serve notebook.md</code>
+    </div>
+  </div>
+</section>
+
+<!-- Getting Started -->
+<section>
+  <div class="bg-gray-100 p-8 rounded-lg text-center">
+    <h2 class="text-2xl font-bold text-gray-900 mb-4">Try These Workflows</h2>
+    <p class="text-gray-600 mb-6">
+      Each workflow demonstrates libraries working together to solve real problems.
+    </p>
+    <div class="flex flex-col sm:flex-row gap-4 justify-center">
+      <a href="/ndarray/getting-started/"
+        class="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors">
+        Start with ndarray
+      </a>
+      <a href="/docs/"
+        class="border-2 border-blue-600 text-blue-600 px-6 py-3 rounded-lg font-semibold hover:bg-blue-600 hover:text-white transition-colors">
+        Documentation Overview
+      </a>
+    </div>
+  </div>
+</section>
