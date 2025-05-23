@@ -120,7 +120,7 @@ let unwrap_to_nx_native (rune_t : ('a, 'b) t) : ('a, 'b) Nx_native.t =
 let wrap_from_nx_native (native_t : ('a, 'b) Nx_native.t) : ('a, 'b) t =
   {
     dtype = Nx_native.dtype native_t;
-    buffer = Cpu_buffer (Nx_native.buffer native_t);
+    buffer = Cpu_buffer (Nx_native.data native_t);
     view = Nx_native.view native_t;
   }
 

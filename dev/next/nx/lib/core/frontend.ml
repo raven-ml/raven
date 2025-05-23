@@ -1694,292 +1694,6 @@ module Make (B : Backend_intf.S) = struct
     if b <= 0 then invalid_arg "_ceildiv: divisor b must be positive"
     else (a + b - 1) / b
 
-  (** Full port of tinygrad's Tensor._pool method. This function extracts
-      sliding local blocks (patches) from an input tensor. It is the core
-      mechanism for operations like convolution and pooling.
-
-      Args: ctx: The backend context. x_padded_input: The input tensor. It is
-      assumed that the caller has already padded this tensor according to the
-      desired convolution/pooling mode (e.g., 'Valid', 'Same', 'Full') and
-      fill_value. k_s: int array, kernel spatial shape (e.g., [|kh; kw|]). s_s:
-      int array, stride for each spatial dimension (e.g., [|sh; sw|]). d_s: int
-      array, dilation for each spatial dimension (e.g., [|dh; dw|]).
-
-      Returns: A tensor where spatial dimensions are transformed into patches.
-      The shape is (prefix_dims..., output_spatial_dims...,
-      kernel_spatial_dims...). For example, an input (N, C, IH, IW) with 2D
-      pooling might result in (N, C, OH, OW, KH, KW). *)
-  let _pool ctx x_padded_input ~k_s ~s_s ~d_s =
-    let x_ndim = ndim x_padded_input in
-    let num_spatial = Array.length k_s in
-
-    if num_spatial = 0 then
-      (* No spatial dimensions to pool over, return as is *)
-      x_padded_input
-    else if x_ndim < num_spatial then
-      invalid_arg
-        "_pool: input tensor ndim less than number of spatial kernel dimensions"
-    else if
-      not (Array.length s_s = num_spatial && Array.length d_s = num_spatial)
-    then
-      invalid_arg
-        "_pool: stride and dilation arrays must match kernel spatiality"
-    else
-      let noop_rank = x_ndim - num_spatial in
-      let prefix_shape = Array.sub (shape x_padded_input) 0 noop_rank in
-      let spatial_shape_in =
-        Array.sub (shape x_padded_input) noop_rank num_spatial
-      in
-      (* These are i_ in tinygrad *)
-
-      (* Calculate output spatial dimensions (o_) based on the (potentially
-         padded) input's spatial_shape_in *)
-      let o_s =
-        Array.init num_spatial (fun j ->
-            let eff_kernel_span = (d_s.(j) * (k_s.(j) - 1)) + 1 in
-            if spatial_shape_in.(j) < eff_kernel_span then 0
-              (* Kernel too large for this input dim *)
-            else ((spatial_shape_in.(j) - eff_kernel_span) / s_s.(j)) + 1)
-      in
-
-      (* If any output dimension is 0, it means no valid patches can be formed.
-         The result should have 0 size along that output dimension, and
-         subsequently, the total number of elements from patches will be 0. The
-         final shape will be (prefix_shape..., o_s..., k_s...). If any o_s is 0,
-         then prod(o_s) * prod(k_s) * prod(prefix_shape) is 0. We can construct
-         an empty tensor with the correct final shape. *)
-      if Array.exists (( = ) 0) o_s then
-        let final_target_shape = Array.concat [ prefix_shape; o_s; k_s ] in
-        empty ctx (dtype x_padded_input) final_target_shape
-      else
-        (* Condition for complex path (from tinygrad) *)
-        let is_complex_path =
-          array_existsi
-            (fun j k_j ->
-              k_j > s_s.(j) && s_s.(j) > 0
-              (* Avoid div by zero if stride is 0 which is invalid anyway*))
-            k_s
-          || Array.exists (( <> ) 1) d_s
-        in
-
-        let result_tensor =
-          if not is_complex_path then (
-            (* Simple Path *)
-            (* This path is taken when kernel_size <= stride for all spatial dims, and dilation = 1 for all. *)
-
-            (* Stage 1: Pad x_padded_input further to align for striding. Target
-               size for spatial dim j becomes o_s.(j) * s_s.(j). *)
-            let pad1_config_spatial =
-              Array.init num_spatial (fun spatial_idx ->
-                  let pad_after =
-                    Stdlib.max 0
-                      ((o_s.(spatial_idx) * s_s.(spatial_idx))
-                      - spatial_shape_in.(spatial_idx))
-                  in
-                  (0, pad_after))
-            in
-            let pad1_config_full =
-              Array.concat [ Array.make noop_rank (0, 0); pad1_config_spatial ]
-            in
-            let x =
-              pad ctx x_padded_input pad1_config_full
-                (Dtype.zero (dtype x_padded_input))
-            in
-
-            (* Stage 2: Shrink to the total span that will be covered by
-               strides. *)
-            let shrink1_config_spatial =
-              Array.init num_spatial (fun spatial_idx ->
-                  (0, o_s.(spatial_idx) * s_s.(spatial_idx)))
-            in
-            let shrink1_config_full =
-              Array.init (ndim x) (fun dim_idx ->
-                  if dim_idx < noop_rank then (0, (shape x).(dim_idx))
-                  else shrink1_config_spatial.(dim_idx - noop_rank))
-            in
-            let x = shrink ctx x shrink1_config_full in
-
-            (* Stage 3: Reshape to separate output patch locations (o_s) and
-               stride steps (s_s). *)
-            let reshape1_shape_spatial_parts =
-              List.flatten
-                (Array.to_list
-                   (Array.init num_spatial (fun j -> [ o_s.(j); s_s.(j) ])))
-            in
-            let reshape1_shape_full =
-              Array.concat
-                [ prefix_shape; Array.of_list reshape1_shape_spatial_parts ]
-            in
-            let x = reshape ctx x reshape1_shape_full in
-
-            (* Stage 4: Shrink to take only kernel_size elements from each
-               stride step. *)
-            let shrink2_config_full = Array.copy (shape x) in
-            (* Will be (prefix..., o_j, s_j, ...) *)
-            for j = 0 to num_spatial - 1 do
-              let stride_step_dim_idx = noop_rank + (j * 2) + 1 in
-              (* Index of s_j dimension *)
-              shrink2_config_full.(stride_step_dim_idx) <- k_s.(j)
-              (* Shrink s_j to k_j *)
-            done;
-            let shrink2_config_pairs =
-              Array.map (fun s -> (0, s)) shrink2_config_full
-            in
-            let x = shrink ctx x shrink2_config_pairs in
-
-            (* Stage 5: Permute to (prefix_dims..., o1, o2, ..., k1, k2, ...) *)
-            let perm_axes_list_prefix = List.init noop_rank Fun.id in
-            let perm_axes_list_o =
-              List.init num_spatial (fun j -> noop_rank + (j * 2))
-            in
-            let perm_axes_list_k =
-              List.init num_spatial (fun j -> noop_rank + (j * 2) + 1)
-            in
-            let final_perm_axes =
-              Array.of_list
-                (List.concat
-                   [ perm_axes_list_prefix; perm_axes_list_o; perm_axes_list_k ])
-            in
-            B.op_permute ctx x final_perm_axes)
-          else
-            (* Complex Path *)
-            (* 1. f_s calculation (factor for repeat) *)
-            let f_s =
-              Array.init num_spatial (fun j ->
-                  let oj, sj, ij, dj, kj =
-                    (o_s.(j), s_s.(j), spatial_shape_in.(j), d_s.(j), k_s.(j))
-                  in
-                  let eff_kernel_span = (dj * (kj - 1)) + 1 in
-                  if oj * sj > ij - eff_kernel_span + 1 then 2
-                  else 1 (* Tinygrad: i - d*(k-1) *))
-            in
-
-            (* 2. Repeat input tensor (using `tile` function) *)
-            let repeat_factors_spatial =
-              Array.init num_spatial (fun j ->
-                  let kj, ij, fj, dj =
-                    (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
-                  in
-                  (* This (ij * fj + dj) term is directly from tinygrad. Its
-                     exact role in achieving im2col is specific to tinygrad's
-                     sequence of ops. It seems to ensure enough data is
-                     available after repeat for subsequent shrink/reshape to
-                     pick dilated elements. If dj is dilation, it's not a simple
-                     size addition. If it's a small const for indexing, then its
-                     value (often 1 in tinygrad examples if d=1) makes sense.
-                     Assuming dj here is the dilation factor for now as per
-                     tinygrad var names. *)
-                  ceildiv (kj * ((ij * fj) + dj)) ij)
-            in
-            let repeat_factors_full =
-              Array.concat [ Array.make noop_rank 1; repeat_factors_spatial ]
-            in
-            let x_repeated = tile ctx repeat_factors_full x_padded_input in
-
-            (* 3. Handle dilation: Shrink and Reshape *)
-            (* Target size for the dimension after repeat that will be reshaped for dilation handling *)
-            let shrink_arg1_spatial_limits =
-              Array.init num_spatial (fun j ->
-                  let kj, ij, fj, dj =
-                    (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
-                  in
-                  kj * ((ij * fj) + dj))
-            in
-            let shrink_arg1_full_pairs =
-              Array.init (ndim x_repeated) (fun dim_idx ->
-                  if dim_idx < noop_rank then (0, prefix_shape.(dim_idx))
-                  else (0, shrink_arg1_spatial_limits.(dim_idx - noop_rank)))
-            in
-            let x_shrunk1 = shrink ctx x_repeated shrink_arg1_full_pairs in
-
-            let reshape_arg1_spatial_parts_list =
-              List.flatten
-                (Array.to_list
-                   (Array.init num_spatial (fun j ->
-                        let kj, ij, fj, dj =
-                          (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
-                        in
-                        [ kj; (ij * fj) + dj ]
-                        (* This is the (k, inner_dim) part *))))
-            in
-            let reshape_arg1_full =
-              Array.concat
-                [ prefix_shape; Array.of_list reshape_arg1_spatial_parts_list ]
-            in
-            let x_reshaped1 = reshape ctx x_shrunk1 reshape_arg1_full in
-
-            (* Shape: (prefix..., k_spatial0, inner_dim0, k_spatial1, inner_dim1, ...) *)
-            (* where inner_dim_j = spatial_shape_in.(j) * f_s.(j) + d_s.(j) *)
-
-            (* 4. Handle stride: Shrink and Reshape on inner_dims *)
-            let current_shape_x_reshaped1 = shape x_reshaped1 in
-            let shrink_arg2_config_pairs =
-              Array.mapi (fun i s_dim -> (0, s_dim)) current_shape_x_reshaped1
-            in
-            let reshape_arg2_spatial_parts_list = ref [] in
-            for j = 0 to num_spatial - 1 do
-              let kj, oj, sj = (k_s.(j), o_s.(j), s_s.(j)) in
-              let inner_dim_idx = noop_rank + (j * 2) + 1 in
-              (* Index of inner_dim_j *)
-              shrink_arg2_config_pairs.(inner_dim_idx) <- (0, oj * sj);
-              reshape_arg2_spatial_parts_list :=
-                List.append !reshape_arg2_spatial_parts_list [ kj; oj; sj ]
-            done;
-            let x_shrunk2 = shrink ctx x_reshaped1 shrink_arg2_config_pairs in
-
-            let reshape_arg2_full =
-              Array.concat
-                [ prefix_shape; Array.of_list !reshape_arg2_spatial_parts_list ]
-            in
-            let x_reshaped2 = reshape ctx x_shrunk2 reshape_arg2_full in
-            (* Shape: (prefix..., k_spatial0, o_spatial0, s_spatial0,
-               k_spatial1, o_spatial1, s_spatial1, ...) *)
-
-            (* 5. Final shrink to select one element per stride step
-               (effectively making stride=1 for this new dimension) *)
-            let current_shape_x_reshaped2 = shape x_reshaped2 in
-            let shrink_arg3_config_pairs =
-              Array.mapi (fun i s_dim -> (0, s_dim)) current_shape_x_reshaped2
-            in
-            let reshape_arg3_spatial_parts_list = ref [] in
-            for j = 0 to num_spatial - 1 do
-              let kj, oj = (k_s.(j), o_s.(j)) in
-              let stride_dim_idx = noop_rank + (j * 3) + 2 in
-              (* Index of s_spatial_j *)
-              shrink_arg3_config_pairs.(stride_dim_idx) <- (0, 1);
-              (* Select the first element of the stride group *)
-              reshape_arg3_spatial_parts_list :=
-                List.append !reshape_arg3_spatial_parts_list [ kj; oj ]
-            done;
-            let x_shrunk3 = shrink ctx x_reshaped2 shrink_arg3_config_pairs in
-
-            let reshape_arg3_full =
-              Array.concat
-                [ prefix_shape; Array.of_list !reshape_arg3_spatial_parts_list ]
-            in
-            let x_reshaped3 = reshape ctx x_shrunk3 reshape_arg3_full in
-            (* Shape: (prefix..., k_spatial0, o_spatial0, k_spatial1,
-               o_spatial1, ...) *)
-
-            (* 6. Permute to (prefix..., o_spatial..., k_spatial...) *)
-            let perm_axes_list_prefix = List.init noop_rank Fun.id in
-            let perm_axes_list_o =
-              List.init num_spatial (fun j -> noop_rank + (j * 2) + 1)
-            in
-            (* o_j is at +1 index within each (k_j, o_j) pair *)
-            let perm_axes_list_k =
-              List.init num_spatial (fun j -> noop_rank + (j * 2))
-            in
-            (* k_j is at +0 index within each (k_j, o_j) pair *)
-            let final_perm_axes =
-              Array.of_list
-                (List.concat
-                   [ perm_axes_list_prefix; perm_axes_list_o; perm_axes_list_k ])
-            in
-            B.op_permute ctx x_reshaped3 final_perm_axes
-        in
-        result_tensor
-
   (** Calculate padding amounts for spatial dimensions based on convolution
       mode. This helper is used by callers of `_pool` (like `correlate2d`).
 
@@ -1992,7 +1706,7 @@ module Make (B : Backend_intf.S) = struct
       Returns: An array of (pad_before, pad_after) tuples, one for each spatial
       dimension. *)
   let calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
-      ~(mode : [ `Full | `Valid | `Same ]) =
+      ~(mode : [< `Full | `Valid | `Same ]) =
     let num_spatial = Array.length input_spatial_shape in
     if
       not
@@ -2031,6 +1745,252 @@ module Make (B : Backend_intf.S) = struct
             let pad_before = total_pad_d / 2 in
             let pad_after = total_pad_d - pad_before in
             (pad_before, pad_after))
+
+  (** Helper to resolve padding specification for pooling/convolution
+      operations. Input `padding_spec` is user-facing. Output `(int*int) array`
+      is for `B.op_pad`, (pad_before, pad_after) for each spatial dimension. *)
+  let resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
+      ~input_spatial_shape ~k_s ~s_s ~d_s =
+    match padding_spec with
+    | `Same | `Valid | `Full ->
+        calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
+          ~mode:padding_spec
+
+  (** Helper to adjust padding for ceil_mode=true. Analogous to tinygrad's
+      _apply_ceil_mode. Input `current_pads_pairs` is (pad_before, pad_after)
+      for each spatial dim. Output is new (pad_before, pad_after) array for each
+      spatial dim. *)
+  let apply_ceil_mode ~current_pads_pairs ~input_spatial_shape ~k_s ~s_s ~d_s =
+    let num_spatial_dims = Array.length k_s in
+    let pads_adj = Array.copy current_pads_pairs in
+    let o_s =
+      Array.init num_spatial_dims (fun i ->
+          let i_d = input_spatial_shape.(i) in
+          let d_d = d_s.(i) in
+          let k_d = k_s.(i) in
+          let s_d = s_s.(i) in
+          let p_b, p_a = current_pads_pairs.(i) in
+          ceildiv (i_d + p_b + p_a - ((d_d * (k_d - 1)) + 1)) s_d + 1)
+    in
+    for i = 0 to num_spatial_dims - 1 do
+      let o_d, i_d, s_d, k_d, d_d =
+        (o_s.(i), input_spatial_shape.(i), s_s.(i), k_s.(i), d_s.(i))
+      in
+      let p_b, p_a = current_pads_pairs.(i) in
+      let pad_needed_for_last_window_start =
+        (s_d * (o_d - 1)) + ((d_d * (k_d - 1)) + 1) - (i_d + p_b + p_a)
+      in
+      let effective_pad_before_input_start =
+        Stdlib.max 0 ((s_d * (o_d - 1)) - (p_b + i_d - 1))
+      in
+      (* Adjust pad_after (pads_adj.(i) |> snd) *)
+      pads_adj.(i) <-
+        ( fst pads_adj.(i),
+          snd pads_adj.(i)
+          + pad_needed_for_last_window_start - effective_pad_before_input_start
+        )
+    done;
+    pads_adj
+
+  (** Internal N-Dimensional pooling core. Analogous to tinygrad's
+      `Tensor._pool`. x_padded_input: Assumed to be ALREADY padded by the
+      caller. *)
+  let pool ctx x_padded_input ~k_s ~s_s ~d_s =
+    let x_ndim = ndim x_padded_input in
+    let num_spatial = Array.length k_s in
+
+    if num_spatial = 0 then x_padded_input
+    else if x_ndim < num_spatial then
+      invalid_arg
+        "pool: input tensor ndim less than number of spatial kernel dimensions"
+    else if
+      not (Array.length s_s = num_spatial && Array.length d_s = num_spatial)
+    then
+      invalid_arg
+        "pool: stride and dilation arrays must match kernel spatiality"
+    else
+      let noop_rank = x_ndim - num_spatial in
+      let prefix_shape = Array.sub (shape x_padded_input) 0 noop_rank in
+      let spatial_shape_in =
+        Array.sub (shape x_padded_input) noop_rank num_spatial
+      in
+
+      let o_s =
+        Array.init num_spatial (fun j ->
+            let eff_kernel_span = (d_s.(j) * (k_s.(j) - 1)) + 1 in
+            if spatial_shape_in.(j) < eff_kernel_span then 0
+            else ((spatial_shape_in.(j) - eff_kernel_span) / s_s.(j)) + 1)
+      in
+
+      if Array.exists (( = ) 0) o_s then
+        let final_target_shape = Array.concat [ prefix_shape; o_s; k_s ] in
+        empty ctx (dtype x_padded_input) final_target_shape
+      else
+        let is_complex_path =
+          array_existsi (fun j k_j -> k_j > s_s.(j) && s_s.(j) > 0) k_s
+          || Array.exists (( <> ) 1) d_s
+        in
+
+        let result_tensor =
+          if not is_complex_path then (
+            (* Simple Path *)
+            let pad1_config_spatial =
+              Array.init num_spatial (fun spatial_idx ->
+                  let pad_after =
+                    Stdlib.max 0
+                      ((o_s.(spatial_idx) * s_s.(spatial_idx))
+                      - spatial_shape_in.(spatial_idx))
+                  in
+                  (0, pad_after))
+            in
+            let pad1_config_full =
+              Array.concat [ Array.make noop_rank (0, 0); pad1_config_spatial ]
+            in
+            let x =
+              pad ctx x_padded_input pad1_config_full
+                (Dtype.zero (dtype x_padded_input))
+            in
+            let shrink1_config_spatial =
+              Array.init num_spatial (fun spatial_idx ->
+                  (0, o_s.(spatial_idx) * s_s.(spatial_idx)))
+            in
+            let shrink1_config_full =
+              Array.init (ndim x) (fun dim_idx ->
+                  if dim_idx < noop_rank then (0, (shape x).(dim_idx))
+                  else shrink1_config_spatial.(dim_idx - noop_rank))
+            in
+            let x = shrink ctx x shrink1_config_full in
+            let reshape1_shape_spatial_parts =
+              List.flatten
+                (Array.to_list
+                   (Array.init num_spatial (fun j -> [ o_s.(j); s_s.(j) ])))
+            in
+            let reshape1_shape_full =
+              Array.concat
+                [ prefix_shape; Array.of_list reshape1_shape_spatial_parts ]
+            in
+            let x = reshape ctx x reshape1_shape_full in
+            let shrink2_shape_abs = Array.copy (shape x) in
+            for j = 0 to num_spatial - 1 do
+              let stride_step_dim_idx = noop_rank + (j * 2) + 1 in
+              shrink2_shape_abs.(stride_step_dim_idx) <- k_s.(j)
+            done;
+            let shrink2_config_pairs =
+              Array.map (fun s -> (0, s)) shrink2_shape_abs
+            in
+            let x = shrink ctx x shrink2_config_pairs in
+            let perm_axes_list_prefix = List.init noop_rank Fun.id in
+            let perm_axes_list_o =
+              List.init num_spatial (fun j -> noop_rank + (j * 2))
+            in
+            let perm_axes_list_k =
+              List.init num_spatial (fun j -> noop_rank + (j * 2) + 1)
+            in
+            let final_perm_axes =
+              Array.of_list
+                (List.concat
+                   [ perm_axes_list_prefix; perm_axes_list_o; perm_axes_list_k ])
+            in
+            B.op_permute ctx x final_perm_axes)
+          else
+            (* Complex Path *)
+            let f_s =
+              Array.init num_spatial (fun j ->
+                  let oj, sj, ij, dj, kj =
+                    (o_s.(j), s_s.(j), spatial_shape_in.(j), d_s.(j), k_s.(j))
+                  in
+                  let eff_kernel_span = (dj * (kj - 1)) + 1 in
+                  if oj * sj > ij - eff_kernel_span + 1 then 2 else 1)
+            in
+            let repeat_factors_spatial =
+              Array.init num_spatial (fun j ->
+                  let kj, ij, fj, dj =
+                    (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
+                  in
+                  ceildiv (kj * ((ij * fj) + dj)) ij)
+            in
+            let repeat_factors_full =
+              Array.concat [ Array.make noop_rank 1; repeat_factors_spatial ]
+            in
+            let x_repeated = tile ctx repeat_factors_full x_padded_input in
+            let shrink_arg1_spatial_limits =
+              Array.init num_spatial (fun j ->
+                  let kj, ij, fj, dj =
+                    (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
+                  in
+                  kj * ((ij * fj) + dj))
+            in
+            let shrink_arg1_full_pairs =
+              Array.init (ndim x_repeated) (fun dim_idx ->
+                  if dim_idx < noop_rank then (0, prefix_shape.(dim_idx))
+                  else (0, shrink_arg1_spatial_limits.(dim_idx - noop_rank)))
+            in
+            let x_shrunk1 = shrink ctx x_repeated shrink_arg1_full_pairs in
+            let reshape_arg1_spatial_parts_list =
+              List.flatten
+                (Array.to_list
+                   (Array.init num_spatial (fun j ->
+                        let kj, ij, fj, dj =
+                          (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
+                        in
+                        [ kj; (ij * fj) + dj ])))
+            in
+            let reshape_arg1_full =
+              Array.concat
+                [ prefix_shape; Array.of_list reshape_arg1_spatial_parts_list ]
+            in
+            let x_reshaped1 = reshape ctx x_shrunk1 reshape_arg1_full in
+            let current_shape_x_reshaped1 = shape x_reshaped1 in
+            let shrink_arg2_config_pairs =
+              Array.mapi (fun i s_dim -> (0, s_dim)) current_shape_x_reshaped1
+            in
+            let reshape_arg2_spatial_parts_list = ref [] in
+            for j = 0 to num_spatial - 1 do
+              let kj, oj, sj = (k_s.(j), o_s.(j), s_s.(j)) in
+              let inner_dim_idx = noop_rank + (j * 2) + 1 in
+              shrink_arg2_config_pairs.(inner_dim_idx) <- (0, oj * sj);
+              reshape_arg2_spatial_parts_list :=
+                List.append !reshape_arg2_spatial_parts_list [ kj; oj; sj ]
+            done;
+            let x_shrunk2 = shrink ctx x_reshaped1 shrink_arg2_config_pairs in
+            let reshape_arg2_full =
+              Array.concat
+                [ prefix_shape; Array.of_list !reshape_arg2_spatial_parts_list ]
+            in
+            let x_reshaped2 = reshape ctx x_shrunk2 reshape_arg2_full in
+            let current_shape_x_reshaped2 = shape x_reshaped2 in
+            let shrink_arg3_config_pairs =
+              Array.mapi (fun i s_dim -> (0, s_dim)) current_shape_x_reshaped2
+            in
+            let reshape_arg3_spatial_parts_list = ref [] in
+            for j = 0 to num_spatial - 1 do
+              let kj, oj = (k_s.(j), o_s.(j)) in
+              let stride_dim_idx = noop_rank + (j * 3) + 2 in
+              shrink_arg3_config_pairs.(stride_dim_idx) <- (0, 1);
+              reshape_arg3_spatial_parts_list :=
+                List.append !reshape_arg3_spatial_parts_list [ kj; oj ]
+            done;
+            let x_shrunk3 = shrink ctx x_reshaped2 shrink_arg3_config_pairs in
+            let reshape_arg3_full =
+              Array.concat
+                [ prefix_shape; Array.of_list !reshape_arg3_spatial_parts_list ]
+            in
+            let x_reshaped3 = reshape ctx x_shrunk3 reshape_arg3_full in
+            let perm_axes_list_prefix = List.init noop_rank Fun.id in
+            let perm_axes_list_o =
+              List.init num_spatial (fun j -> noop_rank + (j * 2) + 1)
+            in
+            let perm_axes_list_k =
+              List.init num_spatial (fun j -> noop_rank + (j * 2))
+            in
+            let final_perm_axes =
+              Array.of_list
+                (List.concat
+                   [ perm_axes_list_prefix; perm_axes_list_o; perm_axes_list_k ])
+            in
+            B.op_permute ctx x_reshaped3 final_perm_axes
+        in
+        result_tensor
 
   (** CorrelateND (cross-correlation) - Generic N-Dimensional version. x: input
       tensor (bs, cin_total, spatial_dims...) w: weight tensor (cout,
@@ -2105,7 +2065,7 @@ module Make (B : Backend_intf.S) = struct
     let x_padded = B.op_pad ctx x op_pad_config_arr actual_fillvalue in
 
     let pooled_x =
-      _pool ctx x_padded ~k_s:kernel_spatial_shape_arr ~s_s:stride_s_arr
+      pool ctx x_padded ~k_s:kernel_spatial_shape_arr ~s_s:stride_s_arr
         ~d_s:dilation_s_arr
     in
     (* Expected pooled_x shape: (bs, cin_total, output_spatial_dims...,
@@ -2267,6 +2227,327 @@ module Make (B : Backend_intf.S) = struct
       ?padding_mode
       [| fst dilation; snd dilation |]
       ?fillvalue ?bias 2 x w
+
+  (** Internal N-Dimensional average pooling. *)
+  let avg_pool_nd ctx x_orig ~kernel_size ~stride ~dilation ~padding_spec
+      ~ceil_mode ~count_include_pad ~num_spatial_dims =
+    let x_ndim = ndim x_orig in
+    let input_spatial_shape =
+      Array.sub (shape x_orig) (x_ndim - num_spatial_dims) num_spatial_dims
+    in
+    let default_stride = kernel_size in
+    let s_s = Option.value stride ~default:default_stride in
+    let d_s = Option.value dilation ~default:(Array.make num_spatial_dims 1) in
+
+    let reg_pads_pairs =
+      resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
+        ~input_spatial_shape ~k_s:kernel_size ~s_s ~d_s
+    in
+    let current_pads_pairs =
+      if ceil_mode then
+        apply_ceil_mode ~current_pads_pairs:reg_pads_pairs ~input_spatial_shape
+          ~k_s:kernel_size ~s_s ~d_s
+      else reg_pads_pairs
+    in
+    let full_pad_config =
+      Array.concat
+        [ Array.make (x_ndim - num_spatial_dims) (0, 0); current_pads_pairs ]
+    in
+    let reduction_axes =
+      Array.init num_spatial_dims (fun i -> x_ndim - num_spatial_dims + i)
+    in
+
+    if not count_include_pad then
+      let x_padded =
+        pad ctx x_orig full_pad_config (Dtype.zero (dtype x_orig))
+      in
+      let pooled_x = pool ctx x_padded ~k_s:kernel_size ~s_s ~d_s in
+      let sum_pooled_x =
+        B.op_reduce_sum ctx pooled_x ~axes:reduction_axes ~keepdims:false
+      in
+
+      let ones = ones_like ctx x_orig in
+      let ones_padded =
+        pad ctx ones full_pad_config (Dtype.zero (dtype ones))
+      in
+      let pooled_ones = pool ctx ones_padded ~k_s:kernel_size ~s_s ~d_s in
+      let sum_pooled_ones =
+        B.op_reduce_sum ctx pooled_ones ~axes:reduction_axes ~keepdims:false
+      in
+
+      B.op_fdiv ctx sum_pooled_x sum_pooled_ones
+    else if not ceil_mode then
+      let x_padded =
+        pad ctx x_orig full_pad_config (Dtype.zero (dtype x_orig))
+      in
+      let pooled = pool ctx x_padded ~k_s:kernel_size ~s_s ~d_s in
+      mean ctx pooled ~axes:reduction_axes ~keepdims:false
+    else (* ceil_mode=true, count_include_pad=true *)
+      let x_padded_ceil =
+        pad ctx x_orig full_pad_config (Dtype.zero (dtype x_orig))
+      in
+      let pooled_x_ceil = pool ctx x_padded_ceil ~k_s:kernel_size ~s_s ~d_s in
+      let sum_pooled_x_ceil =
+        B.op_reduce_sum ctx pooled_x_ceil ~axes:reduction_axes ~keepdims:false
+      in
+
+      let ones_padded_reg =
+        let full_reg_pad_config =
+          Array.concat
+            [ Array.make (x_ndim - num_spatial_dims) (0, 0); reg_pads_pairs ]
+        in
+        pad ctx (ones_like ctx x_orig) full_reg_pad_config
+          (Dtype.zero (dtype x_orig))
+      in
+      let divisor_pads_pairs =
+        Array.map2
+          (fun (cb, ca) (rb, ra) -> (cb - rb, ca - ra))
+          current_pads_pairs reg_pads_pairs
+      in
+      let full_divisor_pad_config =
+        Array.concat
+          [ Array.make (x_ndim - num_spatial_dims) (0, 0); divisor_pads_pairs ]
+      in
+
+      let pooled_ones_for_divisor =
+        pool ctx
+          (pad ctx ones_padded_reg full_divisor_pad_config
+             (Dtype.zero (dtype x_orig)))
+          ~k_s:kernel_size ~s_s ~d_s
+      in
+      let sum_pooled_ones_for_divisor =
+        B.op_reduce_sum ctx pooled_ones_for_divisor ~axes:reduction_axes
+          ~keepdims:false
+      in
+      B.op_fdiv ctx sum_pooled_x_ceil sum_pooled_ones_for_divisor
+
+  let avg_pool1d ctx x ~kernel_size ?stride ?dilation ?(padding_spec = `Valid)
+      ?(ceil_mode = false) ?(count_include_pad = true) () =
+    avg_pool_nd ctx x ~kernel_size:[| kernel_size |]
+      ?stride:(Option.map (fun s -> [| s |]) stride)
+      ?dilation:(Option.map (fun d -> [| d |]) dilation)
+      ~padding_spec ~ceil_mode ~count_include_pad ~num_spatial_dims:1
+
+  let avg_pool2d ctx x ~kernel_size ?stride ?dilation ?(padding_spec = `Valid)
+      ?(ceil_mode = false) ?(count_include_pad = true) () =
+    let ks_arr = [| fst kernel_size; snd kernel_size |] in
+    let s_arr_opt = Option.map (fun s -> [| fst s; snd s |]) stride in
+    let d_arr_opt = Option.map (fun d -> [| fst d; snd d |]) dilation in
+    avg_pool_nd ctx x ~kernel_size:ks_arr ?stride:s_arr_opt ?dilation:d_arr_opt
+      ~padding_spec ~ceil_mode ~count_include_pad ~num_spatial_dims:2
+
+  (** Internal N-Dimensional max pooling. *)
+  let max_pool_nd ctx x_orig ~kernel_size ~stride ~dilation ~padding_spec
+      ~ceil_mode ~return_indices ~num_spatial_dims =
+    let x_ndim = ndim x_orig in
+    let input_spatial_shape =
+      Array.sub (shape x_orig) (x_ndim - num_spatial_dims) num_spatial_dims
+    in
+    let default_stride = kernel_size in
+    let s_s = Option.value stride ~default:default_stride in
+    let d_s = Option.value dilation ~default:(Array.make num_spatial_dims 1) in
+
+    let pads_pairs =
+      resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
+        ~input_spatial_shape ~k_s:kernel_size ~s_s ~d_s
+    in
+    let current_pads_pairs =
+      if ceil_mode then
+        apply_ceil_mode ~current_pads_pairs:pads_pairs ~input_spatial_shape
+          ~k_s:kernel_size ~s_s ~d_s
+      else pads_pairs
+    in
+    let full_pad_config =
+      Array.concat
+        [ Array.make (x_ndim - num_spatial_dims) (0, 0); current_pads_pairs ]
+    in
+    let reduction_axes =
+      Array.init num_spatial_dims (fun i -> x_ndim - num_spatial_dims + i)
+    in
+
+    let fill_value = Dtype.min_val (dtype x_orig) in
+    let x_padded = pad ctx x_orig full_pad_config fill_value in
+    let pooled = pool ctx x_padded ~k_s:kernel_size ~s_s ~d_s in
+    let max_values =
+      B.op_reduce_max ctx pooled ~axes:reduction_axes ~keepdims:false
+    in
+
+    if not return_indices then (max_values, None)
+    else
+      let input_spatial_shape_arr =
+        Array.sub (shape x_orig) (x_ndim - num_spatial_dims) num_spatial_dims
+      in
+      let prod_spatial_size = View.prod input_spatial_shape_arr in
+
+      (* Create indices tensor matching original spatial shape *)
+      let indices_flat = arange ctx Dtype.int32 0 prod_spatial_size 1 in
+      let indices_spatial = reshape ctx indices_flat input_spatial_shape_arr in
+
+      (* Pad indices tensor *)
+      (* Indices for padding should be distinct and not confusable with valid indices.
+     Using a value outside the valid range, e.g., -1 or a very large number.
+     Since max is used later to find the "first" max index (tinygrad uses reversed arange and max),
+     for padding we should use a value that won't be picked by max.
+     Let's use Dtype.min_val for int32.
+  *)
+      let idx_fill_value = Dtype.min_val Dtype.int32 in
+      let indices_spatial_padded =
+        pad ctx indices_spatial full_pad_config idx_fill_value
+      in
+
+      (* Pool the padded indices tensor. We need to replicate non-spatial dims of x_orig for indices. *)
+      (* Target shape for indices_spatial_padded needs to be (1, ..., 1, spatial_dims_padded) to broadcast with x_padded.
+     This is complex. Easier: pool handles prefix dimensions.
+     So, create `idx_template` with shape like `x_orig` but spatial dims replaced by `indices_spatial_padded`'s shape,
+     and prefix dims filled by broadcasting `indices_spatial_padded`.
+  *)
+      let shape_prefix_template =
+        Array.sub (shape x_orig) 0 (x_ndim - num_spatial_dims)
+      in
+      let idx_broadcast_shape_for_pool =
+        Array.concat [ shape_prefix_template; shape indices_spatial_padded ]
+      in
+      let indices_broadcast_for_pool =
+        broadcast_to ctx indices_spatial_padded idx_broadcast_shape_for_pool
+      in
+
+      let pooled_indices =
+        pool ctx indices_broadcast_for_pool ~k_s:kernel_size ~s_s ~d_s
+      in
+
+      (* Create mask for max values *)
+      let max_values_kept_dims =
+        B.op_reduce_max ctx pooled ~axes:reduction_axes ~keepdims:true
+      in
+      let is_max_mask = equal ctx pooled max_values_kept_dims in
+
+      (* Apply mask to pooled_indices. Where not max, put a value that won't be
+         chosen by max. *)
+      let masked_pooled_indices =
+        where ctx is_max_mask pooled_indices
+          (full_like ctx pooled_indices idx_fill_value)
+      in
+
+      (* Find the max of these masked indices. This corresponds to the first
+         occurrence due to arange. *)
+      let final_indices =
+        B.op_reduce_max ctx masked_pooled_indices ~axes:reduction_axes
+          ~keepdims:false
+      in
+      (max_values, Some final_indices)
+
+  let max_pool1d ctx x ~kernel_size ?stride ?dilation ?(padding_spec = `Valid)
+      ?(ceil_mode = false) ?(return_indices = false) () =
+    max_pool_nd ctx x ~kernel_size:[| kernel_size |]
+      ?stride:(Option.map (fun s -> [| s |]) stride)
+      ?dilation:(Option.map (fun d -> [| d |]) dilation)
+      ~padding_spec ~ceil_mode ~return_indices ~num_spatial_dims:1
+
+  let max_pool2d ctx x ~kernel_size ?stride ?dilation ?(padding_spec = `Valid)
+      ?(ceil_mode = false) ?(return_indices = false) () =
+    let ks_arr = [| fst kernel_size; snd kernel_size |] in
+    let s_arr_opt = Option.map (fun s -> [| fst s; snd s |]) stride in
+    let d_arr_opt = Option.map (fun d -> [| fst d; snd d |]) dilation in
+    max_pool_nd ctx x ~kernel_size:ks_arr ?stride:s_arr_opt ?dilation:d_arr_opt
+      ~padding_spec ~ceil_mode ~return_indices ~num_spatial_dims:2
+
+  (** Helper for N-dim one-hot encoding. Creates a new last dimension for
+      classes. *)
+  let _one_hot_nd ctx index_tensor ~num_classes =
+    let index_dt = dtype index_tensor in
+    if not (Dtype.is_int index_dt || Dtype.is_uint index_dt) then
+      invalid_arg "_one_hot_nd: index_tensor must be an integer type";
+
+    let index_expanded = unsqueeze ctx index_tensor ~axis:(ndim index_tensor) in
+    (* Add new last dim *)
+
+    let arange_t = arange ctx index_dt 0 num_classes 1 in
+    (* Classes 0 to num_classes-1 *)
+
+    (* Reshape arange to be (1, ..., 1, num_classes) to align with new last dim
+       of index_expanded *)
+    let ndim_expanded = ndim index_expanded in
+    let shape_for_arange = Array.make ndim_expanded 1 in
+    shape_for_arange.(ndim_expanded - 1) <- num_classes;
+    let arange_b = reshape ctx arange_t shape_for_arange in
+
+    cmpeq ctx index_expanded arange_b (* Broadcasts to one-hot mask *)
+
+  (** Internal N-Dimensional max unpooling. *)
+  let max_unpool_nd ctx input_t indices_t ~kernel_size ~stride ~dilation
+      ~padding_spec ~output_size_opt ~num_spatial_dims =
+    (* Should be bs, c, pooled_spatial_dims... *)
+    let bs = dim 0 input_t in
+    let c = dim 1 input_t in
+    let pooled_spatial_shape = Array.sub (shape input_t) 2 num_spatial_dims in
+
+    let output_spatial_shape =
+      match output_size_opt with
+      | Some os_arr -> os_arr
+      | None ->
+          (* Calculate output_size based on Tinygrad logic (inverse of pooling
+             formula) *)
+          let s_s = Option.value stride ~default:kernel_size in
+          let d_s =
+            Option.value dilation ~default:(Array.make num_spatial_dims 1)
+          in
+          let pads_pairs =
+            resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
+              ~input_spatial_shape:pooled_spatial_shape
+                (* This is an approximation, needs careful thought *)
+              ~k_s:kernel_size ~s_s ~d_s
+          in
+          Array.init num_spatial_dims (fun i ->
+              let pooled_dim_size = pooled_spatial_shape.(i) in
+              let k = kernel_size.(i) in
+              let s = s_s.(i) in
+              let d = d_s.(i) in
+              let pb, pa = pads_pairs.(i) in
+              ((pooled_dim_size - 1) * s) - pb - pa + ((d * (k - 1)) + 1))
+    in
+    let prod_output_spatial_size = View.prod output_spatial_shape in
+
+    (* Reshape inputs for broadcasting:
+   indices_t: (bs, c, pooled_spatial_dims...)
+   input_t: (bs, c, pooled_spatial_dims...)
+*)
+    (* Target one_hot_mask shape: (bs, c, pooled_spatial_dims..., prod_output_spatial_size) *)
+    let one_hot_mask_for_indices =
+      _one_hot_nd ctx indices_t ~num_classes:prod_output_spatial_size
+    in
+
+    let input_expanded = unsqueeze ctx input_t ~axis:(ndim input_t) in
+    (* input_expanded shape: (bs, c, pooled_spatial_dims..., 1) *)
+
+    let multiplied = mul ctx one_hot_mask_for_indices input_expanded in
+    (* multiplied shape: (bs, c, pooled_spatial_dims...,
+       prod_output_spatial_size) *)
+
+    (* Sum over the pooled_spatial_dims. These are axes 2 to 2 +
+       num_spatial_dims - 1 *)
+    let sum_axes = Array.init num_spatial_dims (fun i -> 2 + i) in
+    let result_flat_spatial =
+      sum ctx multiplied ~axes:sum_axes ~keepdims:false
+    in
+    (* result_flat_spatial shape: (bs, c, prod_output_spatial_size) *)
+
+    let final_shape = Array.concat [ [| bs; c |]; output_spatial_shape ] in
+    reshape ctx result_flat_spatial final_shape
+
+  let max_unpool1d ctx input_t indices_t ~kernel_size ?stride ?dilation
+      ?(padding_spec = `Valid) ?output_size_opt () =
+    max_unpool_nd ctx input_t indices_t ~kernel_size:[| kernel_size |]
+      ?stride:(Option.map (fun s -> [| s |]) stride)
+      ?dilation:(Option.map (fun d -> [| d |]) dilation)
+      ~padding_spec ?output_size_opt ~num_spatial_dims:1
+
+  let max_unpool2d ctx input_t indices_t ~kernel_size ?stride ?dilation
+      ?(padding_spec = `Valid) ?output_size_opt () =
+    let ks_arr = [| fst kernel_size; snd kernel_size |] in
+    let s_arr_opt = Option.map (fun s -> [| fst s; snd s |]) stride in
+    let d_arr_opt = Option.map (fun d -> [| fst d; snd d |]) dilation in
+    max_unpool_nd ctx input_t indices_t ~kernel_size:ks_arr ?stride:s_arr_opt
+      ?dilation:d_arr_opt ~padding_spec ?output_size_opt ~num_spatial_dims:2
 
   (* *)
 
