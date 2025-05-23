@@ -1,0 +1,15 @@
+(version 0.5.2)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (ocaml dune dune-configurator optint)))
+
+(source
+ (fetch
+  (url
+   https://github.com/mirage/checkseum/releases/download/v0.5.2/checkseum-0.5.2.tbz)
+  (checksum
+   sha256=9e5e4fd4405cb4a8b4df00877543251833e08a6499ef42ccb8dba582df0dafc8)))

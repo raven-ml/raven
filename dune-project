@@ -19,6 +19,16 @@
 
 (version 0.1.0)
 
+(pin
+ (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
+ (package
+  (name soupault)))
+
+(package
+ (name dev)
+ (allow_empty)
+ (depends odoc odoc-driver soupault))
+
 (package
  (name nx)
  (synopsis "High-performance N-dimensional array library for OCaml")

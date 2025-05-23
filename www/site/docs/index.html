@@ -1,0 +1,148 @@
+<!-- Header -->
+<div class="mb-8">
+  <h1 class="text-3xl font-bold text-gray-900 mb-4">Raven Documentation</h1>
+  <p class="text-lg text-gray-600">
+    Complete guide to the OCaml ecosystem for machine learning and data science.
+  </p>
+</div>
+
+<!-- Quick Start Options -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Choose Your Starting Point</h2>
+  <div class="grid md:grid-cols-2 gap-6">
+
+    <div class="bg-white border border-gray-200 p-6 rounded-lg hover:shadow-md transition-shadow">
+      <div class="flex items-center mb-4">
+        <div class="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mr-4">
+          <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+          </svg>
+        </div>
+        <h3 class="text-xl font-semibold text-gray-900">Coming from Python?</h3>
+      </div>
+      <p class="text-gray-600 mb-4">
+        Migrate from NumPy, Matplotlib, JAX and other Python tools.
+      </p>
+      <a href="/docs/from-python/"
+        class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors inline-block">
+        Migration Guide →
+      </a>
+    </div>
+
+    <div class="bg-white border border-gray-200 p-6 rounded-lg hover:shadow-md transition-shadow">
+      <div class="flex items-center mb-4">
+        <div class="bg-green-100 w-12 h-12 rounded-full flex items-center justify-center mr-4">
+          <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z">
+            </path>
+          </svg>
+        </div>
+        <h3 class="text-xl font-semibold text-gray-900">See Real Examples</h3>
+      </div>
+      <p class="text-gray-600 mb-4">
+        Complete workflows showing libraries working together.
+      </p>
+      <a href="/docs/workflows/"
+        class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors inline-block">
+        View Workflows →
+      </a>
+    </div>
+
+  </div>
+</section>
+
+<!-- Core Libraries -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Core Libraries</h2>
+
+  <div class="grid md:grid-cols-2 gap-6">
+
+    <!-- Foundation -->
+    <div class="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+      <div class="flex items-center mb-3">
+        <span class="bg-blue-100 text-blue-600 px-2 py-1 rounded text-sm mr-3">Foundation</span>
+        <h3 class="text-lg font-semibold">ndarray</h3>
+      </div>
+      <p class="text-gray-600 text-sm mb-4">N-dimensional arrays with linear algebra operations</p>
+      <a href="/ndarray/" class="text-blue-600 hover:text-blue-800 text-sm font-medium">Documentation →</a>
+    </div>
+
+    <!-- Visualization -->
+    <div class="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+      <div class="flex items-center mb-3">
+        <span class="bg-purple-100 text-purple-600 px-2 py-1 rounded text-sm mr-3">Visualization</span>
+        <h3 class="text-lg font-semibold">hugin</h3>
+      </div>
+      <p class="text-gray-600 text-sm mb-4">Publication-quality 2D/3D plotting</p>
+      <a href="/hugin/" class="text-purple-600 hover:text-purple-800 text-sm font-medium">Documentation →</a>
+    </div>
+
+    <!-- ML/Compute -->
+    <div class="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+      <div class="flex items-center mb-3">
+        <span class="bg-orange-100 text-orange-600 px-2 py-1 rounded text-sm mr-3">ML/Compute</span>
+        <h3 class="text-lg font-semibold">rune</h3>
+      </div>
+      <p class="text-gray-600 text-sm mb-4">Automatic differentiation and JIT compilation</p>
+      <a href="/rune/" class="text-orange-600 hover:text-orange-800 text-sm font-medium">Documentation →</a>
+    </div>
+
+    <!-- Deep Learning -->
+    <div class="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+      <div class="flex items-center mb-3">
+        <span class="bg-red-100 text-red-600 px-2 py-1 rounded text-sm mr-3">Deep Learning</span>
+        <h3 class="text-lg font-semibold">kaun</h3>
+      </div>
+      <p class="text-gray-600 text-sm mb-4">Neural network library with high-level APIs</p>
+      <a href="/kaun/" class="text-red-600 hover:text-red-800 text-sm font-medium">Documentation →</a>
+    </div>
+
+    <!-- Computer Vision -->
+    <div class="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+      <div class="flex items-center mb-3">
+        <span class="bg-indigo-100 text-indigo-600 px-2 py-1 rounded text-sm mr-3">Computer Vision</span>
+        <h3 class="text-lg font-semibold">sowilo</h3>
+      </div>
+      <p class="text-gray-600 text-sm mb-4">Computer vision with GPU acceleration</p>
+      <a href="/sowilo/" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">Documentation →</a>
+    </div>
+
+    <!-- Interactive -->
+    <div class="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+      <div class="flex items-center mb-3">
+        <span class="bg-green-100 text-green-600 px-2 py-1 rounded text-sm mr-3">Interactive</span>
+        <h3 class="text-lg font-semibold">quill</h3>
+      </div>
+      <p class="text-gray-600 text-sm mb-4">Interactive notebook environment</p>
+      <a href="/quill/" class="text-green-600 hover:text-green-800 text-sm font-medium">Documentation →</a>
+    </div>
+
+  </div>
+</section>
+
+<!-- Additional Resources -->
+<section>
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Additional Resources</h2>
+
+  <div class="grid md:grid-cols-2 gap-6">
+
+    <div class="border border-gray-200 rounded-lg p-6">
+      <h3 class="text-lg font-semibold mb-3">Project Roadmap</h3>
+      <p class="text-gray-600 text-sm mb-4">
+        Development priorities and future plans for the Raven ecosystem.
+      </p>
+      <a href="/docs/roadmap/" class="text-gray-700 hover:text-gray-900 text-sm font-medium">View Roadmap →</a>
+    </div>
+
+    <div class="border border-gray-200 rounded-lg p-6">
+      <h3 class="text-lg font-semibold mb-3">Community</h3>
+      <p class="text-gray-600 text-sm mb-4">
+        Join our community and contribute to development.
+      </p>
+      <a href="/community/" class="text-gray-700 hover:text-gray-900 text-sm font-medium">Get Involved →</a>
+    </div>
+
+  </div>
+</section>

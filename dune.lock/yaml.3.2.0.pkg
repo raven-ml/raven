@@ -1,0 +1,19 @@
+(version 3.2.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml dune dune-configurator ctypes bos)))
+
+(source
+ (fetch
+  (url
+   https://github.com/avsm/ocaml-yaml/releases/download/v3.2.0/yaml-3.2.0.tbz)
+  (checksum
+   sha256=c50d2aca28b9f966792b71e1603351e5d24eda4dfd3e4453fbd50366a3a08227)))

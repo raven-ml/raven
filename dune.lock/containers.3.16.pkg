@@ -1,0 +1,15 @@
+(version 3.16)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (dune ocaml either dune-configurator base-unix base-threads)))
+
+(source
+ (fetch
+  (url
+   https://github.com/c-cube/ocaml-containers/releases/download/v3.16/containers-3.16.tbz)
+  (checksum
+   sha256=1e7992cb2e59c0d2290d1b6c3a31531b3f310be6170b8ef3dde17ccd876b5b79)))
