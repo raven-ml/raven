@@ -15,12 +15,6 @@
   plugin_discovery = true # Or load explicitly
   plugin_dirs = ["plugins"] # Default
 
-# Define specific templates for different pages/sections
-[templates.landing_page]
-  file = "templates/landing.html"
-  page = "index.html" # Applies only to site/index.html
-  content_selector = "main"
-
 [templates.hugin_project_config]
   file = "templates/layout_hugin.html"
   section = "hugin/"
