@@ -1013,6 +1013,56 @@ module Make (B : Backend_intf.S) = struct
     let variance = var ctx ?axes ~keepdims ~correction x_orig in
     sqrt ctx variance
 
+  (* *)
+
+  (* Check if all elements are true (non-zero) *)
+  let all ctx ?axes ?(keepdims = false) x =
+    let dt = dtype x in
+
+    (* For boolean/uint8 tensors, we check if min == 1 For other numeric types,
+       we check if min != 0 *)
+    let min_val = min ctx ?axes ~keepdims x in
+
+    if Dtype.eq dt Dtype.uint8 then
+      (* For boolean tensors, all elements are true if min is 1 *)
+      let one_val = Dtype.one Dtype.uint8 in
+      let one_tensor = full_like ctx min_val one_val in
+      cmpeq ctx min_val one_tensor
+    else
+      (* For numeric tensors, all elements are true if min is non-zero *)
+      let zero_val = Dtype.zero dt in
+      let zero_tensor = full_like ctx min_val zero_val in
+      cmpne ctx min_val zero_tensor
+
+  (* Check if any element is true (non-zero) *)
+  let any ctx ?axes ?(keepdims = false) x =
+    let dt = dtype x in
+
+    (* For any type, we check if max != 0 *)
+    let max_val = max ctx ?axes ~keepdims x in
+    let zero_val = Dtype.zero dt in
+    let zero_tensor = full_like ctx max_val zero_val in
+    cmpne ctx max_val zero_tensor
+
+  (* Check if two arrays are element-wise equal *)
+  let array_equal ctx x y =
+    (* First, check if we can broadcast the shapes *)
+    let can_broadcast =
+      try
+        let _ = View.broadcast_shapes (shape x) (shape y) in
+        true
+      with _ -> false
+    in
+
+    if not can_broadcast then
+      (* If shapes can't be broadcast, arrays are not equal Return a scalar
+         False (0) *)
+      zeros ctx Dtype.uint8 [||]
+    else
+      (* Check element-wise equality and then check if all are true *)
+      let eq_result = equal ctx x y in
+      all ctx eq_result (* Reduce over all axes to get scalar result *)
+
   (* ────────── movement ops ────────── *)
 
   let pad ctx x padding_config fill_value =
@@ -1053,6 +1103,54 @@ module Make (B : Backend_intf.S) = struct
         pre @ [ mid_prod ] @ post
     in
     reshape ctx x (Array.of_list new_shape_list)
+
+  let unflatten ctx t dim sizes =
+    let dim = resolve_single_axis t dim in
+    let current_shape = shape t in
+    let dim_size = current_shape.(dim) in
+
+    (* Handle -1 in sizes (infer dimension) *)
+    let sizes = Array.copy sizes in
+    let neg_one_count =
+      Array.fold_left (fun acc s -> if s = -1 then acc + 1 else acc) 0 sizes
+    in
+
+    if neg_one_count > 1 then
+      invalid_arg "unflatten: can only specify one unknown dimension";
+
+    if neg_one_count = 1 then (
+      let known_product =
+        Array.fold_left (fun acc s -> if s = -1 then acc else acc * s) 1 sizes
+      in
+      if known_product = 0 || dim_size mod known_product <> 0 then
+        invalid_arg
+          (Printf.sprintf
+             "unflatten: cannot infer dimension size for %d with known sizes \
+              product %d"
+             dim_size known_product);
+      let inferred_size = dim_size / known_product in
+      Array.iteri (fun i s -> if s = -1 then sizes.(i) <- inferred_size) sizes);
+
+    (* Verify that product of sizes equals original dimension *)
+    let sizes_product = Array.fold_left ( * ) 1 sizes in
+    if sizes_product <> dim_size then
+      invalid_arg
+        (Printf.sprintf
+           "unflatten: product of sizes %d does not match dimension size %d"
+           sizes_product dim_size);
+
+    (* Build new shape *)
+    let new_shape =
+      Array.concat
+        [
+          Array.sub current_shape 0 dim;
+          sizes;
+          Array.sub current_shape (dim + 1)
+            (Array.length current_shape - dim - 1);
+        ]
+    in
+
+    reshape ctx t new_shape
 
   let ravel ctx t = flatten ctx t
 
@@ -3404,6 +3502,190 @@ module Make (B : Backend_intf.S) = struct
       ?dilation:d_arr_opt ~padding_spec ?output_size_opt ~num_spatial_dims:2
 
   (* *)
+
+  let sort (type a b) ctx ?(descending = false) ?(axis = -1) (t : (a, b) t) =
+    let axis = resolve_single_axis t axis in
+    let orig_len = dim axis t in
+
+    (* Handle edge case of empty or single element *)
+    if orig_len <= 1 then
+      let idx = arange ctx Dtype.int32 0 orig_len 1 in
+      let idx_shape =
+        Array.init (ndim t) (fun i -> if i = axis then orig_len else 1)
+      in
+      let idx = reshape ctx idx idx_shape |> fun x -> expand ctx x (shape t) in
+      (t, idx)
+    else
+      (* Calculate number of stages for bitonic sort *)
+      let n_stages =
+        int_of_float (Float.ceil (Float.log2 (float_of_int orig_len)))
+      in
+      let padded_len = 1 lsl n_stages in
+
+      (* Pad to power of 2 *)
+      let fill_value =
+        if descending then Dtype.min_val (dtype t)
+        else
+          (* Use a large value for ascending sort *)
+          match dtype t with
+          | dt when Dtype.is_float dt -> Dtype.float_to_dtype dt Float.infinity
+          | Dtype.Int32 -> Int32.max_int
+          | Dtype.Int64 -> Int64.max_int
+          | dt -> Dtype.float_to_dtype dt 1e10 (* Fallback for other types *)
+      in
+
+      let pad_config =
+        Array.init (ndim t) (fun i ->
+            if i = axis then (0, padded_len - orig_len) else (0, 0))
+      in
+
+      let x = pad ctx t pad_config fill_value in
+
+      (* Unflatten into binary tree structure *)
+      let unflatten_sizes = Array.make n_stages 2 in
+      let x = unflatten ctx x axis unflatten_sizes in
+
+      (* Bitonic sort implementation *)
+      let x = ref x in
+      for stage = 1 to n_stages do
+        (* Handle crossover for all stages except the last *)
+        if stage <> n_stages then (
+          let crossover_dim = axis + n_stages - stage - 1 in
+
+          (* Split along crossover dimension *)
+          let blue_slice =
+            List.init (ndim !x) (fun i ->
+                if i = crossover_dim then I 0 else R [])
+          in
+          let green_slice =
+            List.init (ndim !x) (fun i ->
+                if i = crossover_dim then I 1 else R [])
+          in
+
+          let blue_box = slice ctx blue_slice !x in
+          let green_box = slice ctx green_slice !x in
+
+          (* Flip green box dimensions *)
+          let flip_axes =
+            Array.to_list (Array.init (ndim !x) (fun i -> i))
+            |> List.filter (fun i -> i > crossover_dim)
+            |> Array.of_list
+          in
+          let green_box_flipped = flip ctx green_box ~axes:flip_axes in
+
+          (* Reconstruct by stacking *)
+          x := stack ctx ~axis:crossover_dim [ blue_box; green_box_flipped ];
+          x := contiguous ctx !x);
+
+        (* Compare and swap substages *)
+        for substage = stage - 1 downto 0 do
+          let partner_dim = axis + n_stages - substage - 1 in
+
+          (* Split along partner dimension *)
+          let top_slice =
+            List.init (ndim !x) (fun i -> if i = partner_dim then I 0 else R [])
+          in
+          let bottom_slice =
+            List.init (ndim !x) (fun i -> if i = partner_dim then I 1 else R [])
+          in
+
+          let x_top = slice ctx top_slice !x in
+          let x_bottom = slice ctx bottom_slice !x in
+
+          (* Compare and order *)
+          let x_larger = maximum ctx x_top x_bottom in
+          let x_smaller = minimum ctx x_top x_bottom in
+
+          (* Stack based on sort order *)
+          x :=
+            if descending then
+              stack ctx ~axis:partner_dim [ x_larger; x_smaller ]
+            else stack ctx ~axis:partner_dim [ x_smaller; x_larger ];
+          x := contiguous ctx !x
+        done;
+
+        (* Undo crossover if needed *)
+        if stage <> n_stages then
+          let crossover_dim = axis + n_stages - stage - 1 in
+
+          let blue_slice =
+            List.init (ndim !x) (fun i ->
+                if i = crossover_dim then I 0 else R [])
+          in
+          let green_slice =
+            List.init (ndim !x) (fun i ->
+                if i = crossover_dim then I 1 else R [])
+          in
+
+          let blue_box = slice ctx blue_slice !x in
+          let flipped_green_box = slice ctx green_slice !x in
+
+          (* Unflip *)
+          let flip_axes =
+            Array.to_list (Array.init (ndim !x) (fun i -> i))
+            |> List.filter (fun i -> i > crossover_dim)
+            |> Array.of_list
+          in
+          let green_box = flip ctx ~axes:flip_axes flipped_green_box in
+
+          x := stack ctx ~axis:crossover_dim [ blue_box; green_box ]
+      done;
+
+      (* Flatten back to original shape *)
+      let x_sorted =
+        flatten ctx ~start_dim:axis ~end_dim:(axis + n_stages - 1) !x
+      in
+
+      (* Remove padding *)
+      let shrink_slice =
+        List.init (ndim x_sorted) (fun i ->
+            if i = axis then R [ 0; orig_len - 1 ] else R [])
+      in
+      let x_sorted = slice ctx shrink_slice x_sorted in
+
+      (* Compute indices for stable sort *)
+      (* Create index tensor *)
+      let idx = arange ctx Dtype.int32 0 orig_len 1 in
+      let idx_shape =
+        Array.init (ndim t) (fun i -> if i = axis then orig_len else 1)
+      in
+      let idx = reshape ctx idx idx_shape |> fun x -> expand ctx x (shape t) in
+
+      (* Compute counts for handling duplicates *)
+      let compute_counts tensor =
+        (* Count how many elements <= current index with same value *)
+        let t_exp_new = unsqueeze ctx tensor ~axes:[| axis + 1 |] in
+        let t_exp_orig = unsqueeze ctx tensor ~axes:[| axis |] in
+        let idx_exp_new = unsqueeze ctx idx ~axes:[| axis + 1 |] in
+        let idx_exp_orig = unsqueeze ctx idx ~axes:[| axis |] in
+
+        let le_mask = less_equal ctx idx_exp_orig idx_exp_new in
+        let eq_mask = equal ctx t_exp_orig t_exp_new in
+        let mask = logical_and ctx le_mask eq_mask in
+        sum ctx mask ~axes:[| axis + 1 |] ~keepdims:false
+      in
+
+      let count_orig = compute_counts t in
+      let count_sorted = compute_counts x_sorted in
+
+      (* Find where each original element ended up *)
+      let self_exp = unsqueeze ctx t ~axes:[| axis + 1 |] in
+      let sorted_exp = unsqueeze ctx x_sorted ~axes:[| axis |] in
+      let count_orig_exp = unsqueeze ctx count_orig ~axes:[| axis + 1 |] in
+      let count_sorted_exp = unsqueeze ctx count_sorted ~axes:[| axis |] in
+      let idx_exp = unsqueeze ctx idx ~axes:[| axis + 1 |] in
+
+      (* Match by value and count *)
+      let value_match = equal ctx self_exp sorted_exp in
+      let count_match = equal ctx count_orig_exp count_sorted_exp in
+      let matches = logical_and ctx value_match count_match in
+
+      (* Extract indices where matches occur *)
+      let matches_int = cast ctx matches Dtype.int32 in
+      let weighted_idx = mul ctx matches_int idx_exp in
+      let final_idx = sum ctx weighted_idx ~axes:[| axis |] ~keepdims:false in
+
+      (x_sorted, final_idx)
 
   let argmax ctx ?axis ?(keepdims = false) t =
     let t_ndim = ndim t in

@@ -43,6 +43,7 @@ module type S = sig
   (** Tensor containing a single scalar [value]. *)
 
   (* Element-wise Binary Ops *)
+
   (* These ops assume inputs have been broadcast to the same shape and cast to
      the same compatible dtype by the frontend. The output tensor will also have
      this common dtype. *)
