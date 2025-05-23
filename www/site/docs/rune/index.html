@@ -1,18 +1,16 @@
-<!-- rune Documentation Page -->
-<div class="prose max-w-none">
-  <h1>rune Documentation</h1>
-  
-  <p class="lead">
-    This is the documentation section for rune, the automatic differentiation and JIT compilation library.
-  </p>
+<h1>rune Documentation</h1>
 
-  <h2>Getting Started</h2>
-  <p>
-    rune provides JAX-inspired automatic differentiation and JIT compilation using OCaml 5 algebraic effects.
-  </p>
+<p class="lead">
+  This is the documentation section for rune, the automatic differentiation and JIT compilation library.
+</p>
 
-  <h3>Quick Example</h3>
-  <pre><code>open Rune
+<h2>Getting Started</h2>
+<p>
+  rune provides JAX-inspired automatic differentiation and JIT compilation using OCaml 5 algebraic effects.
+</p>
+
+<h3>Quick Example</h3>
+<pre><code>open Rune
 
 (* Define a function *)
 let f x = Tensor.(x * x + sin x)
@@ -26,45 +24,23 @@ let jit_f = jit f
 (* Compose transformations *)
 let fast_grad_f = grad (jit f)</code></pre>
 
-  <h2>Core Concepts</h2>
-  <ul>
-    <li><strong>Automatic Differentiation</strong> - Forward and reverse mode AD</li>
-    <li><strong>JIT Compilation</strong> - Just-in-time compilation for performance</li>
-    <li><strong>Effect System</strong> - OCaml 5 algebraic effects for transformations</li>
-    <li><strong>Composable Transformations</strong> - grad, jit, and other combinators</li>
-  </ul>
+<h2>Core Concepts</h2>
+<ul>
+  <li><strong>Automatic Differentiation</strong> - Forward and reverse mode AD</li>
+  <li><strong>JIT Compilation</strong> - Just-in-time compilation for performance</li>
+  <li><strong>Effect System</strong> - OCaml 5 algebraic effects for transformations</li>
+  <li><strong>Composable Transformations</strong> - grad, jit, and other combinators</li>
+</ul>
 
-  <h2>API Reference</h2>
-  <p>
-    For complete API documentation, see the <a href="/rune/" class="text-orange-600">rune library page</a>.
+<h2>API Reference</h2>
+<p>
+  For complete API documentation, see the <a href="/rune/" class="text-orange-600">rune library page</a>.
+</p>
+
+<div class="bg-orange-50 border-l-4 border-orange-400 p-4 mt-8">
+  <p class="text-orange-800">
+    <strong>Note:</strong> This is the documentation section. Visit the
+    <a href="/rune/" class="text-orange-600 underline">rune library homepage</a>
+    for installation, examples, and getting started guides.
   </p>
-
-  <div class="bg-orange-50 border-l-4 border-orange-400 p-4 mt-8">
-    <p class="text-orange-800">
-      <strong>Note:</strong> This is the documentation section. Visit the 
-      <a href="/rune/" class="text-orange-600 underline">rune library homepage</a> 
-      for installation, examples, and getting started guides.
-    </p>
-  </div>
 </div>
-
-<script>
-  // Set selected library in dropdown
-  document.querySelector('select').value = '/docs/rune/';
-  
-  // Customize sidebar for rune - replace entire content
-  const sidebar = document.querySelector('#sidebar-links');
-  sidebar.innerHTML = `
-    <h3 class="font-semibold mb-4 text-gray-900">rune Documentation</h3>
-    <ul class="space-y-1">
-      <li><a href="/docs/rune/" class="bg-orange-100 text-orange-600 block px-3 py-2 rounded-md text-sm font-medium">📚 Overview</a></li>
-      <li><a href="/docs/rune/getting-started/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🚀 Getting Started</a></li>
-      <li><a href="/docs/rune/autodiff/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">📊 Automatic Differentiation</a></li>
-      <li><a href="/docs/rune/jit/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">⚡ JIT Compilation</a></li>
-      <li><a href="/docs/rune/effects/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🎭 Effect System</a></li>
-      <li><a href="/docs/rune/transformations/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🔄 Transformations</a></li>
-      <li><a href="/docs/rune/optimization/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🎯 Optimization</a></li>
-      <li><a href="/docs/rune/api/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🔧 API Reference</a></li>
-    </ul>
-  `;
-</script>

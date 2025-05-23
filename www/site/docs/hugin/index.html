@@ -1,18 +1,16 @@
-<!-- hugin Documentation Page -->
-<div class="prose max-w-none">
-  <h1>hugin Documentation</h1>
-  
-  <p class="lead">
-    This is the documentation section for hugin, the publication-quality plotting library.
-  </p>
+<h1>hugin Documentation</h1>
 
-  <h2>Getting Started</h2>
-  <p>
-    hugin provides 2D and 3D plotting capabilities with direct integration to ndarray data structures.
-  </p>
+<p class="lead">
+  This is the documentation section for hugin, the publication-quality plotting library.
+</p>
 
-  <h3>Quick Example</h3>
-  <pre><code>open Hugin
+<h2>Getting Started</h2>
+<p>
+  hugin provides 2D and 3D plotting capabilities with direct integration to ndarray data structures.
+</p>
+
+<h3>Quick Example</h3>
+<pre><code>open Hugin
 open Ndarray
 
 (* Generate data *)
@@ -24,45 +22,23 @@ let fig = Figure.create ()
 let ax = Figure.add_subplot fig
 let _ = Axes.plot ax x y ~label:"sin(x)"</code></pre>
 
-  <h2>Core Concepts</h2>
-  <ul>
-    <li><strong>Figures & Axes</strong> - Basic plotting structure</li>
-    <li><strong>Plot Types</strong> - Line plots, scatter, bar charts, histograms</li>
-    <li><strong>Styling</strong> - Colors, themes, and customization</li>
-    <li><strong>3D Plotting</strong> - Three-dimensional visualizations</li>
-  </ul>
+<h2>Core Concepts</h2>
+<ul>
+  <li><strong>Figures & Axes</strong> - Basic plotting structure</li>
+  <li><strong>Plot Types</strong> - Line plots, scatter, bar charts, histograms</li>
+  <li><strong>Styling</strong> - Colors, themes, and customization</li>
+  <li><strong>3D Plotting</strong> - Three-dimensional visualizations</li>
+</ul>
 
-  <h2>API Reference</h2>
-  <p>
-    For complete API documentation, see the <a href="/hugin/" class="text-purple-600">hugin library page</a>.
+<h2>API Reference</h2>
+<p>
+  For complete API documentation, see the <a href="/hugin/" class="text-purple-600">hugin library page</a>.
+</p>
+
+<div class="bg-purple-50 border-l-4 border-purple-400 p-4 mt-8">
+  <p class="text-purple-800">
+    <strong>Note:</strong> This is the documentation section. Visit the
+    <a href="/hugin/" class="text-purple-600 underline">hugin library homepage</a>
+    for installation, gallery, and getting started guides.
   </p>
-
-  <div class="bg-purple-50 border-l-4 border-purple-400 p-4 mt-8">
-    <p class="text-purple-800">
-      <strong>Note:</strong> This is the documentation section. Visit the 
-      <a href="/hugin/" class="text-purple-600 underline">hugin library homepage</a> 
-      for installation, gallery, and getting started guides.
-    </p>
-  </div>
 </div>
-
-<script>
-  // Set selected library in dropdown
-  document.querySelector('select').value = '/docs/hugin/';
-  
-  // Customize sidebar for hugin - replace entire content
-  const sidebar = document.querySelector('#sidebar-links');
-  sidebar.innerHTML = `
-    <h3 class="font-semibold mb-4 text-gray-900">hugin Documentation</h3>
-    <ul class="space-y-1">
-      <li><a href="/docs/hugin/" class="bg-purple-100 text-purple-600 block px-3 py-2 rounded-md text-sm font-medium">📚 Overview</a></li>
-      <li><a href="/docs/hugin/getting-started/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🚀 Getting Started</a></li>
-      <li><a href="/docs/hugin/plot-types/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">📊 Plot Types</a></li>
-      <li><a href="/docs/hugin/styling/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🎨 Styling & Themes</a></li>
-      <li><a href="/docs/hugin/subplots/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">📐 Subplots & Layouts</a></li>
-      <li><a href="/docs/hugin/3d/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🎯 3D Plotting</a></li>
-      <li><a href="/docs/hugin/backends/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🔧 Backends</a></li>
-      <li><a href="/docs/hugin/api/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">📖 API Reference</a></li>
-    </ul>
-  `;
-</script>

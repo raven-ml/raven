@@ -1,18 +1,16 @@
-<!-- sowilo Documentation Page -->
-<div class="prose max-w-none">
-  <h1>sowilo Documentation</h1>
-  
-  <p class="lead">
-    This is the documentation section for sowilo, the computer vision library with JIT-compiled operations.
-  </p>
+<h1>sowilo Documentation</h1>
 
-  <h2>Getting Started</h2>
-  <p>
-    sowilo provides computer vision operations and image processing capabilities with GPU acceleration support.
-  </p>
+<p class="lead">
+  This is the documentation section for sowilo, the computer vision library with JIT-compiled operations.
+</p>
 
-  <h3>Quick Example</h3>
-  <pre><code>open Sowilo
+<h2>Getting Started</h2>
+<p>
+  sowilo provides computer vision operations and image processing capabilities with GPU acceleration support.
+</p>
+
+<h3>Quick Example</h3>
+<pre><code>open Sowilo
 open Ndarray.Io
 
 (* Load and process image *)
@@ -24,45 +22,23 @@ let edges = Cv.canny blurred ~low:50. ~high:150.
 (* Save result *)
 let _ = imwrite edges "edges.jpg"</code></pre>
 
-  <h2>Core Concepts</h2>
-  <ul>
-    <li><strong>Image I/O</strong> - Loading and saving various image formats</li>
-    <li><strong>Filtering</strong> - Gaussian blur, median filter, and custom kernels</li>
-    <li><strong>Edge Detection</strong> - Canny, Sobel, and other edge detectors</li>
-    <li><strong>Morphological Operations</strong> - Erosion, dilation, opening, closing</li>
-  </ul>
+<h2>Core Concepts</h2>
+<ul>
+  <li><strong>Image I/O</strong> - Loading and saving various image formats</li>
+  <li><strong>Filtering</strong> - Gaussian blur, median filter, and custom kernels</li>
+  <li><strong>Edge Detection</strong> - Canny, Sobel, and other edge detectors</li>
+  <li><strong>Morphological Operations</strong> - Erosion, dilation, opening, closing</li>
+</ul>
 
-  <h2>API Reference</h2>
-  <p>
-    For complete API documentation, see the <a href="/sowilo/" class="text-indigo-600">sowilo library page</a>.
+<h2>API Reference</h2>
+<p>
+  For complete API documentation, see the <a href="/sowilo/" class="text-indigo-600">sowilo library page</a>.
+</p>
+
+<div class="bg-indigo-50 border-l-4 border-indigo-400 p-4 mt-8">
+  <p class="text-indigo-800">
+    <strong>Note:</strong> This is the documentation section. Visit the
+    <a href="/sowilo/" class="text-indigo-600 underline">sowilo library homepage</a>
+    for installation, examples, and getting started guides.
   </p>
-
-  <div class="bg-indigo-50 border-l-4 border-indigo-400 p-4 mt-8">
-    <p class="text-indigo-800">
-      <strong>Note:</strong> This is the documentation section. Visit the 
-      <a href="/sowilo/" class="text-indigo-600 underline">sowilo library homepage</a> 
-      for installation, examples, and getting started guides.
-    </p>
-  </div>
 </div>
-
-<script>
-  // Set selected library in dropdown
-  document.querySelector('select').value = '/docs/sowilo/';
-  
-  // Customize sidebar for sowilo - replace entire content
-  const sidebar = document.querySelector('#sidebar-links');
-  sidebar.innerHTML = `
-    <h3 class="font-semibold mb-4 text-gray-900">sowilo Documentation</h3>
-    <ul class="space-y-1">
-      <li><a href="/docs/sowilo/" class="bg-indigo-100 text-indigo-600 block px-3 py-2 rounded-md text-sm font-medium">📚 Overview</a></li>
-      <li><a href="/docs/sowilo/getting-started/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🚀 Getting Started</a></li>
-      <li><a href="/docs/sowilo/image-io/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">📷 Image I/O</a></li>
-      <li><a href="/docs/sowilo/filtering/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🔍 Filtering</a></li>
-      <li><a href="/docs/sowilo/transforms/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🔄 Transforms</a></li>
-      <li><a href="/docs/sowilo/detection/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🎯 Object Detection</a></li>
-      <li><a href="/docs/sowilo/gpu/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">⚡ GPU Acceleration</a></li>
-      <li><a href="/docs/sowilo/api/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🔧 API Reference</a></li>
-    </ul>
-  `;
-</script>

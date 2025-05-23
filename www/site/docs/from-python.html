@@ -219,44 +219,6 @@ let result = grad_f (Tensor.of_array [|1.0; 2.0|])</code></pre>
   </div>
 </section>
 
-<!-- Migration Strategy -->
-<section class="mb-12">
-  <h2 class="text-2xl font-bold text-gray-900 mb-6">Migration Steps</h2>
-
-  <div class="space-y-4">
-    <div class="bg-white p-6 rounded-lg shadow">
-      <div class="flex items-center mb-3">
-        <span
-          class="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">1</span>
-        <h3 class="text-lg font-semibold">Start with ndarray</h3>
-      </div>
-      <p class="text-gray-600 mb-3">Begin by porting NumPy array operations. The API is very similar.</p>
-      <a href="/ndarray/getting-started/" class="text-blue-600 hover:text-blue-800 font-medium">ndarray Guide →</a>
-    </div>
-
-    <div class="bg-white p-6 rounded-lg shadow">
-      <div class="flex items-center mb-3">
-        <span
-          class="bg-purple-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">2</span>
-        <h3 class="text-lg font-semibold">Add visualization</h3>
-      </div>
-      <p class="text-gray-600 mb-3">Replace Matplotlib plotting with hugin for similar functionality.</p>
-      <a href="/hugin/getting-started/" class="text-purple-600 hover:text-purple-800 font-medium">hugin Guide →</a>
-    </div>
-
-    <div class="bg-white p-6 rounded-lg shadow">
-      <div class="flex items-center mb-3">
-        <span
-          class="bg-orange-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">3</span>
-        <h3 class="text-lg font-semibold">Explore machine learning</h3>
-      </div>
-      <p class="text-gray-600 mb-3">Use rune for auto-differentiation and kaun for neural networks.</p>
-      <a href="/rune/getting-started/" class="text-orange-600 hover:text-orange-800 font-medium">rune Guide →</a>
-    </div>
-  </div>
-
-</section>
-
 <!-- Quick Start -->
 <section>
   <div class="bg-gray-100 p-8 rounded-lg text-center">

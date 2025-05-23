@@ -31,11 +31,18 @@ if h1_element then
   end
 end
 
--- Add the title
+-- Add separator
+local separator = HTML.create_element("span")
+HTML.add_class(separator, "mx-2")
+HTML.add_class(separator, "text-gray-400")
+HTML.append_child(separator, HTML.create_text("/"))
+HTML.append_child(breadcrumbs_container, separator)
+
+-- Add the current page title
 local title_span = HTML.create_element("span")
 HTML.add_class(title_span, "text-gray-700")
 HTML.add_class(title_span, "font-semibold")
 HTML.append_child(title_span, HTML.create_text(current_page_title))
 HTML.append_child(breadcrumbs_container, title_span)
 
-Log.debug("Added title: " .. current_page_title)
+Log.debug("Added breadcrumbs for: " .. current_page_title)
