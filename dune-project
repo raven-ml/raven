@@ -19,18 +19,6 @@
 
 (version 0.1.0)
 
-; (generate_opam_files true)
-
-(pin
- (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
- (package
-  (name soupault)))
-
-(package
- (name dev)
- (allow_empty)
- (depends odoc odoc-driver soupault))
-
 (package
  (name ndarray)
  (synopsis "High-performance N-dimensional array library for OCaml")
