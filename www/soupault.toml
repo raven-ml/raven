@@ -51,6 +51,12 @@
   include_subsections = true
   content_selector = "main"
 
+[templates.docs_config]
+  file = "templates/layout_docs.html"
+  section = "docs/"
+  include_subsections = true
+  content_selector = "main"
+
 [widgets.page_title]
   widget = "title"
   selector = "h1"
@@ -73,6 +79,12 @@
   widget = "include"
   file = "templates/partials/footer.html"
   selector = "#footer"
+  action = "replace_element"
+
+[widgets.include_project_nav]
+  widget = "include"
+  file = "templates/partials/project-nav.html"
+  selector = "#project-nav"
   action = "replace_element"
 
 [widgets.style_documentation_main_tag]

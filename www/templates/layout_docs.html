@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Page Title</title>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+  <!-- Header -->
+  <header class="bg-white shadow-sm">
+    <div class="max-w-6xl mx-auto px-6 py-4">
+      <nav class="flex items-center justify-between">
+        <div class="flex items-center space-x-4">
+          <a href="../" class="text-2xl font-bold text-gray-900">Raven</a>
+          <span class="text-gray-400">/</span>
+          <h1 class="text-2xl font-bold text-gray-700">docs</h1>
+        </div>
+        <div class="flex items-center space-x-6">
+          <a href="../community/" class="text-gray-600 hover:text-gray-900">Community</a>
+          <div id="project-nav"></div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Content with Sidebar -->
+  <div class="flex bg-white">
+
+    <!-- Fixed Sidebar -->
+    <nav class="w-64 bg-gray-50 border-r border-gray-200 min-h-screen flex-shrink-0">
+      <div class="p-6">
+        <h3 class="font-semibold mb-4 text-gray-900">Documentation</h3>
+        <ul class="space-y-1">
+          <li><a href="/docs/"
+              class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Overview</a>
+          </li>
+          <li><a href="/docs/from-python/"
+              class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Python
+              Migration</a></li>
+          <li><a href="/docs/workflows/"
+              class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Common
+              Workflows</a></li>
+          <li><a href="/docs/roadmap/"
+              class="text-gray-700 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Roadmap</a>
+          </li>
+        </ul>
+
+        <h3 class="font-semibold mb-4 mt-8 text-gray-900">Library Docs</h3>
+        <ul class="space-y-1">
+          <li><a href="/ndarray/"
+              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">ndarray</a>
+          </li>
+          <li><a href="/hugin/"
+              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">hugin</a>
+          </li>
+          <li><a href="/rune/"
+              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">rune</a>
+          </li>
+          <li><a href="/kaun/"
+              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">kaun</a>
+          </li>
+          <li><a href="/sowilo/"
+              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">sowilo</a>
+          </li>
+          <li><a href="/quill/"
+              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">quill</a>
+          </li>
+        </ul>
+
+        <h3 class="font-semibold mb-4 mt-8 text-gray-900">Community</h3>
+        <ul class="space-y-1">
+          <li><a href="/community/"
+              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Join Us</a>
+          </li>
+          <li><a href="#"
+              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">GitHub</a>
+          </li>
+          <li><a href="#"
+              class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Issues</a>
+          </li>
+        </ul>
+      </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <div class="min-h-screen bg-gray-50">
+      <!-- Documentation container with proper constraints -->
+      <div class="max-w-7xl mx-auto px-6 py-8 bg-white">
+        <div class="flex gap-8">
+          <main class="flex-1 max-w-4xl"></main>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div id="footer"></div>
+</body>
+
+</html>

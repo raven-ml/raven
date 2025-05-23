@@ -16,28 +16,69 @@
 <main>
   <section class="py-12 bg-blue-50">
     <div class="max-w-6xl mx-auto px-6">
-      <h2 class="text-3xl font-bold text-center mb-8">From Python to OCaml</h2>
+      <h2 class="text-3xl font-bold text-center mb-12">From Python to OCaml</h2>
       <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+        
         <div class="bg-white p-6 rounded-lg shadow">
           <h3 class="text-xl font-semibold mb-4 text-gray-800">Python Stack</h3>
-          <ul class="space-y-2 text-gray-600">
-            <li>NumPy → Arrays & Linear Algebra</li>
-            <li>Matplotlib → Plotting & Visualization</li>
-            <li>JAX → Auto-diff & JIT</li>
-            <li>Jupyter → Interactive Notebooks</li>
+          <ul class="space-y-3 text-gray-600">
+            <li class="flex items-center">
+              <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm mr-3">Arrays</span>
+              NumPy
+            </li>
+            <li class="flex items-center">
+              <span class="bg-purple-100 text-purple-800 px-2 py-1 rounded text-sm mr-3">Plotting</span>
+              Matplotlib
+            </li>
+            <li class="flex items-center">
+              <span class="bg-orange-100 text-orange-800 px-2 py-1 rounded text-sm mr-3">ML/JIT</span>
+              JAX
+            </li>
+            <li class="flex items-center">
+              <span class="bg-red-100 text-red-800 px-2 py-1 rounded text-sm mr-3">Deep Learning</span>
+              PyTorch / Flax
+            </li>
+            <li class="flex items-center">
+              <span class="bg-indigo-100 text-indigo-800 px-2 py-1 rounded text-sm mr-3">Computer Vision</span>
+              OpenCV / torchvision
+            </li>
+            <li class="flex items-center">
+              <span class="bg-green-100 text-green-800 px-2 py-1 rounded text-sm mr-3">Notebooks</span>
+              Jupyter
+            </li>
           </ul>
         </div>
+
         <div class="bg-white p-6 rounded-lg shadow">
           <h3 class="text-xl font-semibold mb-4 text-gray-800">Raven Ecosystem</h3>
-          <ul class="space-y-2 text-gray-600">
-            <li><strong>ndarray</strong> → N-dimensional arrays</li>
-            <li><strong>hugin</strong> → Publication-quality plots</li>
-            <li><strong>rune</strong> → Auto-diff & JIT compilation</li>
-            <li><strong>kaun</strong> → Neural networks & deep learning</li>
-            <li><strong>sowilo</strong> → Computer vision & image processing</li>
-            <li><strong>quill</strong> → Interactive documents</li>
+          <ul class="space-y-3 text-gray-600">
+            <li class="flex items-center">
+              <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm mr-3">Arrays</span>
+              <a href="/ndarray/" class="text-blue-600 hover:text-blue-800 font-semibold">ndarray</a>
+            </li>
+            <li class="flex items-center">
+              <span class="bg-purple-100 text-purple-800 px-2 py-1 rounded text-sm mr-3">Plotting</span>
+              <a href="/hugin/" class="text-purple-600 hover:text-purple-800 font-semibold">hugin</a>
+            </li>
+            <li class="flex items-center">
+              <span class="bg-orange-100 text-orange-800 px-2 py-1 rounded text-sm mr-3">ML/JIT</span>
+              <a href="/rune/" class="text-orange-600 hover:text-orange-800 font-semibold">rune</a>
+            </li>
+            <li class="flex items-center">
+              <span class="bg-red-100 text-red-800 px-2 py-1 rounded text-sm mr-3">Deep Learning</span>
+              <a href="/kaun/" class="text-red-600 hover:text-red-800 font-semibold">kaun</a>
+            </li>
+            <li class="flex items-center">
+              <span class="bg-indigo-100 text-indigo-800 px-2 py-1 rounded text-sm mr-3">Computer Vision</span>
+              <a href="/sowilo/" class="text-indigo-600 hover:text-indigo-800 font-semibold">sowilo</a>
+            </li>
+            <li class="flex items-center">
+              <span class="bg-green-100 text-green-800 px-2 py-1 rounded text-sm mr-3">Notebooks</span>
+              <a href="/quill/" class="text-green-600 hover:text-green-800 font-semibold">quill</a>
+            </li>
           </ul>
         </div>
+
       </div>
     </div>
   </section>
@@ -243,7 +284,7 @@
       <div>
         <h3 class="font-semibold mb-3">Getting Started</h3>
         <ul class="space-y-2 text-sm">
-          <li><a href="/docs/getting-started/" class="text-blue-600 hover:text-blue-800">Ecosystem Guide</a></li>
+          <li><a href="/docs/" class="text-blue-600 hover:text-blue-800">Documentation</a></li>
           <li><a href="/docs/from-python/" class="text-blue-600 hover:text-blue-800">Python Migration</a></li>
           <li><a href="/docs/workflows/" class="text-blue-600 hover:text-blue-800">Common Workflows</a></li>
         </ul>

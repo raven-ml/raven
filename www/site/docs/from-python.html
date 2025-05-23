@@ -1,401 +1,273 @@
-<!-- Hero -->
-<section class="py-12 bg-gradient-to-r from-green-600 to-green-700 text-white">
-  <div class="max-w-6xl mx-auto px-6">
-    <div class="max-w-3xl">
-      <h1 class="text-4xl font-bold mb-4">Migrating from Python</h1>
-      <p class="text-xl mb-6 text-green-100">
-        Your guide to switching from NumPy, Matplotlib, JAX, and Jupyter to the Raven ecosystem.
-      </p>
-    </div>
-  </div>
-</section>
+<!-- Header -->
+<div class="mb-8">
+  <h1 class="text-3xl font-bold text-gray-900 mb-4">Migrating from Python</h1>
+  <p class="text-lg text-gray-600">
+    Quick guide to switching from NumPy, Matplotlib, and JAX to the Raven ecosystem.
+  </p>
+</div>
 
 <!-- Library Mapping -->
-<section class="py-12">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Python → OCaml Mapping</h2>
-    <div class="grid md:grid-cols-2 gap-8">
-      
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4 text-gray-800">Python Stack</h3>
-        <ul class="space-y-3 text-gray-600">
-          <li class="flex items-center">
-            <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm mr-3">Arrays</span>
-            NumPy
-          </li>
-          <li class="flex items-center">
-            <span class="bg-purple-100 text-purple-800 px-2 py-1 rounded text-sm mr-3">Plotting</span>
-            Matplotlib
-          </li>
-          <li class="flex items-center">
-            <span class="bg-orange-100 text-orange-800 px-2 py-1 rounded text-sm mr-3">ML/JIT</span>
-            JAX
-          </li>
-          <li class="flex items-center">
-            <span class="bg-red-100 text-red-800 px-2 py-1 rounded text-sm mr-3">Deep Learning</span>
-            PyTorch / Flax
-          </li>
-          <li class="flex items-center">
-            <span class="bg-indigo-100 text-indigo-800 px-2 py-1 rounded text-sm mr-3">Computer Vision</span>
-            OpenCV / torchvision
-          </li>
-          <li class="flex items-center">
-            <span class="bg-green-100 text-green-800 px-2 py-1 rounded text-sm mr-3">Notebooks</span>
-            Jupyter
-          </li>
-        </ul>
-      </div>
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Python → OCaml Mapping</h2>
+  <div class="grid md:grid-cols-2 gap-8">
 
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4 text-gray-800">Raven Ecosystem</h3>
-        <ul class="space-y-3 text-gray-600">
-          <li class="flex items-center">
-            <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm mr-3">Arrays</span>
-            <a href="/ndarray/" class="text-blue-600 hover:text-blue-800 font-semibold">ndarray</a>
-          </li>
-          <li class="flex items-center">
-            <span class="bg-purple-100 text-purple-800 px-2 py-1 rounded text-sm mr-3">Plotting</span>
-            <a href="/hugin/" class="text-purple-600 hover:text-purple-800 font-semibold">hugin</a>
-          </li>
-          <li class="flex items-center">
-            <span class="bg-orange-100 text-orange-800 px-2 py-1 rounded text-sm mr-3">ML/JIT</span>
-            <a href="/rune/" class="text-orange-600 hover:text-orange-800 font-semibold">rune</a>
-          </li>
-          <li class="flex items-center">
-            <span class="bg-red-100 text-red-800 px-2 py-1 rounded text-sm mr-3">Deep Learning</span>
-            <a href="/kaun/" class="text-red-600 hover:text-red-800 font-semibold">kaun</a>
-          </li>
-          <li class="flex items-center">
-            <span class="bg-indigo-100 text-indigo-800 px-2 py-1 rounded text-sm mr-3">Computer Vision</span>
-            <a href="/sowilo/" class="text-indigo-600 hover:text-indigo-800 font-semibold">sowilo</a>
-          </li>
-          <li class="flex items-center">
-            <span class="bg-green-100 text-green-800 px-2 py-1 rounded text-sm mr-3">Notebooks</span>
-            <a href="/quill/" class="text-green-600 hover:text-green-800 font-semibold">quill</a>
-          </li>
-        </ul>
-      </div>
-
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h3 class="text-xl font-semibold mb-4 text-gray-800">Python Stack</h3>
+      <ul class="space-y-3 text-gray-600">
+        <li class="flex items-center">
+          <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm mr-3">Arrays</span>
+          NumPy
+        </li>
+        <li class="flex items-center">
+          <span class="bg-purple-100 text-purple-800 px-2 py-1 rounded text-sm mr-3">Plotting</span>
+          Matplotlib
+        </li>
+        <li class="flex items-center">
+          <span class="bg-orange-100 text-orange-800 px-2 py-1 rounded text-sm mr-3">ML/JIT</span>
+          JAX
+        </li>
+        <li class="flex items-center">
+          <span class="bg-red-100 text-red-800 px-2 py-1 rounded text-sm mr-3">Deep Learning</span>
+          PyTorch
+        </li>
+      </ul>
     </div>
+
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h3 class="text-xl font-semibold mb-4 text-gray-800">Raven Ecosystem</h3>
+      <ul class="space-y-3 text-gray-600">
+        <li class="flex items-center">
+          <span class="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm mr-3">Arrays</span>
+          <a href="/ndarray/" class="text-blue-600 hover:text-blue-800 font-semibold">ndarray</a>
+        </li>
+        <li class="flex items-center">
+          <span class="bg-purple-100 text-purple-800 px-2 py-1 rounded text-sm mr-3">Plotting</span>
+          <a href="/hugin/" class="text-purple-600 hover:text-purple-800 font-semibold">hugin</a>
+        </li>
+        <li class="flex items-center">
+          <span class="bg-orange-100 text-orange-800 px-2 py-1 rounded text-sm mr-3">ML/JIT</span>
+          <a href="/rune/" class="text-orange-600 hover:text-orange-800 font-semibold">rune</a>
+        </li>
+        <li class="flex items-center">
+          <span class="bg-red-100 text-red-800 px-2 py-1 rounded text-sm mr-3">Deep Learning</span>
+          <a href="/kaun/" class="text-red-600 hover:text-red-800 font-semibold">kaun</a>
+        </li>
+      </ul>
+    </div>
+
   </div>
 </section>
 
 <!-- Code Comparisons -->
-<section class="py-12 bg-gray-50">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Side-by-Side Code Examples</h2>
-    
-    <!-- Array Operations -->
-    <div class="mb-12">
-      <h3 class="text-2xl font-semibold mb-6">Array Operations</h3>
-      <div class="grid md:grid-cols-2 gap-6">
-        
-        <div class="bg-white rounded-lg shadow">
-          <div class="bg-blue-600 text-white px-4 py-2 rounded-t-lg">
-            <h4 class="font-semibold">NumPy</h4>
-          </div>
-          <div class="p-4">
-            <pre class="text-sm text-gray-800"><code>import numpy as np
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Code Examples</h2>
 
-# Create arrays
-a = np.ones((3, 3), dtype=np.float32)
-b = np.random.rand(3, 3).astype(np.float32)
+  <!-- Array Operations -->
+  <div class="mb-8">
+    <h3 class="text-xl font-semibold mb-4">Array Operations</h3>
+    <div class="grid md:grid-cols-2 gap-6">
 
-# Operations
-c = np.matmul(a, b)
-d = c + 2.0
-mean = np.mean(d)
-sum_axis = np.sum(d, axis=0)</code></pre>
-          </div>
+      <div class="bg-white rounded-lg shadow">
+        <div class="bg-blue-600 text-white px-4 py-2 rounded-t-lg">
+          <h4 class="font-semibold">NumPy</h4>
         </div>
+        <div class="p-4">
+          <pre class="text-sm text-gray-800"><code>import numpy as np
 
-        <div class="bg-white rounded-lg shadow">
-          <div class="bg-blue-700 text-white px-4 py-2 rounded-t-lg">
-            <h4 class="font-semibold">ndarray</h4>
-          </div>
-          <div class="p-4">
-            <pre class="text-sm text-gray-800"><code>open Ndarray
+# Create and manipulate arrays
+a = np.ones((3, 3), dtype=np.float32)
+b = np.random.rand(3, 3)
+c = np.matmul(a, b) + 2.0</code></pre>
+        </div>
+      </div>
 
-(* Create arrays *)
+      <div class="bg-white rounded-lg shadow">
+        <div class="bg-blue-700 text-white px-4 py-2 rounded-t-lg">
+          <h4 class="font-semibold">ndarray</h4>
+        </div>
+        <div class="p-4">
+          <pre class="text-sm text-gray-800"><code>open Ndarray
+
+(* Create and manipulate arrays *)
 let a = Ndarray.ones [3; 3] float32
 let b = Ndarray.random [3; 3] float32
-
-(* Operations *)
-let c = Ndarray.matmul a b
-let d = Ndarray.add c (Ndarray.scalar 2.0 float32)
-let mean = Ndarray.mean d
-let sum_axis = Ndarray.sum d ~axis:[0]</code></pre>
-          </div>
+let c = Ndarray.(matmul a b + scalar 2.0 float32)</code></pre>
         </div>
-
       </div>
+
     </div>
+  </div>
 
-    <!-- Plotting -->
-    <div class="mb-12">
-      <h3 class="text-2xl font-semibold mb-6">Plotting</h3>
-      <div class="grid md:grid-cols-2 gap-6">
-        
-        <div class="bg-white rounded-lg shadow">
-          <div class="bg-purple-600 text-white px-4 py-2 rounded-t-lg">
-            <h4 class="font-semibold">Matplotlib</h4>
-          </div>
-          <div class="p-4">
-            <pre class="text-sm text-gray-800"><code>import matplotlib.pyplot as plt
-import numpy as np
+  <!-- Auto-differentiation -->
+  <div class="mb-8">
+    <h3 class="text-xl font-semibold mb-4">Auto-differentiation</h3>
+    <div class="grid md:grid-cols-2 gap-6">
 
-x = np.linspace(0, 10, 100)
-y = np.sin(x)
-
-plt.figure()
-plt.plot(x, y, label='sin(x)')
-plt.xlabel('x')
-plt.ylabel('y')
-plt.title('Sine Wave')
-plt.legend()
-plt.savefig('sine.png')</code></pre>
-          </div>
+      <div class="bg-white rounded-lg shadow">
+        <div class="bg-orange-600 text-white px-4 py-2 rounded-t-lg">
+          <h4 class="font-semibold">JAX</h4>
         </div>
-
-        <div class="bg-white rounded-lg shadow">
-          <div class="bg-purple-700 text-white px-4 py-2 rounded-t-lg">
-            <h4 class="font-semibold">hugin</h4>
-          </div>
-          <div class="p-4">
-            <pre class="text-sm text-gray-800"><code>open Hugin
-open Ndarray
-
-let x = Ndarray.linspace 0.0 10.0 100 float64
-let y = Ndarray.sin x
-
-let fig = Figure.create ()
-let ax = Figure.add_subplot fig 1 1 1
-let _ = Axes.plot ax x y ~label:"sin(x)"
-let _ = Axes.set_xlabel ax "x"
-let _ = Axes.set_ylabel ax "y"
-let _ = Axes.set_title ax "Sine Wave"
-let _ = Axes.legend ax ()
-let _ = Figure.savefig fig "sine.png"</code></pre>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-    <!-- Auto-differentiation -->
-    <div>
-      <h3 class="text-2xl font-semibold mb-6">Auto-differentiation</h3>
-      <div class="grid md:grid-cols-2 gap-6">
-        
-        <div class="bg-white rounded-lg shadow">
-          <div class="bg-orange-600 text-white px-4 py-2 rounded-t-lg">
-            <h4 class="font-semibold">JAX</h4>
-          </div>
-          <div class="p-4">
-            <pre class="text-sm text-gray-800"><code>import jax
-import jax.numpy as jnp
+        <div class="p-4">
+          <pre class="text-sm text-gray-800"><code>import jax
 
 def f(x):
-    return jnp.sum(x ** 2)
+return jnp.sum(x ** 2)
 
-# Gradient
 grad_f = jax.grad(f)
-result = grad_f(jnp.array([1.0, 2.0, 3.0]))
-
-# JIT compilation
-jit_f = jax.jit(f)
-compiled_result = jit_f(jnp.array([1.0, 2.0, 3.0]))</code></pre>
-          </div>
+result = grad_f(jnp.array([1.0, 2.0]))</code></pre>
         </div>
-
-        <div class="bg-white rounded-lg shadow">
-          <div class="bg-orange-700 text-white px-4 py-2 rounded-t-lg">
-            <h4 class="font-semibold">rune</h4>
-          </div>
-          <div class="p-4">
-            <pre class="text-sm text-gray-800"><code>open Rune
-
-let f x = Tensor.sum (Tensor.pow x 2.0)
-
-(* Gradient *)
-let grad_f = grad f
-let result = grad_f (Tensor.of_array [|1.0; 2.0; 3.0|])
-
-(* JIT compilation *)
-let jit_f = jit f
-let compiled_result = jit_f (Tensor.of_array [|1.0; 2.0; 3.0|])</code></pre>
-          </div>
-        </div>
-
       </div>
-    </div>
 
+      <div class="bg-white rounded-lg shadow">
+        <div class="bg-orange-700 text-white px-4 py-2 rounded-t-lg">
+          <h4 class="font-semibold">rune</h4>
+        </div>
+        <div class="p-4">
+          <pre class="text-sm text-gray-800"><code>open Rune
+
+let f x = Tensor.sum (Tensor.square x)
+
+let grad_f = grad f
+let result = grad_f (Tensor.of_array [|1.0; 2.0|])</code></pre>
+        </div>
+      </div>
+
+    </div>
   </div>
+
 </section>
 
 <!-- Key Differences -->
-<section class="py-12">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Key Differences</h2>
-    <div class="grid md:grid-cols-2 gap-8">
-      
-      <!-- Advantages -->
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4 text-green-600">Raven Advantages</h3>
-        <ul class="space-y-3 text-gray-600">
-          <li class="flex items-start">
-            <svg class="w-5 h-5 text-green-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
-            </svg>
-            <div>
-              <strong>Type Safety:</strong> Compile-time guarantees prevent many runtime errors
-            </div>
-          </li>
-          <li class="flex items-start">
-            <svg class="w-5 h-5 text-green-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
-            </svg>
-            <div>
-              <strong>Performance:</strong> Native compilation, no interpreter overhead
-            </div>
-          </li>
-          <li class="flex items-start">
-            <svg class="w-5 h-5 text-green-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
-            </svg>
-            <div>
-              <strong>Memory Safety:</strong> No segfaults or memory leaks
-            </div>
-          </li>
-          <li class="flex items-start">
-            <svg class="w-5 h-5 text-green-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
-            </svg>
-            <div>
-              <strong>Concurrency:</strong> OCaml 5 multicore and algebraic effects
-            </div>
-          </li>
-        </ul>
-      </div>
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Key Differences</h2>
+  <div class="grid md:grid-cols-2 gap-8">
 
-      <!-- Considerations -->
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4 text-orange-600">Considerations</h3>
-        <ul class="space-y-3 text-gray-600">
-          <li class="flex items-start">
-            <svg class="w-5 h-5 text-orange-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-            </svg>
-            <div>
-              <strong>Learning Curve:</strong> OCaml syntax and functional programming concepts
-            </div>
-          </li>
-          <li class="flex items-start">
-            <svg class="w-5 h-5 text-orange-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-            </svg>
-            <div>
-              <strong>Ecosystem:</strong> Smaller package ecosystem compared to Python
-            </div>
-          </li>
-          <li class="flex items-start">
-            <svg class="w-5 h-5 text-orange-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-            </svg>
-            <div>
-              <strong>Pre-alpha:</strong> Some libraries still in development
-            </div>
-          </li>
-          <li class="flex items-start">
-            <svg class="w-5 h-5 text-orange-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-            </svg>
-            <div>
-              <strong>Tooling:</strong> Different debugging and profiling tools
-            </div>
-          </li>
-        </ul>
-      </div>
-
+    <!-- Advantages -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h3 class="text-xl font-semibold mb-4 text-green-600">Raven Advantages</h3>
+      <ul class="space-y-3 text-gray-600">
+        <li class="flex items-start">
+          <svg class="w-5 h-5 text-green-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+              clip-rule="evenodd"></path>
+          </svg>
+          <div>
+            <strong>Type Safety:</strong> Compile-time error prevention
+          </div>
+        </li>
+        <li class="flex items-start">
+          <svg class="w-5 h-5 text-green-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+              clip-rule="evenodd"></path>
+          </svg>
+          <div>
+            <strong>Performance:</strong> Native compilation, no interpreter
+          </div>
+        </li>
+        <li class="flex items-start">
+          <svg class="w-5 h-5 text-green-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+              clip-rule="evenodd"></path>
+          </svg>
+          <div>
+            <strong>Memory Safety:</strong> No segfaults or memory leaks
+          </div>
+        </li>
+      </ul>
     </div>
+
+    <!-- Considerations -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h3 class="text-xl font-semibold mb-4 text-orange-600">Trade-offs</h3>
+      <ul class="space-y-3 text-gray-600">
+        <li class="flex items-start">
+          <svg class="w-5 h-5 text-orange-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd"
+              d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+              clip-rule="evenodd"></path>
+          </svg>
+          <div>
+            <strong>Learning Curve:</strong> OCaml syntax and concepts
+          </div>
+        </li>
+        <li class="flex items-start">
+          <svg class="w-5 h-5 text-orange-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd"
+              d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+              clip-rule="evenodd"></path>
+          </svg>
+          <div>
+            <strong>Ecosystem:</strong> Smaller package ecosystem
+          </div>
+        </li>
+        <li class="flex items-start">
+          <svg class="w-5 h-5 text-orange-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd"
+              d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+              clip-rule="evenodd"></path>
+          </svg>
+          <div>
+            <strong>Development:</strong> Some libraries still in beta
+          </div>
+        </li>
+      </ul>
+    </div>
+
   </div>
 </section>
 
 <!-- Migration Strategy -->
-<section class="py-12 bg-green-50">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Migration Strategy</h2>
-    <div class="max-w-4xl mx-auto">
-      
-      <div class="space-y-6">
-        <div class="bg-white p-6 rounded-lg shadow">
-          <div class="flex items-center mb-4">
-            <span class="bg-green-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">1</span>
-            <h3 class="text-xl font-semibold">Start with ndarray</h3>
-          </div>
-          <p class="text-gray-600 mb-3">Begin by porting your NumPy array operations. The API is very similar, so this should feel familiar.</p>
-          <a href="/ndarray/getting-started/" class="text-green-600 hover:text-green-800 font-medium">ndarray Getting Started →</a>
-        </div>
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-6">Migration Steps</h2>
 
-        <div class="bg-white p-6 rounded-lg shadow">
-          <div class="flex items-center mb-4">
-            <span class="bg-green-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">2</span>
-            <h3 class="text-xl font-semibold">Add visualization with hugin</h3>
-          </div>
-          <p class="text-gray-600 mb-3">Replace your Matplotlib plotting with hugin. The patterns are similar but with OCaml syntax.</p>
-          <a href="/hugin/getting-started/" class="text-green-600 hover:text-green-800 font-medium">hugin Getting Started →</a>
-        </div>
-
-        <div class="bg-white p-6 rounded-lg shadow">
-          <div class="flex items-center mb-4">
-            <span class="bg-green-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">3</span>
-            <h3 class="text-xl font-semibold">Explore auto-differentiation with rune</h3>
-          </div>
-          <p class="text-gray-600 mb-3">If you use JAX, rune provides similar auto-differentiation and JIT capabilities.</p>
-          <a href="/rune/getting-started/" class="text-green-600 hover:text-green-800 font-medium">rune Getting Started →</a>
-        </div>
-
-        <div class="bg-white p-6 rounded-lg shadow">
-          <div class="flex items-center mb-4">
-            <span class="bg-green-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">4</span>
-            <h3 class="text-xl font-semibold">Build neural networks with kaun</h3>
-          </div>
-          <p class="text-gray-600 mb-3">If you use PyTorch or Flax, kaun provides high-level neural network APIs with OCaml's type safety.</p>
-          <a href="/kaun/getting-started/" class="text-green-600 hover:text-green-800 font-medium">kaun Getting Started →</a>
-        </div>
-
-        <div class="bg-white p-6 rounded-lg shadow">
-          <div class="flex items-center mb-4">
-            <span class="bg-green-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">5</span>
-            <h3 class="text-xl font-semibold">Process images with sowilo</h3>
-          </div>
-          <p class="text-gray-600 mb-3">If you use OpenCV or torchvision, sowilo provides computer vision operations with GPU acceleration.</p>
-          <a href="/sowilo/getting-started/" class="text-green-600 hover:text-green-800 font-medium">sowilo Getting Started →</a>
-        </div>
-
-        <div class="bg-white p-6 rounded-lg shadow">
-          <div class="flex items-center mb-4">
-            <span class="bg-green-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">6</span>
-            <h3 class="text-xl font-semibold">Try interactive development with quill</h3>
-          </div>
-          <p class="text-gray-600 mb-3">Replace Jupyter notebooks with quill for interactive data science and documentation.</p>
-          <a href="/quill/getting-started/" class="text-green-600 hover:text-green-800 font-medium">quill Getting Started →</a>
-        </div>
+  <div class="space-y-4">
+    <div class="bg-white p-6 rounded-lg shadow">
+      <div class="flex items-center mb-3">
+        <span
+          class="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">1</span>
+        <h3 class="text-lg font-semibold">Start with ndarray</h3>
       </div>
+      <p class="text-gray-600 mb-3">Begin by porting NumPy array operations. The API is very similar.</p>
+      <a href="/ndarray/getting-started/" class="text-blue-600 hover:text-blue-800 font-medium">ndarray Guide →</a>
+    </div>
 
+    <div class="bg-white p-6 rounded-lg shadow">
+      <div class="flex items-center mb-3">
+        <span
+          class="bg-purple-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">2</span>
+        <h3 class="text-lg font-semibold">Add visualization</h3>
+      </div>
+      <p class="text-gray-600 mb-3">Replace Matplotlib plotting with hugin for similar functionality.</p>
+      <a href="/hugin/getting-started/" class="text-purple-600 hover:text-purple-800 font-medium">hugin Guide →</a>
+    </div>
+
+    <div class="bg-white p-6 rounded-lg shadow">
+      <div class="flex items-center mb-3">
+        <span
+          class="bg-orange-600 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-4">3</span>
+        <h3 class="text-lg font-semibold">Explore machine learning</h3>
+      </div>
+      <p class="text-gray-600 mb-3">Use rune for auto-differentiation and kaun for neural networks.</p>
+      <a href="/rune/getting-started/" class="text-orange-600 hover:text-orange-800 font-medium">rune Guide →</a>
     </div>
   </div>
+
 </section>
 
-<!-- Next Steps -->
-<section class="py-12">
-  <div class="max-w-4xl mx-auto px-6 text-center">
-    <h2 class="text-3xl font-bold mb-8">Ready to Start Your Migration?</h2>
+<!-- Quick Start -->
+<section>
+  <div class="bg-gray-100 p-8 rounded-lg text-center">
+    <h2 class="text-2xl font-bold text-gray-900 mb-4">Ready to Start?</h2>
     <div class="flex flex-col sm:flex-row gap-4 justify-center">
-      <a href="/ndarray/getting-started/" class="bg-green-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-green-700 transition-colors">
+      <a href="/ndarray/getting-started/"
+        class="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors">
         Start with ndarray
       </a>
-      <a href="/docs/workflows/" class="border-2 border-green-600 text-green-600 px-8 py-3 rounded-lg font-semibold hover:bg-green-600 hover:text-white transition-colors">
+      <a href="/docs/workflows/"
+        class="border-2 border-blue-600 text-blue-600 px-6 py-3 rounded-lg font-semibold hover:bg-blue-600 hover:text-white transition-colors">
         See Complete Workflows
       </a>
     </div>
