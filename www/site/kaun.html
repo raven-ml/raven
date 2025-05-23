@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>kaun - Neural Networks - Raven</title>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+  <!-- Header -->
+  <header class="bg-white shadow-sm">
+    <div class="max-w-6xl mx-auto px-6 py-4">
+      <nav class="flex items-center justify-between">
+        <div class="flex items-center space-x-4">
+          <a href="/" class="text-2xl font-bold text-gray-900">Raven</a>
+          <span class="text-gray-400">/</span>
+          <h1 class="text-2xl font-bold text-red-600">kaun</h1>
+        </div>
+        <div class="flex items-center space-x-6">
+          <a href="/docs/kaun/" class="text-gray-600 hover:text-gray-900">Docs</a>
+          <a href="/docs/kaun/api/" class="text-gray-600 hover:text-gray-900">API</a>
+          <div id="project-nav"></div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+<!-- Hero -->
+<section class="py-12 bg-gradient-to-r from-red-600 to-orange-600 text-white">
+  <div class="max-w-6xl mx-auto px-6">
+    <div class="max-w-3xl">
+      <div class="flex items-center mb-4">
+        <h1 class="text-4xl font-bold">kaun</h1>
+        <span class="ml-4 px-3 py-1 bg-yellow-500 text-yellow-900 text-sm rounded-full">Beta</span>
+      </div>
+      <p class="text-xl mb-6 text-red-100">
+        High-level neural network library built on Rune. The Flax equivalent for OCaml with modular architecture and
+        training utilities.
+      </p>
+      <div class="flex space-x-4">
+        <a href="guides/getting-started/"
+          class="bg-white text-red-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">
+          Get Started
+        </a>
+        <a href="examples/"
+          class="border-2 border-white text-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-red-600 transition-colors">
+          View Examples
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Core Features -->
+<section class="py-12">
+  <div class="max-w-6xl mx-auto px-6">
+    <h2 class="text-3xl font-bold text-center mb-12">Deep Learning Made Simple</h2>
+    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+
+      <div class="text-center">
+        <div class="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10">
+            </path>
+          </svg>
+        </div>
+        <h3 class="text-xl font-semibold mb-2">Modular Layers</h3>
+        <p class="text-gray-600">Composable neural network layers with automatic shape inference and parameter
+          management.</p>
+      </div>
+
+      <div class="text-center">
+        <div class="bg-orange-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+          </svg>
+        </div>
+        <h3 class="text-xl font-semibold mb-2">Training Loops</h3>
+        <p class="text-gray-600">Built-in training utilities with automatic differentiation, optimization, and progress
+          tracking.</p>
+      </div>
+
+      <div class="text-center">
+        <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z">
+            </path>
+          </svg>
+        </div>
+        <h3 class="text-xl font-semibold mb-2">Type Safety</h3>
+        <p class="text-gray-600">Leverage OCaml's type system for compile-time guarantees on model architecture and data
+          flow.</p>
+      </div>
+
+      <div class="text-center">
+        <div class="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4">
+            </path>
+          </svg>
+        </div>
+        <h3 class="text-xl font-semibold mb-2">Model Zoo</h3>
+        <p class="text-gray-600">Pre-trained models for common tasks including vision, NLP, and transfer learning.</p>
+      </div>
+
+      <div class="text-center">
+        <div class="bg-purple-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+            </path>
+          </svg>
+        </div>
+        <h3 class="text-xl font-semibold mb-2">Optimizers</h3>
+        <p class="text-gray-600">Built-in optimizers (SGD, Adam, RMSprop) with learning rate schedules and momentum.</p>
+      </div>
+
+      <div class="text-center">
+        <div class="bg-indigo-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4">
+            </path>
+          </svg>
+        </div>
+        <h3 class="text-xl font-semibold mb-2">Distributed</h3>
+        <p class="text-gray-600">Multi-GPU and multi-node training with automatic data parallelism and model sharding.
+        </p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Quick Example -->
+<section class="py-12 bg-gray-100">
+  <div class="max-w-4xl mx-auto px-6">
+    <h2 class="text-3xl font-bold text-center mb-8">Build Your First Neural Network</h2>
+    <div class="bg-gray-900 text-gray-100 p-6 rounded-lg overflow-x-auto">
+      <pre class="text-sm"><code><span class="text-gray-500">(* Define a convolutional neural network *)</span>
+<span class="text-blue-400">open</span> Rune
+<span class="text-blue-400">open</span> Kaun
+
+<span class="text-gray-500">(* Model definition using Sequential API *)</span>
+<span class="text-green-400">let</span> model = Sequential.[
+  Conv2d.create ~in_channels:<span class="text-yellow-400">3</span> ~out_channels:<span class="text-yellow-400">32</span> ~kernel_size:<span class="text-yellow-400">3</span>;
+  Activation.relu;
+  MaxPool2d.create ~kernel_size:<span class="text-yellow-400">2</span>;
+  
+  Conv2d.create ~in_channels:<span class="text-yellow-400">32</span> ~out_channels:<span class="text-yellow-400">64</span> ~kernel_size:<span class="text-yellow-400">3</span>;
+  Activation.relu;
+  MaxPool2d.create ~kernel_size:<span class="text-yellow-400">2</span>;
+  
+  Flatten.create ();
+  Linear.create ~in_features:<span class="text-yellow-400">1600</span> ~out_features:<span class="text-yellow-400">128</span>;
+  Activation.relu;
+  Dropout.create ~p:<span class="text-yellow-400">0.5</span>;
+  Linear.create ~in_features:<span class="text-yellow-400">128</span> ~out_features:<span class="text-yellow-400">10</span>;
+]
+
+<span class="text-gray-500">(* Training configuration *)</span>
+<span class="text-green-400">let</span> trainer = Trainer.create
+  ~model
+  ~optimizer:(Adam.create ~lr:<span class="text-yellow-400">0.001</span>)
+  ~loss:CrossEntropy.create
+  ~metrics:[Accuracy.create ()]
+
+<span class="text-gray-500">(* Train the model *)</span>
+<span class="text-green-400">let</span> trained_model = Trainer.fit trainer
+  ~train_data:cifar10_train
+  ~val_data:cifar10_val
+  ~epochs:<span class="text-yellow-400">50</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- Architecture Types -->
+<section class="py-12">
+  <div class="max-w-6xl mx-auto px-6">
+    <h2 class="text-3xl font-bold text-center mb-12">Supported Architectures</h2>
+    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+
+      <div class="bg-white p-6 rounded-lg shadow text-center">
+        <h3 class="text-lg font-semibold mb-2">Vision Models</h3>
+        <p class="text-gray-600 text-sm">CNNs, ResNet, EfficientNet, Vision Transformers</p>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow text-center">
+        <h3 class="text-lg font-semibold mb-2">Language Models</h3>
+        <p class="text-gray-600 text-sm">Transformers, BERT, GPT, sequence models</p>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow text-center">
+        <h3 class="text-lg font-semibold mb-2">Generative Models</h3>
+        <p class="text-gray-600 text-sm">VAEs, GANs, diffusion models</p>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow text-center">
+        <h3 class="text-lg font-semibold mb-2">Custom Models</h3>
+        <p class="text-gray-600 text-sm">Flexible API for research and experimentation</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Advanced Features -->
+<section class="py-12 bg-gray-100">
+  <div class="max-w-6xl mx-auto px-6">
+    <h2 class="text-3xl font-bold text-center mb-12">Advanced Training Features</h2>
+    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-lg font-semibold mb-3">Learning Rate Schedules</h3>
+        <p class="text-gray-600 text-sm mb-3">Cosine annealing, step decay, exponential decay, and custom schedules.</p>
+        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
+          Schedule.cosine_annealing ~max_lr:0.1 ~min_lr:1e-6
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-lg font-semibold mb-3">Model Checkpointing</h3>
+        <p class="text-gray-600 text-sm mb-3">Automatic saving and loading of model weights and training state.</p>
+        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
+          Checkpoint.save trainer "model_epoch_10.ckpt"
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-lg font-semibold mb-3">Early Stopping</h3>
+        <p class="text-gray-600 text-sm mb-3">Prevent overfitting with patience-based early stopping and validation
+          monitoring.</p>
+        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
+          EarlyStopping.create ~patience:10 ~monitor:"val_loss"
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-lg font-semibold mb-3">Mixed Precision</h3>
+        <p class="text-gray-600 text-sm mb-3">Automatic mixed precision training for faster training and reduced memory
+          usage.</p>
+        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
+          Trainer.create ~mixed_precision:true
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-lg font-semibold mb-3">Gradient Clipping</h3>
+        <p class="text-gray-600 text-sm mb-3">Gradient norm and value clipping to stabilize training of deep networks.
+        </p>
+        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
+          ~grad_clip:(ClipNorm 1.0)
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-lg font-semibold mb-3">Transfer Learning</h3>
+        <p class="text-gray-600 text-sm mb-3">Load pre-trained weights and fine-tune for new tasks with frozen layers.
+        </p>
+        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
+          Model.load_pretrained "resnet50" |> freeze_backbone
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Installation -->
+<section class="py-12">
+  <div class="max-w-4xl mx-auto px-6">
+    <h2 class="text-3xl font-bold text-center mb-8">Installation</h2>
+    <div class="grid md:grid-cols-2 gap-8">
+
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-xl font-semibold mb-4">Via OPAM</h3>
+        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
+          <div>$ opam install kaun</div>
+        </div>
+        <p class="text-gray-600 mt-4">Requires rune and ndarray dependencies.</p>
+      </div>
+
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-xl font-semibold mb-4">Development Build</h3>
+        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
+          <div>$ git clone ...</div>
+          <div>$ cd raven</div>
+          <div>$ dune build dev/projects/kaun</div>
+        </div>
+        <p class="text-gray-600 mt-4">Latest features and GPU backends.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Navigation -->
+<section class="py-12 bg-white border-t">
+  <div class="max-w-6xl mx-auto px-6">
+    <div class="grid md:grid-cols-3 gap-8">
+
+      <div>
+        <h3 class="text-xl font-semibold mb-4">Getting Started</h3>
+        <ul class="space-y-2">
+          <li><a href="guides/installation/" class="text-red-600 hover:text-red-800">Installation Guide</a></li>
+          <li><a href="guides/quickstart/" class="text-red-600 hover:text-red-800">First Neural Network</a></li>
+          <li><a href="guides/pytorch-migration/" class="text-red-600 hover:text-red-800">PyTorch Migration</a></li>
+          <li><a href="examples/" class="text-red-600 hover:text-red-800">Example Models</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h3 class="text-xl font-semibold mb-4">Model Building</h3>
+        <ul class="space-y-2">
+          <li><a href="guides/layers/" class="text-red-600 hover:text-red-800">Layer Reference</a></li>
+          <li><a href="guides/models/" class="text-red-600 hover:text-red-800">Model Architectures</a></li>
+          <li><a href="guides/training/" class="text-red-600 hover:text-red-800">Training Loops</a></li>
+          <li><a href="guides/optimization/" class="text-red-600 hover:text-red-800">Optimizers</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h3 class="text-xl font-semibold mb-4">Advanced Topics</h3>
+        <ul class="space-y-2">
+          <li><a href="guides/distributed/" class="text-red-600 hover:text-red-800">Distributed Training</a></li>
+          <li><a href="guides/custom-layers/" class="text-red-600 hover:text-red-800">Custom Layers</a></li>
+          <li><a href="guides/model-zoo/" class="text-red-600 hover:text-red-800">Model Zoo</a></li>
+          <li><a href="api/" class="text-red-600 hover:text-red-800">Full API Reference</a></li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+  </main>
+  <div id="footer"></div>
+</body>
+
+</html>

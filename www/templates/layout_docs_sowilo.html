@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Page Title</title>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+  <!-- Header -->
+  <header class="bg-white shadow-sm">
+    <div class="px-6 py-4">
+      <nav class="flex items-center justify-between">
+        <div class="flex items-center space-x-4">
+          <a href="../../" class="text-2xl font-bold text-gray-900">Raven</a>
+          <span class="text-gray-400">/</span>
+          <a href="../" class="text-2xl font-bold text-gray-700">docs</a>
+          <span class="text-gray-400">/</span>
+          <span class="text-2xl font-bold text-cyan-600">sowilo</span>
+        </div>
+        <div class="flex items-center space-x-6">
+          <a href="../../sowilo/" class="text-gray-600 hover:text-gray-900">Library Home</a>
+          <div id="project-nav"></div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Content with Sidebar -->
+  <div class="flex bg-white">
+
+    <!-- Fixed Sidebar -->
+    <nav class="w-64 bg-gray-50 border-r border-gray-200 min-h-screen flex-shrink-0">
+      <div class="p-6">
+        <!-- Library Info -->
+        <div class="mb-6">
+          <h3 class="font-semibold mb-3 text-cyan-600">🟦 sowilo</h3>
+          <p class="text-sm text-gray-600 mb-4">Differentiable computer vision library</p>
+          <a href="../../sowilo/" class="text-sm text-cyan-600 hover:text-cyan-800">← Back to Library</a>
+        </div>
+
+        <!-- Navigation -->
+        <div id="sidebar-links">
+          <h3 class="font-semibold mb-4 text-gray-900">Documentation</h3>
+          <ul class="space-y-1">
+            <li><a href="/docs/sowilo/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">📚 Overview</a></li>
+            <li><a href="/docs/sowilo/getting-started/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🚀 Getting Started</a></li>
+            <li><a href="/docs/sowilo/installation/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">📦 Installation</a></li>
+            <li><a href="/docs/sowilo/image-processing/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🖼️ Image Processing</a></li>
+            <li><a href="/docs/sowilo/filters/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🔍 Filters</a></li>
+            <li><a href="/docs/sowilo/segmentation/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">✂️ Segmentation</a></li>
+            <li><a href="/docs/sowilo/feature-detection/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🎯 Feature Detection</a></li>
+            <li><a href="/docs/sowilo/neural-networks/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🧠 Neural Networks</a></li>
+            <li><a href="/docs/sowilo/api/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">🔧 API Reference</a></li>
+          </ul>
+
+          <h3 class="font-semibold mb-4 mt-8 text-gray-900">Advanced Topics</h3>
+          <ul class="space-y-1">
+            <li><a href="/docs/sowilo/gpu/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">GPU Programming</a></li>
+            <li><a href="/docs/sowilo/custom-ops/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Custom Operations</a></li>
+            <li><a href="/docs/sowilo/real-time/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Real-time Systems</a></li>
+            <li><a href="/docs/sowilo/optimization/" class="text-gray-600 hover:bg-gray-100 hover:text-gray-900 block px-3 py-2 rounded-md text-sm">Optimization</a></li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <div class="w-full min-h-screen">
+      <div id="breadcrumbs" class="px-6 pt-4 pb-2 text-sm border-b border-gray-200 bg-white"></div>
+
+      <!-- Documentation container with proper constraints -->
+      <div class="max-w-7xl px-6 py-8 bg-white">
+        <div class="flex gap-8">
+          <main class="flex-1 max-w-4xl prose max-w-none"></main>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div id="footer"></div>
+</body>
+
+</html>

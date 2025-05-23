@@ -1,0 +1,311 @@
+<!-- Header -->
+<div class="mb-8">
+  <h1 class="text-3xl font-bold text-gray-900 mb-4">Raven Roadmap</h1>
+  <p class="text-lg text-gray-600">
+    Our vision for building the premier OCaml ecosystem for machine learning and data science.
+  </p>
+</div>
+
+<!-- Current Status -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-8">Current Status</h2>
+  <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+    <!-- ndarray -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <div class="flex items-center mb-4">
+        <h3 class="text-lg font-semibold">ndarray</h3>
+        <span class="ml-3 px-2 py-1 bg-green-100 text-green-800 text-xs rounded">Production</span>
+      </div>
+      <ul class="text-sm text-gray-600 space-y-1">
+        <li>✅ Core array operations</li>
+        <li>✅ Broadcasting & linear algebra</li>
+        <li>✅ I/O extensions</li>
+      </ul>
+    </div>
+
+    <!-- hugin -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <div class="flex items-center mb-4">
+        <h3 class="text-lg font-semibold">hugin</h3>
+        <span class="ml-3 px-2 py-1 bg-green-100 text-green-800 text-xs rounded">Production</span>
+      </div>
+      <ul class="text-sm text-gray-600 space-y-1">
+        <li>✅ 2D plotting & Cairo backend</li>
+        <li>🔄 3D visualization</li>
+        <li>🔄 Interactive mode</li>
+      </ul>
+    </div>
+
+    <!-- rune -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <div class="flex items-center mb-4">
+        <h3 class="text-lg font-semibold">rune</h3>
+        <span class="ml-3 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded">Beta</span>
+      </div>
+      <ul class="text-sm text-gray-600 space-y-1">
+        <li>✅ Auto-differentiation</li>
+        <li>🔄 JIT compilation</li>
+        <li>📋 GPU backends</li>
+      </ul>
+    </div>
+
+    <!-- kaun -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <div class="flex items-center mb-4">
+        <h3 class="text-lg font-semibold">kaun</h3>
+        <span class="ml-3 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded">Beta</span>
+      </div>
+      <ul class="text-sm text-gray-600 space-y-1">
+        <li>✅ Core layers & models</li>
+        <li>🔄 Training utilities</li>
+        <li>📋 Pre-trained models</li>
+      </ul>
+    </div>
+
+    <!-- sowilo -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <div class="flex items-center mb-4">
+        <h3 class="text-lg font-semibold">sowilo</h3>
+        <span class="ml-3 px-2 py-1 bg-red-100 text-red-800 text-xs rounded">Alpha</span>
+      </div>
+      <ul class="text-sm text-gray-600 space-y-1">
+        <li>✅ Basic image processing</li>
+        <li>🔄 Object detection</li>
+        <li>📋 GPU acceleration</li>
+      </ul>
+    </div>
+
+    <!-- quill -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <div class="flex items-center mb-4">
+        <h3 class="text-lg font-semibold">quill</h3>
+        <span class="ml-3 px-2 py-1 bg-red-100 text-red-800 text-xs rounded">Alpha</span>
+      </div>
+      <ul class="text-sm text-gray-600 space-y-1">
+        <li>✅ Markdown notebooks</li>
+        <li>🔄 Live code execution</li>
+        <li>📋 Export formats</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <div class="mt-6 text-center">
+    <div class="flex items-center justify-center space-x-6 text-sm">
+      <div class="flex items-center">
+        <div class="w-3 h-3 bg-green-500 rounded-full mr-2"></div>
+        <span>Complete</span>
+      </div>
+      <div class="flex items-center">
+        <div class="w-3 h-3 bg-yellow-500 rounded-full mr-2"></div>
+        <span>In Progress</span>
+      </div>
+      <div class="flex items-center">
+        <div class="w-3 h-3 bg-gray-400 rounded-full mr-2"></div>
+        <span>Planned</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 2024 Goals -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-8">2024 Priorities</h2>
+
+  <div class="space-y-6">
+
+    <!-- Q1-Q2 2024 -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h3 class="text-xl font-semibold mb-4 text-indigo-600">Stabilization & Performance</h3>
+      <div class="grid md:grid-cols-2 gap-6">
+
+        <div>
+          <h4 class="font-semibold mb-3">Core Libraries</h4>
+          <ul class="space-y-2 text-gray-600 text-sm">
+            <li>• <strong>ndarray:</strong> SIMD optimizations, sparse arrays</li>
+            <li>• <strong>hugin:</strong> Complete 3D support, interactive backend</li>
+            <li>• <strong>rune:</strong> Metal & CUDA backends</li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 class="font-semibold mb-3">Ecosystem</h4>
+          <ul class="space-y-2 text-gray-600 text-sm">
+            <li>• Comprehensive documentation</li>
+            <li>• Performance benchmarks</li>
+            <li>• OPAM package releases</li>
+          </ul>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Q3-Q4 2024 -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h3 class="text-xl font-semibold mb-4 text-purple-600">Next-Generation Features</h3>
+      <div class="grid md:grid-cols-2 gap-6">
+
+        <div>
+          <h4 class="font-semibold mb-3">Advanced Development</h4>
+          <ul class="space-y-2 text-gray-600 text-sm">
+            <li>• OCaml 5 algebraic effects integration</li>
+            <li>• Advanced JIT compilation pipeline</li>
+            <li>• Multi-device computation graphs</li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 class="font-semibold mb-3">High-Level Libraries</h4>
+          <ul class="space-y-2 text-gray-600 text-sm">
+            <li>• <strong>kaun:</strong> Production-ready neural networks</li>
+            <li>• <strong>sowilo:</strong> GPU-accelerated computer vision</li>
+            <li>• Pre-trained model zoo</li>
+          </ul>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- Long-term Vision -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-8">Long-term Vision (2025+)</h2>
+
+  <div class="grid md:grid-cols-3 gap-6">
+
+    <!-- Performance -->
+    <div class="bg-white p-6 rounded-lg shadow text-center">
+      <div class="bg-red-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+        <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+        </svg>
+      </div>
+      <h3 class="text-lg font-semibold mb-3">Performance Leadership</h3>
+      <ul class="text-sm text-gray-600 space-y-1 text-left">
+        <li>• Outperform NumPy on CPU</li>
+        <li>• Competitive with JAX on GPU</li>
+        <li>• Advanced compiler optimizations</li>
+      </ul>
+    </div>
+
+    <!-- Ecosystem -->
+    <div class="bg-white p-6 rounded-lg shadow text-center">
+      <div class="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9v-9m0-9v9"></path>
+        </svg>
+      </div>
+      <h3 class="text-lg font-semibold mb-3">Complete Ecosystem</h3>
+      <ul class="text-sm text-gray-600 space-y-1 text-left">
+        <li>• Rich package ecosystem</li>
+        <li>• Domain-specific libraries</li>
+        <li>• Industry adoption</li>
+      </ul>
+    </div>
+
+    <!-- Innovation -->
+    <div class="bg-white p-6 rounded-lg shadow text-center">
+      <div class="bg-green-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z">
+          </path>
+        </svg>
+      </div>
+      <h3 class="text-lg font-semibold mb-3">Research Innovation</h3>
+      <ul class="text-sm text-gray-600 space-y-1 text-left">
+        <li>• Novel AD algorithms</li>
+        <li>• OCaml 5 concurrency patterns</li>
+        <li>• Type-safe GPU programming</li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<!-- Technical Priorities -->
+<section class="mb-12">
+  <h2 class="text-2xl font-bold text-gray-900 mb-8">Key Technical Priorities</h2>
+
+  <div class="space-y-4">
+
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h3 class="text-lg font-semibold mb-3 text-orange-600">GPU Acceleration</h3>
+      <p class="text-gray-600 mb-3">First-class GPU support with Metal (macOS) and CUDA backends.</p>
+      <div class="grid md:grid-cols-3 gap-4 text-sm text-gray-600">
+        <div><strong>rune:</strong> JIT to GPU kernels</div>
+        <div><strong>ndarray:</strong> Transparent GPU arrays</div>
+        <div><strong>kaun:</strong> GPU training</div>
+      </div>
+    </div>
+
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h3 class="text-lg font-semibold mb-3 text-purple-600">OCaml 5 Integration</h3>
+      <p class="text-gray-600 mb-3">Leverage algebraic effects and multicore parallelism.</p>
+      <div class="grid md:grid-cols-3 gap-4 text-sm text-gray-600">
+        <div><strong>Effects:</strong> Non-intrusive transformations</div>
+        <div><strong>Domains:</strong> Parallel operations</div>
+        <div><strong>Scheduler:</strong> Async computation</div>
+      </div>
+    </div>
+
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h3 class="text-lg font-semibold mb-3 text-blue-600">Type Safety Innovations</h3>
+      <p class="text-gray-600 mb-3">Push boundaries of compile-time guarantees for numerical computing.</p>
+      <div class="grid md:grid-cols-3 gap-4 text-sm text-gray-600">
+        <div><strong>Shape Types:</strong> Dimension checking</div>
+        <div><strong>Device Types:</strong> Memory tracking</div>
+        <div><strong>Grad Types:</strong> Differentiability</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- Community -->
+<section>
+  <div class="bg-gray-100 p-8 rounded-lg text-center">
+    <h2 class="text-2xl font-bold text-gray-900 mb-4">Join the Journey</h2>
+    <p class="text-gray-600 mb-6">
+      Raven needs your help to realize this vision. Whether you're interested in numerical computing,
+      machine learning, or exploring OCaml's potential, there are many ways to contribute.
+    </p>
+
+    <div class="grid md:grid-cols-2 gap-6 mb-6 max-w-2xl mx-auto">
+
+      <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
+        <h3 class="font-semibold mb-2">For Users</h3>
+        <ul class="text-sm text-gray-600 space-y-1">
+          <li>• Try libraries and share feedback</li>
+          <li>• Report bugs and issues</li>
+          <li>• Improve documentation</li>
+        </ul>
+      </div>
+
+      <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
+        <h3 class="font-semibold mb-2">For Developers</h3>
+        <ul class="text-sm text-gray-600 space-y-1">
+          <li>• Contribute to core libraries</li>
+          <li>• Implement new backends</li>
+          <li>• Build domain extensions</li>
+        </ul>
+      </div>
+
+    </div>
+
+    <div class="flex flex-col sm:flex-row gap-4 justify-center">
+      <a href="/community/"
+        class="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors">
+        Join the Community
+      </a>
+      <a href="/docs/"
+        class="border-2 border-blue-600 text-blue-600 px-6 py-3 rounded-lg font-semibold hover:bg-blue-600 hover:text-white transition-colors">
+        Documentation Overview
+      </a>
+    </div>
+  </div>
+</section>

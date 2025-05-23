@@ -1,0 +1,39 @@
+(version dev)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml
+   dune
+   containers
+   fileutils
+   logs
+   fmt
+   lambdasoup
+   markup
+   otoml
+   ezjsonm
+   yaml
+   csv
+   re
+   odate
+   spelll
+   base64
+   jingoo
+   camomile
+   digestif
+   tsort
+   lua-ml
+   cmarkit)))
+
+(source
+ (fetch
+  (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)))
+
+(dev)

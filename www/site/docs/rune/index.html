@@ -1,0 +1,46 @@
+<h1>rune Documentation</h1>
+
+<p class="lead">
+  This is the documentation section for rune, the automatic differentiation and JIT compilation library.
+</p>
+
+<h2>Getting Started</h2>
+<p>
+  rune provides JAX-inspired automatic differentiation and JIT compilation using OCaml 5 algebraic effects.
+</p>
+
+<h3>Quick Example</h3>
+<pre><code>open Rune
+
+(* Define a function *)
+let f x = Tensor.(x * x + sin x)
+
+(* Get gradient function *)
+let grad_f = grad f
+
+(* JIT compile for performance *)
+let jit_f = jit f
+
+(* Compose transformations *)
+let fast_grad_f = grad (jit f)</code></pre>
+
+<h2>Core Concepts</h2>
+<ul>
+  <li><strong>Automatic Differentiation</strong> - Forward and reverse mode AD</li>
+  <li><strong>JIT Compilation</strong> - Just-in-time compilation for performance</li>
+  <li><strong>Effect System</strong> - OCaml 5 algebraic effects for transformations</li>
+  <li><strong>Composable Transformations</strong> - grad, jit, and other combinators</li>
+</ul>
+
+<h2>API Reference</h2>
+<p>
+  For complete API documentation, see the <a href="/rune/" class="text-orange-600">rune library page</a>.
+</p>
+
+<div class="bg-orange-50 border-l-4 border-orange-400 p-4 mt-8">
+  <p class="text-orange-800">
+    <strong>Note:</strong> This is the documentation section. Visit the
+    <a href="/rune/" class="text-orange-600 underline">rune library homepage</a>
+    for installation, examples, and getting started guides.
+  </p>
+</div>

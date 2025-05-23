@@ -1,0 +1,47 @@
+<h1>kaun Documentation</h1>
+
+<p class="lead">
+  This is the documentation section for kaun, the neural network library for deep learning.
+</p>
+
+<h2>Getting Started</h2>
+<p>
+  kaun provides high-level APIs for building and training neural networks, built on top of rune's automatic
+  differentiation.
+</p>
+
+<h3>Quick Example</h3>
+<pre><code>open Kaun
+
+(* Define a neural network *)
+let model = Sequential.[
+  Dense.create ~units:128 ~activation:Relu;
+  Dropout.create ~rate:0.2;
+  Dense.create ~units:10 ~activation:Softmax;
+]
+
+(* Compile and train *)
+let compiled = Model.compile model 
+  ~optimizer:(Adam.create ~lr:0.001)
+  ~loss:CategoricalCrossentropy</code></pre>
+
+<h2>Core Concepts</h2>
+<ul>
+  <li><strong>Layers</strong> - Dense, convolutional, dropout, and custom layers</li>
+  <li><strong>Models</strong> - Sequential and functional model architectures</li>
+  <li><strong>Training</strong> - Optimizers, loss functions, and training loops</li>
+  <li><strong>Metrics</strong> - Evaluation and monitoring during training</li>
+</ul>
+
+<h2>API Reference</h2>
+<p>
+  For complete API documentation, see the <a href="/kaun/" class="text-red-600">kaun library page</a>.
+</p>
+
+<div class="bg-red-50 border-l-4 border-red-400 p-4 mt-8">
+  <p class="text-red-800">
+    <strong>Note:</strong> This is the documentation section. Visit the
+    <a href="/kaun/" class="text-red-600 underline">kaun library homepage</a>
+    for installation, examples, and getting started guides.
+  </p>
+</div>

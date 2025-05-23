@@ -1,0 +1,48 @@
+<h1>quill Documentation</h1>
+
+<p class="lead">
+  This is the documentation section for quill, the interactive notebook environment for data science.
+</p>
+
+<h2>Getting Started</h2>
+<p>
+  quill provides a Jupyter-like notebook environment with markdown-based notebooks and live OCaml code execution.
+</p>
+
+<h3>Quick Example</h3>
+<pre><code># Start Quill server
+$ dune exec quill -- serve notebooks/
+
+# Or execute a notebook
+$ dune exec quill -- exec analysis.md</code></pre>
+
+<h3>In a Notebook</h3>
+<pre><code>```ocaml
+open Ndarray
+open Hugin
+
+let data = Ndarray.random [100; 2] float32
+let fig = Figure.create ()
+let _ = Axes.scatter (Figure.add_subplot fig) data
+```</code></pre>
+
+<h2>Core Concepts</h2>
+<ul>
+  <li><strong>Notebook Format</strong> - Markdown-based notebooks for version control</li>
+  <li><strong>Code Execution</strong> - Live OCaml evaluation with rich output</li>
+  <li><strong>Plotting Integration</strong> - Seamless hugin plot display</li>
+  <li><strong>Export Options</strong> - HTML, PDF, and command-line execution</li>
+</ul>
+
+<h2>API Reference</h2>
+<p>
+  For complete API documentation, see the <a href="/quill/" class="text-green-600">quill library page</a>.
+</p>
+
+<div class="bg-green-50 border-l-4 border-green-400 p-4 mt-8">
+  <p class="text-green-800">
+    <strong>Note:</strong> This is the documentation section. Visit the
+    <a href="/quill/" class="text-green-600 underline">quill library homepage</a>
+    for installation, examples, and getting started guides.
+  </p>
+</div>

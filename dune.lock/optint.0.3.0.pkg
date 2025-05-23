@@ -1,0 +1,15 @@
+(version 0.3.0)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (ocaml dune)))
+
+(source
+ (fetch
+  (url
+   https://github.com/mirage/optint/releases/download/v0.3.0/optint-0.3.0.tbz)
+  (checksum
+   sha256=295cff2c134b0385b13ba81d5005d9f841ba40d4a502aed10c997f239ef1147b)))
