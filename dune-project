@@ -24,7 +24,7 @@
 (package
  (name dev)
  (allow_empty)
- (depends odoc odoc-driver))
+ (depends odoc odoc-driver soupault))
 
 (package
  (name ndarray)
