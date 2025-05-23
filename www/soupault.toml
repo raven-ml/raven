@@ -12,6 +12,8 @@
   markdown_extensions = ["md"]
   keep_doctype = true
   pretty_print_html = true
+  plugin_discovery = true # Or load explicitly
+  plugin_dirs = ["plugins"] # Default
 
 # Define specific templates for different pages/sections
 [templates.landing_page]
@@ -19,22 +21,41 @@
   page = "index.html" # Applies only to site/index.html
   content_selector = "main"
 
-[templates.project_main_page]
-  file = "templates/project.html"
-  path_regex = "^(ndarray|hugin|quill|rune)/index\\.html$" # Targets project root index.html files
+[templates.hugin_project_config]
+  file = "templates/layout_hugin.html"
+  section = "hugin/"
+  include_subsections = true
   content_selector = "main"
 
-[templates.project_sub_page]
-  file = "templates/project.html" # Assuming sub-projects use the same template
-  path_regex = "^rune/(kaun|sowilo)/index\\.html$" # Targets sub-project root index.html files
+[templates.ndarray_project_config]
+  file = "templates/layout_ndarray.html"
+  section = "ndarray/"
+  include_subsections = true
   content_selector = "main"
 
-[widgets.breadcrumbs]
-  widget = "breadcrumbs"
-  selector = "#breadcrumbs"
-  # min_depth = 1 # Optional: if you don't want breadcrumbs on pages like /foo.html (depth 0)
-  between = " / "
-  exclude_page = "index.html" # Exclude from the main site landing page
+[templates.rune_project_config]
+  file = "templates/layout_rune.html"
+  section = "rune/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.quill_project_config]
+  file = "templates/layout_quill.html"
+  section = "quill/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.kaun_project_config]
+  file = "templates/layout_kaun.html"
+  section = "kaun/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.sowilo_project_config]
+  file = "templates/layout_sowilo.html"
+  section = "sowilo/"
+  include_subsections = true
+  content_selector = "main"
 
 [widgets.page_title]
   widget = "title"
@@ -47,24 +68,22 @@
   widget = "delete_element"
   selector = "p:empty"
 
-# The [index] table is for metadata extraction and rendering index *listings*.
-# It does not define what file constitutes a section's index page (that's by convention, e.g., index.html).
-# If you are not extracting metadata to build custom index pages (e.g., a list of blog posts),
-# this section can be minimal or even omitted.
-[index]
-  # To enable metadata extraction and processing, set `index = true`
-  # index = true
+[widgets.breadcrumbs]
+  widget = "breadcrumbs"
+  selector = "#breadcrumbs"
+  # min_depth = 1 # Optional: if you don't want breadcrumbs on pages like /foo.html (depth 0)
+  between = " / "
+  exclude_page = "index.html" # Exclude from the main site landing page
 
-  # Example: if you were to extract metadata:
-  # [index.fields.title]
-  #   selector = "h1"
-  # [index.views.some_listing]
-  #   index_selector = "#some-list-container"
-  #   index_item_template = "<li><a href='{{url}}'>{{title}}</a></li>"
-  #   section = "blog/" # Only create this listing for the blog section's index page
+[widgets.include_footer]
+  widget = "include"
+  file = "templates/partials/footer.html"
+  selector = "#footer"
+  action = "replace_element"
 
-# Preprocessors (if any)
-[preprocessors]
-
-# Lua plugins (if any)
-[plugins]
+[widgets.style_documentation_main_tag]
+  widget = "style_doc_main" # Lua filename without .lua
+  selector = "main"         # The widget will operate on the <main> tag
+  # No need for path_regex here, the plugin logic handles which pages to affect.
+  # This widget should run after content is inserted but before final HTML generation.
+  # Its default order should be fine.
