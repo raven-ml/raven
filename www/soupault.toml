@@ -1,0 +1,93 @@
+# soupault.toml
+
+[settings]
+  site_dir = "site"
+  build_dir = "build"
+  default_template_file = "templates/main.html"
+  default_content_selector = "main"
+  complete_page_selector = "html"
+  generator_mode = true
+  clean_urls = true
+  page_file_extensions = ["htm", "html"]
+  markdown_extensions = ["md"]
+  keep_doctype = true
+  pretty_print_html = true
+  plugin_discovery = true # Or load explicitly
+  plugin_dirs = ["plugins"] # Default
+
+[templates.docs_config]
+  file = "templates/layout_docs.html"
+  section = "docs/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.docs_ndarray_config]
+  file = "templates/layout_docs_ndarray.html"
+  section = "docs/ndarray/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.docs_hugin_config]
+  file = "templates/layout_docs_hugin.html"
+  section = "docs/hugin/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.docs_rune_config]
+  file = "templates/layout_docs_rune.html"
+  section = "docs/rune/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.docs_quill_config]
+  file = "templates/layout_docs_quill.html"
+  section = "docs/quill/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.docs_kaun_config]
+  file = "templates/layout_docs_kaun.html"
+  section = "docs/kaun/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.docs_sowilo_config]
+  file = "templates/layout_docs_sowilo.html"
+  section = "docs/sowilo/"
+  include_subsections = true
+  content_selector = "main"
+
+[widgets.page_title]
+  widget = "title"
+  selector = "h1"
+  default = "Raven Ecosystem"
+  append = " - Raven"
+  # keep = false # Add if you want to force overwrite existing <title> tags
+
+[widgets.clean_empty_paragraphs]
+  widget = "delete_element"
+  selector = "p:empty"
+
+[widgets.breadcrumbs]
+  widget = "breadcrumbs"
+  selector = "#breadcrumbs"
+  breadcrumb_template = """<a href="{{url}}" class="text-gray-500 hover:text-gray-700 hover:underline">{{name | title}}</a>"""
+  between = """<span class="mx-2 text-gray-400">/</span>"""
+  min_depth = 0
+
+[widgets.append_current_page_to_breadcrumbs]
+  widget = "append_page_title_to_breadcrumbs"
+  selector = "#breadcrumbs"
+  after = "breadcrumbs"
+
+[widgets.include_footer]
+  widget = "include"
+  file = "templates/partials/footer.html"
+  selector = "#footer"
+  action = "replace_element"
+
+[widgets.include_project_nav]
+  widget = "include"
+  file = "templates/partials/project-nav.html"
+  selector = "#project-nav"
+  action = "replace_element"

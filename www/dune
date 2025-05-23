@@ -1,0 +1,11 @@
+(rule
+ (targets
+  (dir build))
+ (mode promote)
+ (deps
+  soupault.toml
+  (source_tree plugins)
+  (source_tree templates)
+  (source_tree site))
+ (action
+  (run soupault)))
