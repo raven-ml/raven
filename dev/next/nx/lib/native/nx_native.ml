@@ -503,9 +503,7 @@ let op_contiguous _ctx t =
   else Internal.copy t (* Internal.copy creates a new C-contiguous tensor *)
 
 let op_copy _ctx t = Internal.copy t
-
-let op_assign _ctx target_t source_t =
-  Internal.blit source_t target_t
+let op_assign _ctx target_t source_t = Internal.blit source_t target_t
 
 let op_threefry ctx data seed =
   let out_shape = Internal.shape data in
@@ -517,3 +515,157 @@ let op_threefry ctx data seed =
   Ops_threefry.threefry ctx data seed out_tensor;
 
   out_tensor
+
+(* Element Access Ops *)
+
+let op_gather ctx data_t indices_t axis =
+  let data_shape = Internal.shape data_t in
+  let indices_shape = Internal.shape indices_t in
+  let data_rank = Array.length data_shape in
+  let indices_rank = Array.length indices_shape in
+
+  (* Validate inputs *)
+  if data_rank <> indices_rank then
+    invalid_arg
+      (Printf.sprintf
+         "op_gather: data rank (%d) and indices rank (%d) must match" data_rank
+         indices_rank);
+
+  let axis = if axis < 0 then axis + data_rank else axis in
+  if axis < 0 || axis >= data_rank then
+    invalid_arg
+      (Printf.sprintf "op_gather: axis %d out of bounds for rank %d" axis
+         data_rank);
+
+  (* Validate shape compatibility *)
+  for i = 0 to data_rank - 1 do
+    if i <> axis && indices_shape.(i) > data_shape.(i) then
+      invalid_arg
+        (Printf.sprintf "op_gather: indices.shape[%d]=%d > data.shape[%d]=%d" i
+           indices_shape.(i) i data_shape.(i))
+  done;
+
+  (* Create output tensor with shape of indices *)
+  let output_shape = indices_shape in
+  let output_numel = View.prod output_shape in
+  let output_t =
+    op_buffer ctx data_t.dtype output_numel |> fun t ->
+    with_view t (View.create output_shape)
+  in
+
+  if output_numel = 0 then output_t
+  else
+    let data_buffer = Internal.buffer data_t in
+    let indices_buffer = Internal.buffer indices_t in
+    let output_buffer = Internal.buffer output_t in
+    let data_view = data_t.view in
+    let indices_view = indices_t.view in
+
+    (* Process each output element *)
+    for linear_idx = 0 to output_numel - 1 do
+      (* Get multi-dimensional index in output/indices *)
+      let md_idx = View.multi_index_from_linear linear_idx output_shape in
+
+      (* Read the index value from indices tensor *)
+      let indices_offset = View.offset_of_indices indices_view md_idx in
+      let idx_value =
+        Int32.to_int (Bigarray.Array1.unsafe_get indices_buffer indices_offset)
+      in
+
+      (* Handle negative indices and bounds checking *)
+      let data_size_at_axis = data_shape.(axis) in
+      let normalized_idx =
+        if idx_value < 0 then idx_value + data_size_at_axis else idx_value
+      in
+
+      (* Clamp to valid range *)
+      let clamped_idx = max 0 (min (data_size_at_axis - 1) normalized_idx) in
+
+      (* Build source index for data tensor *)
+      let src_idx = Array.copy md_idx in
+      src_idx.(axis) <- clamped_idx;
+
+      (* Copy value from data to output *)
+      if View.is_valid data_view src_idx then
+        let data_offset = View.offset_of_indices data_view src_idx in
+        let value = Bigarray.Array1.unsafe_get data_buffer data_offset in
+        Bigarray.Array1.unsafe_set output_buffer linear_idx value
+      (* If invalid due to view mask, output remains at default (likely 0) *)
+    done;
+    output_t
+
+let op_scatter _ctx data_template_t indices_t updates_t axis =
+  let template_shape = Internal.shape data_template_t in
+  let indices_shape = Internal.shape indices_t in
+  let updates_shape = Internal.shape updates_t in
+  let template_rank = Array.length template_shape in
+
+  (* Validate inputs *)
+  if not (Dtype.eq data_template_t.dtype updates_t.dtype) then
+    invalid_arg "op_scatter: data_template and updates must have same dtype";
+
+  if indices_shape <> updates_shape then
+    invalid_arg "op_scatter: indices and updates must have same shape";
+
+  let axis = if axis < 0 then axis + template_rank else axis in
+  if axis < 0 || axis >= template_rank then
+    invalid_arg
+      (Printf.sprintf "op_scatter: axis %d out of bounds for rank %d" axis
+         template_rank);
+
+  (* Validate shape compatibility *)
+  for i = 0 to template_rank - 1 do
+    if i <> axis && updates_shape.(i) > template_shape.(i) then
+      invalid_arg
+        (Printf.sprintf
+           "op_scatter: updates.shape[%d]=%d > template.shape[%d]=%d" i
+           updates_shape.(i) i template_shape.(i))
+  done;
+
+  (* Create output as copy of template *)
+  let output_t = Internal.copy data_template_t in
+
+  let updates_numel = View.prod updates_shape in
+  if updates_numel = 0 then output_t
+  else
+    let output_buffer = Internal.buffer output_t in
+    let output_view = output_t.view in
+    let updates_buffer = Internal.buffer updates_t in
+    let updates_view = updates_t.view in
+    let indices_buffer = Internal.buffer indices_t in
+    let indices_view = indices_t.view in
+
+    (* Process each update *)
+    for linear_idx = 0 to updates_numel - 1 do
+      (* Get multi-dimensional index in updates/indices *)
+      let md_idx = View.multi_index_from_linear linear_idx updates_shape in
+
+      (* Read the target index from indices tensor *)
+      let indices_offset = View.offset_of_indices indices_view md_idx in
+      let idx_value =
+        Int32.to_int (Bigarray.Array1.unsafe_get indices_buffer indices_offset)
+      in
+
+      (* Handle negative indices *)
+      let template_size_at_axis = template_shape.(axis) in
+      let normalized_idx =
+        if idx_value < 0 then idx_value + template_size_at_axis else idx_value
+      in
+
+      (* Check bounds *)
+      if normalized_idx >= 0 && normalized_idx < template_size_at_axis then (
+        (* Build destination index *)
+        let dst_idx = Array.copy md_idx in
+        dst_idx.(axis) <- normalized_idx;
+
+        (* Write update value to output if destination is valid *)
+        if View.is_valid output_view dst_idx then
+          let updates_offset = View.offset_of_indices updates_view md_idx in
+          let update_value =
+            Bigarray.Array1.unsafe_get updates_buffer updates_offset
+          in
+          let output_offset = View.offset_of_indices output_view dst_idx in
+          Bigarray.Array1.unsafe_set output_buffer output_offset update_value)
+      (* Out of bounds indices are silently ignored *)
+    done;
+    output_t

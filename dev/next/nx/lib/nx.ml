@@ -247,16 +247,23 @@ let randint dtype ?seed ?high shape low =
 
 (* Element Access *)
 
-let get_item indices t = B.get_item context indices t
-let set_item indices v t = B.set_item context indices v t
 let get indices t = B.get context indices t
 let set indices t1 t2 = B.set context indices t1 t2
 
+let slice_ranges ?steps starts stops t =
+  B.slice_ranges context ?steps starts stops t
+
+let set_slice_ranges ?steps starts stops value t =
+  B.set_slice_ranges context ?steps starts stops value t
+
+let ( .%{} ) x indices = slice_ranges indices x
+let ( .%{}<- ) x indices y = set_slice_ranges indices x y
+
 (* Higher-Order Function *)
 
-let map f t = B.map context f t
-let iter f t = B.iter context f t
-let fold f acc t = B.fold context f acc t
+(* let map f t = B.map context f t *)
+(* let iter f t = B.iter context f t *)
+(* let fold f acc t = B.fold context f acc t *)
 
 (* Transformation *)
 
@@ -268,11 +275,6 @@ let transpose ?axes t = B.transpose context ?axes t
 let broadcast_to new_shape t = B.broadcast_to context new_shape t
 let squeeze ?axes t = B.squeeze context ?axes t
 let expand_dims axis t = B.expand_dims context axis t
-let slice ?steps starts stops t = B.slice context ?steps starts stops t
-
-let set_slice ?steps starts stops value t =
-  B.set_slice context ?steps starts stops value t
-
 let cast dtype t = B.cast context dtype t
 let array_split ?(axis = 0) sections t = B.array_split context ~axis sections t
 let split ?(axis = 0) sections t = B.split context ~axis sections t
@@ -317,11 +319,11 @@ let std ?axes ?keepdims ?correction t =
 
 (* Linear algebra extras *)
 
-let inv t = B.inv context t
-let solve a b = B.solve context a b
-let svd t = B.svd context t
-let eig t = B.eig context t
-let eigh t = B.eigh context t
+(* let inv t = B.inv context t *)
+(* let solve a b = B.solve context a b *)
+(* let svd t = B.svd context t *)
+(* let eig t = B.eig context t *)
+(* let eigh t = B.eigh context t *)
 
 (* Sorting and selection *)
 

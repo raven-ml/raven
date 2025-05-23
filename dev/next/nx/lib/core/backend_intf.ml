@@ -170,4 +170,33 @@ module type S = sig
     (int32, Dtype.int32_elt) t ->
     (int32, Dtype.int32_elt) t
   (** Threefry random number generator. *)
+
+  (* Element Access Ops *)
+
+  (* These operations enable lazy, graph-based element access (get/set). This
+     differs from tinygrad's eager realization for __getitem__/__setitem__. We
+     opt for lazy ops to avoid premature realization and CPU<->device transfers.
+     These are primarily for internal Nx slice/put_slice implementations and
+     their direct backend exposure might be refined later. *)
+
+  val op_gather :
+    context ->
+    ('a, 'b) t (* data *) ->
+    (int32, Dtype.int32_elt) t (* indices *) ->
+    int (* axis *) ->
+    ('a, 'b) t
+  (** Gather elements from [data] along [axis] using [indices]. Output shape
+      matches [indices]. Ranks of [data] and [indices] must match. Sizes of
+      [indices] dims != [axis] must be <= [data] corresponding dims. *)
+
+  val op_scatter :
+    context ->
+    ('a, 'b) t (* data_template *) ->
+    (int32, Dtype.int32_elt) t (* indices *) ->
+    ('a, 'b) t (* updates *) ->
+    int (* axis *) ->
+    ('a, 'b) t
+  (** Scatter [updates] into a new tensor shaped like [data_template] along
+      [axis] using [indices]. Returns a new tensor. If multiple updates target
+      the same index, the last one typically wins. *)
 end

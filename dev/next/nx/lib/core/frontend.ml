@@ -124,7 +124,6 @@ module Make (B : Backend_intf.S) = struct
            (View.pp_int_array (shape dst)));
     B.op_assign ctx dst src
 
-  let fill ctx value t = failwith "todo: fill tensor with value"
   let create ctx dtype shape arr = failwith "todo: create from bigarray"
   let init ctx dtype shape f = failwith "todo: init with function"
   let scalar ctx dt value = B.op_const_scalar ctx value dt
@@ -174,27 +173,45 @@ module Make (B : Backend_intf.S) = struct
     let one_val = Dtype.one self_dtype in
     full_like ctx x one_val
 
+  let fill ctx value t =
+    let value_tensor = scalar_like ctx t value in
+    let value_broadcasted = broadcast_to ctx value_tensor (shape t) in
+    B.op_assign ctx t value_broadcasted;
+    t
+
+  (* *)
+
+  let to_bigarray ctx t = data t
+  let of_bigarray ctx ba ~dtype ~shape = failwith "todo: of_bigarray"
+
+  let to_array ctx t =
+    let ba = data t in
+    let n = numel t in
+    Array.init n (fun i -> Bigarray.Array1.get ba i)
+
   (* ────────── element-wise binary ops ────────── *)
 
-  let add ctx a b =
+  let binop ctx op a b =
     let a', b' = broadcasted ctx a b in
-    B.op_add ctx a' b'
+    op ctx a' b'
 
-  let add_s ctx tensor_a scalar_b_val =
-    let scalar_b_tensor = scalar_like ctx tensor_a scalar_b_val in
-    add ctx tensor_a scalar_b_tensor
+  let scalar_op ctx op tensor scalar_val =
+    let scalar_tensor = scalar_like ctx tensor scalar_val in
+    op ctx tensor scalar_tensor
+
+  let inplace_op ctx op target value =
+    let value_broadcasted = broadcast_to ctx value (shape target) in
+    let result = op ctx target value_broadcasted in
+    B.op_assign ctx target result;
+    target
+
+  let add ctx a b = binop ctx B.op_add a b
+  let add_s ctx tensor scalar = scalar_op ctx add tensor scalar
+  let iadd ctx target value = inplace_op ctx B.op_add target value
 
   let radd_s ctx scalar_a_val tensor_b =
     let scalar_a_tensor = scalar_like ctx tensor_b scalar_a_val in
     add ctx scalar_a_tensor tensor_b
-
-  let iadd ctx target_tensor value_tensor =
-    let value_tensor_broadcasted =
-      broadcast_to ctx value_tensor (shape target_tensor)
-    in
-    let result = B.op_add ctx target_tensor value_tensor_broadcasted in
-    B.op_assign ctx target_tensor result;
-    target_tensor
 
   let iadd_s ctx target_tensor scalar_val =
     let scalar_value_tensor = scalar_like ctx target_tensor scalar_val in
@@ -552,6 +569,8 @@ module Make (B : Backend_intf.S) = struct
     let minus_one_b = broadcast_to ctx minus_one_tensor (shape x) in
     B.op_xor ctx x minus_one_b
 
+  let invert ctx t = bitwise_not ctx t
+
   (* Math functions - assume float inputs as per B.op signatures *)
   let log2 ctx x = B.op_log2 ctx x
   let exp2 ctx x = B.op_exp2 ctx x
@@ -906,7 +925,15 @@ module Make (B : Backend_intf.S) = struct
     in
     B.op_reduce_max ctx x ~axes:axes_to_reduce ~keepdims
 
-  let min ctx ?axes ?(keepdims = false) x = failwith "todo: min"
+  let min ctx ?axes ?(keepdims = false) x =
+    let rank = Array.length (shape x) in
+    let axes_to_reduce =
+      match axes with
+      | None -> Array.init rank Fun.id
+      | Some ax_list ->
+          Array.map (fun ax -> if ax < 0 then ax + rank else ax) ax_list
+    in
+    neg ctx (B.op_reduce_max ctx (neg ctx x) ~axes:axes_to_reduce ~keepdims)
 
   let prod ctx ?axes ?(keepdims = false) x =
     let rank = Array.length (shape x) in
@@ -1027,6 +1054,8 @@ module Make (B : Backend_intf.S) = struct
     in
     reshape ctx x (Array.of_list new_shape_list)
 
+  let ravel ctx t = flatten ctx t
+
   (* drop axes of size 1; [axis] restricts the squeeze *)
   let squeeze ctx ?axis x =
     let sh = shape x in
@@ -1094,6 +1123,8 @@ module Make (B : Backend_intf.S) = struct
       if r = 0 && ax = 0 then [ 1 ] else insert_at_idx 0 ax sh_list 1
     in
     reshape ctx x (Array.of_list new_shape_list)
+
+  let expand_dims ctx t axis = unsqueeze ctx ~axis t
 
   let transpose ctx ?axes x =
     let r = ndim x in
@@ -1358,6 +1389,163 @@ module Make (B : Backend_intf.S) = struct
         reshape ctx result_tensor
           final_shape_arr (* Ensure original shape structure if not flattened *)
 
+  let concatenate ctx ?axis ts =
+    match ts with
+    | [] -> invalid_arg "concatenate: need at least one array"
+    | [ t ] -> copy ctx t
+    | _ ->
+        let axis =
+          match axis with
+          | None ->
+              (* Flatten all arrays first *)
+              let flattened = List.map (flatten ctx) ts in
+              B.op_cat ctx flattened 0
+          | Some a ->
+              let first_ndim = ndim (List.hd ts) in
+              let axis =
+                resolve_single_axis ~ndim_opt:first_ndim (List.hd ts) a
+              in
+
+              (* Check all arrays have same ndim *)
+              if not (List.for_all (fun t -> ndim t = first_ndim) ts) then
+                invalid_arg
+                  "concatenate: all arrays must have same number of dimensions";
+
+              (* Check shapes match except on concatenation axis *)
+              let first_shape = shape (List.hd ts) in
+              List.iter
+                (fun t ->
+                  let t_shape = shape t in
+                  Array.iteri
+                    (fun i s ->
+                      if i <> axis && s <> first_shape.(i) then
+                        invalid_arg
+                          "concatenate: all arrays must have same shape except \
+                           along concatenation axis")
+                    t_shape)
+                (List.tl ts);
+
+              B.op_cat ctx ts axis
+        in
+        axis
+
+  let stack ctx ?axis ts =
+    match ts with
+    | [] -> invalid_arg "stack: need at least one array"
+    | _ ->
+        let first_shape = shape (List.hd ts) in
+        let first_ndim = Array.length first_shape in
+
+        (* Check all arrays have same shape *)
+        List.iter
+          (fun t ->
+            if shape t <> first_shape then
+              invalid_arg "stack: all arrays must have same shape")
+          (List.tl ts);
+
+        (* Determine stacking axis *)
+        let axis =
+          match axis with
+          | None -> 0
+          | Some a ->
+              let a = if a < 0 then a + first_ndim + 1 else a in
+              if a < 0 || a > first_ndim then
+                invalid_arg
+                  (Printf.sprintf "stack: axis %d out of bounds for rank %d" a
+                     first_ndim);
+              a
+        in
+
+        (* Add new dimension to each array *)
+        let expanded = List.map (fun t -> unsqueeze ctx ~axis t) ts in
+
+        (* Concatenate along the new axis *)
+        B.op_cat ctx expanded axis
+
+  let vstack ctx ts =
+    match ts with
+    | [] -> invalid_arg "vstack: need at least one array"
+    | _ ->
+        (* Make all arrays at least 2D *)
+        let arrays_2d =
+          List.map
+            (fun t ->
+              let nd = ndim t in
+              if nd = 0 then reshape ctx t [| 1; 1 |]
+              else if nd = 1 then reshape ctx t [| 1; numel t |]
+              else t)
+            ts
+        in
+
+        (* Concatenate along first axis *)
+        concatenate ctx ~axis:0 arrays_2d
+
+  let hstack ctx ts =
+    match ts with
+    | [] -> invalid_arg "hstack: need at least one array"
+    | _ ->
+        (* Handle different dimensions *)
+        let all_1d = List.for_all (fun t -> ndim t <= 1) ts in
+
+        if all_1d then
+          (* For 1D arrays, concatenate along axis 0 *)
+          let arrays_1d =
+            List.map
+              (fun t -> if ndim t = 0 then reshape ctx t [| 1 |] else t)
+              ts
+          in
+          concatenate ctx ~axis:0 arrays_1d
+        else
+          (* Make all arrays at least 2D *)
+          let arrays_2d =
+            List.map
+              (fun t ->
+                let nd = ndim t in
+                if nd = 0 then reshape ctx t [| 1; 1 |]
+                else if nd = 1 then reshape ctx t [| numel t; 1 |]
+                else t)
+              ts
+          in
+
+          (* Concatenate along second axis *)
+          concatenate ctx ~axis:1 arrays_2d
+
+  let dstack ctx ts =
+    match ts with
+    | [] -> invalid_arg "dstack: need at least one array"
+    | _ ->
+        (* Make all arrays at least 3D *)
+        let arrays_3d =
+          List.map
+            (fun t ->
+              let s = shape t in
+              let nd = Array.length s in
+              if nd = 0 then reshape ctx t [| 1; 1; 1 |]
+              else if nd = 1 then reshape ctx t [| s.(0); 1; 1 |]
+              else if nd = 2 then reshape ctx t [| s.(0); s.(1); 1 |]
+              else t)
+            ts
+        in
+
+        (* Concatenate along third axis *)
+        concatenate ctx ~axis:2 arrays_3d
+
+  let broadcast_arrays ctx ts =
+    match ts with
+    | [] -> []
+    | [ t ] -> [ t ]
+    | _ ->
+        (* Find broadcast shape *)
+        let broadcast_shape =
+          List.fold_left
+            (fun acc_shape t -> View.broadcast_shapes acc_shape (shape t))
+            (shape (List.hd ts))
+            (List.tl ts)
+        in
+
+        (* Broadcast all arrays to common shape *)
+        List.map (fun t -> broadcast_to ctx t broadcast_shape) ts
+
   (* *)
 
   let eye ctx ?m ?k dtype n =
@@ -1544,6 +1732,448 @@ module Make (B : Backend_intf.S) = struct
 
   (* *)
 
+  (* *)
+
+  (* Index type definition *)
+  type index =
+    | I of int (* single index *)
+    | L of int list (* list of indices *)
+    | R of int list (* index range *)
+
+  (* Helper to normalize negative indices *)
+  let normalize_index dim_size idx = if idx < 0 then dim_size + idx else idx
+
+  (* Expand range specification according to Owl's conventions *)
+  let expand_range_spec dim_size = function
+    | [] -> (0, dim_size - 1, 1)
+    | [ start ] ->
+        let start' = normalize_index dim_size start in
+        (start', start', 1)
+    | [ start; stop ] ->
+        let start' = normalize_index dim_size start in
+        let stop' = normalize_index dim_size stop in
+        if start' <= stop' then (start', stop', 1) else (start', stop', -1)
+    | [ start; stop; step ] ->
+        if step = 0 then invalid_arg "step cannot be zero"
+        else
+          let start' = normalize_index dim_size start in
+          let stop' = normalize_index dim_size stop in
+          (start', stop', step)
+    | _ -> invalid_arg "range can have at most 3 elements"
+
+  (* Convert index specification to list of indices *)
+  let indices_of_spec dim_size = function
+    | I idx ->
+        let idx' = normalize_index dim_size idx in
+        if idx' < 0 || idx' >= dim_size then
+          invalid_arg (Printf.sprintf "index %d out of bounds" idx)
+        else [ idx' ]
+    | L indices ->
+        List.map
+          (fun idx ->
+            let idx' = normalize_index dim_size idx in
+            if idx' < 0 || idx' >= dim_size then
+              invalid_arg (Printf.sprintf "index %d out of bounds" idx)
+            else idx')
+          indices
+    | R range ->
+        let start, stop, step = expand_range_spec dim_size range in
+        let rec collect acc i =
+          if step > 0 && i > stop then List.rev acc
+          else if step < 0 && i < stop then List.rev acc
+          else if i >= 0 && i < dim_size then collect (i :: acc) (i + step)
+          else collect acc (i + step)
+        in
+        collect [] start
+
+  (* Efficient get_slice that minimizes tensor operations *)
+  let slice ctx slice_def x =
+    let x_shape = shape x in
+    let ndim = Array.length x_shape in
+
+    (* Pad slice definition *)
+    let full_slice =
+      let n = List.length slice_def in
+      if n > ndim then invalid_arg "too many indices"
+      else slice_def @ List.init (ndim - n) (fun _ -> R [])
+    in
+
+    (* Analyze slice pattern *)
+    let analyze_pattern slice =
+      match slice with
+      | [] -> `Empty
+      | I _ :: rest when List.for_all (function I _ -> true | _ -> false) rest
+        ->
+          `AllSingles
+      | _ ->
+          (* Check if all are contiguous ranges *)
+          let is_contiguous =
+            List.for_all
+              (function
+                | R [] | R [ _ ] | R [ _; _ ] -> true
+                | R [ s; e; 1 ] -> s <= e
+                | R [ s; e; -1 ] -> s >= e
+                | _ -> false)
+              slice
+          in
+          if is_contiguous then `ContiguousRanges else `Mixed
+    in
+
+    match analyze_pattern full_slice with
+    | `Empty -> x
+    | `AllSingles ->
+        (* Direct element access *)
+        let indices =
+          List.map
+            (fun spec ->
+              match spec with
+              | I idx -> normalize_index x_shape.(0) idx
+              | _ -> assert false)
+            full_slice
+        in
+        let shrink_config =
+          Array.of_list (List.mapi (fun i idx -> (idx, idx + 1)) indices)
+        in
+        reshape ctx (shrink ctx x shrink_config) [||]
+    | `ContiguousRanges ->
+        (* Use shrink/flip operations only *)
+        let rec apply_slices tensor dim = function
+          | [] -> tensor
+          | spec :: rest ->
+              let dim_size = (shape tensor).(dim) in
+              let tensor' =
+                match spec with
+                | R [] -> tensor (* Take all *)
+                | R [ idx ] ->
+                    let idx' = normalize_index dim_size idx in
+                    let config =
+                      Array.init (ndim - dim) (fun i ->
+                          if i = 0 then (idx', idx' + 1)
+                          else (0, (shape tensor).(dim + i)))
+                    in
+                    squeeze ctx ~axis:dim (shrink ctx tensor config)
+                | R range ->
+                    let start, stop, step = expand_range_spec dim_size range in
+                    let s, e =
+                      if step > 0 then (start, stop + 1) else (stop, start + 1)
+                    in
+                    let config =
+                      Array.init (ndim - dim) (fun i ->
+                          if i = 0 then (s, e) else (0, (shape tensor).(dim + i)))
+                    in
+                    let sliced = shrink ctx tensor config in
+                    if step < 0 then flip ctx ~axes:[| dim |] sliced else sliced
+                | _ -> assert false
+              in
+              apply_slices tensor' (dim + 1) rest
+        in
+        apply_slices x 0 full_slice
+    | `Mixed ->
+        (* Batch gather operations where possible *)
+        let rec batch_process tensor processed_dims = function
+          | [] -> tensor
+          | specs ->
+              (* Group consecutive gather operations *)
+              let rec group_gathers acc current = function
+                | [] -> List.rev (current :: acc)
+                | ((I _ | L _) as spec) :: rest ->
+                    group_gathers acc (spec :: current) rest
+                | spec :: rest ->
+                    group_gathers ((spec :: current) :: acc) [] rest
+              in
+
+              let groups = group_gathers [] [] specs in
+
+              (* Process each group *)
+              List.fold_left
+                (fun tensor group ->
+                  match group with
+                  | [] -> tensor
+                  | R spec :: rest ->
+                      (* Single range - use shrink *)
+                      let dim_size = (shape tensor).(0) in
+                      let indices = indices_of_spec dim_size (R spec) in
+                      let tensor' =
+                        if List.length indices = dim_size then tensor
+                        else if List.length indices = 1 then
+                          squeeze ctx ~axis:0
+                            (shrink ctx tensor
+                               [| (List.hd indices, List.hd indices + 1) |])
+                        else
+                          (* Create index tensor and gather *)
+                          let idx_tensor =
+                            init ctx Dtype.int32
+                              [| List.length indices |]
+                              (fun arr ->
+                                Int32.of_int (List.nth indices arr.(0)))
+                          in
+                          B.op_gather ctx tensor idx_tensor 0
+                      in
+                      batch_process tensor' (processed_dims + 1) rest
+                  | group ->
+                      (* Multiple gather operations - fall back to sequential processing *)
+                      (* Note: A more sophisticated batched gather operation could be implemented
+                         in the future to handle multiple dimensions at once *)
+                      let indices_lists =
+                        List.mapi
+                          (fun i spec ->
+                            let dim_idx = processed_dims + i in
+                            indices_of_spec (shape tensor).(dim_idx) spec)
+                          group
+                      in
+
+                      (* Process each gather operation sequentially *)
+                      List.fold_left2
+                        (fun t spec indices ->
+                          if List.length indices = 1 then
+                            squeeze ctx ~axis:0
+                              (shrink ctx t
+                                 [| (List.hd indices, List.hd indices + 1) |])
+                          else
+                            let idx_tensor =
+                              init ctx Dtype.int32
+                                [| List.length indices |]
+                                (fun arr ->
+                                  Int32.of_int (List.nth indices arr.(0)))
+                            in
+                            B.op_gather ctx t idx_tensor 0)
+                        tensor group indices_lists)
+                tensor groups
+        in
+        batch_process x 0 full_slice
+
+  (* Efficient set_slice using scatter operations *)
+  let set_slice ctx slice_def x y =
+    let x_shape = shape x in
+    let y_shape = shape y in
+    let ndim = Array.length x_shape in
+
+    (* Pad slice definition *)
+    let full_slice =
+      let n = List.length slice_def in
+      if n > ndim then invalid_arg "too many indices"
+      else slice_def @ List.init (ndim - n) (fun _ -> R [])
+    in
+
+    (* Get indices for each dimension *)
+    let indices_per_dim =
+      List.mapi (fun i spec -> indices_of_spec x_shape.(i) spec) full_slice
+    in
+
+    (* Verify shape *)
+    let expected_shape = Array.of_list (List.map List.length indices_per_dim) in
+    if expected_shape <> y_shape then invalid_arg "shape mismatch";
+
+    (* Check if we can use optimized paths *)
+    let all_contiguous =
+      List.for_all2
+        (fun spec indices ->
+          match spec with
+          | R [ s; e ] | R [ s; e; 1 ] ->
+              let s', e' =
+                (normalize_index x_shape.(0) s, normalize_index x_shape.(0) e)
+              in
+              List.length indices = Stdlib.abs (e' - s') + 1
+          | R [] -> List.length indices = x_shape.(0)
+          | _ -> false)
+        full_slice indices_per_dim
+    in
+
+    if all_contiguous then
+      (* Can use direct blit with proper slicing *)
+      let x_slice_config =
+        List.mapi
+          (fun i spec ->
+            match spec with
+            | R [] -> (0, x_shape.(i))
+            | R [ s ] ->
+                let s' = normalize_index x_shape.(i) s in
+                (s', s' + 1)
+            | R [ s; e ] | R [ s; e; 1 ] ->
+                let s' = normalize_index x_shape.(i) s in
+                let e' = normalize_index x_shape.(i) e in
+                if s' <= e' then (s', e' + 1) else (e', s' + 1)
+            | _ -> assert false)
+          full_slice
+      in
+
+      let x_view = shrink ctx x (Array.of_list x_slice_config) in
+      let y_reshaped = reshape ctx y (shape x_view) in
+      blit ctx y_reshaped x_view
+    else
+      (* General case: build scatter indices *)
+      let total_updates = Array.fold_left ( * ) 1 y_shape in
+
+      (* Create flattened y *)
+      let y_flat = reshape ctx y [| total_updates |] in
+
+      (* Create index tensor for scatter *)
+      let scatter_indices =
+        init ctx Dtype.int32 [| total_updates |] (fun arr ->
+            let linear_idx = arr.(0) in
+
+            (* Convert to multi-dimensional position in y *)
+            let temp = ref linear_idx in
+            let y_pos = Array.make (Array.length y_shape) 0 in
+            for i = Array.length y_shape - 1 downto 0 do
+              y_pos.(i) <- !temp mod y_shape.(i);
+              temp := !temp / y_shape.(i)
+            done;
+
+            (* Map to position in x *)
+            let x_pos =
+              Array.mapi
+                (fun i y_idx -> List.nth (List.nth indices_per_dim i) y_idx)
+                y_pos
+            in
+
+            (* Convert to linear index in x *)
+            let x_linear = ref 0 in
+            let stride = ref 1 in
+            for i = ndim - 1 downto 0 do
+              x_linear := !x_linear + (x_pos.(i) * !stride);
+              stride := !stride * x_shape.(i)
+            done;
+
+            Int32.of_int !x_linear)
+      in
+
+      (* Flatten x, scatter, reshape back *)
+      let x_flat = reshape ctx x [| Array.fold_left ( * ) 1 x_shape |] in
+      let result_flat = B.op_scatter ctx x_flat scatter_indices y_flat 0 in
+      let result = reshape ctx result_flat x_shape in
+      blit ctx result x
+
+  let slice_ranges ctx ?(steps = []) starts stops x =
+    let n_dims = List.length starts in
+    if List.length stops <> n_dims then
+      invalid_arg "slice_ranges: starts and stops must have same length";
+    if steps <> [] && List.length steps <> n_dims then
+      invalid_arg
+        "slice_ranges: steps must have same length as starts/stops if provided";
+
+    let slice_def =
+      List.mapi
+        (fun i (start, stop) ->
+          let step = if steps = [] then 1 else List.nth steps i in
+          R [ start; stop; step ])
+        (List.combine starts stops)
+    in
+    slice ctx slice_def x
+
+  let set_slice_ranges ctx ?(steps = []) starts stops x y =
+    let n_dims = List.length starts in
+    if List.length stops <> n_dims then
+      invalid_arg "set_slice_ranges: starts and stops must have same length";
+    if steps <> [] && List.length steps <> n_dims then
+      invalid_arg
+        "set_slice_ranges: steps must have same length as starts/stops if \
+         provided";
+
+    let slice_def =
+      List.mapi
+        (fun i (start, stop) ->
+          let step = if steps = [] then 1 else List.nth steps i in
+          R [ start; stop; step ])
+        (List.combine starts stops)
+    in
+    set_slice ctx slice_def x y
+
+  (* Get a single element *)
+  let get ctx indices x =
+    slice ctx (List.map (fun i -> I i) indices) x |> fun t ->
+    if numel t = 1 then reshape ctx t [||]
+    else invalid_arg "get requires indices for all dimensions"
+
+  (* Set a single element *)
+  let set ctx indices x value =
+    let value_tensor =
+      if numel value = 1 then reshape ctx value [||]
+      else invalid_arg "set requires scalar value"
+    in
+    set_slice ctx (List.map (fun i -> I i) indices) x value_tensor
+
+  let array_split ctx t ~axis sections =
+    let ndim = ndim t in
+    let axis = resolve_single_axis t axis in
+    let axis_size = dim axis t in
+
+    match sections with
+    | `Indices indices ->
+        (* Split at specific indices *)
+        let indices = Array.of_list indices in
+        let n_sections = Array.length indices + 1 in
+        let splits = Array.make n_sections t in
+
+        (* Add boundaries *)
+        let boundaries = Array.make (n_sections + 1) 0 in
+        boundaries.(0) <- 0;
+        Array.iteri (fun i idx -> boundaries.(i + 1) <- idx) indices;
+        boundaries.(n_sections) <- axis_size;
+
+        (* Create slices *)
+        for i = 0 to n_sections - 1 do
+          let start = boundaries.(i) in
+          let stop = boundaries.(i + 1) in
+
+          if start < stop then
+            let slice_spec =
+              List.init ndim (fun j ->
+                  if j = axis then R [ start; stop - 1 ] else R [])
+            in
+            splits.(i) <- slice ctx slice_spec t
+          else
+            (* Empty slice *)
+            let empty_shape = Array.copy (shape t) in
+            empty_shape.(axis) <- 0;
+            splits.(i) <- empty ctx (dtype t) empty_shape
+        done;
+        Array.to_list splits
+    | `Count n ->
+        (* Split into n sections *)
+        if n <= 0 then invalid_arg "array_split: sections must be positive";
+
+        let base_size = axis_size / n in
+        let remainder = axis_size mod n in
+
+        (* Calculate section sizes *)
+        let sizes = Array.make n base_size in
+        for i = 0 to remainder - 1 do
+          sizes.(i) <- sizes.(i) + 1
+        done;
+
+        (* Create slices *)
+        let splits = Array.make n t in
+        let start = ref 0 in
+
+        for i = 0 to n - 1 do
+          let size = sizes.(i) in
+          let stop = !start + size in
+
+          let slice_spec =
+            List.init ndim (fun j ->
+                if j = axis then R [ !start; stop - 1 ] else R [])
+          in
+          splits.(i) <- slice ctx slice_spec t;
+          start := stop
+        done;
+
+        Array.to_list splits
+
+  let split ctx t ~axis sections =
+    let axis = resolve_single_axis t axis in
+    let axis_size = dim axis t in
+
+    if axis_size mod sections <> 0 then
+      invalid_arg
+        (Printf.sprintf
+           "split: array of size %d cannot be evenly split into %d sections"
+           axis_size sections);
+
+    array_split ctx t ~axis (`Count sections)
+
+  (* *)
+
   let dot ctx x_tensor w_tensor =
     let ndim_x = ndim x_tensor in
     let ndim_w = ndim w_tensor in
@@ -1673,38 +2303,439 @@ module Make (B : Backend_intf.S) = struct
          (...,m,n) *)
       result_intermediate
 
-  (** Helper: flatten a list of arrays into a single array. *)
-  let _flatten_list_of_arrays loa =
-    Array.of_list (List.flatten (List.map Array.to_list loa))
+  (* ────────── Winograd Convolution Support ────────── *)
 
-  (** Check if any element of the array satisfies the predicate, providing the
-      index. *)
-  let array_existsi p arr =
-    let n = Array.length arr in
-    let rec check idx =
-      if idx >= n then false
-      else if p idx arr.(idx) then true
-      else check (idx + 1)
+  (* Winograd F(4x4, 3x3) transformation matrices *)
+  let winograd_f4x4_3x3_g =
+    [|
+      [| 1.0; 0.0; 0.0 |];
+      [| -2.0 /. 3.0; -1.0 /. 3.0; -1.0 /. 3.0 |];
+      [| -2.0 /. 3.0; 1.0 /. 3.0; -1.0 /. 3.0 |];
+      [| 1.0 /. 6.0; 1.0 /. 3.0; 2.0 /. 3.0 |];
+      [| 1.0 /. 6.0; -1.0 /. 3.0; 2.0 /. 3.0 |];
+      [| 0.0; 0.0; 1.0 |];
+    |]
+
+  let winograd_f4x4_3x3_bt =
+    [|
+      [| 4.0; 0.0; -5.0; 0.0; 1.0; 0.0 |];
+      [| 0.0; -4.0; -4.0; 1.0; 1.0; 0.0 |];
+      [| 0.0; 4.0; -4.0; -1.0; 1.0; 0.0 |];
+      [| 0.0; -2.0; -1.0; 2.0; 1.0; 0.0 |];
+      [| 0.0; 2.0; -1.0; -2.0; 1.0; 0.0 |];
+      [| 0.0; 4.0; 0.0; -5.0; 0.0; 1.0 |];
+    |]
+
+  let winograd_f4x4_3x3_at =
+    [|
+      [| 1.0; 1.0; 1.0; 1.0; 1.0; 0.0 |];
+      [| 0.0; 1.0; -1.0; 2.0; -2.0; 0.0 |];
+      [| 0.0; 1.0; 1.0; 4.0; 4.0; 0.0 |];
+      [| 0.0; 1.0; -1.0; 8.0; -8.0; 1.0 |];
+    |]
+
+  (* Helper to create tensor columns for Winograd transformation *)
+  let get_winograd_matcols ctx mat dims base_shape device_dtype =
+    List.init dims (fun dim ->
+        List.init
+          (Array.length mat.(0))
+          (fun k ->
+            let col_tensors =
+              Array.to_list
+                (Array.map
+                   (fun row ->
+                     let value = row.(k) in
+                     let target_shape = Array.copy base_shape in
+                     Array.set target_shape dim 1;
+                     full ctx device_dtype target_shape value)
+                   mat)
+            in
+            B.op_cat ctx col_tensors dim))
+
+  (* Apply Winograd transformation matrix to tensor *)
+  let apply_winograd_matrix ctx mat t dims =
+    let t_shape = shape t in
+    let device_dtype = dtype t in
+
+    (* Reshape to add dimension for expansion *)
+    let new_shape_1 =
+      Array.concat
+        [
+          Array.sub t_shape 0 dims;
+          Array.make dims 1;
+          Array.sub t_shape dims (Array.length t_shape - dims);
+        ]
     in
-    check 0
+    let t_reshaped = reshape ctx t new_shape_1 in
+
+    (* Expand to add output dimensions *)
+    let expand_shape =
+      Array.concat
+        [
+          Array.sub t_shape 0 dims;
+          Array.make dims (Array.length mat);
+          Array.sub t_shape dims (Array.length t_shape - dims);
+        ]
+    in
+    let t_expanded = expand ctx t_reshaped expand_shape in
+
+    (* Get matrix columns *)
+    let matcols =
+      get_winograd_matcols ctx mat dims
+        (Array.sub expand_shape dims (Array.length expand_shape - dims))
+        device_dtype
+    in
+
+    (* Generate all index combinations *)
+    let rec cartesian_product lists =
+      match lists with
+      | [] -> [ [] ]
+      | h :: t ->
+          let rest = cartesian_product t in
+          List.concat (List.map (fun x -> List.map (fun rs -> x :: rs) rest) h)
+    in
+
+    let mat_indices =
+      cartesian_product
+        (List.init dims (fun _ -> List.init (Array.length mat.(0)) Fun.id))
+    in
+
+    (* Compute the sum of products *)
+    let terms =
+      List.map
+        (fun indices ->
+          (* Extract the slice t_expanded[..., indices[0], indices[1], ...] *)
+          let t_slice =
+            let shrink_config =
+              Array.mapi
+                (fun i size ->
+                  if i < dims then (0, size)
+                  else if i < dims * 2 then
+                    let idx = List.nth indices (i - dims) in
+                    (idx, idx + 1)
+                  else (0, size))
+                (shape t_expanded)
+            in
+            let sliced = shrink ctx t_expanded shrink_config in
+
+            (* Squeeze out the indexed dimensions *)
+            let rec squeeze_dims tensor dim_offset = function
+              | [] -> tensor
+              | _ :: rest ->
+                  let squeezed = squeeze ctx ~axis:(dims + dim_offset) tensor in
+                  squeeze_dims squeezed dim_offset rest
+            in
+            squeeze_dims sliced 0 indices
+          in
+
+          (* Get the product of matrix columns for this index combination *)
+          let col_prod =
+            List.fold_left2
+              (fun acc col idx -> mul ctx acc (List.nth col idx))
+              (ones_like ctx t_slice) matcols indices
+          in
+
+          mul ctx col_prod t_slice)
+        mat_indices
+    in
+
+    (* Sum all terms *)
+    match terms with
+    | [] -> zeros_like ctx t (* Should never happen *)
+    | first :: rest -> List.fold_left (add ctx) first rest
+
+  (* ────────── Optimized Pool Implementation ────────── *)
+
+  let pool_simple_path ctx x ~noop_rank ~o_s ~s_s ~k_s ~prefix_shape =
+    let num_spatial = Array.length k_s in
+
+    (* Pad if needed for stride *)
+    let pad_spatial =
+      Array.init num_spatial (fun i ->
+          let pad_after =
+            Stdlib.max 0 ((o_s.(i) * s_s.(i)) - (shape x).(noop_rank + i))
+          in
+          (0, pad_after))
+    in
+    let pad_config =
+      Array.concat [ Array.make noop_rank (0, 0); pad_spatial ]
+    in
+    let x = pad ctx x pad_config (Dtype.zero (dtype x)) in
+
+    (* Shrink to exact needed size *)
+    let shrink_config =
+      Array.mapi
+        (fun i size ->
+          if i < noop_rank then (0, size)
+          else (0, o_s.(i - noop_rank) * s_s.(i - noop_rank)))
+        (shape x)
+    in
+    let x = shrink ctx x shrink_config in
+
+    (* Reshape to separate output let stride dimensions *)
+    let reshape_list = ref (Array.to_list prefix_shape) in
+    for i = 0 to num_spatial - 1 do
+      reshape_list := !reshape_list @ [ o_s.(i); s_s.(i) ]
+    done;
+    let x = reshape ctx x (Array.of_list !reshape_list) in
+
+    (* Shrink stride dimensions to kernel size *)
+    let shrink2_config =
+      Array.mapi
+        (fun i size ->
+          if i < noop_rank then (0, size)
+          else if (i - noop_rank) mod 2 = 1 then (0, k_s.((i - noop_rank) / 2))
+          else (0, size))
+        (shape x)
+    in
+    let x = shrink ctx x shrink2_config in
+
+    (* Permute to final layout *)
+    let perm =
+      Array.of_list
+        (List.init noop_rank Fun.id
+        @ List.init num_spatial (fun i -> noop_rank + (i * 2))
+        @ List.init num_spatial (fun i -> noop_rank + (i * 2) + 1))
+    in
+    B.op_permute ctx x perm
 
   (** Integer ceiling division: (a + b - 1) / b for integers a, b where b > 0.
   *)
   let ceildiv a b =
-    if b <= 0 then invalid_arg "_ceildiv: divisor b must be positive"
+    if b <= 0 then invalid_arg "ceildiv: divisor b must be positive"
     else (a + b - 1) / b
 
-  (** Calculate padding amounts for spatial dimensions based on convolution
-      mode. This helper is used by callers of `_pool` (like `correlate2d`).
+  let pool_dilated_path ctx x ~noop_rank ~o_s ~s_s ~k_s ~d_s ~prefix_shape
+      ~spatial_shape_in =
+    let num_spatial = Array.length k_s in
 
-      Args: input_spatial_shape, shape of the input tensor's spatial dimensions
-      (e.g., [|ih; iw|]). k_s, kernel spatial shape (e.g., [|kh; kw|]). s_s,
-      stride for each spatial dimension (e.g., [|sh; sw|]). d_s, dilation for
-      each spatial dimension (e.g., [|dh; dw|]). mode:
-      [ `Full | `Valid | `Same ], the padding mode.
+    (* Calculate expansion factors *)
+    let f_s =
+      Array.init num_spatial (fun j ->
+          let oj, sj, ij, dj, kj =
+            (o_s.(j), s_s.(j), spatial_shape_in.(j), d_s.(j), k_s.(j))
+          in
+          let eff_kernel_span = (dj * (kj - 1)) + 1 in
+          if oj * sj > ij - eff_kernel_span + 1 then 2 else 1)
+    in
 
-      Returns: An array of (pad_before, pad_after) tuples, one for each spatial
-      dimension. *)
+    (* Calculate repeat factors *)
+    let repeat_factors =
+      Array.init num_spatial (fun j ->
+          let kj, ij, fj, dj =
+            (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
+          in
+          ceildiv (kj * ((ij * fj) + dj)) ij)
+    in
+
+    (* Tile the input *)
+    let repeat_factors_full =
+      Array.concat [ Array.make noop_rank 1; repeat_factors ]
+    in
+    let x = tile ctx repeat_factors_full x in
+
+    (* First shrink *)
+    let shrink1_limits =
+      Array.init num_spatial (fun j ->
+          let kj, ij, fj, dj =
+            (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
+          in
+          kj * ((ij * fj) + dj))
+    in
+    let shrink1_config =
+      Array.init (ndim x) (fun i ->
+          if i < noop_rank then (0, prefix_shape.(i))
+          else (0, shrink1_limits.(i - noop_rank)))
+    in
+    let x = shrink ctx x shrink1_config in
+
+    (* First reshape to separate kernel and spatial+dilation dimensions *)
+    let reshape1_list = ref (Array.to_list prefix_shape) in
+    for j = 0 to num_spatial - 1 do
+      let kj, ij, fj, dj = (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j)) in
+      reshape1_list := !reshape1_list @ [ kj; (ij * fj) + dj ]
+    done;
+    let x = reshape ctx x (Array.of_list !reshape1_list) in
+
+    (* Second shrink to output size *)
+    let shrink2_config =
+      Array.mapi
+        (fun i size ->
+          if i < noop_rank then (0, size)
+          else if (i - noop_rank) mod 2 = 1 then
+            (* This is an inner dimension *)
+            let j = (i - noop_rank) / 2 in
+            (0, o_s.(j) * s_s.(j))
+          else (0, size))
+        (shape x)
+    in
+    let x = shrink ctx x shrink2_config in
+
+    (* Second reshape to separate output and stride dimensions *)
+    let reshape2_list = ref (Array.to_list prefix_shape) in
+    for j = 0 to num_spatial - 1 do
+      reshape2_list := !reshape2_list @ [ k_s.(j); o_s.(j); s_s.(j) ]
+    done;
+    let x = reshape ctx x (Array.of_list !reshape2_list) in
+
+    (* Third shrink to stride=1 (select every s_s-th element) *)
+    let shrink3_config =
+      Array.mapi
+        (fun i size ->
+          if i < noop_rank then (0, size)
+          else if (i - noop_rank) mod 3 = 2 then
+            (* This is a stride dimension *)
+            (0, 1)
+          else (0, size))
+        (shape x)
+    in
+    let x = shrink ctx x shrink3_config in
+
+    (* Third reshape to remove stride dimensions *)
+    let reshape3_list = ref (Array.to_list prefix_shape) in
+    for j = 0 to num_spatial - 1 do
+      reshape3_list := !reshape3_list @ [ k_s.(j); o_s.(j) ]
+    done;
+    let x = reshape ctx x (Array.of_list !reshape3_list) in
+
+    (* Final permutation to get (..., o_1, o_2, ..., k_1, k_2, ...) *)
+    let perm =
+      Array.of_list
+        (List.init noop_rank Fun.id
+        @ List.init num_spatial (fun j -> noop_rank + (j * 2) + 1)
+        @
+        (* output dims *)
+        List.init num_spatial (fun j -> noop_rank + (j * 2)) (* kernel dims *))
+    in
+    B.op_permute ctx x perm
+
+  let pool ctx x_padded_input ~k_s ~s_s ~d_s =
+    let x_ndim = ndim x_padded_input in
+    let num_spatial = Array.length k_s in
+
+    if num_spatial = 0 then x_padded_input
+    else if x_ndim < num_spatial then
+      invalid_arg
+        "pool: input tensor ndim less than number of spatial kernel dimensions"
+    else
+      let noop_rank = x_ndim - num_spatial in
+      let prefix_shape = Array.sub (shape x_padded_input) 0 noop_rank in
+      let spatial_shape_in =
+        Array.sub (shape x_padded_input) noop_rank num_spatial
+      in
+
+      (* Calculate output shape *)
+      let o_s =
+        Array.init num_spatial (fun j ->
+            let eff_kernel_span = (d_s.(j) * (k_s.(j) - 1)) + 1 in
+            if spatial_shape_in.(j) < eff_kernel_span then 0
+            else ((spatial_shape_in.(j) - eff_kernel_span) / s_s.(j)) + 1)
+      in
+
+      if Array.exists (( = ) 0) o_s then
+        let final_target_shape = Array.concat [ prefix_shape; o_s; k_s ] in
+        empty ctx (dtype x_padded_input) final_target_shape
+      else
+        (* Check if we can use simple path *)
+        let use_simple_path =
+          Array.for_all2 (fun k s -> k <= s) k_s s_s
+          && Array.for_all (( = ) 1) d_s
+        in
+
+        if use_simple_path then
+          pool_simple_path ctx x_padded_input ~noop_rank ~o_s ~s_s ~k_s
+            ~prefix_shape
+        else
+          pool_dilated_path ctx x_padded_input ~noop_rank ~o_s ~s_s ~k_s ~d_s
+            ~prefix_shape ~spatial_shape_in
+
+  (* ────────── Optimized Convolution with Winograd ────────── *)
+
+  let should_use_winograd ~kernel_size ~stride ~groups =
+    groups = 1
+    && Array.length kernel_size = 2
+    && kernel_size.(0) = 3
+    && kernel_size.(1) = 3
+    && stride.(0) = 1
+    && stride.(1) = 1
+
+  let winograd_conv2d ctx x w =
+    let bs, cin, h, w_dim = (dim 0 x, dim 1 x, dim 2 x, dim 3 x) in
+    let cout, _, kh, kw = (dim 0 w, dim 1 w, dim 2 w, dim 3 w) in
+
+    (* Transform weights: (cout, cin, 3, 3) -> (cout, cin, 6, 6) *)
+    let w_transformed = apply_winograd_matrix ctx winograd_f4x4_3x3_g w 2 in
+
+    (* Prepare input tiles *)
+    let tile_h = (h + 3) / 4 in
+    let tile_w = (w_dim + 3) / 4 in
+
+    (* Pad input to multiple of 4 *)
+    let pad_h = (tile_h * 4) - h in
+    let pad_w = (tile_w * 4) - w_dim in
+    let x_padded =
+      pad ctx x
+        [| (0, 0); (0, 0); (0, pad_h); (0, pad_w) |]
+        (Dtype.zero (dtype x))
+    in
+
+    (* Extract 6x6 tiles with 4x4 stride *)
+    let x_tiles =
+      pool ctx x_padded ~k_s:[| 6; 6 |] ~s_s:[| 4; 4 |] ~d_s:[| 1; 1 |]
+    in
+    (* Shape: (bs, cin, tile_h, tile_w, 6, 6) *)
+
+    (* Apply B^T transformation *)
+    let x_transformed =
+      apply_winograd_matrix ctx winograd_f4x4_3x3_bt x_tiles 2
+    in
+
+    (* Reshape for matmul: merge tile dimensions *)
+    let x_reshaped =
+      let s = shape x_transformed in
+      reshape ctx x_transformed [| s.(0); s.(1); s.(2) * s.(3); s.(4); s.(5) |]
+    in
+
+    (* Prepare weights for broadcasting *)
+    let w_reshaped =
+      let s = shape w_transformed in
+      reshape ctx w_transformed [| s.(0); s.(1); 1; s.(2); s.(3) |]
+    in
+
+    (* Element-wise multiplication in transform space *)
+    let y_transformed =
+      let x_exp = unsqueeze ctx ~axis:1 x_reshaped in
+      let w_exp =
+        expand ctx w_reshaped [| 1; cout; cin; tile_h * tile_w; 6; 6 |]
+      in
+      let prod = mul ctx x_exp w_exp in
+      sum ctx prod ~axes:[| 2 |]
+      (* sum over cin *)
+    in
+
+    (* Apply A^T transformation *)
+    let y_tiles =
+      apply_winograd_matrix ctx winograd_f4x4_3x3_at y_transformed 2
+    in
+
+    (* Reshape back to image format *)
+    (* y_tiles has shape (bs, cout, tile_h * tile_w, 4, 4) *)
+    let y_reshaped =
+      let s = shape y_tiles in
+      reshape ctx y_tiles [| s.(0); s.(1); tile_h; tile_w; s.(3); s.(4) |]
+    in
+
+    (* Permute to group spatial dimensions: (bs, cout, tile_h, 4, tile_w, 4) *)
+    let y_permuted = transpose ctx ~axes:[| 0; 1; 2; 4; 3; 5 |] y_reshaped in
+
+    (* Merge tile dimensions with spatial dimensions *)
+    let y_merged =
+      reshape ctx y_permuted [| bs; cout; tile_h * 4; tile_w * 4 |]
+    in
+
+    (* Remove padding to get original output size *)
+    shrink ctx y_merged [| (0, bs); (0, cout); (0, h); (0, w_dim) |]
+
   let calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
       ~(mode : [< `Full | `Valid | `Same ]) =
     let num_spatial = Array.length input_spatial_shape in
@@ -1722,10 +2753,6 @@ module Make (B : Backend_intf.S) = struct
     | `Valid -> Array.make num_spatial (0, 0)
     | `Full ->
         Array.init num_spatial (fun i ->
-            (* Pad by (kernel_size - 1) * dilation on each side. This allows the
-               kernel's first element to align with the first input element, and
-               the kernel's last element to align with the last input
-               element. *)
             let pad_each_side = d_s.(i) * (k_s.(i) - 1) in
             (pad_each_side, pad_each_side))
     | `Same ->
@@ -1733,12 +2760,8 @@ module Make (B : Backend_intf.S) = struct
             let is_d, ss_d, ks_d, ds_d =
               (input_spatial_shape.(i), s_s.(i), k_s.(i), d_s.(i))
             in
-            (* Output size for 'SAME' padding is typically ceil(input_size /
-               stride_size) *)
             let os_d = ceildiv is_d ss_d in
-            (* Effective kernel size including dilation *)
             let eff_ks_d = (ds_d * (ks_d - 1)) + 1 in
-            (* Calculate total padding needed *)
             let total_pad_d =
               Stdlib.max 0 (((os_d - 1) * ss_d) + eff_ks_d - is_d)
             in
@@ -1746,283 +2769,7 @@ module Make (B : Backend_intf.S) = struct
             let pad_after = total_pad_d - pad_before in
             (pad_before, pad_after))
 
-  (** Helper to resolve padding specification for pooling/convolution
-      operations. Input `padding_spec` is user-facing. Output `(int*int) array`
-      is for `B.op_pad`, (pad_before, pad_after) for each spatial dimension. *)
-  let resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
-      ~input_spatial_shape ~k_s ~s_s ~d_s =
-    match padding_spec with
-    | `Same | `Valid | `Full ->
-        calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
-          ~mode:padding_spec
-
-  (** Helper to adjust padding for ceil_mode=true. Analogous to tinygrad's
-      _apply_ceil_mode. Input `current_pads_pairs` is (pad_before, pad_after)
-      for each spatial dim. Output is new (pad_before, pad_after) array for each
-      spatial dim. *)
-  let apply_ceil_mode ~current_pads_pairs ~input_spatial_shape ~k_s ~s_s ~d_s =
-    let num_spatial_dims = Array.length k_s in
-    let pads_adj = Array.copy current_pads_pairs in
-    let o_s =
-      Array.init num_spatial_dims (fun i ->
-          let i_d = input_spatial_shape.(i) in
-          let d_d = d_s.(i) in
-          let k_d = k_s.(i) in
-          let s_d = s_s.(i) in
-          let p_b, p_a = current_pads_pairs.(i) in
-          ceildiv (i_d + p_b + p_a - ((d_d * (k_d - 1)) + 1)) s_d + 1)
-    in
-    for i = 0 to num_spatial_dims - 1 do
-      let o_d, i_d, s_d, k_d, d_d =
-        (o_s.(i), input_spatial_shape.(i), s_s.(i), k_s.(i), d_s.(i))
-      in
-      let p_b, p_a = current_pads_pairs.(i) in
-      let pad_needed_for_last_window_start =
-        (s_d * (o_d - 1)) + ((d_d * (k_d - 1)) + 1) - (i_d + p_b + p_a)
-      in
-      let effective_pad_before_input_start =
-        Stdlib.max 0 ((s_d * (o_d - 1)) - (p_b + i_d - 1))
-      in
-      (* Adjust pad_after (pads_adj.(i) |> snd) *)
-      pads_adj.(i) <-
-        ( fst pads_adj.(i),
-          snd pads_adj.(i)
-          + pad_needed_for_last_window_start - effective_pad_before_input_start
-        )
-    done;
-    pads_adj
-
-  (** Helper for N-dim one-hot encoding. Creates a new last dimension for
-      classes. *)
-  let one_hot ctx index_tensor ~num_classes =
-    let index_dt = dtype index_tensor in
-    if not (Dtype.is_int index_dt || Dtype.is_uint index_dt) then
-      invalid_arg "one_hot_nd: index_tensor must be an integer type";
-
-    let index_expanded = unsqueeze ctx index_tensor ~axis:(ndim index_tensor) in
-    (* Add new last dim *)
-
-    let arange_t = arange ctx index_dt 0 num_classes 1 in
-    (* Classes 0 to num_classes-1 *)
-
-    (* Reshape arange to be (1, ..., 1, num_classes) to align with new last dim
-       of index_expanded *)
-    let ndim_expanded = ndim index_expanded in
-    let shape_for_arange = Array.make ndim_expanded 1 in
-    shape_for_arange.(ndim_expanded - 1) <- num_classes;
-    let arange_b = reshape ctx arange_t shape_for_arange in
-
-    cmpeq ctx index_expanded arange_b (* Broadcasts to one-hot mask *)
-
-  (** Internal N-Dimensional pooling core. Analogous to tinygrad's
-      `Tensor._pool`. x_padded_input: Assumed to be ALREADY padded by the
-      caller. *)
-  let pool ctx x_padded_input ~k_s ~s_s ~d_s =
-    let x_ndim = ndim x_padded_input in
-    let num_spatial = Array.length k_s in
-
-    if num_spatial = 0 then x_padded_input
-    else if x_ndim < num_spatial then
-      invalid_arg
-        "pool: input tensor ndim less than number of spatial kernel dimensions"
-    else if
-      not (Array.length s_s = num_spatial && Array.length d_s = num_spatial)
-    then
-      invalid_arg
-        "pool: stride and dilation arrays must match kernel spatiality"
-    else
-      let noop_rank = x_ndim - num_spatial in
-      let prefix_shape = Array.sub (shape x_padded_input) 0 noop_rank in
-      let spatial_shape_in =
-        Array.sub (shape x_padded_input) noop_rank num_spatial
-      in
-
-      let o_s =
-        Array.init num_spatial (fun j ->
-            let eff_kernel_span = (d_s.(j) * (k_s.(j) - 1)) + 1 in
-            if spatial_shape_in.(j) < eff_kernel_span then 0
-            else ((spatial_shape_in.(j) - eff_kernel_span) / s_s.(j)) + 1)
-      in
-
-      if Array.exists (( = ) 0) o_s then
-        let final_target_shape = Array.concat [ prefix_shape; o_s; k_s ] in
-        empty ctx (dtype x_padded_input) final_target_shape
-      else
-        let is_complex_path =
-          array_existsi (fun j k_j -> k_j > s_s.(j) && s_s.(j) > 0) k_s
-          || Array.exists (( <> ) 1) d_s
-        in
-
-        let result_tensor =
-          if not is_complex_path then (
-            (* Simple Path *)
-            let pad1_config_spatial =
-              Array.init num_spatial (fun spatial_idx ->
-                  let pad_after =
-                    Stdlib.max 0
-                      ((o_s.(spatial_idx) * s_s.(spatial_idx))
-                      - spatial_shape_in.(spatial_idx))
-                  in
-                  (0, pad_after))
-            in
-            let pad1_config_full =
-              Array.concat [ Array.make noop_rank (0, 0); pad1_config_spatial ]
-            in
-            let x =
-              pad ctx x_padded_input pad1_config_full
-                (Dtype.zero (dtype x_padded_input))
-            in
-            let shrink1_config_spatial =
-              Array.init num_spatial (fun spatial_idx ->
-                  (0, o_s.(spatial_idx) * s_s.(spatial_idx)))
-            in
-            let shrink1_config_full =
-              Array.init (ndim x) (fun dim_idx ->
-                  if dim_idx < noop_rank then (0, (shape x).(dim_idx))
-                  else shrink1_config_spatial.(dim_idx - noop_rank))
-            in
-            let x = shrink ctx x shrink1_config_full in
-            let reshape1_shape_spatial_parts =
-              List.flatten
-                (Array.to_list
-                   (Array.init num_spatial (fun j -> [ o_s.(j); s_s.(j) ])))
-            in
-            let reshape1_shape_full =
-              Array.concat
-                [ prefix_shape; Array.of_list reshape1_shape_spatial_parts ]
-            in
-            let x = reshape ctx x reshape1_shape_full in
-            let shrink2_shape_abs = Array.copy (shape x) in
-            for j = 0 to num_spatial - 1 do
-              let stride_step_dim_idx = noop_rank + (j * 2) + 1 in
-              shrink2_shape_abs.(stride_step_dim_idx) <- k_s.(j)
-            done;
-            let shrink2_config_pairs =
-              Array.map (fun s -> (0, s)) shrink2_shape_abs
-            in
-            let x = shrink ctx x shrink2_config_pairs in
-            let perm_axes_list_prefix = List.init noop_rank Fun.id in
-            let perm_axes_list_o =
-              List.init num_spatial (fun j -> noop_rank + (j * 2))
-            in
-            let perm_axes_list_k =
-              List.init num_spatial (fun j -> noop_rank + (j * 2) + 1)
-            in
-            let final_perm_axes =
-              Array.of_list
-                (List.concat
-                   [ perm_axes_list_prefix; perm_axes_list_o; perm_axes_list_k ])
-            in
-            B.op_permute ctx x final_perm_axes)
-          else
-            (* Complex Path *)
-            let f_s =
-              Array.init num_spatial (fun j ->
-                  let oj, sj, ij, dj, kj =
-                    (o_s.(j), s_s.(j), spatial_shape_in.(j), d_s.(j), k_s.(j))
-                  in
-                  let eff_kernel_span = (dj * (kj - 1)) + 1 in
-                  if oj * sj > ij - eff_kernel_span + 1 then 2 else 1)
-            in
-            let repeat_factors_spatial =
-              Array.init num_spatial (fun j ->
-                  let kj, ij, fj, dj =
-                    (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
-                  in
-                  ceildiv (kj * ((ij * fj) + dj)) ij)
-            in
-            let repeat_factors_full =
-              Array.concat [ Array.make noop_rank 1; repeat_factors_spatial ]
-            in
-            let x_repeated = tile ctx repeat_factors_full x_padded_input in
-            let shrink_arg1_spatial_limits =
-              Array.init num_spatial (fun j ->
-                  let kj, ij, fj, dj =
-                    (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
-                  in
-                  kj * ((ij * fj) + dj))
-            in
-            let shrink_arg1_full_pairs =
-              Array.init (ndim x_repeated) (fun dim_idx ->
-                  if dim_idx < noop_rank then (0, prefix_shape.(dim_idx))
-                  else (0, shrink_arg1_spatial_limits.(dim_idx - noop_rank)))
-            in
-            let x_shrunk1 = shrink ctx x_repeated shrink_arg1_full_pairs in
-            let reshape_arg1_spatial_parts_list =
-              List.flatten
-                (Array.to_list
-                   (Array.init num_spatial (fun j ->
-                        let kj, ij, fj, dj =
-                          (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j))
-                        in
-                        [ kj; (ij * fj) + dj ])))
-            in
-            let reshape_arg1_full =
-              Array.concat
-                [ prefix_shape; Array.of_list reshape_arg1_spatial_parts_list ]
-            in
-            let x_reshaped1 = reshape ctx x_shrunk1 reshape_arg1_full in
-            let current_shape_x_reshaped1 = shape x_reshaped1 in
-            let shrink_arg2_config_pairs =
-              Array.mapi (fun i s_dim -> (0, s_dim)) current_shape_x_reshaped1
-            in
-            let reshape_arg2_spatial_parts_list = ref [] in
-            for j = 0 to num_spatial - 1 do
-              let kj, oj, sj = (k_s.(j), o_s.(j), s_s.(j)) in
-              let inner_dim_idx = noop_rank + (j * 2) + 1 in
-              shrink_arg2_config_pairs.(inner_dim_idx) <- (0, oj * sj);
-              reshape_arg2_spatial_parts_list :=
-                List.append !reshape_arg2_spatial_parts_list [ kj; oj; sj ]
-            done;
-            let x_shrunk2 = shrink ctx x_reshaped1 shrink_arg2_config_pairs in
-            let reshape_arg2_full =
-              Array.concat
-                [ prefix_shape; Array.of_list !reshape_arg2_spatial_parts_list ]
-            in
-            let x_reshaped2 = reshape ctx x_shrunk2 reshape_arg2_full in
-            let current_shape_x_reshaped2 = shape x_reshaped2 in
-            let shrink_arg3_config_pairs =
-              Array.mapi (fun i s_dim -> (0, s_dim)) current_shape_x_reshaped2
-            in
-            let reshape_arg3_spatial_parts_list = ref [] in
-            for j = 0 to num_spatial - 1 do
-              let kj, oj = (k_s.(j), o_s.(j)) in
-              let stride_dim_idx = noop_rank + (j * 3) + 2 in
-              shrink_arg3_config_pairs.(stride_dim_idx) <- (0, 1);
-              reshape_arg3_spatial_parts_list :=
-                List.append !reshape_arg3_spatial_parts_list [ kj; oj ]
-            done;
-            let x_shrunk3 = shrink ctx x_reshaped2 shrink_arg3_config_pairs in
-            let reshape_arg3_full =
-              Array.concat
-                [ prefix_shape; Array.of_list !reshape_arg3_spatial_parts_list ]
-            in
-            let x_reshaped3 = reshape ctx x_shrunk3 reshape_arg3_full in
-            let perm_axes_list_prefix = List.init noop_rank Fun.id in
-            let perm_axes_list_o =
-              List.init num_spatial (fun j -> noop_rank + (j * 2) + 1)
-            in
-            let perm_axes_list_k =
-              List.init num_spatial (fun j -> noop_rank + (j * 2))
-            in
-            let final_perm_axes =
-              Array.of_list
-                (List.concat
-                   [ perm_axes_list_prefix; perm_axes_list_o; perm_axes_list_k ])
-            in
-            B.op_permute ctx x_reshaped3 final_perm_axes
-        in
-        result_tensor
-
-  (** CorrelateND (cross-correlation) - Generic N-Dimensional version. x: input
-      tensor (bs, cin_total, spatial_dims...) w: weight tensor (cout,
-      cin_per_group, kernel_spatial_dims...) bias: optional bias tensor (cout)
-      stride_s, dilation_s: arrays for spatial dimensions. padding_mode:
-      [ `Full | `Valid | `Same ] fillvalue: optional scalar to fill padding.
-      Defaults to 0 of x's dtype. num_spatial_dims: The number of spatial
-      dimensions (e.g., 1 for 1D, 2 for 2D). *)
-  let correlate_nd ctx ?(groups = 1) stride_s_arr
-      ?(padding_mode : [ `Full | `Valid | `Same ] = `Valid) dilation_s_arr
+  let correlate_nd_general ctx ~groups stride_s_arr ~padding_mode dilation_s_arr
       ?fillvalue num_spatial_dims x w ?bias () =
     if ndim w <> num_spatial_dims + 2 then
       invalid_arg
@@ -2072,10 +2819,7 @@ module Make (B : Backend_intf.S) = struct
         ~mode:padding_mode
     in
 
-    let num_prefix_dims =
-      2
-      (* bs, cin_total *)
-    in
+    let num_prefix_dims = 2 in
     let op_pad_config_list_prefix =
       Array.to_list (Array.make num_prefix_dims (0, 0))
     in
@@ -2090,18 +2834,16 @@ module Make (B : Backend_intf.S) = struct
       pool ctx x_padded ~k_s:kernel_spatial_shape_arr ~s_s:stride_s_arr
         ~d_s:dilation_s_arr
     in
-    (* Expected pooled_x shape: (bs, cin_total, output_spatial_dims...,
-       kernel_spatial_dims...) *)
 
     let output_spatial_shape_arr =
       Array.init num_spatial_dims (fun i ->
           (shape pooled_x).(num_prefix_dims + i))
     in
 
-    (* Reshape pooled_x to (bs, groups, cin_per_group, 1 (for rcout broadcast),
-       output_spatial..., kernel_spatial...) *)
+    (* Reshape pooled_x to (bs, groups, cin_per_group, 1, output_spatial...,
+       kernel_spatial...) *)
     let shape_x_pre_expand_list =
-      [ bs; groups; cin_per_group; 1 ] (* 1 is for rcout to be expanded *)
+      [ bs; groups; cin_per_group; 1 ]
       @ Array.to_list output_spatial_shape_arr
       @ Array.to_list kernel_spatial_shape_arr
     in
@@ -2121,15 +2863,11 @@ module Make (B : Backend_intf.S) = struct
 
     (* Permute to (bs, groups, rcout, output_spatial..., cin_per_group,
        kernel_spatial...) *)
-    let perm_axes_list_prefix_output =
-      [ 0; 1; 3 ]
-      (* bs, groups, rcout *)
-    in
+    let perm_axes_list_prefix_output = [ 0; 1; 3 ] in
     let perm_axes_list_output_spatial =
       List.init num_spatial_dims (fun i -> 4 + i)
     in
     let perm_axes_list_cin_group = [ 2 ] in
-    (* cin_per_group original index *)
     let perm_axes_list_kernel_spatial =
       List.init num_spatial_dims (fun i -> 4 + num_spatial_dims + i)
     in
@@ -2145,8 +2883,7 @@ module Make (B : Backend_intf.S) = struct
     in
     let x_ready = B.op_permute ctx pooled_x_expanded perm_axes in
 
-    (* Reshape w to (1 (bs broadcast), groups, rcout, 1s (output_spatial
-       broadcast), cin_per_group, kernel_spatial...) *)
+    (* Reshape w to (1, groups, rcout, 1s, cin_per_group, kernel_spatial...) *)
     let shape_w_broadcastable_list =
       [ 1; groups; rcout ]
       @ Array.to_list (Array.make num_spatial_dims 1)
@@ -2159,9 +2896,7 @@ module Make (B : Backend_intf.S) = struct
 
     let multiplied = mul ctx x_ready w_broadcastable in
 
-    (* Sum over cin_per_group and kernel_spatial_dims. These are the last (1 +
-       num_spatial_dims) dimensions after permute. Indices start from
-       (ndim_multiplied - (1 + num_spatial_dims)). *)
+    (* Sum over cin_per_group and kernel_spatial_dims *)
     let ndim_multiplied = ndim multiplied in
     let num_reduce_dims = 1 + num_spatial_dims in
     let reduce_axes =
@@ -2186,6 +2921,25 @@ module Make (B : Backend_intf.S) = struct
           reshape ctx b (Array.of_list bias_reshape_target_list)
         in
         add ctx result_reshaped bias_reshaped
+
+  let correlate_nd ctx ?(groups = 1) stride_s_arr
+      ?(padding_mode : [ `Full | `Valid | `Same ] = `Valid) dilation_s_arr
+      ?fillvalue num_spatial_dims x w ?bias () =
+    (* Check if we should use Winograd for 2D 3x3 convolutions *)
+    if
+      num_spatial_dims = 2
+      && should_use_winograd
+           ~kernel_size:(Array.sub (shape w) 2 2)
+           ~stride:stride_s_arr ~groups
+    then
+      let result = winograd_conv2d ctx x w in
+      match bias with
+      | None -> result
+      | Some b -> add ctx result (reshape ctx b [| 1; dim 0 b; 1; 1 |])
+    else
+      (* Original implementation *)
+      correlate_nd_general ctx ~groups stride_s_arr ~padding_mode dilation_s_arr
+        ?fillvalue num_spatial_dims x w ?bias ()
 
   (** Correlate1D (cross-correlation). x: input tensor (bs, cin_total, iw) w:
       weight tensor (cout, cin_per_group, kw) bias: optional bias tensor (cout)
@@ -2250,100 +3004,212 @@ module Make (B : Backend_intf.S) = struct
       [| fst dilation; snd dilation |]
       ?fillvalue ?bias 2 x w
 
-  let avg_pool_nd ctx ~kernel_size ?stride ?dilation ~padding_spec ~ceil_mode
-      ~count_include_pad ~num_spatial_dims x_orig =
+  (** Helper to resolve padding specification for pooling/convolution
+      operations. Input `padding_spec` is user-facing. Output `(int*int) array`
+      is for `B.op_pad`, (pad_before, pad_after) for each spatial dimension. *)
+  let resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
+      ~input_spatial_shape ~k_s ~s_s ~d_s =
+    match padding_spec with
+    | `Same | `Valid | `Full ->
+        calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
+          ~mode:padding_spec
+
+  (** Helper to adjust padding for ceil_mode=true. Analogous to tinygrad's
+      _apply_ceil_mode. Input `current_pads_pairs` is (pad_before, pad_after)
+      for each spatial dim. Output is new (pad_before, pad_after) array for each
+      spatial dim. *)
+  let apply_ceil_mode ~current_pads_pairs ~input_spatial_shape ~k_s ~s_s ~d_s =
+    let num_spatial_dims = Array.length k_s in
+    let pads_adj = Array.copy current_pads_pairs in
+    let o_s =
+      Array.init num_spatial_dims (fun i ->
+          let i_d = input_spatial_shape.(i) in
+          let d_d = d_s.(i) in
+          let k_d = k_s.(i) in
+          let s_d = s_s.(i) in
+          let p_b, p_a = current_pads_pairs.(i) in
+          ceildiv (i_d + p_b + p_a - ((d_d * (k_d - 1)) + 1)) s_d + 1)
+    in
+    for i = 0 to num_spatial_dims - 1 do
+      let o_d, i_d, s_d, k_d, d_d =
+        (o_s.(i), input_spatial_shape.(i), s_s.(i), k_s.(i), d_s.(i))
+      in
+      let p_b, p_a = current_pads_pairs.(i) in
+      let pad_needed_for_last_window_start =
+        (s_d * (o_d - 1)) + ((d_d * (k_d - 1)) + 1) - (i_d + p_b + p_a)
+      in
+      let effective_pad_before_input_start =
+        Stdlib.max 0 ((s_d * (o_d - 1)) - (p_b + i_d - 1))
+      in
+      (* Adjust pad_after (pads_adj.(i) |> snd) *)
+      pads_adj.(i) <-
+        ( fst pads_adj.(i),
+          snd pads_adj.(i)
+          + pad_needed_for_last_window_start - effective_pad_before_input_start
+        )
+    done;
+    pads_adj
+
+  let pool_setup ctx ~num_spatial_dims ~kernel_size ?stride ?dilation
+      ~padding_spec ~ceil_mode x_orig =
     let x_ndim = ndim x_orig in
     let input_spatial_shape =
       Array.sub (shape x_orig) (x_ndim - num_spatial_dims) num_spatial_dims
     in
-    let default_stride = kernel_size in
-    let s_s = Option.value stride ~default:default_stride in
+    let s_s = Option.value stride ~default:kernel_size in
     let d_s = Option.value dilation ~default:(Array.make num_spatial_dims 1) in
 
-    let reg_pads_pairs =
+    let reg_pads =
       resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
         ~input_spatial_shape ~k_s:kernel_size ~s_s ~d_s
     in
-    let current_pads_pairs =
+    let pads =
       if ceil_mode then
-        apply_ceil_mode ~current_pads_pairs:reg_pads_pairs ~input_spatial_shape
+        apply_ceil_mode ~current_pads_pairs:reg_pads ~input_spatial_shape
           ~k_s:kernel_size ~s_s ~d_s
-      else reg_pads_pairs
+      else reg_pads
     in
     let full_pad_config =
-      Array.concat
-        [ Array.make (x_ndim - num_spatial_dims) (0, 0); current_pads_pairs ]
+      Array.concat [ Array.make (x_ndim - num_spatial_dims) (0, 0); pads ]
     in
+
+    (input_spatial_shape, s_s, d_s, pads, reg_pads, full_pad_config)
+
+  let avg_pool_nd ctx ~kernel_size ?stride ?dilation ~padding_spec ~ceil_mode
+      ~count_include_pad ~num_spatial_dims x_orig =
+    let x_ndim = ndim x_orig in
+
+    (* Use pool_setup helper *)
+    let ( input_spatial_shape,
+          s_s,
+          d_s,
+          current_pads_pairs,
+          reg_pads_pairs,
+          full_pad_config ) =
+      pool_setup ctx ~num_spatial_dims ~kernel_size ?stride ?dilation
+        ~padding_spec ~ceil_mode x_orig
+    in
+
+    (* Always pad and pool *)
+    let x_padded = pad ctx x_orig full_pad_config (Dtype.zero (dtype x_orig)) in
+    let pooled_x = pool ctx x_padded ~k_s:kernel_size ~s_s ~d_s in
+
     let reduction_axes =
-      let pooled_ndim =
-        x_ndim - num_spatial_dims + num_spatial_dims + num_spatial_dims
+      Array.init num_spatial_dims (fun i ->
+          ndim pooled_x - num_spatial_dims + i)
+    in
+
+    (* Compute sum *)
+    let sum_pooled = sum ctx pooled_x ~axes:reduction_axes ~keepdims:false in
+
+    (* Compute divisor based on mode *)
+    if count_include_pad && not ceil_mode then
+      (* Simple case: divide by kernel size *)
+      let kernel_numel = View.prod kernel_size in
+      div_s ctx sum_pooled (float_of_int kernel_numel)
+    else
+      (* Need to count valid elements *)
+      let ones = ones_like ctx x_orig in
+      let ones_padded =
+        if ceil_mode && count_include_pad then
+          (* Special padding for ceil_mode divisor calculation *)
+          let reg_pad_config =
+            Array.concat
+              [ Array.make (x_ndim - num_spatial_dims) (0, 0); reg_pads_pairs ]
+          in
+          let ones_reg =
+            pad ctx ones reg_pad_config (Dtype.zero (dtype ones))
+          in
+          let extra_pads =
+            Array.map2
+              (fun (cb, ca) (rb, ra) -> (cb - rb, ca - ra))
+              current_pads_pairs reg_pads_pairs
+          in
+          let extra_pad_config =
+            Array.concat
+              [ Array.make (x_ndim - num_spatial_dims) (0, 0); extra_pads ]
+          in
+          pad ctx ones_reg extra_pad_config (Dtype.zero (dtype ones))
+        else pad ctx ones full_pad_config (Dtype.zero (dtype ones))
       in
+      let pooled_ones = pool ctx ones_padded ~k_s:kernel_size ~s_s ~d_s in
+      let count = sum ctx pooled_ones ~axes:reduction_axes ~keepdims:false in
+      div ctx sum_pooled count
+
+  let max_pool_nd ctx ~kernel_size ?stride ?dilation ~padding_spec ~ceil_mode
+      ~return_indices ~num_spatial_dims x_orig =
+    let x_ndim = ndim x_orig in
+
+    (* Use pool_setup helper *)
+    let input_spatial_shape, s_s, d_s, current_pads_pairs, _, full_pad_config =
+      pool_setup ctx ~num_spatial_dims ~kernel_size ?stride ?dilation
+        ~padding_spec ~ceil_mode x_orig
+    in
+
+    let reduction_axes =
+      let pooled_ndim = x_ndim + num_spatial_dims in
       Array.init num_spatial_dims (fun i -> pooled_ndim - num_spatial_dims + i)
     in
 
-    if not count_include_pad then
-      let x_padded =
-        pad ctx x_orig full_pad_config (Dtype.zero (dtype x_orig))
-      in
-      let pooled_x = pool ctx x_padded ~k_s:kernel_size ~s_s ~d_s in
-      let sum_pooled_x =
-        B.op_reduce_sum ctx pooled_x ~axes:reduction_axes ~keepdims:false
+    let fill_value = Dtype.min_val (dtype x_orig) in
+    let x_padded = pad ctx x_orig full_pad_config fill_value in
+    let pooled = pool ctx x_padded ~k_s:kernel_size ~s_s ~d_s in
+    let max_values =
+      B.op_reduce_max ctx pooled ~axes:reduction_axes ~keepdims:false
+    in
+
+    if not return_indices then (max_values, None)
+    else
+      let prod_spatial_size = View.prod input_spatial_shape in
+
+      (* Create forward indices directly *)
+      let indices_flat = arange ctx Dtype.int32 0 prod_spatial_size 1 in
+      let indices_spatial = reshape ctx indices_flat input_spatial_shape in
+
+      (* Pad indices with -1 (invalid index marker) *)
+      let indices_padded =
+        pad ctx indices_spatial current_pads_pairs (Int32.of_int (-1))
       in
 
-      let ones = ones_like ctx x_orig in
-      let ones_padded =
-        pad ctx ones full_pad_config (Dtype.zero (dtype ones))
+      (* Broadcast and pool indices *)
+      let shape_prefix_template =
+        Array.sub (shape x_orig) 0 (x_ndim - num_spatial_dims)
       in
-      let pooled_ones = pool ctx ones_padded ~k_s:kernel_size ~s_s ~d_s in
-      let sum_pooled_ones =
-        B.op_reduce_sum ctx pooled_ones ~axes:reduction_axes ~keepdims:false
+      let indices_broadcast =
+        broadcast_to ctx indices_padded
+          (Array.concat [ shape_prefix_template; shape indices_padded ])
       in
-
-      B.op_fdiv ctx sum_pooled_x sum_pooled_ones
-    else if not ceil_mode then
-      let x_padded =
-        pad ctx x_orig full_pad_config (Dtype.zero (dtype x_orig))
-      in
-      let pooled = pool ctx x_padded ~k_s:kernel_size ~s_s ~d_s in
-      mean ctx pooled ~axes:reduction_axes ~keepdims:false
-    else (* ceil_mode=true, count_include_pad=true *)
-      let x_padded_ceil =
-        pad ctx x_orig full_pad_config (Dtype.zero (dtype x_orig))
-      in
-      let pooled_x_ceil = pool ctx x_padded_ceil ~k_s:kernel_size ~s_s ~d_s in
-      let sum_pooled_x_ceil =
-        B.op_reduce_sum ctx pooled_x_ceil ~axes:reduction_axes ~keepdims:false
+      let pooled_indices =
+        pool ctx indices_broadcast ~k_s:kernel_size ~s_s ~d_s
       in
 
-      let ones_padded_reg =
-        let full_reg_pad_config =
-          Array.concat
-            [ Array.make (x_ndim - num_spatial_dims) (0, 0); reg_pads_pairs ]
-        in
-        pad ctx (ones_like ctx x_orig) full_reg_pad_config
-          (Dtype.zero (dtype x_orig))
+      (* Mask with max values *)
+      let max_values_expanded =
+        B.op_reduce_max ctx pooled ~axes:reduction_axes ~keepdims:true
       in
-      let divisor_pads_pairs =
-        Array.map2
-          (fun (cb, ca) (rb, ra) -> (cb - rb, ca - ra))
-          current_pads_pairs reg_pads_pairs
+      let is_max = equal ctx pooled max_values_expanded in
+
+      (* Select first occurrence of max (lowest index) *)
+      let invalid_idx =
+        scalar ctx Dtype.int32 (Int32.of_int prod_spatial_size)
       in
-      let full_divisor_pad_config =
-        Array.concat
-          [ Array.make (x_ndim - num_spatial_dims) (0, 0); divisor_pads_pairs ]
+      let masked_indices =
+        where ctx is_max pooled_indices
+          (broadcast_to ctx invalid_idx (shape pooled_indices))
       in
 
-      let pooled_ones_for_divisor =
-        pool ctx
-          (pad ctx ones_padded_reg full_divisor_pad_config
-             (Dtype.zero (dtype x_orig)))
-          ~k_s:kernel_size ~s_s ~d_s
+      (* Get minimum valid index (first occurrence) *)
+      let min_indices =
+        min ctx masked_indices ~axes:reduction_axes ~keepdims:false
       in
-      let sum_pooled_ones_for_divisor =
-        B.op_reduce_sum ctx pooled_ones_for_divisor ~axes:reduction_axes
-          ~keepdims:false
+
+      (* Filter out invalid indices *)
+      let valid_mask = cmplt ctx min_indices invalid_idx in
+      let final_indices =
+        where ctx valid_mask min_indices (scalar ctx Dtype.int32 0l)
       in
-      B.op_fdiv ctx sum_pooled_x_ceil sum_pooled_ones_for_divisor
+
+      (max_values, Some final_indices)
 
   let avg_pool1d ctx x ~kernel_size ?stride ?dilation ?(padding_spec = `Valid)
       ?(ceil_mode = false) ?(count_include_pad = true) () =
@@ -2360,101 +3226,6 @@ module Make (B : Backend_intf.S) = struct
     avg_pool_nd ctx x ~kernel_size:ks_arr ?stride:s_arr_opt ?dilation:d_arr_opt
       ~padding_spec ~ceil_mode ~count_include_pad ~num_spatial_dims:2
 
-  (** Internal N-Dimensional max pooling. *)
-  let max_pool_nd ctx ~kernel_size ?stride ?dilation ~padding_spec ~ceil_mode
-      ~return_indices ~num_spatial_dims x_orig =
-    let x_ndim = ndim x_orig in
-    let input_spatial_shape =
-      Array.sub (shape x_orig) (x_ndim - num_spatial_dims) num_spatial_dims
-    in
-    let default_stride = kernel_size in
-    let s_s = Option.value stride ~default:default_stride in
-    let d_s = Option.value dilation ~default:(Array.make num_spatial_dims 1) in
-
-    let pads_pairs =
-      resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
-        ~input_spatial_shape ~k_s:kernel_size ~s_s ~d_s
-    in
-    let current_pads_pairs =
-      if ceil_mode then
-        apply_ceil_mode ~current_pads_pairs:pads_pairs ~input_spatial_shape
-          ~k_s:kernel_size ~s_s ~d_s
-      else pads_pairs
-    in
-    let full_pad_config =
-      Array.concat
-        [ Array.make (x_ndim - num_spatial_dims) (0, 0); current_pads_pairs ]
-    in
-    let reduction_axes =
-      let pooled_ndim =
-        x_ndim - num_spatial_dims + num_spatial_dims + num_spatial_dims
-      in
-      Array.init num_spatial_dims (fun i -> pooled_ndim - num_spatial_dims + i)
-    in
-
-    let fill_value = Dtype.min_val (dtype x_orig) in
-    let x_padded = pad ctx x_orig full_pad_config fill_value in
-    let pooled = pool ctx x_padded ~k_s:kernel_size ~s_s ~d_s in
-    let max_values =
-      B.op_reduce_max ctx pooled ~axes:reduction_axes ~keepdims:false
-    in
-
-    if not return_indices then (max_values, None)
-    else
-      let input_spatial_shape_arr =
-        Array.sub (shape x_orig) (x_ndim - num_spatial_dims) num_spatial_dims
-      in
-      let prod_spatial_size = View.prod input_spatial_shape_arr in
-
-      let indices_flat =
-        arange ctx Dtype.int32 (prod_spatial_size - 1) (-1) (-1)
-      in
-      (* N-1, ..., 0 *)
-      let indices_spatial = reshape ctx indices_flat input_spatial_shape_arr in
-
-      let idx_fill_value = Dtype.min_val Dtype.int32 in
-      (* Smallest value for indices padding *)
-      let indices_spatial_padded =
-        pad ctx indices_spatial current_pads_pairs idx_fill_value
-      in
-
-      let shape_prefix_template =
-        Array.sub (shape x_orig) 0 (x_ndim - num_spatial_dims)
-      in
-      let idx_broadcast_shape_for_pool =
-        Array.concat [ shape_prefix_template; shape indices_spatial_padded ]
-      in
-      let indices_broadcast_for_pool =
-        broadcast_to ctx indices_spatial_padded idx_broadcast_shape_for_pool
-      in
-
-      let pooled_indices =
-        pool ctx indices_broadcast_for_pool ~k_s:kernel_size ~s_s ~d_s
-      in
-
-      let max_values_kept_dims =
-        B.op_reduce_max ctx pooled ~axes:reduction_axes ~keepdims:true
-      in
-      let is_max_mask = equal ctx pooled max_values_kept_dims in
-
-      let masked_pooled_indices =
-        where ctx is_max_mask pooled_indices
-          (full_like ctx pooled_indices idx_fill_value)
-      in
-
-      let final_indices_from_end =
-        B.op_reduce_max ctx masked_pooled_indices ~axes:reduction_axes
-          ~keepdims:false
-      in
-
-      let spatial_size_minus_1_tensor =
-        scalar ctx Dtype.int32 (Int32.of_int (prod_spatial_size - 1))
-      in
-      let final_indices =
-        sub ctx spatial_size_minus_1_tensor final_indices_from_end
-      in
-      (max_values, Some final_indices)
-
   let max_pool1d ctx x ~kernel_size ?stride ?dilation ?(padding_spec = `Valid)
       ?(ceil_mode = false) ?(return_indices = false) () =
     max_pool_nd ctx x ~kernel_size:[| kernel_size |]
@@ -2469,6 +3240,28 @@ module Make (B : Backend_intf.S) = struct
     let d_arr_opt = Option.map (fun d -> [| fst d; snd d |]) dilation in
     max_pool_nd ctx x ~kernel_size:ks_arr ?stride:s_arr_opt ?dilation:d_arr_opt
       ~padding_spec ~ceil_mode ~return_indices ~num_spatial_dims:2
+
+  (** Helper for N-dim one-hot encoding. Creates a new last dimension for
+      classes. *)
+  let one_hot ctx index_tensor ~num_classes =
+    let index_dt = dtype index_tensor in
+    if not (Dtype.is_int index_dt || Dtype.is_uint index_dt) then
+      invalid_arg "one_hot_nd: index_tensor must be an integer type";
+
+    let index_expanded = unsqueeze ctx index_tensor ~axis:(ndim index_tensor) in
+    (* Add new last dim *)
+
+    let arange_t = arange ctx index_dt 0 num_classes 1 in
+    (* Classes 0 to num_classes-1 *)
+
+    (* Reshape arange to be (1, ..., 1, num_classes) to align with new last dim
+       of index_expanded *)
+    let ndim_expanded = ndim index_expanded in
+    let shape_for_arange = Array.make ndim_expanded 1 in
+    shape_for_arange.(ndim_expanded - 1) <- num_classes;
+    let arange_b = reshape ctx arange_t shape_for_arange in
+
+    cmpeq ctx index_expanded arange_b (* Broadcasts to one-hot mask *)
 
   (** Internal N-Dimensional max unpooling. *)
   let max_unpool_nd ctx ~kernel_size ?stride ?dilation ~padding_spec
