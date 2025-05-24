@@ -281,7 +281,7 @@ let reshape view new_shape =
     invalid_arg
       (Printf.sprintf "reshape: Total size mismatch: %d vs %d" current_numel
          new_numel)
-  else if Array.exists (( < ) 0) new_shape then
+  else if Array.exists (fun x -> x < 0) new_shape then
     (* Allow new_shape to contain -1 if it's resolved by frontend *)
     invalid_arg
       "reshape: Negative dimensions not allowed in final shape for View.reshape"
@@ -289,15 +289,28 @@ let reshape view new_shape =
   then
     create ~offset:0
       new_shape (* Handle zero-size tensors: new C-contig view, offset 0*)
-  else if view.layout = C_contiguous && view.mask = None then
-    (* Simplest C-contiguous case *)
-    create ~offset:view.offset new_shape (* Preserve offset, new C-strides *)
+  else if view.mask = None then
+    (* Handle C-contiguous and strided cases without masks *)
+    if view.layout = C_contiguous then
+      (* Simplest C-contiguous case *)
+      create ~offset:view.offset new_shape (* Preserve offset, new C-strides *)
+    else
+      (* For strided views, check if they're effectively contiguous *)
+      let expected_strides = compute_strides view.shape in
+      let is_effectively_contiguous = all_eq view.strides expected_strides in
+      
+      (* Also check for single-element tensors which can always be reshaped *)
+      let is_single_element = current_numel <= 1 in
+      
+      if is_effectively_contiguous || is_single_element then
+        (* The view is effectively C-contiguous or single element *)
+        create ~offset:view.offset new_shape
+      else
+        failwith
+          "View.reshape: cannot reshape non-contiguous strided views"
   else
-    (* For now, non-trivial cases are not handled by this specific utility.
-       Backends op_reshape would need more advanced logic. *)
     failwith
-      "View.reshape: only supports reshaping of basic C-contiguous unmasked \
-       views or zero-sized views."
+      "View.reshape: cannot reshape views with masks"
 
 (* helper used by [pad] and [shrink] *)
 let unsafe_resize view arg new_mask_opt =

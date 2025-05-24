@@ -2052,10 +2052,10 @@ module Make (B : Backend_intf.S) = struct
     | `AllSingles ->
         (* Direct element access *)
         let indices =
-          List.map
-            (fun spec ->
+          List.mapi
+            (fun i spec ->
               match spec with
-              | I idx -> normalize_index x_shape.(0) idx
+              | I idx -> normalize_index x_shape.(i) idx
               | _ -> assert false)
             full_slice
         in
@@ -2188,9 +2188,39 @@ module Make (B : Backend_intf.S) = struct
       List.mapi (fun i spec -> indices_of_spec x_shape.(i) spec) full_slice
     in
 
-    (* Verify shape *)
-    let expected_shape = Array.of_list (List.map List.length indices_per_dim) in
-    if expected_shape <> y_shape then invalid_arg "shape mismatch";
+    (* Check if this is scalar setting (all single indices) *)
+    let all_singles = List.for_all (function I _ -> true | _ -> false) slice_def in
+    
+    if all_singles then (
+      (* Special case for scalar setting - use direct element assignment *)
+      let indices = List.mapi (fun i spec ->
+        match spec with
+        | I idx -> normalize_index x_shape.(i) idx
+        | _ -> assert false) slice_def in
+      
+      (* Verify y is scalar *)
+      if y_shape <> [||] then invalid_arg "scalar setting requires scalar value";
+      
+      (* Calculate linear offset in x *)
+      let linear_offset = ref 0 in
+      let stride = ref 1 in
+      for i = ndim - 1 downto 0 do
+        let idx = if i < List.length indices then List.nth indices i else 0 in
+        linear_offset := !linear_offset + (idx * !stride);
+        stride := !stride * x_shape.(i)
+      done;
+      
+      (* Direct assignment using bigarray *)
+      let x_data = data x in
+      let y_data = data y in
+      let y_offset = offset y in
+      let x_offset = offset x in
+      Bigarray.Array1.set x_data (!linear_offset + x_offset) 
+        (Bigarray.Array1.get y_data y_offset)
+    ) else (
+      (* Verify shape for non-scalar case *)
+      let expected_shape = Array.of_list (List.map List.length indices_per_dim) in
+      if expected_shape <> y_shape then invalid_arg "shape mismatch";
 
     (* Check if we can use optimized paths *)
     let all_contiguous =
@@ -2271,6 +2301,7 @@ module Make (B : Backend_intf.S) = struct
       let result_flat = B.op_scatter ctx x_flat scatter_indices y_flat 0 in
       let result = reshape ctx result_flat x_shape in
       blit ctx result x
+    )
 
   let slice_ranges ctx ?(steps = []) starts stops x =
     let n_dims = List.length starts in
@@ -2309,12 +2340,34 @@ module Make (B : Backend_intf.S) = struct
 
   (* Get a single element *)
   let get ctx indices x =
+    let x_shape = shape x in
+    (* Check bounds for each index *)
+    List.iteri (fun dim idx ->
+      if dim >= Array.length x_shape then
+        invalid_arg (Printf.sprintf "get_item: Too many indices for shape %s" 
+          (View.pp_int_array x_shape))
+      else if idx < 0 || idx >= x_shape.(dim) then
+        invalid_arg (Printf.sprintf "get_item: Index %d at dimension %d is out of bounds for shape %s"
+          idx dim (View.pp_int_array x_shape))
+    ) indices;
+    
     slice ctx (List.map (fun i -> I i) indices) x |> fun t ->
     if numel t = 1 then reshape ctx t [||]
     else invalid_arg "get requires indices for all dimensions"
 
   (* Set a single element *)
   let set ctx indices x value =
+    let x_shape = shape x in
+    (* Check bounds for each index *)
+    List.iteri (fun dim idx ->
+      if dim >= Array.length x_shape then
+        invalid_arg (Printf.sprintf "set_item: Too many indices for shape %s" 
+          (View.pp_int_array x_shape))
+      else if idx < 0 || idx >= x_shape.(dim) then
+        invalid_arg (Printf.sprintf "set_item: Index %d at dimension %d is out of bounds for shape %s"
+          idx dim (View.pp_int_array x_shape))
+    ) indices;
+    
     let value_tensor =
       if numel value = 1 then reshape ctx value [||]
       else invalid_arg "set requires scalar value"
@@ -2324,7 +2377,8 @@ module Make (B : Backend_intf.S) = struct
   let unsafe_get_item ctx indices x =
     let scalar_tensor = get ctx indices x in
     let ba = data scalar_tensor in
-    Bigarray.Array1.get ba 0
+    let view_offset = offset scalar_tensor in
+    Bigarray.Array1.get ba view_offset
 
   let unsafe_set_item ctx indices x value =
     let scalar_tensor = scalar ctx (dtype x) value in
