@@ -22,6 +22,12 @@ module Make (B : Backend_intf.S) = struct
   let offset t = View.offset (B.view t)
   let layout t = View.layout (B.view t)
 
+  (** Integer ceiling division: (a + b - 1) / b for integers a, b where b > 0.
+  *)
+  let ceildiv a b =
+    if b <= 0 then invalid_arg "ceildiv: divisor b must be positive"
+    else (a + b - 1) / b
+
   let resolve_axis ?ndim_opt t (axis_opt : int option) =
     let ndim = match ndim_opt with Some n -> n | None -> ndim t in
     match axis_opt with
@@ -110,6 +116,8 @@ module Make (B : Backend_intf.S) = struct
         B.op_copy ctx x
     | None -> B.op_cast ctx x dt
 
+  let astype ctx dt x = cast ctx x dt
+
   (* ────────── creation ops ────────── *)
 
   let contiguous ctx x = B.op_contiguous ctx x
@@ -181,7 +189,13 @@ module Make (B : Backend_intf.S) = struct
 
   (* *)
 
-  let to_bigarray ctx t = data t
+  let to_bigarray ctx t =
+    let array1 = data t in
+    let ba =
+      Bigarray.reshape (Bigarray.genarray_of_array1 array1) (shape t)
+    in
+    ba
+
   let of_bigarray ctx ba ~dtype ~shape = failwith "todo: of_bigarray"
 
   let to_array ctx t =
@@ -1904,8 +1918,6 @@ module Make (B : Backend_intf.S) = struct
 
   (* *)
 
-  (* *)
-
   (* Index type definition *)
   type index =
     | I of int (* single index *)
@@ -2265,6 +2277,15 @@ module Make (B : Backend_intf.S) = struct
     in
     set_slice ctx (List.map (fun i -> I i) indices) x value_tensor
 
+  let unsafe_get_item ctx indices x =
+    let scalar_tensor = get ctx indices x in
+    let ba = data scalar_tensor in
+    Bigarray.Array1.get ba 0
+
+  let unsafe_set_item ctx indices x value =
+    let scalar_tensor = scalar ctx (dtype x) value in
+    set ctx indices x scalar_tensor
+
   let array_split ctx t ~axis sections =
     let ndim = ndim t in
     let axis = resolve_single_axis t axis in
@@ -2343,6 +2364,152 @@ module Make (B : Backend_intf.S) = struct
            axis_size sections);
 
     array_split ctx t ~axis (`Count sections)
+
+  (* *)
+
+  let rand ctx dtype ?(seed = 42) shape =
+    if not (Dtype.is_float dtype) then
+      invalid_arg "rand only supports float dtypes";
+
+    (* Check shape is valid *)
+    if Array.exists (fun x -> x < 0) shape then
+      invalid_arg "shape dimensions must be non-negative";
+
+    (* If shape has 0, return zeros *)
+    let numel = View.prod shape in
+    if numel = 0 then zeros ctx dtype shape
+    else
+      (* Generate random int32 values using threefry *)
+      let num_pairs = ceildiv numel 2 in
+
+      (* Create counter tensors for threefry - offset by seed *)
+      let counts0 = arange ctx Dtype.int32 seed (seed + num_pairs) 1 in
+      let counts1 =
+        arange ctx Dtype.int32 (seed + num_pairs) (seed + (2 * num_pairs)) 1
+      in
+
+      (* Generate random bits using threefry *)
+      let random_bits = B.op_threefry ctx counts0 counts1 in
+
+      (* Flatten and take only what we need *)
+      let bits_flat = flatten ctx random_bits in
+      let bits_needed =
+        if numel < size bits_flat then shrink ctx bits_flat [| (0, numel) |]
+        else bits_flat
+      in
+
+      (* Convert to float64 for precision during normalization *)
+      let bits_float64 = cast ctx bits_needed Dtype.float64 in
+
+      (* Add 2^31 to shift from signed [-2^31, 2^31-1] to unsigned [0, 2^32-1]
+         range *)
+      let offset = scalar ctx Dtype.float64 2147483648.0 in
+      (* 2^31 *)
+      let shifted = add ctx bits_float64 offset in
+
+      (* Normalize to [0, 1) by dividing by 2^32 *)
+      let normalizer = scalar ctx Dtype.float64 4294967296.0 in
+      (* 2^32 *)
+      let normalized = div ctx shifted normalizer in
+
+      (* Cast to target dtype *)
+      let result = cast ctx normalized dtype in
+
+      (* Reshape to final shape *)
+      reshape ctx result shape
+
+  let randn ctx dtype ?(seed = 42) shape =
+    (* Check that dtype is float *)
+    if not (Dtype.is_float dtype) then
+      invalid_arg "randn only supports float dtypes";
+
+    (* Check shape is valid *)
+    if Array.exists (fun x -> x < 0) shape then
+      invalid_arg "shape dimensions must be non-negative";
+
+    (* If shape has 0, return zeros *)
+    let numel = View.prod shape in
+    if numel = 0 then zeros ctx dtype shape
+    else
+      (* Box-Muller transform: generate pairs of uniform random values *)
+      (* We need 2 uniform values per output value *)
+      let rand_shape = Array.concat [ [| 2 |]; shape ] in
+
+      (* Generate uniform random values in (0, 1] - we use a different seed
+         offset for u2 *)
+      let u1 = rand ctx Dtype.float32 ~seed rand_shape in
+      let u2 = rand ctx Dtype.float32 ~seed:(seed + numel) rand_shape in
+
+      (* Split into the two components *)
+      let u1_part = slice ctx [ I 0 ] u1 in
+      let u2_part = slice ctx [ I 1 ] u2 in
+
+      (* Box-Muller transform: z0 = cos(2π * u1) * sqrt(-2 * ln(u2)) We use u2
+         for the log to avoid log(0) *)
+
+      (* Compute 2π * u1 *)
+      let two_pi = scalar ctx Dtype.float32 (2.0 *. Float.pi) in
+      let angle = mul ctx u1_part two_pi in
+
+      (* Compute cos(2π * u1) *)
+      let cos_part = cos ctx angle in
+
+      (* Compute sqrt(-2 * ln(u2)) *)
+      (* First ensure u2 is not exactly 0 by using 1 - original_uniform *)
+      let one = ones_like ctx u2_part in
+      let u2_safe = sub ctx one u2_part in
+      (* Now in [0, 1) *)
+
+      (* Add small epsilon to avoid log(0) *)
+      let eps = scalar ctx Dtype.float32 1e-7 in
+      let u2_nonzero = maximum ctx u2_safe eps in
+
+      let log_u2 = log ctx u2_nonzero in
+      let neg_two = scalar ctx Dtype.float32 (-2.0) in
+      let sqrt_arg = mul ctx neg_two log_u2 in
+      let sqrt_part = sqrt ctx sqrt_arg in
+
+      (* Combine: z0 = cos_part * sqrt_part *)
+      let result_f32 = mul ctx cos_part sqrt_part in
+
+      (* Cast to target dtype *)
+      cast ctx result_f32 dtype
+
+  let randint ctx dtype ?(seed = 42) ?(high = 10) shape low =
+    (* Check that dtype is int *)
+    if not (Dtype.is_int dtype) then
+      invalid_arg "randint only supports integer dtypes";
+
+    (* Check shape is valid *)
+    if Array.exists (fun x -> x < 0) shape then
+      invalid_arg "shape dimensions must be non-negative";
+
+    (* Check range is valid *)
+    if low >= high then
+      invalid_arg
+        (Printf.sprintf "low (%d) must be less than high (%d)" low high);
+
+    (* If shape has 0, return zeros *)
+    let numel = View.prod shape in
+    if numel = 0 then zeros ctx dtype shape
+    else
+      (* Generate uniform random floats in [0, 1) *)
+      let uniform = rand ctx Dtype.float32 ~seed shape in
+
+      (* Scale to [0, high-low) *)
+      let range = float_of_int (high - low) in
+      let range_tensor = scalar ctx Dtype.float32 range in
+      let scaled = mul ctx uniform range_tensor in
+
+      (* Shift to [low, high) *)
+      let low_tensor = scalar ctx Dtype.float32 (float_of_int low) in
+      let shifted = add ctx scaled low_tensor in
+
+      (* Floor to get integers (truncate towards negative infinity) *)
+      let floored = floor ctx shifted in
+
+      (* Cast to target integer dtype *)
+      cast ctx floored dtype
 
   (* *)
 
@@ -2672,12 +2839,6 @@ module Make (B : Backend_intf.S) = struct
         @ List.init num_spatial (fun i -> noop_rank + (i * 2) + 1))
     in
     B.op_permute ctx x perm
-
-  (** Integer ceiling division: (a + b - 1) / b for integers a, b where b > 0.
-  *)
-  let ceildiv a b =
-    if b <= 0 then invalid_arg "ceildiv: divisor b must be positive"
-    else (a + b - 1) / b
 
   let pool_dilated_path ctx x ~noop_rank ~o_s ~s_s ~k_s ~d_s ~prefix_shape
       ~spatial_shape_in =
@@ -3687,6 +3848,10 @@ module Make (B : Backend_intf.S) = struct
 
       (x_sorted, final_idx)
 
+  let argsort ctx ?(descending = false) ?(axis = -1) t =
+    let _, indices = sort ctx ~descending ~axis t in
+    indices
+
   let argmax ctx ?axis ?(keepdims = false) t =
     let t_ndim = ndim t in
     let reduction_axis =
@@ -3760,31 +3925,20 @@ module Make (B : Backend_intf.S) = struct
 
   let argmin (type a b) ctx ?axis ?(keepdims = false) (t : (a, b) t) :
       (int32, Dtype.int32_elt) t =
-    (* For integers, -t might overflow. For floats, -t is fine. For unsigned,
-       this is more complex. Tinygrad uses `_inverse` which is `-self` for
-       floats, `~self` for ints, `logical_not` for bools. Let's assume a numeric
-       type for simplicity here or require float. If dtype is integer, a robust
-       way is: max_val - t *)
     let t_dtype = dtype t in
     let t_inverted =
       if Dtype.is_float t_dtype then neg ctx t
       else if Dtype.is_int t_dtype && not (Dtype.is_uint t_dtype) then neg ctx t
       else if Dtype.is_uint t_dtype then
-        (* (max_val_for_dtype - t). This might need a cast if max_val is too
-           large for 'a *)
         let max_val_specific : (a, b) t =
           match t_dtype with
-          (* This is a bit of a hack; Dtype should provide this if general *)
           | Dtype.UInt8 -> scalar ctx Dtype.uint8 255
           | Dtype.UInt16 -> scalar ctx Dtype.uint16 65535
-          (* Add other uint types as needed, or make Dtype.max_val more
-             accessible *)
           | _ -> failwith "argmin: unsupported uint dtype for inversion"
         in
         let max_val_b = broadcast_to ctx max_val_specific (shape t) in
         sub ctx max_val_b t
-      else (* Bool, etc. *)
-        logical_not ctx t (* This will change argmin for bools compared to -t *)
+      else logical_not ctx t
     in
     argmax ctx ?axis ~keepdims t_inverted
 

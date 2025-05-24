@@ -75,7 +75,7 @@ let zeros dtype shape = B.zeros context dtype shape
 let ones_like t = B.ones_like context t
 let zeros_like t = B.zeros_like context t
 let empty_like t = B.empty_like context t
-let full_like value t = B.full_like context value t
+let full_like value t = B.full_like context t value
 let scalar dtype v = B.scalar context dtype v
 let eye ?m ?k dtype n = B.eye context ?m ?k dtype n
 let identity dtype n = B.identity context dtype n
@@ -85,7 +85,7 @@ let identity dtype n = B.identity context dtype n
 let empty dtype shape = B.empty context dtype shape
 let copy t = B.copy context t
 let blit src dst = B.blit context src dst
-let fill value t = B.fill context value t
+let fill value t = B.fill context value t 
 
 (* Range Generation *)
 
@@ -249,6 +249,8 @@ let randint dtype ?seed ?high shape low =
 
 let get indices t = B.get context indices t
 let set indices t1 t2 = B.set context indices t1 t2
+let get_item indices t = B.unsafe_get_item context indices t
+let set_item indices v t = B.unsafe_set_item context indices t v
 
 let slice_ranges ?steps starts stops t =
   B.slice_ranges context ?steps starts stops t
@@ -276,6 +278,7 @@ let broadcast_to new_shape t = B.broadcast_to context new_shape t
 let squeeze ?axes t = B.squeeze context ?axes t
 let expand_dims axes t = B.expand_dims context axes t
 let cast dtype t = B.cast context dtype t
+let astype dtype t = B.astype context dtype t
 let array_split ?(axis = 0) sections t = B.array_split context ~axis sections t
 let split ?(axis = 0) sections t = B.split context ~axis sections t
 
@@ -331,8 +334,6 @@ let sort ?axis t = B.sort context ?axis t
 let argsort ?axis t = B.argsort context ?axis t
 let argmax ?axis t = B.argmax context ?axis t
 let argmin ?axis t = B.argmin context ?axis t
-let unique t = B.unique context t
-let nonzero t = B.nonzero context t
 
 (* Logical functions *)
 
