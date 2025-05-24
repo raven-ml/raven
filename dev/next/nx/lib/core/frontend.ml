@@ -159,7 +159,7 @@ module Make (B : Backend_intf.S) = struct
       let ndim = Array.length shape in
       let indices = Array.make ndim 0 in
       let remaining = ref idx in
-      for i = ndim - 1 downto 0 do
+      for i = 0 to ndim - 1 do
         let stride =
           Array.fold_left ( * ) 1 (Array.sub shape (i + 1) (ndim - i - 1))
         in
@@ -574,6 +574,27 @@ module Make (B : Backend_intf.S) = struct
     let a', b' = broadcasted ctx a b in
     B.op_and ctx a' b'
 
+  (* ────────── logical ops (for boolean tensors, typically uint8) ────────── *)
+
+  let logical_and ctx a b =
+    let a_b, b_b = broadcasted ctx a b in
+    B.op_and ctx a_b b_b
+
+  let logical_or ctx a b =
+    let a_b, b_b = broadcasted ctx a b in
+    B.op_or ctx a_b b_b
+
+  let logical_xor ctx a b =
+    let a_b, b_b = broadcasted ctx a b in
+    B.op_xor ctx a_b b_b
+
+  let logical_not ctx a = 
+    (* For boolean tensors (uint8), logical not is 1 - x *)
+    let dt = dtype a in
+    let one_val = Dtype.one dt in
+    let one_tensor = full ctx dt (shape a) one_val in
+    sub ctx one_tensor a
+
   (* ────────── comparison ops ────────── *)
 
   let cmplt ctx a b =
@@ -590,31 +611,15 @@ module Make (B : Backend_intf.S) = struct
 
   let cmpeq ctx a b =
     let ne_result = cmpne ctx a b in
-    B.op_neg ctx ne_result
+    logical_not ctx ne_result
 
   let equal ctx a b = cmpeq ctx a b
   let cmpgt ctx a b = cmplt ctx b a
   let greater ctx a b = cmpgt ctx a b
-  let cmple ctx a b = B.op_neg ctx (cmpgt ctx a b)
+  let cmple ctx a b = logical_not ctx (cmpgt ctx a b)
   let less_equal ctx a b = cmple ctx a b
-  let cmpge ctx a b = B.op_neg ctx (cmplt ctx a b)
+  let cmpge ctx a b = logical_not ctx (cmplt ctx a b)
   let greater_equal ctx a b = cmpge ctx a b
-
-  (* ────────── logical ops (for boolean tensors, typically uint8) ────────── *)
-
-  let logical_and ctx a b =
-    let a_b, b_b = broadcasted ctx a b in
-    B.op_and ctx a_b b_b
-
-  let logical_or ctx a b =
-    let a_b, b_b = broadcasted ctx a b in
-    B.op_or ctx a_b b_b
-
-  let logical_xor ctx a b =
-    let a_b, b_b = broadcasted ctx a b in
-    B.op_xor ctx a_b b_b
-
-  let logical_not ctx a = B.op_neg ctx a
 
   (* ────────── element-wise unary ops ────────── *)
 
@@ -1779,8 +1784,8 @@ module Make (B : Backend_intf.S) = struct
   (* *)
 
   let eye ctx ?m ?k dtype n =
-    let rows = n in
-    let cols = match m with Some v -> v | None -> n in
+    let rows = match m with Some v -> v | None -> n in
+    let cols = n in
     let k_val = match k with Some v -> v | None -> 0 in
 
     let final_shape = [| rows; cols |] in
@@ -2075,9 +2080,9 @@ module Make (B : Backend_intf.S) = struct
                 | R [ idx ] ->
                     let idx' = normalize_index dim_size idx in
                     let config =
-                      Array.init (ndim - dim) (fun i ->
-                          if i = 0 then (idx', idx' + 1)
-                          else (0, (shape tensor).(dim + i)))
+                      Array.init ndim (fun i ->
+                          if i = dim then (idx', idx' + 1)
+                          else (0, (shape tensor).(i)))
                     in
                     squeeze ctx ~axes:[| dim |] (shrink ctx tensor config)
                 | R range ->
@@ -2086,8 +2091,8 @@ module Make (B : Backend_intf.S) = struct
                       if step > 0 then (start, stop + 1) else (stop, start + 1)
                     in
                     let config =
-                      Array.init (ndim - dim) (fun i ->
-                          if i = 0 then (s, e) else (0, (shape tensor).(dim + i)))
+                      Array.init ndim (fun i ->
+                          if i = dim then (s, e) else (0, (shape tensor).(i)))
                     in
                     let sliced = shrink ctx tensor config in
                     if step < 0 then flip ctx ~axes:[| dim |] sliced else sliced
