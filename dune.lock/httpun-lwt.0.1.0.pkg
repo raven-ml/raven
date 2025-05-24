@@ -1,0 +1,15 @@
+(version 0.1.0)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (ocaml dune httpun lwt gluten-lwt)))
+
+(source
+ (fetch
+  (url
+   https://github.com/anmonteiro/httpun/releases/download/0.1.0/httpun-0.1.0.tbz)
+  (checksum
+   sha256=5007465f42e1cf8dec1e019819194b79bc5eed407cb93db4f603304c86a294d1)))

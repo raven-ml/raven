@@ -1,0 +1,48 @@
+(version 1)
+
+(build
+ (all_platforms ((action (run sh -ex configure.sh)))))
+
+(depexts
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows))
+    ((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (cmake))))
+
+(extra_sources
+ (configure.sh
+  (fetch
+   (url
+    https://raw.githubusercontent.com/ocaml/opam-source-archives/main/patches/conf-cmake/configure.sh)
+   (checksum
+    sha256=3417a88adeac146a5c2fc6e6d2185f80e319054c9054a2048df43b4644920f4f))))

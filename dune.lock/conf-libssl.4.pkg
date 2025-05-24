@@ -1,0 +1,181 @@
+(version 4)
+
+(install
+ (choice
+  ((((arch x86_64)
+     (os linux))
+    ((arch arm64)
+     (os linux)))
+   (withenv
+    ((= HOMEBREW_NO_AUTO_UPDATE 1))
+    (when
+     (= %{os_distribution} homebrew)
+     (run sh -ex ./homebrew.sh install %{lib}))))
+  ((((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   (withenv
+    ((= HOMEBREW_NO_AUTO_UPDATE 1))
+    (run sh -ex ./homebrew.sh install %{lib})))))
+
+(build
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine)))
+   ((action
+     (withenv
+      ((= HOMEBREW_NO_AUTO_UPDATE 1))
+      (run pkg-config --print-errors --exists openssl)))))
+  ((((arch x86_64)
+     (os linux))
+    ((arch arm64)
+     (os linux)))
+   ((action
+     (withenv
+      ((= HOMEBREW_NO_AUTO_UPDATE 1))
+      (progn
+       (when
+        (and_absorb_undefined_var
+         true
+         (<> %{os_distribution} homebrew))
+        (run pkg-config --print-errors --exists openssl))
+       (when
+        (= %{os_distribution} homebrew)
+        (run sh -ex ./homebrew.sh check)))))))
+  ((((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   ((action
+     (withenv
+      ((= HOMEBREW_NO_AUTO_UPDATE 1))
+      (run sh -ex ./homebrew.sh check)))))
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows))
+    ((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   ((action
+     (withenv
+      ((= HOMEBREW_NO_AUTO_UPDATE 1))
+      (run
+       pkgconf
+       (when
+        (catch_undefined_var
+         (and_absorb_undefined_var true %{pkg:host-arch-x86_32:installed})
+         false)
+        --personality=i686-w64-mingw32)
+       (when
+        (catch_undefined_var
+         (and_absorb_undefined_var true %{pkg:host-arch-x86_64:installed})
+         false)
+        --personality=x86_64-w64-mingw32)
+       --print-errors
+       --exists
+       openssl)))))))
+
+(depends
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch x86_64)
+     (os linux))
+    ((arch arm64)
+     (os linux))
+    ((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   (conf-pkg-config))
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (conf-pkg-config host-arch-x86_64 conf-mingw-w64-openssl-x86_64))
+  ((((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (conf-pkg-config host-arch-x86_32 conf-mingw-w64-openssl-i686))))
+
+(depexts
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian)))
+   (libssl-dev))
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine)))
+   (openssl-dev))
+  ((((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   (openssl))))
+
+(extra_sources
+ (homebrew.sh
+  (fetch
+   (url
+    https://raw.githubusercontent.com/ocaml/opam-source-archives/main/patches/conf-libssl/homebrew.sh.4)
+   (checksum
+    sha256=c6e132e784f0d3250b434a91ad806416ad6c30e25465bd4e37df946a33bfbad2))))

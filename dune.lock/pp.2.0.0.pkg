@@ -1,0 +1,18 @@
+(version 2.0.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml)))
+
+(source
+ (fetch
+  (url https://github.com/ocaml-dune/pp/releases/download/2.0.0/pp-2.0.0.tbz)
+  (checksum
+   sha256=8651351518b092b4a2def4e08171c276152f92fb6a84a8b19b6b929ccdb44419)))

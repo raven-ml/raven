@@ -1,0 +1,18 @@
+(version 1.13)
+
+(install
+ (all_platforms
+  (run %{make} install)))
+
+(build
+ (all_platforms ((action (run %{make} all)))))
+
+(depends
+ (all_platforms
+  (ocaml ocamlfind conf-zlib)))
+
+(source
+ (fetch
+  (url https://github.com/xavierleroy/camlzip/archive/rel113.tar.gz)
+  (checksum
+   sha256=8a038692ac811cdd2fdff9b37b5892b7a912c2042641187eae29757d98565d9e)))

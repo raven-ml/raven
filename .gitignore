@@ -1,9 +1,6 @@
 # Build output directory
 _build/
 
-# Dune package lock directory
-dune.lock/
-
 # Development tools lock files
 dev-tools.locks/
 

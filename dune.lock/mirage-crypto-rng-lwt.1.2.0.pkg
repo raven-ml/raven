@@ -1,0 +1,19 @@
+(version 1.2.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml dune duration logs mirage-crypto-rng mtime lwt)))
+
+(source
+ (fetch
+  (url
+   https://github.com/mirage/mirage-crypto/releases/download/v1.2.0/mirage-crypto-1.2.0.tbz)
+  (checksum
+   sha256=09542bcd96c1d368ff9ba8853105f4c1781d8c94c2400df9f3ac0610ee07e67e)))

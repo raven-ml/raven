@@ -1,0 +1,12 @@
+(version transition)
+
+(depends
+ (all_platforms
+  (curl curl_lwt)))
+
+(source
+ (fetch
+  (url
+   https://github.com/ygrek/ocurl/releases/download/0.10.0/curl-0.10.0.tbz)
+  (checksum
+   sha256=c14e215fda7f94292a758d9ae90f7bcbc21564c919190064011fccdcf7a12914)))

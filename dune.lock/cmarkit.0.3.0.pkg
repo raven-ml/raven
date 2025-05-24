@@ -1,0 +1,23 @@
+(version 0.3.0)
+
+(build
+ (all_platforms
+  ((action
+    (run
+     ocaml
+     pkg/pkg.ml
+     build
+     --dev-pkg
+     %{pkg-self:dev}
+     --with-cmdliner
+     %{pkg:cmdliner:installed})))))
+
+(depends
+ (all_platforms
+  (ocaml ocamlfind ocamlbuild topkg cmdliner)))
+
+(source
+ (fetch
+  (url https://erratique.ch/software/cmarkit/releases/cmarkit-0.3.0.tbz)
+  (checksum
+   sha512=42fa920e84f2b7d45f5cf1251d3308daa7becff2590f7ce84186cb22335415b02cc9bc44179095bf0d37624fb5a0e66d1c96fcc1b12f1106f567247a71c79039)))

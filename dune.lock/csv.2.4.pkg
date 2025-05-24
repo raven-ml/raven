@@ -1,0 +1,19 @@
+(version 2.4)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml dune base-bytes base-unix)))
+
+(source
+ (fetch
+  (url
+   https://github.com/Chris00/ocaml-csv/releases/download/2.4/csv-2.4.tbz)
+  (checksum
+   sha256=13fec48177f2658c4c62edf04f5edd055962fbf2abb4c3e372d268dd2ab2a98e)))

@@ -1,0 +1,39 @@
+(version 2.2.4)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install)
+     (run
+      dune
+      install
+      -p
+      %{pkg-self:name}
+      --create-install-file
+      %{pkg-self:name}))))))
+
+(depends
+ (all_platforms
+  (angstrom
+   bigstringaf
+   domain-name
+   dune
+   dune-site
+   ipaddr
+   logs
+   lru
+   lwt-dllist
+   mtime
+   ocaml
+   ptime
+   tls
+   uri
+   x509)))
+
+(source
+ (fetch
+  (url
+   https://github.com/paurkedal/ocaml-caqti/releases/download/v2.2.4/caqti-v2.2.4.tbz)
+  (checksum
+   sha256=b8ea432820154ec095132c4f7b244b06cd8553e0b2035185b844d9c4f30af8bb)))

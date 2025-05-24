@@ -1,0 +1,19 @@
+(version 0.10.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml dune-configurator base-bigarray base-unix conf-libcurl)))
+
+(source
+ (fetch
+  (url
+   https://github.com/ygrek/ocurl/releases/download/0.10.0/curl-0.10.0.tbz)
+  (checksum
+   sha256=c14e215fda7f94292a758d9ae90f7bcbc21564c919190064011fccdcf7a12914)))

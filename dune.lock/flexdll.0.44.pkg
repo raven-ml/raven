@@ -1,0 +1,18 @@
+(version 0.44)
+
+(source
+ (fetch
+  (url https://github.com/ocaml/flexdll/archive/refs/tags/0.44.tar.gz)
+  (checksum
+   sha256=b7c6a92286f1f3065324d51083dcb16eec436a4e6e3b8df7cf836b6d7a8b9491)))
+
+(enabled_on_platforms
+ (only
+  ((arch x86_64)
+   (os win32)
+   (os-distribution cygwin)
+   (os-family windows))
+  ((arch arm64)
+   (os win32)
+   (os-distribution cygwin)
+   (os-family windows))))

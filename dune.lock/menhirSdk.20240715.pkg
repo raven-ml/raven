@@ -1,0 +1,14 @@
+(version 20240715)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (ocaml dune)))
+
+(source
+ (fetch
+  (url
+   https://gitlab.inria.fr/fpottier/menhir/-/archive/20240715/archive.tar.gz)
+  (checksum md5=d39a8943fe1be28199e5ec1f4133504c)))

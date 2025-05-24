@@ -1,0 +1,17 @@
+(version 0.7.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml dune-configurator conf-libssl)))
+
+(source
+ (fetch
+  (url https://github.com/savonet/ocaml-ssl/archive/refs/tags/v0.7.0.tar.gz)
+  (checksum md5=0ced13c2beef2135cd9d3a3743ea0e37)))

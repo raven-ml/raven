@@ -1,0 +1,32 @@
+(version 2.0.1)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml
+   dune
+   mirage-crypto
+   mirage-crypto-ec
+   mirage-crypto-pk
+   mirage-crypto-rng
+   x509
+   domain-name
+   fmt
+   kdf
+   logs
+   ipaddr
+   ohex
+   digestif)))
+
+(source
+ (fetch
+  (url
+   https://github.com/mirleft/ocaml-tls/releases/download/v2.0.1/tls-2.0.1.tbz)
+  (checksum
+   sha256=6bab8da3ad528d3f312d7b4ee21da4c59c34a91ae3e5cf4234715ab9a1820ead)))

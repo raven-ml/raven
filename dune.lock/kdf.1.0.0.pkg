@@ -1,0 +1,19 @@
+(version 1.0.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml dune digestif mirage-crypto)))
+
+(source
+ (fetch
+  (url
+   https://github.com/robur-coop/kdf/releases/download/v1.0.0/kdf-1.0.0.tbz)
+  (checksum
+   sha256=d161582b0efe66d958dd6b8c9c21068e9f6454ce218377d6cf87823dec62e0ce)))

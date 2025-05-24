@@ -1,0 +1,191 @@
+(version 119)
+
+(install
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   (run cp bin/wasm-opt bin/wasm-metadce bin/wasm-merge %{bin}))
+  ((((arch x86_64)
+     (os linux))
+    ((arch arm64)
+     (os linux)))
+   (progn
+    (when
+     (<> %{os_family} windows)
+     (run cp bin/wasm-opt bin/wasm-metadce bin/wasm-merge %{bin}))
+    (when
+     (= %{os_family} windows)
+     (run cp bin/wasm-opt.exe bin/wasm-metadce.exe bin/wasm-merge.exe %{bin}))))
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows))
+    ((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (run cp bin/wasm-opt.exe bin/wasm-metadce.exe bin/wasm-merge.exe %{bin}))))
+
+(build
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   ((action
+     (progn
+      (run
+       cmake
+       -G
+       Ninja
+       .
+       -DBUILD_STATIC_LIB=ON
+       -DBUILD_TESTS=off
+       -DINSTALL_LIBS=off
+       -DENABLE_WERROR=off)
+      (run ninja)))))
+  ((((arch x86_64)
+     (os linux))
+    ((arch arm64)
+     (os linux)))
+   ((action
+     (progn
+      (when
+       (and_absorb_undefined_var
+        (<> %{os_family} windows)
+        true)
+       (run
+        cmake
+        -G
+        Ninja
+        .
+        -DBUILD_STATIC_LIB=ON
+        -DBUILD_TESTS=off
+        -DINSTALL_LIBS=off
+        -DENABLE_WERROR=off))
+      (when
+       (and_absorb_undefined_var
+        (<> %{os_family} windows)
+        true)
+       (run ninja))
+      (when
+       (= %{os_family} windows)
+       (run
+        cmake
+        .
+        -DBUILD_STATIC_LIB=ON
+        -DBUILD_TESTS=off
+        -DINSTALL_LIBS=off
+        -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc))
+      (when
+       (or_absorb_undefined_var
+        (= %{os_family} windows)
+        false)
+       (run %{make} -j %{jobs}))))))
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows))
+    ((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   ((action
+     (progn
+      (run
+       cmake
+       .
+       -DBUILD_STATIC_LIB=ON
+       -DBUILD_TESTS=off
+       -DINSTALL_LIBS=off
+       -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc)
+      (run %{make} -j %{jobs})))))))
+
+(depends
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch x86_64)
+     (os linux))
+    ((arch arm64)
+     (os linux))
+    ((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   (conf-cmake conf-ninja conf-c++))
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows))
+    ((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (conf-cmake conf-c++))))
+
+(source
+ (fetch
+  (url
+   https://github.com/WebAssembly/binaryen/archive/refs/tags/version_119.tar.gz)
+  (checksum md5=4dfd979d4f46aaa9ea983bd77c33c414)))

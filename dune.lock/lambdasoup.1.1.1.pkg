@@ -1,0 +1,14 @@
+(version 1.1.1)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (camlp-streams dune markup ocaml)))
+
+(source
+ (fetch
+  (url https://github.com/aantron/lambdasoup/archive/1.1.1.tar.gz)
+  (checksum
+   sha256=05d97f38e534a431176ed8d3dbe6dfb7bdcf7770109193c5a69dff53e38f10fe)))

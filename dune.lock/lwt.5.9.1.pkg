@@ -1,0 +1,71 @@
+(version 5.9.1)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run
+      dune
+      exec
+      -p
+      %{pkg-self:name}
+      src/unix/config/discover.exe
+      --
+      --save
+      --use-libev
+      %{pkg:conf-libev:installed})
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch x86_64)
+     (os linux))
+    ((arch arm64)
+     (os linux))
+    ((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   (dune
+    ocaml
+    cppo
+    dune-configurator
+    ocplib-endian
+    base-threads
+    base-unix
+    conf-libev))
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows))
+    ((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (dune ocaml cppo dune-configurator ocplib-endian base-threads base-unix))))
+
+(source
+ (fetch
+  (url https://github.com/ocsigen/lwt/archive/refs/tags/5.9.1.tar.gz)
+  (checksum md5=18742da8b8fe3618e3fa700b7a884fe7)))

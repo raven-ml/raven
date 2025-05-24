@@ -1,0 +1,23 @@
+(version 1)
+
+(build
+ (choice
+  ((((arch x86_64) (os win32) (os-distribution cygwin) (os-family windows)))
+   ((action (run x86_64-w64-mingw32-g++ --version))))))
+
+(depends
+ (choice
+  ((((arch x86_64) (os win32) (os-distribution cygwin) (os-family windows)))
+   (conf-mingw-w64-gcc-x86_64))))
+
+(depexts
+ (choice
+  ((((arch x86_64) (os win32) (os-distribution cygwin) (os-family windows)))
+   (mingw64-x86_64-gcc-g++))))
+
+(enabled_on_platforms
+ (only
+  ((arch x86_64)
+   (os win32)
+   (os-distribution cygwin)
+   (os-family windows))))

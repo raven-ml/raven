@@ -1,0 +1,19 @@
+(version 0.13.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml angstrom faraday)))
+
+(source
+ (fetch
+  (url
+   https://github.com/anmonteiro/ocaml-h2/releases/download/0.13.0/h2-0.13.0.tbz)
+  (checksum
+   sha256=0d89b6f178175294e7a207223be81d5b83fc31b97549bec34f0432a3b2a8070f)))
