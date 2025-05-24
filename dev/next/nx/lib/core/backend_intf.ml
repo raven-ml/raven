@@ -42,6 +42,11 @@ module type S = sig
   val op_const_scalar : context -> 'a -> ('a, 'b) Dtype.t -> ('a, 'b) t
   (** Tensor containing a single scalar [value]. *)
 
+  val op_const_array :
+    context -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> ('a, 'b) t
+  (** Tensor containing the elements of [array]. The array must be contiguous.
+  *)
+
   (* Element-wise Binary Ops *)
 
   (* These ops assume inputs have been broadcast to the same shape and cast to

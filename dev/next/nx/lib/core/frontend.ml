@@ -1,7 +1,5 @@
 (* High-level tensor operations built on backend [B]. *)
 
-[@@@ocaml.warning "-27"]
-
 module Make (B : Backend_intf.S) = struct
   type ('a, 'b) t = ('a, 'b) B.t
   type context = B.context
@@ -132,8 +130,51 @@ module Make (B : Backend_intf.S) = struct
            (View.pp_int_array (shape dst)));
     B.op_assign ctx dst src
 
-  let create ctx dtype shape arr = failwith "todo: create from bigarray"
-  let init ctx dtype shape f = failwith "todo: init with function"
+  let create ctx dtype shape arr =
+    let n = Array.fold_left ( * ) 1 shape in
+    if Array.length arr <> n then
+      invalid_arg
+        (Printf.sprintf "create: array size (%d) doesn't match shape (%d)"
+           (Array.length arr) n);
+
+    (* Create bigarray buffer with proper dtype *)
+    let kind = Dtype.kind_of_dtype dtype in
+    let bigarray = Bigarray.Array1.create kind Bigarray.c_layout n in
+
+    (* Copy data from OCaml array to bigarray *)
+    for i = 0 to n - 1 do
+      Bigarray.Array1.unsafe_set bigarray i arr.(i)
+    done;
+
+    (* Create flat tensor and reshape if needed *)
+    let tensor_1d = B.op_const_array ctx bigarray in
+    if Array.length shape = 1 && shape.(0) = n then tensor_1d
+    else B.op_reshape ctx tensor_1d shape
+
+  let init ctx dtype shape f =
+    let size = Array.fold_left ( * ) 1 shape in
+
+    (* Helper to convert linear index to multi-dimensional indices *)
+    let unravel_index idx shape =
+      let ndim = Array.length shape in
+      let indices = Array.make ndim 0 in
+      let remaining = ref idx in
+      for i = ndim - 1 downto 0 do
+        let stride =
+          Array.fold_left ( * ) 1 (Array.sub shape (i + 1) (ndim - i - 1))
+        in
+        indices.(i) <- !remaining / stride;
+        remaining := !remaining mod stride
+      done;
+      indices
+    in
+
+    (* Create OCaml array with values from f *)
+    let arr = Array.init size (fun i -> f (unravel_index i shape)) in
+
+    (* Use create to handle the conversion *)
+    create ctx dtype shape arr
+
   let scalar ctx dt value = B.op_const_scalar ctx value dt
 
   let empty ctx dtype shape_arr =
@@ -189,16 +230,19 @@ module Make (B : Backend_intf.S) = struct
 
   (* *)
 
-  let to_bigarray ctx t =
+  let to_bigarray _ctx t =
     let array1 = data t in
-    let ba =
-      Bigarray.reshape (Bigarray.genarray_of_array1 array1) (shape t)
-    in
+    let ba = Bigarray.reshape (Bigarray.genarray_of_array1 array1) (shape t) in
     ba
 
-  let of_bigarray ctx ba ~dtype ~shape = failwith "todo: of_bigarray"
+  let of_bigarray ctx ba =
+    let size = Array.fold_left ( * ) 1 (Bigarray.Genarray.dims ba) in
+    let arr = Bigarray.reshape_1 ba size in
+    let shape = Bigarray.Genarray.dims ba in
+    let flat_tensor = B.op_const_array ctx arr in
+    reshape ctx flat_tensor shape
 
-  let to_array ctx t =
+  let to_array _ctx t =
     let ba = data t in
     let n = numel t in
     Array.init n (fun i -> Bigarray.Array1.get ba i)
@@ -1774,7 +1818,7 @@ module Make (B : Backend_intf.S) = struct
   let identity ctx dtype n = eye ctx ~m:n ~k:0 dtype n
 
   let arange (type a b) ctx (dtype : (a, b) Dtype.t) start stop step =
-    if step = 0 then failwith "arange: step cannot be zero";
+    if step = 0 then invalid_arg "arange: step cannot be zero";
     let num_elements =
       if step > 0 then
         if start >= stop then 0
@@ -1832,7 +1876,7 @@ module Make (B : Backend_intf.S) = struct
       init ctx dtype [| num_elements |] f_init
 
   let arange_f ctx dtype start_f stop_f step_f =
-    if step_f = 0. then failwith "arange_f: step cannot be zero";
+    if step_f = 0. then invalid_arg "arange_f: step cannot be zero";
     let num_exact_steps = (stop_f -. start_f) /. step_f in
     let eps_factor = 1e-9 in
     (* Small factor to subtract before floor for robust exclusive bound *)
@@ -2016,7 +2060,7 @@ module Make (B : Backend_intf.S) = struct
             full_slice
         in
         let shrink_config =
-          Array.of_list (List.mapi (fun i idx -> (idx, idx + 1)) indices)
+          Array.of_list (List.mapi (fun _i idx -> (idx, idx + 1)) indices)
         in
         reshape ctx (shrink ctx x shrink_config) [||]
     | `ContiguousRanges ->
@@ -2108,7 +2152,7 @@ module Make (B : Backend_intf.S) = struct
 
                       (* Process each gather operation sequentially *)
                       List.fold_left2
-                        (fun t spec indices ->
+                        (fun t _spec indices ->
                           if List.length indices = 1 then
                             squeeze ctx ~axes:[| 0 |]
                               (shrink ctx t
@@ -2996,7 +3040,7 @@ module Make (B : Backend_intf.S) = struct
 
   let winograd_conv2d ctx x w =
     let bs, cin, h, w_dim = (dim 0 x, dim 1 x, dim 2 x, dim 3 x) in
-    let cout, _, kh, kw = (dim 0 w, dim 1 w, dim 2 w, dim 3 w) in
+    let cout, _, _kh, _kw = (dim 0 w, dim 1 w, dim 2 w, dim 3 w) in
 
     (* Transform weights: (cout, cin, 3, 3) -> (cout, cin, 6, 6) *)
     let w_transformed = apply_winograd_matrix ctx winograd_f4x4_3x3_g w 2 in
@@ -3342,8 +3386,7 @@ module Make (B : Backend_intf.S) = struct
   (** Helper to resolve padding specification for pooling/convolution
       operations. Input `padding_spec` is user-facing. Output `(int*int) array`
       is for `B.op_pad`, (pad_before, pad_after) for each spatial dimension. *)
-  let resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
-      ~input_spatial_shape ~k_s ~s_s ~d_s =
+  let resolve_padding_for_ops padding_spec ~input_spatial_shape ~k_s ~s_s ~d_s =
     match padding_spec with
     | `Same | `Valid | `Full ->
         calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
@@ -3385,8 +3428,8 @@ module Make (B : Backend_intf.S) = struct
     done;
     pads_adj
 
-  let pool_setup ctx ~num_spatial_dims ~kernel_size ?stride ?dilation
-      ~padding_spec ~ceil_mode x_orig =
+  let pool_setup ~num_spatial_dims ~kernel_size ?stride ?dilation ~padding_spec
+      ~ceil_mode x_orig =
     let x_ndim = ndim x_orig in
     let input_spatial_shape =
       Array.sub (shape x_orig) (x_ndim - num_spatial_dims) num_spatial_dims
@@ -3395,8 +3438,8 @@ module Make (B : Backend_intf.S) = struct
     let d_s = Option.value dilation ~default:(Array.make num_spatial_dims 1) in
 
     let reg_pads =
-      resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
-        ~input_spatial_shape ~k_s:kernel_size ~s_s ~d_s
+      resolve_padding_for_ops padding_spec ~input_spatial_shape ~k_s:kernel_size
+        ~s_s ~d_s
     in
     let pads =
       if ceil_mode then
@@ -3415,14 +3458,14 @@ module Make (B : Backend_intf.S) = struct
     let x_ndim = ndim x_orig in
 
     (* Use pool_setup helper *)
-    let ( input_spatial_shape,
+    let ( _input_spatial_shape,
           s_s,
           d_s,
           current_pads_pairs,
           reg_pads_pairs,
           full_pad_config ) =
-      pool_setup ctx ~num_spatial_dims ~kernel_size ?stride ?dilation
-        ~padding_spec ~ceil_mode x_orig
+      pool_setup ~num_spatial_dims ~kernel_size ?stride ?dilation ~padding_spec
+        ~ceil_mode x_orig
     in
 
     (* Always pad and pool *)
@@ -3477,8 +3520,8 @@ module Make (B : Backend_intf.S) = struct
 
     (* Use pool_setup helper *)
     let input_spatial_shape, s_s, d_s, current_pads_pairs, _, full_pad_config =
-      pool_setup ctx ~num_spatial_dims ~kernel_size ?stride ?dilation
-        ~padding_spec ~ceil_mode x_orig
+      pool_setup ~num_spatial_dims ~kernel_size ?stride ?dilation ~padding_spec
+        ~ceil_mode x_orig
     in
 
     let reduction_axes =
@@ -3616,7 +3659,7 @@ module Make (B : Backend_intf.S) = struct
             Option.value dilation ~default:(Array.make num_spatial_dims 1)
           in
           let pads_pairs =
-            resolve_padding_for_ops ctx padding_spec ~num_spatial_dims
+            resolve_padding_for_ops padding_spec
               ~input_spatial_shape:pooled_spatial_shape
                 (* Placeholder, see note in thought process *)
               ~k_s:kernel_size ~s_s ~d_s
@@ -4019,7 +4062,7 @@ module Make (B : Backend_intf.S) = struct
     Format.pp_print_newline Format.std_formatter ();
     Format.pp_print_flush Format.std_formatter ()
 
-  let pp_dtype context fmt dtype =
+  let pp_dtype _context fmt dtype =
     Format.fprintf fmt "%s" (Dtype.to_string dtype)
 
   let shape_to_string _ctx shape =

@@ -34,8 +34,8 @@ dune build ndarray hugin rune quill
 dune build dev/next/nx dev/next/rune  # Next-gen libraries
 
 # Run tests
-dune test
-dune test ndarray/test  # Specific library tests
+dune build @runtest  # All tests
+dune build @ndarray/runtest  # Specific library tests
 
 # Interactive REPL
 dune utop ndarray

@@ -31,13 +31,20 @@ let op_buffer _ctx dt size_in_elements =
   in
   Internal.{ dtype = dt; buffer = ba; view = initial_view }
 
-let op_const_scalar _ctx (value : 'a) dt =
+let op_const_scalar _ctx value dt =
   let kind = Dtype.kind_of_dtype dt in
   let ba = Bigarray.Array1.create kind Bigarray.c_layout 1 in
   Bigarray.Array1.set ba 0 value;
   let scalar_view = View.create [||] in
   (* 0-dim for scalar *)
   Internal.{ dtype = dt; buffer = ba; view = scalar_view }
+
+let op_const_array _ctx bigarray =
+  let dtype = Dtype.dtype_of_kind (Bigarray.Array1.kind bigarray) in
+  let size = Bigarray.Array1.dim bigarray in
+  let t = op_buffer _ctx dtype size in
+  Bigarray.Array1.blit bigarray (data t);
+  t
 
 (* Binary Ops *)
 
