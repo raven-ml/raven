@@ -1,5 +1,5 @@
 open Hugin
-open Ndarray
+open Nx
 
 let x = linspace float32 0. (2. *. Float.pi) 100
 let y1 = map Float.sin x

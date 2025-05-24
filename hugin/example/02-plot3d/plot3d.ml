@@ -1,10 +1,10 @@
-open Ndarray
+open Nx
 
 let create_helix_data () =
-  let t = Ndarray.linspace float32 0. (4. *. Float.pi) 100 in
-  let x = Ndarray.map (fun t -> Float.cos t) t in
-  let y = Ndarray.map (fun t -> Float.sin t) t in
-  let z = Ndarray.map (fun t -> t /. (4. *. Float.pi)) t in
+  let t = Nx.linspace float32 0. (4. *. Float.pi) 100 in
+  let x = Nx.map (fun t -> Float.cos t) t in
+  let y = Nx.map (fun t -> Float.sin t) t in
+  let z = Nx.map (fun t -> t /. (4. *. Float.pi)) t in
   (x, y, z)
 
 let () =

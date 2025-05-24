@@ -10,7 +10,7 @@ type int64_elt = Bigarray.int64_elt
 type complex32_elt = Bigarray.complex32_elt
 type complex64_elt = Bigarray.complex64_elt
 
-type ('a, 'b) dtype = ('a, 'b) Ndarray_core.dtype =
+type ('a, 'b) dtype = ('a, 'b) Nx_core.dtype =
   | Float16 : (float, float16_elt) dtype
   | Float32 : (float, float32_elt) dtype
   | Float64 : (float, float64_elt) dtype

@@ -1,4 +1,0 @@
-(executable
- (name bench_ndarray)
- (modules bench_ndarray)
- (libraries ndarray ubench))

@@ -1,0 +1,15 @@
+(executable
+ (name iris)
+ (libraries nx_datasets hugin nx))
+
+(executable
+ (name mnist)
+ (libraries nx_datasets hugin nx))
+
+(executable
+ (name airline)
+ (libraries nx_datasets hugin nx))
+
+(executable
+ (name california)
+ (libraries nx_datasets hugin nx))

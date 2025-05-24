@@ -180,8 +180,8 @@ let plot_style ?color ?linewidth ?linestyle ?marker () : plot_style =
   }
 
 type line2d = {
-  xdata : Ndarray.float32_t;
-  ydata : Ndarray.float32_t;
+  xdata : Nx.float32_t;
+  ydata : Nx.float32_t;
   color : color;
   linewidth : float;
   linestyle : line_style;
@@ -190,9 +190,9 @@ type line2d = {
 }
 
 type line3d = {
-  xdata : Ndarray.float32_t;
-  ydata : Ndarray.float32_t;
-  zdata : Ndarray.float32_t;
+  xdata : Nx.float32_t;
+  ydata : Nx.float32_t;
+  zdata : Nx.float32_t;
   color : color;
   linewidth : float;
   linestyle : line_style;
@@ -201,8 +201,8 @@ type line3d = {
 }
 
 type scatter = {
-  xdata : Ndarray.float32_t;
-  ydata : Ndarray.float32_t;
+  xdata : Nx.float32_t;
+  ydata : Nx.float32_t;
   s : float; (* Size *)
   c : color; (* Color *)
   marker : marker_style;
@@ -210,8 +210,8 @@ type scatter = {
 }
 
 type bar = {
-  x : Ndarray.float32_t;
-  height : Ndarray.float32_t;
+  x : Nx.float32_t;
+  height : Nx.float32_t;
   width : float;
   bottom : float;
   color : color;
@@ -226,9 +226,7 @@ type text = {
   fontsize : float;
 }
 
-type image_data =
-  | Uint8_image of Ndarray.uint8_t
-  | Float32_image of Ndarray.float32_t
+type image_data = Uint8_image of Nx.uint8_t | Float32_image of Nx.float32_t
 
 type image = {
   data : image_data;
@@ -239,8 +237,8 @@ type image = {
 }
 
 type errorbar_style = {
-  yerr : Ndarray.float32_t option;
-  xerr : Ndarray.float32_t option;
+  yerr : Nx.float32_t option;
+  xerr : Nx.float32_t option;
   color : color;
   linewidth : float;
   capsize : float;
@@ -249,8 +247,8 @@ type errorbar_style = {
 type step_where = Pre | Post | Mid
 
 type step = {
-  xdata : Ndarray.float32_t;
-  ydata : Ndarray.float32_t;
+  xdata : Nx.float32_t;
+  ydata : Nx.float32_t;
   color : color;
   linewidth : float;
   linestyle : line_style;
@@ -259,11 +257,11 @@ type step = {
 }
 
 type fill_between = {
-  xdata : Ndarray.float32_t;
-  y1data : Ndarray.float32_t;
-  y2data : Ndarray.float32_t;
+  xdata : Nx.float32_t;
+  y1data : Nx.float32_t;
+  y2data : Nx.float32_t;
   color : color; (* Fill color, alpha is part of the color type *)
-  where : Ndarray.float32_t option; (* Optional mask *)
+  where : Nx.float32_t option; (* Optional mask *)
   interpolate : bool; (* Handle NaNs by interpolation? *)
   label : string option;
 }
@@ -282,13 +280,13 @@ type t =
 
 let line2d ?(color = Color.blue) ?(linewidth = 1.5) ?(linestyle = Solid)
     ?(marker = None) ?label x y =
-  if Ndarray.ndim x <> Ndarray.ndim y then
+  if Nx.ndim x <> Nx.ndim y then
     invalid_arg "Artist.line2d: x and y dimensions must match";
   Line2D { xdata = x; ydata = y; color; linewidth; linestyle; marker; label }
 
 let line3d ?(color = Color.blue) ?(linewidth = 1.5) ?(linestyle = Solid)
     ?(marker = None) ?label x y z =
-  if Ndarray.ndim x <> Ndarray.ndim y || Ndarray.ndim x <> Ndarray.ndim z then
+  if Nx.ndim x <> Nx.ndim y || Nx.ndim x <> Nx.ndim z then
     invalid_arg "Artist.line3d: x, y, and z dimensions must match";
   Line3D
     {
@@ -303,12 +301,12 @@ let line3d ?(color = Color.blue) ?(linewidth = 1.5) ?(linestyle = Solid)
     }
 
 let scatter ?(s = 20.0) ?(c = Color.blue) ?(marker = Circle) ?label x y =
-  if Ndarray.ndim x <> Ndarray.ndim y then
+  if Nx.ndim x <> Nx.ndim y then
     invalid_arg "Artist.scatter: x and y dimensions must match";
   Scatter { xdata = x; ydata = y; s; c; marker; label }
 
 let bar ?(width = 0.8) ?(bottom = 0.0) ?(color = Color.blue) ?label ~height x =
-  if Ndarray.size x <> Ndarray.size height then
+  if Nx.size x <> Nx.size height then
     invalid_arg "Artist.bar: x and height lengths must match";
   Bar { x; height; width; bottom; color; label }
 
@@ -319,16 +317,16 @@ let image : type a b.
     ?extent:float * float * float * float ->
     ?cmap:cmap ->
     ?aspect:string ->
-    (a, b) Ndarray.t ->
+    (a, b) Nx.t ->
     t =
  fun ?extent ?cmap ?aspect data ->
-  match Ndarray.dtype data with
-  | Ndarray.UInt8 ->
-      let shape = Ndarray.shape data in
+  match Nx.dtype data with
+  | Nx.UInt8 ->
+      let shape = Nx.shape data in
       let data = Uint8_image data in
       Image { data; shape; extent; cmap; aspect }
-  | Ndarray.Float32 ->
-      let shape = Ndarray.shape data in
+  | Nx.Float32 ->
+      let shape = Nx.shape data in
       let data = Float32_image data in
       Image { data; shape; extent; cmap; aspect }
   | _ ->
@@ -336,28 +334,25 @@ let image : type a b.
         "Artist.image: Unsupported data type. Only UInt8 and Float32 supported"
 
 let image_uint8 ?extent ?cmap ?aspect data =
-  let shape = Ndarray.shape data in
+  let shape = Nx.shape data in
   Image { data = Uint8_image data; shape; extent; cmap; aspect }
 
 let image_float32 ?extent ?cmap ?aspect data =
-  let shape = Ndarray.shape data in
+  let shape = Nx.shape data in
   Image { data = Float32_image data; shape; extent; cmap; aspect }
 
 let step ?(color = Color.blue) ?(linewidth = 1.5) ?(linestyle = Solid)
     ?(where = Post) ?label x y =
-  if
-    Ndarray.ndim x <> 1
-    || Ndarray.ndim y <> 1
-    || Ndarray.size x <> Ndarray.size y
-  then invalid_arg "Artist.step: x and y must be 1D arrays of the same size";
+  if Nx.ndim x <> 1 || Nx.ndim y <> 1 || Nx.size x <> Nx.size y then
+    invalid_arg "Artist.step: x and y must be 1D arrays of the same size";
   Step { xdata = x; ydata = y; color; linewidth; linestyle; where; label }
 
 let fill_between ?(color = Color.blue) ?where ?(interpolate = false) ?label x y1
     y2 =
-  if Ndarray.size x <> Ndarray.size y1 || Ndarray.size x <> Ndarray.size y2 then
+  if Nx.size x <> Nx.size y1 || Nx.size x <> Nx.size y2 then
     invalid_arg "Artist.fill_between: x, y1, and y2 must have the same size";
   (match where with
-  | Some w when Ndarray.size w <> Ndarray.size x ->
+  | Some w when Nx.size w <> Nx.size x ->
       invalid_arg "Artist.fill_between: where mask must have same size as x"
   | _ -> ());
   FillBetween

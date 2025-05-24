@@ -1,4 +1,4 @@
-module Backend_cpu = Ndarray_core.Make (Ndarray_native)
+module Backend_cpu = Nx_core.Make (Nx_native)
 
 type float16_elt = Bigarray.float16_elt
 type float32_elt = Bigarray.float32_elt
@@ -11,7 +11,7 @@ type int32_elt = Bigarray.int32_elt
 type int64_elt = Bigarray.int64_elt
 type complex32_elt = Bigarray.complex32_elt
 type complex64_elt = Bigarray.complex64_elt
-type ('a, 'b) dtype = ('a, 'b) Ndarray_core.dtype
+type ('a, 'b) dtype = ('a, 'b) Nx_core.dtype
 
 type ('a, 'b, 'c) data =
   | Cpu_data :

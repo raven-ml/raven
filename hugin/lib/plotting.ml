@@ -4,18 +4,17 @@ let plot ?color ?linewidth ?linestyle ?marker ?label ~x ~y ax =
 
 let plot_y ?color ?linewidth ?linestyle ?marker ?label ~y ax =
   let n_elements =
-    match Ndarray.shape y with
+    match Nx.shape y with
     | [| size |] -> size
     | _ ->
         Printf.eprintf
-          "Warning: Plotting.plot_y requires a non-empty 1D Ndarray. Skipping.\n\
-           %!";
+          "Warning: Plotting.plot_y requires a non-empty 1D Nx. Skipping.\n%!";
         0
   in
   if n_elements <= 0 then ax
   else
     let x_data =
-      Ndarray.create Ndarray.float32 [| n_elements |]
+      Nx.create Nx.float32 [| n_elements |]
         (Array.init n_elements (fun i -> float_of_int i))
     in
     plot ?color ?linewidth ?linestyle ?marker ?label ~x:x_data ~y ax
@@ -43,8 +42,8 @@ let hist ?(bins = `Num 10) ?range ?(density = false) ?color ?label ~x ax =
     match range with
     | Some (min_val, max_val) -> (min_val, max_val)
     | None ->
-        let min_val = Ndarray.min x |> Ndarray.get_item [||] in
-        let max_val = Ndarray.max x |> Ndarray.get_item [||] in
+        let min_val = Nx.min x |> Nx.get_item [||] in
+        let max_val = Nx.max x |> Nx.get_item [||] in
         (min_val, max_val)
   in
   let edges =
@@ -59,7 +58,7 @@ let hist ?(bins = `Num 10) ?range ?(density = false) ?color ?label ~x ax =
   let counts = Array.make num_bins 0. in
   let total_count = ref 0. in
 
-  Ndarray.iter
+  Nx.iter
     (fun v ->
       if v >= x_min && v <= x_max then (
         total_count := !total_count +. 1.;
@@ -91,8 +90,8 @@ let hist ?(bins = `Num 10) ?range ?(density = false) ?color ?label ~x ax =
     (heights, widths, centers)
   in
 
-  let height = Ndarray.create Ndarray.float32 [| num_bins |] bar_heights in
-  let bar_centers = Ndarray.create Ndarray.float32 [| num_bins |] bar_centers in
+  let height = Nx.create Nx.float32 [| num_bins |] bar_heights in
+  let bar_centers = Nx.create Nx.float32 [| num_bins |] bar_centers in
 
   let bar_artist = Artist.bar ?color ?label ~height bar_centers in
   let modified_ax = Axes.add_artist bar_artist ax in
@@ -143,14 +142,14 @@ let errorbar ?yerr ?xerr ?(ecolor = Artist.Color.black) ?(elinewidth = 1.0)
     { yerr; xerr; color = ecolor; linewidth = elinewidth; capsize }
   in
 
-  let n = Ndarray.size x in
+  let n = Nx.size x in
   let validate_err name arr_opt =
     match arr_opt with
-    | Some arr when Ndarray.size arr <> n ->
+    | Some arr when Nx.size arr <> n ->
         invalid_arg
           (Printf.sprintf
              "Plotting.errorbar: %s length (%d) must match x/y data length (%d)"
-             name (Ndarray.size arr) n)
+             name (Nx.size arr) n)
     | _ -> ()
   in
   validate_err "yerr" yerr;
@@ -171,7 +170,7 @@ let matshow ?cmap ?aspect ?extent ?(origin = `upper) ~data ax =
   let img_artist = Artist.image ?cmap ?aspect ?extent data in
   let _ = Axes.add_artist img_artist ax in
 
-  let shape = Ndarray.shape data in
+  let shape = Nx.shape data in
   let rows, cols =
     match shape with
     | [| r; c |] -> (float r, float c)

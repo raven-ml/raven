@@ -12,7 +12,7 @@ Raven aims to make training models, running data science tasks, and building pip
 
 Raven is currently in **pre-alpha** and we're seeking user feedback:
 
-- **[Ndarray](ndarray/)** and **[Hugin](hugin/)**: Scope is feature-complete for the first alpha release, though feedback may influence refinements.
+- **[Nx](nx/)** and **[Hugin](hugin/)**: Scope is feature-complete for the first alpha release, though feedback may influence refinements.
 - **[Rune](rune/)**: Proof-of-concept stage.
 - **[Quill](quill/)**: Early prototyping phase.
 
@@ -20,11 +20,11 @@ Raven is currently in **pre-alpha** and we're seeking user feedback:
 
 Raven is a constellation of sub-projects, each addressing a specific aspect of the machine learning and data science workflow:
 
-- **[Ndarray](ndarray/)**: The core of Raven, providing high-performance numerical computation with multi-device support (CPU, GPU), similar to NumPy but with OCaml's type safety.
-  - **[Ndarray-CV](ndarray-cv/)**: A collection of computer vision utilities built on top of Ndarray.
-  - **[Ndarray-IO](ndarray-io/)**: A library for reading and writing Ndarray data in various formats.
-  - **[Ndarray-Datasets](ndarray-datasets/)**: Easy access to popular machine learning and data.
-science datasets as Ndarrays.
+- **[Nx](nx/)**: The core of Raven, providing high-performance numerical computation with multi-device support (CPU, GPU), similar to NumPy but with OCaml's type safety.
+  - **[Nx-CV](nx-cv/)**: A collection of computer vision utilities built on top of Nx.
+  - **[Nx-IO](nx-io/)**: A library for reading and writing Nx data in various formats.
+  - **[Nx-Datasets](nx-datasets/)**: Easy access to popular machine learning and data.
+science datasets as Nxs.
 - **[Quill](quill/)**: An interactive notebook application for data exploration, prototyping, and knowledge sharing.
 - **[Hugin](hugin/)**: A visualization library that produces publication-quality plots and charts.
 - **[Rune](rune/)**: A library for automatic differentiation and JIT compilation, inspired by JAX.
@@ -36,7 +36,7 @@ The table below compares Python's popular data science libraries with their Rave
 
 | Task                      | Python Ecosystem    | Raven Ecosystem     | Comparison Guide                                   | Examples                     |
 | ------------------------- | ------------------- | ------------------- | -------------------------------------------------- | ---------------------------- |
-| Numerical Computing       | NumPy               | [Ndarray](ndarray/) | [Comparison Guide](docs/compare_python_ndarray.md) | [Examples](ndarray/example/) |
+| Numerical Computing       | NumPy               | [Nx](nx/) | [Comparison Guide](docs/compare_python_nx.md) | [Examples](nx/example/) |
 | Visualization             | Matplotlib, Seaborn | [Hugin](hugin/)     | [Comparison Guide](docs/compare_python_hugin.md)   | [Examples](hugin/example/)   |
 | Notebooks                 | Jupyter             | [Quill](quill/)     | N/A                                                | N/A                          |
 | Automatic Differentiation | JAX                 | [Rune](rune/)       | *In progress*                                      | *In progress*                |

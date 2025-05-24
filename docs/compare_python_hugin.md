@@ -16,12 +16,12 @@ This document compares the Hugin visualization library (OCaml) with Matplotlib (
 
 ## 1. Overview
 
-Hugin is a visualization library for OCaml inspired by Matplotlib's API and functionality. Just as Ndarray provides NumPy-like functionality for OCaml, Hugin provides Matplotlib-like visualization capabilities for the OCaml ecosystem.
+Hugin is a visualization library for OCaml inspired by Matplotlib's API and functionality. Just as Nx provides NumPy-like functionality for OCaml, Hugin provides Matplotlib-like visualization capabilities for the OCaml ecosystem.
 
 Key characteristics of Hugin vs Matplotlib:
 
 - **Cairo with SDL Backend:** Hugin uses Cairo for rendering with SDL as the display backend. It has been designed to support multiple backends, with plans to add more in the future.
-- **Integration with Ndarray:** Hugin is designed to work seamlessly with Ndarray, just as Matplotlib works with NumPy arrays.
+- **Integration with Nx:** Hugin is designed to work seamlessly with Nx, just as Matplotlib works with NumPy arrays.
 - **Functional Style:** Hugin follows OCaml's functional paradigm, with a pipeline-oriented API that uses the `|>` operator for chaining operations, making the code flow naturally in OCaml.
 - **Limited Feature Set:** While Hugin covers the core visualization needs, it's not yet as feature-rich as Matplotlib, focusing on the fundamentals with more features planned for future development.
 - **API Structure:** While Matplotlib is object-oriented, Hugin uses a more functional approach with modules and functions that align with OCaml's programming model.
@@ -40,7 +40,7 @@ let () =
     exit 1);
 
   let image_path = Sys.argv.(1) in
-  let img = Ndarray_io.load_image image_path in
+  let img = Nx_io.load_image image_path in
   let fig = imshow ~title:"Image" img in
   show fig
 ```
@@ -73,7 +73,7 @@ plt.show()
 **Hugin:**
 ```ocaml
 open Hugin
-open Ndarray
+open Nx
 
 let x = linspace float32 0. (2. *. Float.pi) 100
 let y1 = map Float.sin x
@@ -124,13 +124,13 @@ plt.show()
 
 **Hugin:**
 ```ocaml
-open Ndarray
+open Nx
 
 let create_helix_data () =
-  let t = Ndarray.linspace float32 0. (4. *. Float.pi) 100 in
-  let x = Ndarray.map (fun t -> Float.cos t) t in
-  let y = Ndarray.map (fun t -> Float.sin t) t in
-  let z = Ndarray.map (fun t -> t /. (4. *. Float.pi)) t in
+  let t = Nx.linspace float32 0. (4. *. Float.pi) 100 in
+  let x = Nx.map (fun t -> Float.cos t) t in
+  let y = Nx.map (fun t -> Float.sin t) t in
+  let z = Nx.map (fun t -> t /. (4. *. Float.pi)) t in
   (x, y, z)
 
 let () =

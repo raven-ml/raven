@@ -16,8 +16,8 @@ The `dev/` directory serves as:
 
 | Name                | Description                                | Status      |
 | ------------------- | ------------------------------------------ | ----------- |
-| **`ndarray-metal`** | Metal backend for Ndarray                  | Incubation  |
-| **`ndarray-cuda`**  | Cuda backend for Ndarray                   | Exploration |
+| **`nx-metal`** | Metal backend for Nx                  | Incubation  |
+| **`nx-cuda`**  | Cuda backend for Nx                   | Exploration |
 | **`kaun`**          | Deep Learning library built on top of Rune | Exploration |
 
 ## Project Status

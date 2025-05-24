@@ -37,36 +37,36 @@ let move device x =
 
 (* creation *)
 
-let ndarray (type a b) (x : (a, b) Ndarray.t) =
+let nx (type a b) (x : (a, b) Nx.t) =
   let context = Backend_cpu.create_context () in
-  let buffer = Ndarray.data x in
+  let buffer = Nx.data x in
   let core_dtype : (a, b) dtype =
-    match Ndarray.dtype x with
-    | Ndarray.Float16 -> Ndarray_core.Float16
-    | Ndarray.Float32 -> Ndarray_core.Float32
-    | Ndarray.Float64 -> Ndarray_core.Float64
-    | Ndarray.Int8 -> Ndarray_core.Int8
-    | Ndarray.Int16 -> Ndarray_core.Int16
-    | Ndarray.Int32 -> Ndarray_core.Int32
-    | Ndarray.Int64 -> Ndarray_core.Int64
-    | Ndarray.UInt8 -> Ndarray_core.UInt8
-    | Ndarray.UInt16 -> Ndarray_core.UInt16
-    | Ndarray.Complex32 -> Ndarray_core.Complex32
-    | Ndarray.Complex64 -> Ndarray_core.Complex64
+    match Nx.dtype x with
+    | Nx.Float16 -> Nx_core.Float16
+    | Nx.Float32 -> Nx_core.Float32
+    | Nx.Float64 -> Nx_core.Float64
+    | Nx.Int8 -> Nx_core.Int8
+    | Nx.Int16 -> Nx_core.Int16
+    | Nx.Int32 -> Nx_core.Int32
+    | Nx.Int64 -> Nx_core.Int64
+    | Nx.UInt8 -> Nx_core.UInt8
+    | Nx.UInt16 -> Nx_core.UInt16
+    | Nx.Complex32 -> Nx_core.Complex32
+    | Nx.Complex64 -> Nx_core.Complex64
   in
   let core_layout =
-    match Ndarray.layout x with
-    | Ndarray.C_contiguous -> Ndarray_core.C_contiguous
-    | Ndarray.Strided -> Ndarray_core.Strided
+    match Nx.layout x with
+    | Nx.C_contiguous -> Nx_core.C_contiguous
+    | Nx.Strided -> Nx_core.Strided
   in
   let descriptor =
-    Ndarray_core.
+    Nx_core.
       {
         dtype = core_dtype;
-        shape = Ndarray.shape x;
+        shape = Nx.shape x;
         layout = core_layout;
-        strides = Ndarray.strides x;
-        offset = Ndarray.offset x;
+        strides = Nx.strides x;
+        offset = Nx.offset x;
       }
   in
   let data = Backend_cpu.from_buffer context descriptor buffer in

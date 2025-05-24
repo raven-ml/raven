@@ -1,0 +1,5 @@
+(library
+ (enabled_if
+  (= %{ocaml-config:system} "macosx"))
+ (name nx_metal)
+ (libraries nx_core metal metallib))

@@ -14,7 +14,7 @@ Metal), and JIT compilation.
 - Multi-device backends: CPU, CUDA, Metal
 - Random tensor initialization: `rand`
 - JIT compilation to accelerate operations on GPU backends
-- Seamless interop with Ndarray for data loading and visualization
+- Seamless interop with Nx for data loading and visualization
 
 ## Quick Start
 

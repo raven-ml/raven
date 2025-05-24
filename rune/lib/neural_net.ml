@@ -8,7 +8,7 @@ let one_hot (type a b c d dev) (dtype : (a, b) dtype) (labels : (c, d, dev) t)
   let n = size labels in
   let labels_flat = reshape [| n |] labels in
   let oh_flat = empty_on_device (device labels) dtype [| n; depth |] in
-  Dispatch.fill (Ndarray_core.zero dtype) oh_flat.data;
+  Dispatch.fill (Nx_core.zero dtype) oh_flat.data;
   let lbl_dtype = Dispatch.dtype labels.data in
   for i = 0 to n - 1 do
     let idx : int =
@@ -21,7 +21,7 @@ let one_hot (type a b c d dev) (dtype : (a, b) dtype) (labels : (c, d, dev) t)
       | Int64 -> Int64.to_int (get [| i |] labels_flat)
       | _ -> failwith "one_hot: labels must have integer dtype"
     in
-    let one : a = Ndarray_core.one dtype in
+    let one : a = Nx_core.one dtype in
     set [| i; idx |] one oh_flat
   done;
   reshape (Array.append input_shape [| depth |]) oh_flat

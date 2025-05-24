@@ -19,7 +19,7 @@ let binary_op_scalar (type a b dev) ~cpu_op (x : (a, b, dev) data) (y : a) :
   match x with Cpu_data (x, ctx_x) -> Cpu_data (cpu_op ctx_x x y, ctx_x)
 
 let compare_op (type a b dev) ~cpu_op (x : (a, b, dev) data)
-    (y : (a, b, dev) data) : (int, Ndarray_core.uint8_elt, dev) data =
+    (y : (a, b, dev) data) : (int, Nx_core.uint8_elt, dev) data =
   match (x, y) with
   | Cpu_data (x, ctx_x), Cpu_data (y, ctx_y) when ctx_x = ctx_y ->
       Cpu_data (cpu_op ctx_x x y, ctx_x)
@@ -189,7 +189,7 @@ let move (type a b dev_to dev_from) (device : dev_to device)
     (x : (a, b, dev_from) data) : (a, b, dev_to) data =
   match (x, device) with Cpu_data (v, _), Cpu ctx -> Cpu_data (v, ctx)
 
-let where (type a b dev) (cond : (int, Ndarray_core.uint8_elt, dev) data)
+let where (type a b dev) (cond : (int, Nx_core.uint8_elt, dev) data)
     (x : (a, b, dev) data) (y : (a, b, dev) data) : (a, b, dev) data =
   match (cond, x, y) with
   | Cpu_data (cond, ctx_cond), Cpu_data (x, ctx_x), Cpu_data (y, ctx_y)

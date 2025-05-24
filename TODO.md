@@ -2,16 +2,16 @@
 
 ## alpha release
 
-ndarray
+nx
 - OK
 
-ndarray-cv
+nx-cv
 - OK
 
-ndarray-dataset
+nx-dataset
 - OK
 
-ndarray-io
+nx-io
 - OK
 
 hugin
@@ -56,8 +56,8 @@ roadmap
 - pmap support in rune
 
 refactorings
-- consider having descriptor in Ndarray_core.t instead of backend to simplify code. can we remove descriptor from backend entirely (unlikely)
-- extract automatic device dispatching from run to an ndarray library
+- consider having descriptor in Nx_core.t instead of backend to simplify code. can we remove descriptor from backend entirely (unlikely)
+- extract automatic device dispatching from run to an nx library
 
 improvements
 - implement buffer pool for the metal bindings

@@ -21,23 +21,23 @@ module My_sites = struct
 
   let cmas =
     [
-      lookup_file "ndarray_core.cma";
-      lookup_file "ndarray_native.cma";
-      lookup_file "ndarray.cma";
-      lookup_file "ndarray_metal.cma";
+      lookup_file "nx_core.cma";
+      lookup_file "nx_native.cma";
+      lookup_file "nx.cma";
+      lookup_file "nx_metal.cma";
       lookup_file "bigarray.cma";
       lookup_file "zip.cma";
       lookup_file "npy.cma";
       lookup_file "stb_image.cma";
       lookup_file "stb_image_write.cma";
-      lookup_file "ndarray_io.cma";
+      lookup_file "nx_io.cma";
       lookup_file "unix.cma";
       lookup_file "curl.cma";
       lookup_file "csv.cma";
-      lookup_file "ndarray_datasets.cma";
+      lookup_file "nx_datasets.cma";
       lookup_file "cairo.cma";
       lookup_file "usdl.cma";
-      lookup_file "ndarray_cv.cma";
+      lookup_file "nx_cv.cma";
       lookup_file "hugin.cma";
       lookup_file "base64.cma";
       lookup_file "rune.cma";
@@ -74,14 +74,14 @@ let initialize_toplevel_unsafe () : bool =
 
         execute_directive
           {|
-let pp_ndarray fmt arr =
+let pp_nx fmt arr =
   Format.fprintf fmt "```ocaml@\n";
   Format.pp_open_vbox fmt 0;
-  Ndarray.pp fmt arr;
+  Nx.pp fmt arr;
   Format.pp_close_box fmt ();
   Format.fprintf fmt "@\n```";;
 |};
-        execute_directive "#install_printer pp_ndarray;;";
+        execute_directive "#install_printer pp_nx;;";
 
         execute_directive
           {|

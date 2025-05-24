@@ -1,8 +1,0 @@
-(tests
- (names
-  test_ndarray_basics
-  test_ndarray_manipulation
-  test_ndarray_ops
-  test_ndarray_linalg
-  test_ndarray_indexing)
- (libraries ndarray alcotest))

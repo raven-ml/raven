@@ -1,7 +1,7 @@
 (** hugin: Functional Plotting and Visualization Library for OCaml
 
     Provides composable artists, axes, figures, and high-level plotting APIs for
-    creating scientific and statistical graphics using Ndarray. *)
+    creating scientific and statistical graphics using Nx. *)
 
 (** Artist: Visual element constructors and style specifications. *)
 module Artist : sig
@@ -96,8 +96,8 @@ module Artist : sig
     ?linestyle:line_style ->
     ?marker:marker_style ->
     ?label:string ->
-    Ndarray.float32_t ->
-    Ndarray.float32_t ->
+    Nx.float32_t ->
+    Nx.float32_t ->
     t
   (** [line2d ?color ?linewidth ?linestyle ?marker ?label x y]
 
@@ -124,9 +124,9 @@ module Artist : sig
     ?linestyle:line_style ->
     ?marker:marker_style ->
     ?label:string ->
-    Ndarray.float32_t ->
-    Ndarray.float32_t ->
-    Ndarray.float32_t ->
+    Nx.float32_t ->
+    Nx.float32_t ->
+    Nx.float32_t ->
     t
   (** [line3d ?color ?linewidth ?linestyle ?marker ?label x y z]
 
@@ -138,9 +138,9 @@ module Artist : sig
       - [?linestyle]: pattern for the line.
       - [?marker]: marker style at each data point.
       - [?label]: legend entry.
-      - [x]: 1D float32 ndarray of x coordinates.
-      - [y]: 1D float32 ndarray of y coordinates.
-      - [z]: 1D float32 ndarray of z coordinates.
+      - [x]: 1D float32 nx of x coordinates.
+      - [y]: 1D float32 nx of y coordinates.
+      - [z]: 1D float32 nx of z coordinates.
 
       {2 Returns}
       - an artist [t] representing the configured 3D line.
@@ -159,8 +159,8 @@ module Artist : sig
     ?c:color ->
     ?marker:marker_style ->
     ?label:string ->
-    Ndarray.float32_t ->
-    Ndarray.float32_t ->
+    Nx.float32_t ->
+    Nx.float32_t ->
     t
   (** [scatter ?s ?c ?marker ?label x y]
 
@@ -171,8 +171,8 @@ module Artist : sig
       - [?c]: marker color (default [Artist.Color.blue]).
       - [?marker]: marker style (default [Circle]).
       - [?label]: legend entry.
-      - [x]: 1D float32 ndarray of x coordinates.
-      - [y]: 1D float32 ndarray of y coordinates.
+      - [x]: 1D float32 nx of x coordinates.
+      - [y]: 1D float32 nx of y coordinates.
 
       {2 Returns}
       - an artist [t] representing the scatter plot.
@@ -194,8 +194,8 @@ module Artist : sig
     ?bottom:float ->
     ?color:color ->
     ?label:string ->
-    height:Ndarray.float32_t ->
-    Ndarray.float32_t ->
+    height:Nx.float32_t ->
+    Nx.float32_t ->
     t
   (** [bar ?width ?bottom ?color ?label ~height x]
 
@@ -206,8 +206,8 @@ module Artist : sig
       - [?bottom]: y-coordinate of the bottom of the bars (default 0.0).
       - [?color]: bar color.
       - [?label]: legend entry.
-      - [height]: 1D float32 ndarray of heights.
-      - [x]: 1D float32 ndarray of x coordinates.
+      - [height]: 1D float32 nx of heights.
+      - [x]: 1D float32 nx of x coordinates.
 
       {2 Returns}
       - an artist [t] representing the bar plot.
@@ -230,8 +230,8 @@ module Artist : sig
     ?linestyle:line_style ->
     ?where:step_where ->
     ?label:string ->
-    Ndarray.float32_t ->
-    Ndarray.float32_t ->
+    Nx.float32_t ->
+    Nx.float32_t ->
     t
   (** [step ?color ?linewidth ?linestyle ?where ?label x y]
 
@@ -243,8 +243,8 @@ module Artist : sig
       - [?linestyle]: pattern for stepped line.
       - [?where]: position of step relative to x ([Pre], [Post], [Mid]).
       - [?label]: legend entry.
-      - [x]: 1D float32 ndarray of x coordinates.
-      - [y]: 1D float32 ndarray of y coordinates.
+      - [x]: 1D float32 nx of x coordinates.
+      - [y]: 1D float32 nx of y coordinates.
 
       {2 Returns}
       - an artist [t] representing the step plot.
@@ -260,12 +260,12 @@ module Artist : sig
 
   val fill_between :
     ?color:color ->
-    ?where:Ndarray.float32_t ->
+    ?where:Nx.float32_t ->
     ?interpolate:bool ->
     ?label:string ->
-    Ndarray.float32_t ->
-    Ndarray.float32_t ->
-    Ndarray.float32_t ->
+    Nx.float32_t ->
+    Nx.float32_t ->
+    Nx.float32_t ->
     t
   (** [fill_between ?color ?where ?interpolate ?label x y1 y2]
 
@@ -276,9 +276,9 @@ module Artist : sig
       - [?where]: 1D float32 mask; true values fill region.
       - [?interpolate]: whether to interpolate missing segments (default false).
       - [?label]: legend entry.
-      - [x]: 1D float32 ndarray of x coordinates.
-      - [y1]: 1D float32 ndarray of lower bound values.
-      - [y2]: 1D float32 ndarray of upper bound values.
+      - [x]: 1D float32 nx of x coordinates.
+      - [y1]: 1D float32 nx of lower bound values.
+      - [y2]: 1D float32 nx of upper bound values.
 
       {2 Returns}
       - an artist [t] representing the filled region.
@@ -321,11 +321,11 @@ module Artist : sig
     ?extent:float * float * float * float ->
     ?cmap:cmap ->
     ?aspect:string ->
-    Ndarray.uint8_t ->
+    Nx.uint8_t ->
     t
   (** [image ?extent ?cmap ?aspect data]
 
-      Create an image artist from a uint8 ndarray.
+      Create an image artist from a uint8 nx.
 
       {2 Parameters}
       - [?extent]: (xmin, xmax, ymin, ymax) for positioning; defaults to data
@@ -333,8 +333,7 @@ module Artist : sig
       - [?cmap]: colormap for interpreting scalar data; ignored for RGB(A)
         arrays.
       - [?aspect]: aspect ratio, e.g., "auto" or "equal" (default "auto").
-      - [data]: uint8 ndarray of shape [|H;W|], [|H;W;1|], [|H;W;3|], or
-        [|H;W;4|].
+      - [data]: uint8 nx of shape [|H;W|], [|H;W;1|], [|H;W;3|], or [|H;W;4|].
 
       {2 Returns}
       - a [t] representing the image artist.
@@ -785,8 +784,8 @@ module Plotting : sig
     ?linestyle:Artist.line_style ->
     ?marker:Artist.marker_style ->
     ?label:string ->
-    x:Ndarray.float32_t ->
-    y:Ndarray.float32_t ->
+    x:Nx.float32_t ->
+    y:Nx.float32_t ->
     Axes.t ->
     Axes.t
   (** [plot ?color ?linewidth ?linestyle ?marker ?label ~x ~y axes]
@@ -799,8 +798,8 @@ module Plotting : sig
       - [?linestyle]: dash pattern for the line.
       - [?marker]: marker style at data points.
       - [?label]: legend entry for the plotted data.
-      - [x]: 1D float32 ndarray of x coordinates.
-      - [y]: 1D float32 ndarray of y coordinates.
+      - [x]: 1D float32 nx of x coordinates.
+      - [y]: 1D float32 nx of y coordinates.
       - [axes]: target axes to draw the plot on.
 
       {2 Returns}
@@ -821,7 +820,7 @@ module Plotting : sig
     ?linestyle:Artist.line_style ->
     ?marker:Artist.marker_style ->
     ?label:string ->
-    y:Ndarray.float32_t ->
+    y:Nx.float32_t ->
     Axes.t ->
     Axes.t
   (** [plot_y ?color ?linewidth ?linestyle ?marker ?label ~y axes]
@@ -834,7 +833,7 @@ module Plotting : sig
       - [?linestyle]: dash pattern.
       - [?marker]: point marker style.
       - [?label]: legend entry.
-      - [y]: 1D float32 ndarray of y values.
+      - [y]: 1D float32 nx of y values.
       - [axes]: target axes.
 
       {2 Returns}
@@ -852,9 +851,9 @@ module Plotting : sig
     ?linestyle:Artist.line_style ->
     ?marker:Artist.marker_style ->
     ?label:string ->
-    x:Ndarray.float32_t ->
-    y:Ndarray.float32_t ->
-    z:Ndarray.float32_t ->
+    x:Nx.float32_t ->
+    y:Nx.float32_t ->
+    z:Nx.float32_t ->
     Axes.t ->
     Axes.t
   (** [plot3d ?color ?linewidth ?linestyle ?marker ?label ~x ~y ~z axes]
@@ -867,7 +866,7 @@ module Plotting : sig
       - [?linestyle]: dash pattern.
       - [?marker]: marker style.
       - [?label]: legend entry.
-      - [x], [y], [z]: 1D float32 ndarrays of coordinates.
+      - [x], [y], [z]: 1D float32 nxs of coordinates.
       - [axes]: 3D axes for plotting.
 
       {2 Returns}
@@ -887,8 +886,8 @@ module Plotting : sig
     ?c:Artist.color ->
     ?marker:Artist.marker_style ->
     ?label:string ->
-    x:Ndarray.float32_t ->
-    y:Ndarray.float32_t ->
+    x:Nx.float32_t ->
+    y:Nx.float32_t ->
     Axes.t ->
     Axes.t
   (** [scatter ?s ?c ?marker ?label ~x ~y axes]
@@ -920,8 +919,8 @@ module Plotting : sig
     ?bottom:float ->
     ?color:Artist.color ->
     ?label:string ->
-    x:Ndarray.float32_t ->
-    height:Ndarray.float32_t ->
+    x:Nx.float32_t ->
+    height:Nx.float32_t ->
     Axes.t ->
     Axes.t
   (** [bar ?width ?bottom ?color ?label ~x ~height axes]
@@ -955,7 +954,7 @@ module Plotting : sig
     ?density:bool ->
     ?color:Artist.color ->
     ?label:string ->
-    x:Ndarray.float32_t ->
+    x:Nx.float32_t ->
     Axes.t ->
     Axes.t
   (** [hist ?bins ?range ?density ?color ?label ~x axes]
@@ -989,8 +988,8 @@ module Plotting : sig
     ?linestyle:Artist.line_style ->
     ?where:Artist.step_where ->
     ?label:string ->
-    x:Ndarray.float32_t ->
-    y:Ndarray.float32_t ->
+    x:Nx.float32_t ->
+    y:Nx.float32_t ->
     Axes.t ->
     Axes.t
   (** [step ?color ?linewidth ?linestyle ?where ?label ~x ~y axes]
@@ -1020,12 +1019,12 @@ module Plotting : sig
 
   val fill_between :
     ?color:Artist.color ->
-    ?where:Ndarray.float32_t ->
+    ?where:Nx.float32_t ->
     ?interpolate:bool ->
     ?label:string ->
-    x:Ndarray.float32_t ->
-    y1:Ndarray.float32_t ->
-    y2:Ndarray.float32_t ->
+    x:Nx.float32_t ->
+    y1:Nx.float32_t ->
+    y2:Nx.float32_t ->
     Axes.t ->
     Axes.t
   (** [fill_between ?color ?where ?interpolate ?label ~x ~y1 ~y2 axes]
@@ -1053,15 +1052,15 @@ module Plotting : sig
       ]} *)
 
   val errorbar :
-    ?yerr:Ndarray.float32_t ->
-    ?xerr:Ndarray.float32_t ->
+    ?yerr:Nx.float32_t ->
+    ?xerr:Nx.float32_t ->
     ?ecolor:Artist.color ->
     ?elinewidth:float ->
     ?capsize:float ->
     ?fmt:Artist.plot_style ->
     ?label:string ->
-    x:Ndarray.float32_t ->
-    y:Ndarray.float32_t ->
+    x:Nx.float32_t ->
+    y:Nx.float32_t ->
     Axes.t ->
     Axes.t
   (** [errorbar ?yerr ?xerr ?ecolor ?elinewidth ?capsize ?fmt ?label ~x ~y axes]
@@ -1095,7 +1094,7 @@ module Plotting : sig
     ?cmap:Artist.cmap ->
     ?aspect:string ->
     ?extent:float * float * float * float ->
-    data:('a, 'b) Ndarray.t ->
+    data:('a, 'b) Nx.t ->
     Axes.t ->
     Axes.t
   (** [imshow ?cmap ?aspect ?extent ~data axes]
@@ -1106,7 +1105,7 @@ module Plotting : sig
       - [?cmap]: colormap for single-channel arrays.
       - [?aspect]: aspect ratio option ("auto" or "equal").
       - [?extent]: (xmin,xmax,ymin,ymax) image bounds.
-      - [data]: ndarray of shape [|H;W|], [|H;W;3|], or [|H;W;4|].
+      - [data]: nx of shape [|H;W|], [|H;W;3|], or [|H;W;4|].
       - [axes]: target axes.
 
       {2 Returns}
@@ -1126,7 +1125,7 @@ module Plotting : sig
     ?aspect:string ->
     ?extent:float * float * float * float ->
     ?origin:[ `upper | `lower ] ->
-    data:('a, 'b) Ndarray.t ->
+    data:('a, 'b) Nx.t ->
     Axes.t ->
     Axes.t
   (** [matshow ?cmap ?aspect ?extent ?origin ~data axes]
@@ -1138,7 +1137,7 @@ module Plotting : sig
       - [?aspect]: aspect ratio for display.
       - [?extent]: (xmin,xmax,ymin,ymax) bounds.
       - [?origin]: data origin placement ([`upper] or [`lower]).
-      - [data]: 2D ndarray of numeric values.
+      - [data]: 2D nx of numeric values.
       - [axes]: target axes.
 
       {2 Returns}
@@ -1200,8 +1199,8 @@ val plot :
   ?linestyle:Artist.line_style ->
   ?marker:Artist.marker_style ->
   ?label:string ->
-  Ndarray.float32_t ->
-  Ndarray.float32_t ->
+  Nx.float32_t ->
+  Nx.float32_t ->
   figure
 (** [plot ?title ?xlabel ?ylabel ?color ?linewidth ?linestyle ?marker ?label x
      y]
@@ -1217,8 +1216,8 @@ val plot :
     - [?linestyle]: dash pattern of the line.
     - [?marker]: marker style at data points.
     - [?label]: legend entry for the plotted data.
-    - [x]: 1D float32 ndarray of x coordinates.
-    - [y]: 1D float32 ndarray of y coordinates.
+    - [x]: 1D float32 nx of x coordinates.
+    - [y]: 1D float32 nx of y coordinates.
 
     {2 Returns}
     - a [figure] containing the created plot.
@@ -1238,7 +1237,7 @@ val plot_y :
   ?linestyle:Artist.line_style ->
   ?marker:Artist.marker_style ->
   ?label:string ->
-  Ndarray.float32_t ->
+  Nx.float32_t ->
   figure
 (** [plot_y ?title ?xlabel ?ylabel ?color ?linewidth ?linestyle ?marker ?label
      y]
@@ -1254,7 +1253,7 @@ val plot_y :
     - [?linestyle]: dash pattern of the line.
     - [?marker]: marker style at data points.
     - [?label]: legend entry for the series.
-    - [y]: 1D float32 ndarray of y values.
+    - [y]: 1D float32 nx of y values.
 
     {2 Returns}
     - a [figure] containing the plotted series.
@@ -1275,9 +1274,9 @@ val plot3d :
   ?linestyle:Artist.line_style ->
   ?marker:Artist.marker_style ->
   ?label:string ->
-  Ndarray.float32_t ->
-  Ndarray.float32_t ->
-  Ndarray.float32_t ->
+  Nx.float32_t ->
+  Nx.float32_t ->
+  Nx.float32_t ->
   figure
 (** [plot3d ?title ?xlabel ?ylabel ?zlabel ?color ?linewidth ?linestyle ?marker
      ?label x y z]
@@ -1292,7 +1291,7 @@ val plot3d :
     - [?linestyle]: dash pattern.
     - [?marker]: marker style.
     - [?label]: legend entry.
-    - [x], [y], [z]: 1D float32 ndarrays of coordinates.
+    - [x], [y], [z]: 1D float32 nxs of coordinates.
 
     {2 Returns}
     - a [figure] with the 3D line plotted.
@@ -1311,8 +1310,8 @@ val scatter :
   ?c:Artist.color ->
   ?marker:Artist.marker_style ->
   ?label:string ->
-  Ndarray.float32_t ->
-  Ndarray.float32_t ->
+  Nx.float32_t ->
+  Nx.float32_t ->
   figure
 (** [scatter ?title ?xlabel ?ylabel ?s ?c ?marker ?label x y]
 
@@ -1349,7 +1348,7 @@ val hist :
   ?ylabel:string ->
   ?color:Artist.color ->
   ?label:string ->
-  Ndarray.float32_t ->
+  Nx.float32_t ->
   figure
 (** [hist ?bins ?range ?density ?title ?xlabel ?ylabel ?color ?label x]
 
@@ -1364,7 +1363,7 @@ val hist :
     - [?ylabel]: y-axis label.
     - [?color]: bar fill color.
     - [?label]: legend entry.
-    - [x]: 1D float32 ndarray of data values.
+    - [x]: 1D float32 nx of data values.
 
     {2 Returns}
     - a [figure] containing the histogram plot.
@@ -1383,8 +1382,8 @@ val bar :
   ?ylabel:string ->
   ?color:Artist.color ->
   ?label:string ->
-  height:Ndarray.float32_t ->
-  Ndarray.float32_t ->
+  height:Nx.float32_t ->
+  Nx.float32_t ->
   figure
 (** [bar ?width ?bottom ?title ?xlabel ?ylabel ?color ?label ~height x]
 
@@ -1398,8 +1397,8 @@ val bar :
     - [?ylabel]: label for y-axis.
     - [?color]: bar fill color.
     - [?label]: legend entry.
-    - [~height]: 1D float32 ndarray of bar heights.
-    - [x]: 1D float32 ndarray of bar positions.
+    - [~height]: 1D float32 nx of bar heights.
+    - [x]: 1D float32 nx of bar positions.
 
     {2 Returns}
     - a [figure] containing the bar chart.
@@ -1417,7 +1416,7 @@ val imshow :
   ?title:string ->
   ?xlabel:string ->
   ?ylabel:string ->
-  ('a, 'b) Ndarray.t ->
+  ('a, 'b) Nx.t ->
   figure
 (** [imshow ?cmap ?aspect ?extent ?title ?xlabel ?ylabel data]
 
@@ -1429,7 +1428,7 @@ val imshow :
     - [?extent]: bounding box (xmin, xmax, ymin, ymax).
     - [?title]: figure title.
     - [?xlabel], [?ylabel]: axis labels.
-    - [data]: ndarray of shape [|H;W|], [|H;W;3|], or [|H;W;4|].
+    - [data]: nx of shape [|H;W|], [|H;W;3|], or [|H;W;4|].
 
     {2 Returns}
     - a [figure] with the image displayed.
@@ -1453,8 +1452,8 @@ val step :
   ?linestyle:Artist.line_style ->
   ?where:Artist.step_where ->
   ?label:string ->
-  Ndarray.float32_t ->
-  Ndarray.float32_t ->
+  Nx.float32_t ->
+  Nx.float32_t ->
   figure
 (** [step ?title ?xlabel ?ylabel ?color ?linewidth ?linestyle ?where ?label x y]
 
@@ -1487,12 +1486,12 @@ val fill_between :
   ?xlabel:string ->
   ?ylabel:string ->
   ?color:Artist.color ->
-  ?where:Ndarray.float32_t ->
+  ?where:Nx.float32_t ->
   ?interpolate:bool ->
   ?label:string ->
-  Ndarray.float32_t ->
-  Ndarray.float32_t ->
-  Ndarray.float32_t ->
+  Nx.float32_t ->
+  Nx.float32_t ->
+  Nx.float32_t ->
   figure
 (** [fill_between ?title ?xlabel ?ylabel ?color ?where ?interpolate ?label x y1
      y2]
@@ -1525,15 +1524,15 @@ val errorbar :
   ?title:string ->
   ?xlabel:string ->
   ?ylabel:string ->
-  ?yerr:Ndarray.float32_t ->
-  ?xerr:Ndarray.float32_t ->
+  ?yerr:Nx.float32_t ->
+  ?xerr:Nx.float32_t ->
   ?ecolor:Artist.color ->
   ?elinewidth:float ->
   ?capsize:float ->
   ?fmt:Artist.plot_style ->
   ?label:string ->
-  Ndarray.float32_t ->
-  Ndarray.float32_t ->
+  Nx.float32_t ->
+  Nx.float32_t ->
   figure
 (** [errorbar ?title ?xlabel ?ylabel ?yerr ?xerr ?ecolor ?elinewidth ?capsize
      ?fmt ?label x y]
@@ -1570,7 +1569,7 @@ val matshow :
   ?extent:float * float * float * float ->
   ?origin:[ `upper | `lower ] ->
   ?title:string ->
-  ('a, 'b) Ndarray.t ->
+  ('a, 'b) Nx.t ->
   figure
 (** [matshow ?cmap ?aspect ?extent ?origin ?title data]
 
@@ -1582,7 +1581,7 @@ val matshow :
     - [?extent]: (xmin,xmax,ymin,ymax) plot bounds.
     - [?origin]: [`upper] or [`lower] y-axis origin placement.
     - [?title]: figure title.
-    - [data]: 2D ndarray of numeric values.
+    - [data]: 2D nx of numeric values.
 
     {2 Returns}
     - a [figure] containing the matrix image.

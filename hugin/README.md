@@ -3,7 +3,7 @@
 Publication-quality plotting and visualization library for OCaml
 
 Hugin is part of the Raven ecosystem, providing a flexible and powerful API to create
-publication-quality charts, plots, and figures from Ndarray data. It supports 2D and 3D
+publication-quality charts, plots, and figures from Nx data. It supports 2D and 3D
 visualizations with multiple backends (Cairo+SDL) and seamless integration in notebooks.
 
 ## Features
@@ -14,13 +14,13 @@ visualizations with multiple backends (Cairo+SDL) and seamless integration in no
 - Matrix heatmap: matshow for 2D data as images
 - Text annotation: titles, labels, and arbitrary text
 - Figure and axes abstraction with customizable ticks, labels, and layouts
-- Data from Ndarray: seamless plotting of numerical arrays
+- Data from Nx: seamless plotting of numerical arrays
 - Multiple rendering backends: Cairo+SDL on native platforms
 
 ## Quick Start
 
 ```ocaml
-open Ndarray
+open Nx
 open Hugin
 
 (* Create a simple line plot *)

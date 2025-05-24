@@ -6,8 +6,8 @@ We will also visualize some of the MNIST data using the Hugin plotting library.
 **Libraries Used:**
 
 * `Rune`: For tensor operations, automatic differentiation, and neural network building blocks.
-* `Ndarray`: Rune's underlying library for multi-dimensional arrays (often used implicitly via Rune).
-* `Ndarray_datasets`: For easily loading standard datasets like MNIST.
+* `Nx`: Rune's underlying library for multi-dimensional arrays (often used implicitly via Rune).
+* `Nx_datasets`: For easily loading standard datasets like MNIST.
 * `Hugin`: For plotting and data visualizationd.
 
 ## 1. Setup and Imports
@@ -16,16 +16,16 @@ First, let's open the necessary libraries.
 
 ```ocaml
 open Rune
-module Nd = Ndarray
+module Nd = Nx
 module Hg = Hugin
 ```
 
 ## 2. Load MNIST Data
 
-We use `Ndarray_datasets` to load the MNIST dataset. It conveniently provides training and testing splits.
+We use `Nx_datasets` to load the MNIST dataset. It conveniently provides training and testing splits.
 
 ```ocaml
-let (x_train_raw, y_train_raw), (x_test_raw, y_test_raw) = Ndarray_datasets.load_mnist ()
+let (x_train_raw, y_train_raw), (x_test_raw, y_test_raw) = Nx_datasets.load_mnist ()
 
 let () =
   Printf.printf "Dataset loaded.\n%!";

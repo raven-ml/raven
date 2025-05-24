@@ -1,6 +1,6 @@
 # Hugin Examples
 
-A collection of OCaml programs (with `Hugin` + `Ndarray`) showcasing common plotting tasks, alongside equivalent Python/Matplotlib scripts for comparison.
+A collection of OCaml programs (with `Hugin` + `Nx`) showcasing common plotting tasks, alongside equivalent Python/Matplotlib scripts for comparison.
 
 ## Directory Layout
 
@@ -10,7 +10,7 @@ Each numbered folder contains a self-contained example. For most, you'll find bo
    Basic 2D line plots of sine & cosine with legend, grid, labels.  
 
 2. **02-imshow**  
-   Load & display an image via `Ndarray_io.load_image` + `Hugin.imshow`.
+   Load & display an image via `Nx_io.load_image` + `Hugin.imshow`.
 
 3. **02-plot3d**  
    Generate a 3D helix and render with `Hugin.plot3d`.  

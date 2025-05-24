@@ -5,7 +5,7 @@ This is a simple example of a markdown file that can be used with Quill.
 Support for **bold**, *italic*, and `inline code` is included.
 
 ```ocaml
-Ndarray.eye Ndarray.float32 4
+Nx.eye Nx.float32 4
 ```
 <!-- quill=output_start -->
 ```
@@ -30,7 +30,7 @@ Hello, world!
 
 ```ocaml
 open Hugin
-open Ndarray
+open Nx
 
 
 let fig =

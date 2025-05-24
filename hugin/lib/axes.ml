@@ -163,7 +163,7 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
     let current_min = ref Float.infinity in
     let current_max = ref Float.neg_infinity in
     let found_finite = ref false in
-    Ndarray.iter
+    Nx.iter
       (fun v ->
         if Float.is_finite v then (
           found_finite := true;
@@ -191,11 +191,11 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
       | Artist.Line3D l -> update_bounds_from_arrays l.xdata l.ydata
       | Artist.Scatter s -> update_bounds_from_arrays s.xdata s.ydata
       | Artist.Bar b ->
-          let n = Ndarray.size b.x in
-          if n > 0 && n = Ndarray.size b.height then
+          let n = Nx.size b.x in
+          if n > 0 && n = Nx.size b.height then
             for i = 0 to n - 1 do
-              let x_center = Ndarray.get_item [| i |] b.x in
-              let height = Ndarray.get_item [| i |] b.height in
+              let x_center = Nx.get_item [| i |] b.x in
+              let height = Nx.get_item [| i |] b.height in
               let x_left = x_center -. (b.width /. 2.0) in
               let x_right = x_center +. (b.width /. 2.0) in
               let y_bottom = b.bottom in
@@ -220,13 +220,13 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
                 update_bounds (cols -. 0.5) (rows -. 0.5)))
       | Artist.Errorbar (line, style) -> (
           update_bounds_from_arrays line.xdata line.ydata;
-          let n = Ndarray.size line.xdata in
+          let n = Nx.size line.xdata in
           (match style.yerr with
-          | Some yerr when Ndarray.size yerr = n ->
+          | Some yerr when Nx.size yerr = n ->
               for i = 0 to n - 1 do
-                let x = Ndarray.get_item [| i |] line.xdata in
-                let y = Ndarray.get_item [| i |] line.ydata in
-                let dy = Ndarray.get_item [| i |] yerr in
+                let x = Nx.get_item [| i |] line.xdata in
+                let y = Nx.get_item [| i |] line.ydata in
+                let dy = Nx.get_item [| i |] yerr in
                 if Float.is_finite x && Float.is_finite y && Float.is_finite dy
                 then (
                   update_bounds x (y -. dy);
@@ -234,11 +234,11 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
               done
           | _ -> ());
           match style.xerr with
-          | Some xerr when Ndarray.size xerr = n ->
+          | Some xerr when Nx.size xerr = n ->
               for i = 0 to n - 1 do
-                let x = Ndarray.get_item [| i |] line.xdata in
-                let y = Ndarray.get_item [| i |] line.ydata in
-                let dx = Ndarray.get_item [| i |] xerr in
+                let x = Nx.get_item [| i |] line.xdata in
+                let y = Nx.get_item [| i |] line.ydata in
+                let dx = Nx.get_item [| i |] xerr in
                 if Float.is_finite x && Float.is_finite y && Float.is_finite dx
                 then (
                   update_bounds (x -. dx) y;
@@ -338,7 +338,7 @@ let calculate_z_bounds (ax : t) : (float * float) option =
       let current_min = ref Float.infinity in
       let current_max = ref Float.neg_infinity in
       let found_finite = ref false in
-      Ndarray.iter
+      Nx.iter
         (fun v ->
           if Float.is_finite v then (
             found_finite := true;

@@ -1,4 +1,0 @@
-(library
- (name ndarray)
- (public_name ndarray)
- (libraries ndarray_core ndarray_native))

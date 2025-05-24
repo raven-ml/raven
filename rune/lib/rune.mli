@@ -1,4 +1,4 @@
-(** Rune: A JAX-like library built on Ndarray *)
+(** Rune: A JAX-like library built on Nx *)
 
 (** {2 Core Rune Types} *)
 
@@ -48,9 +48,9 @@ val complex64 : (Complex.t, complex64_elt) dtype
 
 (** {1 Creation} *)
 
-val ndarray : ('a, 'b) Ndarray.t -> ('a, 'b, [ `cpu ]) t
+val nx : ('a, 'b) Nx.t -> ('a, 'b, [ `cpu ]) t
 val create : ('a, 'b) dtype -> int array -> 'a array -> ('a, 'b, [ `cpu ]) t
-val empty : ('a, 'b) Ndarray_core.dtype -> int array -> ('a, 'b, [ `cpu ]) t
+val empty : ('a, 'b) Nx_core.dtype -> int array -> ('a, 'b, [ `cpu ]) t
 val empty_like : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 val zeros : ('a, 'b) dtype -> int array -> ('a, 'b, [ `cpu ]) t
 val full : ('a, 'b) dtype -> int array -> 'a -> ('a, 'b, [ `cpu ]) t

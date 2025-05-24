@@ -1,0 +1,4 @@
+(library
+ (name nx)
+ (public_name nx)
+ (libraries nx_core nx_native))

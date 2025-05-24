@@ -6,6 +6,6 @@ let () =
     exit 1);
 
   let image_path = Sys.argv.(1) in
-  let img = Ndarray_io.load_image image_path in
+  let img = Nx_io.load_image image_path in
   let fig = imshow ~title:"Image" img in
   show fig

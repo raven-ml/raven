@@ -1,3 +1,0 @@
-(executables
- (names image npy)
- (libraries ndarray ndarray_io))

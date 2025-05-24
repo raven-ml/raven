@@ -1,3 +1,0 @@
-(executable
- (name basic_operations)
- (libraries ndarray))

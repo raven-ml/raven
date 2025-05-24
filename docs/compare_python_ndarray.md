@@ -1,8 +1,8 @@
-# Ndarray vs NumPy Comparison
+# Nx vs NumPy Comparison
 
-This document compares the Ndarray library (OCaml) with NumPy (Python), highlighting similarities, differences, and providing equivalent code examples.
+This document compares the Nx library (OCaml) with NumPy (Python), highlighting similarities, differences, and providing equivalent code examples.
 
-- [Ndarray vs NumPy Comparison](#ndarray-vs-numpy-comparison)
+- [Nx vs NumPy Comparison](#nx-vs-numpy-comparison)
   - [1. Overview](#1-overview)
   - [2. Array Creation](#2-array-creation)
     - [Basic Array Creation](#basic-array-creation)
@@ -20,35 +20,35 @@ This document compares the Ndarray library (OCaml) with NumPy (Python), highligh
 
 ## 1. Overview
 
-Ndarray is a numerical computing library for OCaml. It takes heavy inspiration from NumPy and aims to be as familiar as possible to NumPy users. That said, there are some phyilosophical differences between the two.
+Nx is a numerical computing library for OCaml. It takes heavy inspiration from NumPy and aims to be as familiar as possible to NumPy users. That said, there are some phyilosophical differences between the two.
 
-- **Pure OCaml Implementation:** Ndarray is fully native OCaml without C bindings. For that reason, it typically doesn't match NumPy's raw performances. But it is not trying to: while we care about performance, we prioritize the local development experience, where performance is not critical. That said, Ndarray uses a backend architecture under the hood, so it can easily be extended to use C or CUDA backends. This is what libraries like Rune are doing, implementing custom backends for Ndarray, making them suitable for production use cases.
-- **Portable Compilation:** In return for a pure OCaml implementation, you get to compile Ndarray to JavaScript, WebAssembly, or even unikernels. Making it suitable for a wide range of application.
-- **Type Safety First:** Ndarray leverages OCaml's strong type system and doesn't perform automatic type casting between array types. You can still use the `astype` function for explicit type conversions.
-- **Bigarray Foundation:** Built on OCaml's Bigarray, Ndarray uses uint8 instead of boolean arrays and doesn't support string arrays.
+- **Pure OCaml Implementation:** Nx is fully native OCaml without C bindings. For that reason, it typically doesn't match NumPy's raw performances. But it is not trying to: while we care about performance, we prioritize the local development experience, where performance is not critical. That said, Nx uses a backend architecture under the hood, so it can easily be extended to use C or CUDA backends. This is what libraries like Rune are doing, implementing custom backends for Nx, making them suitable for production use cases.
+- **Portable Compilation:** In return for a pure OCaml implementation, you get to compile Nx to JavaScript, WebAssembly, or even unikernels. Making it suitable for a wide range of application.
+- **Type Safety First:** Nx leverages OCaml's strong type system and doesn't perform automatic type casting between array types. You can still use the `astype` function for explicit type conversions.
+- **Bigarray Foundation:** Built on OCaml's Bigarray, Nx uses uint8 instead of boolean arrays and doesn't support string arrays.
 
-Apart from the above, Ndarray is designed to be as close to NumPy as possible. The broadcasting rules are the same, and most functions behave similarly. If you notice an undocumented difference, please open an issue; it's probably a bug.
+Apart from the above, Nx is designed to be as close to NumPy as possible. The broadcasting rules are the same, and most functions behave similarly. If you notice an undocumented difference, please open an issue; it's probably a bug.
 
 ## 2. Array Creation
 
 ### Basic Array Creation
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Creating a zeros array *)
-let zeros = Ndarray.zeros Bigarray.float64 [|3; 3|]
+let zeros = Nx.zeros Bigarray.float64 [|3; 3|]
 
 (* Creating a ones array *)
-let ones = Ndarray.ones Bigarray.float64 [|3; 3|]
+let ones = Nx.ones Bigarray.float64 [|3; 3|]
 
 (* Creating an array with a specific value *)
-let full = Ndarray.full Bigarray.float64 [|3; 3|] 5.0
+let full = Nx.full Bigarray.float64 [|3; 3|] 5.0
 
 (* Creating a range *)
-let range = Ndarray.arange Bigarray.int32 0 10 1
+let range = Nx.arange Bigarray.int32 0 10 1
 
 (* Creating an identity matrix *)
-let identity = Ndarray.identity Bigarray.float64 3
+let identity = Nx.identity Bigarray.float64 3
 ```
 
 **NumPy:**
@@ -71,14 +71,14 @@ identity = np.identity(3)
 
 ### Advanced Array Creation
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Creating from existing data *)
 let data = [|1.0; 2.0; 3.0; 4.0|]
-let arr = Ndarray.create Bigarray.float64 [|2; 2|] data
+let arr = Nx.create Bigarray.float64 [|2; 2|] data
 
 (* Creating using a function *)
-let init_arr = Ndarray.init Bigarray.float64 [|3; 3|] (fun idx -> 
+let init_arr = Nx.init Bigarray.float64 [|3; 3|] (fun idx -> 
   float_of_int (idx.(0) + idx.(1)))
 ```
 
@@ -96,19 +96,19 @@ init_arr = np.fromfunction(lambda i, j: i + j, (3, 3))
 
 ### Basic Operations
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Element-wise addition *)
-let result = Ndarray.add arr1 arr2
+let result = Nx.add arr1 arr2
 
 (* In-place addition *)
-let _ = Ndarray.add_inplace arr1 arr2
+let _ = Nx.add_inplace arr1 arr2
 
 (* Scalar multiplication *)
-let scaled = Ndarray.mul_scalar arr 2.0
+let scaled = Nx.mul_scalar arr 2.0
 
 (* Matrix multiplication *)
-let matmul_result = Ndarray.matmul arr1 arr2
+let matmul_result = Nx.matmul arr1 arr2
 ```
 
 **NumPy:**
@@ -128,19 +128,19 @@ matmul_result = arr1 @ arr2  # or np.matmul(arr1, arr2)
 
 ### Array Manipulation
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Reshape array *)
-let reshaped = Ndarray.reshape [|1; 6|] arr
+let reshaped = Nx.reshape [|1; 6|] arr
 
 (* Transpose array *)
-let transposed = Ndarray.transpose arr
+let transposed = Nx.transpose arr
 
 (* Flatten array *)
-let flattened = Ndarray.flatten arr
+let flattened = Nx.flatten arr
 
 (* Concatenate arrays *)
-let concat = Ndarray.concatenate ~axis:0 [arr1; arr2]
+let concat = Nx.concatenate ~axis:0 [arr1; arr2]
 ```
 
 **NumPy:**
@@ -160,16 +160,16 @@ concat = np.concatenate([arr1, arr2], axis=0)
 
 ## 4. Element Access and Slicing
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Get a single element *)
-let element = Ndarray.get_item [|0; 1|] arr
+let element = Nx.get_item [|0; 1|] arr
 
 (* Set a single element *)
-let _ = Ndarray.set_item [|0; 1|] 5.0 arr
+let _ = Nx.set_item [|0; 1|] 5.0 arr
 
 (* Get a slice/subarray *)
-let slice = Ndarray.get [|0|] arr
+let slice = Nx.get [|0|] arr
 ```
 
 **NumPy:**
@@ -186,20 +186,20 @@ slice = arr[0]
 
 ## 5. Statistical Functions
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Sum of all elements *)
-let total = Ndarray.sum arr
+let total = Nx.sum arr
 
 (* Mean of all elements *)
-let avg = Ndarray.mean arr
+let avg = Nx.mean arr
 
 (* Min and max values *)
-let min_val = Ndarray.min arr
-let max_val = Ndarray.max arr
+let min_val = Nx.min arr
+let max_val = Nx.max arr
 
 (* Sum along an axis *)
-let axis_sum = Ndarray.sum ~axes:[|0|] arr
+let axis_sum = Nx.sum ~axes:[|0|] arr
 ```
 
 **NumPy:**
@@ -220,19 +220,19 @@ axis_sum = np.sum(arr, axis=0)
 
 ## 6. Linear Algebra
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Matrix inverse *)
-let inv_a = Ndarray.inv a
+let inv_a = Nx.inv a
 
 (* Solve linear system Ax = b *)
-let x = Ndarray.solve a b
+let x = Nx.solve a b
 
 (* SVD decomposition *)
-let u, s, vt = Ndarray.svd a
+let u, s, vt = Nx.svd a
 
 (* Eigenvalue decomposition *)
-let eigenvalues, eigenvectors = Ndarray.eig a
+let eigenvalues, eigenvectors = Nx.eig a
 ```
 
 **NumPy:**
@@ -252,13 +252,13 @@ eigenvalues, eigenvectors = np.linalg.eig(a)
 
 ## 7. Broadcasting
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Broadcast a smaller array to match dimensions *)
-let broadcasted = Ndarray.broadcast_to [|3; 3|] smaller_arr
+let broadcasted = Nx.broadcast_to [|3; 3|] smaller_arr
 
 (* Broadcasting happens automatically in operations *)
-let result = Ndarray.add matrix vector
+let result = Nx.add matrix vector
 ```
 
 **NumPy:**
@@ -272,13 +272,13 @@ result = matrix + vector
 
 ## 8. Conditional Operations
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Create a boolean mask *)
-let mask = Ndarray.greater arr (Ndarray.scalar Bigarray.float64 0.5)
+let mask = Nx.greater arr (Nx.scalar Bigarray.float64 0.5)
 
 (* Apply condition with where *)
-let result = Ndarray.where mask arr1 arr2
+let result = Nx.where mask arr1 arr2
 ```
 
 **NumPy:**
@@ -292,13 +292,13 @@ result = np.where(mask, arr1, arr2)
 
 ## 9. Random Number Generation
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Generate uniform random numbers *)
-let random = Ndarray.rand Bigarray.float64 [|3; 3|]
+let random = Nx.rand Bigarray.float64 [|3; 3|]
 
 (* Generate normal distributed random numbers *)
-let normal = Ndarray.randn Bigarray.float64 [|3; 3|]
+let normal = Nx.randn Bigarray.float64 [|3; 3|]
 ```
 
 **NumPy:**
@@ -312,23 +312,23 @@ normal = np.random.randn(3, 3)
 
 ## 10. Real-World Example: Linear Regression
 
-**Ndarray:**
+**Nx:**
 ```ocaml
 (* Generate sample data *)
-let x = Ndarray.linspace Bigarray.float64 0.0 10.0 100
-let y = Ndarray.(add (mul_scalar x 2.0) (randn Bigarray.float64 [|100|]))
+let x = Nx.linspace Bigarray.float64 0.0 10.0 100
+let y = Nx.(add (mul_scalar x 2.0) (randn Bigarray.float64 [|100|]))
 
 (* Reshape x for design matrix *)
-let x_design = Ndarray.(concatenate ~axis:1 [ones Bigarray.float64 [|100; 1|]; 
+let x_design = Nx.(concatenate ~axis:1 [ones Bigarray.float64 [|100; 1|]; 
                                            reshape [|100; 1|] x])
 
 (* Compute coefficients using normal equation *)
-let xtx = Ndarray.matmul (Ndarray.transpose x_design) x_design
-let xty = Ndarray.matmul (Ndarray.transpose x_design) (Ndarray.reshape [|100; 1|] y)
-let coeffs = Ndarray.solve xtx xty
+let xtx = Nx.matmul (Nx.transpose x_design) x_design
+let xty = Nx.matmul (Nx.transpose x_design) (Nx.reshape [|100; 1|] y)
+let coeffs = Nx.solve xtx xty
 
 (* Make predictions *)
-let y_pred = Ndarray.matmul x_design coeffs
+let y_pred = Nx.matmul x_design coeffs
 ```
 
 **NumPy:**

@@ -82,11 +82,11 @@ let train_mlp x_train y_train_onehot batch_size learning_rate epochs =
 
 let () =
   (* Load MNIST dataset *)
-  let (x_train, y_train), (x_test, y_test) = Ndarray_datasets.load_mnist () in
-  let x_train = ndarray x_train in
-  let y_train = ndarray y_train in
-  let x_test = ndarray x_test in
-  let _y_test = ndarray y_test in
+  let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_mnist () in
+  let x_train = nx x_train in
+  let y_train = nx y_train in
+  let x_test = nx x_test in
+  let _y_test = nx y_test in
 
   (* Preprocess training data *)
   let x_train = div (astype Float32 x_train) (scalar Float32 255.0) in

@@ -3,7 +3,7 @@
 open Hugin
 module A = Artist
 module P = Plotting
-module N = Ndarray
+module N = Nx
 
 (* Helper function to generate linearly spaced data *)
 let linspace start stop num = N.linspace N.Float32 ~endpoint:true start stop num

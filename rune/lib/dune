@@ -1,4 +1,4 @@
 (library
  (name rune)
  (public_name rune)
- (libraries ndarray))
+ (libraries nx))

@@ -1,0 +1,8 @@
+(tests
+ (names
+  test_nx_basics
+  test_nx_manipulation
+  test_nx_ops
+  test_nx_linalg
+  test_nx_indexing)
+ (libraries nx alcotest))

@@ -1,8 +1,8 @@
 let set_source_color cr (color : Artist.color) =
   Cairo.set_source_rgba cr color.r color.g color.b color.a
 
-let to_cairo_surface ?cmap (data : Ndarray.uint8_t) =
-  let shape = Ndarray.shape data in
+let to_cairo_surface ?cmap (data : Nx.uint8_t) =
+  let shape = Nx.shape data in
   let h, w, channels =
     match shape with
     | [| h; w; 4 |] -> (h, w, 4)
@@ -25,8 +25,8 @@ let to_cairo_surface ?cmap (data : Ndarray.uint8_t) =
 
   let module BA = Bigarray in
   let src_ba =
-    let ba = Ndarray.to_bigarray data in
-    let size = Array.fold_left ( * ) 1 (Ndarray.dims data) in
+    let ba = Nx.to_bigarray data in
+    let size = Array.fold_left ( * ) 1 (Nx.dims data) in
     BA.reshape_1 ba size
   in
 
@@ -114,8 +114,8 @@ let to_cairo_surface ?cmap (data : Ndarray.uint8_t) =
   cairo_surface
 
 let float32_to_cairo_surface ?(cmap = Artist.Colormap.gray)
-    (data : Ndarray.float32_t) =
-  let shape = Ndarray.shape data in
+    (data : Nx.float32_t) =
+  let shape = Nx.shape data in
   let h, w, channels =
     match shape with
     | [| h; w |] -> (h, w, 1)
@@ -136,7 +136,7 @@ let float32_to_cairo_surface ?(cmap = Artist.Colormap.gray)
 
   let module BA = Bigarray in
   let src_ba : (float, BA.float32_elt, BA.c_layout) BA.Genarray.t =
-    Ndarray.to_bigarray data
+    Nx.to_bigarray data
   in
 
   let clamp01 f = max 0.0 (min 1.0 f) in

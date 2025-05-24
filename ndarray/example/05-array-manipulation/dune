@@ -1,3 +1,0 @@
-(executable
- (name array_manipulation)
- (libraries ndarray))

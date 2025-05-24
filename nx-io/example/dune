@@ -1,0 +1,3 @@
+(executables
+ (names image npy)
+ (libraries nx nx_io))
