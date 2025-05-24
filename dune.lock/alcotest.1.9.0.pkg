@@ -1,0 +1,19 @@
+(version 1.9.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml fmt astring cmdliner re stdlib-shims uutf ocaml-syntax-shims)))
+
+(source
+ (fetch
+  (url
+   https://github.com/mirage/alcotest/releases/download/1.9.0/alcotest-1.9.0.tbz)
+  (checksum
+   sha256=e2387136ca854df2b4152139dd4d4b3953a646e804948073dedfe0a232f08a15)))

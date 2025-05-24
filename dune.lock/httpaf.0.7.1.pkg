@@ -1,0 +1,18 @@
+(version 0.7.1)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml dune bigstringaf angstrom faraday result)))
+
+(source
+ (fetch
+  (url https://github.com/inhabitedtype/httpaf/archive/0.7.1.tar.gz)
+  (checksum
+   sha256=ea2e97f4e2a4b03931be232113f503b2fb402e1726a57f6d2b0cd6091ced6aa5)))

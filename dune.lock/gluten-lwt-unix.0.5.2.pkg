@@ -1,0 +1,19 @@
+(version 0.5.2)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml gluten-lwt faraday-lwt-unix lwt_ssl)))
+
+(source
+ (fetch
+  (url
+   https://github.com/anmonteiro/gluten/releases/download/0.5.2/gluten-0.5.2.tbz)
+  (checksum
+   sha256=b1eed89f9f6080bb4bd289cc8d252c6bcf01f03d395726e66fa6067207e7015f)))

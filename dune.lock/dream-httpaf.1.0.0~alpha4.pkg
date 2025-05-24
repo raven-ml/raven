@@ -1,0 +1,28 @@
+(version 1.0.0~alpha4)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (dream-pure
+   dune
+   gluten
+   gluten-lwt-unix
+   h2
+   h2-lwt-unix
+   httpun
+   httpun-lwt-unix
+   httpun-ws
+   lwt
+   lwt_ppx
+   lwt_ssl
+   ocaml
+   ssl)))
+
+(source
+ (fetch
+  (url
+   https://github.com/aantron/dream/releases/download/1.0.0-alpha8/dream-1.0.0-alpha8.tar.gz)
+  (checksum
+   sha256=23ed812890c03fe5c9974a4961a9e8e62126bed7bc7d7d1440b84652c95cf296)))

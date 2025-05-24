@@ -1,0 +1,51 @@
+(lang package 0.1)
+
+(dependency_hash e3c2463cb1e3b36e5329e3b2bec38357)
+
+(ocaml ocaml-base-compiler)
+
+(repositories
+ (complete true)
+ (used
+  ((source
+    https://github.com/ocaml-dune/opam-overlays.git#2a9543286ff0e0656058fee5c0da7abc16b8717d))
+  ((source
+    https://github.com/ocaml/opam-repository.git#428327733193cda496cf0f6a6e47f2172aab591e))))
+
+(solved_for_platforms
+ ((arch x86_64)
+  (os linux)
+  (os-distribution ubuntu)
+  (os-family debian))
+ ((arch arm64)
+  (os linux)
+  (os-distribution ubuntu)
+  (os-family debian))
+ ((arch x86_64)
+  (os linux)
+  (os-distribution alpine)
+  (os-family alpine))
+ ((arch arm64)
+  (os linux)
+  (os-distribution alpine)
+  (os-family alpine))
+ ((arch x86_64)
+  (os linux))
+ ((arch arm64)
+  (os linux))
+ ((arch x86_64)
+  (os macos)
+  (os-distribution homebrew)
+  (os-family homebrew))
+ ((arch arm64)
+  (os macos)
+  (os-distribution homebrew)
+  (os-family homebrew))
+ ((arch x86_64)
+  (os win32)
+  (os-distribution cygwin)
+  (os-family windows))
+ ((arch arm64)
+  (os win32)
+  (os-distribution cygwin)
+  (os-family windows)))

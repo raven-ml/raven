@@ -1,0 +1,19 @@
+(version 0.2.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml base64 bigstringaf angstrom faraday gluten httpun)))
+
+(source
+ (fetch
+  (url
+   https://github.com/anmonteiro/httpun-ws/releases/download/0.2.0/httpun-ws-0.2.0.tbz)
+  (checksum
+   sha256=eae0cd2e0eb5b4fc9cb6d862b7116a6f0fc8503b2e439046bf0e6f4cb2c297fd)))

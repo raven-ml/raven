@@ -1,0 +1,19 @@
+(version 4.0.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (ocaml cmdliner ptime dune)))
+
+(source
+ (fetch
+  (url
+   https://github.com/mirage/ocaml-crunch/releases/download/v4.0.0/crunch-4.0.0.tbz)
+  (checksum
+   sha256=939b8d1129ed6c634cb0f9ccc6f6d44aa1703cd05ce6091f2ee2a0162944b89b)))

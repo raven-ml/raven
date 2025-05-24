@@ -1,0 +1,19 @@
+(version 0.6.5)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml base-bigarray dune dune-configurator conf-cairo)))
+
+(source
+ (fetch
+  (url
+   https://github.com/Chris00/ocaml-cairo/releases/download/0.6.5/cairo2-0.6.5.tbz)
+  (checksum
+   sha256=25dc41c9436d9abcf56caad9a105944ff7346041b8cc6a2a654ab8848b657372)))

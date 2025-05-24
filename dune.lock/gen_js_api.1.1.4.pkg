@@ -1,0 +1,17 @@
+(version 1.1.4)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml ppxlib ojs)))
+
+(source
+ (fetch
+  (url https://github.com/LexiFi/gen_js_api/archive/refs/tags/v1.1.4.tar.gz)
+  (checksum md5=929c88d650cb6702621379d9646494ed)))

@@ -1,0 +1,15 @@
+(version 1.0.0~alpha2)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (base64 bigstringaf dune hmap lwt lwt_ppx ocaml ptime uri)))
+
+(source
+ (fetch
+  (url
+   https://github.com/aantron/dream/releases/download/1.0.0-alpha4/dream-1.0.0-alpha4.tar.gz)
+  (checksum
+   sha256=a143b3694d67c0089ea16ce4585971d6333f05001abcadcede6696b06ca6af10)))

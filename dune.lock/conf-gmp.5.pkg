@@ -1,0 +1,141 @@
+(version 5)
+
+(build
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch x86_64)
+     (os linux))
+    ((arch arm64)
+     (os linux))
+    ((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   ((action
+     (run
+      sh
+      -c
+      "pkg-config --print-errors --exists gmp || cc -c $CFLAGS -I/usr/local/include test.c"))))
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows))
+    ((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   ((action
+     (run
+      sh
+      -exc
+      (concat
+       (if
+        (catch_undefined_var %{pkg:host-arch-x86_64:installed} false)
+        x86_64
+        "")
+       ""
+       (if
+        (catch_undefined_var %{pkg:host-arch-x86_32:installed} false)
+        i686
+        "")
+       "-w64-mingw32-gcc -c $CFLAGS test.c")))))))
+
+(depends
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch x86_64)
+     (os linux))
+    ((arch arm64)
+     (os linux)))
+   ())
+  ((((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   (conf-pkg-config))
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (host-arch-x86_64 conf-mingw-w64-gmp-x86_64))
+  ((((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (host-arch-x86_32 conf-mingw-w64-gmp-i686))))
+
+(depexts
+ (choice
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian))
+    ((arch arm64)
+     (os linux)
+     (os-distribution ubuntu)
+     (os-family debian)))
+   (libgmp-dev))
+  ((((arch x86_64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine))
+    ((arch arm64)
+     (os linux)
+     (os-distribution alpine)
+     (os-family alpine)))
+   (gmp-dev))
+  ((((arch x86_64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew))
+    ((arch arm64)
+     (os macos)
+     (os-distribution homebrew)
+     (os-family homebrew)))
+   (gmp))))
+
+(extra_sources
+ (test.c
+  (fetch
+   (url
+    https://raw.githubusercontent.com/ocaml/opam-source-archives/main/patches/conf-gmp/test.c.4)
+   (checksum
+    sha256=54a30735f1f271a2531526747e75716f4490dd7bc1546efd6498ccfe3cc4d6fb))))

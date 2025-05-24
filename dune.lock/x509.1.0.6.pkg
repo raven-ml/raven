@@ -1,0 +1,34 @@
+(version 1.0.6)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml
+   dune
+   asn1-combinators
+   ptime
+   base64
+   mirage-crypto
+   mirage-crypto-pk
+   mirage-crypto-ec
+   mirage-crypto-rng
+   fmt
+   gmap
+   domain-name
+   logs
+   kdf
+   ohex
+   ipaddr)))
+
+(source
+ (fetch
+  (url
+   https://github.com/mirleft/ocaml-x509/releases/download/v1.0.6/x509-1.0.6.tbz)
+  (checksum
+   sha256=fc816ae2c65e8b42fa60d90a507b2140495e28d095ad37b27e4c268ae3c00d6c)))

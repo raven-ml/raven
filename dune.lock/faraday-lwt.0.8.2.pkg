@@ -1,0 +1,18 @@
+(version 0.8.2)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml dune faraday lwt)))
+
+(source
+ (fetch
+  (url https://github.com/inhabitedtype/faraday/archive/0.8.2.tar.gz)
+  (checksum
+   sha256=720ea90b39fd3ea7de6e8722330a25514e67306e94d4af41ad48d8a7cfa035c6)))

@@ -1,0 +1,69 @@
+(version 0.2.0)
+
+(build
+ (choice
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows))
+    ((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   ((action
+     (run
+      sh
+      ./gen_config.sh
+      %{pkg-self:name}
+      (when
+       (catch_undefined_var %{pkg:conf-mingw-w64-gcc-i686:installed} false)
+       i686-binutils)
+      (when
+       (catch_undefined_var %{pkg:conf-mingw-w64-gcc-i686:installed} false)
+       i686-gcc-core)
+      i686-gcc-g++-%{pkg:conf-mingw-w64-g++-i686:installed}
+      (when
+       (catch_undefined_var %{pkg:conf-mingw-w64-gcc-x86_64:installed} false)
+       x86_64-binutils)
+      (when
+       (catch_undefined_var %{pkg:conf-mingw-w64-gcc-x86_64:installed} false)
+       x86_64-gcc-core)
+      x86_64-gcc-g++-%{pkg:conf-mingw-w64-g++-x86_64:installed}
+      (when
+       (catch_undefined_var %{pkg:conf-pkg-config:installed} false)
+       pkgconf)))))))
+
+(depends
+ (choice
+  ((((arch x86_64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (conf-mingw-w64-gcc-x86_64 conf-mingw-w64-g++-x86_64 conf-pkg-config))
+  ((((arch arm64)
+     (os win32)
+     (os-distribution cygwin)
+     (os-family windows)))
+   (conf-mingw-w64-gcc-x86_64 conf-mingw-w64-g++-i686 conf-pkg-config))))
+
+(source
+ (fetch
+  (url
+   https://github.com/dra27/mingw-w64-shims/archive/refs/tags/0.2.0.tar.gz)
+  (checksum
+   sha256=c152e3fcc7f22d61880a2f7f044027e6707ad7c22e5a75651e99925cc09ad5b8)))
+
+(exported_env
+ (+= PATH "\%{_:runtime-x86_64}%")
+ (+= PATH "\%{_:runtime-i686}%"))
+
+(enabled_on_platforms
+ (only
+  ((arch x86_64)
+   (os win32)
+   (os-distribution cygwin)
+   (os-family windows))
+  ((arch arm64)
+   (os win32)
+   (os-distribution cygwin)
+   (os-family windows))))

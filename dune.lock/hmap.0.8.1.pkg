@@ -1,0 +1,15 @@
+(version 0.8.1)
+
+(build
+ (all_platforms
+  ((action (run ocaml pkg/pkg.ml build --pinned %{pkg-self:pinned})))))
+
+(depends
+ (all_platforms
+  (ocaml ocamlfind ocamlbuild topkg)))
+
+(source
+ (fetch
+  (url http://erratique.ch/software/hmap/releases/hmap-0.8.1.tbz)
+  (checksum
+   sha256=6a00db1b12b6f55e1b2419f206fdfbaa669e14b51c78f8ac3cffa0a58897be83)))

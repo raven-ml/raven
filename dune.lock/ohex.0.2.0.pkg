@@ -1,0 +1,18 @@
+(version 0.2.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml dune)))
+
+(source
+ (fetch
+  (url
+   https://github.com/ocaml/opam-source-archives/raw/main/ohex-0.2.0.tar.gz)
+  (checksum md5=77f2cbe75b9efd528a2b3478a8d4f3d4)))

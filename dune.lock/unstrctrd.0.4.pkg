@@ -1,0 +1,15 @@
+(version 0.4)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (ocaml dune uutf angstrom)))
+
+(source
+ (fetch
+  (url
+   https://github.com/dinosaure/unstrctrd/releases/download/v0.4/unstrctrd-0.4.tbz)
+  (checksum
+   sha256=368a9b86acea988e952fe7bdf5db2c9eaf5345a6939e609351f15eeb25121824)))
