@@ -1,13 +1,13 @@
 open Alcotest
 
 let nx_int32 : (int32, Nx.int32_elt) Nx.t testable =
-  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 0)
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 let nx_float64 : (float, Nx.float64_elt) Nx.t testable =
-  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 0)
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 let nx_complex32 : (Complex.t, Nx.complex32_elt) Nx.t testable =
-  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 0)
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 (* Testable for complex numbers *)
 let complex =
