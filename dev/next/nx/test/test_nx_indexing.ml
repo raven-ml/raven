@@ -2,10 +2,10 @@ open Alcotest
 
 (* Testables *)
 let nx_float32 : (float, Nx.float32_elt) Nx.t testable =
-  Alcotest.testable Nx.pp Nx.array_equal
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 let nx_int64 : (int64, Nx.int64_elt) Nx.t testable =
-  Alcotest.testable Nx.pp Nx.array_equal
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 let test_where_1d () =
   let mask = Nx.create Nx.uint8 [| 3 |] [| 1; 0; 1 |] in

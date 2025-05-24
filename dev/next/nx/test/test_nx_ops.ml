@@ -17,13 +17,13 @@ let ndarray_float64 : (float, Nx.float64_elt) Nx.t testable =
   Alcotest.testable Nx.pp (approx_equal 1e-10)
 
 let ndarray_int16 : (int, Nx.int16_elt) Nx.t testable =
-  Alcotest.testable Nx.pp Nx.array_equal
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 let ndarray_int32 : (int32, Nx.int32_elt) Nx.t testable =
-  Alcotest.testable Nx.pp Nx.array_equal
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 let ndarray_uint8 : (int, Nx.uint8_elt) Nx.t testable =
-  Alcotest.testable Nx.pp Nx.array_equal
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 let test_add_two_2x2_float32 () =
   let t1 = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in

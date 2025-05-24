@@ -1,10 +1,10 @@
 open Alcotest
 
 let nx_int32 : (int32, Nx.int32_elt) Nx.t testable =
-  Alcotest.testable Nx.pp Nx.array_equal
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 let nx_float32 : (float, Nx.float32_elt) Nx.t testable =
-  Alcotest.testable Nx.pp Nx.array_equal
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 (* Helper function for approximate equality of float tensors *)
 let check_approx_equal ?(epsilon = 1e-6) msg t1 t2 =

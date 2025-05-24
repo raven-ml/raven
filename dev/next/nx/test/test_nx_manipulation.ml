@@ -1,7 +1,7 @@
 open Alcotest
 
 let nx_float32 : (float, Nx.float32_elt) Nx.t testable =
-  Alcotest.testable Nx.pp Nx.array_equal
+  Alcotest.testable Nx.pp (fun x y -> Nx.get_item [] (Nx.array_equal x y) = 1)
 
 let float = float 1e-10
 
