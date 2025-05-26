@@ -1,134 +1,149 @@
-open Bigarray
 open Nx_core
+open Bigarray
 
-type ('a, 'b) t = {
-  descriptor : ('a, 'b) Nx_core.descriptor;
-  buffer : ('a, 'b) Nx_core.buffer;
-}
-
+type ('a, 'b) buffer = ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
 type context = { pool : Parallel.pool }
 
-let buffer t = t.buffer
-let descriptor t = t.descriptor
-let shape t = t.descriptor.shape
-let dtype t = t.descriptor.dtype
-let strides t = t.descriptor.strides
-let offset t = t.descriptor.offset
-let layout t = t.descriptor.layout
+type ('a, 'b) t = {
+  context : context;
+  dtype : ('a, 'b) Dtype.t;
+  buffer : ('a, 'b) buffer;
+  view : View.t;
+}
 
-let size t =
-  let n = Array.length t.descriptor.shape in
-  if n = 0 then 1 else Array.fold_left ( * ) 1 t.descriptor.shape
+(* Basic Accessors for Internal.t *)
+let dtype { dtype; _ } = dtype
+let buffer { buffer; _ } = buffer
+let view { view; _ } = view
+let shape { view; _ } = View.shape view
+let strides { view; _ } = View.strides view
+let stride axis { view; _ } = View.stride axis view
+let offset { view; _ } = View.offset view
+let size { view; _ } = View.size view (* Delegates to View.numel (view t) *)
+let numel { view; _ } = View.numel view (* Explicit numel accessor *)
+let dims { view; _ } = View.dims view (* Alias for shape *)
+let dim axis { view; _ } = View.dim axis view
+let ndim { view; _ } = View.ndim view
+let is_contiguous { view; _ } = View.is_contiguous view
 
-let stride axis t =
-  if axis < 0 then invalid_arg "axis must be non-negative";
-  if axis >= Array.length t.descriptor.strides then
-    invalid_arg "axis out of bounds";
-  let stride = Array.unsafe_get t.descriptor.strides axis in
-  stride
+(* Low-level helper to create a Bigarray.Array1.t *)
+let create_buffer_unsafe (type a b) (dt : (a, b) Dtype.t)
+    (size_in_elements : int) : (a, b) buffer =
+  Bigarray.Array1.create (Dtype.kind_of_dtype dt) Bigarray.c_layout
+    size_in_elements
 
-let dims t = t.descriptor.shape
+(* Operations (These seem like they might belong in a higher-level API or were
+   part of an older structure, but correcting them as requested.) Note: These
+   operations do not use a 'context' and thus won't be parallelized by
+   default. *)
 
-let dim axis t =
-  if axis < 0 then invalid_arg "axis must be non-negative";
-  if axis >= Array.length t.descriptor.shape then
-    invalid_arg "axis out of bounds";
-  let dim = Array.unsafe_get t.descriptor.shape axis in
-  dim
+let empty : type a b. context -> (a, b) Dtype.t -> int array -> (a, b) t =
+ fun ctx dt shp ->
+  let num_elements = Array.fold_left ( * ) 1 shp in
+  let buf = create_buffer_unsafe dt num_elements in
+  (* Backend ops like op_buffer typically create a flat view. If these are
+     higher-level ops, they should create a view matching the shape. *)
+  let vw = View.create shp in
+  { context = ctx; dtype = dt; buffer = buf; view = vw }
 
-let ndim t = Array.length t.descriptor.shape
-let is_c_contiguous t = Nx_core.is_c_contiguous t.descriptor
-
-let create : type a b. (a, b) dtype -> int array -> a array -> (a, b) t =
- fun dtype shape array ->
-  let buffer : (a, b) buffer = create_buffer dtype (Array.length array) in
-  let strides = compute_c_strides shape in
-  let descriptor =
-    { dtype; shape; layout = C_contiguous; strides; offset = 0 }
-  in
-  { buffer; descriptor }
-
-let empty : type a b. (a, b) dtype -> int array -> (a, b) t =
- fun dtype shape ->
-  let size = Array.fold_left ( * ) 1 shape in
-  let buffer : (a, b) buffer = create_buffer dtype size in
-  let strides = compute_c_strides shape in
-  let descriptor =
-    { dtype; shape; layout = C_contiguous; strides; offset = 0 }
-  in
-  { buffer; descriptor }
-
-let full : type a b. (a, b) dtype -> int array -> a -> (a, b) t =
- fun dtype shape value ->
-  let t = empty dtype shape in
-  let buffer = t.buffer in
-  Array1.fill buffer value;
+let full : type a b. context -> (a, b) Dtype.t -> int array -> a -> (a, b) t =
+ fun ctx dt shp value ->
+  let t = empty ctx dt shp in
+  (* Fill the entire buffer; assumes the view of 'empty' covers the whole buffer
+     contiguously if size > 0 *)
+  if Array.fold_left ( * ) 1 shp > 0 then Array1.fill t.buffer value;
   t
 
-let empty_like t = empty (dtype t) (shape t)
+let empty_like t = empty t.context (dtype t) (shape t)
 
 let copy : type a b. (a, b) t -> (a, b) t =
- fun t ->
-  let total_size = Array.fold_left ( * ) 1 (shape t) in
-  let new_buffer = create_buffer (dtype t) total_size in
-  let new_shape = Array.copy (shape t) in
-  let new_strides = compute_c_strides new_shape in
+ fun t_src ->
+  let src_view = view t_src in
+  let src_shape = View.shape src_view in
+  let total_elements = View.numel src_view in
+
+  let new_buffer = create_buffer_unsafe (dtype t_src) total_elements in
+  (* Create a new C-contiguous view for the destination *)
+  let new_view = View.create src_shape in
   let new_t =
     {
+      context = t_src.context;
+      dtype = dtype t_src;
       buffer = new_buffer;
-      descriptor =
-        {
-          dtype = dtype t;
-          shape = new_shape;
-          layout = C_contiguous;
-          strides = new_strides;
-          offset = 0;
-        };
+      view = new_view;
     }
   in
-  if is_c_contiguous t && offset t = 0 then (
-    Array1.blit t.buffer new_t.buffer;
+
+  if total_elements = 0 then new_t (* Handle zero-element tensor *)
+  else if
+    is_contiguous t_src
+    && View.offset src_view = 0
+    && Array1.dim (buffer t_src) = total_elements
+  then (
+    (* If source is fully C-contiguous and view covers entire buffer, use fast
+       Bigarray.Array1.blit *)
+    Array1.blit (buffer t_src) new_buffer;
     new_t)
   else
-    let n_dims = Array.length (shape t) in
-    let current_md_idx = Array.make n_dims 0 in
-    let rec copy_slice dim =
-      if dim = n_dims then
-        let src_linear_idx =
-          md_to_linear current_md_idx (strides t) + offset t
-        in
-        let dst_linear_idx =
-          md_to_linear current_md_idx (strides new_t) + offset new_t
-        in
-        new_buffer.{dst_linear_idx} <- t.buffer.{src_linear_idx}
-      else
-        for i = 0 to (shape t).(dim) - 1 do
-          current_md_idx.(dim) <- i;
-          copy_slice (dim + 1)
-        done
-    in
-    if total_size > 0 then copy_slice 0;
-    new_t
+    (* General case: iterate based on logical indices and copy element by
+       element This assumes the new_t is C-contiguous from its own view's
+       perspective. *)
+    let n_dims = View.ndim src_view in
+    if n_dims = 0 then (
+      (* Scalar case *)
+      let v = Bigarray.Array1.get (buffer t_src) (View.offset src_view) in
+      Bigarray.Array1.set new_buffer (View.offset new_view) v;
+      new_t)
+    else
+      let current_md_idx = Array.make n_dims 0 in
+      let rec copy_slice dim =
+        if dim = n_dims then
+          let src_physical_idx =
+            View.offset src_view
+            + View.index_to_offset current_md_idx (View.strides src_view)
+          in
+          (* For new_t, its view is C-contiguous and offset 0 on its own
+             buffer *)
+          let dst_physical_idx =
+            View.index_to_offset current_md_idx (View.strides new_view)
+          in
+          new_buffer.{dst_physical_idx} <- (buffer t_src).{src_physical_idx}
+        else
+          for i = 0 to View.dim dim src_view - 1 do
+            current_md_idx.(dim) <- i;
+            copy_slice (dim + 1)
+          done
+      in
+      copy_slice 0;
+      new_t
 
 let fill : type a b. a -> (a, b) t -> unit =
- fun value t ->
-  (* This needs to respect strides/offset if not contiguous *)
-  if is_c_contiguous t && offset t = 0 then
-    let buffer = t.buffer in
-    Array1.fill buffer value
+ fun value t_fill ->
+  let fill_view = view t_fill in
+  let fill_buffer = buffer t_fill in
+  let total_elements = View.numel fill_view in
+
+  if total_elements = 0 then () (* No elements to fill *)
+  else if is_contiguous t_fill && View.offset fill_view = 0 then
+    (* If the view is fully C-contiguous on its buffer, use fast fill *)
+    Array1.fill fill_buffer value
   else
-    (* Generic case: Iterate and fill element by element *)
-    (* This is inefficient but correct for all layouts/offsets *)
-    let total_size = size t in
-    if total_size > 0 then
-      let n_dims = Array.length (shape t) in
+    (* Generic case: Iterate and fill element by element respecting the view *)
+    let n_dims = View.ndim fill_view in
+    if n_dims = 0 then
+      (* Scalar case *)
+      Bigarray.Array1.set fill_buffer (View.offset fill_view) value
+    else
       let current_md_idx = Array.make n_dims 0 in
       let rec fill_slice dim =
         if dim = n_dims then
-          let linear_idx = md_to_linear current_md_idx (strides t) + offset t in
-          t.buffer.{linear_idx} <- value
+          let physical_idx =
+            View.offset fill_view
+            + View.index_to_offset current_md_idx (View.strides fill_view)
+          in
+          fill_buffer.{physical_idx} <- value
         else
-          for i = 0 to (shape t).(dim) - 1 do
+          for i = 0 to View.dim dim fill_view - 1 do
             current_md_idx.(dim) <- i;
             fill_slice (dim + 1)
           done
@@ -137,67 +152,58 @@ let fill : type a b. a -> (a, b) t -> unit =
 
 let blit : type a b. (a, b) t -> (a, b) t -> unit =
  fun src dst ->
-  let src_desc = descriptor src in
-  let dst_desc = descriptor dst in
-  let n_dims = Array.length src_desc.shape in
+  let src_view = view src in
+  let dst_view = view dst in
 
-  if n_dims <> Array.length dst_desc.shape then
+  if View.ndim src_view <> View.ndim dst_view then
     invalid_arg "blit: tensors must have the same number of dimensions";
-  if src_desc.shape <> dst_desc.shape then
+  if not (View.all_eq (View.shape src_view) (View.shape dst_view)) then
     invalid_arg "blit: tensors must have the same shape";
 
-  let total_size = size src in
-  if total_size = 0 then ()
+  let total_elements = View.numel src_view in
+  if total_elements = 0 then () (* Nothing to blit *)
   else
     let src_buffer = buffer src in
     let dst_buffer = buffer dst in
-    let src_strides = strides src in
-    let dst_strides = strides dst in
-    let src_offset = offset src in
-    let dst_offset = offset dst in
-    let shape = shape src in
+    let n_dims = View.ndim src_view in
 
-    if n_dims = 0 then dst_buffer.{dst_offset} <- src_buffer.{src_offset}
+    (* TODO: Handle overlapping bigarrays correctly. Currently, when src and dst
+       are views of the same underlying buffer with overlapping regions, the
+       copy may produce incorrect results as source data can be overwritten
+       before being read.
+
+       Consider using https://github.com/dinosaure/overlap which provides a
+       library for checking if bigarrays overlap. If overlap is detected, we
+       should either: 1. Make a copy of the source data first 2. Copy in the
+       appropriate order (backward if dst > src) 3. Use memmove-like semantics
+
+       See test_blit_overlapping_views for expected behavior. *)
+    if n_dims = 0 then
+      (* Scalar case *)
+      dst_buffer.{View.offset dst_view} <- src_buffer.{View.offset src_view}
     else
+      (* Iterate through logical elements based on common shape *)
       let current_md_idx = Array.make n_dims 0 in
       let rec blit_slice dim =
         if dim = n_dims then (
-          let src_linear_idx = ref src_offset in
-          let dst_linear_idx = ref dst_offset in
-          for i = 0 to n_dims - 1 do
-            src_linear_idx :=
-              !src_linear_idx + (current_md_idx.(i) * src_strides.(i));
-            dst_linear_idx :=
-              !dst_linear_idx + (current_md_idx.(i) * dst_strides.(i))
-          done;
-          dst_buffer.{!dst_linear_idx} <- src_buffer.{!src_linear_idx})
+          let src_physical_offset =
+            View.offset src_view
+            + View.index_to_offset current_md_idx (View.strides src_view)
+          in
+          let dst_physical_offset =
+            View.offset dst_view
+            + View.index_to_offset current_md_idx (View.strides dst_view)
+          in
+          (* Debug output *)
+          if false then
+            Printf.printf "Copying from src[%d] to dst[%d]\n"
+              src_physical_offset dst_physical_offset;
+          dst_buffer.{dst_physical_offset} <- src_buffer.{src_physical_offset})
         else
-          for i = 0 to shape.(dim) - 1 do
+          for i = 0 to View.dim dim src_view - 1 do
+            (* Use src_view's shape, same as dst_view's *)
             current_md_idx.(dim) <- i;
             blit_slice (dim + 1)
           done
       in
       blit_slice 0
-
-let zeros : type a b. (a, b) dtype -> int array -> (a, b) t =
- fun dtype shape ->
-  let t = empty dtype shape in
-  fill (zero t.descriptor.dtype) t;
-  t
-
-let ones : type a b. (a, b) dtype -> int array -> (a, b) t =
- fun dtype shape ->
-  let t = empty dtype shape in
-  fill (one t.descriptor.dtype) t;
-  t
-
-let astype : type a b c d. (c, d) dtype -> (a, b) t -> (c, d) t =
- fun new_dtype t ->
-  let new_buffer = Nx_core.astype new_dtype (descriptor t) (buffer t) in
-  { buffer = new_buffer; descriptor = { t.descriptor with dtype = new_dtype } }
-
-let broadcast_to t new_shape =
-  let new_descriptor = Nx_core.broadcast_to t.descriptor new_shape in
-  { t with descriptor = new_descriptor }
-
-let is_scalar t = Nx_core.is_scalar t.descriptor

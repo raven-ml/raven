@@ -14,11 +14,10 @@ The `dev/` directory serves as:
 
 ## Projects
 
-| Name                | Description                                | Status      |
-| ------------------- | ------------------------------------------ | ----------- |
-| **`nx-metal`** | Metal backend for Nx                  | Incubation  |
-| **`nx-cuda`**  | Cuda backend for Nx                   | Exploration |
-| **`kaun`**          | Deep Learning library built on top of Rune | Exploration |
+| Name           | Description                                | Status      |
+| -------------- | ------------------------------------------ | ----------- |
+| **`nx-cuda`**  | Cuda backend for Nx                        | Exploration |
+| **`kaun`**     | Deep Learning library built on top of Rune | Exploration |
 
 ## Project Status
 

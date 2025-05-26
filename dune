@@ -1,0 +1,3 @@
+(executable
+ (name test_unsafe_set_bug)
+ (libraries nx))

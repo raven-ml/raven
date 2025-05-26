@@ -1,11 +1,24 @@
 # todo
 
+goalpost: mnist notebook in quill with rune + hugin
+
+## current
+
+- fix failing tests in nx (all files)
+- bug: getting Command got signal SEGV. at randint
+- fix plot3d with hugin
+- benchmarking suite for nx (plan created: .claude/plans/2025-01-27-nx-benchmarking-suite.md)
+- test rewritten sowilo (after fixing sanity tests)
+- fix rune tests and examples compilation
+- rune build system for metal backend on non macOS systems
+
+refactor nx
+- allocate buffers outside of the backend?
+- not sure we need non-polymorphic functions for perf of where, we should benchmark
+
 ## alpha release
 
 nx
-- OK
-
-nx-cv
 - OK
 
 nx-dataset
@@ -42,32 +55,23 @@ rune
 - train mnist
 - metal kernels.
 - cuda kernels.
-- support multiple devices
 
 docs
 - examples
 - end-to-end example with quill+rune+hugin
-- website?
+- website
 
 ## next
 
 roadmap
 - jit support in rune
+  - placeholder? not in tinygrad
+  - test for kernelize (see kernelize.md)
+  - clang jit backend
+  - cuda jit backend
+- symbolic shapes for jit
+- memory planner during lowering (scheduling)
 - pmap support in rune
 
-refactorings
-- consider having descriptor in Nx_core.t instead of backend to simplify code. can we remove descriptor from backend entirely (unlikely)
-- extract automatic device dispatching from run to an nx library
-
-improvements
-- implement buffer pool for the metal bindings
-- better slicing function api
-- infix operators
-- add ?out argument to all functions? replace inplace functions?
-
-optim
-- add support for scalar ops in run - review operations with scalar in rune and replace with scalar variants
-
 new libs
-- neural network library on top of rune?
 - dataframe library

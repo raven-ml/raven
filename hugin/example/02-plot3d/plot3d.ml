@@ -1,10 +1,10 @@
 open Nx
 
 let create_helix_data () =
-  let t = Nx.linspace float32 0. (4. *. Float.pi) 100 in
-  let x = Nx.map (fun t -> Float.cos t) t in
-  let y = Nx.map (fun t -> Float.sin t) t in
-  let z = Nx.map (fun t -> t /. (4. *. Float.pi)) t in
+  let t = linspace float32 0. (4. *. Float.pi) 100 in
+  let x = cos t in
+  let y = sin t in
+  let z = unsafe_map (fun t -> t /. (4. *. Float.pi)) t in
   (x, y, z)
 
 let () =

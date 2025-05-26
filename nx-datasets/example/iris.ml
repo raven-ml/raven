@@ -11,10 +11,10 @@ let get_class_features features labels target_label feature_idx1 feature_idx2 =
   let filtered_pairs =
     List.filter_map
       (fun i ->
-        let label = Nx.get_item [| i; 0 |] labels in
+        let label = Nx.get_item [ i; 0 ] labels in
         if label = target_label then
-          let f1 = Nx.get_item [| i; feature_idx1 |] features in
-          let f2 = Nx.get_item [| i; feature_idx2 |] features in
+          let f1 = Nx.get_item [ i; feature_idx1 ] features in
+          let f2 = Nx.get_item [ i; feature_idx2 ] features in
           Some (f1, f2)
         else None)
       indices

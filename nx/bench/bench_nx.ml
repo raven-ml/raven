@@ -12,34 +12,64 @@ let binary_op_bench : type a b.
     unit =
  fun op size dtype ->
   let shape = [| size; size |] in
-  let a = Nx.astype dtype (Nx.rand Nx.float32 shape) in
-  let b = Nx.astype dtype (Nx.rand Nx.float32 shape) in
+  (* TODO: Fix Nx.rand and use it instead of ones *)
+  let a = Nx.astype dtype (Nx.ones Nx.float32 shape) in
+  let b = Nx.astype dtype (Nx.ones Nx.float32 shape) in
   fun () -> op a b |> ignore
 
 (* Helper for unary operations: takes one array *)
-let _unary_op_bench : type a b.
+let unary_op_bench : type a b.
     ((a, b) Nx.t -> (a, b) Nx.t) -> int -> (a, b) Nx.dtype -> unit -> unit =
  fun op size dtype ->
   let shape = [| size; size |] in
-  let a = Nx.astype dtype (Nx.rand Nx.float32 shape) in
+  (* TODO: Fix Nx.rand and use it instead of ones *)
+  let a = Nx.astype dtype (Nx.ones Nx.float32 shape) in
   fun () -> op a |> ignore
+
+(* Helper for reduction operations: reduces array to scalar/smaller array *)
+let reduction_op_bench : type a b c d.
+    ((a, b) Nx.t -> (c, d) Nx.t) -> int -> (a, b) Nx.dtype -> unit -> unit =
+ fun op size dtype ->
+  let shape = [| size; size |] in
+  (* TODO: Fix Nx.rand and use it instead of ones *)
+  let a = Nx.astype dtype (Nx.ones Nx.float32 shape) in
+  fun () -> op a |> ignore
+
+(* Helper for matrix operations like matmul *)
+let matmul_bench : type a b. int -> (a, b) Nx.dtype -> unit -> unit =
+ fun size dtype ->
+  (* TODO: Fix Nx.rand and use it instead of ones *)
+  let a = Nx.astype dtype (Nx.ones Nx.float32 [| size; size |]) in
+  let b = Nx.astype dtype (Nx.ones Nx.float32 [| size; size |]) in
+  fun () -> Nx.matmul a b |> ignore
 
 (* List of operations to benchmark *)
 let operations : type a b.
     int -> (a, b) Nx.dtype -> (string * (unit -> unit)) list =
  fun size dtype ->
-  [
-    ("Addition", binary_op_bench Nx.add size dtype);
-    (* ("Subtraction", binary_op_bench Nx.sub size dtype); ("Multiplication",
-       binary_op_bench Nx.mul size dtype); ("Division", binary_op_bench Nx.div
-       size dtype); ("Power", binary_op_bench Nx.pow size dtype); *)
-  ]
+  List.concat
+    [
+      (* Binary operations *)
+      [
+        ("Addition", binary_op_bench Nx.add size dtype);
+        ("Multiplication", binary_op_bench Nx.mul size dtype);
+        (* Unary operations *)
+        ("Square", unary_op_bench Nx.square size dtype);
+      ];
+      (* Matrix operations - skip for large sizes *)
+      (if size <= 100 then [ ("MatMul", matmul_bench size dtype) ] else []);
+      (* Reductions *)
+      [ ("Sum", reduction_op_bench Nx.sum size dtype) ];
+    ]
 
 let float_operations : type b.
     int -> (float, b) Nx.dtype -> (string * (unit -> unit)) list =
- fun _size _dtype ->
-  [ (* ("Square Root", unary_op_bench Nx.sqrt size dtype); *)
-    (* ("Mean", unary_op_bench Nx.mean size dtype); *) ]
+ fun size dtype ->
+  [
+    (* Float-specific unary operations *)
+    ("Sqrt", unary_op_bench Nx.sqrt size dtype);
+    ("Exp", unary_op_bench Nx.exp size dtype);
+  ]
 
 (* Generate benchmark tests for all combinations *)
 let tests ~sizes =
@@ -82,6 +112,6 @@ let tests ~sizes =
 (* Run the benchmarks *)
 let () =
   print_endline "# Nx Benchmarks";
-  let tests = tests ~sizes:[ 50; 100; 500; 1000; 2000 ] in
-  let results = Ubench.run ~warmup:0 ~trials:1 ~min_time:1. tests in
+  let tests = tests ~sizes:[ 50; 100; 500 ] in
+  let results = Ubench.run ~warmup:1 ~trials:3 ~min_time:0.01 tests in
   Ubench.print_report results

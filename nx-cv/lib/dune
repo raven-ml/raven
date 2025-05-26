@@ -1,4 +1,0 @@
-(library
- (name nx_cv)
- (public_name nx-cv)
- (libraries nx))

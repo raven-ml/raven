@@ -2,8 +2,8 @@ open Hugin
 open Nx
 
 let x = linspace float32 0. (2. *. Float.pi) 100
-let y1 = map Float.sin x
-let y2 = map Float.cos x
+let y1 = sin x
+let y2 = cos x
 
 let () =
   let fig = figure ~width:800 ~height:600 () in

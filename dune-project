@@ -15,6 +15,8 @@
 
 (using dune_site 0.1)
 
+(using ctypes 0.3)
+
 (version 0.1.0)
 
 (package
@@ -26,39 +28,11 @@
   (ocaml
    (>= 5.0.0))
   dune
+  ; nx.io
+  camlzip
   (alcotest :with-test))
  (tags
   (numerical-computation tensor-library machine-learning)))
-
-(package
- (name nx-io)
- (synopsis "Input/Output library for Nx")
- (description
-  "nx-io provides functionality for reading and writing nx data in various formats.")
- (depends
-  (ocaml
-   (>= 5.0.0))
-  dune
-  camlzip
-  (nx
-   (= :version)))
- (tags
-  (io data-format serialization deserialization)))
-
-(package
- (name nx-cv)
- (synopsis "Computer vision extensions for Nx")
- (description
-  "Computer vision operations and algorithms built on top of the Nx library. Provides image processing, feature extraction, and other vision-related functionality.")
- (depends
-  (ocaml
-   (>= 4.14.0))
-  dune
-  (nx
-   (= :version))
-  (alcotest :with-test))
- (tags
-  (computer-vision image-processing feature-detection machine-learning)))
 
 (package
  (name nx-datasets)
@@ -70,12 +44,45 @@
    (>= 5.0.0))
   dune
   camlzip
-  ocurl
+  ; Currently fails with dune pkg - update when fixed:
+  ; This rule defines a directory target "default/.pkg/ocurl/target" that
+  ; matches the requested path "default/.pkg/ocurl/target/lib/curl/curl.cma" but
+  ; the rule's action didn't produce it
+  (ocurl
+   (< 0.10.0))
   csv
   (nx
    (= :version)))
  (tags
   (datasets machine-learning data-science image-classification regression)))
+
+(package
+ (name rune)
+ (synopsis "")
+ (description "")
+ (depends
+  (ocaml
+   (>= 5.0.0))
+  dune
+  (nx
+   (= :version))
+  ctypes
+  (alcotest :with-test)))
+
+(package
+ (name sowilo)
+ (synopsis "Computer vision extensions for Rune")
+ (description
+  "Computer vision operations and algorithms built on top of the Rune library. Provides image processing, feature extraction, and other vision-related functionality.")
+ (depends
+  (ocaml
+   (>= 4.14.0))
+  dune
+  (rune
+   (= :version))
+  (alcotest :with-test))
+ (tags
+  (computer-vision image-processing feature-detection machine-learning)))
 
 (package
  (name quill)
@@ -102,15 +109,13 @@
   base64
   (nx
    (= :version))
+  (nx-datasets
+   (= :version))
   (hugin
    (= :version))
   (rune
    (= :version))
-  (nx-io
-   (= :version))
-  (nx-cv
-   (= :version))
-  (nx-datasets
+  (sowilo
    (= :version))
   (alcotest :with-test))
  (tags
@@ -135,15 +140,3 @@
   (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
-
-(package
- (name rune)
- (synopsis "")
- (description "")
- (depends
-  (ocaml
-   (>= 5.0.0))
-  dune
-  (nx
-   (= :version))
-  (alcotest :with-test)))

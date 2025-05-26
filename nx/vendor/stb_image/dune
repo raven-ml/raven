@@ -1,0 +1,7 @@
+(library
+ (name stb_image)
+ (public_name nx.io.stb_image)
+ (libraries bigarray)
+ (foreign_stubs
+  (language c)
+  (names ml_stb_image)))

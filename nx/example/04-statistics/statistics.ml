@@ -96,8 +96,8 @@ let () =
 
   print_separator ();
 
-  (* 5. Sorting and unique values *)
-  Printf.printf "5. Sorting and Unique Values\n";
+  (* 5. Sorting *)
+  Printf.printf "5. Sorting\n";
 
   (* Create a smaller array with some repeated values *)
   let unsorted =
@@ -105,17 +105,14 @@ let () =
   in
   Printf.printf "Unsorted array with duplicates:\n%s\n" (to_string unsorted);
 
-  let sorted = sort unsorted in
+  let sorted, _ = sort unsorted in
   Printf.printf "Sorted array (entire array):\n%s\n" (to_string sorted);
 
-  let sorted_axis0 = sort ~axis:0 unsorted in
+  let sorted_axis0, _ = sort ~axis:0 unsorted in
   Printf.printf "Sorted along axis 0 (columns):\n%s\n" (to_string sorted_axis0);
 
-  let sorted_axis1 = sort ~axis:1 unsorted in
+  let sorted_axis1, _ = sort ~axis:1 unsorted in
   Printf.printf "Sorted along axis 1 (rows):\n%s\n" (to_string sorted_axis1);
-
-  let unique_values = unique (flatten unsorted) in
-  Printf.printf "Unique values:\n%s\n" (to_string unique_values);
 
   print_separator ();
 
@@ -149,7 +146,7 @@ let () =
 
   (* Compute geometric mean using fold *)
   let n = size small_array in
-  let log_sum = fold (fun acc x -> acc +. Stdlib.log x) 0.0 small_array in
+  let log_sum = fold_item (fun acc x -> acc +. Stdlib.log x) 0.0 small_array in
   let geom_mean = Stdlib.exp (log_sum /. float_of_int n) in
 
   Printf.printf "Geometric mean (using fold): %.4f\n" geom_mean

@@ -37,7 +37,7 @@ module My_sites = struct
       lookup_file "nx_datasets.cma";
       lookup_file "cairo.cma";
       lookup_file "usdl.cma";
-      lookup_file "nx_cv.cma";
+      lookup_file "sowilo.cma";
       lookup_file "hugin.cma";
       lookup_file "base64.cma";
       lookup_file "rune.cma";

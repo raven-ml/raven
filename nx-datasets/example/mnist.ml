@@ -12,9 +12,11 @@ let () =
 
   Printf.printf "Creating subplots...\n%!";
   for i = 0 to n_show - 1 do
-    let img_slice = Nx.slice [| i; 0; 0; 0 |] [| i + 1; 28; 28; 1 |] x_train in
+    let img_slice =
+      Nx.slice_ranges [ i; 0; 0; 0 ] [ i + 1; 28; 28; 1 ] x_train
+    in
     let img_2d = Nx.reshape [| 28; 28 |] img_slice in
-    let label = Nx.get_item [| i; 0 |] y_train in
+    let label = Nx.get_item [ i; 0 ] y_train in
 
     let ax = Figure.add_subplot ~nrows:3 ~ncols:3 ~index:(i + 1) fig in
 

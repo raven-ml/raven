@@ -1,0 +1,198 @@
+{0 Input/Output Operations}
+
+The {!Nx_io} module provides functions to load and save Nx tensors in various file formats,
+including image formats and NumPy formats.
+
+{1 Features}
+
+- {b Image I/O}: Load and save images in PNG, JPEG, BMP, TGA, and GIF formats
+- {b NumPy .npy format}: Load and save single arrays in NumPy's native format
+- {b NumPy .npz archives}: Load and save multiple named arrays in compressed archives
+- {b Runtime dtype detection}: Handle arrays with types determined at runtime
+- {b Type conversion utilities}: Convert between different numeric types
+
+{1 Image Operations}
+
+{2 Loading Images}
+
+Images can be loaded as uint8 tensors:
+
+{[
+open Nx_io
+
+(* Load as RGB: shape [|height; width; 3|] *)
+let img = load_image "photo.png"
+
+(* Load as grayscale: shape [|height; width|] *)
+let gray = load_image ~grayscale:true "photo.png"
+]}
+
+{2 Saving Images}
+
+Save uint8 tensors as images:
+
+{[
+(* Save RGB or grayscale based on shape *)
+save_image img "output.png"
+]}
+
+Supported shapes:
+- [|height; width|] - Grayscale
+- [|height; width; 1|] - Grayscale with explicit channel
+- [|height; width; 3|] - RGB
+- [|height; width; 4|] - RGBA
+
+{1 NumPy Format Support}
+
+{2 Single Arrays (.npy)}
+
+The .npy format stores a single array with its dtype and shape information:
+
+{[
+(* Load array with runtime-detected type *)
+let P arr = load_npy "data.npy" in
+(* arr : ('a, 'b) Nx.t *)
+
+(* Convert to specific type *)
+let float_arr = load_npy "data.npy" |> to_float32
+
+(* Save array *)
+save_npy my_array "output.npy"
+]}
+
+{2 Archives (.npz)}
+
+The .npz format stores multiple named arrays in a compressed archive:
+
+{[
+(* Load entire archive *)
+let archive = load_npz "bundle.npz" in
+
+(* Access specific array *)
+match Hashtbl.find_opt archive "weights" with
+| Some (P arr) -> 
+    let weights = to_float32 (P arr) in
+    (* use weights *)
+| None -> failwith "weights not found"
+
+(* Load single array directly *)
+let P data = load_npz_member ~path:"bundle.npz" ~name:"data"
+
+(* Save multiple arrays *)
+save_npz [
+  ("inputs", P input_array);
+  ("labels", P label_array);
+  ("weights", P weight_array)
+] "model.npz"
+]}
+
+{1 Packed Arrays and Type Conversions}
+
+Since file formats store type information that's only known at runtime,
+loaded arrays are wrapped in the {!type:Nx_io.packed_nx} type:
+
+{[
+type packed_nx = P : ('a, 'b) Nx.t -> packed_nx
+]}
+
+Convert packed arrays to specific types using the provided functions:
+
+{[
+let packed = load_npy "data.npy" in
+let float32_array = to_float32 packed
+let int32_array = to_int32 packed
+let uint8_array = to_uint8 packed
+(* etc. *)
+]}
+
+Available conversions:
+- Floating point: {!to_float16}, {!to_float32}, {!to_float64}
+- Signed integers: {!to_int8}, {!to_int16}, {!to_int32}, {!to_int64}
+- Unsigned integers: {!to_uint8}, {!to_uint16}
+- Complex: {!to_complex32}, {!to_complex64}
+
+{1 Examples}
+
+{2 Image Processing Pipeline}
+
+{[
+open Nx
+open Nx_io
+
+let process_image input_path output_path =
+  (* Load image *)
+  let img = load_image input_path in
+  
+  (* Convert to float for processing *)
+  let img_float = Nx.astype float32 img in
+  
+  (* Normalize to [0, 1] *)
+  let normalized = Nx.div_s img_float 255.0 in
+  
+  (* Apply some processing *)
+  let processed = 
+    normalized
+    |> Nx.mul_s 0.8  (* Reduce brightness *)
+    |> Nx.add_s 0.1  (* Add bias *)
+  in
+  
+  (* Convert back to uint8 *)
+  let result = 
+    processed
+    |> Nx.mul_s 255.0
+    |> Nx.clip ~min:0.0 ~max:255.0
+    |> Nx.astype uint8
+  in
+  
+  (* Save result *)
+  save_image result output_path
+]}
+
+{2 Model Checkpoint Save/Load}
+
+{[
+let save_checkpoint ~path ~epoch ~model =
+  let weights = Model.get_weights model in
+  let optimizer_state = Model.get_optimizer_state model in
+  
+  save_npz [
+    ("epoch", P (Nx.scalar int32 epoch));
+    ("weights", P weights);
+    ("optimizer_state", P optimizer_state);
+  ] path
+
+let load_checkpoint path =
+  let archive = load_npz path in
+  let epoch = 
+    match Hashtbl.find_opt archive "epoch" with
+    | Some p -> Nx.get_item [] (to_int32 p)
+    | None -> failwith "epoch not found"
+  in
+  let weights = 
+    match Hashtbl.find_opt archive "weights" with
+    | Some p -> to_float32 p
+    | None -> failwith "weights not found"
+  in
+  (epoch, weights)
+]}
+
+{1 Error Handling}
+
+All I/O operations may raise [Failure] exceptions:
+- File not found or inaccessible
+- Unsupported file format
+- Invalid data format
+- Incompatible array shapes (for [save_image])
+- Missing archive members (for [load_npz_member])
+
+{1 Performance Considerations}
+
+- Image loading/saving uses the stb_image libraries (header-only C libraries)
+- NumPy format I/O is implemented in pure OCaml
+- Large .npz archives are loaded entirely into memory
+- For very large datasets, consider loading arrays individually with [load_npz_member]
+
+{1 See Also}
+
+- {!Nx}: Core tensor operations
+- {!Nx_io}: Complete API reference

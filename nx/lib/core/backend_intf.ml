@@ -1,196 +1,199 @@
-open Descriptor
-open Buffer
+(* Primitive tensor operations that every Nx backend must implement. *)
 
+(** Backend interface.
+
+    The [`op_*`] functions mirror tinygrad's UOps. A backend can execute them
+    eagerly, raise effects for a JIT, build a computation graph, etc.
+
+    The frontend handles broadcasting and shape validation, so each operation
+    simply produces a fresh tensor. *)
 module type S = sig
-  type ('a, 'b) b_t
+  type ('a, 'b) t
+  (** Opaque tensor handle.
+
+      ['a] is the OCaml element type; ['b] tags the dtype. *)
+
   type context
+  (** Backend execution context. Carries any state required by the
+      implementation (memory pools, command queues, ...). *)
 
-  val create_context : unit -> context
-  val descriptor : ('a, 'b) b_t -> ('a, 'b) descriptor
-  val buffer : ('a, 'b) b_t -> ('a, 'b) buffer
+  (* lenses *)
 
-  val from_buffer :
-    context -> ('a, 'b) descriptor -> ('a, 'b) buffer -> ('a, 'b) b_t
+  val view : ('a, 'b) t -> View.t
+  (** Return the logical view metadata of [t]. *)
 
-  val view : ('a, 'b) descriptor -> ('a, 'b) b_t -> ('a, 'b) b_t
-  val empty : context -> ('a, 'b) dtype -> int array -> ('a, 'b) b_t
-  val copy : context -> ('a, 'b) b_t -> ('a, 'b) b_t
-  val blit : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val fill : context -> 'a -> ('a, 'b) b_t -> unit
+  val dtype : ('a, 'b) t -> ('a, 'b) Dtype.t
+  (** Element type of [t]. *)
 
-  (** Element‑wise arithmetic **)
+  val context : ('a, 'b) t -> context
+  (** Execution context of [t]. *)
 
-  val add : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val sub : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val mul : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val div : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val pow : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val rem : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
+  val data : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
+  (** Return the raw buffer of [t]. *)
 
-  val fma :
-    context ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    unit
+  (* ops: mirrors tinygrad UOps *)
 
-  (** Element‑wise bitwise operations **)
+  val op_buffer :
+    context -> ('a, 'b) Dtype.t -> int (* size_in_elements *) -> ('a, 'b) t
+  (** Allocate a buffer of [size_in_elements] elements of [dtype]. *)
 
-  val bit_and :
-    context -> (int, 'b) b_t -> (int, 'b) b_t -> (int, 'b) b_t -> unit
+  val op_const_scalar : context -> 'a -> ('a, 'b) Dtype.t -> ('a, 'b) t
+  (** Tensor containing a single scalar [value]. *)
 
-  val bit_or :
-    context -> (int, 'b) b_t -> (int, 'b) b_t -> (int, 'b) b_t -> unit
+  val op_const_array :
+    context -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> ('a, 'b) t
+  (** Tensor containing the elements of [array]. The array must be contiguous.
+  *)
 
-  val bit_xor :
-    context -> (int, 'b) b_t -> (int, 'b) b_t -> (int, 'b) b_t -> unit
+  (* Element-wise Binary Ops *)
 
-  val bit_not : context -> (int, 'b) b_t -> (int, 'b) b_t -> unit
+  (* These ops assume inputs have been broadcast to the same shape and cast to
+     the same compatible dtype by the frontend. The output tensor will also have
+     this common dtype. *)
 
-  (** Comparisons (produce a uint8 mask) **)
+  val op_add : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Element-wise addition. *)
 
-  val equal :
-    context ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    (int, Bigarray.int8_unsigned_elt) b_t ->
-    unit
+  val op_mul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Element-wise multiplication. *)
 
-  val greater :
-    context ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    (int, Bigarray.int8_unsigned_elt) b_t ->
-    unit
+  val op_idiv : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Integer division, truncating. *)
 
-  val greater_equal :
-    context ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    (int, Bigarray.int8_unsigned_elt) b_t ->
-    unit
+  val op_fdiv : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Floating-point division. *)
 
-  val less :
-    context ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    (int, Bigarray.int8_unsigned_elt) b_t ->
-    unit
+  val op_max : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Element-wise maximum. *)
 
-  val less_equal :
-    context ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    (int, Bigarray.int8_unsigned_elt) b_t ->
-    unit
+  val op_mod : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Integer modulus. *)
 
-  (** Unary numeric / transcendental **)
+  val op_pow : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Raise [base] to [exponent]. *)
 
-  val neg : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val abs : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val sign : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val sqrt : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val exp : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val log : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val sin : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val cos : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val tan : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val asin : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val acos : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val atan : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val sinh : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val cosh : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val tanh : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val asinh : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val acosh : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
-  val atanh : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
+  val op_cmplt : ('a, 'b) t -> ('a, 'b) t -> (int, Dtype.uint8_elt) t
+  (** Compare [<]. Returns 0 or 1 as uint8. *)
 
-  (** Essential non‑trivial numerics **)
+  val op_cmpne : ('a, 'b) t -> ('a, 'b) t -> (int, Dtype.uint8_elt) t
+  (** Compare [<>]. Returns 0 or 1 as uint8. *)
 
-  val floor : context -> (float, 'b) b_t -> (float, 'b) b_t -> unit
-  val ceil : context -> (float, 'b) b_t -> (float, 'b) b_t -> unit
-  val round : context -> (float, 'b) b_t -> (float, 'b) b_t -> unit
+  val op_xor : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Bitwise XOR. *)
 
-  val isnan :
-    context -> (float, 'b) b_t -> (int, Bigarray.int8_unsigned_elt) b_t -> unit
+  val op_or : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Bitwise OR. *)
 
-  val isinf :
-    context -> (float, 'b) b_t -> (int, Bigarray.int8_unsigned_elt) b_t -> unit
+  val op_and : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Bitwise AND. *)
 
-  val isfinite :
-    context -> (float, 'b) b_t -> (int, Bigarray.int8_unsigned_elt) b_t -> unit
+  (* Element-wise Unary Ops *)
 
-  (** Masked‐select (“where”) & index‐of‐nonzero **)
+  val op_neg : ('a, 'b) t -> ('a, 'b) t
+  (** Negation (logical not for bools). *)
 
-  val where :
-    context ->
-    (int, Bigarray.int8_unsigned_elt) b_t ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    unit
+  val op_log2 : ('a, 'b) t -> ('a, 'b) t
+  (** Base-2 logarithm. *)
 
-  (** Sorting & selection kernels **)
+  val op_exp2 : ('a, 'b) t -> ('a, 'b) t
+  (** Exponential base 2. *)
 
-  val sort : context -> axis:int -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
+  val op_sin : ('a, 'b) t -> ('a, 'b) t
+  (** Sine. *)
 
-  val argsort :
-    context ->
-    axis:int ->
-    ('a, 'b) b_t ->
-    (int64, Bigarray.int64_elt) b_t ->
-    unit
+  val op_sqrt : ('a, 'b) t -> ('a, 'b) t
+  (** Square root. *)
 
-  val argmax :
-    context ->
-    axis:int ->
-    ('a, 'b) b_t ->
-    (int64, Bigarray.int64_elt) b_t ->
-    unit
+  val op_recip : ('a, 'b) t -> ('a, 'b) t
+  (** Reciprocal. *)
 
-  val argmin :
-    context ->
-    axis:int ->
-    ('a, 'b) b_t ->
-    (int64, Bigarray.int64_elt) b_t ->
-    unit
+  (* Ternary Op *)
 
-  (** Reductions along axes **)
+  val op_where :
+    (int, Dtype.uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Select from [if_true] or [if_false] based on a boolean tensor. *)
 
-  val sum :
-    context ->
-    axes:int array ->
-    keepdims:bool ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    unit
+  (* Reduction Ops *)
 
-  val prod :
-    context ->
-    axes:int array ->
-    keepdims:bool ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    unit
+  val op_reduce_sum :
+    axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** Sum over [axes]. Keeps reduced dimensions if [keepdims] is true. *)
 
-  val max :
-    context ->
-    axes:int array ->
-    keepdims:bool ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    unit
+  val op_reduce_max :
+    axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** Maximum over [axes]. Keeps reduced dimensions if [keepdims] is true. *)
 
-  val min :
-    context ->
-    axes:int array ->
-    keepdims:bool ->
-    ('a, 'b) b_t ->
-    ('a, 'b) b_t ->
-    unit
+  val op_reduce_prod :
+    axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** Product over [axes]. Keeps reduced dimensions if [keepdims] is true. *)
 
-  (** Core linear‐algebra primitives **)
+  (* Movement Ops - manipulate view metadata *)
 
-  val matmul : context -> ('a, 'b) b_t -> ('a, 'b) b_t -> ('a, 'b) b_t -> unit
+  val op_expand : ('a, 'b) t -> int array -> ('a, 'b) t
+  (** Broadcast dimensions of size 1 to a new shape. *)
+
+  val op_reshape : ('a, 'b) t -> int array -> ('a, 'b) t
+  (** Change the logical shape without moving data. *)
+
+  val op_permute : ('a, 'b) t -> int array -> ('a, 'b) t
+  (** Reorder dimensions according to [axes]. *)
+
+  val op_pad : ('a, 'b) t -> (int * int) array -> 'a -> ('a, 'b) t
+  (** Pad with [fill_value] using the given configuration. *)
+
+  val op_shrink : ('a, 'b) t -> (int * int) array -> ('a, 'b) t
+  (** Slice according to the given start/stop pairs. *)
+
+  val op_flip : ('a, 'b) t -> bool array -> ('a, 'b) t
+  (** Flip dimensions where the boolean array is [true]. *)
+
+  val op_cat : ('a, 'b) t list -> int -> ('a, 'b) t
+  (** Concatenate tensors along [axis]. *)
+
+  (* Other Ops *)
+
+  val op_cast : ('a, 'b) t -> ('c, 'd) Dtype.t -> ('c, 'd) t
+  (** Cast elements to [target_dtype]. *)
+
+  val op_contiguous : ('a, 'b) t -> ('a, 'b) t
+  (** Return a C-contiguous tensor. May copy. *)
+
+  val op_copy : ('a, 'b) t -> ('a, 'b) t
+  (** Duplicate [t]. Result has its own buffer. *)
+
+  val op_assign : ('a, 'b) t -> ('a, 'b) t -> unit
+  (** Store [src] into [dst] at the given logical indices. *)
+
+  val op_threefry :
+    (int32, Dtype.int32_elt) t ->
+    (int32, Dtype.int32_elt) t ->
+    (int32, Dtype.int32_elt) t
+  (** Threefry random number generator. *)
+
+  (* Element Access Ops *)
+
+  (* These operations enable lazy, graph-based element access (get/set). This
+     differs from tinygrad's eager realization for __getitem__/__setitem__. We
+     opt for lazy ops to avoid premature realization and CPU<->device transfers.
+     These are primarily for internal Nx slice/put_slice implementations and
+     their direct backend exposure might be refined later. *)
+
+  val op_gather :
+    ('a, 'b) t (* data *) ->
+    (int32, Dtype.int32_elt) t (* indices *) ->
+    int (* axis *) ->
+    ('a, 'b) t
+  (** Gather elements from [data] along [axis] using [indices]. Output shape
+      matches [indices]. Ranks of [data] and [indices] must match. Sizes of
+      [indices] dims != [axis] must be <= [data] corresponding dims. *)
+
+  val op_scatter :
+    ('a, 'b) t (* data_template *) ->
+    (int32, Dtype.int32_elt) t (* indices *) ->
+    ('a, 'b) t (* updates *) ->
+    int (* axis *) ->
+    ('a, 'b) t
+  (** Scatter [updates] into a new tensor shaped like [data_template] along
+      [axis] using [indices]. Returns a new tensor. If multiple updates target
+      the same index, the last one typically wins. *)
 end

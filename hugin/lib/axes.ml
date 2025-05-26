@@ -163,7 +163,7 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
     let current_min = ref Float.infinity in
     let current_max = ref Float.neg_infinity in
     let found_finite = ref false in
-    Nx.iter
+    Nx.unsafe_iter
       (fun v ->
         if Float.is_finite v then (
           found_finite := true;
@@ -194,8 +194,8 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
           let n = Nx.size b.x in
           if n > 0 && n = Nx.size b.height then
             for i = 0 to n - 1 do
-              let x_center = Nx.get_item [| i |] b.x in
-              let height = Nx.get_item [| i |] b.height in
+              let x_center = Nx.get_item [ i ] b.x in
+              let height = Nx.get_item [ i ] b.height in
               let x_left = x_center -. (b.width /. 2.0) in
               let x_right = x_center +. (b.width /. 2.0) in
               let y_bottom = b.bottom in
@@ -224,9 +224,9 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
           (match style.yerr with
           | Some yerr when Nx.size yerr = n ->
               for i = 0 to n - 1 do
-                let x = Nx.get_item [| i |] line.xdata in
-                let y = Nx.get_item [| i |] line.ydata in
-                let dy = Nx.get_item [| i |] yerr in
+                let x = Nx.get_item [ i ] line.xdata in
+                let y = Nx.get_item [ i ] line.ydata in
+                let dy = Nx.get_item [ i ] yerr in
                 if Float.is_finite x && Float.is_finite y && Float.is_finite dy
                 then (
                   update_bounds x (y -. dy);
@@ -236,9 +236,9 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
           match style.xerr with
           | Some xerr when Nx.size xerr = n ->
               for i = 0 to n - 1 do
-                let x = Nx.get_item [| i |] line.xdata in
-                let y = Nx.get_item [| i |] line.ydata in
-                let dx = Nx.get_item [| i |] xerr in
+                let x = Nx.get_item [ i ] line.xdata in
+                let y = Nx.get_item [ i ] line.ydata in
+                let dx = Nx.get_item [ i ] xerr in
                 if Float.is_finite x && Float.is_finite y && Float.is_finite dx
                 then (
                   update_bounds (x -. dx) y;
@@ -338,7 +338,7 @@ let calculate_z_bounds (ax : t) : (float * float) option =
       let current_min = ref Float.infinity in
       let current_max = ref Float.neg_infinity in
       let found_finite = ref false in
-      Nx.iter
+      Nx.unsafe_iter
         (fun v ->
           if Float.is_finite v then (
             found_finite := true;

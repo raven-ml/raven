@@ -3,4 +3,4 @@
 (library
  (name hugin)
  (public_name hugin)
- (libraries nx nx-io cairo2 usdl))
+ (libraries nx nx.io cairo2 usdl))
