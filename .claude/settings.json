@@ -1,0 +1,27 @@
+{
+  "allowedTools": [
+    "Edit",
+    "MultiEdit",
+    "Read",
+    "Write",
+    "LS",
+    "Glob",
+    "Grep",
+    "Bash(dune *)",
+    "Bash(git status)",
+    "Bash(git diff*)",
+    "Bash(git log*)",
+    "Bash(git add*)",
+    "Bash(git commit*)",
+    "Bash(opam*)",
+    "Bash(ocaml*)",
+    "WebFetch",
+    "TodoRead",
+    "TodoWrite"
+  ],
+  "notes": [
+    "Edit/MultiEdit/Read/Write/LS/Glob/Grep are safe file operations",
+    "Bash commands are limited to dune (build system), git (version control), and OCaml tools",
+    "Add more tools as needed with /allowed-tools command or by editing this file"
+  ]
+}

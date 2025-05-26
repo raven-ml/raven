@@ -1,4 +1,0 @@
-(library
- (name npy)
- (public_name nx-io.npy)
- (libraries bigarray camlzip))

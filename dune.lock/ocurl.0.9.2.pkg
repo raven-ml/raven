@@ -1,0 +1,17 @@
+(version 0.9.2)
+
+(install
+ (all_platforms
+  (run %{make} install)))
+
+(build
+ (all_platforms ((action (progn (run ./configure) (run %{make}))))))
+
+(depends
+ (all_platforms
+  (ocaml ocamlfind base-unix conf-libcurl lwt lwt_ppx)))
+
+(source
+ (fetch
+  (url https://ygrek.org/p/release/ocurl/ocurl-0.9.2.tar.gz)
+  (checksum md5=8a4149c6cfa79dabdfde24f308ad1f0c)))

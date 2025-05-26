@@ -1,0 +1,22 @@
+(rule
+ (targets
+  ccopts.sexp
+  cclibs.sexp
+  platform.ml
+  platform.mli
+  ccomp.ml
+  ccomp.mli
+  arch.ml
+  arch.mli)
+ (deps
+  (:discover ../config/discover.exe))
+ (action
+  (run %{discover})))
+
+(library
+ (name objc)
+ (public_name nx.metal.bindings.objc)
+ (libraries objc_c ctypes ctypes.foreign)
+ (c_library_flags
+  :standard
+  (:include cclibs.sexp)))

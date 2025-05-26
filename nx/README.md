@@ -17,8 +17,8 @@ functionality with the benefits of OCaml's strong static type system.
 - Linear algebra routines (`dot`, matrix multiplication, transpose,
   sum, mean, argmax, etc.)
 - Optimized CPU backend; pure OCaml interface leveraging Bigarray
-- Seamless integration with the Raven ecosystem: `nx-io`,
-  `nx-cv`, `quill`, `hugin`, etc.
+- I/O support: image formats (PNG, JPEG), NumPy files (.npy, .npz)
+- Seamless integration with the Raven ecosystem: `sowilo`, `quill`, `hugin`, etc.
 
 ## Quick Start
 

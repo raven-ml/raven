@@ -1,0 +1,3 @@
+(executable
+ (name io_operations)
+ (libraries nx nx.io))

@@ -25,7 +25,7 @@ let to_cairo_surface ?cmap (data : Nx.uint8_t) =
 
   let module BA = Bigarray in
   let src_ba =
-    let ba = Nx.to_bigarray data in
+    let ba = Nx.unsafe_to_bigarray data in
     let size = Array.fold_left ( * ) 1 (Nx.dims data) in
     BA.reshape_1 ba size
   in
@@ -136,7 +136,7 @@ let float32_to_cairo_surface ?(cmap = Artist.Colormap.gray)
 
   let module BA = Bigarray in
   let src_ba : (float, BA.float32_elt, BA.c_layout) BA.Genarray.t =
-    Nx.to_bigarray data
+    Nx.unsafe_to_bigarray data
   in
 
   let clamp01 f = max 0.0 (min 1.0 f) in

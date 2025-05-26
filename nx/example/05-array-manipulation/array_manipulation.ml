@@ -35,11 +35,11 @@ let () =
   Printf.printf "2. Slicing and Indexing\n";
 
   (* Get the first row *)
-  let first_row = get [| 0 |] data in
+  let first_row = get [ 0 ] data in
   Printf.printf "First row:\n%s\n" (to_string first_row);
 
   (* Get the second column *)
-  let second_col = get [| 1 |] data in
+  let second_col = get [ 1 ] data in
   Printf.printf "Second column:\n%s\n" (to_string second_col);
 
   print_separator ();
@@ -94,7 +94,7 @@ let () =
   let to_split = arange float64 0 9 1 in
   Printf.printf "Array to split:\n%s\n" (to_string to_split);
 
-  let splits = split 3 to_split in
+  let splits = split ~axis:0 3 to_split in
   Printf.printf "Split into 3 equal parts:\n";
   List.iteri
     (fun i arr -> Printf.printf "Part %d:\n%s\n" (i + 1) (to_string arr))
@@ -117,10 +117,10 @@ let () =
   let vector = arange float64 0 5 1 in
   Printf.printf "Original vector (1D):\n%s\n" (to_string vector);
 
-  let expanded = expand_dims 0 vector in
+  let expanded = expand_dims [| 0 |] vector in
   Printf.printf "Expanded at axis 0 (row vector):\n%s\n" (to_string expanded);
 
-  let expanded_col = expand_dims 1 vector in
+  let expanded_col = expand_dims [| 1 |] vector in
   Printf.printf "Expanded at axis 1 (column vector):\n%s\n"
     (to_string expanded_col);
 

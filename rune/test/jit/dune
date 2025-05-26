@@ -1,0 +1,12 @@
+(library
+ (name test_rune_jit_support)
+ (modules support)
+ (wrapped false)
+ (libraries rune_jit alcotest))
+
+(tests
+ (names test_lower test_schedule test_metal)
+ (deps
+  (source_tree golden))
+ (modules :standard \ support)
+ (libraries rune_jit alcotest test_rune_jit_support))

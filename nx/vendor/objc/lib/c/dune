@@ -1,0 +1,28 @@
+(library
+ (name objc_c)
+ (public_name rune.objc.c)
+ (libraries ctypes ctypes.foreign)
+ (c_library_flags
+  :standard
+  (:include ../cclibs.sexp))
+ (ctypes
+  (external_library_name libobjc)
+  (build_flags_resolver
+   (vendored
+    (c_flags
+     :standard
+     (:include ../ccopts.sexp))
+    (c_library_flags
+     :standard
+     (:include ../cclibs.sexp))))
+  (headers
+   (include "objc/runtime.h"))
+  (type_description
+   (instance Types)
+   (functor Type_description))
+  (function_description
+   (concurrency unlocked)
+   (instance Functions)
+   (functor Function_description))
+  (generated_types Types_generated)
+  (generated_entry_point objc_c)))

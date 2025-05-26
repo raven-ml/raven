@@ -1,4 +1,4 @@
 (library
  (name nx_core)
- (public_name nx.internal)
+ (public_name nx.core)
  (libraries))

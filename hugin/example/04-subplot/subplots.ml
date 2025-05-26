@@ -44,7 +44,7 @@ let () =
   (* --- 2. Plot Y only --- *)
   let ax2 = Figure.add_subplot ~nrows ~ncols ~index:2 fig in
   let x_for_y2 = linspace 0.0 20.0 100 in
-  let y2 = N.map (fun x -> exp (-.x /. 10.0) *. sin x) x_for_y2 in
+  let y2 = N.unsafe_map (fun x -> exp (-.x /. 10.0) *. sin x) x_for_y2 in
   let _ax2 =
     ax2
     |> P.plot_y ~y:y2 ~color:A.Color.green ~marker:A.Point
@@ -57,7 +57,7 @@ let () =
   let ax3 = Figure.add_subplot ~nrows ~ncols ~index:3 fig in
   let x3_rand = N.rand N.Float32 [| 50 |] in
   let x3 = N.mul x3_rand (N.scalar N.Float32 10.0) in
-  let y3 = N.map (fun x -> x +. Random.float 2.0 -. 1.0) x3 in
+  let y3 = N.unsafe_map (fun x -> x +. Random.float 2.0 -. 1.0) x3 in
   let _ax3 =
     ax3
     |> P.scatter ~x:x3 ~y:y3 ~s:50.0
@@ -97,8 +97,8 @@ let () =
   (* --- 6. Step Plot --- *)
   let ax6 = Figure.add_subplot ~nrows ~ncols ~index:6 fig in
   let x6 = linspace 0.0 10.0 11 in
-  let y6 = N.map (fun x -> sin (x /. 2.0)) x6 in
-  let y6_shifted = N.map (fun y -> y -. 0.5) y6 in
+  let y6 = N.unsafe_map (fun x -> sin (x /. 2.0)) x6 in
+  let y6_shifted = N.unsafe_map (fun y -> y -. 0.5) y6 in
   let _ax6 =
     ax6
     |> P.step ~x:x6 ~y:y6 ~where:A.Mid ~color:A.Color.magenta
@@ -130,7 +130,7 @@ let () =
   let ax8 = Figure.add_subplot ~nrows ~ncols ~index:8 fig in
   let x8 = linspace 0.5 5.5 6 in
   let y8_inv = N.div (N.scalar N.Float32 1.0) x8 in
-  let y8 = N.map (fun y -> y +. (Random.float 0.2 -. 0.1)) y8_inv in
+  let y8 = N.unsafe_map (fun y -> y +. (Random.float 0.2 -. 0.1)) y8_inv in
   let yerr8_data = Array.init 6 (fun _ -> Random.float 0.1 +. 0.05) in
   let yerr8 = N.create N.Float32 [| 6 |] yerr8_data in
   let xerr8_data = Array.init 6 (fun _ -> Random.float 0.2 +. 0.1) in
@@ -208,7 +208,7 @@ let () =
   let ax12 = Figure.add_subplot ~nrows ~ncols ~index:12 fig in
   let x12 = linspace (-5.0) 5.0 50 in
   let y12_tanh = N.tanh x12 in
-  let y12_step = N.map (fun x -> if x > 0.0 then 1.0 else -1.0) x12 in
+  let y12_step = N.unsafe_map (fun x -> if x > 0.0 then 1.0 else -1.0) x12 in
   let _ax12 =
     ax12
     |> P.plot ~x:x12 ~y:y12_tanh ~color:A.Color.black ~label:"tanh(x)"

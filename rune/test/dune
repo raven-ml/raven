@@ -1,3 +1,8 @@
-(test
- (name test_rune)
+(tests
+ (names
+  test_rune
+  test_grad_ops
+  test_advanced_grad
+  test_jit_advanced
+  test_rune_prev)
  (libraries rune alcotest))

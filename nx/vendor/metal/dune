@@ -1,0 +1,5 @@
+(library
+ (name metal)
+ (public_name nx.metal.bindings)
+ (flags :standard -ccopt "-framework CoreGraphics" -ccopt "-framework Metal")
+ (libraries objc))

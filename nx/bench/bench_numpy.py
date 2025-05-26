@@ -13,9 +13,9 @@ def run_benchmark(f, iterations):
     times = [measure_time(f) for _ in range(iterations)]
     return statistics.mean(times)
 
-sizes = [50, 100, 500, 1000, 2000]
+sizes = [50, 100, 500]
 dtypes = [np.float32, np.float64]
-iterations = 100
+iterations = 3  # Reduced for consistency with OCaml benchmarks
 
 results = []
 for size in sizes:
@@ -23,20 +23,34 @@ for size in sizes:
         a = np.random.rand(size, size).astype(dtype)
         b = np.random.rand(size, size).astype(dtype)
 
+        # Fixed order to match Nx benchmarks
         ops = [
             ("Addition",       lambda: a + b),
-            # ("Multiplication", lambda: a * b),
-            # ("Subtraction",    lambda: a - b),
-            # ("Division",       lambda: a / b),
-            # ("Power",          lambda: np.power(a, b)),
-            # ("Maximum",        lambda: np.maximum(a, b)),
-            # ("Minimum",        lambda: np.minimum(a, b)),
+            ("Multiplication", lambda: a * b),
+            ("Square",         lambda: np.square(a)),
         ]
-
+        
+        # Matrix operations - skip for large sizes
+        if size <= 100:
+            ops.append(("MatMul", lambda: np.matmul(a, b)))
+        
+        # Reduction operations
+        ops.append(("Sum", lambda: np.sum(a)))
+        
+        # Float-specific operations
+        if dtype in [np.float32, np.float64]:
+            ops.extend([
+                ("Sqrt",       lambda: np.sqrt(a)),
+                ("Exp",        lambda: np.exp(a)),
+            ])
+        
         for name, func in ops:
             full_name = f"{name} on {size}x{size} {dtype.__name__}"
             mean_ns = run_benchmark(func, iterations)
             results.append((full_name, mean_ns))
+
+# Sort results by time (fastest first)
+results.sort(key=lambda x: x[1])
 
 # Find the fastest time to normalize against
 fastest_ns = min(ns for _, ns in results)
@@ -51,6 +65,8 @@ header = f"┌──────────────────────
 divider = f"├─────────────────────────────────────┼{'─' * time_col_width}┼────────────┤"
 footer = f"└─────────────────────────────────────┴{'─' * time_col_width}┴────────────┘"
 
+print("# NumPy Benchmarks")
+print()
 print(header)
 print(f"│ Name                                │ {'Time/Run (ns)':>{time_col_width-2}} │ Percentage │")
 print(divider)

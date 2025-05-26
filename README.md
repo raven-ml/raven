@@ -21,10 +21,9 @@ Raven is currently in **pre-alpha** and we're seeking user feedback:
 Raven is a constellation of sub-projects, each addressing a specific aspect of the machine learning and data science workflow:
 
 - **[Nx](nx/)**: The core of Raven, providing high-performance numerical computation with multi-device support (CPU, GPU), similar to NumPy but with OCaml's type safety.
-  - **[Nx-CV](nx-cv/)**: A collection of computer vision utilities built on top of Nx.
-  - **[Nx-IO](nx-io/)**: A library for reading and writing Nx data in various formats.
   - **[Nx-Datasets](nx-datasets/)**: Easy access to popular machine learning and data.
 science datasets as Nxs.
+- **[Sowilo](sowilo/)**: A collection of computer vision utilities built on top of Nx.
 - **[Quill](quill/)**: An interactive notebook application for data exploration, prototyping, and knowledge sharing.
 - **[Hugin](hugin/)**: A visualization library that produces publication-quality plots and charts.
 - **[Rune](rune/)**: A library for automatic differentiation and JIT compilation, inspired by JAX.
@@ -34,14 +33,14 @@ science datasets as Nxs.
 
 The table below compares Python's popular data science libraries with their Raven counterparts. For detailed code examples, see the linked documentation files.
 
-| Task                      | Python Ecosystem    | Raven Ecosystem     | Comparison Guide                                   | Examples                     |
-| ------------------------- | ------------------- | ------------------- | -------------------------------------------------- | ---------------------------- |
-| Numerical Computing       | NumPy               | [Nx](nx/) | [Comparison Guide](docs/compare_python_nx.md) | [Examples](nx/example/) |
-| Visualization             | Matplotlib, Seaborn | [Hugin](hugin/)     | [Comparison Guide](docs/compare_python_hugin.md)   | [Examples](hugin/example/)   |
-| Notebooks                 | Jupyter             | [Quill](quill/)     | N/A                                                | N/A                          |
-| Automatic Differentiation | JAX                 | [Rune](rune/)       | *In progress*                                      | *In progress*                |
-| Dataframe Manipulation    | Pandas              | *Not yet*           | N/A                                                | N/A                          |
-| Deep Learning             | Pytorch, Tensorflow | *Not yet*           | N/A                                                | N/A                          |
+| Task                      | Python Ecosystem    | Raven Ecosystem | Comparison Guide                                 | Examples                   |
+| ------------------------- | ------------------- | --------------- | ------------------------------------------------ | -------------------------- |
+| Numerical Computing       | NumPy               | [Nx](nx/)       | [Comparison Guide](docs/compare_python_nx.md)    | [Examples](nx/example/)    |
+| Visualization             | Matplotlib, Seaborn | [Hugin](hugin/) | [Comparison Guide](docs/compare_python_hugin.md) | [Examples](hugin/example/) |
+| Notebooks                 | Jupyter             | [Quill](quill/) | N/A                                              | N/A                        |
+| Automatic Differentiation | JAX                 | [Rune](rune/)   | *In progress*                                    | *In progress*              |
+| Dataframe Manipulation    | Pandas              | *Not yet*       | N/A                                              | N/A                        |
+| Deep Learning             | Pytorch, Tensorflow | *Not yet*       | N/A                                              | N/A                        |
 
 ## Contributing
 

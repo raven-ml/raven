@@ -22,6 +22,9 @@ Each numbered folder is a self-contained example:
 6. **06-linear-algebra**  
    Matrix ops (`matmul`, `inv`, `solve`), eigendecomposition (`eig`, `eigh`), SVD, and a simple linear regression example.
 
+7. **07-io**  
+   File I/O operations: reading/writing NPY files, NPZ archives, and image files (PNG/JPEG).
+
 ## Building & Running
 
 From the root of the Raven repository:
@@ -33,6 +36,7 @@ dune exec nx/example/03-broadcasting/broadcasting.exe
 dune exec nx/example/04-statistics/statistics.exe
 dune exec nx/example/05-array-manipulation/array_manipulation.exe
 dune exec nx/example/06-linear-algebra/linear_algebra.exe
+dune exec nx/example/07-io/io_operations.exe
 ```
 
 Or cd into a folder:

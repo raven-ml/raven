@@ -8,14 +8,14 @@ let render_line2d cr (t_ctx : Transforms.context2d) (l : Artist.line2d) =
   | DashDot -> Cairo.set_dash cr ~ofs:0.0 [| 6.0; 3.0; 1.0; 3.0 |]
   | Solid | None -> Cairo.set_dash cr ~ofs:0.0 [||]);
 
-  let x0 = Nx.get_item [| 0 |] l.xdata in
-  let y0 = Nx.get_item [| 0 |] l.ydata in
+  let x0 = Nx.get_item [ 0 ] l.xdata in
+  let y0 = Nx.get_item [ 0 ] l.ydata in
   let px0, py0 = Transforms.transform t_ctx ~x:x0 ~y:y0 in
   Cairo.move_to cr px0 py0;
 
   for i = 1 to Nx.size l.xdata - 1 do
-    let x = Nx.get_item [| i |] l.xdata in
-    let y = Nx.get_item [| i |] l.ydata in
+    let x = Nx.get_item [ i ] l.xdata in
+    let y = Nx.get_item [ i ] l.ydata in
     let px, py = Transforms.transform t_ctx ~x ~y in
     Cairo.line_to cr px py
   done;
@@ -73,9 +73,9 @@ let render_line3d cr (t_ctx : Transforms.context3d) (l : Artist.line3d) =
 
   let first_visible_point = ref true in
   for i = 0 to Nx.size l.xdata - 1 do
-    let x = Nx.get_item [| i |] l.xdata in
-    let y = Nx.get_item [| i |] l.ydata in
-    let z = Nx.get_item [| i |] l.zdata in
+    let x = Nx.get_item [ i ] l.xdata in
+    let y = Nx.get_item [ i ] l.ydata in
+    let z = Nx.get_item [ i ] l.zdata in
     match Transforms.transform3d t_ctx ~x ~y ~z with
     | Some (px, py) ->
         if !first_visible_point then Cairo.move_to cr px py
@@ -99,8 +99,8 @@ let render_bar cr (t_ctx : Transforms.context2d) (b : Artist.bar) =
   Render_utils.set_source_color cr b.color;
   let half_width = b.width /. 2.0 in
   for i = 0 to n - 1 do
-    let x_center = Nx.get_item [| i |] b.x in
-    let height = Nx.get_item [| i |] b.height in
+    let x_center = Nx.get_item [ i ] b.x in
+    let height = Nx.get_item [ i ] b.height in
     let y_bottom = b.bottom in
     let y_top = y_bottom +. height in
 
@@ -160,8 +160,8 @@ let render_scatter cr (t_ctx : Transforms.context2d) (s : Artist.scatter) =
   let triangle_base = triangle_height *. 0.866 *. 2. /. sqrt 3. in
 
   for i = 0 to n - 1 do
-    let x = Nx.get_item [| i |] s.xdata in
-    let y = Nx.get_item [| i |] s.ydata in
+    let x = Nx.get_item [ i ] s.xdata in
+    let y = Nx.get_item [ i ] s.ydata in
     let px, py = Transforms.transform t_ctx ~x ~y in
 
     if Float.is_finite px && Float.is_finite py then
@@ -217,13 +217,13 @@ let render_errorbar cr (t_ctx : Transforms.context2d) (line : Artist.line2d)
     Render_utils.set_source_color cr style.color;
     Cairo.set_line_width cr style.linewidth;
     for i = 0 to n - 1 do
-      let x = Nx.get_item [| i |] line.xdata in
-      let y = Nx.get_item [| i |] line.ydata in
+      let x = Nx.get_item [ i ] line.xdata in
+      let y = Nx.get_item [ i ] line.ydata in
       let px, py = Transforms.transform t_ctx ~x ~y in
 
       if Float.is_finite px && Float.is_finite py then (
         (if has_yerr then
-           let y_err_val = Nx.get_item [| i |] (Option.get style.yerr) in
+           let y_err_val = Nx.get_item [ i ] (Option.get style.yerr) in
            let _px_low, py_low =
              Transforms.transform t_ctx ~x ~y:(y -. y_err_val)
            in
@@ -244,7 +244,7 @@ let render_errorbar cr (t_ctx : Transforms.context2d) (line : Artist.line2d)
                Cairo.stroke cr)));
 
         if has_xerr then
-          let x_err_val = Nx.get_item [| i |] (Option.get style.xerr) in
+          let x_err_val = Nx.get_item [ i ] (Option.get style.xerr) in
           let px_low, _py_low =
             Transforms.transform t_ctx ~x:(x -. x_err_val) ~y
           in
@@ -273,8 +273,8 @@ let render_errorbar cr (t_ctx : Transforms.context2d) (line : Artist.line2d)
 
     Render_utils.set_source_color cr marker_color;
     for i = 0 to n - 1 do
-      let x = Nx.get_item [| i |] line.xdata in
-      let y = Nx.get_item [| i |] line.ydata in
+      let x = Nx.get_item [ i ] line.xdata in
+      let y = Nx.get_item [ i ] line.ydata in
       let px, py = Transforms.transform t_ctx ~x ~y in
 
       if Float.is_finite px && Float.is_finite py then
@@ -330,8 +330,8 @@ let render_step cr (t_ctx : Transforms.context2d) (st : Artist.step) =
   | DashDot -> Cairo.set_dash cr ~ofs:0.0 [| 6.0; 3.0; 1.0; 3.0 |]
   | Solid | None -> Cairo.set_dash cr ~ofs:0.0 [||]);
 
-  let x0 = Nx.get_item [| 0 |] st.xdata in
-  let y0 = Nx.get_item [| 0 |] st.ydata in
+  let x0 = Nx.get_item [ 0 ] st.xdata in
+  let y0 = Nx.get_item [ 0 ] st.ydata in
   let px0, py0 = Transforms.transform t_ctx ~x:x0 ~y:y0 in
 
   if Float.is_finite px0 && Float.is_finite py0 then Cairo.move_to cr px0 py0
@@ -339,15 +339,15 @@ let render_step cr (t_ctx : Transforms.context2d) (st : Artist.step) =
   let last_valid = ref (Float.is_finite px0 && Float.is_finite py0) in
 
   for i = 0 to Nx.size st.xdata - 2 do
-    let x1 = Nx.get_item [| i + 1 |] st.xdata in
-    let y1 = Nx.get_item [| i + 1 |] st.ydata in
+    let x1 = Nx.get_item [ i + 1 ] st.xdata in
+    let y1 = Nx.get_item [ i + 1 ] st.ydata in
     let px1, py1 = Transforms.transform t_ctx ~x:x1 ~y:y1 in
     let current_valid = Float.is_finite px1 && Float.is_finite py1 in
 
     if current_valid then
       if !last_valid then (
-        let prev_x = Nx.get_item [| i |] st.xdata in
-        let prev_y = Nx.get_item [| i |] st.ydata in
+        let prev_x = Nx.get_item [ i ] st.xdata in
+        let prev_y = Nx.get_item [ i ] st.ydata in
         let prev_px, prev_py = Transforms.transform t_ctx ~x:prev_x ~y:prev_y in
 
         match st.where with
@@ -380,9 +380,9 @@ let render_fill_between cr (t_ctx : Transforms.context2d)
   else
     let is_valid i =
       try
-        let x = Nx.get_item [| i |] fb.xdata in
-        let y1 = Nx.get_item [| i |] fb.y1data in
-        let y2 = Nx.get_item [| i |] fb.y2data in
+        let x = Nx.get_item [ i ] fb.xdata in
+        let y1 = Nx.get_item [ i ] fb.y1data in
+        let y2 = Nx.get_item [ i ] fb.y2data in
         let px, py1 = Transforms.transform t_ctx ~x ~y:y1 in
         let _, py2 = Transforms.transform t_ctx ~x ~y:y2 in
 
@@ -392,7 +392,7 @@ let render_fill_between cr (t_ctx : Transforms.context2d)
         let where_cond =
           match fb.where with
           | None -> true
-          | Some w -> Nx.get_item [| i |] w > 0.
+          | Some w -> Nx.get_item [ i ] w > 0.
         in
         finite && where_cond
       with _ -> false
@@ -421,9 +421,9 @@ let render_fill_between cr (t_ctx : Transforms.context2d)
         let segment_y2_points_rev = ref [] in
 
         while !i < n && is_valid !i do
-          let x = Nx.get_item [| !i |] fb.xdata in
-          let y1 = Nx.get_item [| !i |] fb.y1data in
-          let y2 = Nx.get_item [| !i |] fb.y2data in
+          let x = Nx.get_item [ !i ] fb.xdata in
+          let y1 = Nx.get_item [ !i ] fb.y1data in
+          let y2 = Nx.get_item [ !i ] fb.y2data in
           let px, py1 = Transforms.transform t_ctx ~x ~y:y1 in
           let _, py2 = Transforms.transform t_ctx ~x ~y:y2 in
           segment_y1_points := (px, py1) :: !segment_y1_points;

@@ -6,7 +6,7 @@
   %{lib-private:nx_core:nx_core.cma}
   %{lib-private:nx_native:nx_native.cma}
   ; nx-io
-  %{lib:nx-io:nx_io.cmi}
+  %{lib:nx.io:nx_io.cmi}
   %{lib-private:nx_io:nx_io.cma}
   ; %{lib:bigarray:bigarray.cma}
   %{project_root}/_build/_private/default/.pkg/camlzip/target/lib/zip/zip.cma
@@ -22,9 +22,9 @@
   %{project_root}/_build/_private/default/.pkg/ocurl/target/lib/curl/curl.cma
   %{project_root}/_build/_private/default/.pkg/csv/target/lib/csv/csv.cma
   %{project_root}/_build/_private/default/.pkg/csv/target/lib/csv/csv.cma
-  ; nx-cv
-  %{lib:nx-cv:nx_cv.cmi}
-  %{lib-private:nx_cv:nx_cv.cma}
+  ; sowilo
+  %{lib:sowilo:sowilo.cmi}
+  %{lib-private:sowilo:sowilo.cma}
   ; hugin
   %{lib:base64:base64.cmi}
   %{lib:base64:base64.cma}
@@ -52,8 +52,8 @@
   zip.cma
   curl.cma
   csv.cma
-  nx_cv.cmi
-  nx_cv.cma
+  sowilo.cmi
+  sowilo.cma
   hugin.cmi
   hugin.cma
   base64.cmi
@@ -69,7 +69,7 @@
    (copy %{lib-private:nx:nx.cma} nx.cma)
    (copy %{lib-private:nx_core:nx_core.cma} nx_core.cma)
    (copy %{lib-private:nx_native:nx_native.cma} nx_native.cma)
-   (copy %{lib:nx-io:nx_io.cmi} nx_io.cmi)
+   (copy %{lib:nx.io:nx_io.cmi} nx_io.cmi)
    (copy %{lib-private:nx_io:nx_io.cma} nx_io.cma)
    ;  (copy %{lib:bigarray:bigarray.cma} bigarray.cma)
    (copy %{lib-private:npy:npy.cma} npy.cma)
@@ -89,8 +89,8 @@
    (copy
     %{project_root}/_build/_private/default/.pkg/csv/target/lib/csv/csv.cma
     csv.cma)
-   (copy %{lib:nx-cv:nx_cv.cmi} nx_cv.cmi)
-   (copy %{lib-private:nx_cv:nx_cv.cma} nx_cv.cma)
+   (copy %{lib:sowilo:sowilo.cmi} sowilo.cmi)
+   (copy %{lib-private:sowilo:sowilo.cma} sowilo.cma)
    (copy %{lib:base64:base64.cmi} base64.cmi)
    (copy %{lib:base64:base64.cma} base64.cma)
    (copy %{lib:hugin:hugin.cmi} hugin.cmi)
@@ -124,8 +124,8 @@
   zip.cma
   curl.cma
   csv.cma
-  nx_cv.cmi
-  nx_cv.cma
+  sowilo.cmi
+  sowilo.cma
   base64.cmi
   base64.cma
   hugin.cmi

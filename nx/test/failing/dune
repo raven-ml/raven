@@ -1,0 +1,7 @@
+(executables
+ (names
+  bug_logspace_division_by_zero
+  bug_slice_batch_process_bounds
+  bug_set_slice_debug
+  bug_blit_overlapping)
+ (libraries nx))

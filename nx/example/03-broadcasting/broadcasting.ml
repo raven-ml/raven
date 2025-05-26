@@ -14,7 +14,7 @@ let () =
   Printf.printf "Original matrix:\n%s\n" (to_string matrix);
 
   (* We can use mul_scalar for this specific case *)
-  let scaled = mul_scalar matrix 2.0 in
+  let scaled = mul_s matrix 2.0 in
   Printf.printf "Matrix x 2.0 (using mul_scalar):\n%s\n\n" (to_string scaled);
 
   (* 2. Matrix and vector operations *)

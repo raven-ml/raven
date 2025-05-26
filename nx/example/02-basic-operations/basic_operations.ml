@@ -20,12 +20,12 @@ let () =
   Printf.printf "Array B:\n%s\n\n" (to_string b);
 
   (* 1. Accessing elements *)
-  let element = get_item [| 0; 1 |] a in
+  let element = get_item [ 0; 1 ] a in
   Printf.printf "Element A[0,1]: %.1f\n\n" element;
 
   (* 2. Setting elements *)
   let a_modified = copy a in
-  set_item [| 0; 1 |] 10.0 a_modified;
+  set_item [ 0; 1 ] 10.0 a_modified;
   Printf.printf "Modified A (changed A[0,1] to 10.0):\n%s\n\n"
     (to_string a_modified);
 
@@ -43,12 +43,12 @@ let () =
   Printf.printf "A / B (element-wise):\n%s\n\n" (to_string quotient);
 
   (* 4. Scalar operations *)
-  let scaled = mul_scalar a 2.0 in
+  let scaled = mul_s a 2.0 in
   Printf.printf "A * 2.0:\n%s\n\n" (to_string scaled);
 
   (* 5. In-place operations *)
   let a_inplace = copy a in
-  let _ = add_inplace a_inplace b in
+  let _ = iadd a_inplace b in
   (* a_inplace += b *)
   Printf.printf "A += B (in-place):\n%s\n\n" (to_string a_inplace);
 
@@ -71,7 +71,7 @@ let () =
   Printf.printf "A flattened:\n%s\n\n" (to_string flattened);
 
   (* 9. Functional operations *)
-  let mapped = map (fun x -> (x *. x) +. 1.0) a in
+  let mapped = map_item (fun x -> (x *. x) +. 1.0) a in
   Printf.printf "A mapped with f(x) = x² + 1:\n%s\n\n" (to_string mapped);
 
   (* 10. Comparison operations *)
