@@ -163,7 +163,7 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
     let current_min = ref Float.infinity in
     let current_max = ref Float.neg_infinity in
     let found_finite = ref false in
-    Nx.unsafe_iter
+    Nx.iter_item
       (fun v ->
         if Float.is_finite v then (
           found_finite := true;
@@ -338,7 +338,7 @@ let calculate_z_bounds (ax : t) : (float * float) option =
       let current_min = ref Float.infinity in
       let current_max = ref Float.neg_infinity in
       let found_finite = ref false in
-      Nx.unsafe_iter
+      Nx.iter_item
         (fun v ->
           if Float.is_finite v then (
             found_finite := true;
