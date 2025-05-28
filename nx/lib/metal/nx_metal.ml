@@ -25,13 +25,22 @@ let create_context () =
 
 let data : type a b. (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t =
  fun t ->
-  (* Create a bigarray that shares memory with the Metal buffer *)
+  (* Create a bigarray with the size of the view *)
   let size = Internal.numel t in
   let kind = Dtype.kind_of_dtype t.dtype in
   let ba = Bigarray.Array1.create kind Bigarray.c_layout size in
-  (* Copy data from Metal buffer to bigarray *)
+  (* Copy data from Metal buffer to bigarray, handling views correctly *)
   Internal.copy_to_bigarray t ba;
   ba
+
+let op_contiguous t =
+  (* Check if view is contiguous AND buffer has the expected size *)
+  let view_size = View.numel t.view in
+  let expected_bytes = view_size * Internal.sizeof_dtype t.dtype in
+  let actual_bytes = t.buffer.size_bytes in
+  
+  if View.is_contiguous t.view && actual_bytes >= expected_bytes then t
+  else Ops_movement.make_contiguous t.context t
 
 (* Buffer operations *)
 let op_buffer ctx dtype size_in_elements =
@@ -77,8 +86,8 @@ let op_const_array : type a b.
 
 (* Movement operations *)
 let op_expand t new_shape =
-  (* Expand just changes the view metadata *)
-  { t with view = View.create new_shape }
+  (* Expand changes the view metadata, setting strides to 0 for broadcast dimensions *)
+  { t with view = View.expand t.view new_shape }
 
 let op_reshape t new_shape =
   (* Reshape changes the view metadata *)
@@ -150,9 +159,6 @@ and op_copy t =
   Ops_movement.copy ctx t out;
   out
 
-let op_contiguous t =
-  if View.is_contiguous t.view then t
-  else Ops_movement.make_contiguous t.context t
 
 (* Binary operations *)
 let op_add a b = Ops_binary.add a.context a b

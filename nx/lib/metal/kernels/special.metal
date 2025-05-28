@@ -224,6 +224,25 @@ kernel void scatter_int(device int* out [[buffer(0)]],
     out[out_idx] = updates[gid];
 }
 
+kernel void scatter_uchar(device uchar* out [[buffer(0)]],
+                         device const int* indices [[buffer(1)]],
+                         device const uchar* updates [[buffer(2)]],
+                         constant uint& axis_size [[buffer(3)]],
+                         constant uint& inner_size [[buffer(4)]],
+                         constant uint& indices_size [[buffer(5)]],
+                         uint gid [[thread_position_in_grid]]) {
+    if (gid >= indices_size * inner_size) return;
+    
+    uint idx_pos = gid / inner_size;
+    uint inner_pos = gid % inner_size;
+    
+    int idx = indices[idx_pos];
+    if (idx < 0) idx += axis_size;
+    
+    uint out_idx = uint(idx) * inner_size + inner_pos;
+    out[out_idx] = updates[gid];
+}
+
 // Threefry random number generator (simplified version)
 kernel void threefry_int32(device int* out [[buffer(0)]],
                           device const int* key [[buffer(1)]],

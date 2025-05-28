@@ -2,6 +2,17 @@ open Nx_core
 open Metal
 
 let where ctx cond if_true if_false =
+  (* Ensure inputs are contiguous for the kernel *)
+  let cond = 
+    if View.is_contiguous cond.Internal.view then cond 
+    else Ops_movement.make_contiguous ctx cond in
+  let if_true = 
+    if View.is_contiguous if_true.Internal.view then if_true 
+    else Ops_movement.make_contiguous ctx if_true in
+  let if_false = 
+    if View.is_contiguous if_false.Internal.view then if_false 
+    else Ops_movement.make_contiguous ctx if_false in
+
   let out_size = Internal.numel if_true in
   let size_bytes = out_size * Internal.sizeof_dtype if_true.Internal.dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in

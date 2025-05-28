@@ -93,6 +93,12 @@ let make_contiguous ctx t =
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp size_val)
         ~length:4 ~index:5;
+      
+      (* Pass the offset *)
+      let offset_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.view))) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp offset_val)
+        ~length:4 ~index:6;
 
       let threads_per_group, num_groups =
         Internal.compute_thread_groups (Internal.numel t)
@@ -241,16 +247,25 @@ let cat ctx tensors axis =
       in
       let out = { out with view = View.create shape } in
 
-      (* Concatenate each tensor *)
+      (* Use the concat_axis kernel that handles all axes *)
       let dtype_suffix = Internal.dtype_to_metal_type first.dtype in
-      let kernel_name = Printf.sprintf "concat_%s" dtype_suffix in
+      let kernel_name = Printf.sprintf "concat_axis_%s" dtype_suffix in
       let func = Kernels.get_special_kernel ctx kernel_name in
       let pipeline = Kernels.create_compute_pipeline ctx.device func in
-
-      let offset = ref 0 in
+      
+      let ndim = Array.length shape in
+      let axis_offset = ref 0 in
+      
       List.iter
         (fun t ->
-          let in_size = Internal.numel t in
+          (* Make input contiguous if needed *)
+          let t_contig = 
+            if View.is_contiguous t.Internal.view then t 
+            else make_contiguous ctx t 
+          in
+          
+          let in_shape = Internal.shape t_contig in
+          let in_size = Internal.numel t_contig in
 
           Internal.with_command_buffer ctx (fun cmd_buffer ->
               let encoder = ComputeCommandEncoder.on_buffer cmd_buffer in
@@ -259,21 +274,37 @@ let cat ctx tensors axis =
               ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:0
                 out.Internal.buffer.buffer;
               ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:1
-                t.Internal.buffer.buffer;
+                t_contig.Internal.buffer.buffer;
 
-              let in_size_val =
-                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int in_size))
-              in
-              let offset_val =
-                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int !offset))
-              in
-
+              (* Set shape arrays *)
+              let out_shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
+              let in_shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
+              for i = 0 to ndim - 1 do
+                Ctypes.(out_shape_arr +@ i <-@ Unsigned.UInt32.of_int shape.(i));
+                Ctypes.(in_shape_arr +@ i <-@ Unsigned.UInt32.of_int in_shape.(i))
+              done;
+              
               ComputeCommandEncoder.set_bytes encoder
-                ~bytes:Ctypes.(to_voidp in_size_val)
-                ~length:4 ~index:2;
+                ~bytes:Ctypes.(to_voidp out_shape_arr)
+                ~length:(ndim * 4) ~index:2;
               ComputeCommandEncoder.set_bytes encoder
-                ~bytes:Ctypes.(to_voidp offset_val)
-                ~length:4 ~index:3;
+                ~bytes:Ctypes.(to_voidp in_shape_arr)
+                ~length:(ndim * 4) ~index:3;
+              
+              (* Set axis, axis_offset, and ndim *)
+              let axis_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int axis)) in
+              let axis_offset_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int !axis_offset)) in
+              let ndim_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int ndim)) in
+              
+              ComputeCommandEncoder.set_bytes encoder
+                ~bytes:Ctypes.(to_voidp axis_val)
+                ~length:4 ~index:4;
+              ComputeCommandEncoder.set_bytes encoder
+                ~bytes:Ctypes.(to_voidp axis_offset_val)
+                ~length:4 ~index:5;
+              ComputeCommandEncoder.set_bytes encoder
+                ~bytes:Ctypes.(to_voidp ndim_val)
+                ~length:4 ~index:6;
 
               let threads_per_group, num_groups =
                 Internal.compute_thread_groups in_size
@@ -290,7 +321,7 @@ let cat ctx tensors axis =
                 ~threads_per_threadgroup:group_size;
               ComputeCommandEncoder.end_encoding encoder);
 
-          offset := !offset + in_size)
+          axis_offset := !axis_offset + in_shape.(axis))
         tensors;
 
       out
