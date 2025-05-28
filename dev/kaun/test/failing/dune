@@ -1,0 +1,3 @@
+(executable
+ (name bug_adam_bus_error)
+ (libraries kaun rune))
