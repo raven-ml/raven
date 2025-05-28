@@ -1,0 +1,14 @@
+(library
+ (name nx_conv)
+ (modules nx_conv)
+ (libraries nx_core nx_native))
+
+(executable
+ (name bench_conv)
+ (modules bench_conv)
+ (libraries nx nx_conv ubench unix))
+
+(test
+ (name test_conv_optimized)
+ (modules test_conv_optimized)
+ (libraries nx nx_conv alcotest test_nx_support))
