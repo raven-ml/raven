@@ -77,12 +77,13 @@ let swap_channels img =
       if c < 3 then img
       else
         (* Use concatenation instead of element-wise operations *)
-        let chan0 = Rune.slice [ Rune.R []; Rune.R []; Rune.I 0 ] img in
-        let chan1 = Rune.slice [ Rune.R []; Rune.R []; Rune.I 1 ] img in
-        let chan2 = Rune.slice [ Rune.R []; Rune.R []; Rune.I 2 ] img in
+        (* Use R[i; i+1] to keep the dimension (end is exclusive) *)
+        let chan0 = Rune.slice [ Rune.R []; Rune.R []; Rune.R [ 0; 1 ] ] img in
+        let chan1 = Rune.slice [ Rune.R []; Rune.R []; Rune.R [ 1; 2 ] ] img in
+        let chan2 = Rune.slice [ Rune.R []; Rune.R []; Rune.R [ 2; 3 ] ] img in
         let chans_rest =
           if c > 3 then
-            Some (Rune.slice [ Rune.R []; Rune.R []; Rune.R [ 3; c - 1 ] ] img)
+            Some (Rune.slice [ Rune.R []; Rune.R []; Rune.R [ 3; c ] ] img)
           else None
         in
 
@@ -230,68 +231,72 @@ let gaussian_blur : type a b.
         let ksize = Rune.numel kernel in
         let pad = ksize / 2 in
         let padded = Rune.pad [| (0, 0); (pad, pad) |] 0.0 img in
-        
+
         (* Apply kernel weights to shifted versions *)
         let result = ref (Rune.zeros_like img) in
         for i = 0 to ksize - 1 do
-          let weight = Rune.unsafe_get [i] kernel in
-          if abs_float weight > 1e-10 then begin
-            let shifted = Rune.slice [ Rune.R []; Rune.R [ i; i + w ] ] padded in
+          let weight = Rune.unsafe_get [ i ] kernel in
+          if abs_float weight > 1e-10 then
+            let shifted =
+              Rune.slice [ Rune.R []; Rune.R [ i; i + w ] ] padded
+            in
             let weighted = Rune.mul_s shifted weight in
             result := Rune.add !result weighted
-          end
         done;
         !result
     | `Color (_h, w, _c) ->
         let ksize = Rune.numel kernel in
         let pad = ksize / 2 in
         let padded = Rune.pad [| (0, 0); (pad, pad); (0, 0) |] 0.0 img in
-        
+
         (* Apply kernel weights to shifted versions *)
         let result = ref (Rune.zeros_like img) in
         for i = 0 to ksize - 1 do
-          let weight = Rune.unsafe_get [i] kernel in
-          if abs_float weight > 1e-10 then begin
-            let shifted = Rune.slice [ Rune.R []; Rune.R [ i; i + w ]; Rune.R [] ] padded in
+          let weight = Rune.unsafe_get [ i ] kernel in
+          if abs_float weight > 1e-10 then
+            let shifted =
+              Rune.slice [ Rune.R []; Rune.R [ i; i + w ]; Rune.R [] ] padded
+            in
             let weighted = Rune.mul_s shifted weight in
             result := Rune.add !result weighted
-          end
         done;
         !result
   in
-  
+
   let blur_1d_vertical kernel img =
     match get_dims img with
     | `Gray (h, _w) ->
         let ksize = Rune.numel kernel in
         let pad = ksize / 2 in
         let padded = Rune.pad [| (pad, pad); (0, 0) |] 0.0 img in
-        
+
         (* Apply kernel weights to shifted versions *)
         let result = ref (Rune.zeros_like img) in
         for i = 0 to ksize - 1 do
-          let weight = Rune.unsafe_get [i] kernel in
-          if abs_float weight > 1e-10 then begin
-            let shifted = Rune.slice [ Rune.R [ i; i + h ]; Rune.R [] ] padded in
+          let weight = Rune.unsafe_get [ i ] kernel in
+          if abs_float weight > 1e-10 then
+            let shifted =
+              Rune.slice [ Rune.R [ i; i + h ]; Rune.R [] ] padded
+            in
             let weighted = Rune.mul_s shifted weight in
             result := Rune.add !result weighted
-          end
         done;
         !result
     | `Color (h, _w, _c) ->
         let ksize = Rune.numel kernel in
         let pad = ksize / 2 in
         let padded = Rune.pad [| (pad, pad); (0, 0); (0, 0) |] 0.0 img in
-        
+
         (* Apply kernel weights to shifted versions *)
         let result = ref (Rune.zeros_like img) in
         for i = 0 to ksize - 1 do
-          let weight = Rune.unsafe_get [i] kernel in
-          if abs_float weight > 1e-10 then begin
-            let shifted = Rune.slice [ Rune.R [ i; i + h ]; Rune.R []; Rune.R [] ] padded in
+          let weight = Rune.unsafe_get [ i ] kernel in
+          if abs_float weight > 1e-10 then
+            let shifted =
+              Rune.slice [ Rune.R [ i; i + h ]; Rune.R []; Rune.R [] ] padded
+            in
             let weighted = Rune.mul_s shifted weight in
             result := Rune.add !result weighted
-          end
         done;
         !result
   in
@@ -344,48 +349,55 @@ let box_filter : type a b. ksize:int * int -> (a, b) Rune.t -> (a, b) Rune.t =
 
   (* Optimized box filter using cumulative approach *)
   match get_dims img_f32 with
-  | `Gray (h, w) ->
+  | `Gray (h, w) -> (
       (* Pad the image *)
       let pad_h = kh / 2 in
       let pad_w = kw / 2 in
       let padded = Rune.pad [| (pad_h, pad_h); (pad_w, pad_w) |] 0.0 img_f32 in
-      
+
       (* Sum over window using shifts and additions *)
       let result = ref (Rune.zeros_like img_f32) in
       for i = 0 to kh - 1 do
         for j = 0 to kw - 1 do
-          let shifted = Rune.slice [ Rune.R [ i; i + h ]; Rune.R [ j; j + w ] ] padded in
+          let shifted =
+            Rune.slice [ Rune.R [ i; i + h ]; Rune.R [ j; j + w ] ] padded
+          in
           result := Rune.add !result shifted
         done
       done;
-      
+
       (* Divide by kernel size to get average *)
       let filtered_f32 = Rune.div_s !result (float_of_int (kh * kw)) in
-      
-      (match Rune.dtype img with
+
+      match Rune.dtype img with
       | Rune.UInt8 -> to_uint8 filtered_f32
       | Rune.Float32 -> filtered_f32
       | _ -> failwith "Unsupported image type for box_filter")
-      
-  | `Color (h, w, _c) ->
+  | `Color (h, w, _c) -> (
       (* Pad the image *)
       let pad_h = kh / 2 in
       let pad_w = kw / 2 in
-      let padded = Rune.pad [| (pad_h, pad_h); (pad_w, pad_w); (0, 0) |] 0.0 img_f32 in
-      
+      let padded =
+        Rune.pad [| (pad_h, pad_h); (pad_w, pad_w); (0, 0) |] 0.0 img_f32
+      in
+
       (* Sum over window using shifts and additions *)
       let result = ref (Rune.zeros_like img_f32) in
       for i = 0 to kh - 1 do
         for j = 0 to kw - 1 do
-          let shifted = Rune.slice [ Rune.R [ i; i + h ]; Rune.R [ j; j + w ]; Rune.R [] ] padded in
+          let shifted =
+            Rune.slice
+              [ Rune.R [ i; i + h ]; Rune.R [ j; j + w ]; Rune.R [] ]
+              padded
+          in
           result := Rune.add !result shifted
         done
       done;
-      
+
       (* Divide by kernel size to get average *)
       let filtered_f32 = Rune.div_s !result (float_of_int (kh * kw)) in
-      
-      (match Rune.dtype img with
+
+      match Rune.dtype img with
       | Rune.UInt8 -> to_uint8 filtered_f32
       | Rune.Float32 -> filtered_f32
       | _ -> failwith "Unsupported image type for box_filter")
@@ -461,37 +473,38 @@ let morph_op ~op ~kernel (img : uint8_t) : uint8_t =
       (* Optimized morphological operations using direct tensor operations *)
       let pad_h = kh / 2 in
       let pad_w = kw / 2 in
-      
+
       match op with
       | `Max ->
           (* Dilation: max over kernel positions *)
           let padded = Rune.pad [| (pad_h, pad_h); (pad_w, pad_w) |] 0 img in
           let result = ref (Rune.zeros_like img) in
-          
+
           (* For each kernel position where kernel is non-zero *)
           for i = 0 to kh - 1 do
             for j = 0 to kw - 1 do
-              let kernel_val = Rune.unsafe_get [i; j] kernel in
-              if kernel_val > 0 then begin
-                let shifted = Rune.slice [ Rune.R [ i; i + h ]; Rune.R [ j; j + w ] ] padded in
+              let kernel_val = Rune.unsafe_get [ i; j ] kernel in
+              if kernel_val > 0 then
+                let shifted =
+                  Rune.slice [ Rune.R [ i; i + h ]; Rune.R [ j; j + w ] ] padded
+                in
                 result := Rune.maximum !result shifted
-              end
             done
           done;
           !result
-          
       | `Min ->
           (* Erosion using max pooling with stride=1 on inverted image *)
           (* Invert the image: 255 - img *)
           let max_val = Rune.scalar_like img 255 in
           let inverted = Rune.sub max_val img in
           let inv_4d = Rune.reshape [| 1; 1; h; w |] inverted in
-          
+
           (* Apply max pooling to inverted image *)
           let result_4d, _ =
-            Rune.max_pool2d ~kernel_size:(kh, kw) ~stride:(1, 1) ~padding_spec:`Same inv_4d
+            Rune.max_pool2d ~kernel_size:(kh, kw) ~stride:(1, 1)
+              ~padding_spec:`Same inv_4d
           in
-          
+
           (* Invert back: 255 - result *)
           let result = Rune.reshape [| h; w |] result_4d in
           Rune.sub max_val result)
@@ -499,19 +512,13 @@ let morph_op ~op ~kernel (img : uint8_t) : uint8_t =
 let erode ~kernel img = morph_op ~op:`Min ~kernel img
 let dilate ~kernel img = morph_op ~op:`Max ~kernel img
 
-(* Sobel kernel definition - kept for reference but not used with manual implementation
-let sobel_kernel dx dy ksize =
-  if ksize <> 3 then failwith "Sobel currently only supports ksize=3";
-  let device = Rune.cpu in
-  match (dx, dy) with
-  | 1, 0 ->
-      Rune.create device Rune.float32 [| 3; 3 |]
-        [| -1.; 0.; 1.; -2.; 0.; 2.; -1.; 0.; 1. |]
-  | 0, 1 ->
-      Rune.create device Rune.float32 [| 3; 3 |]
-        [| -1.; -2.; -1.; 0.; 0.; 0.; 1.; 2.; 1. |]
-  | _ -> failwith "Sobel requires dx=1, dy=0 or dx=0, dy=1"
-*)
+(* Sobel kernel definition - kept for reference but not used with manual
+   implementation let sobel_kernel dx dy ksize = if ksize <> 3 then failwith
+   "Sobel currently only supports ksize=3"; let device = Rune.cpu in match (dx,
+   dy) with | 1, 0 -> Rune.create device Rune.float32 [| 3; 3 |] [| -1.; 0.; 1.;
+   -2.; 0.; 2.; -1.; 0.; 1. |] | 0, 1 -> Rune.create device Rune.float32 [| 3; 3
+   |] [| -1.; -2.; -1.; 0.; 0.; 0.; 1.; 2.; 1. |] | _ -> failwith "Sobel
+   requires dx=1, dy=0 or dx=0, dy=1" *)
 
 let sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t =
  fun ~dx ~dy ?(ksize = 3) img ->
@@ -524,10 +531,10 @@ let sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t =
   | `Gray (h, w) ->
       (* Convert to float for computation *)
       let img_f32 = Rune.astype Rune.float32 img in
-      
+
       (* Pad the image *)
       let img_padded = Rune.pad [| (1, 1); (1, 1) |] 0.0 img_f32 in
-      
+
       (* Extract shifted versions for manual convolution *)
       let tl = Rune.slice_ranges [ 0; 0 ] [ h; w ] img_padded in
       let tc = Rune.slice_ranges [ 0; 1 ] [ h; w + 1 ] img_padded in
@@ -537,26 +544,25 @@ let sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t =
       let bl = Rune.slice_ranges [ 2; 0 ] [ h + 2; w ] img_padded in
       let bc = Rune.slice_ranges [ 2; 1 ] [ h + 2; w + 1 ] img_padded in
       let br = Rune.slice_ranges [ 2; 2 ] [ h + 2; w + 2 ] img_padded in
-      
+
       (* Apply Sobel kernels manually *)
-      let result_f32 = match (dx, dy) with
+      let result_f32 =
+        match (dx, dy) with
         | 1, 0 ->
             (* Sobel X: [-1 0 1; -2 0 2; -1 0 1] *)
             Rune.add
-              (Rune.add
-                (Rune.sub tr tl)
-                (Rune.sub (Rune.mul_s mr 2.0) (Rune.mul_s ml 2.0)))
+              (Rune.add (Rune.sub tr tl)
+                 (Rune.sub (Rune.mul_s mr 2.0) (Rune.mul_s ml 2.0)))
               (Rune.sub br bl)
         | 0, 1 ->
             (* Sobel Y: [-1 -2 -1; 0 0 0; 1 2 1] *)
             Rune.add
-              (Rune.add
-                (Rune.sub bl tl)
-                (Rune.sub (Rune.mul_s bc 2.0) (Rune.mul_s tc 2.0)))
+              (Rune.add (Rune.sub bl tl)
+                 (Rune.sub (Rune.mul_s bc 2.0) (Rune.mul_s tc 2.0)))
               (Rune.sub br tr)
         | _ -> failwith "Sobel requires dx=1, dy=0 or dx=0, dy=1"
       in
-      
+
       Rune.astype Rune.int16 result_f32
 
 let canny ~threshold1 ~threshold2 ?(ksize = 3) (img : uint8_t) : uint8_t =
