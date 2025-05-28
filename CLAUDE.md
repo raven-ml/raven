@@ -48,6 +48,7 @@ dune build fmt                    # Format code
 - **Errors**: `function_name: what went wrong` format, fail fast
 - **Tests**: Alcotest framework, test edge cases, group related tests
 - **Type annotations**: Avoid explicit types unless required by type checker (dtype pattern matching)
+- **Commit messages**: Use conventional commit prefixes: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `style:`, `perf:`
 
 ## Architecture
 
