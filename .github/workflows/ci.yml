@@ -32,6 +32,9 @@ jobs:
       - name: Use dune
         uses: ocaml-dune/setup-dune@v0
       
+      - name: Build
+        run: dune build
+      
       - name: Run tests
         run: dune runtest
       
