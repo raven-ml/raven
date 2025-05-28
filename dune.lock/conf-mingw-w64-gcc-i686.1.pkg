@@ -2,35 +2,16 @@
 
 (build
  (choice
-  ((((arch x86_64)
-     (os win32)
-     (os-distribution cygwin)
-     (os-family windows))
-    ((arch arm64)
-     (os win32)
-     (os-distribution cygwin)
-     (os-family windows)))
-   ((action
-     (run i686-w64-mingw32-gcc --version))))))
+  ((((arch arm64) (os win32) (os-distribution cygwin) (os-family windows)))
+   ((action (run i686-w64-mingw32-gcc --version))))))
 
 (depexts
  (choice
-  ((((arch x86_64)
-     (os win32)
-     (os-distribution cygwin)
-     (os-family windows))
-    ((arch arm64)
-     (os win32)
-     (os-distribution cygwin)
-     (os-family windows)))
+  ((((arch arm64) (os win32) (os-distribution cygwin) (os-family windows)))
    (mingw64-i686-gcc-core))))
 
 (enabled_on_platforms
  (only
-  ((arch x86_64)
-   (os win32)
-   (os-distribution cygwin)
-   (os-family windows))
   ((arch arm64)
    (os win32)
    (os-distribution cygwin)
