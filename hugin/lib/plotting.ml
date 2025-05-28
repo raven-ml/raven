@@ -58,7 +58,7 @@ let hist ?(bins = `Num 10) ?range ?(density = false) ?color ?label ~x ax =
   let counts = Array.make num_bins 0. in
   let total_count = ref 0. in
 
-  Nx.unsafe_iter
+  Nx.iter_item
     (fun v ->
       if v >= x_min && v <= x_max then (
         total_count := !total_count +. 1.;

@@ -4,7 +4,7 @@ let create_helix_data () =
   let t = linspace float32 0. (4. *. Float.pi) 100 in
   let x = cos t in
   let y = sin t in
-  let z = unsafe_map (fun t -> t /. (4. *. Float.pi)) t in
+  let z = map_item (fun t -> t /. (4. *. Float.pi)) t in
   (x, y, z)
 
 let () =

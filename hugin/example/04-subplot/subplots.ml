@@ -3,10 +3,10 @@
 open Hugin
 module A = Artist
 module P = Plotting
-module N = Nx
 
 (* Helper function to generate linearly spaced data *)
-let linspace start stop num = N.linspace N.Float32 ~endpoint:true start stop num
+let linspace start stop num =
+  Nx.linspace Nx.Float32 ~endpoint:true start stop num
 
 (* Helper function to generate gaussian data *)
 let gaussian mean stddev num =
@@ -18,7 +18,7 @@ let gaussian mean stddev num =
         let theta = 2.0 *. Float.pi *. u2 in
         mean +. (stddev *. r *. cos theta))
   in
-  N.create N.Float32 [| num |] data
+  Nx.create Nx.Float32 [| num |] data
 
 let () =
   (* --- Figure Setup --- *)
@@ -28,8 +28,8 @@ let () =
   (* --- 1. Basic Plot (Line2D) --- *)
   let ax1 = Figure.add_subplot ~nrows ~ncols ~index:1 fig in
   let x1 = linspace 0.0 (2. *. Float.pi) 100 in
-  let y1 = N.sin x1 in
-  let y1_cos = N.cos x1 in
+  let y1 = Nx.sin x1 in
+  let y1_cos = Nx.cos x1 in
   let _ax1 =
     ax1
     |> P.plot ~x:x1 ~y:y1 ~color:A.Color.blue ~linestyle:A.Solid
@@ -44,7 +44,7 @@ let () =
   (* --- 2. Plot Y only --- *)
   let ax2 = Figure.add_subplot ~nrows ~ncols ~index:2 fig in
   let x_for_y2 = linspace 0.0 20.0 100 in
-  let y2 = N.unsafe_map (fun x -> exp (-.x /. 10.0) *. sin x) x_for_y2 in
+  let y2 = Nx.map_item (fun x -> exp (-.x /. 10.0) *. sin x) x_for_y2 in
   let _ax2 =
     ax2
     |> P.plot_y ~y:y2 ~color:A.Color.green ~marker:A.Point
@@ -55,9 +55,9 @@ let () =
 
   (* --- 3. Scatter Plot --- *)
   let ax3 = Figure.add_subplot ~nrows ~ncols ~index:3 fig in
-  let x3_rand = N.rand N.Float32 [| 50 |] in
-  let x3 = N.mul x3_rand (N.scalar N.Float32 10.0) in
-  let y3 = N.unsafe_map (fun x -> x +. Random.float 2.0 -. 1.0) x3 in
+  let x3_rand = Nx.rand Nx.Float32 [| 50 |] in
+  let x3 = Nx.mul x3_rand (Nx.scalar Nx.Float32 10.0) in
+  let y3 = Nx.map_item (fun x -> x +. Random.float 2.0 -. 1.0) x3 in
   let _ax3 =
     ax3
     |> P.scatter ~x:x3 ~y:y3 ~s:50.0
@@ -69,9 +69,9 @@ let () =
 
   (* --- 4. Bar Chart --- *)
   let ax4 = Figure.add_subplot ~nrows ~ncols ~index:4 fig in
-  let x4 = N.linspace N.Float32 0.0 4.0 5 in
+  let x4 = Nx.linspace Nx.Float32 0.0 4.0 5 in
   let height4_data = Array.init 5 (fun i -> float_of_int (i + 1) *. 1.5) in
-  let height4 = N.create N.Float32 [| 5 |] height4_data in
+  let height4 = Nx.create Nx.Float32 [| 5 |] height4_data in
   let _ax4 =
     ax4
     |> P.bar ~x:x4 ~height:height4 ~width:0.8 ~color:A.Color.orange
@@ -97,8 +97,8 @@ let () =
   (* --- 6. Step Plot --- *)
   let ax6 = Figure.add_subplot ~nrows ~ncols ~index:6 fig in
   let x6 = linspace 0.0 10.0 11 in
-  let y6 = N.unsafe_map (fun x -> sin (x /. 2.0)) x6 in
-  let y6_shifted = N.unsafe_map (fun y -> y -. 0.5) y6 in
+  let y6 = Nx.map_item (fun x -> sin (x /. 2.0)) x6 in
+  let y6_shifted = Nx.map_item (fun y -> y -. 0.5) y6 in
   let _ax6 =
     ax6
     |> P.step ~x:x6 ~y:y6 ~where:A.Mid ~color:A.Color.magenta
@@ -112,9 +112,9 @@ let () =
   (* --- 7. Fill Between --- *)
   let ax7 = Figure.add_subplot ~nrows ~ncols ~index:7 fig in
   let x7 = linspace 0.0 (2. *. Float.pi) 100 in
-  let y7_base = N.sin x7 in
-  let y7a = N.add y7_base (N.scalar N.Float32 0.5) in
-  let y7b = N.sub y7_base (N.scalar N.Float32 0.5) in
+  let y7_base = Nx.sin x7 in
+  let y7a = Nx.add y7_base (Nx.scalar Nx.Float32 0.5) in
+  let y7b = Nx.sub y7_base (Nx.scalar Nx.Float32 0.5) in
   let _ax7 =
     ax7
     |> P.fill_between ~x:x7 ~y1:y7a ~y2:y7b
@@ -129,12 +129,12 @@ let () =
   (* --- 8. Error Bars --- *)
   let ax8 = Figure.add_subplot ~nrows ~ncols ~index:8 fig in
   let x8 = linspace 0.5 5.5 6 in
-  let y8_inv = N.div (N.scalar N.Float32 1.0) x8 in
-  let y8 = N.unsafe_map (fun y -> y +. (Random.float 0.2 -. 0.1)) y8_inv in
+  let y8_inv = Nx.div (Nx.scalar Nx.Float32 1.0) x8 in
+  let y8 = Nx.map_item (fun y -> y +. (Random.float 0.2 -. 0.1)) y8_inv in
   let yerr8_data = Array.init 6 (fun _ -> Random.float 0.1 +. 0.05) in
-  let yerr8 = N.create N.Float32 [| 6 |] yerr8_data in
+  let yerr8 = Nx.create Nx.Float32 [| 6 |] yerr8_data in
   let xerr8_data = Array.init 6 (fun _ -> Random.float 0.2 +. 0.1) in
-  let xerr8 = N.create N.Float32 [| 6 |] xerr8_data in
+  let xerr8 = Nx.create Nx.Float32 [| 6 |] xerr8_data in
   let fmt_style = A.plot_style ~color:A.Color.red ~marker:A.Square () in
   let _ax8 =
     ax8
@@ -157,7 +157,7 @@ let () =
         let v = float_of_int ((r * cols9) + c) *. 2.55 |> int_of_float in
         min 255 (max 0 v))
   in
-  let data9 = N.create N.UInt8 [| rows9; cols9 |] data9_arr in
+  let data9 = Nx.create Nx.UInt8 [| rows9; cols9 |] data9_arr in
   let _ax9 =
     ax9
     |> P.imshow ~data:data9 ~cmap:A.Colormap.viridis ~aspect:"equal"
@@ -176,7 +176,7 @@ let () =
         let c = i mod cols10 in
         sin (float_of_int r /. 2.0) *. cos (float_of_int c /. 3.0))
   in
-  let data10 = N.create N.Float32 [| rows10; cols10 |] data10_arr in
+  let data10 = Nx.create Nx.Float32 [| rows10; cols10 |] data10_arr in
   let _ax10 =
     ax10
     |> P.matshow ~data:data10 ~cmap:A.Colormap.coolwarm ~origin:`upper
@@ -188,13 +188,13 @@ let () =
     Figure.add_subplot ~nrows ~ncols ~index:11 ~projection:Axes.ThreeD fig
   in
   let t11 = linspace 0.0 (6. *. Float.pi) 200 in
-  let pi6 = N.scalar N.Float32 (6. *. Float.pi) in
-  let pi2 = N.scalar N.Float32 (2. *. Float.pi) in
-  let one = N.scalar N.Float32 1.0 in
-  let scale = N.add one (N.div t11 pi6) in
-  let x11 = N.mul (N.cos t11) scale in
-  let y11 = N.mul (N.sin t11) scale in
-  let z11 = N.div t11 pi2 in
+  let pi6 = Nx.scalar Nx.Float32 (6. *. Float.pi) in
+  let pi2 = Nx.scalar Nx.Float32 (2. *. Float.pi) in
+  let one = Nx.scalar Nx.Float32 1.0 in
+  let scale = Nx.add one (Nx.div t11 pi6) in
+  let x11 = Nx.mul (Nx.cos t11) scale in
+  let y11 = Nx.mul (Nx.sin t11) scale in
+  let z11 = Nx.div t11 pi2 in
   let _ax11 =
     ax11
     |> P.plot3d ~x:x11 ~y:y11 ~z:z11 ~color:A.Color.blue ~linewidth:2.0
@@ -207,8 +207,8 @@ let () =
   (* --- 12. Placeholder / Combined Example --- *)
   let ax12 = Figure.add_subplot ~nrows ~ncols ~index:12 fig in
   let x12 = linspace (-5.0) 5.0 50 in
-  let y12_tanh = N.tanh x12 in
-  let y12_step = N.unsafe_map (fun x -> if x > 0.0 then 1.0 else -1.0) x12 in
+  let y12_tanh = Nx.tanh x12 in
+  let y12_step = Nx.map_item (fun x -> if x > 0.0 then 1.0 else -1.0) x12 in
   let _ax12 =
     ax12
     |> P.plot ~x:x12 ~y:y12_tanh ~color:A.Color.black ~label:"tanh(x)"
