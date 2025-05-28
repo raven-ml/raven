@@ -26,13 +26,13 @@
 
     Core types, element types, data type specifications, and type aliases. *)
 
-type ('a, 'b) t
+type ('a, 'b) t = ('a, 'b) Nx_native.t
 (** [('a, 'b) t] is a tensor with OCaml type ['a] and bigarray type ['b]. *)
 
-type context
+type context = Nx_native.context
 (** Backend-specific context for tensor operations. *)
 
-type layout =
+type layout = Nx_core.View.layout =
   | C_contiguous
   | Strided
       (** Memory layout. [C_contiguous] for row-major contiguous arrays. *)
