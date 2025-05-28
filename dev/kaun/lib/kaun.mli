@@ -2,6 +2,7 @@
 
 type ('layout, 'dev) tensor = (float, 'layout) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
+type 'dev device = 'dev Rune.device
 
 type ('layout, 'dev) ptree =
   | Tensor of ('layout, 'dev) tensor
@@ -19,10 +20,18 @@ module Rng : sig
   val create : ?seed:int -> unit -> t
 
   val normal :
-    t -> dtype:'layout dtype -> shape:int array -> ('layout, [ `cpu ]) tensor
+    t ->
+    device:'dev device ->
+    dtype:'layout dtype ->
+    shape:int array ->
+    ('layout, [ `cpu ]) tensor
 
   val uniform :
-    t -> dtype:'layout dtype -> shape:int array -> ('layout, [ `cpu ]) tensor
+    t ->
+    device:'dev device ->
+    dtype:'layout dtype ->
+    shape:int array ->
+    ('layout, [ `cpu ]) tensor
 end
 
 module Activation : sig
@@ -39,7 +48,7 @@ end
 
 module Initializer : sig
   type ('layout, 'dev) t =
-    Rng.t -> int array -> 'layout dtype -> ('layout, 'dev) tensor
+    Rng.t -> int array -> 'dev device -> 'layout dtype -> ('layout, 'dev) tensor
 
   val constant : float -> ('layout, 'dev) t
   val glorot_uniform : in_axis:int -> out_axis:int -> ('layout, 'dev) t

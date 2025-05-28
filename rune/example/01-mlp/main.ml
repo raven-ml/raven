@@ -46,7 +46,7 @@ let train_mlp inputs y_true learning_rate epochs =
     (* Compute gradients using the provided grad function *)
     let loss, grad_params = value_and_grads loss_fn params in
 
-    Printf.printf "Epoch %d: Loss = %f\n" epoch (get [] loss);
+    Printf.printf "Epoch %d: Loss = %f\n" epoch (unsafe_get [] loss);
 
     List.combine params grad_params
     |> List.iter (fun (param, grad) ->

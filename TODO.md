@@ -5,10 +5,7 @@ goalpost: mnist notebook in quill with rune + hugin
 ## current
 
 - wip: improve nx documentation (go through each function, check the implementation, check if there's invariant to document, check if useful to add examples)
-- wip: fix metal tests in nx (frontend all failing)
 
-- plan and implement comprehensive test suite for rune (don't duplicate nx, so mostly autodiff and jit)
-- implement value_and_grads and fix rune examples + kaun
 - fix nx tests: getting Command got signal SEGV. at randint
 - fix plot3d with hugin
 - rune (or nx) build system for metal backend on non macOS systems
