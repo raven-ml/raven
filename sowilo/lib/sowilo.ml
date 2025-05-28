@@ -368,6 +368,7 @@ let morph_op ~op ~kernel (img : uint8_t) : uint8_t =
 let erode ~kernel img = morph_op ~op:`Min ~kernel img
 let dilate ~kernel img = morph_op ~op:`Max ~kernel img
 
+(* Sobel kernel definition - kept for reference but not used with manual implementation
 let sobel_kernel dx dy ksize =
   if ksize <> 3 then failwith "Sobel currently only supports ksize=3";
   let device = Rune.cpu in
@@ -379,6 +380,7 @@ let sobel_kernel dx dy ksize =
       Rune.create device Rune.float32 [| 3; 3 |]
         [| -1.; -2.; -1.; 0.; 0.; 0.; 1.; 2.; 1. |]
   | _ -> failwith "Sobel requires dx=1, dy=0 or dx=0, dy=1"
+*)
 
 let sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t =
  fun ~dx ~dy ?(ksize = 3) img ->
@@ -386,11 +388,45 @@ let sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t =
     failwith "Sobel currently requires uint8 input";
   if ksize <> 3 then failwith "Sobel currently only supports ksize=3";
 
-  let kernel = sobel_kernel dx dy ksize in
-  let img_f32 = Rune.astype Rune.float32 img in
-
-  let result_f32 = convolve2d_safe kernel img_f32 in
-  Rune.astype Rune.int16 result_f32
+  match get_dims img with
+  | `Color _ -> failwith "Sobel currently only supports grayscale images"
+  | `Gray (h, w) ->
+      (* Convert to float for computation *)
+      let img_f32 = Rune.astype Rune.float32 img in
+      
+      (* Pad the image *)
+      let img_padded = Rune.pad [| (1, 1); (1, 1) |] 0.0 img_f32 in
+      
+      (* Extract shifted versions for manual convolution *)
+      let tl = Rune.slice_ranges [ 0; 0 ] [ h; w ] img_padded in
+      let tc = Rune.slice_ranges [ 0; 1 ] [ h; w + 1 ] img_padded in
+      let tr = Rune.slice_ranges [ 0; 2 ] [ h; w + 2 ] img_padded in
+      let ml = Rune.slice_ranges [ 1; 0 ] [ h + 1; w ] img_padded in
+      let mr = Rune.slice_ranges [ 1; 2 ] [ h + 1; w + 2 ] img_padded in
+      let bl = Rune.slice_ranges [ 2; 0 ] [ h + 2; w ] img_padded in
+      let bc = Rune.slice_ranges [ 2; 1 ] [ h + 2; w + 1 ] img_padded in
+      let br = Rune.slice_ranges [ 2; 2 ] [ h + 2; w + 2 ] img_padded in
+      
+      (* Apply Sobel kernels manually *)
+      let result_f32 = match (dx, dy) with
+        | 1, 0 ->
+            (* Sobel X: [-1 0 1; -2 0 2; -1 0 1] *)
+            Rune.add
+              (Rune.add
+                (Rune.sub tr tl)
+                (Rune.sub (Rune.mul_s mr 2.0) (Rune.mul_s ml 2.0)))
+              (Rune.sub br bl)
+        | 0, 1 ->
+            (* Sobel Y: [-1 -2 -1; 0 0 0; 1 2 1] *)
+            Rune.add
+              (Rune.add
+                (Rune.sub bl tl)
+                (Rune.sub (Rune.mul_s bc 2.0) (Rune.mul_s tc 2.0)))
+              (Rune.sub br tr)
+        | _ -> failwith "Sobel requires dx=1, dy=0 or dx=0, dy=1"
+      in
+      
+      Rune.astype Rune.int16 result_f32
 
 let canny ~threshold1 ~threshold2 ?(ksize = 3) (img : uint8_t) : uint8_t =
   if Rune.dtype img <> Rune.uint8 then
