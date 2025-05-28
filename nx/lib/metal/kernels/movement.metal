@@ -142,14 +142,16 @@ kernel void concat_float(device float* out [[buffer(0)]],
     out[out_offset + gid] = in[gid];
 }
 
-// Concatenation kernel that handles axis properly
+// Concatenation kernel that handles axis properly with stride support
 kernel void concat_axis_float(device float* out [[buffer(0)]],
                              device const float* in [[buffer(1)]],
                              constant uint* out_shape [[buffer(2)]],
                              constant uint* in_shape [[buffer(3)]],
-                             constant uint& axis [[buffer(4)]],
-                             constant uint& axis_offset [[buffer(5)]],
-                             constant uint& ndim [[buffer(6)]],
+                             constant int* in_strides [[buffer(4)]],
+                             constant uint& axis [[buffer(5)]],
+                             constant uint& axis_offset [[buffer(6)]],
+                             constant uint& ndim [[buffer(7)]],
+                             constant uint& in_offset [[buffer(8)]],
                              uint gid [[thread_position_in_grid]]) {
     uint in_size = 1;
     for (uint i = 0; i < ndim; i++) {
@@ -165,6 +167,12 @@ kernel void concat_axis_float(device float* out [[buffer(0)]],
         temp /= in_shape[i];
     }
     
+    // Compute strided input index
+    uint in_idx = in_offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * in_strides[i];
+    }
+    
     // Adjust coordinate for concatenation axis
     coords[axis] += axis_offset;
     
@@ -176,7 +184,7 @@ kernel void concat_axis_float(device float* out [[buffer(0)]],
         stride *= out_shape[i];
     }
     
-    out[out_idx] = in[gid];
+    out[out_idx] = in[in_idx];
 }
 
 
@@ -193,9 +201,11 @@ kernel void concat_axis_int(device int* out [[buffer(0)]],
                            device const int* in [[buffer(1)]],
                            constant uint* out_shape [[buffer(2)]],
                            constant uint* in_shape [[buffer(3)]],
-                           constant uint& axis [[buffer(4)]],
-                           constant uint& axis_offset [[buffer(5)]],
-                           constant uint& ndim [[buffer(6)]],
+                           constant int* in_strides [[buffer(4)]],
+                           constant uint& axis [[buffer(5)]],
+                           constant uint& axis_offset [[buffer(6)]],
+                           constant uint& ndim [[buffer(7)]],
+                           constant uint& in_offset [[buffer(8)]],
                            uint gid [[thread_position_in_grid]]) {
     uint in_size = 1;
     for (uint i = 0; i < ndim; i++) {
@@ -211,6 +221,12 @@ kernel void concat_axis_int(device int* out [[buffer(0)]],
         temp /= in_shape[i];
     }
     
+    // Compute strided input index
+    uint in_idx = in_offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * in_strides[i];
+    }
+    
     // Adjust coordinate for concatenation axis
     coords[axis] += axis_offset;
     
@@ -222,7 +238,7 @@ kernel void concat_axis_int(device int* out [[buffer(0)]],
         stride *= out_shape[i];
     }
     
-    out[out_idx] = in[gid];
+    out[out_idx] = in[in_idx];
 }
 
 kernel void concat_uchar(device uchar* out [[buffer(0)]],
@@ -238,9 +254,11 @@ kernel void concat_axis_uchar(device uchar* out [[buffer(0)]],
                              device const uchar* in [[buffer(1)]],
                              constant uint* out_shape [[buffer(2)]],
                              constant uint* in_shape [[buffer(3)]],
-                             constant uint& axis [[buffer(4)]],
-                             constant uint& axis_offset [[buffer(5)]],
-                             constant uint& ndim [[buffer(6)]],
+                             constant int* in_strides [[buffer(4)]],
+                             constant uint& axis [[buffer(5)]],
+                             constant uint& axis_offset [[buffer(6)]],
+                             constant uint& ndim [[buffer(7)]],
+                             constant uint& in_offset [[buffer(8)]],
                              uint gid [[thread_position_in_grid]]) {
     uint in_size = 1;
     for (uint i = 0; i < ndim; i++) {
@@ -256,6 +274,12 @@ kernel void concat_axis_uchar(device uchar* out [[buffer(0)]],
         temp /= in_shape[i];
     }
     
+    // Compute strided input index
+    uint in_idx = in_offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * in_strides[i];
+    }
+    
     // Adjust coordinate for concatenation axis
     coords[axis] += axis_offset;
     
@@ -267,7 +291,7 @@ kernel void concat_axis_uchar(device uchar* out [[buffer(0)]],
         stride *= out_shape[i];
     }
     
-    out[out_idx] = in[gid];
+    out[out_idx] = in[in_idx];
 }
 
 // Padding kernel

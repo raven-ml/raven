@@ -1,15 +1,59 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Where (conditional select) operation
+// Helper for strided indexing - compute linear index from position and strides
+inline uint compute_strided_index(uint3 pos, constant uint* shape, constant int* strides, uint ndim) {
+    uint idx = 0;
+    for (uint i = 0; i < ndim; i++) {
+        uint coord = i == 0 ? pos.x : (i == 1 ? pos.y : pos.z);
+        if (i < ndim) {
+            coord = coord % shape[i];
+            idx += coord * strides[i];
+        }
+    }
+    return idx;
+}
+
+// Where (conditional select) operation with stride support
 kernel void where_float(device float* out [[buffer(0)]],
                        device const uchar* cond [[buffer(1)]],
                        device const float* if_true [[buffer(2)]],
                        device const float* if_false [[buffer(3)]],
-                       constant uint& size [[buffer(4)]],
+                       constant uint* shape [[buffer(4)]],
+                       constant int* cond_strides [[buffer(5)]],
+                       constant int* true_strides [[buffer(6)]],
+                       constant int* false_strides [[buffer(7)]],
+                       constant uint& ndim [[buffer(8)]],
+                       constant uint& cond_offset [[buffer(9)]],
+                       constant uint& true_offset [[buffer(10)]],
+                       constant uint& false_offset [[buffer(11)]],
                        uint gid [[thread_position_in_grid]]) {
-    if (gid >= size) return;
-    out[gid] = cond[gid] ? if_true[gid] : if_false[gid];
+    uint total_size = ndim == 0 ? 1 : shape[0] * (ndim > 1 ? shape[1] : 1) * (ndim > 2 ? shape[2] : 1);
+    if (gid >= total_size) return;
+    
+    // Convert linear index to position
+    uint3 pos;
+    uint temp = gid;
+    if (ndim > 2) {
+        pos.z = temp % shape[2];
+        temp /= shape[2];
+    } else {
+        pos.z = 0;
+    }
+    if (ndim > 1) {
+        pos.y = temp % shape[1];
+        temp /= shape[1];
+    } else {
+        pos.y = 0;
+    }
+    pos.x = temp;
+    
+    // Compute strided indices with offsets
+    uint cond_idx = cond_offset + compute_strided_index(pos, shape, cond_strides, ndim);
+    uint true_idx = true_offset + compute_strided_index(pos, shape, true_strides, ndim);
+    uint false_idx = false_offset + compute_strided_index(pos, shape, false_strides, ndim);
+    
+    out[gid] = cond[cond_idx] ? if_true[true_idx] : if_false[false_idx];
 }
 
 
@@ -17,30 +61,123 @@ kernel void where_int(device int* out [[buffer(0)]],
                      device const uchar* cond [[buffer(1)]],
                      device const int* if_true [[buffer(2)]],
                      device const int* if_false [[buffer(3)]],
-                     constant uint& size [[buffer(4)]],
+                     constant uint* shape [[buffer(4)]],
+                     constant int* cond_strides [[buffer(5)]],
+                     constant int* true_strides [[buffer(6)]],
+                     constant int* false_strides [[buffer(7)]],
+                     constant uint& ndim [[buffer(8)]],
+                     constant uint& cond_offset [[buffer(9)]],
+                     constant uint& true_offset [[buffer(10)]],
+                     constant uint& false_offset [[buffer(11)]],
                      uint gid [[thread_position_in_grid]]) {
-    if (gid >= size) return;
-    out[gid] = cond[gid] ? if_true[gid] : if_false[gid];
+    uint total_size = ndim == 0 ? 1 : shape[0] * (ndim > 1 ? shape[1] : 1) * (ndim > 2 ? shape[2] : 1);
+    if (gid >= total_size) return;
+    
+    // Convert linear index to position
+    uint3 pos;
+    uint temp = gid;
+    if (ndim > 2) {
+        pos.z = temp % shape[2];
+        temp /= shape[2];
+    } else {
+        pos.z = 0;
+    }
+    if (ndim > 1) {
+        pos.y = temp % shape[1];
+        temp /= shape[1];
+    } else {
+        pos.y = 0;
+    }
+    pos.x = temp;
+    
+    // Compute strided indices with offsets
+    uint cond_idx = cond_offset + compute_strided_index(pos, shape, cond_strides, ndim);
+    uint true_idx = true_offset + compute_strided_index(pos, shape, true_strides, ndim);
+    uint false_idx = false_offset + compute_strided_index(pos, shape, false_strides, ndim);
+    
+    out[gid] = cond[cond_idx] ? if_true[true_idx] : if_false[false_idx];
 }
 
 kernel void where_long(device long* out [[buffer(0)]],
                       device const uchar* cond [[buffer(1)]],
                       device const long* if_true [[buffer(2)]],
                       device const long* if_false [[buffer(3)]],
-                      constant uint& size [[buffer(4)]],
+                      constant uint* shape [[buffer(4)]],
+                      constant int* cond_strides [[buffer(5)]],
+                      constant int* true_strides [[buffer(6)]],
+                      constant int* false_strides [[buffer(7)]],
+                      constant uint& ndim [[buffer(8)]],
+                      constant uint& cond_offset [[buffer(9)]],
+                      constant uint& true_offset [[buffer(10)]],
+                      constant uint& false_offset [[buffer(11)]],
                       uint gid [[thread_position_in_grid]]) {
-    if (gid >= size) return;
-    out[gid] = cond[gid] ? if_true[gid] : if_false[gid];
+    uint total_size = ndim == 0 ? 1 : shape[0] * (ndim > 1 ? shape[1] : 1) * (ndim > 2 ? shape[2] : 1);
+    if (gid >= total_size) return;
+    
+    // Convert linear index to position
+    uint3 pos;
+    uint temp = gid;
+    if (ndim > 2) {
+        pos.z = temp % shape[2];
+        temp /= shape[2];
+    } else {
+        pos.z = 0;
+    }
+    if (ndim > 1) {
+        pos.y = temp % shape[1];
+        temp /= shape[1];
+    } else {
+        pos.y = 0;
+    }
+    pos.x = temp;
+    
+    // Compute strided indices with offsets
+    uint cond_idx = cond_offset + compute_strided_index(pos, shape, cond_strides, ndim);
+    uint true_idx = true_offset + compute_strided_index(pos, shape, true_strides, ndim);
+    uint false_idx = false_offset + compute_strided_index(pos, shape, false_strides, ndim);
+    
+    out[gid] = cond[cond_idx] ? if_true[true_idx] : if_false[false_idx];
 }
 
 kernel void where_uchar(device uchar* out [[buffer(0)]],
                        device const uchar* cond [[buffer(1)]],
                        device const uchar* if_true [[buffer(2)]],
                        device const uchar* if_false [[buffer(3)]],
-                       constant uint& size [[buffer(4)]],
+                       constant uint* shape [[buffer(4)]],
+                       constant int* cond_strides [[buffer(5)]],
+                       constant int* true_strides [[buffer(6)]],
+                       constant int* false_strides [[buffer(7)]],
+                       constant uint& ndim [[buffer(8)]],
+                       constant uint& cond_offset [[buffer(9)]],
+                       constant uint& true_offset [[buffer(10)]],
+                       constant uint& false_offset [[buffer(11)]],
                        uint gid [[thread_position_in_grid]]) {
-    if (gid >= size) return;
-    out[gid] = cond[gid] ? if_true[gid] : if_false[gid];
+    uint total_size = ndim == 0 ? 1 : shape[0] * (ndim > 1 ? shape[1] : 1) * (ndim > 2 ? shape[2] : 1);
+    if (gid >= total_size) return;
+    
+    // Convert linear index to position
+    uint3 pos;
+    uint temp = gid;
+    if (ndim > 2) {
+        pos.z = temp % shape[2];
+        temp /= shape[2];
+    } else {
+        pos.z = 0;
+    }
+    if (ndim > 1) {
+        pos.y = temp % shape[1];
+        temp /= shape[1];
+    } else {
+        pos.y = 0;
+    }
+    pos.x = temp;
+    
+    // Compute strided indices with offsets
+    uint cond_idx = cond_offset + compute_strided_index(pos, shape, cond_strides, ndim);
+    uint true_idx = true_offset + compute_strided_index(pos, shape, true_strides, ndim);
+    uint false_idx = false_offset + compute_strided_index(pos, shape, false_strides, ndim);
+    
+    out[gid] = cond[cond_idx] ? if_true[true_idx] : if_false[false_idx];
 }
 
 // Type casting kernels

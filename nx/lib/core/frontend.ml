@@ -1864,14 +1864,13 @@ module Make (B : Backend_intf.S) = struct
       (* Condition: c_indices - r_indices = k_val *)
       let diff = sub c_indices r_indices in
       let k_tensor_scalar = scalar ctx Dtype.int32 (Int32.of_int k_val) in
-      (* Use cmpne and swap the where branches since cmpeq doesn't work with uint8 *)
-      let not_diag_mask = cmpne diff k_tensor_scalar in
+      (* Create the diagonal mask *)
+      let diag_mask = cmpeq diff k_tensor_scalar in
 
       let zeros_tensor = zeros ctx dtype final_shape in
       let one_val = Dtype.one dtype in
       let ones_fill = full_like zeros_tensor one_val in
-      (* Swap the branches: if not_diag then zeros else ones *)
-      where not_diag_mask zeros_tensor ones_fill
+      where diag_mask ones_fill zeros_tensor
 
   let identity ctx dtype n = eye ctx ~m:n ~k:0 dtype n
 

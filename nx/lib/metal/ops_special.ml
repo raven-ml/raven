@@ -2,17 +2,9 @@ open Nx_core
 open Metal
 
 let where ctx cond if_true if_false =
-  (* Ensure inputs are contiguous for the kernel *)
-  let cond = 
-    if View.is_contiguous cond.Internal.view then cond 
-    else Ops_movement.make_contiguous ctx cond in
-  let if_true = 
-    if View.is_contiguous if_true.Internal.view then if_true 
-    else Ops_movement.make_contiguous ctx if_true in
-  let if_false = 
-    if View.is_contiguous if_false.Internal.view then if_false 
-    else Ops_movement.make_contiguous ctx if_false in
-
+  (* All inputs should have the same shape *)
+  let shape = Internal.shape if_true in
+  let ndim = Array.length shape in
   let out_size = Internal.numel if_true in
   let size_bytes = out_size * Internal.sizeof_dtype if_true.Internal.dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
@@ -22,7 +14,7 @@ let where ctx cond if_true if_false =
       context = ctx;
       Internal.dtype = if_true.dtype;
       buffer = metal_buffer;
-      view = if_true.view;
+      view = View.create shape;
     }
   in
 
@@ -44,12 +36,50 @@ let where ctx cond if_true if_false =
       ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:3
         if_false.Internal.buffer.buffer;
 
-      let size_val =
-        Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int out_size))
-      in
+      (* Set shape array *)
+      let shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
+      for i = 0 to ndim - 1 do
+        Ctypes.(shape_arr +@ i <-@ Unsigned.UInt32.of_int shape.(i))
+      done;
       ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp size_val)
-        ~length:4 ~index:4;
+        ~bytes:Ctypes.(to_voidp shape_arr)
+        ~length:(ndim * 4) ~index:4;
+
+      (* Set strides for each input *)
+      let set_strides view index =
+        let strides = View.strides view in
+        let strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
+        for i = 0 to ndim - 1 do
+          Ctypes.(strides_arr +@ i <-@ Int32.of_int strides.(i))
+        done;
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp strides_arr)
+          ~length:(ndim * 4) ~index
+      in
+      set_strides cond.Internal.view 5;
+      set_strides if_true.Internal.view 6;
+      set_strides if_false.Internal.view 7;
+
+      (* Set ndim *)
+      let ndim_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int ndim)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp ndim_val)
+        ~length:4 ~index:8;
+
+      (* Set offsets *)
+      let cond_offset = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset cond.Internal.view))) in
+      let true_offset = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset if_true.Internal.view))) in
+      let false_offset = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset if_false.Internal.view))) in
+      
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp cond_offset)
+        ~length:4 ~index:9;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp true_offset)
+        ~length:4 ~index:10;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp false_offset)
+        ~length:4 ~index:11;
 
       let threads_per_group, num_groups =
         Internal.compute_thread_groups out_size
