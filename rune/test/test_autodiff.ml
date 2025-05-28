@@ -285,6 +285,41 @@ let test_value_and_grad () =
   check_scalar ~eps "value_and_grad value" 9.0 (scalar_value value);
   check_scalar ~eps "value_and_grad grad" 6.0 (scalar_value grad)
 
+(* Multiple input gradient functions *)
+let test_grads () =
+  let x = T.scalar ctx T.float32 2.0 in
+  let y = T.scalar ctx T.float32 3.0 in
+  let f inputs =
+    match inputs with
+    | [ a; b ] -> T.add (T.mul a a) (T.mul b b) (* f(x,y) = x² + y² *)
+    | _ -> failwith "Expected 2 inputs"
+  in
+  let grads = T.grads f [ x; y ] in
+  (* ∂f/∂x = 2x = 4 at x=2, ∂f/∂y = 2y = 6 at y=3 *)
+  check_scalar ~eps "grads x" 4.0 (scalar_value (List.nth grads 0));
+  check_scalar ~eps "grads y" 6.0 (scalar_value (List.nth grads 1))
+
+let test_value_and_grads () =
+  let x = T.scalar ctx T.float32 2.0 in
+  let y = T.scalar ctx T.float32 3.0 in
+  let z = T.scalar ctx T.float32 1.0 in
+  let f inputs =
+    match inputs with
+    | [ a; b; c ] ->
+        T.mul c (T.add (T.mul a a) (T.mul b b)) (* f(x,y,z) = z(x² + y²) *)
+    | _ -> failwith "Expected 3 inputs"
+  in
+  let value, grads = T.value_and_grads f [ x; y; z ] in
+  (* f(2,3,1) = 1*(4+9) = 13 *)
+  check_scalar ~eps "value_and_grads value" 13.0 (scalar_value value);
+  (* ∂f/∂x = 2xz = 4, ∂f/∂y = 2yz = 6, ∂f/∂z = x² + y² = 13 *)
+  check_scalar ~eps "value_and_grads grad x" 4.0
+    (scalar_value (List.nth grads 0));
+  check_scalar ~eps "value_and_grads grad y" 6.0
+    (scalar_value (List.nth grads 1));
+  check_scalar ~eps "value_and_grads grad z" 13.0
+    (scalar_value (List.nth grads 2))
+
 (* Edge cases *)
 let test_grad_zero () =
   let x = T.scalar ctx T.float32 0.0 in
@@ -357,6 +392,8 @@ let () =
         [
           test_case "second-order derivative" `Quick test_grad_second_order;
           test_case "value_and_grad" `Quick test_value_and_grad;
+          test_case "grads" `Quick test_grads;
+          test_case "value_and_grads" `Quick test_value_and_grads;
         ] );
       ( "edge cases",
         [

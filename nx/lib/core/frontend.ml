@@ -620,6 +620,7 @@ module Make (B : Backend_intf.S) = struct
 
   let log x =
     let log2_x = log2 x in
+    (* todo: remove float here, it prevents complex *)
     let ln_2_val = Stdlib.log 2.0 in
     let dt = dtype x in
     let ln_2_tensor = B.op_const_scalar (B.context x) ln_2_val dt in
@@ -627,6 +628,7 @@ module Make (B : Backend_intf.S) = struct
     B.op_mul log2_x ln_2_b
 
   let exp x =
+    (* todo: remove float here, it prevents complex *)
     let one_over_ln_2_val = 1.0 /. Stdlib.log 2.0 in
     let dt = dtype x in
     let factor_tensor = B.op_const_scalar (B.context x) one_over_ln_2_val dt in
@@ -635,6 +637,7 @@ module Make (B : Backend_intf.S) = struct
     B.op_exp2 x_scaled
 
   let cos x =
+    (* todo: remove float here, it prevents complex *)
     let pi_half_val = Stdlib.acos 0.0 in
     let dt = dtype x in
     let pi_half_tensor = B.op_const_scalar (B.context x) pi_half_val dt in
