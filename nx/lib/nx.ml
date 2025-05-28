@@ -3,34 +3,38 @@ include B
 
 (* ───── Overriding functions with default context ───── *)
 
-let context = Nx_native.create_context ()
-let create dtype shape arr = B.create context dtype shape arr
-let init dtype shape f = B.init context dtype shape f
-let empty dtype shape = B.empty context dtype shape
-let full dtype shape value = B.full context dtype shape value
-let ones dtype shape = B.ones context dtype shape
-let zeros dtype shape = B.zeros context dtype shape
-let scalar dtype v = B.scalar context dtype v
-let eye ?m ?k dtype n = B.eye context ?m ?k dtype n
-let identity dtype n = B.identity context dtype n
-let arange dtype start stop step = B.arange context dtype start stop step
-let arange_f dtype start stop step = B.arange_f context dtype start stop step
+let context = Lazy.from_fun Nx_native.create_context
+let create dtype shape arr = B.create (Lazy.force context) dtype shape arr
+let init dtype shape f = B.init (Lazy.force context) dtype shape f
+let empty dtype shape = B.empty (Lazy.force context) dtype shape
+let full dtype shape value = B.full (Lazy.force context) dtype shape value
+let ones dtype shape = B.ones (Lazy.force context) dtype shape
+let zeros dtype shape = B.zeros (Lazy.force context) dtype shape
+let scalar dtype v = B.scalar (Lazy.force context) dtype v
+let eye ?m ?k dtype n = B.eye (Lazy.force context) ?m ?k dtype n
+let identity dtype n = B.identity (Lazy.force context) dtype n
+
+let arange dtype start stop step =
+  B.arange (Lazy.force context) dtype start stop step
+
+let arange_f dtype start stop step =
+  B.arange_f (Lazy.force context) dtype start stop step
 
 let linspace dtype ?endpoint start stop num =
-  B.linspace context dtype ?endpoint start stop num
+  B.linspace (Lazy.force context) dtype ?endpoint start stop num
 
 let logspace dtype ?endpoint ?base start stop num =
-  B.logspace context dtype ?endpoint ?base start stop num
+  B.logspace (Lazy.force context) dtype ?endpoint ?base start stop num
 
 let geomspace dtype ?endpoint start stop num =
-  B.geomspace context dtype ?endpoint start stop num
+  B.geomspace (Lazy.force context) dtype ?endpoint start stop num
 
-let of_bigarray ba = B.of_bigarray context ba
-let rand dtype ?seed shape = B.rand context dtype ?seed shape
-let randn dtype ?seed shape = B.randn context dtype ?seed shape
+let of_bigarray ba = B.of_bigarray (Lazy.force context) ba
+let rand dtype ?seed shape = B.rand (Lazy.force context) dtype ?seed shape
+let randn dtype ?seed shape = B.randn (Lazy.force context) dtype ?seed shape
 
 let randint dtype ?seed ?high shape low =
-  B.randint context dtype ?seed ?high shape low
+  B.randint (Lazy.force context) dtype ?seed ?high shape low
 
 (* ───── Aliases to unsafe functions ───── *)
 
