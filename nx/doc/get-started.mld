@@ -1,1 +1,200 @@
-{0 Get started}
+{0 Getting Started with Nx}
+
+This guide introduces the fundamental concepts of Nx and shows how to perform basic tensor operations.
+
+{1 Creating Tensors}
+
+{2 From Scratch}
+
+Nx provides several functions to create tensors:
+
+{[
+open Nx
+
+(* Create arrays filled with specific values *)
+let zeros = zeros float32 [|3; 4|]      (* 3x4 matrix of zeros *)
+let ones = ones float32 [|2; 3; 4|]     (* 2x3x4 tensor of ones *)
+let full = full int32 [|5; 5|] 42      (* 5x5 matrix filled with 42 *)
+
+(* Create identity matrices *)
+let eye = eye float64 4                 (* 4x4 identity matrix *)
+let identity = identity float64 3        (* 3x3 identity matrix *)
+
+(* Generate ranges *)
+let range = arange int32 0 10 1         (* [0,1,2,...,9] *)
+let float_range = arange_f float32 0. 1. 0.1  (* [0.0,0.1,...,0.9] *)
+
+(* Evenly spaced values *)
+let lin = linspace float64 0. 10. 5     (* 5 values from 0 to 10 *)
+let log = logspace float32 0. 3. 4      (* 10^0, 10^1, 10^2, 10^3 *)
+]}
+
+{2 From Data}
+
+Create tensors from OCaml arrays:
+
+{[
+(* From flat array with shape *)
+let data = [|1.; 2.; 3.; 4.; 5.; 6.|]
+let matrix = create float64 [|2; 3|] data
+(* Creates: [[1.; 2.; 3.]
+             [4.; 5.; 6.]] *)
+
+(* Initialize with a function *)
+let grid = init float32 [|3; 3|] (fun idx ->
+  float_of_int (idx.(0) * 3 + idx.(1)))
+(* Creates: [[0.; 1.; 2.]
+             [3.; 4.; 5.]
+             [6.; 7.; 8.]] *)
+
+(* Create scalars *)
+let scalar_int = scalar int32 42
+let scalar_float = scalar float64 3.14
+]}
+
+{2 Random Tensors}
+
+Generate random values:
+
+{[
+(* Uniform distribution [0, 1) *)
+let uniform = rand float32 ~seed:42 [|3; 3|]
+
+(* Standard normal distribution (mean=0, std=1) *)
+let normal = randn float64 ~seed:42 [|100|]
+
+(* Random integers *)
+let integers = randint int32 ~seed:42 ~high:10 [|5; 5|] 0
+(* Random integers from 0 to 9 *)
+]}
+
+{1 Data Types}
+
+Nx supports various numeric types:
+
+{[
+(* Floating point *)
+let f16 = zeros float16 [|10|]    (* 16-bit half precision *)
+let f32 = zeros float32 [|10|]    (* 32-bit single precision *)
+let f64 = zeros float64 [|10|]    (* 64-bit double precision *)
+
+(* Integers *)
+let i8 = zeros int8 [|10|]        (* 8-bit signed *)
+let u8 = zeros uint8 [|10|]       (* 8-bit unsigned *)
+let i32 = zeros int32 [|10|]      (* 32-bit signed *)
+let i64 = zeros int64 [|10|]      (* 64-bit signed *)
+
+(* Complex numbers *)
+let c32 = zeros complex32 [|10|]  (* 32-bit complex *)
+let c64 = zeros complex64 [|10|]  (* 64-bit complex *)
+]}
+
+{1 Basic Operations}
+
+{2 Arithmetic}
+
+All arithmetic operations support broadcasting:
+
+{[
+let a = arange float32 0 6 1 |> reshape [|2; 3|]
+let b = ones float32 [|3|]
+
+(* Element-wise operations *)
+let sum = add a b          (* a + b with broadcasting *)
+let diff = sub a b         (* a - b *)
+let prod = mul a b         (* a * b *)
+let quot = div a b         (* a / b *)
+
+(* Scalar operations *)
+let doubled = mul_s a 2.   (* Multiply by scalar *)
+let shifted = add_s a 10.  (* Add scalar *)
+]}
+
+{2 Mathematical Functions}
+
+{[
+let x = linspace float32 (-1.) 1. 100
+
+(* Unary operations *)
+let abs_x = abs x
+let exp_x = exp x
+let log_x = log (add_s x 2.)  (* Shift to make positive *)
+let sqrt_x = sqrt (abs x)
+
+(* Trigonometric *)
+let sin_x = sin x
+let cos_x = cos x
+let tan_x = tan x
+
+(* Activation functions *)
+let relu_x = relu x
+let sigmoid_x = sigmoid x
+let tanh_x = tanh x
+]}
+
+{1 Tensor Properties}
+
+Query tensor information:
+
+{[
+let t = arange float32 0 24 1 |> reshape [|2; 3; 4|]
+
+(* Shape and dimensions *)
+let shape = shape t         (* [|2; 3; 4|] *)
+let ndim = ndim t          (* 3 *)
+let size = size t          (* 24 *)
+
+(* Data type *)
+let dt = dtype t           (* Float32 *)
+let itemsize = itemsize t  (* 4 bytes *)
+
+(* Memory layout *)
+let is_contig = is_contiguous t  (* true/false *)
+let strides = strides t          (* Byte strides *)
+]}
+
+{1 Printing and Display}
+
+{[
+(* Print tensor with data *)
+print t
+
+(* Convert to string *)
+let s = to_string t
+
+(* Print just the data *)
+print_data t
+
+(* Convert to OCaml array *)
+let arr = to_array t
+]}
+
+{1 Type Conversions}
+
+{[
+let int_tensor = arange int32 0 10 1
+
+(* Convert to different type *)
+let float_tensor = cast float64 int_tensor
+let uint8_tensor = astype uint8 float_tensor
+
+(* Ensure contiguous memory *)
+let contig = contiguous some_strided_tensor
+
+(* Create a copy *)
+let copy = copy original_tensor
+]}
+
+{1 Next Steps}
+
+- Learn about {!basics} for detailed operations
+- Understand {!broadcasting} rules
+- Explore {!shape-manipulation} for reshaping and slicing
+- Study {!linear-algebra} for matrix operations
+
+{1 Examples}
+
+For complete examples, see:
+- [nx/example/01-hello-world/] - Basic tensor creation
+- [nx/example/02-basic-operations/] - Arithmetic and math functions
+- [nx/example/07-io/] - Loading and saving data

@@ -1,0 +1,357 @@
+{0 Shape Manipulation}
+
+This guide covers tensor reshaping, slicing, indexing, and other shape transformations in Nx.
+
+{1 Reshaping Tensors}
+
+{2 Basic Reshaping}
+
+{[
+open Nx
+
+(* Create a 1D tensor *)
+let x = arange float32 0 24 1
+
+(* Reshape to different dimensions *)
+let matrix_2d = reshape [|6; 4|] x      (* 6x4 matrix *)
+let matrix_3d = reshape [|2; 3; 4|] x   (* 2x3x4 tensor *)
+let vector = reshape [|24|] matrix_3d   (* Back to 1D *)
+
+(* Use -1 to infer one dimension *)
+let auto_rows = reshape [|-1; 4|] x     (* 6x4 (inferred) *)
+let auto_cols = reshape [|6; -1|] x     (* 6x4 (inferred) *)
+]}
+
+{2 Flattening}
+
+{[
+(* Flatten entire tensor to 1D *)
+let tensor_3d = arange float32 0 24 1 |> reshape [|2; 3; 4|]
+let flat = flatten tensor_3d            (* Shape: [24] *)
+let flat_contig = ravel tensor_3d      (* Same, but ensures contiguous *)
+
+(* Flatten specific dimensions *)
+let partial = flatten ~start_dim:1 ~end_dim:2 tensor_3d
+(* Flattens dims 1,2: [2;3;4] → [2;12] *)
+
+(* Unflatten back *)
+let unflat = unflatten 1 [|3; 4|] partial
+(* [2;12] → [2;3;4] *)
+]}
+
+{1 Dimension Manipulation}
+
+{2 Adding Dimensions}
+
+{[
+let vec = arange float32 0 5 1          (* Shape: [5] *)
+
+(* Add dimensions with unsqueeze *)
+let col = unsqueeze ~axes:[|1|] vec     (* Shape: [5;1] *)
+let row = unsqueeze ~axes:[|0|] vec     (* Shape: [1;5] *)
+let tensor_3d = unsqueeze ~axes:[|0; 2|] vec  (* Shape: [1;5;1] *)
+
+(* Alternative: unsqueeze_axis *)
+let col2 = unsqueeze_axis 1 vec        (* Shape: [5;1] *)
+
+(* expand_dims is an alias *)
+let col3 = expand_dims [|1|] vec       (* Shape: [5;1] *)
+]}
+
+{2 Removing Dimensions}
+
+{[
+let x = ones float32 [|1; 3; 1; 4; 1|]
+
+(* Remove all size-1 dimensions *)
+let squeezed = squeeze x                (* Shape: [3;4] *)
+
+(* Remove specific dimensions *)
+let partial = squeeze ~axes:[|0; 2|] x  (* Shape: [3;4;1] *)
+
+(* Remove single axis *)
+let single = squeeze_axis 0 x          (* Shape: [3;1;4;1] *)
+]}
+
+{1 Transposition and Permutation}
+
+{[
+(* 2D transpose *)
+let matrix = arange float32 0 6 1 |> reshape [|2; 3|]
+let transposed = transpose matrix       (* [2;3] → [3;2] *)
+
+(* Transpose specific axes *)
+let tensor = arange float32 0 24 1 |> reshape [|2; 3; 4|]
+let perm1 = transpose ~axes:[|2; 0; 1|] tensor  (* [2;3;4] → [4;2;3] *)
+let perm2 = transpose ~axes:[|0; 2; 1|] tensor  (* [2;3;4] → [2;4;3] *)
+
+(* Swap two axes *)
+let swapped = swapaxes 0 2 tensor      (* Swap axis 0 and 2 *)
+
+(* Move axis to new position *)
+let moved = moveaxis 2 0 tensor        (* Move axis 2 to position 0 *)
+]}
+
+{1 Slicing and Indexing}
+
+{2 Basic Slicing}
+
+{[
+let x = arange float32 0 20 1 |> reshape [|4; 5|]
+
+(* Using slice with index types *)
+let row = slice [I 1] x                 (* Select row 1 *)
+let col = slice [R[]; I 2] x           (* Select column 2 *)
+let sub = slice [R[1;3]; R[2;4]] x     (* Rows 1-2, cols 2-3 *)
+
+(* Negative indices count from end *)
+let last_row = slice [I (-1)] x        (* Last row *)
+let last_2x2 = slice [R[-2;0]; R[-2;0]] x  (* Last 2x2 block *)
+
+(* Step slicing *)
+let every_other = slice [R[0;0;2]] x   (* Every other row *)
+let reversed = slice [R[-1;-1;-1]] x   (* Reverse order *)
+]}
+
+{2 Fancy Indexing}
+
+{[
+(* List indexing *)
+let indices = slice [L[0;2;3]] x        (* Select rows 0,2,3 *)
+let complex = slice [L[1;3]; L[0;2;4]] x  (* Specific elements *)
+]}
+
+{2 slice_ranges Convenience}
+
+{[
+(* Slice multiple dimensions at once *)
+let tensor = arange float32 0 60 1 |> reshape [|3; 4; 5|]
+
+let sliced = slice_ranges [0; 1; 2] [2; 3; 5] tensor
+(* Equivalent to slice [R[0;2]; R[1;3]; R[2;5]] *)
+
+let with_steps = slice_ranges ~steps:[1; 2; 1] [0; 0; 0] [3; 4; 5] tensor
+(* Every row, every other col, all depths *)
+]}
+
+{2 Getting and Setting Elements}
+
+{[
+let x = arange float32 0 12 1 |> reshape [|3; 4|]
+
+(* Get single element as scalar *)
+let elem = get_item [1; 2] x           (* Row 1, col 2 *)
+
+(* Get subtensor *)
+let sub = get [1] x                     (* Row 1 as 1D tensor *)
+
+(* Set single element *)
+set_item [1; 2] 99. x
+
+(* Set subtensor *)
+let new_row = full float32 [|4|] 77.
+set [2] x new_row
+
+(* Set slice *)
+let values = ones float32 [|2; 2|]
+set_slice [R[0;2]; R[0;2]] values x
+]}
+
+{1 Concatenation and Stacking}
+
+{2 Concatenation}
+
+{[
+let a = ones float32 [|2; 3|]
+let b = zeros float32 [|2; 3|]
+let c = full float32 [|2; 3|] 2.
+
+(* Concatenate along existing axis *)
+let v_concat = concatenate ~axis:0 [a; b; c]    (* [6;3] *)
+let h_concat = concatenate ~axis:1 [a; b; c]    (* [2;9] *)
+
+(* Without axis: flatten then concatenate *)
+let flat_concat = concatenate [a; b; c]         (* [18] *)
+]}
+
+{2 Stacking}
+
+{[
+(* Stack along new axis *)
+let arrays = [a; b; c]                           (* Each is [2;3] *)
+
+let stack0 = stack ~axis:0 arrays               (* [3;2;3] *)
+let stack1 = stack ~axis:1 arrays               (* [2;3;3] *)
+let stack2 = stack ~axis:2 arrays               (* [2;3;3] *)
+
+(* Convenience functions *)
+let vstacked = vstack [a; b; c]                 (* Vertical: [6;3] *)
+let hstacked = hstack [a; b]                    (* Horizontal: [2;6] *)
+let dstacked = dstack [a; b]                    (* Depth: [2;3;2] *)
+]}
+
+{1 Splitting Arrays}
+
+{[
+let x = arange float32 0 12 1 |> reshape [|3; 4|]
+
+(* Split into equal parts *)
+let [first; second] = split ~axis:1 2 x         (* Two [3;2] arrays *)
+
+(* Split at specific indices *)
+let parts = array_split ~axis:0 (`Indices [1; 2]) x
+(* Creates 3 arrays: [1;4], [1;4], [1;4] *)
+
+(* Split into possibly unequal parts *)
+let unequal = array_split ~axis:0 (`Count 2) x
+(* Creates [2;4] and [1;4] - extra rows go to first part *)
+]}
+
+{1 Padding and Trimming}
+
+{2 Padding}
+
+{[
+let x = arange float32 0 6 1 |> reshape [|2; 3|]
+
+(* Pad with constant value *)
+let padded = pad [|(1,1); (2,2)|] 0. x
+(* Pads 1 row before/after, 2 cols before/after with 0s *)
+(* Result shape: [4;7] *)
+
+(* Different padding per dimension *)
+let asymmetric = pad [|(0,2); (1,0)|] (-1.) x
+(* No pad top, 2 rows bottom; 1 col left, no pad right *)
+]}
+
+{2 Trimming (shrink)}
+
+{[
+let large = arange float32 0 20 1 |> reshape [|4; 5|]
+
+(* Extract subregion *)
+let trimmed = shrink [|(1,3); (1,4)|] large
+(* Rows 1-2, cols 1-3 (exclusive end) *)
+]}
+
+{1 Tiling and Repeating}
+
+{[
+let x = arange float32 0 6 1 |> reshape [|2; 3|]
+
+(* Tile entire array *)
+let tiled = tile [|2; 3|] x
+(* Repeats 2x vertically, 3x horizontally: [4;9] *)
+
+(* Repeat elements *)
+let vec = arange float32 0 3 1
+let repeated = repeat 3 vec              (* [0;0;0;1;1;1;2;2;2] *)
+let rep_axis = repeat ~axis:0 2 x       (* Repeat along axis 0 *)
+]}
+
+{1 Advanced Transformations}
+
+{2 Rolling/Shifting}
+
+{[
+let x = arange float32 0 10 1
+
+(* Roll elements (circular shift) *)
+let rolled = roll 3 x                    (* Shift right by 3 *)
+let rolled_back = roll (-2) x           (* Shift left by 2 *)
+
+(* Roll along specific axis *)
+let matrix = reshape [|2; 5|] x
+let rolled_rows = roll ~axis:1 2 matrix  (* Roll each row *)
+]}
+
+{2 Flipping}
+
+{[
+let x = arange float32 0 12 1 |> reshape [|3; 4|]
+
+(* Flip along axes *)
+let v_flip = flip ~axes:[|0|] x         (* Flip vertically *)
+let h_flip = flip ~axes:[|1|] x         (* Flip horizontally *)
+let both_flip = flip x                  (* Flip all axes *)
+]}
+
+{1 Memory Considerations}
+
+{2 Views vs Copies}
+
+Most shape operations return views when possible:
+
+{[
+let x = arange float32 0 1000000 1
+
+(* These create views (O(1) memory) *)
+let view1 = reshape [|1000; 1000|] x
+let view2 = transpose view1
+let view3 = slice [R[0;500]] view1
+let view4 = unsqueeze ~axes:[|0|] x
+
+(* These create copies (O(n) memory) *)
+let copy1 = contiguous view2            (* If not already contiguous *)
+let copy2 = concatenate [x; x]
+let copy3 = tile [|2; 1|] x
+]}
+
+{2 Checking Contiguity}
+
+{[
+let x = arange float32 0 24 1 |> reshape [|4; 6|]
+let t = transpose x
+
+Printf.printf "Original contiguous: %b\n" (is_contiguous x)   (* true *)
+Printf.printf "Transpose contiguous: %b\n" (is_contiguous t)  (* false *)
+
+(* Ensure contiguous *)
+let t_contig = contiguous t
+Printf.printf "After contiguous: %b\n" (is_contiguous t_contig)  (* true *)
+]}
+
+{1 Common Patterns}
+
+{2 Batch Processing}
+
+{[
+(* Add batch dimension *)
+let image = rand float32 [|3; 224; 224|]
+let batch = unsqueeze ~axes:[|0|] image  (* [1;3;224;224] *)
+
+(* Process multiple samples *)
+let batch_data = rand float32 [|32; 3; 224; 224|]
+let processed = List.init 32 (fun i ->
+  let sample = slice [I i] batch_data in
+  (* process sample *)
+  sample
+) |> stack ~axis:0
+]}
+
+{2 Sliding Windows}
+
+{[
+(* Extract sliding windows manually *)
+let signal = arange float32 0 100 1
+let window_size = 10
+let stride = 5
+
+let windows = List.init ((100 - window_size) / stride + 1) (fun i ->
+  slice [R[i*stride; i*stride + window_size]] signal
+) |> stack ~axis:0
+]}
+
+{1 Performance Tips}
+
+1. {b Prefer views}: Reshape, transpose, slice create views
+2. {b Batch operations}: Process multiple items at once
+3. {b Check contiguity}: Some operations require contiguous memory
+4. {b Minimize copies}: Chain view operations before copying
+5. {b Use appropriate functions}: [ravel] vs [flatten], etc.
+
+{1 Next Steps}
+
+- Master {!linear-algebra} for matrix operations
+- Learn about {!io} for data loading/saving
+- See examples in [nx/example/05-array-manipulation/]

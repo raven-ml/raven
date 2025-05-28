@@ -1,3 +1,81 @@
-@children_order get-started io
+@children_order get-started basics broadcasting shape-manipulation linear-algebra io
 
-{0 nx}
+{0 Nx - N-dimensional Arrays for OCaml}
+
+Nx provides NumPy-style tensor operations for OCaml. It offers an efficient, type-safe interface for numerical computing with support for broadcasting, automatic differentiation (via Rune), and multiple backends.
+
+{1 Features}
+
+- {b Type-safe tensors}: Parameterized by both OCaml type and bigarray element type
+- {b NumPy compatibility}: Familiar API for users coming from Python
+- {b Broadcasting}: Automatic shape compatibility for element-wise operations
+- {b Memory efficiency}: Zero-copy views, strided arrays, and careful memory management
+- {b Multiple backends}: CPU (native) and GPU (Metal) backends available
+- {b Rich ecosystem}: Integration with plotting (Hugin), computer vision (Sowilo), and deep learning (Rune)
+
+{1 Quick Example}
+
+{[
+open Nx
+
+(* Create arrays *)
+let x = arange float32 0 12 1 |> reshape [|3; 4|]
+let y = ones float32 [|4|]
+
+(* Broadcasting works automatically *)
+let z = add x y
+
+(* Matrix operations *)
+let m1 = eye float32 3
+let m2 = arange float32 0 9 1 |> reshape [|3; 3|]
+let result = matmul m1 m2
+
+(* Reductions *)
+let sum_all = sum z
+let sum_rows = sum ~axes:[|1|] z
+let mean_val = mean z
+]}
+
+{1 Installation}
+
+Add to your [dune-project]:
+
+{[
+(package
+ (depends
+  nx))
+]}
+
+{1 Backend Selection}
+
+By default, Nx uses the native CPU backend. To use the Metal backend on macOS:
+
+{[
+module B = Nx_metal
+include Nx_core.Make_frontend(B)
+
+(* Or use the pre-configured module *)
+open Nx_metal.Frontend
+]}
+
+{1 Documentation Structure}
+
+- {!get-started}: Introduction and basic concepts
+- {!basics}: Core tensor operations and data types
+- {!broadcasting}: Understanding broadcasting rules
+- {!shape-manipulation}: Reshaping, slicing, and indexing
+- {!linear-algebra}: Matrix operations and linear algebra
+- {!io}: Loading and saving data
+
+{1 API Reference}
+
+- {!Nx}: Main module with all tensor operations
+- {!Nx_io}: Input/output operations for images and NumPy formats
+- {!Nx.Dtype}: Data type specifications
+
+{1 See Also}
+
+- {{:https://github.com/tinygrad/tinygrad}Tinygrad}: Inspiration for the backend design
+- {{:https://numpy.org/doc/stable/}NumPy}: API compatibility reference
+- {!Rune}: Automatic differentiation and neural networks
+- {!Hugin}: Plotting and visualization

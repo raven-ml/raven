@@ -1,0 +1,265 @@
+{0 Linear Algebra}
+
+This guide covers linear algebra operations in Nx, including matrix multiplication, decompositions, and solving linear systems.
+
+{1 Matrix Multiplication}
+
+{2 Basic Matrix Multiplication}
+
+The {!Nx.dot} function performs generalized dot product operations:
+
+{[
+open Nx
+
+(* Vector dot product *)
+let v1 = of_list float32 [1.; 2.; 3.]
+let v2 = of_list float32 [4.; 5.; 6.]
+let dot_product = dot v1 v2  (* 32. *)
+
+(* Matrix-vector multiplication *)
+let mat = of_list float32 [1.; 2.; 3.; 4.] |> reshape [|2; 2|]
+let vec = of_list float32 [1.; 2.]
+let result = dot mat vec  (* [5.; 11.] *)
+
+(* Matrix-matrix multiplication *)
+let a = of_list float32 [1.; 2.; 3.; 4.] |> reshape [|2; 2|]
+let b = of_list float32 [5.; 6.; 7.; 8.] |> reshape [|2; 2|]
+let c = dot a b  (* [[19.; 22.]; [43.; 50.]] *)
+]}
+
+{2 Batched Operations}
+
+The {!Nx.matmul} function supports batched matrix multiplication with broadcasting:
+
+{[
+(* Batch of matrices times single matrix *)
+let batch = zeros float32 [|10; 3; 4|]  (* 10 matrices of 3x4 *)
+let mat = zeros float32 [|4; 5|]         (* Single 4x5 matrix *)
+let result = matmul batch mat            (* Shape: [10; 3; 5] *)
+
+(* Batch times batch *)
+let a = zeros float32 [|10; 3; 4|]
+let b = zeros float32 [|10; 4; 5|]
+let c = matmul a b                       (* Shape: [10; 3; 5] *)
+]}
+
+{1 Matrix Properties}
+
+{2 Norms}
+
+Nx provides various matrix and vector norms:
+
+{[
+(* Vector norms *)
+let vec = of_list float32 [3.; 4.]
+let l2_norm = norm vec          (* 5. - Euclidean norm *)
+let l1_norm = norm ~ord:1. vec  (* 7. - Manhattan norm *)
+let inf_norm = norm ~ord:infinity vec  (* 4. - Max norm *)
+
+(* Matrix norms *)
+let mat = of_list float32 [1.; 2.; 3.; 4.] |> reshape [|2; 2|]
+let frobenius = norm mat        (* Frobenius norm (default) *)
+let spectral = norm ~ord:2. mat (* Spectral norm *)
+]}
+
+{2 Determinant and Trace}
+
+{[
+(* Determinant *)
+let mat = of_list float32 [1.; 2.; 3.; 4.] |> reshape [|2; 2|]
+let det = determinant mat  (* -2. *)
+
+(* Trace (sum of diagonal) *)
+let tr = trace mat  (* 5. *)
+
+(* Diagonal extraction *)
+let diag = diagonal mat  (* [1.; 4.] *)
+]}
+
+{1 Matrix Decompositions}
+
+{2 LU Decomposition}
+
+LU decomposition factors a matrix into lower and upper triangular matrices:
+
+{[
+let a = of_list float32 [2.; 1.; 1.; 3.] |> reshape [|2; 2|]
+let (p, l, u) = lu a
+(* p: permutation matrix
+   l: lower triangular with unit diagonal
+   u: upper triangular
+   Such that: p @ a = l @ u *)
+]}
+
+{2 QR Decomposition}
+
+QR decomposition factors a matrix into orthogonal and upper triangular matrices:
+
+{[
+let a = of_list float32 [1.; 2.; 3.; 4.; 5.; 6.] |> reshape [|3; 2|]
+let (q, r) = qr a
+(* q: orthogonal matrix (q @ q.T = I)
+   r: upper triangular
+   Such that: a = q @ r *)
+]}
+
+{2 Eigenvalue Decomposition}
+
+For symmetric matrices:
+
+{[
+let sym = of_list float32 [1.; 2.; 2.; 4.] |> reshape [|2; 2|]
+let (eigenvalues, eigenvectors) = eigh sym
+(* eigenvalues: sorted in ascending order
+   eigenvectors: column i is eigenvector for eigenvalue i *)
+]}
+
+{2 Singular Value Decomposition (SVD)}
+
+{[
+let a = of_list float32 [1.; 2.; 3.; 4.; 5.; 6.] |> reshape [|2; 3|]
+let (u, s, vt) = svd a
+(* u: left singular vectors
+   s: singular values (diagonal)
+   vt: right singular vectors (transposed)
+   Such that: a = u @ diag(s) @ vt *)
+]}
+
+{1 Solving Linear Systems}
+
+{2 Direct Solution}
+
+Solve Ax = b for x:
+
+{[
+let a = of_list float32 [2.; 1.; 1.; 3.] |> reshape [|2; 2|]
+let b = of_list float32 [5.; 7.]
+let x = solve a b  (* Solution to a @ x = b *)
+
+(* Verify *)
+let check = dot a x  (* Should equal b *)
+]}
+
+{2 Least Squares}
+
+For overdetermined systems (more equations than unknowns):
+
+{[
+(* Solve Ax ≈ b in least squares sense *)
+let a = of_list float32 [1.; 1.; 1.; 2.; 1.; 3.] |> reshape [|3; 2|]
+let b = of_list float32 [1.; 2.; 2.]
+let x = lstsq a b  (* Least squares solution *)
+]}
+
+{2 Matrix Inversion}
+
+{b Warning}: Direct inversion is numerically unstable. Use {!Nx.solve} when possible.
+
+{[
+let a = of_list float32 [1.; 2.; 3.; 4.] |> reshape [|2; 2|]
+let a_inv = inv a
+
+(* Verify: a @ a_inv = I *)
+let identity = dot a a_inv
+]}
+
+{1 Special Matrices}
+
+{2 Creating Special Matrices}
+
+{[
+(* Identity matrix *)
+let id = eye float32 [|5; 5|]
+
+(* Diagonal matrix from vector *)
+let diag_vals = of_list float32 [1.; 2.; 3.]
+let diag_mat = diag diag_vals
+
+(* Triangular matrices *)
+let upper = triu (ones float32 [|4; 4|])     (* Upper triangular *)
+let lower = tril (ones float32 [|4; 4|])     (* Lower triangular *)
+let strict_upper = triu (ones float32 [|4; 4|]) ~k:1  (* Strict upper *)
+]}
+
+{2 Matrix Powers}
+
+{[
+(* Matrix power *)
+let a = of_list float32 [1.; 1.; 0.; 1.] |> reshape [|2; 2|]
+let a_squared = matrix_power a 2
+let a_cubed = matrix_power a 3
+
+(* For negative powers (requires invertible matrix) *)
+let a_inv = matrix_power a (-1)  (* Same as inv a *)
+]}
+
+{1 Performance Considerations}
+
+{2 BLAS Backend}
+
+Many linear algebra operations use optimized BLAS routines:
+- Matrix multiplication ({!Nx.dot}, {!Nx.matmul})
+- Triangular solves
+- Level-3 BLAS operations
+
+{2 Memory Layout}
+
+For best performance:
+- Use contiguous arrays when possible
+- Consider transposing to get better memory access patterns
+- Batch operations to amortize overhead
+
+{[
+(* Good: contiguous memory access *)
+let a = zeros float32 [|1000; 1000|]
+let b = zeros float32 [|1000; 1000|]
+let c = dot a b
+
+(* Less efficient: strided access *)
+let a_view = slice a [R []; R [0; -1; 2]]  (* Every other column *)
+let c_slow = dot a_view b
+]}
+
+{2 Numerical Stability}
+
+- Prefer {!Nx.solve} over computing inverse explicitly
+- Use QR decomposition for least squares problems
+- Check condition numbers for ill-conditioned matrices
+- Consider using higher precision (float64) for sensitive computations
+
+{1 Common Patterns}
+
+{2 Gram Matrix}
+
+{[
+(* Compute X.T @ X efficiently *)
+let x = randn float32 [|100; 20|]
+let gram = dot (transpose x) x  (* 20x20 Gram matrix *)
+]}
+
+{2 Covariance Matrix}
+
+{[
+(* Compute covariance of data matrix (samples x features) *)
+let data = randn float32 [|1000; 10|]
+let mean = mean data ~axis:[|0|] ~keepdims:true
+let centered = sub data mean
+let cov = div (dot (transpose centered) centered) 
+              (scalar float32 999.)  (* n-1 for unbiased *)
+]}
+
+{2 Orthogonalization}
+
+{[
+(* Orthogonalize vectors using QR *)
+let vectors = randn float32 [|5; 3|]  (* 3 vectors of dim 5 *)
+let (q, _) = qr vectors
+(* q contains orthonormal vectors *)
+]}
+
+{1 See Also}
+
+- {!Nx}: Core tensor operations
+- {!page-"basics"}: Basic mathematical operations
+- {!page-"broadcasting"}: Understanding broadcasting rules
+}

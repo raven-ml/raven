@@ -1,0 +1,306 @@
+{0 Basic Operations}
+
+This guide covers fundamental tensor operations in Nx, including arithmetic, mathematical functions, comparisons, and reductions.
+
+{1 Element-wise Operations}
+
+Element-wise operations apply a function to corresponding elements of tensors. Broadcasting rules are automatically applied.
+
+{2 Arithmetic Operations}
+
+{[
+open Nx
+
+let a = arange float32 1 7 1 |> reshape [|2; 3|]
+let b = arange float32 10 16 1 |> reshape [|2; 3|]
+
+(* Basic arithmetic *)
+let sum = add a b         (* Element-wise addition *)
+let diff = sub a b        (* Element-wise subtraction *)
+let prod = mul a b        (* Element-wise multiplication *)
+let quot = div a b        (* Element-wise division *)
+let power = pow a b       (* Element-wise power *)
+let modulo = mod_ a b     (* Element-wise modulo *)
+
+(* Negation *)
+let neg_a = neg a         (* Unary negation *)
+]}
+
+{2 Scalar Operations}
+
+Most operations have scalar variants for efficiency:
+
+{[
+let x = arange float32 0 10 1
+
+(* Scalar operations *)
+let x_plus_5 = add_s x 5.       (* Add scalar *)
+let x_times_2 = mul_s x 2.      (* Multiply by scalar *)
+let x_div_3 = div_s x 3.        (* Divide by scalar *)
+let x_pow_2 = pow_s x 2.        (* Raise to scalar power *)
+
+(* Reverse operations *)
+let five_minus_x = rsub_s 5. x  (* 5 - x *)
+let ten_div_x = rdiv_s 10. x    (* 10 / x *)
+]}
+
+{2 In-place Operations}
+
+In-place operations modify the target tensor:
+
+{[
+let target = zeros float32 [|3; 3|]
+let value = ones float32 [|3; 3|]
+
+(* In-place operations return the modified target *)
+let _ = iadd target value        (* target += value *)
+let _ = imul_s target 2.        (* target *= 2 *)
+let _ = isub target value       (* target -= value *)
+
+(* Fill all elements with a value *)
+let _ = fill 3.14 target        (* Sets all elements to 3.14 *)
+]}
+
+{1 Mathematical Functions}
+
+{2 Basic Math}
+
+{[
+let x = linspace float32 0. 10. 100
+
+(* Basic functions *)
+let abs_x = abs x           (* Absolute value *)
+let sqrt_x = sqrt x         (* Square root *)
+let square_x = square x     (* x^2 *)
+let recip_x = recip x       (* 1/x *)
+let rsqrt_x = rsqrt x       (* 1/sqrt(x) *)
+
+(* Exponential and logarithm *)
+let exp_x = exp x           (* e^x *)
+let exp2_x = exp2 x         (* 2^x *)
+let log_x = log x           (* Natural log *)
+let log2_x = log2 x         (* Log base 2 *)
+]}
+
+{2 Trigonometric Functions}
+
+{[
+let angles = linspace float32 0. (2. *. Float.pi) 100
+
+(* Standard trig *)
+let sin_a = sin angles
+let cos_a = cos angles
+let tan_a = tan angles
+
+(* Inverse trig *)
+let x = linspace float32 (-1.) 1. 100
+let asin_x = asin x
+let acos_x = acos x
+let atan_x = atan x
+
+(* Two-argument arctangent *)
+let y = ones float32 [|10|]
+let x = arange_f float32 (-5.) 5. 1.
+let angles = atan2 y x      (* atan2(y, x) *)
+
+(* Hyperbolic functions *)
+let sinh_x = sinh x
+let cosh_x = cosh x
+let tanh_x = tanh x
+let asinh_x = asinh x
+let acosh_x = acosh (add_s x 1.1)  (* x must be >= 1 *)
+let atanh_x = atanh (mul_s x 0.9)  (* x must be in (-1, 1) *)
+]}
+
+{2 Rounding Functions}
+
+{[
+let x = linspace float32 (-2.9) 2.9 10
+
+let truncated = trunc x     (* Round toward zero *)
+let ceiled = ceil x         (* Round up *)
+let floored = floor x       (* Round down *)
+let rounded = round x       (* Round to nearest (away from zero) *)
+
+(* Examples:
+   x = 2.7:  trunc=2.0, ceil=3.0, floor=2.0, round=3.0
+   x = -2.7: trunc=-2.0, ceil=-2.0, floor=-3.0, round=-3.0 *)
+]}
+
+{1 Comparison Operations}
+
+Comparisons return uint8 tensors with 1 for true, 0 for false:
+
+{[
+let a = arange float32 0 5 1
+let b = arange float32 2 7 1
+
+(* Element-wise comparisons *)
+let lt = cmplt a b          (* a < b *)
+let le = cmple a b          (* a <= b *)
+let eq = cmpeq a b          (* a == b *)
+let ne = cmpne a b          (* a != b *)
+let gt = cmpgt a b          (* a > b *)
+let ge = cmpge a b          (* a >= b *)
+
+(* Alternative names *)
+let lt2 = less a b
+let eq2 = equal a b
+let ne2 = not_equal a b
+
+(* Array equality check (returns scalar) *)
+let arrays_equal = array_equal a b  (* 0 or 1 *)
+]}
+
+{2 Special Value Checks}
+
+{[
+let x = [|1.; Float.nan; Float.infinity; Float.neg_infinity; 0.|]
+      |> create float32 [|5|]
+
+let is_nan = isnan x        (* [0;1;0;0;0] *)
+let is_inf = isinf x        (* [0;0;1;1;0] *)
+let is_finite = isfinite x  (* [1;0;0;0;1] *)
+]}
+
+{1 Logical Operations}
+
+{[
+let a = [|0; 1; 0; 1|] |> create uint8 [|4|]
+let b = [|0; 0; 1; 1|] |> create uint8 [|4|]
+
+(* Logical operations (0 is false, non-zero is true) *)
+let and_ = logical_and a b   (* [0;0;0;1] *)
+let or_ = logical_or a b     (* [0;1;1;1] *)
+let xor_ = logical_xor a b   (* [0;1;1;0] *)
+let not_ = logical_not a     (* [1;0;1;0] *)
+]}
+
+{1 Bitwise Operations}
+
+For integer types:
+
+{[
+let a = arange int32 0 8 1
+let b = arange int32 4 12 1
+
+(* Bitwise operations *)
+let bit_and = bitwise_and a b
+let bit_or = bitwise_or a b
+let bit_xor = bitwise_xor a b
+let bit_not = bitwise_not a  (* Same as invert *)
+
+(* Bit shifts *)
+let left_shift = lshift a 2   (* a << 2 *)
+let right_shift = rshift b 1  (* b >> 1 *)
+]}
+
+{1 Reduction Operations}
+
+Reductions aggregate values along specified axes:
+
+{[
+let x = arange float32 0 24 1 |> reshape [|2; 3; 4|]
+
+(* Reduce all axes (returns scalar) *)
+let total = sum x
+let product = prod x
+let maximum = max x
+let minimum = min x
+let average = mean x
+
+(* Reduce specific axes *)
+let sum_axis0 = sum ~axes:[|0|] x        (* Shape: [3;4] *)
+let sum_axis12 = sum ~axes:[|1;2|] x     (* Shape: [2] *)
+let sum_keepdims = sum ~axes:[|1|] ~keepdims:true x  (* Shape: [2;1;4] *)
+
+(* Statistical reductions *)
+let variance = var x          (* Population variance *)
+let std_dev = std x          (* Population std deviation *)
+let sample_var = var ~ddof:1 x   (* Sample variance *)
+let sample_std = std ~ddof:1 x   (* Sample std deviation *)
+
+(* Logical reductions *)
+let all_true = all x         (* Are all elements non-zero? *)
+let any_true = any x         (* Is any element non-zero? *)
+]}
+
+{2 Finding Extrema}
+
+{[
+let x = [|3; 1; 4; 1; 5; 9; 2; 6|] |> create int32 [|8|]
+
+(* Find indices of extrema *)
+let max_idx = argmax x       (* 5l - index of 9 *)
+let min_idx = argmin x       (* 1l - index of first 1 *)
+
+(* Along specific axis *)
+let matrix = reshape [|2; 4|] x
+let max_per_row = argmax ~axis:1 matrix  (* [2l; 1l] *)
+]}
+
+{1 Conditional Operations}
+
+{2 Element Selection}
+
+{[
+let condition = [|1; 0; 1; 0|] |> create uint8 [|4|]
+let if_true = [|10; 20; 30; 40|] |> create int32 [|4|]
+let if_false = [|100; 200; 300; 400|] |> create int32 [|4|]
+
+(* Select based on condition *)
+let result = where condition if_true if_false
+(* [10; 200; 30; 400] *)
+
+(* Common pattern: thresholding *)
+let x = linspace float32 (-5.) 5. 11
+let relu_manual = where (cmpgt x (zeros_like x)) x (zeros_like x)
+(* Same as relu x *)
+]}
+
+{2 Min/Max Operations}
+
+{[
+let a = [|1.; 5.; 3.|] |> create float32 [|3|]
+let b = [|4.; 2.; 6.|] |> create float32 [|3|]
+
+(* Element-wise min/max *)
+let mins = minimum a b       (* [1.; 2.; 3.] *)
+let maxs = maximum a b       (* [4.; 5.; 6.] *)
+
+(* With scalars *)
+let clamped_low = maximum_s a 2.   (* [2.; 5.; 3.] *)
+let clamped_high = minimum_s a 4.  (* [1.; 4.; 3.] *)
+
+(* Clamp to range *)
+let clamped = clamp ~min:0. ~max:1. x  (* Alias: clip *)
+]}
+
+{1 Special Functions}
+
+{[
+(* Linear interpolation *)
+let start = zeros float32 [|5|]
+let end_ = ones float32 [|5|]
+let weight = linspace float32 0. 1. 5
+let interpolated = lerp start end_ weight
+
+(* Hypotenuse (stable sqrt(x² + y²)) *)
+let x = [|3.; 1e200|] |> create float64 [|2|]
+let y = [|4.; 1e200|] |> create float64 [|2|]
+let h = hypot x y            (* [5.; 1.414e200] - no overflow *)
+]}
+
+{1 Performance Tips}
+
+1. {b Use scalar operations}: [add_s x 5.] is more efficient than [add x (full_like x 5.)]
+2. {b Prefer in-place operations}: When modifying existing tensors, use [iadd], [imul], etc.
+3. {b Check memory layout}: Use [is_contiguous] and [contiguous] when needed
+4. {b Batch operations}: Operate on entire tensors rather than element-by-element
+5. {b Use appropriate dtypes}: float32 is often sufficient and faster than float64
+
+{1 Next Steps}
+
+- Understanding {!broadcasting} for automatic shape compatibility
+- Learn about {!shape-manipulation} for reshaping and indexing
+- Explore {!linear-algebra} for matrix operations
