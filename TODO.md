@@ -4,13 +4,14 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
-- fix failing tests in nx (all files)
-- bug: getting Command got signal SEGV. at randint
+- wip: improve nx documentation (go through each function, check the implementation, check if there's invariant to document, check if useful to add examples)
+- wip: fix metal tests in nx (frontend all failing)
+
+- plan and implement comprehensive test suite for rune (don't duplicate nx, so mostly autodiff and jit)
+- implement value_and_grads and fix rune examples + kaun
+- fix nx tests: getting Command got signal SEGV. at randint
 - fix plot3d with hugin
-- benchmarking suite for nx (plan created: .claude/plans/2025-01-27-nx-benchmarking-suite.md)
-- test rewritten sowilo (after fixing sanity tests)
-- fix rune tests and examples compilation
-- rune build system for metal backend on non macOS systems
+- rune (or nx) build system for metal backend on non macOS systems
 
 refactor nx
 - allocate buffers outside of the backend?
