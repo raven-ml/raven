@@ -67,10 +67,22 @@ let where ctx cond if_true if_false =
         ~length:4 ~index:8;
 
       (* Set offsets *)
-      let cond_offset = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset cond.Internal.view))) in
-      let true_offset = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset if_true.Internal.view))) in
-      let false_offset = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset if_false.Internal.view))) in
-      
+      let cond_offset =
+        Ctypes.(
+          allocate uint32_t
+            (Unsigned.UInt32.of_int (View.offset cond.Internal.view)))
+      in
+      let true_offset =
+        Ctypes.(
+          allocate uint32_t
+            (Unsigned.UInt32.of_int (View.offset if_true.Internal.view)))
+      in
+      let false_offset =
+        Ctypes.(
+          allocate uint32_t
+            (Unsigned.UInt32.of_int (View.offset if_false.Internal.view)))
+      in
+
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp cond_offset)
         ~length:4 ~index:9;

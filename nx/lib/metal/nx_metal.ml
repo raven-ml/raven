@@ -38,7 +38,7 @@ let op_contiguous t =
   let view_size = View.numel t.view in
   let expected_bytes = view_size * Internal.sizeof_dtype t.dtype in
   let actual_bytes = t.buffer.size_bytes in
-  
+
   if View.is_contiguous t.view && actual_bytes >= expected_bytes then t
   else Ops_movement.make_contiguous t.context t
 
@@ -86,7 +86,8 @@ let op_const_array : type a b.
 
 (* Movement operations *)
 let op_expand t new_shape =
-  (* Expand changes the view metadata, setting strides to 0 for broadcast dimensions *)
+  (* Expand changes the view metadata, setting strides to 0 for broadcast
+     dimensions *)
   { t with view = View.expand t.view new_shape }
 
 let op_reshape t new_shape =
@@ -158,7 +159,6 @@ and op_copy t =
   let out = { out with view = View.create (View.shape t.view) } in
   Ops_movement.copy ctx t out;
   out
-
 
 (* Binary operations *)
 let op_add a b = Ops_binary.add a.context a b

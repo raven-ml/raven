@@ -93,9 +93,11 @@ let make_contiguous ctx t =
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp size_val)
         ~length:4 ~index:5;
-      
+
       (* Pass the offset *)
-      let offset_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.view))) in
+      let offset_val =
+        Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.view)))
+      in
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp offset_val)
         ~length:4 ~index:6;
@@ -252,10 +254,10 @@ let cat ctx tensors axis =
       let kernel_name = Printf.sprintf "concat_axis_%s" dtype_suffix in
       let func = Kernels.get_special_kernel ctx kernel_name in
       let pipeline = Kernels.create_compute_pipeline ctx.device func in
-      
+
       let ndim = Array.length shape in
       let axis_offset = ref 0 in
-      
+
       List.iter
         (fun t ->
           let in_shape = Internal.shape t in
@@ -275,16 +277,17 @@ let cat ctx tensors axis =
               let in_shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
               for i = 0 to ndim - 1 do
                 Ctypes.(out_shape_arr +@ i <-@ Unsigned.UInt32.of_int shape.(i));
-                Ctypes.(in_shape_arr +@ i <-@ Unsigned.UInt32.of_int in_shape.(i))
+                Ctypes.(
+                  in_shape_arr +@ i <-@ Unsigned.UInt32.of_int in_shape.(i))
               done;
-              
+
               ComputeCommandEncoder.set_bytes encoder
                 ~bytes:Ctypes.(to_voidp out_shape_arr)
                 ~length:(ndim * 4) ~index:2;
               ComputeCommandEncoder.set_bytes encoder
                 ~bytes:Ctypes.(to_voidp in_shape_arr)
                 ~length:(ndim * 4) ~index:3;
-              
+
               (* Set input strides *)
               let in_strides = View.strides t.Internal.view in
               let in_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
@@ -294,13 +297,23 @@ let cat ctx tensors axis =
               ComputeCommandEncoder.set_bytes encoder
                 ~bytes:Ctypes.(to_voidp in_strides_arr)
                 ~length:(ndim * 4) ~index:4;
-              
+
               (* Set axis, axis_offset, ndim, and in_offset *)
-              let axis_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int axis)) in
-              let axis_offset_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int !axis_offset)) in
-              let ndim_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int ndim)) in
-              let in_offset_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.Internal.view))) in
-              
+              let axis_val =
+                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int axis))
+              in
+              let axis_offset_val =
+                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int !axis_offset))
+              in
+              let ndim_val =
+                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int ndim))
+              in
+              let in_offset_val =
+                Ctypes.(
+                  allocate uint32_t
+                    (Unsigned.UInt32.of_int (View.offset t.Internal.view)))
+              in
+
               ComputeCommandEncoder.set_bytes encoder
                 ~bytes:Ctypes.(to_voidp axis_val)
                 ~length:4 ~index:5;

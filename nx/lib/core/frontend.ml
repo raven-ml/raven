@@ -574,9 +574,9 @@ module Make (B : Backend_intf.S) = struct
         let one_val = Dtype.one dt in
         let one_tensor = full (B.context a) dt (shape a) one_val in
         B.op_xor a one_tensor
-    | Dtype.Float16 | Dtype.Float32 | Dtype.Float64 | Dtype.Int32 | Dtype.Int64 | Dtype.Int8
-    | Dtype.Int16 | Dtype.UInt16 | Dtype.Int | Dtype.NativeInt | Dtype.Complex32
-    | Dtype.Complex64 ->
+    | Dtype.Float16 | Dtype.Float32 | Dtype.Float64 | Dtype.Int32 | Dtype.Int64
+    | Dtype.Int8 | Dtype.Int16 | Dtype.UInt16 | Dtype.Int | Dtype.NativeInt
+    | Dtype.Complex32 | Dtype.Complex64 ->
         let one_val = Dtype.one dt in
         let one_tensor = full (B.context a) dt (shape a) one_val in
         sub one_tensor a

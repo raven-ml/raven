@@ -81,26 +81,28 @@ let dispatch_reduce ctx op_name t ~axes ~keepdims =
       let naxes = Array.length axes in
       let shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
       let axes_arr = Ctypes.(allocate_n uint32_t ~count:naxes) in
-      
+
       for i = 0 to ndim - 1 do
         Ctypes.(shape_arr +@ i <-@ Unsigned.UInt32.of_int shape.(i))
       done;
-      
+
       for i = 0 to naxes - 1 do
         let ax = if axes.(i) < 0 then ndim + axes.(i) else axes.(i) in
         Ctypes.(axes_arr +@ i <-@ Unsigned.UInt32.of_int ax)
       done;
-      
+
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp shape_arr)
         ~length:(ndim * 4) ~index:5;
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp axes_arr)
         ~length:(naxes * 4) ~index:6;
-        
+
       let ndim_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int ndim)) in
-      let naxes_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int naxes)) in
-      
+      let naxes_val =
+        Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int naxes))
+      in
+
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp ndim_val)
         ~length:4 ~index:7;
