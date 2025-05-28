@@ -1,0 +1,23 @@
+name: Build and test
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        runs-on: [ ubuntu-latest, macos-latest ]
+    runs-on: ${{ matrix.runs-on }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Use dune
+        uses: ocaml-dune/setup-dune@v0
+      
+      - name: Run tests
+        run: dune runtest
+      
+      - name: Check formatting
+        run: dune build @fmt
