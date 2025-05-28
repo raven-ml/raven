@@ -9,4 +9,6 @@ let metal () : [ `metal ] device = Nx_rune.create_context ~device:Metal ()
 let device t = Nx_rune.context t
 let jit = Jit.jit
 let grad = Autodiff.grad
+let grads = Autodiff.grads
 let value_and_grad = Autodiff.value_and_grad
+let value_and_grads = Autodiff.value_and_grads
