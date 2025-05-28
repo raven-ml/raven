@@ -9,6 +9,8 @@
 (library
  (name nx_metal)
  (public_name nx.metal)
+ (enabled_if
+  (= %{ocaml-config:system} "macosx"))
  (libraries nx.core metal)
  (flags :standard -w -27-32-33-34-37)
  (foreign_stubs

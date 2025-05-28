@@ -1,6 +1,8 @@
 (library
  (name objc_c)
  (public_name rune.objc.c)
+ (enabled_if
+  (= %{ocaml-config:system} "macosx"))
  (libraries ctypes ctypes.foreign)
  (c_library_flags
   :standard

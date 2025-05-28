@@ -16,6 +16,8 @@
 (library
  (name objc)
  (public_name nx.metal.bindings.objc)
+ (enabled_if
+  (= %{ocaml-config:system} "macosx"))
  (libraries objc_c ctypes ctypes.foreign)
  (c_library_flags
   :standard
