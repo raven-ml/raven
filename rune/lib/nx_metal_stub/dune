@@ -1,0 +1,10 @@
+(library
+ (name nx_metal_stub)
+ (public_name rune.nx_metal_stub)
+ (libraries
+  nx.core
+  (select
+   nx_metal_stub.ml
+   from
+   (nx.metal -> nx_metal_stub.present.ml)
+   (-> nx_metal_stub.missing.ml))))

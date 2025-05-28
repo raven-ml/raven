@@ -694,7 +694,8 @@ let execute_compiled_fn state input =
   | Cpu_tensor _ ->
       Cpu_tensor (Nx_native.op_const_array (Nx_native.create_context ()) out_ba)
   | Metal_tensor _ ->
-      Metal_tensor (Nx_metal.op_const_array (Nx_metal.create_context ()) out_ba)
+      Metal_tensor
+        (Nx_metal_stub.op_const_array (Nx_metal_stub.create_context ()) out_ba)
   | Symbolic_tensor _ -> assert false
 
 (* ───── Main JIT Function ───── *)

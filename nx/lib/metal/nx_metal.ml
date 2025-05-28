@@ -10,7 +10,6 @@ type ('a, 'b) t = ('a, 'b) Internal.t = {
   view : View.t;
 }
 
-let is_available () = true
 let view t = t.view
 let dtype t = t.dtype
 let context t = t.context
