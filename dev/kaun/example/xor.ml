@@ -56,7 +56,7 @@ let train_mlp input y_true learning_rate epochs =
     (* Print loss every 100 epochs *)
     if epoch mod 100 = 0 then
       print_endline
-        (Printf.sprintf "Epoch %d: Loss = %f" epoch (Rune.get [||] loss))
+        (Printf.sprintf "Epoch %d: Loss = %f" epoch (Rune.unsafe_get [] loss))
   done;
 
   (* Return the trained model *)
@@ -66,10 +66,13 @@ let train_mlp input y_true learning_rate epochs =
 let () =
   (* XOR input data: [4 samples, 2 features] *)
   let input =
-    Rune.create Rune.float32 [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |]
+    Rune.create Rune.cpu Rune.float32 [| 4; 2 |]
+      [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |]
   in
   (* XOR target data: [4 samples, 1 output] *)
-  let y_true = Rune.create Rune.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
+  let y_true =
+    Rune.create Rune.cpu Rune.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |]
+  in
   let learning_rate = 0.1 in
   let epochs = 2000 in
 

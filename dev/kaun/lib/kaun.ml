@@ -1,5 +1,6 @@
 type ('layout, 'dev) tensor = (float, 'layout) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
+type 'dev device = 'dev Rune.device
 
 (* Parameter tree to represent model parameters hierarchically *)
 type ('layout, 'dev) ptree =
@@ -71,12 +72,12 @@ module Rng = struct
   let create ?seed () =
     match seed with Some s -> s | None -> Random.int 1_000_000
 
-  let normal key ~dtype ~shape =
-    let tensor = Rune.randn dtype ~seed:key shape in
+  let normal key ~device ~dtype ~shape =
+    let tensor = Rune.randn device dtype ~seed:key shape in
     tensor
 
-  let uniform key ~dtype ~shape =
-    let tensor = Rune.rand dtype ~seed:key shape in
+  let uniform key ~device ~dtype ~shape =
+    let tensor = Rune.rand device dtype ~seed:key shape in
     tensor
 end
 
@@ -94,20 +95,21 @@ end
 
 module Initializer = struct
   type ('layout, 'dev) t =
-    Rng.t -> int array -> 'layout dtype -> ('layout, 'dev) tensor
+    Rng.t -> int array -> 'dev device -> 'layout dtype -> ('layout, 'dev) tensor
 
-  let constant value = fun _rng shape dtype -> Rune.full dtype shape value
+  let constant value =
+   fun _rng shape dev dtype -> Rune.full dev dtype shape value
 
   let glorot_uniform ~in_axis ~out_axis =
-   fun rng shape dtype ->
+   fun rng shape dev dtype ->
     let din = shape.(in_axis) in
     let dout = shape.(out_axis) in
     let fan_in = din in
     let fan_out = dout in
     let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
-    let u01 = Rng.uniform rng ~dtype ~shape in
-    let scale = Rune.scalar dtype (2.0 *. limit) in
-    let shift = Rune.scalar dtype limit in
+    let u01 = Rng.uniform rng ~device:dev ~dtype ~shape in
+    let scale = Rune.scalar dev dtype (2.0 *. limit) in
+    let shift = Rune.scalar dev dtype limit in
     Rune.(sub (mul u01 scale) shift)
 end
 
@@ -119,11 +121,9 @@ module Linear = struct
 
   let init ~rng ?(use_bias = true) ~dtype ~device in_features out_features =
     let glorot_uniform = Initializer.glorot_uniform ~in_axis:0 ~out_axis:1 in
-    let w_cpu = glorot_uniform rng [| in_features; out_features |] dtype in
-    let w = Rune.move device w_cpu in
+    let w = glorot_uniform rng [| in_features; out_features |] device dtype in
     let b =
-      if use_bias then
-        Some (Rune.zeros dtype [| out_features |] |> Rune.move device)
+      if use_bias then Some (Rune.zeros device dtype [| out_features |])
       else None
     in
     { w; b }
@@ -135,7 +135,7 @@ module Linear = struct
   let update ~lr { w; b } { w = dw; b = db_opt } =
     let dev = Rune.device w in
     let dtype = Rune.dtype w in
-    let lr_t = Rune.scalar dtype lr |> Rune.move dev in
+    let lr_t = Rune.scalar dev dtype lr in
     let w' = Rune.sub w (Rune.mul lr_t dw) in
     let b' =
       match (b, db_opt) with
@@ -167,7 +167,8 @@ module Optimizer = struct
       List.map
         (fun g ->
           let dtype = Rune.dtype g in
-          let scale = Rune.scalar dtype (-.lr) in
+          let dev = Rune.device g in
+          let scale = Rune.scalar dev dtype (-.lr) in
           Rune.mul g scale)
         grads
   end
@@ -237,7 +238,7 @@ module Optimizer = struct
         let p_list, rebuild = flatten_ptree params_pt in
         let g_list, _ = flatten_ptree grads in
         let updates = Sgd.updates cfg g_list in
-        let new_params = List.map2 Rune.add_inplace p_list updates in
+        let new_params = List.map2 Rune.iadd p_list updates in
         model := lens.of_ptree (rebuild new_params)
     | Adam { cfg; lens; model; state } ->
         let p_ts, _ = flatten_ptree (lens.to_ptree !model) in
@@ -254,28 +255,26 @@ module Optimizer = struct
           | p :: ps', g :: gs', m_old :: ms', v_old :: vs' ->
               let dtype = Rune.dtype p in
               let dev = Rune.device p in
-              let b1t = Rune.scalar dtype beta1 |> Rune.move dev in
-              let b1_ = Rune.scalar dtype (1. -. beta1) |> Rune.move dev in
+              let b1t = Rune.scalar dev dtype beta1 in
+              let b1_ = Rune.scalar dev dtype (1. -. beta1) in
               let m_new = Rune.(add (mul b1t m_old) (mul b1_ g)) in
-              let b2t = Rune.scalar dtype beta2 |> Rune.move dev in
-              let b2_ = Rune.scalar dtype (1. -. beta2) |> Rune.move dev in
+              let b2t = Rune.scalar dev dtype beta2 in
+              let b2_ = Rune.scalar dev dtype (1. -. beta2) in
               let gg = Rune.mul g g in
               let v_new = Rune.(add (mul b2t v_old) (mul b2_ gg)) in
-              let bc1_t = Rune.scalar dtype bc1 |> Rune.move dev in
-              let bc2_t = Rune.scalar dtype bc2 |> Rune.move dev in
+              let bc1_t = Rune.scalar dev dtype bc1 in
+              let bc2_t = Rune.scalar dev dtype bc2 in
               let m_hat = Rune.div m_new bc1_t in
               let v_hat = Rune.div v_new bc2_t in
-              let lr_t = Rune.scalar dtype lr |> Rune.move dev in
-              let eps_t = Rune.scalar dtype eps |> Rune.move dev in
+              let lr_t = Rune.scalar dev dtype lr in
+              let eps_t = Rune.scalar dev dtype eps in
               let upd =
                 Rune.(mul lr_t (div m_hat (add (Rune.sqrt v_hat) eps_t)))
               in
               let upd =
                 if weight_decay = 0. then upd
                 else
-                  let wd_t =
-                    Rune.scalar dtype (lr *. weight_decay) |> Rune.move dev
-                  in
+                  let wd_t = Rune.scalar dev dtype (lr *. weight_decay) in
                   Rune.(add upd (mul wd_t p))
               in
               aux ps' gs' ms' vs' (m_new :: acc_m) (v_new :: acc_v)
@@ -286,7 +285,7 @@ module Optimizer = struct
         let m_ts', v_ts', us = aux p_ts g_ts m_ts v_ts [] [] [] in
         state.m <- rebuild_m m_ts';
         state.v <- rebuild_v v_ts';
-        List.iter2 (fun p u -> ignore (Rune.sub_inplace p u)) p_ts us
+        List.iter2 (fun p u -> ignore (Rune.isub p u)) p_ts us
 end
 
 module Loss = struct
@@ -294,7 +293,8 @@ module Loss = struct
 
   let sigmoid_binary_cross_entropy logits labels =
     let dtype = Rune.dtype logits in
-    let one = Rune.scalar dtype 1.0 in
+    let dev = Rune.device logits in
+    let one = Rune.scalar dev dtype 1.0 in
     let log_sig = Rune.log_sigmoid logits in
     let log_sig_neg = Rune.log_sigmoid (Rune.neg logits) in
     let term1 = Rune.mul labels log_sig in
@@ -304,8 +304,8 @@ module Loss = struct
 end
 
 let value_and_grad ~(lens : ('model, 'l, 'd) lens)
-    (f : 'model -> ('v_l, 'v_d, [ `cpu ]) Rune.t) (model : 'model) :
-    ('v_l, 'v_d, [ `cpu ]) Rune.t * ('l, 'd) ptree =
+    (f : 'model -> ('v_l, 'v_d) Rune.t) (model : 'model) :
+    ('v_l, 'v_d) Rune.t * ('l, 'd) ptree =
   let ptree = lens.to_ptree model in
   let tensors, rebuild = flatten_ptree ptree in
   let f_on_list ts = f (lens.of_ptree (rebuild ts)) in
