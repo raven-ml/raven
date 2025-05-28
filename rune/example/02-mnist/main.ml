@@ -11,114 +11,231 @@ let get_batch x y batch_size batch_idx =
   if batch_size_actual <= 0 then failwith "Empty batch encountered"
   else
     let x_batch =
-      slice_ranges [ start; 0 ] [ start + batch_size_actual; dim 1 x ] x
+      slice_ranges [ start; 0; 0; 0 ] [ start + batch_size_actual; 1; 28; 28 ] x
     in
     let y_batch =
       slice_ranges [ start; 0 ] [ start + batch_size_actual; dim 1 y ] y
     in
     (x_batch, y_batch)
 
-(* Forward pass: computes the MLP output (logits) with shape logging *)
-let forward params inputs =
+(* Initialize parameters for LeNet *)
+let init_lenet_params ctx =
+  (* Conv1: 1 input channel, 6 output channels, 5x5 kernel *)
+  let conv1_w =
+    div
+      (randn ctx Float32 [| 6; 1; 5; 5 |])
+      (scalar ctx Float32 (Stdlib.sqrt 25.0))
+  in
+  let conv1_b = zeros ctx Float32 [| 6 |] in
+
+  (* Conv2: 6 input channels, 16 output channels, 5x5 kernel *)
+  let conv2_w =
+    div
+      (randn ctx Float32 [| 16; 6; 5; 5 |])
+      (scalar ctx Float32 (Stdlib.sqrt (6.0 *. 25.0)))
+  in
+  let conv2_b = zeros ctx Float32 [| 16 |] in
+
+  (* FC1: 16*4*4 = 256 inputs, 120 outputs *)
+  let fc1_w =
+    div
+      (randn ctx Float32 [| 256; 120 |])
+      (scalar ctx Float32 (Stdlib.sqrt 256.0))
+  in
+  let fc1_b = zeros ctx Float32 [| 120 |] in
+
+  (* FC2: 120 inputs, 84 outputs *)
+  let fc2_w =
+    div
+      (randn ctx Float32 [| 120; 84 |])
+      (scalar ctx Float32 (Stdlib.sqrt 120.0))
+  in
+  let fc2_b = zeros ctx Float32 [| 84 |] in
+
+  (* FC3: 84 inputs, 10 outputs *)
+  let fc3_w =
+    div (randn ctx Float32 [| 84; 10 |]) (scalar ctx Float32 (Stdlib.sqrt 84.0))
+  in
+  let fc3_b = zeros ctx Float32 [| 10 |] in
+
+  [
+    conv1_w; conv1_b; conv2_w; conv2_b; fc1_w; fc1_b; fc2_w; fc2_b; fc3_w; fc3_b;
+  ]
+
+(* Forward pass for LeNet *)
+let forward_lenet params inputs =
   match params with
-  | [ w1; b1; w2; b2 ] ->
-      let z1 = add (matmul inputs w1) b1 in
-      let a1 = maximum (scalar cpu Float32 0.0) z1 in
-      let z2 = add (matmul a1 w2) b2 in
-      z2
+  | [
+   conv1_w; conv1_b; conv2_w; conv2_b; fc1_w; fc1_b; fc2_w; fc2_b; fc3_w; fc3_b;
+  ] ->
+      (* Conv1 + Tanh + MaxPool *)
+      let conv1_out = convolve2d inputs conv1_w ~padding_mode:`Valid in
+      let conv1_out = add conv1_out (reshape [| 1; 6; 1; 1 |] conv1_b) in
+      let conv1_out = tanh conv1_out in
+      let pool1_out, _ =
+        max_pool2d conv1_out ~kernel_size:(2, 2) ~stride:(2, 2)
+      in
+
+      (* Conv2 + Tanh + MaxPool *)
+      let conv2_out = convolve2d pool1_out conv2_w ~padding_mode:`Valid in
+      let conv2_out = add conv2_out (reshape [| 1; 16; 1; 1 |] conv2_b) in
+      let conv2_out = tanh conv2_out in
+      let pool2_out, _ =
+        max_pool2d conv2_out ~kernel_size:(2, 2) ~stride:(2, 2)
+      in
+
+      (* Flatten for FC layers *)
+      let batch_size = dim 0 pool2_out in
+      let flattened = reshape [| batch_size; 256 |] pool2_out in
+
+      (* FC1 + Tanh *)
+      let fc1_out = add (matmul flattened fc1_w) fc1_b in
+      let fc1_out = tanh fc1_out in
+
+      (* FC2 + Tanh *)
+      let fc2_out = add (matmul fc1_out fc2_w) fc2_b in
+      let fc2_out = tanh fc2_out in
+
+      (* FC3 (logits) *)
+      let logits = add (matmul fc2_out fc3_w) fc3_b in
+      logits
   | _ -> failwith "Invalid parameters"
 
-(* Cross-entropy loss: computes loss with shape logging *)
+(* Cross-entropy loss *)
 let cross_entropy_loss logits y_true =
   let epsilon = 1e-10 in
-  let probs = softmax logits in
-  let log_probs = log (add probs (scalar cpu Float32 epsilon)) in
+  let probs = softmax logits ~axes:[| 1 |] in
+  let log_probs = log (add probs (scalar (device logits) Float32 epsilon)) in
   let mul_term = mul y_true log_probs in
   let sum_term = sum mul_term ~axes:[| 1 |] in
   let neg_term = neg sum_term in
   let loss = mean neg_term in
   loss
 
+(* Calculate accuracy *)
+let accuracy predictions labels =
+  let pred_classes = argmax predictions ~axis:1 ~keepdims:false in
+  let correct = equal pred_classes labels in
+  let correct_float = astype Float32 correct in
+  let acc = mean correct_float in
+  unsafe_get [] acc
+
 (* Training function *)
-let train_mlp x_train y_train_onehot batch_size learning_rate epochs =
-  (* MLP architecture dimensions *)
-  let d = 784 in
-  (* Input: 28*28 *)
-  let h = 128 in
-  (* Hidden layer size *)
-  let c = 10 in
-  (* Output: 10 classes *)
+let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
+    y_test_labels batch_size learning_rate epochs =
+  let ctx = cpu in
 
   (* Initialize parameters *)
-  let w1 =
-    div
-      (randn cpu Float32 [| d; h |])
-      (scalar cpu Float32 (Stdlib.sqrt (float d)))
-  in
-  let b1 = zeros cpu Float32 [| h |] in
-  let w2 =
-    div
-      (randn cpu Float32 [| h; c |])
-      (scalar cpu Float32 (Stdlib.sqrt (float h)))
-  in
-  let b2 = zeros cpu Float32 [| c |] in
-  let params = [ w1; b1; w2; b2 ] in
+  let params = init_lenet_params ctx in
 
-  (* Training loop with mini-batches *)
+  (* Training loop *)
   let num_samples = dim 0 x_train in
   let num_batches = (num_samples + batch_size - 1) / batch_size in
+
   for epoch = 1 to epochs do
+    let epoch_loss = ref 0.0 in
+    let epoch_correct = ref 0 in
+    let epoch_samples = ref 0 in
+
     for batch_idx = 0 to num_batches - 1 do
       let x_batch, y_batch =
         get_batch x_train y_train_onehot batch_size batch_idx
       in
+      let y_labels_batch =
+        slice_ranges
+          [ batch_idx * batch_size ]
+          [ Stdlib.min ((batch_idx + 1) * batch_size) num_samples ]
+          y_train_labels
+      in
+
+      (* Forward and backward pass *)
       let loss_fn params =
-        let logits = forward params x_batch in
+        let logits = forward_lenet params x_batch in
         cross_entropy_loss logits y_batch
       in
+
       let loss, grad_params = value_and_grads loss_fn params in
-      print_endline
-      @@ Printf.sprintf "Epoch %d, Batch %d: Loss = %f\n" epoch batch_idx
-           (get [] loss);
+
+      (* Track metrics *)
+      epoch_loss := !epoch_loss +. unsafe_get [] loss;
+      let logits = forward_lenet params x_batch in
+      let pred_classes = argmax logits ~axis:1 ~keepdims:false in
+      let correct = equal pred_classes y_labels_batch in
+      let correct_count =
+        unsafe_get [] (sum (astype Float32 correct)) |> int_of_float
+      in
+      epoch_correct := !epoch_correct + correct_count;
+      epoch_samples := !epoch_samples + dim 0 x_batch;
+
+      (* Update parameters *)
       List.combine params grad_params
       |> List.iter (fun (param, grad) ->
-             isub param (mul (scalar cpu Float32 learning_rate) grad) |> ignore)
-    done
+             isub param (mul (scalar ctx Float32 learning_rate) grad) |> ignore);
+
+      (* Print progress *)
+      Printf.printf "Epoch %d, Batch %d/%d: Loss = %.4f\n%!" epoch batch_idx
+        num_batches (unsafe_get [] loss)
+    done;
+
+    (* Evaluate on test set *)
+    let test_logits = forward_lenet params x_test in
+    let test_loss = cross_entropy_loss test_logits y_test_onehot in
+    let test_acc = accuracy test_logits y_test_labels in
+
+    Printf.printf
+      "Epoch %d: Train Loss = %.4f, Train Acc = %.2f%%, Test Loss = %.4f, Test \
+       Acc = %.2f%%\n\
+       %!"
+      epoch
+      (!epoch_loss /. float num_batches)
+      (100.0 *. float !epoch_correct /. float !epoch_samples)
+      (unsafe_get [] test_loss) (100.0 *. test_acc)
   done;
   params
 
 let () =
   (* Load MNIST dataset *)
   let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_mnist () in
-  let x_train = nx x_train in
-  let y_train = nx y_train in
-  let x_test = nx x_test in
-  let _y_test = nx y_test in
+  let ctx = cpu in
 
-  (* Preprocess training data *)
-  let x_train = div (astype Float32 x_train) (scalar cpu Float32 255.0) in
-  let x_train = reshape [| 60000; 784 |] x_train in
-  let y_train = reshape [| dim 0 y_train |] y_train in
-  let y_train_onehot = one_hot Float32 y_train 10 in
+  (* Convert to Rune tensors and preprocess *)
+  let x_train = of_bigarray ctx (Nx.to_bigarray x_train) in
+  let y_train = of_bigarray ctx (Nx.to_bigarray y_train) in
+  let x_test = of_bigarray ctx (Nx.to_bigarray x_test) in
+  let y_test = of_bigarray ctx (Nx.to_bigarray y_test) in
 
-  (* Preprocess test data *)
-  let x_test = div (astype Float32 x_test) (scalar cpu Float32 255.0) in
-  let x_test = reshape [| 10000; 784 |] x_test in
-  let _y_test = reshape [| dim 0 _y_test |] _y_test in
-  let _y_test_onehot = one_hot cpu Float32 _y_test 10 in
+  (* Normalize and reshape to NCHW format (batch, channels, height, width) *)
+  let x_train = div (astype Float32 x_train) (scalar ctx Float32 255.0) in
+  let x_train = reshape [| 60000; 1; 28; 28 |] x_train in
+
+  let x_test = div (astype Float32 x_test) (scalar ctx Float32 255.0) in
+  let x_test = reshape [| 10000; 1; 28; 28 |] x_test in
+
+  (* Prepare labels *)
+  let y_train_labels = reshape [| dim 0 y_train |] y_train in
+  let y_train_labels = astype Int32 y_train_labels in
+  let y_train_onehot = one_hot ~num_classes:10 y_train_labels in
+  let y_train_onehot = astype Float32 y_train_onehot in
+
+  let y_test_labels = reshape [| dim 0 y_test |] y_test in
+  let y_test_labels = astype Int32 y_test_labels in
+  let y_test_onehot = one_hot ~num_classes:10 y_test_labels in
+  let y_test_onehot = astype Float32 y_test_onehot in
 
   (* Training parameters *)
   let batch_size = 64 in
-  let learning_rate = 0.1 in
+  let learning_rate = 0.01 in
+  (* Lower learning rate for CNN *)
   let epochs = 10 in
 
-  (* Train the MLP *)
-  let trained_params =
-    train_mlp x_train y_train_onehot batch_size learning_rate epochs
+  Printf.printf "Starting LeNet training on MNIST...\n";
+  Printf.printf "Training samples: %d, Test samples: %d\n%!" (dim 0 x_train)
+    (dim 0 x_test);
+
+  (* Train the model *)
+  let _trained_params =
+    train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
+      y_test_labels batch_size learning_rate epochs
   in
 
-  (* Make predictions on test set *)
-  let logits = forward trained_params x_test in
-  let probs = softmax logits in
-  print_endline "Predicted probabilities on test set after training:";
-  print probs
+  Printf.printf "\nTraining completed!\n"
