@@ -565,12 +565,21 @@ module Make (B : Backend_intf.S) = struct
     let a_b, b_b = broadcasted a b in
     B.op_xor a_b b_b
 
-  let logical_not a =
+  let logical_not (type a b) (a : (a, b) t) =
     (* For boolean tensors (uint8), logical not is 1 - x *)
+    (* But sub doesn't support uint8, so we use XOR with 1 *)
     let dt = dtype a in
-    let one_val = Dtype.one dt in
-    let one_tensor = full (B.context a) dt (shape a) one_val in
-    sub one_tensor a
+    match dt with
+    | Dtype.UInt8 ->
+        let one_val = Dtype.one dt in
+        let one_tensor = full (B.context a) dt (shape a) one_val in
+        B.op_xor a one_tensor
+    | Dtype.Float16 | Dtype.Float32 | Dtype.Float64 | Dtype.Int32 | Dtype.Int64 | Dtype.Int8
+    | Dtype.Int16 | Dtype.UInt16 | Dtype.Int | Dtype.NativeInt | Dtype.Complex32
+    | Dtype.Complex64 ->
+        let one_val = Dtype.one dt in
+        let one_tensor = full (B.context a) dt (shape a) one_val in
+        sub one_tensor a
 
   (* ───── Comparison Operations ───── *)
 
@@ -1855,6 +1864,7 @@ module Make (B : Backend_intf.S) = struct
       (* Condition: c_indices - r_indices = k_val *)
       let diff = sub c_indices r_indices in
       let k_tensor_scalar = scalar ctx Dtype.int32 (Int32.of_int k_val) in
+      (* Create the diagonal mask *)
       let diag_mask = cmpeq diff k_tensor_scalar in
 
       let zeros_tensor = zeros ctx dtype final_shape in
@@ -2561,8 +2571,12 @@ module Make (B : Backend_intf.S) = struct
   let unsafe_get indices x =
     let scalar_tensor = get indices x in
     let ba = unsafe_data scalar_tensor in
-    let view_offset = offset scalar_tensor in
-    Bigarray.Array1.get ba view_offset
+    (* For a scalar tensor (result of get), the data is already at index 0 *)
+    if List.length indices = 0 && numel scalar_tensor = 1 then
+      Bigarray.Array1.get ba 0
+    else
+      let view_offset = offset scalar_tensor in
+      Bigarray.Array1.get ba view_offset
 
   let unsafe_set indices value x =
     let scalar_tensor = scalar (B.context x) (dtype x) value in

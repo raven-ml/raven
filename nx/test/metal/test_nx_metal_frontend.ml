@@ -52,11 +52,6 @@ let check_tensor ?(eps = 1e-5) msg expected actual =
         failf "%s[%s]: expected %f, got %f (diff: %f)" msg
           (String.concat "," (Array.to_list (Array.map string_of_int idx)))
           expected_val actual_val diff
-      else if expected_val <> actual_val then
-        failf "%s[%s]: expected %s, got %s" msg
-          (String.concat "," (Array.to_list (Array.map string_of_int idx)))
-          (string_of_float expected_val)
-          (string_of_float actual_val)
   done
 
 (* Test basic tensor creation *)
