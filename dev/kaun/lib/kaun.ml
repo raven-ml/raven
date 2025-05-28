@@ -241,7 +241,7 @@ module Optimizer = struct
         let new_params = List.map2 Rune.iadd p_list updates in
         model := lens.of_ptree (rebuild new_params)
     | Adam { cfg; lens; model; state } ->
-        let p_ts, _ = flatten_ptree (lens.to_ptree !model) in
+        let p_ts, rebuild_p = flatten_ptree (lens.to_ptree !model) in
         let g_ts, _ = flatten_ptree grads in
         let m_ts, rebuild_m = flatten_ptree state.m in
         let v_ts, rebuild_v = flatten_ptree state.v in
@@ -285,7 +285,8 @@ module Optimizer = struct
         let m_ts', v_ts', us = aux p_ts g_ts m_ts v_ts [] [] [] in
         state.m <- rebuild_m m_ts';
         state.v <- rebuild_v v_ts';
-        List.iter2 (fun p u -> ignore (Rune.isub p u)) p_ts us
+        let updated_params = List.map2 Rune.isub p_ts us in
+        model := lens.of_ptree (rebuild_p updated_params)
 end
 
 module Loss = struct
