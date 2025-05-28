@@ -22,12 +22,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libev-dev libcurl4-gnutls-dev libcairo2-dev pkg-config
+          sudo apt-get install -y libev-dev libcurl4-gnutls-dev libcairo2-dev pkg-config libsdl2-dev
       
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install libev curl cairo pkg-config
+          brew install libev curl cairo pkg-config sdl2
       
       - name: Use dune
         uses: ocaml-dune/setup-dune@v0
