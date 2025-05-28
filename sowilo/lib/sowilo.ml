@@ -349,9 +349,9 @@ let morph_op ~op ~kernel (img : uint8_t) : uint8_t =
 
       match op with
       | `Max ->
-          (* Dilation using max pooling *)
+          (* Dilation using max pooling with stride=1 to preserve size *)
           let result_4d, _ =
-            Rune.max_pool2d ~kernel_size:(kh, kw) ~padding_spec:`Same img_4d
+            Rune.max_pool2d ~kernel_size:(kh, kw) ~stride:(1, 1) ~padding_spec:`Same img_4d
           in
           Rune.reshape [| h; w |] result_4d
       | `Min ->
@@ -360,7 +360,7 @@ let morph_op ~op ~kernel (img : uint8_t) : uint8_t =
           let inverted = Rune.sub max_val img in
           let inv_4d = Rune.reshape [| 1; 1; h; w |] inverted in
           let result_4d, _ =
-            Rune.max_pool2d ~kernel_size:(kh, kw) ~padding_spec:`Same inv_4d
+            Rune.max_pool2d ~kernel_size:(kh, kw) ~stride:(1, 1) ~padding_spec:`Same inv_4d
           in
           let result = Rune.reshape [| h; w |] result_4d in
           Rune.sub max_val result)
