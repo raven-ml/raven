@@ -33,7 +33,7 @@
  (action
   (with-stdout-to
    %{targets}
-   (echo "let is_release_mode = %{read-lines:./mode.txt}"))))
+   (echo "let is_release_mode = %{read-lines:./mode.txt}\n"))))
 
 (rule
  (targets asset_editor.ml)
