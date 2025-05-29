@@ -659,9 +659,12 @@ let execute_compiled_fn (type kernel_native)
   | Ok () -> ()
   | Error e -> failwith (Printf.sprintf "Copy to device failed: %s" e));
 
-  let inputs = Hashtbl.create 1 in
-  Hashtbl.add inputs (List.hd state.input_vars)
-    (Rune_jit.Backend_intf.Any_Device_Buffer input_buf);
+  let inputs = Hashtbl.create (List.length state.input_vars) in
+  (* For operations like "add x x", multiple input vars might refer to the same tensor *)
+  List.iter (fun var ->
+    Hashtbl.add inputs var
+      (Rune_jit.Backend_intf.Any_Device_Buffer input_buf))
+    state.input_vars;
 
   let outputs =
     match
@@ -710,16 +713,26 @@ let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
   let backend =
     (module B : Rune_jit.Backend_intf.S with type callable_kernel_native = _)
   in
-  let compiled_state = ref None in
+  (* Cache compiled functions by input shape *)
+  let cache = Hashtbl.create 8 in
   fun (input : ('a, 'b) Nx_rune.t) ->
-    match !compiled_state with
+    let input_shape = View.shape (view input) in
+    match Hashtbl.find_opt cache input_shape with
     | Some state -> execute_compiled_fn ~backend state input
     | None -> (
         try
           let _ = B.Device_info.get_default () in
-          let graph, symbolic_result = trace (Nx_rune.context input) f input in
+          (* Get context from the input tensor *)
+          let ctx = 
+            match input with
+            | Cpu_tensor _ -> Nx_rune.create_context ~device:Cpu ()
+            | Metal_tensor _ -> Nx_rune.create_context ~device:Metal ()
+            | Symbolic_tensor _ -> Nx_rune.create_context ~device:Cpu () (* Default to CPU for symbolic *)
+          in
+          let graph, symbolic_result = trace ctx f input in
           Printf.eprintf
-            "JIT: First call - tracing and compiling graph with %d nodes\n"
+            "JIT: Compiling graph for shape %s with %d nodes\n"
+            (Array.fold_left (fun acc x -> acc ^ " " ^ string_of_int x) "[" input_shape ^ " ]")
             (List.length graph.nodes);
           let executable = compile_graph ~backend graph in
           let state =
@@ -731,7 +744,7 @@ let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
               output_dtype = nx_dtype_to_ir_any_dtype (dtype symbolic_result);
             }
           in
-          compiled_state := Some state;
+          Hashtbl.add cache input_shape state;
           execute_compiled_fn ~backend state input
         with e ->
           Printf.eprintf "JIT: Compilation failed (%s), falling back to eager\n"

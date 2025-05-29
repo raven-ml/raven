@@ -120,12 +120,13 @@ module Renderer = struct
     let pairs = List.mapi (fun i v -> (v, Printf.sprintf "v%d" i)) keys in
     of_seq (List.to_seq pairs)
 
-  let render_instruction ~name_of ~smem_prefix indent
+  let render_instruction ~name_of ~smem_prefix ~local_buffer_vars ~names indent
       (ins : Ir.Lowered.instruction) : string =
     let ind = String.make (indent * 2) ' ' in
     let v = name_of in
     match ins with
     | L_Buffer { dtype; size; out } ->
+        (* Note: L_Buffer is handled specially in render function to avoid collisions *)
         Printf.sprintf "%s%s%s %s[%d];" ind smem_prefix (metal_of_dtype dtype)
           (v out) size
     | L_Const { dtype; value; out } ->
@@ -140,7 +141,13 @@ module Renderer = struct
         Printf.sprintf "%s%s %s = %s[%s];" ind (metal_of_dtype dtype) (v dst)
           (v buf) (v idx)
     | L_Store { buf; idx; src; valid = _ } ->
-        Printf.sprintf "%s%s[%s] = %s;" ind (v buf) (v idx) (v src)
+        (* For stores to kernel arguments, use the original name without _local suffix *)
+        let buf_name = 
+          if Hashtbl.mem local_buffer_vars buf then
+            Hashtbl.find names buf  (* Use original name for kernel args *)
+          else
+            v buf in
+        Printf.sprintf "%s%s[%s] = %s;" ind buf_name (v idx) (v src)
     | L_ALU { dst; op; args; dtype } -> (
         match (op, args) with
         | Ir.Lowered.Binary bop, [ a; b ] -> (
@@ -251,8 +258,34 @@ module Renderer = struct
       dedup_preserve_order
         (lowered_ir.kernel_input_vars @ lowered_ir.kernel_output_vars)
     in
+    
+    (* First pass: identify variables that need renaming *)
+    let local_buffer_vars = Hashtbl.create 10 in
+    let arg_set = List.fold_left (fun acc v -> Var.Set.add v acc) Var.Set.empty arg_ll in
+    List.iter (fun instr ->
+      match instr with
+      | Ir.Lowered.L_Buffer { out; _ } | Ir.Lowered.L_Local { out; _ } ->
+          if Var.Set.mem out arg_set then
+            Hashtbl.add local_buffer_vars out true
+      | _ -> ()
+    ) lowered_ir.instructions;
+    
+    (* Build name map with special handling for collision variables *)
     let names = build_name_map lowered_ir arg_ll in
-    let name_of v = Hashtbl.find names v in
+    
+    (* Create a name function that handles collisions *)
+    let name_of v =
+      let base = Hashtbl.find names v in
+      (* If this variable is a local buffer that collides with kernel arg,
+         always use the _local suffix *)
+      if Hashtbl.mem local_buffer_vars v then
+        base ^ "_local"
+      else
+        base
+    in
+    
+    (* Special function for kernel arguments - never add suffix *)
+    let name_of_arg v = Hashtbl.find names v in
 
     let buf = Buffer.create 1024 in
     Buffer.add_string buf "#include <metal_stdlib>\nusing namespace metal;\n\n";
@@ -261,7 +294,7 @@ module Renderer = struct
     let arg_decl i v =
       let md = Hashtbl.find lowered_ir.vars_metadata v in
       Printf.sprintf "device %s* %s [[buffer(%d)]]" (metal_of_dtype md.dtype)
-        (name_of v) i
+        (name_of_arg v) i
     in
     let arg_line =
       List.mapi arg_decl arg_ll
@@ -286,6 +319,7 @@ module Renderer = struct
         Buffer.add_string buf
           (render_instruction ~name_of
              ~smem_prefix:(Device_info.renderer_smem_prefix device_info)
+             ~local_buffer_vars ~names
              !indent ins);
         Buffer.add_char buf '\n';
         match ins with L_Range _ -> incr indent | _ -> ())
