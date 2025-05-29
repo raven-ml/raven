@@ -2,6 +2,7 @@ open Nx_core
 open Nx_rune
 module Ir = Rune_jit.Ir
 module Var = Ir.Var
+module Rune_jit_metal = Rune_metal.Jit_backend
 
 (* ───── Dtype Conversion Helpers ───── *)
 
@@ -697,7 +698,7 @@ let execute_compiled_fn (type kernel_native)
       Cpu_tensor (Nx_native.op_const_array (Nx_native.create_context ()) out_ba)
   | Metal_tensor _ ->
       Metal_tensor
-        (Nx_metal_stub.op_const_array (Nx_metal_stub.create_context ()) out_ba)
+        (Rune_metal.op_const_array (Rune_metal.create_context ()) out_ba)
   | Symbolic_tensor _ -> assert false
 
 (* ───── Main JIT Function ───── *)
