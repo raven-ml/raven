@@ -4,7 +4,7 @@ open Support
 
 (* ───── helpers ───── *)
 
-let device_info = Rune_jit.Metal_backend.Device_info.get_default ()
+let device_info = Rune_jit_metal.Device_info.get_default ()
 
 let make_metal_source graph =
   let spec = List.hd (Rune_jit.Debug.schedule graph) in
@@ -13,7 +13,7 @@ let make_metal_source graph =
       (Rune_jit.Debug.lower_kernel ~kernel_spec:spec
          ~original_graph_vars_metadata:graph.vars_metadata)
   in
-  Rune_jit.Debug.render_metal ~device_info ~lowered_ir:lowered
+  Rune_jit_metal.Renderer.render ~device_info ~lowered_ir:lowered
     ~kernel_name:spec.name
 
 (* pretty printer that truncates long strings *)
@@ -107,7 +107,7 @@ let get_ba_from_buf (type a b) (Backend_intf.Any_Device_Buffer buf)
   let host = Bigarray.Array1.create kind Bigarray.c_layout len in
   (match
      Rune_jit.copy_from_device
-       ~backend:(module Rune_jit.Metal_backend)
+       ~backend:(module Rune_jit_metal)
        ~src_buffer:buf ~dest:host
    with
   | Ok () -> ()
@@ -119,7 +119,7 @@ let test_e2e_add () =
   let a, b, c, graph = simple_add_graph () in
   (* compile *)
   let exe =
-    match Rune_jit.compile ~backend:(module Rune_jit.Metal_backend) graph with
+    match Rune_jit.compile ~backend:(module Rune_jit_metal) graph with
     | Ok e -> e
     | Error e -> failf "compile: %s" e
   in
@@ -137,7 +137,7 @@ let test_e2e_add () =
   let alloc host =
     Result.get_ok
       (Rune_jit.allocate_buffer
-         ~backend:(module Rune_jit.Metal_backend)
+         ~backend:(module Rune_jit_metal)
          ~size_in_bytes:(Bigarray.Array1.size_in_bytes host)
          ~dtype:Ir.Dtype.Float32)
   in
@@ -147,7 +147,7 @@ let test_e2e_add () =
     (fun host buf ->
       Result.get_ok
         (Rune_jit.copy_to_device
-           ~backend:(module Rune_jit.Metal_backend)
+           ~backend:(module Rune_jit_metal)
            ~dest_buffer:buf ~host))
     [ ba_a; ba_b ] [ buf_a; buf_b ];
   (* prepare input map *)
@@ -158,7 +158,7 @@ let test_e2e_add () =
   let outs =
     match
       Rune_jit.execute
-        ~backend:(module Rune_jit.Metal_backend)
+        ~backend:(module Rune_jit_metal)
         exe ~inputs ~outputs:[ c ]
     with
     | Ok tbl -> tbl
