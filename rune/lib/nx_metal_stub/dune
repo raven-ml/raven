@@ -3,8 +3,9 @@
  (public_name rune.nx_metal_stub)
  (libraries
   nx.core
+  rune.jit
   (select
    nx_metal_stub.ml
    from
-   (nx.metal -> nx_metal_stub.present.ml)
+   (nx.metal rune.jit.metal -> nx_metal_stub.present.ml)
    (-> nx_metal_stub.missing.ml))))

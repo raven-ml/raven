@@ -27,10 +27,6 @@ let rec result_fold_left f init = function
       let* acc = f init x in
       result_fold_left f acc xs
 
-(* ───── backend interface ───── *)
-
-module Metal_backend = Metal_backend
-
 (* ───── top-level API ───── *)
 
 let schedule = Scheduler.schedule
@@ -189,6 +185,4 @@ module Debug = struct
 
   let lower_kernel ~kernel_spec ~original_graph_vars_metadata =
     lower ~kernel_spec ~original_graph_vars_metadata
-
-  let render_metal = Metal_backend.Renderer.render
 end

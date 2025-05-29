@@ -38,7 +38,7 @@ module Platform = struct
     | _ -> []
 
   let link_libs = function
-    | MacOS | IOS | Catalyst -> [ "-lobjc"; "-framework"; "Foundation" ]
+    | MacOS | IOS | Catalyst -> [ "-framework"; "Foundation" ]
     | GNUStep ->
         let ldirs =
           [

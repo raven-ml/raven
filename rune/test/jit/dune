@@ -5,8 +5,15 @@
  (libraries rune_jit alcotest))
 
 (tests
- (names test_lower test_schedule test_metal)
+ (names test_lower test_schedule)
  (deps
   (source_tree golden))
  (modules :standard \ support)
  (libraries rune_jit alcotest test_rune_jit_support))
+
+(test
+ (name test_metal)
+ (modules test_metal)
+ (build_if
+  (= %{ocaml-config:system} "macosx"))
+ (libraries rune_jit rune_jit_metal test_rune_jit_support))

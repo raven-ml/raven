@@ -1,5 +1,5 @@
 (tests
  (names test_nx_metal test_nx_metal_frontend)
- (enabled_if
+ (build_if
   (= %{ocaml-config:system} "macosx"))
  (libraries nx.metal nx.core alcotest))

@@ -1,4 +1,4 @@
 (library
  (name rune_jit)
  (public_name rune.jit)
- (libraries metal))
+ (libraries ctypes))

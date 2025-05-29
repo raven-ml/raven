@@ -589,18 +589,15 @@ let trace _ctx f input =
 
 (* Helper to get Metal backend module *)
 let metal_backend_module () =
-  (module Rune_jit.Metal_backend.B : Rune_jit.Backend_intf.S
-    with type callable_kernel_native =
-      Rune_jit.Metal_backend.B.callable_kernel_native
-     and type device_buffer_native =
-       Rune_jit.Metal_backend.B.device_buffer_native)
+  (module Rune_jit_metal : Rune_jit.Backend_intf.S
+    with type callable_kernel_native = Rune_jit_metal.callable_kernel_native
+     and type device_buffer_native = Rune_jit_metal.device_buffer_native)
 
-let compile_graph (graph : Ir.graph_t) =
-  let backend =
-    (module Rune_jit.Metal_backend.B : Rune_jit.Backend_intf.S
-      with type callable_kernel_native =
-        Rune_jit.Metal_backend.B.callable_kernel_native)
-  in
+let compile_graph (type kernel_native)
+    ~(backend :
+       (module Rune_jit.Backend_intf.S
+          with type callable_kernel_native = kernel_native))
+    (graph : Ir.graph_t) =
   match Rune_jit.compile ~backend graph with
   | Ok executable -> executable
   | Error e -> failwith (Printf.sprintf "JIT compilation failed: %s" e)
@@ -615,11 +612,9 @@ let ir_dtype_to_bigarray_kind_any (Ir.Dtype.Any_Dtype dt) =
 
 (* ───── Compiled Function State ───── *)
 
-type compiled_state = {
+type 'kernel_native compiled_state = {
   executable :
-    Rune_jit.Metal_backend.B.callable_kernel_native
-    Rune_jit.Backend_intf.callable_kernel
-    Rune_jit.executable;
+    'kernel_native Rune_jit.Backend_intf.callable_kernel Rune_jit.executable;
   input_vars : Var.t list;
   output_vars : Var.t list;
   output_shape : int array;
@@ -628,8 +623,15 @@ type compiled_state = {
 
 (* ───── Execute Compiled Function ───── *)
 
-let execute_compiled_fn state input =
-  let module B = Rune_jit.Metal_backend.B in
+let execute_compiled_fn (type kernel_native)
+    ~(backend :
+       (module Rune_jit.Backend_intf.S
+          with type callable_kernel_native = kernel_native)) state input =
+  let module B =
+    (val backend
+        : Rune_jit.Backend_intf.S
+        with type callable_kernel_native = kernel_native)
+  in
   let input_ba =
     match input with
     | Cpu_tensor cpu_t -> Nx_native.data cpu_t
@@ -701,18 +703,24 @@ let execute_compiled_fn state input =
 (* ───── Main JIT Function ───── *)
 
 let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
+  (* TODO: we should get the backend depending on the device, add an optional
+     ~device argument to jit *)
+  let module B = (val metal_backend_module ()) in
+  let backend =
+    (module B : Rune_jit.Backend_intf.S with type callable_kernel_native = _)
+  in
   let compiled_state = ref None in
   fun (input : ('a, 'b) Nx_rune.t) ->
     match !compiled_state with
-    | Some state -> execute_compiled_fn state input
+    | Some state -> execute_compiled_fn ~backend state input
     | None -> (
         try
-          let _ = Rune_jit.Metal_backend.B.Device_info.get_default () in
+          let _ = B.Device_info.get_default () in
           let graph, symbolic_result = trace (Nx_rune.context input) f input in
           Printf.eprintf
             "JIT: First call - tracing and compiling graph with %d nodes\n"
             (List.length graph.nodes);
-          let executable = compile_graph graph in
+          let executable = compile_graph ~backend graph in
           let state =
             {
               executable;
@@ -723,7 +731,7 @@ let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
             }
           in
           compiled_state := Some state;
-          execute_compiled_fn state input
+          execute_compiled_fn ~backend state input
         with e ->
           Printf.eprintf "JIT: Compilation failed (%s), falling back to eager\n"
             (Printexc.to_string e);
