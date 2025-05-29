@@ -61,13 +61,13 @@ let test_convolve2d_stride () =
   let y = Nx_conv.convolve2d ~stride:(2, 2) ~padding_mode:`Valid x w in
   Alcotest.(check (array int)) "stride 2 shape" [| 1; 1; 3; 3 |] (Nx.shape y)
 
-(* let test_convolve2d_groups () =
-  (* Groups test - 4 input channels, 4 output channels, groups=2 *)
-  let x = Nx.randn Nx.float32 ~seed:42 [| 1; 4; 8; 8 |] in
-  let w = Nx.randn Nx.float32 ~seed:43 [| 4; 2; 3; 3 |] in
+(* let test_convolve2d_groups () = (* Groups test - 4 input channels, 4 output
+   channels, groups=2 *) let x = Nx.randn Nx.float32 ~seed:42 [| 1; 4; 8; 8 |]
+   in let w = Nx.randn Nx.float32 ~seed:43 [| 4; 2; 3; 3 |] in
 
-  let y = Nx_conv.convolve2d ~groups:2 ~padding_mode:`Valid x w in
-  Alcotest.(check (array int)) "groups=2 shape" [| 1; 4; 6; 6 |] (Nx.shape y) *)
+   let y = Nx_conv.convolve2d ~groups:2 ~padding_mode:`Valid x w in
+   Alcotest.(check (array int)) "groups=2 shape" [| 1; 4; 6; 6 |] (Nx.shape
+   y) *)
 
 let test_convolve2d_5x5_kernel () =
   (* Test with 5x5 kernel *)

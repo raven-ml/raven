@@ -660,10 +660,11 @@ let execute_compiled_fn (type kernel_native)
   | Error e -> failwith (Printf.sprintf "Copy to device failed: %s" e));
 
   let inputs = Hashtbl.create (List.length state.input_vars) in
-  (* For operations like "add x x", multiple input vars might refer to the same tensor *)
-  List.iter (fun var ->
-    Hashtbl.add inputs var
-      (Rune_jit.Backend_intf.Any_Device_Buffer input_buf))
+  (* For operations like "add x x", multiple input vars might refer to the same
+     tensor *)
+  List.iter
+    (fun var ->
+      Hashtbl.add inputs var (Rune_jit.Backend_intf.Any_Device_Buffer input_buf))
     state.input_vars;
 
   let outputs =
@@ -723,16 +724,20 @@ let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
         try
           let _ = B.Device_info.get_default () in
           (* Get context from the input tensor *)
-          let ctx = 
+          let ctx =
             match input with
             | Cpu_tensor _ -> Nx_rune.create_context ~device:Cpu ()
             | Metal_tensor _ -> Nx_rune.create_context ~device:Metal ()
-            | Symbolic_tensor _ -> Nx_rune.create_context ~device:Cpu () (* Default to CPU for symbolic *)
+            | Symbolic_tensor _ ->
+                Nx_rune.create_context ~device:Cpu
+                  () (* Default to CPU for symbolic *)
           in
           let graph, symbolic_result = trace ctx f input in
-          Printf.eprintf
-            "JIT: Compiling graph for shape %s with %d nodes\n"
-            (Array.fold_left (fun acc x -> acc ^ " " ^ string_of_int x) "[" input_shape ^ " ]")
+          Printf.eprintf "JIT: Compiling graph for shape %s with %d nodes\n"
+            (Array.fold_left
+               (fun acc x -> acc ^ " " ^ string_of_int x)
+               "[" input_shape
+            ^ " ]")
             (List.length graph.nodes);
           let executable = compile_graph ~backend graph in
           let state =
