@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nx - N-dimensional arrays for OCaml | raven</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="main-content">
+    <nav class="nx-nav nav-breadcrumb">
+      <a href="/">raven</a> / nx
+      [ <a href="/docs/nx/">docs</a> |
+      <a href="https://github.com/raven-ml/raven/tree/main/nx">source</a> ]
+    </nav>
+
+    <div class="nx-hero hero">
+      <h1>nx</h1>
+      <p class="tagline">NumPy's power. OCaml's type safety. Zero compromises.</p>
+    </div>
+
+    <hr>
+
+    <h2>why nx?</h2>
+
+    <div class="feature-grid">
+      <div>
+        <h3 class="color-blue">your numpy code, but safer</h3>
+        <p>The API feels like NumPy because it is like NumPy. But the compiler catches your dimension mismatches.</p>
+      </div>
+      <div>
+        <h3 class="color-blue">actually zero-copy</h3>
+        <p>Slicing returns views. Broadcasting doesn't allocate. Reshaping is free. We mean it.</p>
+      </div>
+      <div>
+        <h3 class="color-blue">backends that matter</h3>
+        <p>CPU today. Metal on macOS. CUDA coming. Same code runs everywhere.</p>
+      </div>
+      <div>
+        <h3 class="color-blue">part of something bigger</h3>
+        <p>First-class citizen in Raven. Your arrays flow seamlessly into plotting, autodiff, and neural networks.</p>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>show me the code</h2>
+
+    <div class="code-compare">
+      <div>
+        <h4>NUMPY</h4>
+        <pre><span class="comment"># Create and reshape</span>
+<span class="keyword">a</span> <span class="operator">=</span> <span class="function">np.arange</span>(<span class="number">12</span>).<span class="function">reshape</span>(<span class="number">3</span>, <span class="number">4</span>)
+
+<span class="comment"># Slice (might copy)</span>
+<span class="keyword">b</span> <span class="operator">=</span> <span class="keyword">a</span>[<span class="operator">:</span>, <span class="number">1</span><span class="operator">:</span><span class="number">3</span>]
+
+<span class="comment"># Reduction</span>
+<span class="keyword">c</span> <span class="operator">=</span> <span class="keyword">a</span>.<span class="function">mean</span>(<span class="keyword">axis</span><span class="operator">=</span><span class="number">0</span>)
+
+<span class="comment"># This crashes at runtime</span>
+<span class="keyword">x</span> <span class="operator">=</span> <span class="function">np.ones</span>((<span class="number">2</span>, <span class="number">3</span>))
+<span class="keyword">y</span> <span class="operator">=</span> <span class="function">np.ones</span>((<span class="number">3</span>, <span class="number">2</span>))
+<span class="keyword">z</span> <span class="operator">=</span> <span class="keyword">x</span> <span class="operator">+</span> <span class="keyword">y</span>  <span class="comment"># ValueError!</span></pre>
+      </div>
+      <div>
+        <h4>NX</h4>
+        <pre><span class="comment">(* Create and reshape *)</span>
+<span class="keyword">let</span> <span class="keyword">a</span> <span class="operator">=</span> <span class="function">arange</span> <span class="number">12</span> <span class="operator">|></span> <span class="function">reshape</span> [<span class="operator">|</span><span class="number">3</span>; <span class="number">4</span><span class="operator">|</span>]
+
+<span class="comment">(* Slice (never copies) *)</span>
+<span class="keyword">let</span> <span class="keyword">b</span> <span class="operator">=</span> <span class="function">get_slice</span> [<span class="type">All</span>; <span class="type">R</span> [<span class="number">1</span>; <span class="number">3</span>]] <span class="keyword">a</span>
+
+<span class="comment">(* Reduction *)</span>
+<span class="keyword">let</span> <span class="keyword">c</span> <span class="operator">=</span> <span class="function">mean</span> <span class="operator">~</span><span class="keyword">axes</span><span class="operator">:</span>[<span class="operator">|</span><span class="number">0</span><span class="operator">|</span>] <span class="keyword">a</span>
+
+<span class="comment">(* This would fail at compile time *)</span>
+<span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">ones</span> <span class="type">float32</span> [<span class="operator">|</span><span class="number">2</span>; <span class="number">3</span><span class="operator">|</span>]
+<span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="function">ones</span> <span class="type">float32</span> [<span class="operator">|</span><span class="number">3</span>; <span class="number">2</span><span class="operator">|</span>]
+<span class="comment">(* let z = add x y  -- won't compile! *)</span></pre>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>the good parts</h2>
+
+    <p><b>Types that work</b><br>
+    float32, float64, int32, int64, uint8, and more. Generic functions that preserve types.</p>
+
+    <p><b>Broadcasting that makes sense</b><br>
+    [|3; 1; 5|] + [|1; 4; 5|] = [|3; 4; 5|]. Same rules as NumPy.</p>
+
+    <p><b>I/O that just works</b><br>
+    Load your .npy files. Save as images. Interop with Python when you need to.</p>
+
+    <hr>
+
+    <h2>get started</h2>
+
+    <p>Nx isn't released yet. For now, check out the <a href="/docs/nx/">documentation</a> to learn more.</p>
+
+    <p>When it's ready:</p>
+
+    <pre>
+<span class="comment"># Install</span>
+<span class="function">opam</span> install nx
+
+<span class="comment"># Try it</span>
+<span class="keyword">open</span> <span class="type">Nx</span>
+
+<span class="keyword">let</span> () <span class="operator">=</span> 
+  <span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">rand</span> <span class="type">float32</span> [<span class="operator">|</span><span class="number">3</span>; <span class="number">3</span><span class="operator">|</span>] <span class="keyword">in</span>
+  <span class="function">print_tensor</span> <span class="keyword">x</span>
+    </pre>
+  </main>
+</body>
+</html>

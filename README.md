@@ -24,7 +24,7 @@ Raven is built from modular projects that form a cohesive ecosystem:
 | ----------------------- | --------------------- | ------------------------------------------------------ |
 | [**Rune**](rune/)       | JAX                   | Autodiff with multi-device support and JIT compilation |
 | [**Kaun** ᚲ](kaun/)     | PyTorch/Flax          | Deep learning framework built on Rune                  |
-| [**Sowilo** ᛊ](sowilo/) | OpenCV                | Computer vision framework built on Rune                |
+| [**Sowilo** ᛋ](sowilo/) | OpenCV                | Computer vision framework built on Rune                |
 
 ## Why Raven?
 

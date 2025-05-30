@@ -1,317 +1,206 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>quill - Interactive Notebooks - Raven</title>
-  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>quill - Markdown notebooks for OCaml | raven</title>
+  <link rel="stylesheet" href="/styles.css">
 </head>
+<body>
+  <main class="main-content">
+    <nav class="quill-nav nav-breadcrumb">
+      <a href="/">raven</a> / quill
+      [ <a href="/docs/quill/">docs</a> |
+      <a href="https://github.com/raven-ml/raven/tree/main/quill">source</a> ]
+    </nav>
 
-<body class="bg-gray-50 text-gray-900">
-  <!-- Header -->
-  <header class="bg-white shadow-sm">
-    <div class="max-w-6xl mx-auto px-6 py-4">
-      <nav class="flex items-center justify-between">
-        <div class="flex items-center space-x-4">
-          <a href="/" class="text-2xl font-bold text-gray-900">Raven</a>
-          <span class="text-gray-400">/</span>
-          <h1 class="text-2xl font-bold text-green-600">quill</h1>
-        </div>
-        <div class="flex items-center space-x-6">
-          <a href="/docs/quill/" class="text-gray-600 hover:text-gray-900">Docs</a>
-          <a href="/docs/quill/api/" class="text-gray-600 hover:text-gray-900">API</a>
-          <div id="project-nav"></div>
-        </div>
-      </nav>
+    <div class="quill-hero hero">
+      <h1>quill</h1>
+      <p class="tagline">Notebooks as markdown. No JSON mess. Beautiful output.</p>
     </div>
-  </header>
 
-  <main>
+    <hr>
 
-<!-- Hero -->
-<section class="py-12 bg-gradient-to-r from-green-600 to-green-700 text-white">
-  <div class="max-w-6xl mx-auto px-6">
-    <div class="max-w-3xl">
-      <div class="flex items-center mb-4">
-        <h1 class="text-4xl font-bold">quill</h1>
-        <span class="ml-4 px-3 py-1 bg-red-500 text-white text-sm rounded-full">Alpha</span>
-      </div>
-      <p class="text-xl mb-6 text-green-100">
-        Interactive notebook environment with markdown-based editing and seamless Raven ecosystem integration.
-      </p>
-      <div class="flex space-x-4">
-        <a href="guides/getting-started/"
-          class="bg-white text-green-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">
-          Get Started
-        </a>
-        <a href="demo/"
-          class="border-2 border-white text-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-green-600 transition-colors">
-          Try Demo
-        </a>
-      </div>
-    </div>
-  </div>
-</section>
+    <h2>why quill?</h2>
 
-<!-- Features -->
-<section class="py-12">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Interactive Development</h2>
-    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-
-      <div class="text-center">
-        <div class="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Markdown-First</h3>
-        <p class="text-gray-600">Write documentation and code in markdown files with executable OCaml code blocks.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Live Execution</h3>
-        <p class="text-gray-600">Execute OCaml code blocks in real-time with immediate results and visualization.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-purple-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Rich Output</h3>
-        <p class="text-gray-600">Display plots, images, tables, and interactive content directly in the document.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-yellow-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Ecosystem Integration</h3>
-        <p class="text-gray-600">Built-in support for ndarray, hugin, and rune with seamless interoperability.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9v-9m0-9v9"></path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Web-Based</h3>
-        <p class="text-gray-600">Browser-based interface with modern editor features and collaborative sharing.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-indigo-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Export Options</h3>
-        <p class="text-gray-600">Export to HTML, PDF, or standalone executables for sharing and publication.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Example Notebook -->
-<section class="py-12 bg-gray-100">
-  <div class="max-w-4xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-8">Example Notebook</h2>
-    <div class="bg-white rounded-lg shadow-lg overflow-hidden">
-
-      <!-- Notebook Header -->
-      <div class="bg-gray-800 text-white p-4 flex items-center">
-        <svg class="w-6 h-6 mr-3" fill="currentColor" viewBox="0 0 24 24">
-          <path
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
-          </path>
-        </svg>
-        <span class="font-semibold">data_analysis.md</span>
-      </div>
-
-      <!-- Notebook Content -->
-      <div class="p-6">
-
-        <!-- Markdown Cell -->
-        <div class="mb-6">
-          <h1 class="text-2xl font-bold mb-2">Data Analysis with Raven</h1>
-          <p class="text-gray-600">This notebook demonstrates loading data, performing analysis, and creating
-            visualizations.</p>
-        </div>
-
-        <!-- Code Cell -->
-        <div class="mb-6">
-          <div class="bg-gray-50 border-l-4 border-green-500 p-4 rounded">
-            <div class="text-sm text-gray-500 mb-2">OCaml</div>
-            <pre class="text-sm"><code><span class="text-blue-600">open</span> Ndarray
-<span class="text-blue-600">open</span> Hugin
-<span class="text-blue-600">open</span> Ndarray_datasets
-
-<span class="text-gray-500">(* Load the Iris dataset *)</span>
-<span class="text-green-600">let</span> data = Iris.load ()
-<span class="text-green-600">let</span> features = data.features
-<span class="text-green-600">let</span> labels = data.labels</code></pre>
-          </div>
-        </div>
-
-        <!-- Output Cell -->
-        <div class="mb-6 bg-blue-50 p-4 rounded">
-          <div class="text-sm text-blue-600 mb-2">Output</div>
-          <pre class="text-sm text-gray-700">Dataset loaded: 150 samples, 4 features
-Shape: [150; 4]
-Classes: setosa, versicolor, virginica</pre>
-        </div>
-
-        <!-- Another Code Cell -->
-        <div class="mb-6">
-          <div class="bg-gray-50 border-l-4 border-green-500 p-4 rounded">
-            <div class="text-sm text-gray-500 mb-2">OCaml</div>
-            <pre class="text-sm"><code><span class="text-gray-500">(* Create a scatter plot *)</span>
-<span class="text-green-600">let</span> fig = Figure.create ()
-<span class="text-green-600">let</span> ax = Figure.add_subplot fig <span class="text-yellow-600">1</span> <span class="text-yellow-600">1</span> <span class="text-yellow-600">1</span>
-
-<span class="text-green-600">let</span> x = Ndarray.slice features [All; Index <span class="text-yellow-600">0</span>]
-<span class="text-green-600">let</span> y = Ndarray.slice features [All; Index <span class="text-yellow-600">1</span>]
-
-<span class="text-green-600">let</span> _ = Axes.scatter ax x y ~c:labels ~alpha:<span class="text-yellow-600">0.7</span>
-<span class="text-green-600">let</span> _ = Axes.set_title ax <span class="text-yellow-600">"Iris Dataset"</span>
-<span class="text-green-600">let</span> _ = Figure.show fig</code></pre>
-          </div>
-        </div>
-
-        <!-- Plot Output -->
-        <div class="bg-white border rounded p-4 text-center">
-          <div class="text-gray-400 text-sm mb-2">Interactive Plot</div>
-          <div class="bg-gray-100 h-64 rounded flex items-center justify-center">
-            <span class="text-gray-500">📊 Scatter plot visualization would appear here</span>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- Use Cases -->
-<section class="py-12">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Perfect For</h2>
-    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Research</h3>
-        <p class="text-gray-600 text-sm">Exploratory data analysis and prototyping with reproducible results.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Education</h3>
-        <p class="text-gray-600 text-sm">Interactive tutorials and coursework with embedded explanations.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Documentation</h3>
-        <p class="text-gray-600 text-sm">Living documentation with executable examples and visualizations.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Presentations</h3>
-        <p class="text-gray-600 text-sm">Interactive reports and presentations with live data and plots.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Installation -->
-<section class="py-12 bg-gray-100">
-  <div class="max-w-4xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-8">Installation</h2>
-    <div class="grid md:grid-cols-2 gap-8">
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Server Mode</h3>
-        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
-          <div>$ opam install quill</div>
-          <div>$ quill serve notebook/</div>
-          <div># Open http://localhost:8080</div>
-        </div>
-        <p class="text-gray-600 mt-4">Web-based interface for interactive editing.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Execution Mode</h3>
-        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
-          <div>$ quill exec analysis.md</div>
-          <div>$ quill export analysis.md --html</div>
-          <div>$ quill export analysis.md --pdf</div>
-        </div>
-        <p class="text-gray-600 mt-4">Command-line execution and export.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Navigation -->
-<section class="py-12 bg-white border-t">
-  <div class="max-w-6xl mx-auto px-6">
-    <div class="grid md:grid-cols-3 gap-8">
-
+    <div class="feature-grid">
       <div>
-        <h3 class="text-xl font-semibold mb-4">Getting Started</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/installation/" class="text-green-600 hover:text-green-800">Installation Guide</a></li>
-          <li><a href="guides/quickstart/" class="text-green-600 hover:text-green-800">First Notebook</a></li>
-          <li><a href="guides/jupyter-migration/" class="text-green-600 hover:text-green-800">Jupyter Migration</a></li>
-          <li><a href="examples/" class="text-green-600 hover:text-green-800">Example Notebooks</a></li>
+        <h3 class="color-green">markdown notebooks</h3>
+        <p>Your notebooks are markdown files with OCaml code blocks. Git-friendly. No JSON. No merge conflicts.</p>
+      </div>
+      <div>
+        <h3 class="color-green">beautiful output</h3>
+        <p>Plots render inline. Arrays display as tables. Everything from Raven just works.</p>
+      </div>
+      <div>
+        <h3 class="color-green">integrated with raven</h3>
+        <p>First-class support for nx arrays, hugin plots, and rune models. Everything displays beautifully.</p>
+      </div>
+      <div>
+        <h3 class="color-green">web editor</h3>
+        <p>Browser-based interface with syntax highlighting and live output. Or use your favorite editor.</p>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>show me the code</h2>
+
+    <div class="code-compare">
+      <div>
+        <h4>Jupyter</h4>
+        <pre><span class="comment"># Cell 1</span>
+<span class="keyword">import</span> <span class="type">numpy</span> <span class="keyword">as</span> <span class="type">np</span>
+<span class="keyword">import</span> <span class="type">matplotlib.pyplot</span> <span class="keyword">as</span> <span class="type">plt</span>
+
+<span class="comment"># Cell 2</span>
+<span class="keyword">data</span> <span class="operator">=</span> <span class="function">np.random.randn</span>(<span class="number">1000</span>)
+<span class="function">plt.hist</span>(<span class="keyword">data</span>, <span class="keyword">bins</span><span class="operator">=</span><span class="number">30</span>)
+<span class="function">plt.show</span>()
+
+<span class="comment"># Cell 3</span>
+<span class="function">print</span>(<span class="string">f"Mean: {data.mean():.2f}"</span>)
+<span class="function">print</span>(<span class="string">f"Std: {data.std():.2f}"</span>)</pre>
+      </div>
+      <div>
+        <h4>QUILL</h4>
+        <pre><span class="comment"># Data Analysis</span>
+
+Let's generate some random data:
+
+```ocaml
+<span class="keyword">open</span> <span class="type">Nx</span>
+<span class="keyword">open</span> <span class="type">Hugin</span>
+
+<span class="keyword">let</span> <span class="keyword">data</span> <span class="operator">=</span> <span class="function">randn</span> <span class="type">float32</span> [<span class="operator">|</span><span class="number">1000</span><span class="operator">|</span>]
+```
+
+Now plot it:
+
+```ocaml
+<span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">figure</span> ()
+<span class="keyword">let</span> <span class="keyword">ax</span> <span class="operator">=</span> <span class="function">subplot</span> <span class="keyword">fig</span>
+<span class="keyword">let</span> _ <span class="operator">=</span> <span class="type">Plotting</span>.<span class="function">hist</span> <span class="operator">~</span><span class="keyword">values</span><span class="operator">:</span><span class="keyword">data</span> <span class="operator">~</span><span class="keyword">bins</span><span class="operator">:</span><span class="number">30</span> <span class="keyword">ax</span>
+<span class="function">show</span> <span class="keyword">fig</span>
+```
+
+Statistics:
+
+```ocaml
+<span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"Mean: %.2f\n"</span> (<span class="function">mean</span> <span class="keyword">data</span>);
+<span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"Std: %.2f\n"</span> (<span class="function">std</span> <span class="keyword">data</span>)
+```</pre>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>how it works</h2>
+
+    <p>Write your notebook as a markdown file:</p>
+
+    <pre class="notebook-example">
+<span class="comment"># My Analysis</span>
+
+Some introductory text about what we're doing.
+
+<span class="comment">## Load the data</span>
+
+```ocaml
+<span class="keyword">open</span> <span class="type">Nx</span>
+
+<span class="keyword">let</span> <span class="keyword">data</span> <span class="operator">=</span> <span class="type">Nx_io</span>.<span class="function">load_npy</span> <span class="string">"data.npy"</span>
+<span class="keyword">let</span> () <span class="operator">=</span> <span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"Loaded %d samples\n"</span> (<span class="function">shape</span> <span class="keyword">data</span>).(<span class="number">0</span>)
+```
+
+The data contains measurements from our experiment...
+
+<span class="comment">## Visualize</span>
+
+```ocaml
+<span class="keyword">open</span> <span class="type">Hugin</span>
+
+<span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">figure</span> ()
+<span class="keyword">let</span> <span class="keyword">ax</span> <span class="operator">=</span> <span class="function">subplot</span> <span class="keyword">fig</span>
+<span class="keyword">let</span> _ <span class="operator">=</span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">y</span><span class="operator">:</span><span class="keyword">data</span> <span class="keyword">ax</span>
+<span class="function">show</span> <span class="keyword">fig</span>
+```
+    </pre>
+
+    <p>Then run it:</p>
+
+    <pre>
+<span class="comment"># Start the web interface</span>
+<span class="function">quill</span> serve
+
+<span class="comment"># Or execute directly</span>
+<span class="function">quill</span> exec notebook.md
+    </pre>
+
+    <hr>
+
+    <h2>what's implemented</h2>
+
+    <p>Quill is under active development. Here's what works today:</p>
+
+    <div class="feature-grid">
+      <div>
+        <h3 class="color-green">working now</h3>
+        <ul style="list-style: none; padding: 0;">
+          <li>✓ Markdown parsing with OCaml blocks</li>
+          <li>✓ Web-based editor with syntax highlighting</li>
+          <li>✓ Text and plot output</li>
+          <li>✓ Array visualization</li>
         </ul>
       </div>
-
       <div>
-        <h3 class="text-xl font-semibold mb-4">Features</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/markdown/" class="text-green-600 hover:text-green-800">Markdown Syntax</a></li>
-          <li><a href="guides/code-blocks/" class="text-green-600 hover:text-green-800">Code Execution</a></li>
-          <li><a href="guides/visualization/" class="text-green-600 hover:text-green-800">Rich Output</a></li>
-          <li><a href="guides/export/" class="text-green-600 hover:text-green-800">Export & Sharing</a></li>
+        <h3 class="color-green">coming soon</h3>
+        <ul style="list-style: none; padding: 0;">
+          <li>⏳ Interactive widgets</li>
+          <li>⏳ Export to HTML/PDF</li>
+          <li>⏳ LSP integration in editor</li>
+          <li>⏳ Cell-by-cell execution</li>
+          <li>⏳ Rich media output (images, tables)</li>
         </ul>
       </div>
-
-      <div>
-        <h3 class="text-xl font-semibold mb-4">Advanced</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/plugins/" class="text-green-600 hover:text-green-800">Plugin System</a></li>
-          <li><a href="guides/customization/" class="text-green-600 hover:text-green-800">Customization</a></li>
-          <li><a href="guides/server/" class="text-green-600 hover:text-green-800">Server Configuration</a></li>
-          <li><a href="api/" class="text-green-600 hover:text-green-800">API Reference</a></li>
-        </ul>
-      </div>
-
     </div>
-  </div>
-</section>
 
+    <hr>
+
+    <h2>design philosophy</h2>
+
+    <p><b>Notebooks are documents.</b> A notebook is a markdown file. You can edit it in any text editor, version it with git, and read it on GitHub.</p>
+
+    <p><b>Code is code.</b> OCaml code blocks are real OCaml. Your editor understands them. Refactoring tools work.</p>
+
+
+    <hr>
+
+    <h2>get started</h2>
+
+    <p>Quill isn't released yet. For now, check out the <a href="/docs/quill/">documentation</a> to learn more.</p>
+
+    <p>When it's ready:</p>
+
+    <pre>
+<span class="comment"># Install</span>
+<span class="function">opam</span> install quill
+
+<span class="comment"># Create a notebook</span>
+<span class="function">cat</span> <span class="operator">></span> example.md <span class="operator"><<</span><span class="string">'EOF'
+# My First Notebook
+
+Let's do some math:
+
+```ocaml
+let x = 2 + 2
+let () = Printf.printf "2 + 2 = %d\n" x
+```
+EOF</span>
+
+<span class="comment"># Run it</span>
+<span class="function">quill</span> exec example.md
+    </pre>
   </main>
-  <div id="footer"></div>
 </body>
-
 </html>

@@ -1,0 +1,15 @@
+(version 2.2.0)
+
+(build
+ (all_platforms
+  ((action (run dune build -p %{pkg-self:name} -j %{jobs} @install)))))
+
+(depends
+ (all_platforms
+  (ocaml dune)))
+
+(source
+ (fetch
+  (url
+   https://github.com/dmbaturin/ocaml-tsort/archive/refs/tags/2.2.0.tar.gz)
+  (checksum md5=efe0d2a972638bd07a65b30fed372ed2)))

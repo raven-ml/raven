@@ -1,0 +1,19 @@
+(version 1.0.1)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml thread-table)))
+
+(source
+ (fetch
+  (url
+   https://github.com/ocaml-multicore/domain-local-await/releases/download/1.0.1/domain-local-await-1.0.1.tbz)
+  (checksum
+   sha256=2952113c53cb07e2b054b2dc86ce72939131dab8207c8f3139adb23e64cdfa6f)))

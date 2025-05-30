@@ -21,9 +21,9 @@
   include_subsections = true
   content_selector = "main"
 
-[templates.docs_ndarray_config]
-  file = "templates/layout_docs_ndarray.html"
-  section = "docs/ndarray/"
+[templates.docs_nx_config]
+  file = "templates/layout_docs_nx.html"
+  section = "docs/nx/"
   include_subsections = true
   content_selector = "main"
 
@@ -60,34 +60,19 @@
 [widgets.page_title]
   widget = "title"
   selector = "h1"
-  default = "Raven Ecosystem"
-  append = " - Raven"
-  # keep = false # Add if you want to force overwrite existing <title> tags
-
-[widgets.clean_empty_paragraphs]
-  widget = "delete_element"
-  selector = "p:empty"
+  default = "raven"
+  append = " - raven"
+  force = true
+  keep = true # Add if you want to force overwrite existing <title> tags
 
 [widgets.breadcrumbs]
   widget = "breadcrumbs"
   selector = "#breadcrumbs"
-  breadcrumb_template = """<a href="{{url}}" class="text-gray-500 hover:text-gray-700 hover:underline">{{name | title}}</a>"""
-  between = """<span class="mx-2 text-gray-400">/</span>"""
-  min_depth = 0
+  breadcrumb_template = """<a href="{{url}}">{{name | title}}</a>"""
+  between = """<span class="breadcrumb-separator">/</span>"""
+  min_depth = 1
 
 [widgets.append_current_page_to_breadcrumbs]
   widget = "append_page_title_to_breadcrumbs"
   selector = "#breadcrumbs"
   after = "breadcrumbs"
-
-[widgets.include_footer]
-  widget = "include"
-  file = "templates/partials/footer.html"
-  selector = "#footer"
-  action = "replace_element"
-
-[widgets.include_project_nav]
-  widget = "include"
-  file = "templates/partials/project-nav.html"
-  selector = "#project-nav"
-  action = "replace_element"

@@ -1,0 +1,13 @@
+(version v0.17.2)
+
+(build
+ (all_platforms ((action (run dune build -p %{pkg-self:name} -j %{jobs})))))
+
+(depends
+ (all_platforms
+  (ocaml ocaml_intrinsics_kernel sexplib0 dune dune-configurator)))
+
+(source
+ (fetch
+  (url https://github.com/janestreet/base/archive/refs/tags/v0.17.2.tar.gz)
+  (checksum md5=11de9f28abbd131d778b5665126ec7e8)))

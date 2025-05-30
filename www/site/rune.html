@@ -1,413 +1,197 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>rune - Automatic Differentiation & JIT - Raven</title>
-  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>rune - Automatic differentiation for OCaml | raven</title>
+  <link rel="stylesheet" href="/styles.css">
 </head>
+<body>
+  <main class="main-content">
+    <nav class="rune-nav nav-breadcrumb">
+      <a href="/">raven</a> / rune
+      [ <a href="/docs/rune/">docs</a> |
+      <a href="https://github.com/raven-ml/raven/tree/main/rune">source</a> ]
+    </nav>
 
-<body class="bg-gray-50 text-gray-900">
-  <!-- Header -->
-  <header class="bg-white shadow-sm">
-    <div class="max-w-6xl mx-auto px-6 py-4">
-      <nav class="flex items-center justify-between">
-        <div class="flex items-center space-x-4">
-          <a href="/" class="text-2xl font-bold text-gray-900">Raven</a>
-          <span class="text-gray-400">/</span>
-          <h1 class="text-2xl font-bold text-orange-600">rune</h1>
-        </div>
-        <div class="flex items-center space-x-6">
-          <a href="/docs/rune/" class="text-gray-600 hover:text-gray-900">Docs</a>
-          <a href="/docs/rune/api/" class="text-gray-600 hover:text-gray-900">API</a>
-          <div id="project-nav"></div>
-        </div>
-      </nav>
+    <div class="rune-hero hero">
+      <h1>rune</h1>
+      <p class="tagline">JAX's transformations. OCaml's guarantees. Differentiable everything.</p>
+      <span style="font-size: 36px; opacity: 0.2;" class="color-orange">ᚠ ᚢ ᚦ ᚨ ᚱ ᚲ</span>
     </div>
-  </header>
 
-  <main>
+    <hr>
 
-<!-- Hero -->
-<section class="py-12 bg-gradient-to-r from-orange-600 to-red-600 text-white">
-  <div class="max-w-6xl mx-auto px-6">
-    <div class="max-w-3xl">
-      <div class="flex items-center mb-4">
-        <h1 class="text-4xl font-bold">rune</h1>
-        <span class="ml-4 px-3 py-1 bg-yellow-500 text-yellow-900 text-sm rounded-full">Beta</span>
-      </div>
-      <p class="text-xl mb-6 text-orange-100">
-        Automatic differentiation and JIT compilation with composable transformations, inspired by JAX.
-      </p>
-      <div class="flex space-x-4">
-        <a href="guides/getting-started/"
-          class="bg-white text-orange-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">
-          Get Started
-        </a>
-        <a href="examples/"
-          class="border-2 border-white text-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-orange-600 transition-colors">
-          View Examples
-        </a>
-      </div>
-    </div>
-  </div>
-</section>
+    <h2>why rune?</h2>
 
-<!-- Core Concepts -->
-<section class="py-12">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Core Transformations</h2>
-    <div class="grid md:grid-cols-3 gap-8">
-
-      <div class="bg-white p-8 rounded-lg shadow-lg text-center">
-        <div class="bg-orange-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-          <svg class="w-10 h-10 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-          </svg>
-        </div>
-        <h3 class="text-2xl font-bold mb-4">grad</h3>
-        <p class="text-gray-600 mb-4">Automatic differentiation for computing gradients of scalar-valued functions.</p>
-        <div class="bg-gray-100 p-4 rounded text-left text-sm font-mono">
-          <div>let f x = Tensor.sum (Tensor.square x)</div>
-          <div>let grad_f = grad f</div>
-        </div>
-      </div>
-
-      <div class="bg-white p-8 rounded-lg shadow-lg text-center">
-        <div class="bg-blue-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-          <svg class="w-10 h-10 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-2xl font-bold mb-4">jit</h3>
-        <p class="text-gray-600 mb-4">Just-in-time compilation for optimized execution on various backends.</p>
-        <div class="bg-gray-100 p-4 rounded text-left text-sm font-mono">
-          <div>let fast_f = jit f</div>
-          <div>let result = fast_f input</div>
-        </div>
-      </div>
-
-      <div class="bg-white p-8 rounded-lg shadow-lg text-center">
-        <div class="bg-green-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-          <svg class="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-2xl font-bold mb-4">Composition</h3>
-        <p class="text-gray-600 mb-4">Transformations compose seamlessly for complex optimization workflows.</p>
-        <div class="bg-gray-100 p-4 rounded text-left text-sm font-mono">
-          <div>let optimized = grad (jit f)</div>
-          <div>let parallel = vmap (jit f)</div>
-        </div>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Features -->
-<section class="py-12 bg-gray-100">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Advanced Features</h2>
-    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Reverse-Mode AD</h3>
-        <p class="text-gray-600">Efficient backpropagation for neural networks and optimization with O(1) gradient
-          computation.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Multi-Device</h3>
-        <p class="text-gray-600">Seamless execution across CPU, GPU (Metal/CUDA), and accelerators with automatic memory
-          management.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Vectorization</h3>
-        <p class="text-gray-600">vmap for automatic batching and parallel execution over leading dimensions.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Higher-Order Derivatives</h3>
-        <p class="text-gray-600">Compose grad transformations for Hessians and higher-order optimization methods.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Type Safety</h3>
-        <p class="text-gray-600">OCaml's type system ensures gradient shapes and device placement correctness at compile
-          time.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Functional API</h3>
-        <p class="text-gray-600">Pure functional transformations with immutable tensors and composable operations.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Quick Example -->
-<section class="py-12">
-  <div class="max-w-4xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-8">Neural Network Training</h2>
-    <div class="bg-gray-900 text-gray-100 p-6 rounded-lg overflow-x-auto">
-      <pre class="text-sm"><code><span class="text-gray-500">(* Define a simple MLP *)</span>
-<span class="text-blue-400">open</span> Rune
-
-<span class="text-green-400">let</span> mlp params x =
-  x
-  |> Tensor.linear params.w1 params.b1
-  |> Tensor.relu
-  |> Tensor.linear params.w2 params.b2
-
-<span class="text-gray-500">(* Loss function *)</span>
-<span class="text-green-400">let</span> loss params (x, y) =
-  <span class="text-green-400">let</span> pred = mlp params x <span class="text-blue-400">in</span>
-  Tensor.mse_loss pred y
-
-<span class="text-gray-500">(* Training step with automatic differentiation *)</span>
-<span class="text-green-400">let</span> step params batch =
-  <span class="text-green-400">let</span> grad_fn = grad loss <span class="text-blue-400">in</span>
-  <span class="text-green-400">let</span> grads = grad_fn params batch <span class="text-blue-400">in</span>
-  Optimizer.sgd params grads ~lr:<span class="text-yellow-400">0.01</span>
-
-<span class="text-gray-500">(* JIT compile for performance *)</span>
-<span class="text-green-400">let</span> fast_step = jit step</code></pre>
-    </div>
-  </div>
-</section>
-
-<!-- Transformations -->
-<section class="py-12 bg-gray-100">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Available Transformations</h2>
-    <div class="grid md:grid-cols-2 gap-8">
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Differentiation</h3>
-        <ul class="space-y-2 text-gray-600">
-          <li><strong>grad</strong> - Reverse-mode automatic differentiation</li>
-          <li><strong>jacrev</strong> - Jacobian via reverse-mode AD</li>
-          <li><strong>jacfwd</strong> - Jacobian via forward-mode AD</li>
-          <li><strong>hessian</strong> - Second-order derivatives</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Compilation</h3>
-        <ul class="space-y-2 text-gray-600">
-          <li><strong>jit</strong> - Just-in-time compilation</li>
-          <li><strong>aot</strong> - Ahead-of-time compilation</li>
-          <li><strong>device</strong> - Device placement control</li>
-          <li><strong>precision</strong> - Numerical precision control</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Vectorization</h3>
-        <ul class="space-y-2 text-gray-600">
-          <li><strong>vmap</strong> - Vectorize over batch dimension</li>
-          <li><strong>pmap</strong> - Parallel map across devices</li>
-          <li><strong>scan</strong> - Sequential scan operations</li>
-          <li><strong>while_loop</strong> - Optimized loops</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Debugging</h3>
-        <ul class="space-y-2 text-gray-600">
-          <li><strong>checkify</strong> - Numerical error checking</li>
-          <li><strong>debug</strong> - Debug mode with tracing</li>
-          <li><strong>profile</strong> - Performance profiling</li>
-          <li><strong>visualize</strong> - Computation graph visualization</li>
-        </ul>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Ecosystem -->
-<section class="py-12 bg-gray-100">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Rune Ecosystem</h2>
-    <p class="text-lg text-gray-600 text-center mb-8 max-w-3xl mx-auto">
-      High-level libraries built on Rune's automatic differentiation and JIT compilation for specialized machine
-      learning tasks.
-    </p>
-    <div class="grid lg:grid-cols-2 gap-12 max-w-5xl mx-auto">
-
-      <!-- Kaun -->
-      <div class="bg-white rounded-lg shadow-xl overflow-hidden">
-        <div class="bg-gradient-to-r from-orange-500 to-red-500 text-white p-8">
-          <div class="flex items-center mb-4">
-            <h2 class="text-3xl font-bold">kaun</h2>
-            <span class="ml-4 px-3 py-1 bg-yellow-500 text-yellow-900 text-sm rounded-full">Beta</span>
-          </div>
-          <p class="text-orange-100 text-lg">Neural Network Library</p>
-        </div>
-        <div class="p-8">
-          <p class="text-gray-600 mb-6 text-lg">
-            High-level neural network library with pre-built layers, optimizers, and training loops. The Flax equivalent
-            for the Rune ecosystem.
-          </p>
-
-          <h3 class="font-semibold mb-4">Key Features:</h3>
-          <ul class="text-gray-600 space-y-2 mb-6">
-            <li>• <strong>Modular Architecture:</strong> Composable layers and models</li>
-            <li>• <strong>Built-in Optimizers:</strong> SGD, Adam, RMSprop with learning rate schedules</li>
-            <li>• <strong>Training Utilities:</strong> Automated training loops and checkpointing</li>
-            <li>• <strong>Model Zoo:</strong> Pre-trained models for common tasks</li>
-            <li>• <strong>Transfer Learning:</strong> Easy fine-tuning and adaptation</li>
-            <li>• <strong>Distributed Training:</strong> Multi-GPU and multi-node support</li>
-          </ul>
-
-          <div class="bg-gray-50 p-4 rounded text-sm font-mono mb-6">
-            <div class="text-gray-500 mb-2">(* Define a simple MLP with Kaun *)</div>
-            <div>open Kaun</div>
-            <div></div>
-            <div>let model = Sequential.[</div>
-            <div> Linear.create ~in_features:784 ~out_features:128;</div>
-            <div> Activation.relu;</div>
-            <div> Linear.create ~in_features:128 ~out_features:10;</div>
-            <div>]</div>
-            <div></div>
-            <div>let trainer = Trainer.create ~model ~optimizer:Adam.default</div>
-          </div>
-
-          <a href="kaun/"
-            class="inline-block bg-orange-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-orange-700 transition-colors">
-            Learn More →
-          </a>
-        </div>
-      </div>
-
-      <!-- Sowilo -->
-      <div class="bg-white rounded-lg shadow-xl overflow-hidden">
-        <div class="bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-8">
-          <div class="flex items-center mb-4">
-            <h2 class="text-3xl font-bold">sowilo</h2>
-            <span class="ml-4 px-3 py-1 bg-red-500 text-white text-sm rounded-full">Alpha</span>
-          </div>
-          <p class="text-blue-100 text-lg">Computer Vision Library</p>
-        </div>
-        <div class="p-8">
-          <p class="text-gray-600 mb-6 text-lg">
-            Differentiable computer vision operations with JIT compilation and GPU acceleration for real-time
-            processing.
-          </p>
-
-          <h3 class="font-semibold mb-4">Key Features:</h3>
-          <ul class="text-gray-600 space-y-2 mb-6">
-            <li>• <strong>Differentiable Operations:</strong> All CV ops support automatic differentiation</li>
-            <li>• <strong>JIT Compilation:</strong> Optimized kernels for GPU acceleration</li>
-            <li>• <strong>Real-time Processing:</strong> Efficient video and camera input handling</li>
-            <li>• <strong>Pre-trained Models:</strong> Object detection, segmentation, pose estimation</li>
-            <li>• <strong>Custom Pipelines:</strong> Composable image processing workflows</li>
-            <li>• <strong>Multi-device:</strong> CPU, Metal (macOS), CUDA (Linux) backends</li>
-          </ul>
-
-          <div class="bg-gray-50 p-4 rounded text-sm font-mono mb-6">
-            <div class="text-gray-500 mb-2">(* Differentiable image processing *)</div>
-            <div>open Sowilo</div>
-            <div></div>
-            <div>let pipeline img =</div>
-            <div> img</div>
-            <div> |&gt; gaussian_blur ~sigma:1.0</div>
-            <div> |&gt; edge_detection ~method:Canny</div>
-            <div> |&gt; morphology ~op:Closing</div>
-            <div></div>
-            <div>let jit_pipeline = jit pipeline</div>
-          </div>
-
-          <a href="sowilo/"
-            class="inline-block bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors">
-            Learn More →
-          </a>
-        </div>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Installation -->
-<section class="py-12">
-  <div class="max-w-4xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-8">Installation</h2>
-    <div class="grid md:grid-cols-2 gap-8">
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Core Library</h3>
-        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
-          <div>$ opam install rune</div>
-        </div>
-        <p class="text-gray-600 mt-4">CPU backend with basic transformations.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Ecosystem Libraries</h3>
-        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
-          <div>$ opam install rune kaun sowilo</div>
-        </div>
-        <p class="text-gray-600 mt-4">Install all ecosystem libraries together.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Navigation -->
-<section class="py-12 bg-white border-t">
-  <div class="max-w-6xl mx-auto px-6">
-    <div class="grid md:grid-cols-3 gap-8">
-
+    <div class="feature-grid">
       <div>
-        <h3 class="text-xl font-semibold mb-4">Getting Started</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/installation/" class="text-orange-600 hover:text-orange-800">Installation Guide</a></li>
-          <li><a href="guides/quickstart/" class="text-orange-600 hover:text-orange-800">First Gradients</a></li>
-          <li><a href="guides/jax-migration/" class="text-orange-600 hover:text-orange-800">JAX Migration</a></li>
-          <li><a href="examples/" class="text-orange-600 hover:text-orange-800">Example Gallery</a></li>
-        </ul>
+        <h3 class="color-orange">composable transformations</h3>
+        <p>grad, jit, vmap - they compose like functions should. Build complex ML systems from simple parts.</p>
       </div>
-
       <div>
-        <h3 class="text-xl font-semibold mb-4">Core Concepts</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/autodiff/" class="text-orange-600 hover:text-orange-800">Automatic Differentiation</a>
-          </li>
-          <li><a href="guides/jit/" class="text-orange-600 hover:text-orange-800">JIT Compilation</a></li>
-          <li><a href="guides/transformations/" class="text-orange-600 hover:text-orange-800">Composing
-              Transformations</a></li>
-          <li><a href="guides/neural-nets/" class="text-orange-600 hover:text-orange-800">Neural Networks</a></li>
-        </ul>
+        <h3 class="color-orange">effect-based autodiff</h3>
+        <p>OCaml 5's effects make automatic differentiation elegant. No tape, no graph - just functions.</p>
       </div>
-
       <div>
-        <h3 class="text-xl font-semibold mb-4">Advanced Topics</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/gpu/" class="text-orange-600 hover:text-orange-800">GPU Programming</a></li>
-          <li><a href="guides/optimization/" class="text-orange-600 hover:text-orange-800">Optimization Algorithms</a>
-          </li>
-          <li><a href="guides/effects/" class="text-orange-600 hover:text-orange-800">Algebraic Effects</a></li>
-          <li><a href="api/" class="text-orange-600 hover:text-orange-800">Full API Reference</a></li>
-        </ul>
+        <h3 class="color-orange">multi-device support</h3>
+        <p>Same code runs on CPU or Metal. Device placement is explicit and type-safe.</p>
       </div>
-
+      <div>
+        <h3 class="color-orange">type-safe gradients</h3>
+        <p>Shape errors at compile time. Device mismatches impossible. Your gradients always match your parameters.</p>
+      </div>
     </div>
-  </div>
-</section>
 
+    <hr>
+
+    <h2>show me the code</h2>
+
+    <div class="code-compare">
+      <div>
+        <h4>JAX</h4>
+        <pre><span class="keyword">import</span> <span class="type">jax</span>
+<span class="keyword">import</span> <span class="type">jax.numpy</span> <span class="keyword">as</span> <span class="type">jnp</span>
+<span class="keyword">from</span> <span class="type">jax</span> <span class="keyword">import</span> <span class="function">grad</span>, <span class="function">jit</span>
+
+<span class="comment"># Define function</span>
+<span class="keyword">def</span> <span class="function">f</span>(<span class="keyword">x</span>):
+    <span class="keyword">return</span> <span class="function">jnp.sum</span>(<span class="keyword">x</span> ** <span class="number">2</span>)
+
+<span class="comment"># Transform it</span>
+<span class="keyword">grad_f</span> <span class="operator">=</span> <span class="function">grad</span>(<span class="keyword">f</span>)
+<span class="keyword">fast_grad_f</span> <span class="operator">=</span> <span class="function">jit</span>(<span class="keyword">grad_f</span>)</pre>
+      </div>
+      <div>
+        <h4>RUNE</h4>
+        <pre><span class="keyword">open</span> <span class="type">Rune</span>
+
+<span class="comment">(* Define function *)</span>
+<span class="keyword">let</span> <span class="keyword">f</span> <span class="keyword">x</span> <span class="operator">=</span> 
+  <span class="function">sum</span> (<span class="function">mul</span> <span class="keyword">x</span> <span class="keyword">x</span>)
+
+<span class="comment">(* Transform it *)</span>
+<span class="keyword">let</span> <span class="keyword">grad_f</span> <span class="operator">=</span> <span class="function">grad</span> <span class="keyword">f</span>
+<span class="keyword">let</span> <span class="keyword">fast_grad_f</span> <span class="operator">=</span> <span class="function">jit</span> <span class="keyword">grad_f</span></pre>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>automatic differentiation</h2>
+
+    <p>Rune uses OCaml's effect system to implement autodiff. Write normal functions, get derivatives for free:</p>
+
+    <pre><span class="comment">(* Any function works *)</span>
+<span class="keyword">let</span> <span class="keyword">my_function</span> <span class="keyword">x</span> <span class="operator">=</span>
+  <span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="function">sin</span> <span class="keyword">x</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">z</span> <span class="operator">=</span> <span class="function">mul</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="keyword">in</span>
+  <span class="function">sum</span> <span class="keyword">z</span>
+
+<span class="comment">(* Get gradient function *)</span>
+<span class="keyword">let</span> <span class="keyword">df_dx</span> <span class="operator">=</span> <span class="function">grad</span> <span class="keyword">my_function</span>
+
+<span class="comment">(* Compute value and gradient together *)</span>
+<span class="keyword">let</span> <span class="keyword">value</span>, <span class="keyword">gradient</span> <span class="operator">=</span> <span class="function">value_and_grad</span> <span class="keyword">my_function</span> <span class="keyword">x</span></pre>
+
+    <hr>
+
+    <h2>device placement</h2>
+
+    <pre><span class="comment">(* CPU computation *)</span>
+<span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">rand</span> <span class="keyword">cpu</span> <span class="type">Float32</span> [<span class="operator">|</span><span class="number">100</span><span class="operator">|</span>]
+
+<span class="comment">(* Metal GPU (macOS) *)</span>
+<span class="keyword">let</span> <span class="keyword">gpu</span> <span class="operator">=</span> <span class="function">metal</span> () <span class="keyword">in</span>
+<span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="function">rand</span> <span class="keyword">gpu</span> <span class="type">Float32</span> [<span class="operator">|</span><span class="number">100</span><span class="operator">|</span>]
+
+<span class="comment">(* Operations run on tensor's device *)</span>
+<span class="keyword">let</span> <span class="keyword">z</span> <span class="operator">=</span> <span class="function">add</span> <span class="keyword">y</span> <span class="keyword">y</span>  <span class="comment">(* runs on GPU *)</span></pre>
+
+    <hr>
+
+    <h2>neural network example</h2>
+
+    <pre><span class="comment">(* Simple two-layer network *)</span>
+<span class="keyword">let</span> <span class="keyword">mlp</span> <span class="keyword">w1</span> <span class="keyword">b1</span> <span class="keyword">w2</span> <span class="keyword">b2</span> <span class="keyword">x</span> <span class="operator">=</span>
+  <span class="keyword">let</span> <span class="keyword">h</span> <span class="operator">=</span> <span class="function">add</span> (<span class="function">matmul</span> <span class="keyword">x</span> <span class="keyword">w1</span>) <span class="keyword">b1</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">h</span> <span class="operator">=</span> <span class="function">maximum</span> <span class="keyword">h</span> (<span class="function">zeros_like</span> <span class="keyword">h</span>) <span class="keyword">in</span>  <span class="comment">(* ReLU *)</span>
+  <span class="function">add</span> (<span class="function">matmul</span> <span class="keyword">h</span> <span class="keyword">w2</span>) <span class="keyword">b2</span>
+
+<span class="comment">(* Loss function *)</span>
+<span class="keyword">let</span> <span class="keyword">loss</span> <span class="keyword">params</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="operator">=</span>
+  <span class="keyword">let</span> [<span class="keyword">w1</span>; <span class="keyword">b1</span>; <span class="keyword">w2</span>; <span class="keyword">b2</span>] <span class="operator">=</span> <span class="keyword">params</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">pred</span> <span class="operator">=</span> <span class="function">mlp</span> <span class="keyword">w1</span> <span class="keyword">b1</span> <span class="keyword">w2</span> <span class="keyword">b2</span> <span class="keyword">x</span> <span class="keyword">in</span>
+  <span class="function">mean</span> (<span class="function">mul</span> (<span class="function">sub</span> <span class="keyword">pred</span> <span class="keyword">y</span>) (<span class="function">sub</span> <span class="keyword">pred</span> <span class="keyword">y</span>))
+
+<span class="comment">(* Get gradients for all parameters *)</span>
+<span class="keyword">let</span> <span class="keyword">grad_loss</span> <span class="operator">=</span> <span class="function">grads</span> <span class="keyword">loss</span>
+
+<span class="comment">(* Training step *)</span>
+<span class="keyword">let</span> <span class="keyword">update</span> <span class="keyword">params</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="keyword">lr</span> <span class="operator">=</span>
+  <span class="keyword">let</span> <span class="keyword">grads</span> <span class="operator">=</span> <span class="keyword">grad_loss</span> <span class="keyword">params</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="keyword">in</span>
+  <span class="type">List</span>.<span class="function">map2</span> 
+    (<span class="keyword">fun</span> <span class="keyword">p</span> <span class="keyword">g</span> <span class="operator">-></span> <span class="function">sub</span> <span class="keyword">p</span> (<span class="function">mul</span> (<span class="function">scalar</span> <span class="keyword">cpu</span> <span class="type">Float32</span> <span class="keyword">lr</span>) <span class="keyword">g</span>))
+    <span class="keyword">params</span> <span class="keyword">grads</span></pre>
+
+    <hr>
+
+    <h2>what's coming</h2>
+
+    <p>Rune works today for automatic differentiation. Post-v1, we're adding:</p>
+
+    <ul>
+      <li><b>JIT to LLVM/Metal/CUDA</b> - Real compilation, not just tracing</li>
+      <li><b>vmap</b> - Automatic vectorization over batch dimensions</li>
+      <li><b>Forward-mode AD</b> - For Jacobian-vector products</li>
+      <li><b>Higher-order derivatives</b> - Hessians and beyond</li>
+    </ul>
+
+    <hr>
+
+    <h2>ecosystem</h2>
+
+    <div class="feature-grid">
+      <div>
+        <h3 class="color-orange">kaun - neural networks</h3>
+        <p>High-level neural network library built on Rune. Layers, optimizers, and training loops that just work.</p>
+        <p><a href="/kaun/" class="color-red">Learn more →</a></p>
+      </div>
+      <div>
+        <h3 class="color-orange">sowilo - computer vision</h3>
+        <p>Differentiable image processing. Every operation supports autodiff.</p>
+        <p><a href="/sowilo/" class="color-indigo">Learn more →</a></p>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>get started</h2>
+
+    <p>Rune isn't released yet. For now, check out the <a href="/docs/rune/">documentation</a> to learn more.</p>
+
+    <p>When it's ready:</p>
+
+    <pre>
+<span class="comment"># Install</span>
+<span class="function">opam</span> install rune
+
+<span class="comment"># Try it</span>
+<span class="keyword">open</span> <span class="type">Rune</span>
+
+<span class="keyword">let</span> () <span class="operator">=</span> 
+  <span class="comment">(* Define a function *)</span>
+  <span class="keyword">let</span> <span class="keyword">f</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">sum</span> (<span class="function">mul</span> <span class="keyword">x</span> <span class="keyword">x</span>) <span class="keyword">in</span>
+  
+  <span class="comment">(* Get its gradient *)</span>
+  <span class="keyword">let</span> <span class="keyword">grad_f</span> <span class="operator">=</span> <span class="function">grad</span> <span class="keyword">f</span> <span class="keyword">in</span>
+  
+  <span class="comment">(* Test it *)</span>
+  <span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">scalar</span> <span class="keyword">cpu</span> <span class="type">Float32</span> <span class="number">3.0</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">g</span> <span class="operator">=</span> <span class="keyword">grad_f</span> <span class="keyword">x</span> <span class="keyword">in</span>
+  <span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"f(3) = %.1f\n"</span> (<span class="function">unsafe_get</span> (<span class="keyword">f</span> <span class="keyword">x</span>) [<span class="operator">||</span>]);
+  <span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"f'(3) = %.1f\n"</span> (<span class="function">unsafe_get</span> <span class="keyword">g</span> [<span class="operator">||</span>])
+    </pre>
   </main>
-  <div id="footer"></div>
 </body>
-
 </html>
