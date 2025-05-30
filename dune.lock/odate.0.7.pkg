@@ -1,0 +1,18 @@
+(version 0.7)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml dune menhir base-unix)))
+
+(source
+ (fetch
+  (url https://github.com/hhugo/odate/releases/download/0.7/odate-0.7.tbz)
+  (checksum
+   sha256=74192cc81d97f3c2689b6f5b55ef5006f71412cc947441832260ea85518f55af)))

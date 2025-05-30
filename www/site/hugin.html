@@ -1,291 +1,184 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>hugin - Publication-Quality Plotting - Raven</title>
-  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>hugin - Plotting library for OCaml | raven</title>
+  <link rel="stylesheet" href="/styles.css">
 </head>
+<body>
+  <main class="main-content">
+    <nav class="hugin-nav nav-breadcrumb">
+      <a href="/">raven</a> / hugin
+      [ <a href="/docs/hugin/">docs</a> |
+      <a href="https://github.com/raven-ml/raven/tree/main/hugin">source</a> ]
+    </nav>
 
-<body class="bg-gray-50 text-gray-900">
-  <!-- Header -->
-  <header class="bg-white shadow-sm">
-    <div class="max-w-6xl mx-auto px-6 py-4">
-      <nav class="flex items-center justify-between">
-        <div class="flex items-center space-x-4">
-          <a href="/" class="text-2xl font-bold text-gray-900">Raven</a>
-          <span class="text-gray-400">/</span>
-          <h1 class="text-2xl font-bold text-purple-600">hugin</h1>
-        </div>
-        <div class="flex items-center space-x-6">
-          <a href="/docs/hugin/" class="text-gray-600 hover:text-gray-900">Docs</a>
-          <a href="/docs/hugin/api/" class="text-gray-600 hover:text-gray-900">API</a>
-          <div id="project-nav"></div>
-        </div>
-      </nav>
+    <div class="hugin-hero hero">
+      <h1>hugin</h1>
+      <p class="tagline">matplotlib's flexibility. OCaml's elegance. publication-ready plots.</p>
     </div>
-  </header>
 
-  <main>
+    <hr>
 
-<!-- Hero -->
-<section class="py-12 bg-gradient-to-r from-purple-600 to-purple-700 text-white">
-  <div class="max-w-6xl mx-auto px-6">
-    <div class="max-w-3xl">
-      <div class="flex items-center mb-4">
-        <h1 class="text-4xl font-bold">hugin</h1>
-        <span class="ml-4 px-3 py-1 bg-green-500 text-white text-sm rounded-full">Production Ready</span>
-      </div>
-      <p class="text-xl mb-6 text-purple-100">
-        Publication-quality 2D and 3D plotting library with seamless ndarray integration and Cairo backend.
-      </p>
-      <div class="flex space-x-4">
-        <a href="guides/getting-started/"
-          class="bg-white text-purple-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">
-          Get Started
-        </a>
-        <a href="gallery/"
-          class="border-2 border-white text-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-purple-600 transition-colors">
-          View Gallery
-        </a>
-      </div>
-    </div>
-  </div>
-</section>
+    <h2>why hugin?</h2>
 
-<!-- Features -->
-<section class="py-12">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Visualization Features</h2>
-    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-
-      <div class="text-center">
-        <div class="bg-purple-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">2D & 3D Plots</h3>
-        <p class="text-gray-600">Line plots, scatter plots, bar charts, heatmaps, and 3D surface visualizations.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Publication Quality</h3>
-        <p class="text-gray-600">High-resolution output with precise typography and professional styling options.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Cairo Backend</h3>
-        <p class="text-gray-600">Hardware-accelerated rendering with support for multiple output formats (PNG, SVG,
-          PDF).</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-yellow-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Subplots</h3>
-        <p class="text-gray-600">Flexible subplot layouts for complex multi-panel visualizations and comparisons.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zM21 5a2 2 0 00-2-2h-4a2 2 0 00-2 2v12a4 4 0 004 4h4a2 2 0 002-2V5z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Ndarray Integration</h3>
-        <p class="text-gray-600">Direct plotting of ndarray data structures with automatic type inference.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-indigo-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Interactive Mode</h3>
-        <p class="text-gray-600">Live plotting with SDL backend for interactive exploration and real-time updates.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Quick Example -->
-<section class="py-12 bg-gray-100">
-  <div class="max-w-4xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-8">Quick Example</h2>
-    <div class="bg-gray-900 text-gray-100 p-6 rounded-lg overflow-x-auto">
-      <pre
-        class="text-sm"><code><span class="text-gray-500">(* Create a simple line plot *)</span>
-<span class="text-blue-400">open</span> Hugin
-<span class="text-blue-400">open</span> Ndarray
-
-<span class="text-gray-500">(* Generate data *)</span>
-<span class="text-green-400">let</span> x = Ndarray.linspace <span class="text-yellow-400">0.0</span> <span class="text-yellow-400">10.0</span> <span class="text-yellow-400">100</span> <span class="text-blue-400">float64</span>
-<span class="text-green-400">let</span> y = Ndarray.sin x
-
-<span class="text-gray-500">(* Create figure and plot *)</span>
-<span class="text-green-400">let</span> fig = Figure.create ()
-<span class="text-green-400">let</span> ax = Figure.add_subplot fig <span class="text-yellow-400">1</span> <span class="text-yellow-400">1</span> <span class="text-yellow-400">1</span>
-<span class="text-green-400">let</span> _ = Axes.plot ax x y ~label:<span class="text-yellow-400">"sin(x)"</span>
-
-<span class="text-gray-500">(* Customize and save *)</span>
-<span class="text-green-400">let</span> _ = Axes.set_title ax <span class="text-yellow-400">"Sine Wave"</span>
-<span class="text-green-400">let</span> _ = Axes.set_xlabel ax <span class="text-yellow-400">"x"</span>
-<span class="text-green-400">let</span> _ = Axes.set_ylabel ax <span class="text-yellow-400">"y"</span>
-<span class="text-green-400">let</span> _ = Axes.legend ax ()
-<span class="text-green-400">let</span> _ = Figure.savefig fig <span class="text-yellow-400">"sine_wave.png"</span></code></pre>
-    </div>
-  </div>
-</section>
-
-<!-- Plot Types -->
-<section class="py-12">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Supported Plot Types</h2>
-    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Line Plots</h3>
-        <p class="text-gray-600 text-sm">plot(), semilogx(), semilogy(), loglog()</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Scatter Plots</h3>
-        <p class="text-gray-600 text-sm">scatter(), bubble plots with size/color mapping</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Bar Charts</h3>
-        <p class="text-gray-600 text-sm">bar(), barh(), stacked and grouped bars</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Histograms</h3>
-        <p class="text-gray-600 text-sm">hist(), hist2d(), density plots</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Heatmaps</h3>
-        <p class="text-gray-600 text-sm">imshow(), pcolormesh(), contour plots</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">3D Plots</h3>
-        <p class="text-gray-600 text-sm">plot3d(), surface(), wireframe()</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Statistical</h3>
-        <p class="text-gray-600 text-sm">boxplot(), violin(), errorbar()</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow text-center">
-        <h3 class="text-lg font-semibold mb-2">Specialized</h3>
-        <p class="text-gray-600 text-sm">polar(), quiver(), streamplot()</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Installation -->
-<section class="py-12 bg-gray-100">
-  <div class="max-w-4xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-8">Installation</h2>
-    <div class="grid md:grid-cols-2 gap-8">
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Via OPAM</h3>
-        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
-          <div>$ opam install hugin</div>
-        </div>
-        <p class="text-gray-600 mt-4">Includes Cairo and SDL dependencies automatically.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">System Dependencies</h3>
-        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
-          <div># macOS</div>
-          <div>$ brew install cairo sdl2</div>
-          <div># Ubuntu</div>
-          <div>$ apt install libcairo2-dev libsdl2-dev</div>
-        </div>
-        <p class="text-gray-600 mt-4">Required for Cairo and SDL backends.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Navigation -->
-<section class="py-12 bg-white border-t">
-  <div class="max-w-6xl mx-auto px-6">
-    <div class="grid md:grid-cols-3 gap-8">
-
+    <div class="feature-grid">
       <div>
-        <h3 class="text-xl font-semibold mb-4">Getting Started</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/installation/" class="text-purple-600 hover:text-purple-800">Installation Guide</a></li>
-          <li><a href="guides/quickstart/" class="text-purple-600 hover:text-purple-800">First Plot Tutorial</a></li>
-          <li><a href="guides/matplotlib-migration/" class="text-purple-600 hover:text-purple-800">Matplotlib
-              Migration</a></li>
-          <li><a href="gallery/" class="text-purple-600 hover:text-purple-800">Plot Gallery</a></li>
-        </ul>
+        <h3 class="color-purple">beautiful by default</h3>
+        <p>Publication-quality output without endless tweaking. Sensible defaults that just work.</p>
       </div>
-
       <div>
-        <h3 class="text-xl font-semibold mb-4">Plot Types</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/line-plots/" class="text-purple-600 hover:text-purple-800">Line & Scatter Plots</a></li>
-          <li><a href="guides/bar-charts/" class="text-purple-600 hover:text-purple-800">Bar Charts & Histograms</a>
-          </li>
-          <li><a href="guides/heatmaps/" class="text-purple-600 hover:text-purple-800">Heatmaps & Contours</a></li>
-          <li><a href="guides/3d-plots/" class="text-purple-600 hover:text-purple-800">3D Visualization</a></li>
-        </ul>
+        <h3 class="color-purple">functional composition</h3>
+        <p>Build complex visualizations by composing simple elements. No hidden global state.</p>
       </div>
-
       <div>
-        <h3 class="text-xl font-semibold mb-4">Advanced Topics</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/customization/" class="text-purple-600 hover:text-purple-800">Styling & Themes</a></li>
-          <li><a href="guides/backends/" class="text-purple-600 hover:text-purple-800">Backend Configuration</a></li>
-          <li><a href="guides/interactive/" class="text-purple-600 hover:text-purple-800">Interactive Mode</a></li>
-          <li><a href="api/" class="text-purple-600 hover:text-purple-800">Full API Reference</a></li>
-        </ul>
+        <h3 class="color-purple">type-safe plotting</h3>
+        <p>Mismatched dimensions? Wrong data type? The compiler catches it before you waste time.</p>
       </div>
-
+      <div>
+        <h3 class="color-purple">cairo + SDL backends</h3>
+        <p>Interactive windows for exploration. PNG export for sharing. Same API for both.</p>
+      </div>
     </div>
-  </div>
-</section>
 
+    <hr>
+
+    <h2>show me the code</h2>
+
+    <div class="code-compare">
+      <div>
+        <h4>MATPLOTLIB</h4>
+        <pre><span class="keyword">import</span> <span class="type">matplotlib.pyplot</span> <span class="keyword">as</span> <span class="type">plt</span>
+<span class="keyword">import</span> <span class="type">numpy</span> <span class="keyword">as</span> <span class="type">np</span>
+
+<span class="comment"># Create data</span>
+<span class="keyword">x</span> <span class="operator">=</span> <span class="function">np.linspace</span>(<span class="number">0</span>, <span class="number">10</span>, <span class="number">100</span>)
+<span class="keyword">y</span> <span class="operator">=</span> <span class="function">np.sin</span>(<span class="keyword">x</span>)
+
+<span class="comment"># Plot</span>
+<span class="function">plt.figure</span>(<span class="keyword">figsize</span><span class="operator">=</span>(<span class="number">8</span>, <span class="number">6</span>))
+<span class="function">plt.plot</span>(<span class="keyword">x</span>, <span class="keyword">y</span>, <span class="keyword">color</span><span class="operator">=</span><span class="string">'blue'</span>)
+<span class="function">plt.xlabel</span>(<span class="string">'x'</span>)
+<span class="function">plt.ylabel</span>(<span class="string">'sin(x)'</span>)
+<span class="function">plt.grid</span>(<span class="keyword">True</span>)
+<span class="function">plt.show</span>()</pre>
+      </div>
+      <div>
+        <h4>HUGIN</h4>
+        <pre><span class="keyword">open</span> <span class="type">Hugin</span>
+<span class="keyword">open</span> <span class="type">Nx</span>
+
+<span class="comment">(* Create data *)</span>
+<span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">linspace</span> <span class="type">float32</span> <span class="number">0.</span> <span class="number">10.</span> <span class="number">100</span>
+<span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="function">Nx.map</span> <span class="type">Float.sin</span> <span class="keyword">x</span>
+
+<span class="comment">(* Plot *)</span>
+<span class="keyword">let</span> () <span class="operator">=</span>
+  <span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">figure</span> <span class="operator">~</span><span class="keyword">width</span><span class="operator">:</span><span class="number">800</span> <span class="operator">~</span><span class="keyword">height</span><span class="operator">:</span><span class="number">600</span> () <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">ax</span> <span class="operator">=</span> <span class="function">subplot</span> <span class="keyword">fig</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> _ <span class="operator">=</span>
+    <span class="keyword">ax</span>
+    <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span> <span class="operator">~</span><span class="keyword">color</span><span class="operator">:</span><span class="type">Artist.Color</span>.<span class="keyword">blue</span>
+    <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">set_xlabel</span> <span class="string">"x"</span>
+    <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">set_ylabel</span> <span class="string">"sin(x)"</span>
+    <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">grid</span> <span class="keyword">true</span>
+  <span class="keyword">in</span>
+  <span class="function">show</span> <span class="keyword">fig</span></pre>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>functional style</h2>
+
+    <p>Hugin embraces OCaml's pipeline operator. Build plots by transforming axes:</p>
+
+    <pre><span class="keyword">let</span> <span class="keyword">plot_data</span> <span class="keyword">ax</span> <span class="operator">=</span>
+  <span class="keyword">ax</span>
+  <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y1</span> <span class="operator">~</span><span class="keyword">label</span><span class="operator">:</span><span class="string">"sin"</span> <span class="operator">~</span><span class="keyword">color</span><span class="operator">:</span><span class="type">Artist.Color</span>.<span class="keyword">red</span>
+  <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y2</span> <span class="operator">~</span><span class="keyword">label</span><span class="operator">:</span><span class="string">"cos"</span> <span class="operator">~</span><span class="keyword">color</span><span class="operator">:</span><span class="type">Artist.Color</span>.<span class="keyword">blue</span>
+  <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">set_title</span> <span class="string">"Trigonometric Functions"</span>
+  <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">set_xlim</span> <span class="operator">~</span><span class="keyword">min</span><span class="operator">:</span><span class="number">0.</span> <span class="operator">~</span><span class="keyword">max</span><span class="operator">:</span><span class="number">10.</span></pre>
+
+    <hr>
+
+    <h2>what works today</h2>
+
+    <div class="feature-grid">
+      <div>
+        <h3 class="color-purple">2D plotting</h3>
+        <pre><span class="comment">(* Lines and scatter *)</span>
+<span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span>
+<span class="type">Plotting</span>.<span class="function">scatter</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span>
+
+<span class="comment">(* Bar charts *)</span>
+<span class="type">Plotting</span>.<span class="function">bar</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">heights</span>
+
+<span class="comment">(* Histograms *)</span>
+<span class="type">Plotting</span>.<span class="function">hist</span> <span class="operator">~</span><span class="keyword">values</span> <span class="operator">~</span><span class="keyword">bins</span><span class="operator">:</span><span class="number">30</span></pre>
+      </div>
+      <div>
+        <h3 class="color-purple">styling</h3>
+        <pre><span class="comment">(* Colors *)</span>
+<span class="type">Artist.Color</span>.<span class="keyword">red</span>
+<span class="type">Artist.Color</span>.<span class="function">rgba</span> <span class="number">0.5</span> <span class="number">0.5</span> <span class="number">0.5</span> <span class="number">1.0</span>
+
+<span class="comment">(* Line styles *)</span>
+<span class="type">Artist</span>.<span class="type">Solid</span>
+<span class="type">Artist</span>.<span class="type">Dashed</span>
+
+<span class="comment">(* Markers *)</span>
+<span class="type">Artist</span>.<span class="type">Circle</span>
+<span class="type">Artist</span>.<span class="type">Square</span></pre>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>display images</h2>
+
+    <pre><span class="comment">(* Load and display *)</span>
+<span class="keyword">let</span> <span class="keyword">img</span> <span class="operator">=</span> <span class="type">Nx_io</span>.<span class="function">load_image</span> <span class="string">"photo.jpg"</span> <span class="keyword">in</span>
+<span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">imshow</span> <span class="operator">~</span><span class="keyword">title</span><span class="operator">:</span><span class="string">"My Image"</span> <span class="keyword">img</span> <span class="keyword">in</span>
+<span class="function">show</span> <span class="keyword">fig</span></pre>
+
+    <hr>
+
+    <h2>get started</h2>
+
+    <p>Hugin needs Cairo and SDL2. Install them first:</p>
+
+    <pre>
+<span class="comment"># macOS</span>
+<span class="function">brew</span> install cairo sdl2
+
+<span class="comment"># Ubuntu</span>  
+<span class="function">apt</span> install libcairo2-dev libsdl2-dev
+    </pre>
+
+    <p>Hugin isn't released yet. For now, check out the <a href="/docs/hugin/">documentation</a> to learn more.</p>
+
+    <p>When it's ready:</p>
+
+    <pre>
+<span class="comment"># Install</span>
+<span class="function">opam</span> install hugin
+
+<span class="comment"># Try it</span>
+<span class="keyword">open</span> <span class="type">Hugin</span>
+<span class="keyword">open</span> <span class="type">Nx</span>
+
+<span class="keyword">let</span> () <span class="operator">=</span> 
+  <span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">linspace</span> <span class="type">float32</span> <span class="number">0.</span> (<span class="number">2.</span> <span class="operator">*.</span> <span class="type">Float</span>.<span class="keyword">pi</span>) <span class="number">100</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="type">Nx</span>.<span class="function">map</span> <span class="type">Float</span>.<span class="function">sin</span> <span class="keyword">x</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">figure</span> () <span class="keyword">in</span>
+  <span class="keyword">let</span> _ <span class="operator">=</span> 
+    <span class="function">subplot</span> <span class="keyword">fig</span>
+    <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span>
+  <span class="keyword">in</span>
+  <span class="function">savefig</span> <span class="keyword">fig</span> <span class="string">"plot.png"</span>
+    </pre>
   </main>
-  <div id="footer"></div>
 </body>
-
 </html>

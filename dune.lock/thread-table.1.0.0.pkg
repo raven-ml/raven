@@ -1,0 +1,19 @@
+(version 1.0.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs} @install))))))
+
+(depends
+ (all_platforms
+  (dune ocaml)))
+
+(source
+ (fetch
+  (url
+   https://github.com/ocaml-multicore/thread-table/releases/download/1.0.0/thread-table-1.0.0.tbz)
+  (checksum
+   sha256=a48cd88463597df9442c4baa69ccc06091ca77ba71e438d3609fbae0f3b81ddd)))

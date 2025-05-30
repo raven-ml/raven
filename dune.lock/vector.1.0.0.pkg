@@ -1,0 +1,19 @@
+(version 1.0.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run dune build -p %{pkg-self:name} -j %{jobs}))))))
+
+(depends
+ (all_platforms
+  (ocaml dune)))
+
+(source
+ (fetch
+  (url
+   https://github.com/backtracking/vector/releases/download/1.0.0/vector-1.0.0.tbz)
+  (checksum
+   sha256=f212d1d693ce37deb0da2550aab8d550ad5ea457c5757dc02f8ca8a66ebe6641)))

@@ -1,0 +1,168 @@
+/* Documentation specific styles */
+body {
+  padding: 0;
+  font-size: 15px;
+}
+
+/* Layout */
+.header {
+  border-bottom: 2px solid var(--color-border);
+  padding: 20px;
+}
+
+/* Header navigation */
+.header nav {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.breadcrumb-link {
+  text-decoration: none;
+  font-size: 18px;
+  color: var(--color-text);
+}
+.breadcrumb-link:hover {
+  color: var(--color-text-bright);
+}
+.breadcrumb-separator {
+  color: var(--color-border-light);
+  margin: 0 5px;
+}
+.breadcrumb-text {
+  font-size: 18px;
+}
+
+/* Logo in header */
+.logo-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.header-logo {
+  width: 28px;
+  height: 28px;
+  filter: invert(1);
+  opacity: 0.85;
+  margin-right: 4px;
+}
+.container {
+  display: flex;
+  min-height: calc(100vh - 60px);
+}
+.sidebar {
+  width: 250px;
+  border-right: 1px solid var(--color-border);
+  padding: 30px 20px;
+  background-color: var(--color-bg-dark);
+}
+.content {
+  flex: 1;
+  padding: 40px;
+  max-width: 900px;
+}
+
+/* Navigation */
+.nav-section {
+  margin-bottom: 30px;
+}
+.nav-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+  margin-bottom: 10px;
+  letter-spacing: 0.5px;
+}
+.nav-links {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.nav-links li {
+  margin-bottom: 5px;
+}
+.nav-links a {
+  text-decoration: none;
+  color: var(--color-text);
+  font-size: 14px;
+  display: block;
+  padding: 3px 0;
+}
+.nav-links a:hover {
+  color: var(--color-text-bright);
+}
+.nav-links .active {
+  color: var(--color-text-bright);
+}
+
+/* Override for library color classes */
+.nav-links a.color-blue { color: var(--color-nx) !important; }    /* nx */
+.nav-links a.color-purple { color: var(--color-hugin) !important; }  /* hugin */
+.nav-links a.color-green { color: var(--color-quill) !important; }   /* quill */
+.nav-links a.color-orange { color: var(--color-rune) !important; }  /* rune */
+.nav-links a.color-red { color: var(--color-kaun) !important; }     /* kaun */
+.nav-links a.color-indigo { color: var(--color-sowilo) !important; }  /* sowilo */
+
+/* Library info section */
+.library-info {
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+.library-info h3 {
+  margin-bottom: 10px;
+}
+.library-info p {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  margin-bottom: 10px;
+}
+.library-info a {
+  font-size: 13px;
+}
+
+/* Breadcrumbs */
+.breadcrumbs {
+  padding: 15px 0;
+  font-size: 13px;
+  color: var(--color-text-dim);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 30px;
+}
+.breadcrumbs:empty {
+  display: none;
+}
+.breadcrumbs a {
+  color: var(--color-text);
+  text-decoration: none;
+}
+.breadcrumbs a:hover {
+  color: var(--color-text-bright);
+  text-decoration: underline;
+}
+.breadcrumbs > span {
+  color: var(--color-border-light);
+}
+.breadcrumbs > span:last-child {
+  color: var(--color-text);
+  font-weight: normal;
+}
+
+/* Breadcrumb separator and current page */
+.breadcrumb-separator {
+  color: var(--color-border-light);
+  margin: 0 8px;
+}
+.breadcrumb-current {
+  color: var(--color-text);
+}
+
+/* Content specific overrides */
+blockquote {
+  border-left: 3px solid var(--color-border);
+  margin: 20px 0;
+  padding-left: 20px;
+  color: var(--color-text-dim);
+}

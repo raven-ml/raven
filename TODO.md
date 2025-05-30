@@ -4,8 +4,6 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
-- wip: improve nx documentation (go through each function, check the implementation, check if there's invariant to document, check if useful to add examples)
-
 - fix nx tests: getting Command got signal SEGV. at randint
 - fix plot3d with hugin
 - rune (or nx) build system for metal backend on non macOS systems
@@ -13,6 +11,12 @@ goalpost: mnist notebook in quill with rune + hugin
 refactor nx
 - allocate buffers outside of the backend?
 - not sure we need non-polymorphic functions for perf of where, we should benchmark
+
+documentation
+- improve mlis (go through each function, apply docs guidelines, check the implementation, check if there's invariant to document, check if useful to add examples)
+- generate docs with odoc3 + dream-style html rewriting to integrate in www/
+- more user documentation
+- favicon
 
 ## alpha release
 

@@ -1,0 +1,15 @@
+(version 0.2.1)
+
+(build
+ (all_platforms
+  ((action (run ocaml pkg/pkg.ml build --dev-pkg %{pkg-self:dev})))))
+
+(depends
+ (all_platforms
+  (ocaml ocamlfind ocamlbuild topkg base-unix rresult astring fpath fmt logs)))
+
+(source
+ (fetch
+  (url https://erratique.ch/software/bos/releases/bos-0.2.1.tbz)
+  (checksum
+   sha512=8daeb8a4c2dd1f2460f6274ada19f4f1b6ebe875ff83a938c93418ce0e6bdb74b8afc5c9a7d410c1c9df2dad030e4fa276b6ed2da580639484e8b5bc92610b1d)))

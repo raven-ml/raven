@@ -1,395 +1,188 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>sowilo - Computer Vision - Raven</title>
-  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>sowilo - Computer vision for OCaml | raven</title>
+  <link rel="stylesheet" href="/styles.css">
 </head>
+<body>
+  <main class="main-content">
+    <nav class="sowilo-nav nav-breadcrumb">
+      <a href="/">raven</a> / sowilo <span class="color-indigo rune-symbol">ᛋ</span>
+      [ <a href="/docs/sowilo/">docs</a> |
+      <a href="https://github.com/raven-ml/raven/tree/main/sowilo">source</a> ]
+    </nav>
 
-<body class="bg-gray-50 text-gray-900">
-  <!-- Header -->
-  <header class="bg-white shadow-sm">
-    <div class="max-w-6xl mx-auto px-6 py-4">
-      <nav class="flex items-center justify-between">
-        <div class="flex items-center space-x-4">
-          <a href="/" class="text-2xl font-bold text-gray-900">Raven</a>
-          <span class="text-gray-400">/</span>
-          <h1 class="text-2xl font-bold text-cyan-600">sowilo</h1>
-        </div>
-        <div class="flex items-center space-x-6">
-          <a href="/docs/swilo/" class="text-gray-600 hover:text-gray-900">Docs</a>
-          <a href="/docs/swilo/api/" class="text-gray-600 hover:text-gray-900">API</a>
-          <div id="project-nav"></div>
-        </div>
-      </nav>
+    <div class="sowilo-hero hero">
+      <h1>sowilo <span style="font-size: 48px; margin-left: -20px; opacity: 0.6;" class="color-indigo">ᛋ</span></h1>
+      <p class="tagline">OpenCV's algorithms. torchvision's autodiff. OCaml's reliability.</p>
     </div>
-  </header>
 
-  <main>
+    <hr>
 
-<!-- Hero -->
-<section class="py-12 bg-gradient-to-r from-cyan-600 to-blue-600 text-white">
-  <div class="max-w-6xl mx-auto px-6">
-    <div class="max-w-3xl">
-      <div class="flex items-center mb-4">
-        <h1 class="text-4xl font-bold">sowilo</h1>
-        <span class="ml-4 px-3 py-1 bg-red-500 text-white text-sm rounded-full">Alpha</span>
-      </div>
-      <p class="text-xl mb-6 text-cyan-100">
-        Differentiable computer vision library with JIT compilation and GPU acceleration. Built on Rune for seamless
-        integration with neural networks.
-      </p>
-      <div class="flex space-x-4">
-        <a href="guides/getting-started/"
-          class="bg-white text-cyan-600 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">
-          Get Started
-        </a>
-        <a href="examples/"
-          class="border-2 border-white text-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-cyan-600 transition-colors">
-          View Examples
-        </a>
-      </div>
-    </div>
-  </div>
-</section>
+    <h2>why sowilo?</h2>
 
-<!-- Core Features -->
-<section class="py-12">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Differentiable Computer Vision</h2>
-    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-
-      <div class="text-center">
-        <div class="bg-cyan-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">JIT Compilation</h3>
-        <p class="text-gray-600">GPU-accelerated kernels with automatic optimization for real-time performance.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Differentiable Ops</h3>
-        <p class="text-gray-600">All computer vision operations support automatic differentiation through Rune.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Real-time Processing</h3>
-        <p class="text-gray-600">Optimized pipelines for video streams and camera input with minimal latency.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-purple-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Multi-Device</h3>
-        <p class="text-gray-600">Seamless execution across CPU, Metal (macOS), and CUDA (Linux) backends.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-yellow-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Composable Pipelines</h3>
-        <p class="text-gray-600">Build complex processing workflows by composing primitive operations.</p>
-      </div>
-
-      <div class="text-center">
-        <div class="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z">
-            </path>
-          </svg>
-        </div>
-        <h3 class="text-xl font-semibold mb-2">Type Safety</h3>
-        <p class="text-gray-600">OCaml's type system ensures memory safety and correctness in GPU kernels.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Quick Example -->
-<section class="py-12 bg-gray-100">
-  <div class="max-w-4xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-8">Differentiable Image Processing</h2>
-    <div class="bg-gray-900 text-gray-100 p-6 rounded-lg overflow-x-auto">
-      <pre class="text-sm"><code><span class="text-gray-500">(* Differentiable computer vision pipeline *)</span>
-<span class="text-blue-400">open</span> Rune
-<span class="text-blue-400">open</span> Sowilo
-
-<span class="text-gray-500">(* Define a learnable image processing pipeline *)</span>
-<span class="text-green-400">let</span> enhance_image params img =
-  img
-  |> gaussian_blur ~sigma:params.blur_sigma
-  |> contrast_adjust ~factor:params.contrast
-  |> edge_enhance ~strength:params.edge_strength
-  |> color_balance ~params:params.color_params
-
-<span class="text-gray-500">(* Loss function for image enhancement *)</span>
-<span class="text-green-400">let</span> enhancement_loss params (input, target) =
-  <span class="text-green-400">let</span> enhanced = enhance_image params input <span class="text-blue-400">in</span>
-  l2_loss enhanced target
-
-<span class="text-gray-500">(* Optimize the pipeline parameters *)</span>
-<span class="text-green-400">let</span> train_step params batch =
-  <span class="text-green-400">let</span> grad_fn = grad enhancement_loss <span class="text-blue-400">in</span>
-  <span class="text-green-400">let</span> grads = grad_fn params batch <span class="text-blue-400">in</span>
-  Adam.update params grads ~lr:<span class="text-yellow-400">0.001</span>
-
-<span class="text-gray-500">(* JIT compile for GPU acceleration *)</span>
-<span class="text-green-400">let</span> fast_enhance = jit enhance_image
-<span class="text-green-400">let</span> fast_train = jit train_step</code></pre>
-    </div>
-  </div>
-</section>
-
-<!-- Computer Vision Operations -->
-<section class="py-12">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Computer Vision Operations</h2>
-    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Filtering</h3>
-        <ul class="text-sm text-gray-600 space-y-1">
-          <li>• Gaussian blur</li>
-          <li>• Bilateral filter</li>
-          <li>• Median filter</li>
-          <li>• Custom convolutions</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Edge Detection</h3>
-        <ul class="text-sm text-gray-600 space-y-1">
-          <li>• Canny edge detector</li>
-          <li>• Sobel operator</li>
-          <li>• Laplacian of Gaussian</li>
-          <li>• Gradient operators</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Morphology</h3>
-        <ul class="text-sm text-gray-600 space-y-1">
-          <li>• Erosion & dilation</li>
-          <li>• Opening & closing</li>
-          <li>• Skeletonization</li>
-          <li>• Distance transforms</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Transforms</h3>
-        <ul class="text-sm text-gray-600 space-y-1">
-          <li>• Geometric transforms</li>
-          <li>• Perspective correction</li>
-          <li>• Image warping</li>
-          <li>• Optical flow</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Feature Detection</h3>
-        <ul class="text-sm text-gray-600 space-y-1">
-          <li>• Corner detection</li>
-          <li>• Blob detection</li>
-          <li>• SIFT/SURF features</li>
-          <li>• Template matching</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Segmentation</h3>
-        <ul class="text-sm text-gray-600 space-y-1">
-          <li>• Threshold segmentation</li>
-          <li>• Watershed algorithm</li>
-          <li>• Region growing</li>
-          <li>• Graph cuts</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Color Processing</h3>
-        <ul class="text-sm text-gray-600 space-y-1">
-          <li>• Color space conversion</li>
-          <li>• Histogram equalization</li>
-          <li>• White balance</li>
-          <li>• Tone mapping</li>
-        </ul>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Object Detection</h3>
-        <ul class="text-sm text-gray-600 space-y-1">
-          <li>• YOLO models</li>
-          <li>• R-CNN variants</li>
-          <li>• SSD detectors</li>
-          <li>• Custom architectures</li>
-        </ul>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Real-time Applications -->
-<section class="py-12 bg-gray-100">
-  <div class="max-w-6xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-12">Real-time Applications</h2>
-    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Video Processing</h3>
-        <p class="text-gray-600 text-sm mb-3">Process video streams in real-time with GPU acceleration and frame
-          buffering.</p>
-        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
-          Video.process_stream ~input:camera ~pipeline:enhance
-        </div>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Object Tracking</h3>
-        <p class="text-gray-600 text-sm mb-3">Multi-object tracking with Kalman filters and deep association networks.
-        </p>
-        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
-          Tracker.create ~model:yolo ~association:DeepSORT
-        </div>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Pose Estimation</h3>
-        <p class="text-gray-600 text-sm mb-3">Real-time human pose estimation for motion capture and analysis.</p>
-        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
-          PoseNet.estimate frame |> visualize_keypoints
-        </div>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Image Enhancement</h3>
-        <p class="text-gray-600 text-sm mb-3">Learned image enhancement with neural networks and traditional CV.</p>
-        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
-          enhance_pipeline |> jit |> apply_to_stream
-        </div>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Face Recognition</h3>
-        <p class="text-gray-600 text-sm mb-3">Face detection, alignment, and recognition with pre-trained models.</p>
-        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
-          FaceNet.recognize faces ~database:known_faces
-        </div>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-3">Scene Understanding</h3>
-        <p class="text-gray-600 text-sm mb-3">Semantic segmentation and scene parsing for autonomous systems.</p>
-        <div class="bg-gray-50 p-2 rounded text-xs font-mono">
-          SegNet.segment frame |> extract_objects
-        </div>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Installation -->
-<section class="py-12">
-  <div class="max-w-4xl mx-auto px-6">
-    <h2 class="text-3xl font-bold text-center mb-8">Installation</h2>
-    <div class="grid md:grid-cols-2 gap-8">
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">Via OPAM</h3>
-        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
-          <div>$ opam install sowilo</div>
-        </div>
-        <p class="text-gray-600 mt-4">Includes CPU backend and basic operations.</p>
-      </div>
-
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-xl font-semibold mb-4">GPU Backends</h3>
-        <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
-          <div># macOS Metal</div>
-          <div>$ opam install sowilo-metal</div>
-          <div># Linux CUDA</div>
-          <div>$ opam install sowilo-cuda</div>
-        </div>
-        <p class="text-gray-600 mt-4">GPU acceleration for real-time performance.</p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<!-- Navigation -->
-<section class="py-12 bg-white border-t">
-  <div class="max-w-6xl mx-auto px-6">
-    <div class="grid md:grid-cols-3 gap-8">
-
+    <div class="feature-grid">
       <div>
-        <h3 class="text-xl font-semibold mb-4">Getting Started</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/installation/" class="text-cyan-600 hover:text-cyan-800">Installation Guide</a></li>
-          <li><a href="guides/quickstart/" class="text-cyan-600 hover:text-cyan-800">First Pipeline</a></li>
-          <li><a href="guides/opencv-migration/" class="text-cyan-600 hover:text-cyan-800">OpenCV Migration</a></li>
-          <li><a href="examples/" class="text-cyan-600 hover:text-cyan-800">Example Pipelines</a></li>
-        </ul>
+        <h3 class="color-indigo">differentiable vision</h3>
+        <p>Every operation supports automatic differentiation. Train neural networks with classical CV in the loop.</p>
       </div>
-
       <div>
-        <h3 class="text-xl font-semibold mb-4">Operations</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/filtering/" class="text-cyan-600 hover:text-cyan-800">Image Filtering</a></li>
-          <li><a href="guides/detection/" class="text-cyan-600 hover:text-cyan-800">Object Detection</a></li>
-          <li><a href="guides/segmentation/" class="text-cyan-600 hover:text-cyan-800">Image Segmentation</a></li>
-          <li><a href="guides/video/" class="text-cyan-600 hover:text-cyan-800">Video Processing</a></li>
-        </ul>
+        <h3 class="color-indigo">pure functional</h3>
+        <p>No global state, no side effects. Image processing operations that compose like functions should.</p>
       </div>
-
       <div>
-        <h3 class="text-xl font-semibold mb-4">Advanced Topics</h3>
-        <ul class="space-y-2">
-          <li><a href="guides/gpu/" class="text-cyan-600 hover:text-cyan-800">GPU Programming</a></li>
-          <li><a href="guides/custom-ops/" class="text-cyan-600 hover:text-cyan-800">Custom Operations</a></li>
-          <li><a href="guides/real-time/" class="text-cyan-600 hover:text-cyan-800">Real-time Systems</a></li>
-          <li><a href="api/" class="text-cyan-600 hover:text-cyan-800">Full API Reference</a></li>
-        </ul>
+        <h3 class="color-indigo">type-safe images</h3>
+        <p>Images are just tensors with known shapes. The compiler catches dimension mismatches.</p>
       </div>
-
+      <div>
+        <h3 class="color-indigo">jit ready</h3>
+        <p>Built on Rune's tensor operations. When JIT lands, your filters compile to GPU kernels automatically.</p>
+      </div>
     </div>
-  </div>
-</section>
 
+    <hr>
+
+    <h2>show me the code</h2>
+
+    <div class="code-compare">
+      <div>
+        <h4>OpenCV</h4>
+        <pre><span class="keyword">import</span> <span class="type">cv2</span>
+<span class="keyword">import</span> <span class="type">numpy</span> <span class="keyword">as</span> <span class="type">np</span>
+
+<span class="comment"># Load and process</span>
+<span class="keyword">img</span> <span class="operator">=</span> <span class="type">cv2</span>.<span class="function">imread</span>(<span class="string">'photo.jpg'</span>)
+<span class="keyword">gray</span> <span class="operator">=</span> <span class="type">cv2</span>.<span class="function">cvtColor</span>(<span class="keyword">img</span>, <span class="type">cv2</span>.<span class="keyword">COLOR_BGR2GRAY</span>)
+<span class="keyword">blurred</span> <span class="operator">=</span> <span class="type">cv2</span>.<span class="function">GaussianBlur</span>(<span class="keyword">gray</span>, (<span class="number">5</span>, <span class="number">5</span>), <span class="number">1.0</span>)
+<span class="keyword">edges</span> <span class="operator">=</span> <span class="type">cv2</span>.<span class="function">Canny</span>(<span class="keyword">blurred</span>, <span class="number">100</span>, <span class="number">200</span>)
+
+<span class="comment"># Not differentiable!</span></pre>
+      </div>
+      <div>
+        <h4>SOWILO</h4>
+        <pre><span class="keyword">open</span> <span class="type">Sowilo</span>
+
+<span class="comment">(* Load and process *)</span>
+<span class="keyword">let</span> <span class="keyword">img</span> <span class="operator">=</span> <span class="type">Nx_io</span>.<span class="function">load_image</span> <span class="string">"photo.jpg"</span> <span class="operator">|></span> <span class="type">Rune</span>.<span class="function">of_bigarray</span>
+<span class="keyword">let</span> <span class="keyword">processed</span> <span class="operator">=</span> 
+  <span class="keyword">img</span>
+  <span class="operator">|></span> <span class="function">to_grayscale</span>
+  <span class="operator">|></span> <span class="function">gaussian_blur</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">5</span> <span class="operator">~</span><span class="keyword">sigma</span><span class="operator">:</span><span class="number">1.0</span>
+  <span class="operator">|></span> <span class="function">canny</span> <span class="operator">~</span><span class="keyword">low</span><span class="operator">:</span><span class="number">100.</span> <span class="operator">~</span><span class="keyword">high</span><span class="operator">:</span><span class="number">200.</span>
+
+<span class="comment">(* Fully differentiable! *)</span></pre>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>image processing operations</h2>
+
+    <pre><span class="comment">(* Filters *)</span>
+<span class="function">gaussian_blur</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">5</span> <span class="operator">~</span><span class="keyword">sigma</span><span class="operator">:</span><span class="number">1.0</span>
+<span class="function">median_blur</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span>
+<span class="function">box_filter</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span>
+
+<span class="comment">(* Edge detection *)</span>
+<span class="keyword">let</span> <span class="keyword">grad_x</span>, <span class="keyword">grad_y</span> <span class="operator">=</span> <span class="function">sobel</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">dx</span><span class="operator">:</span><span class="number">1</span> <span class="operator">~</span><span class="keyword">dy</span><span class="operator">:</span><span class="number">0</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span>
+<span class="keyword">let</span> <span class="keyword">edges</span> <span class="operator">=</span> <span class="function">canny</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">low</span><span class="operator">:</span><span class="number">50.</span> <span class="operator">~</span><span class="keyword">high</span><span class="operator">:</span><span class="number">150.</span>
+
+<span class="comment">(* Morphology *)</span>
+<span class="keyword">let</span> <span class="keyword">kernel</span> <span class="operator">=</span> <span class="function">get_structuring_element</span> <span class="type">Rect</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span>
+<span class="keyword">let</span> <span class="keyword">eroded</span> <span class="operator">=</span> <span class="function">erode</span> <span class="keyword">img</span> <span class="keyword">kernel</span>
+<span class="keyword">let</span> <span class="keyword">dilated</span> <span class="operator">=</span> <span class="function">dilate</span> <span class="keyword">img</span> <span class="keyword">kernel</span>
+
+<span class="comment">(* Thresholding *)</span>
+<span class="function">threshold</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">thresh</span><span class="operator">:</span><span class="number">128.</span> <span class="operator">~</span><span class="keyword">maxval</span><span class="operator">:</span><span class="number">255.</span> <span class="operator">~</span><span class="keyword">typ</span><span class="operator">:</span><span class="type">Binary</span></pre>
+
+    <hr>
+
+    <h2>differentiable augmentations</h2>
+
+    <p>Train neural networks with classical CV operations in the forward pass:</p>
+
+    <pre><span class="comment">(* Augmentation pipeline *)</span>
+<span class="keyword">let</span> <span class="keyword">augment</span> <span class="keyword">img</span> <span class="operator">=</span>
+  <span class="keyword">img</span>
+  <span class="operator">|></span> <span class="function">random_crop</span> <span class="operator">~</span><span class="keyword">size</span><span class="operator">:</span>(<span class="number">224</span>, <span class="number">224</span>)
+  <span class="operator">|></span> <span class="function">random_flip</span> <span class="operator">~</span><span class="keyword">p</span><span class="operator">:</span><span class="number">0.5</span>
+  <span class="operator">|></span> <span class="function">adjust_brightness</span> <span class="operator">~</span><span class="keyword">factor</span><span class="operator">:</span>(<span class="function">random</span> <span class="number">0.8</span> <span class="number">1.2</span>)
+  <span class="operator">|></span> <span class="function">gaussian_blur</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span> <span class="operator">~</span><span class="keyword">sigma</span><span class="operator">:</span>(<span class="function">random</span> <span class="number">0.</span> <span class="number">1.</span>)
+
+<span class="comment">(* Use in training - gradients flow through! *)</span>
+<span class="keyword">let</span> <span class="keyword">loss</span> <span class="keyword">model</span> <span class="keyword">img</span> <span class="keyword">label</span> <span class="operator">=</span>
+  <span class="keyword">let</span> <span class="keyword">augmented</span> <span class="operator">=</span> <span class="function">augment</span> <span class="keyword">img</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">features</span> <span class="operator">=</span> <span class="function">extract_features</span> <span class="keyword">augmented</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">pred</span> <span class="operator">=</span> <span class="type">Model</span>.<span class="function">forward</span> <span class="keyword">model</span> <span class="keyword">features</span> <span class="keyword">in</span>
+  <span class="function">cross_entropy</span> <span class="keyword">pred</span> <span class="keyword">label</span></pre>
+
+    <hr>
+
+    <h2>what's implemented</h2>
+
+    <div class="feature-grid">
+      <div>
+        <h3 class="color-indigo">core operations</h3>
+        <ul style="list-style: none; padding: 0;">
+          <li>✓ Color space conversions</li>
+          <li>✓ Gaussian, median, box filters</li>
+          <li>✓ Sobel gradients, Canny edges</li>
+          <li>✓ Morphological operations</li>
+          <li>✓ Thresholding functions</li>
+          <li>✓ Image resizing (nearest, bilinear)</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-indigo">coming soon</h3>
+        <ul style="list-style: none; padding: 0;">
+          <li>⏳ Feature detection (SIFT, ORB)</li>
+          <li>⏳ Optical flow</li>
+          <li>⏳ Semantic segmentation ops</li>
+          <li>⏳ Video processing</li>
+          <li>⏳ 3D vision primitives</li>
+        </ul>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>design philosophy</h2>
+
+    <p><b>Images are tensors.</b> No special image type - just 3D arrays with shape [H; W; C]. This means any tensor operation works on images.</p>
+
+    <p><b>Everything differentiates.</b> Unlike traditional CV libraries, every operation in sowilo can be differentiated. This enables new techniques like learnable image processing.</p>
+
+    <p><b>Functional composition.</b> Operations are pure functions that compose naturally. No global state, no side effects.</p>
+
+    <hr>
+
+    <h2>get started</h2>
+
+    <p>Sowilo isn't released yet. For now, check out the <a href="/docs/sowilo/">documentation</a> to learn more.</p>
+
+    <p>When it's ready:</p>
+
+    <pre>
+<span class="comment"># Install</span>
+<span class="function">opam</span> install sowilo
+
+<span class="comment"># Try it</span>
+<span class="keyword">open</span> <span class="type">Sowilo</span>
+
+<span class="comment">(* Edge detection example *)</span>
+<span class="keyword">let</span> () <span class="operator">=</span>
+  <span class="keyword">let</span> <span class="keyword">img</span> <span class="operator">=</span> <span class="type">Nx_io</span>.<span class="function">load_image</span> <span class="string">"input.jpg"</span> <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">edges</span> <span class="operator">=</span> 
+    <span class="type">Rune</span>.<span class="function">of_bigarray</span> (<span class="type">Nx</span>.<span class="function">to_bigarray</span> <span class="keyword">img</span>)
+    <span class="operator">|></span> <span class="function">to_grayscale</span>
+    <span class="operator">|></span> <span class="function">canny</span> <span class="operator">~</span><span class="keyword">low</span><span class="operator">:</span><span class="number">50.</span> <span class="operator">~</span><span class="keyword">high</span><span class="operator">:</span><span class="number">150.</span>
+    <span class="operator">|></span> <span class="type">Rune</span>.<span class="function">to_bigarray</span>
+    <span class="operator">|></span> <span class="type">Nx</span>.<span class="function">of_bigarray</span>
+  <span class="keyword">in</span>
+  <span class="type">Nx_io</span>.<span class="function">save_image</span> <span class="keyword">edges</span> <span class="string">"edges.png"</span>
+    </pre>
   </main>
-  <div id="footer"></div>
 </body>
-
 </html>

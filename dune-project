@@ -24,10 +24,10 @@
  (package
   (name soupault)))
 
-; (package
-;  (name dev)
-;  (allow_empty)
-;  (depends odoc odoc-driver soupault))
+(package
+ (name dev)
+ (allow_empty)
+ (depends odoc odoc-driver soupault))
 
 (package
  (name nx)

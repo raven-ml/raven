@@ -2,7 +2,7 @@
 
 **A writing-first, interactive document environment for OCaml**
 
-Quill blends the simplicity of distraction-free writing with the power of live OCaml code. It’s built for focus—whether you’re working solo or collaborating—reimagining the notebook experience to keep you in the flow.
+Quill blends the simplicity of distraction-free writing with the power of live OCaml code. It’s built for focus, whether you’re working solo or collaborating, reimagining the notebook experience to keep you in the flow.
 
 ## Features
 

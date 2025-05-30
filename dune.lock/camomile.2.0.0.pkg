@@ -1,0 +1,32 @@
+(version 2.0.0)
+
+(build
+ (all_platforms
+  ((action
+    (progn
+     (when %{pkg-self:dev} (run dune subst))
+     (run
+      dune
+      build
+      -p
+      %{pkg-self:name}
+      -j
+      %{jobs}
+      --promote-install-files=false
+      @install)
+     (run
+      dune
+      install
+      -p
+      %{pkg-self:name}
+      --create-install-files
+      %{pkg-self:name}))))))
+
+(depends
+ (all_platforms
+  (dune dune-site camlp-streams ocaml)))
+
+(source
+ (fetch
+  (url https://github.com/savonet/Camomile/archive/refs/tags/v2.0.0.tar.gz)
+  (checksum md5=41e02d124c3fa29ea511110d2c6532de)))
