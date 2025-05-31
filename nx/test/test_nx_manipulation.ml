@@ -60,9 +60,19 @@ let test_reshape_copy_when_not_contiguous () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let transposed = Nx.transpose t in
   (* Non-contiguous - reshape should fail *)
-  check_raises "reshape non-contiguous"
-    (Failure "View.reshape: cannot reshape non-contiguous strided views")
-    (fun () -> ignore (Nx.reshape [| 6 |] transposed))
+  (* The error message now provides more detail about the reshape failure *)
+  try
+    ignore (Nx.reshape [| 6 |] transposed);
+    Alcotest.fail "Expected reshape to fail for non-contiguous array"
+  with
+  | Failure msg ->
+      let prefix = "View.reshape: cannot reshape strided view" in
+      let prefix_len = String.length prefix in
+      if String.length msg >= prefix_len && String.sub msg 0 prefix_len = prefix then
+        () (* Expected failure with detailed message *)
+      else
+        Alcotest.fail (Printf.sprintf "Unexpected error message: %s" msg)
+  | e -> Alcotest.fail (Printf.sprintf "Unexpected exception: %s" (Printexc.to_string e))
 
 let test_reshape_to_vector () =
   let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -414,9 +424,19 @@ let test_ravel_non_contiguous_copy () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let tr = Nx.transpose t in
   (* Non-contiguous - ravel should fail since it uses reshape *)
-  check_raises "ravel non-contiguous"
-    (Failure "View.reshape: cannot reshape non-contiguous strided views")
-    (fun () -> ignore (Nx.ravel tr))
+  (* The error message now provides more detail about the reshape failure *)
+  try
+    ignore (Nx.ravel tr);
+    Alcotest.fail "Expected ravel to fail for non-contiguous array"
+  with
+  | Failure msg ->
+      let prefix = "View.reshape: cannot reshape strided view" in
+      let prefix_len = String.length prefix in
+      if String.length msg >= prefix_len && String.sub msg 0 prefix_len = prefix then
+        () (* Expected failure with detailed message *)
+      else
+        Alcotest.fail (Printf.sprintf "Unexpected error message: %s" msg)
+  | e -> Alcotest.fail (Printf.sprintf "Unexpected exception: %s" (Printexc.to_string e))
 
 let test_pad_2d () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
