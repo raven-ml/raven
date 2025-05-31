@@ -3,21 +3,21 @@ open Nx
 (* Test data specification *)
 let test_specs =
   [
-    ("tiny_4x4", [| 1; 1; 4; 4 |], [| 1; 1; 3; 3 |]);
-    ("small_8x8", [| 1; 1; 8; 8 |], [| 1; 1; 3; 3 |]);
+    (* ("tiny_4x4", [| 1; 1; 4; 4 |], [| 1; 1; 3; 3 |]); *)
+    (* ("small_8x8", [| 1; 1; 8; 8 |], [| 1; 1; 3; 3 |]); *)
     ("medium_16x16", [| 1; 4; 16; 16 |], [| 8; 4; 3; 3 |]);
     (* Skip large tests for now - they're too slow and might cause memory issues *)
-    (* ("channels_32x32", [| 1; 8; 32; 32 |], [| 16; 8; 3; 3 |]);
-  ("kernel_5x5", [| 1; 4; 16; 16 |], [| 8; 4; 5; 5 |]);
-  ("batch_16x16", [| 4; 4; 16; 16 |], [| 8; 4; 3; 3 |]); *)
+    (* ("channels_32x32", [| 1; 8; 32; 32 |], [| 16; 8; 3; 3 |]); *)
+    (* ("kernel_5x5", [| 1; 4; 16; 16 |], [| 8; 4; 5; 5 |]); *)
+    (* ("batch_16x16", [| 4; 4; 16; 16 |], [| 8; 4; 3; 3 |]); *)
   ]
 
 (* Create all test data upfront and keep references *)
 let test_data =
   List.map
     (fun (name, x_shape, k_shape) ->
-      let x = randn float32 ~seed:42 x_shape in
-      let k = randn float32 ~seed:43 k_shape in
+      let x = ones float32 x_shape in
+      let k = ones float32 k_shape in
       (name, x, k))
     test_specs
 

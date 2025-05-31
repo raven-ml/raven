@@ -270,56 +270,120 @@ let permute view axes =
   in
   create ~offset:view.offset ?mask:new_mask ~strides:new_strides new_shape
 
-(* In view.ml *)
-let reshape view new_shape =
-  let current_numel = prod view.shape in
+let can_merge_dims view start_idx count =
+  (* Check if 'count' consecutive dimensions starting at start_idx can be
+     merged *)
+  if count <= 1 then true
+  else
+    let rec check i =
+      if i >= start_idx + count - 1 then true
+      else
+        let expected_stride = view.shape.(i + 1) * view.strides.(i + 1) in
+        view.strides.(i) = expected_stride && check (i + 1)
+    in
+    check start_idx
+
+let can_split_dim view dim_idx new_shape_left new_shape_right =
+  (* Check if dimension at dim_idx can be split into (new_shape_left,
+     new_shape_right) *)
+  let original_size = view.shape.(dim_idx) in
+  let original_stride = view.strides.(dim_idx) in
+  original_size = new_shape_left * new_shape_right
+  && original_stride = new_shape_right (* Assuming row-major split *)
+
+let find_reshape_mapping old_shape new_shape =
+  (* Find how old dimensions map to new dimensions *)
+  let old_numel = prod old_shape in
   let new_numel = prod new_shape in
+  if old_numel <> new_numel then None
+  else
+    (* Try to find a valid dimension mapping *)
+    let rec try_mapping old_idx new_idx old_used new_used =
+      if old_idx >= Array.length old_shape && new_idx >= Array.length new_shape
+      then Some (old_used, new_used)
+      else if
+        old_idx >= Array.length old_shape || new_idx >= Array.length new_shape
+      then None
+      else
+        let old_size =
+          if old_idx < Array.length old_shape then old_shape.(old_idx) else 1
+        in
+        let new_size =
+          if new_idx < Array.length new_shape then new_shape.(new_idx) else 1
+        in
+
+        if old_size = new_size then
+          (* Dimensions match, map 1:1 *)
+          try_mapping (old_idx + 1) (new_idx + 1) (old_used @ [ old_idx ])
+            (new_used @ [ new_idx ])
+        else if old_size > new_size && old_size mod new_size = 0 then
+          (* Try splitting old dimension *)
+          None (* Would need more complex logic *)
+        else if new_size > old_size && new_size mod old_size = 0 then
+          (* Try merging old dimensions *)
+          let rec accumulate_dims idx acc =
+            if acc = new_size then Some idx
+            else if idx >= Array.length old_shape || acc > new_size then None
+            else accumulate_dims (idx + 1) (acc * old_shape.(idx))
+          in
+          match accumulate_dims old_idx 1 with
+          | Some end_idx ->
+              try_mapping end_idx (new_idx + 1)
+                (old_used @ List.init (end_idx - old_idx) (fun i -> old_idx + i))
+                (new_used @ [ new_idx ])
+          | None -> None
+        else None
+    in
+    try_mapping 0 0 [] []
+
+let reshape view new_shape =
+  (* Early return if shapes are identical *)
   if view.shape = new_shape then view
-  else if current_numel <> new_numel && current_numel <> 0 && new_numel <> 0
-  then
-    (* Allow 0-size to be reshaped if one of them is 0-size *)
-    invalid_arg
-      (Printf.sprintf "reshape: cannot reshape array of size %d into shape %s"
-         current_numel (pp_int_array new_shape))
-  else if Array.exists (fun x -> x < 0) new_shape then
-    (* Allow new_shape to contain -1 if it's resolved by frontend *)
-    invalid_arg
-      "reshape: Negative dimensions not allowed in final shape for View.reshape"
-  else if Array.exists (( = ) 0) view.shape || Array.exists (( = ) 0) new_shape
-  then
-    create ~offset:0
-      new_shape (* Handle zero-size tensors: new C-contig view, offset 0*)
-  else if view.mask = None then
-    (* Handle C-contiguous and strided cases without masks *)
-    if view.layout = C_contiguous then
-      (* Simplest C-contiguous case *)
-      create ~offset:view.offset new_shape (* Preserve offset, new C-strides *)
-    else
-      (* For strided views, check if they're effectively contiguous *)
-      let expected_strides = compute_strides view.shape in
-      let is_effectively_contiguous = all_eq view.strides expected_strides in
+  else
+    let current_numel = prod view.shape in
+    let new_numel = prod new_shape in
 
-      (* Also check for single-element tensors which can always be reshaped *)
-      let is_single_element = current_numel <= 1 in
-
-      (* Check if this is just squeezing (removing dims of size 1) *)
-      let is_squeeze_only =
-        let old_non_one = Array.to_list view.shape |> List.filter (( <> ) 1) in
-        let new_non_one = Array.to_list new_shape |> List.filter (( <> ) 1) in
-        old_non_one = new_non_one
+    (* Check size compatibility *)
+    if current_numel <> new_numel && current_numel <> 0 && new_numel <> 0 then
+      invalid_arg
+        (Printf.sprintf "reshape: cannot reshape array of size %d into shape %s"
+           current_numel (pp_int_array new_shape))
+      (* Handle zero-size tensors *)
+    else if
+      Array.exists (( = ) 0) view.shape || Array.exists (( = ) 0) new_shape
+    then create ~offset:0 new_shape
+      (* Check for masks - these complicate reshape *)
+    else if view.mask <> None then
+      failwith "View.reshape: cannot reshape views with masks"
+      (* Fast path for C-contiguous views *)
+    else if view.layout = C_contiguous then create ~offset:view.offset new_shape
+    else if
+      (* Special case: reshaping to/from scalar *)
+      Array.length new_shape = 0
+    then
+      (* Reshaping to scalar - always valid if size is 1 *)
+      create ~offset:view.offset new_shape
+      (* Special case: all strides are 0 (all dims are size 1) *)
+    else if Array.for_all (( = ) 0) view.strides then
+      (* When all strides are 0, any reshape of the same size is valid *)
+      let new_strides =
+        Array.map (fun dim -> if dim = 1 then 0 else 1) new_shape
       in
+      create ~offset:view.offset ~strides:new_strides new_shape
+    (* Special case: only expanding/squeezing size-1 dimensions *)
+      else
+      let old_non_one = Array.to_list view.shape |> List.filter (( <> ) 1) in
+      let new_non_one = Array.to_list new_shape |> List.filter (( <> ) 1) in
 
-      if is_effectively_contiguous || is_single_element then
-        (* The view is effectively C-contiguous or single element *)
-        create ~offset:view.offset new_shape
-      else if is_squeeze_only then
-        (* Special case: just removing dimensions of size 1 *)
+      if old_non_one = new_non_one then
+        (* Just adding/removing size-1 dimensions *)
         let new_strides =
           let old_idx = ref 0 in
           Array.map
             (fun dim ->
               if dim = 1 then 0
               else (
+                (* Skip size-1 dims in old shape *)
                 while
                   !old_idx < Array.length view.shape
                   && view.shape.(!old_idx) = 1
@@ -331,15 +395,116 @@ let reshape view new_shape =
                 stride))
             new_shape
         in
-        {
-          shape = new_shape;
-          strides = new_strides;
-          offset = view.offset;
-          mask = view.mask;
-          layout = Strided;
-        }
-      else failwith "View.reshape: cannot reshape non-contiguous strided views"
-  else failwith "View.reshape: cannot reshape views with masks"
+        create ~offset:view.offset ~strides:new_strides new_shape
+      else
+        let analyze_reshape old_shape old_strides new_shape =
+          (* Can we map old dimensions to new dimensions? *)
+          let try_match old_pos new_pos old_size new_size =
+            match () with
+            | _ when old_size = new_size ->
+                (* Sizes match - check if we can reuse stride *)
+                if old_pos + 1 <= Array.length old_shape then
+                  Some [ (old_pos, new_pos, old_size) ]
+                else None
+            | _ when old_size < new_size && new_size mod old_size = 0 -> (
+                (* Try merging old dimensions *)
+                let rec accumulate pos acc =
+                  if acc = new_size then
+                    Some
+                      (List.rev
+                         (List.init (pos - old_pos) (fun i -> old_pos + i)))
+                  else if pos >= Array.length old_shape || acc > new_size then
+                    None
+                  else accumulate (pos + 1) (acc * old_shape.(pos))
+                in
+                match accumulate (old_pos + 1) old_size with
+                | Some merged_dims ->
+                    (* Check if dimensions are contiguous in memory *)
+                    let can_merge =
+                      List.fold_left
+                        (fun (ok, expected_stride) dim ->
+                          if not ok then (false, 0)
+                          else if dim = List.hd merged_dims then
+                            (true, old_strides.(dim))
+                          else
+                            ( old_strides.(dim) = expected_stride,
+                              old_strides.(dim) * old_shape.(dim) ))
+                        (true, 0) merged_dims
+                      |> fst
+                    in
+                    if can_merge then Some [ (old_pos, new_pos, new_size) ]
+                    else None
+                | None -> None)
+            | _ when new_size < old_size && old_size mod new_size = 0 ->
+                (* Try splitting old dimension *)
+                let factor = old_size / new_size in
+                (* For splitting to work, we need stride = 1 (contiguous) *)
+                if old_strides.(old_pos) = 1 then
+                  (* Can split: outer dim gets stride*factor, inner gets
+                     stride *)
+                  Some
+                    [
+                      (old_pos, new_pos, new_size);
+                      (old_pos, new_pos + 1, factor);
+                    ]
+                else None
+            | _ -> None
+          in
+
+          (* Build mapping between old and new dimensions *)
+          let rec build_mapping old_idx new_idx mappings =
+            if
+              old_idx >= Array.length old_shape
+              && new_idx >= Array.length new_shape
+            then Some (List.rev mappings)
+            else if
+              old_idx >= Array.length old_shape
+              || new_idx >= Array.length new_shape
+            then None
+            else
+              match
+                try_match old_idx new_idx old_shape.(old_idx)
+                  new_shape.(new_idx)
+              with
+              | Some maps ->
+                  let old_advance =
+                    List.length
+                      (List.filter (fun (o, _, _) -> o = old_idx) maps)
+                  in
+                  let new_advance = List.length maps in
+                  build_mapping (old_idx + old_advance) (new_idx + new_advance)
+                    (maps @ mappings)
+              | None -> None
+          in
+
+          build_mapping 0 0 []
+        in
+
+        (* Compute new strides based on mapping *)
+        match analyze_reshape view.shape view.strides new_shape with
+        | Some mapping ->
+            let new_strides = Array.make (Array.length new_shape) 0 in
+            List.iter
+              (fun (old_dim, new_dim, _size) ->
+                new_strides.(new_dim) <- view.strides.(old_dim))
+              mapping;
+            create ~offset:view.offset ~strides:new_strides new_shape
+        | None ->
+            (* Fall back to existing logic or error *)
+            failwith
+              (Printf.sprintf
+                 "View.reshape: cannot reshape strided view from shape %s to %s.\n\
+                  Current strides: %s (expected C-contiguous: %s)\n\
+                  This reshape would require reordering elements in memory.\n\
+                  Possible solutions:\n\
+                  - Call contiguous() before reshape to create a C-contiguous \
+                  copy\n\
+                  - Use transpose/permute operations that preserve striding\n\
+                  - Check if the operation sequence can be reordered to avoid \
+                  this reshape"
+                 (pp_int_array view.shape) (pp_int_array new_shape)
+                 (pp_int_array view.strides)
+                 (pp_int_array (compute_strides view.shape)))
 
 (* helper used by [pad] and [shrink] *)
 let unsafe_resize view arg new_mask_opt =
