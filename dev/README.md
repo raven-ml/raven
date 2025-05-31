@@ -17,7 +17,6 @@ The `dev/` directory serves as:
 | Name           | Description                                | Status      |
 | -------------- | ------------------------------------------ | ----------- |
 | **`nx-cuda`**  | Cuda backend for Nx                        | Exploration |
-| **`kaun`**     | Deep Learning library built on top of Rune | Exploration |
 
 ## Project Status
 
