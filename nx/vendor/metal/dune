@@ -2,6 +2,6 @@
  (name metal)
  (public_name nx.metal.bindings)
  (enabled_if
-  (= %{ocaml-config:system} "macosx"))
+  (= %{system} "macosx"))
  (flags :standard -ccopt "-framework CoreGraphics" -ccopt "-framework Metal")
  (libraries objc))

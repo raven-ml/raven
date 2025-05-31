@@ -15,5 +15,5 @@
  (deps
   (source_tree golden))
  (build_if
-  (= %{ocaml-config:system} "macosx"))
+  (= %{system} "macosx"))
  (libraries rune_jit rune_jit_metal test_rune_jit_support))

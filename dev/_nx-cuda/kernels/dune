@@ -1,7 +1,7 @@
 (rule
  (enabled_if
   (not
-   (= %{ocaml-config:system} "macosx")))
+   (= %{system} "macosx")))
  (deps elementwise.cu)
  (targets cuda_kernels.ptx)
  (action
@@ -10,7 +10,7 @@
 (rule
  (enabled_if
   (not
-   (= %{ocaml-config:system} "macosx")))
+   (= %{system} "macosx")))
  (target cuda_kernels.ml)
  (deps cuda_kernels.ptx)
  (action
@@ -27,7 +27,7 @@
 (library
  (enabled_if
   (not
-   (= %{ocaml-config:system} "macosx")))
+   (= %{system} "macosx")))
  (name cuda_kernels)
  (public_name rune.cuda.kernels)
  (libraries))

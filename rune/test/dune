@@ -6,5 +6,5 @@
  (name test_jit_metal)
  (modules test_jit_metal)
  (build_if
-  (= %{ocaml-config:system} "macosx"))
+  (= %{system} "macosx"))
  (libraries rune alcotest test_rune_support))

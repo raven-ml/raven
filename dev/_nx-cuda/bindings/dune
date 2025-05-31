@@ -1,7 +1,7 @@
 (library
  (enabled_if
   (not
-   (= %{ocaml-config:system} "macosx")))
+   (= %{system} "macosx")))
  (name cuda)
  (public_name rune.cuda.bindings)
  (modules cuda)

@@ -2,5 +2,5 @@
  (name rune_jit_metal)
  (public_name rune.jit.metal)
  (enabled_if
-  (= %{ocaml-config:system} "macosx"))
+  (= %{system} "macosx"))
  (libraries metal ctypes rune_jit))
