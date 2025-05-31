@@ -48,7 +48,6 @@ dune build fmt                    # Format code
 - **Errors**: `function_name: what went wrong` format, fail fast
 - **Tests**: Alcotest framework, test edge cases, group related tests
 - **Type annotations**: Avoid explicit types unless required by type checker (dtype pattern matching)
-- **Commit messages**: Use conventional commit prefixes: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `style:`, `perf:`
 
 ## Architecture
 
@@ -58,6 +57,8 @@ dune build fmt                    # Format code
 - `rune/lib/autodiff.ml` - Effect-based autodiff
 
 ## Critical Knowledge
+
+- Don't clean the world: Never clean the dune cache or delete `_build` directory. The problem is not the build system.
 
 ### OCaml Gotchas
 - **GADTs**: Can't group pattern match branches
