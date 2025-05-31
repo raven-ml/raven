@@ -4,33 +4,17 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
-- fix nx tests: getting Command got signal SEGV. at randint
-- fix plot3d with hugin
-- rune (or nx) build system for metal backend on non macOS systems
-
-refactor nx
-- allocate buffers outside of the backend?
-- not sure we need non-polymorphic functions for perf of where, we should benchmark
-
-documentation
-- improve mlis (go through each function, apply docs guidelines, check the implementation, check if there's invariant to document, check if useful to add examples)
-- generate docs with odoc3 + dream-style html rewriting to integrate in www/
-- more user documentation
-- favicon
+- fix convolution being _extremely_ slow in nx/rune
+  - implement lazy view + realization (implicit? explicit?), that should be equivalent to the VIEW uop. think of the interaction with jit. need a shape tracker in core.
 
 ## alpha release
 
 nx
-- OK
-
-nx-dataset
-- OK
-
-nx-io
-- OK
+- fix intermittent Command got signal ABRT in convolution tests (dev/conv2d)
+- fix intermittent Command got signal SEGV. at randint
 
 hugin
-- OK
+- fix plot3d
 
 quill
 - editor bugs:
@@ -53,15 +37,13 @@ quill
 - run button
 - run all
 
-rune
-- train mnist
-- metal kernels.
-- cuda kernels.
-
-docs
+docs/website
 - examples
+- improve mlis (go through each function, apply docs guidelines, check the implementation, check if there's invariant to document, check if useful to add examples)
+- generate docs with odoc3 + dream-style html rewriting to integrate in www/
+- more user documentation
+- favicon
 - end-to-end example with quill+rune+hugin
-- website
 
 ## next
 
@@ -75,5 +57,15 @@ roadmap
 - memory planner during lowering (scheduling)
 - pmap support in rune
 
+refactorings
+- (?) allocate buffers outside of the backend?
+- (?) not sure we need non-polymorphic functions for perf of where, we should benchmark
+
+notes
+- add no_grad and detach
+- we can make jit composable by re raising all the effects (but what does it mean to write grad(jit(f)))?? What are the semantics in jax?
+
 new libs
 - dataframe library
+- nx cuda backend
+- (?) nx blas backend
