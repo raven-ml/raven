@@ -13,6 +13,6 @@
   (backend landmarks)))
 
 (test
- (name test_conv_optimized)
- (modules test_conv_optimized)
+ (name test_conv)
+ (modules test_conv)
  (libraries nx nx_conv alcotest test_nx_support))
