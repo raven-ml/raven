@@ -135,9 +135,6 @@ let property_access_tests =
     test_case "offset" `Quick (fun () ->
         let t = Nx.create float32 shape_2x3 test_array in
         check int "offset" 0 (Nx.offset t));
-    test_case "layout" `Quick (fun () ->
-        let t = Nx.create float32 shape_2x3 test_array in
-        check bool "layout is c_layout" true (Nx.layout t = C_contiguous));
   ]
 
 let data_manipulation_tests =

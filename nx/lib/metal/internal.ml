@@ -120,7 +120,7 @@ let copy_to_bigarray : type a b.
   let view_size = View.numel view in
   let required_size = View.offset view + view_size in
 
-  if View.is_contiguous view && required_size <= buffer_size then (
+  if View.is_c_contiguous view && required_size <= buffer_size then (
     (* For contiguous views with sufficient buffer size, we can do a direct
        copy *)
     let offset = View.offset view in

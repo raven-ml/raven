@@ -292,7 +292,7 @@ let op_reduce_sum ~(axes : int array) ~(keepdims : bool) xensor =
     if Array.length output_shape_logical = 0 then [||] else output_shape_logical
   in
 
-  let output_numel = View.prod output_shape_final in
+  let output_numel = Shape.numel output_shape_final in
   let output_tensor =
     op_buffer ctx xensor.dtype output_numel |> fun t ->
     with_view t (View.create output_shape_final)
@@ -331,7 +331,7 @@ let op_reduce_max ~(axes : int array) ~(keepdims : bool) xensor =
     if Array.length output_shape_logical = 0 then [||] else output_shape_logical
   in
 
-  let output_numel = View.prod output_shape_final in
+  let output_numel = Shape.numel output_shape_final in
   let output_tensor =
     op_buffer ctx xensor.dtype output_numel |> fun t ->
     with_view t (View.create output_shape_final)
@@ -371,7 +371,7 @@ let op_reduce_prod ~(axes : int array) ~(keepdims : bool) xensor =
     if Array.length output_shape_logical = 0 then [||] else output_shape_logical
   in
 
-  let output_numel = View.prod output_shape_final in
+  let output_numel = Shape.numel output_shape_final in
   let output_tensor =
     op_buffer ctx xensor.dtype output_numel |> fun t ->
     with_view t (View.create output_shape_final)
@@ -437,7 +437,7 @@ let op_pad t padding_config (fill_value : 'a) =
     (* Define the slice in the new_t that corresponds to the original t *)
     let shrink_args_for_dst =
       Array.mapi
-        (fun i (pb, _pa) -> (pb, pb + old_view.shape.(i)))
+        (fun i (pb, _pa) -> (pb, pb + (View.shape old_view).(i)))
         padding_config
     in
     let dst_slice_view = View.shrink new_t.view shrink_args_for_dst in
@@ -484,7 +484,7 @@ let op_cat tensors axis =
 
   let output_shape = Array.copy (Internal.shape first_t) in
   output_shape.(axis) <- output_dim_size_at_axis;
-  let output_numel = View.prod output_shape in
+  let output_numel = Shape.numel output_shape in
   let output_t =
     op_buffer ctx dt_ref output_numel |> fun t ->
     with_view t (View.create output_shape)
@@ -529,7 +529,7 @@ let op_cast x target_dt =
   out_tensor
 
 let op_contiguous t =
-  if Internal.is_contiguous t && View.offset t.view = 0 then t
+  if Internal.is_c_contiguous t && View.offset t.view = 0 then t
     (* Already contiguous and offset 0 *)
   else Internal.copy t (* Internal.copy creates a new C-contiguous tensor *)
 
@@ -579,7 +579,7 @@ let op_gather data_t indices_t axis =
 
   (* Create output tensor with shape of indices *)
   let output_shape = indices_shape in
-  let output_numel = View.prod output_shape in
+  let output_numel = Shape.numel output_shape in
   let output_t =
     op_buffer ctx data_t.dtype output_numel |> fun t ->
     with_view t (View.create output_shape)
@@ -596,10 +596,10 @@ let op_gather data_t indices_t axis =
     (* Process each output element *)
     for linear_idx = 0 to output_numel - 1 do
       (* Get multi-dimensional index in output/indices *)
-      let md_idx = View.multi_index_from_linear linear_idx output_shape in
+      let md_idx = Shape.unravel_index linear_idx output_shape in
 
       (* Read the index value from indices tensor *)
-      let indices_offset = View.offset_of_indices indices_view md_idx in
+      let indices_offset = View.linear_index indices_view md_idx in
       let idx_value =
         Int32.to_int (Bigarray.Array1.unsafe_get indices_buffer indices_offset)
       in
@@ -619,7 +619,7 @@ let op_gather data_t indices_t axis =
 
       (* Copy value from data to output *)
       if View.is_valid data_view src_idx then
-        let data_offset = View.offset_of_indices data_view src_idx in
+        let data_offset = View.linear_index data_view src_idx in
         let value = Bigarray.Array1.unsafe_get data_buffer data_offset in
         Bigarray.Array1.unsafe_set output_buffer linear_idx value
       (* If invalid due to view mask, output remains at default (likely 0) *)
@@ -657,7 +657,7 @@ let op_scatter data_template_t indices_t updates_t axis =
   (* Create output as copy of template *)
   let output_t = Internal.copy data_template_t in
 
-  let updates_numel = View.prod updates_shape in
+  let updates_numel = Shape.numel updates_shape in
   if updates_numel = 0 then output_t
   else
     let output_buffer = Internal.buffer output_t in
@@ -670,10 +670,10 @@ let op_scatter data_template_t indices_t updates_t axis =
     (* Process each update *)
     for linear_idx = 0 to updates_numel - 1 do
       (* Get multi-dimensional index in updates/indices *)
-      let md_idx = View.multi_index_from_linear linear_idx updates_shape in
+      let md_idx = Shape.unravel_index linear_idx updates_shape in
 
       (* Read the target index from indices tensor *)
-      let indices_offset = View.offset_of_indices indices_view md_idx in
+      let indices_offset = View.linear_index indices_view md_idx in
       let idx_value =
         Int32.to_int (Bigarray.Array1.unsafe_get indices_buffer indices_offset)
       in
@@ -692,11 +692,11 @@ let op_scatter data_template_t indices_t updates_t axis =
 
         (* Write update value to output if destination is valid *)
         if View.is_valid output_view dst_idx then
-          let updates_offset = View.offset_of_indices updates_view md_idx in
+          let updates_offset = View.linear_index updates_view md_idx in
           let update_value =
             Bigarray.Array1.unsafe_get updates_buffer updates_offset
           in
-          let output_offset = View.offset_of_indices output_view dst_idx in
+          let output_offset = View.linear_index output_view dst_idx in
           Bigarray.Array1.unsafe_set output_buffer output_offset update_value)
       (* Out of bounds indices are silently ignored *)
     done;

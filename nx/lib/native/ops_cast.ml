@@ -1,12 +1,12 @@
 open Bigarray
 module Dtype = Nx_core.Dtype
-open Nx_core.View
+module Shape = Nx_core.Shape
 open Internal
 
 let cast_f16_to_f32 (src : (float, float16_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -28,8 +28,8 @@ let cast_f16_to_f32 (src : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -37,7 +37,7 @@ let cast_f16_to_f32 (src : (float, float16_elt) t)
 let cast_f16_to_f64 (src : (float, float16_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -59,8 +59,8 @@ let cast_f16_to_f64 (src : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -68,7 +68,7 @@ let cast_f16_to_f64 (src : (float, float16_elt) t)
 let cast_f16_to_i8 (src : (float, float16_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -90,8 +90,8 @@ let cast_f16_to_i8 (src : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -99,7 +99,7 @@ let cast_f16_to_i8 (src : (float, float16_elt) t)
 let cast_f16_to_u8 (src : (float, float16_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -121,8 +121,8 @@ let cast_f16_to_u8 (src : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -130,7 +130,7 @@ let cast_f16_to_u8 (src : (float, float16_elt) t)
 let cast_f16_to_i16 (src : (float, float16_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -152,8 +152,8 @@ let cast_f16_to_i16 (src : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -161,7 +161,7 @@ let cast_f16_to_i16 (src : (float, float16_elt) t)
 let cast_f16_to_u16 (src : (float, float16_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -183,8 +183,8 @@ let cast_f16_to_u16 (src : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -192,7 +192,7 @@ let cast_f16_to_u16 (src : (float, float16_elt) t)
 let cast_f16_to_i32 (src : (float, float16_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -214,8 +214,8 @@ let cast_f16_to_i32 (src : (float, float16_elt) t) (dst : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_float src_val)
     done
@@ -223,7 +223,7 @@ let cast_f16_to_i32 (src : (float, float16_elt) t) (dst : (int32, int32_elt) t)
 let cast_f16_to_i64 (src : (float, float16_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -245,8 +245,8 @@ let cast_f16_to_i64 (src : (float, float16_elt) t) (dst : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_float src_val)
     done
@@ -254,7 +254,7 @@ let cast_f16_to_i64 (src : (float, float16_elt) t) (dst : (int64, int64_elt) t)
 let cast_f16_to_c32 (src : (float, float16_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -276,8 +276,8 @@ let cast_f16_to_c32 (src : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k { Complex.re = src_val; im = 0.0 }
     done
@@ -285,7 +285,7 @@ let cast_f16_to_c32 (src : (float, float16_elt) t)
 let cast_f16_to_c64 (src : (float, float16_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -307,8 +307,8 @@ let cast_f16_to_c64 (src : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k { Complex.re = src_val; im = 0.0 }
     done
@@ -316,7 +316,7 @@ let cast_f16_to_c64 (src : (float, float16_elt) t)
 let cast_f16_to_int (src : (float, float16_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -338,8 +338,8 @@ let cast_f16_to_int (src : (float, float16_elt) t) (dst : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -347,7 +347,7 @@ let cast_f16_to_int (src : (float, float16_elt) t) (dst : (int, int_elt) t)
 let cast_f16_to_nativeint (src : (float, float16_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -369,8 +369,8 @@ let cast_f16_to_nativeint (src : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_float src_val)
     done
@@ -378,7 +378,7 @@ let cast_f16_to_nativeint (src : (float, float16_elt) t)
 let cast_f32_to_f16 (src : (float, float32_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -400,8 +400,8 @@ let cast_f32_to_f16 (src : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -409,7 +409,7 @@ let cast_f32_to_f16 (src : (float, float32_elt) t)
 let cast_f32_to_f64 (src : (float, float32_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -431,8 +431,8 @@ let cast_f32_to_f64 (src : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -440,7 +440,7 @@ let cast_f32_to_f64 (src : (float, float32_elt) t)
 let cast_f32_to_i8 (src : (float, float32_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -462,8 +462,8 @@ let cast_f32_to_i8 (src : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -471,7 +471,7 @@ let cast_f32_to_i8 (src : (float, float32_elt) t)
 let cast_f32_to_u8 (src : (float, float32_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -493,8 +493,8 @@ let cast_f32_to_u8 (src : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -502,7 +502,7 @@ let cast_f32_to_u8 (src : (float, float32_elt) t)
 let cast_f32_to_i16 (src : (float, float32_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -524,8 +524,8 @@ let cast_f32_to_i16 (src : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -533,7 +533,7 @@ let cast_f32_to_i16 (src : (float, float32_elt) t)
 let cast_f32_to_u16 (src : (float, float32_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -555,8 +555,8 @@ let cast_f32_to_u16 (src : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -564,7 +564,7 @@ let cast_f32_to_u16 (src : (float, float32_elt) t)
 let cast_f32_to_i32 (src : (float, float32_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -586,8 +586,8 @@ let cast_f32_to_i32 (src : (float, float32_elt) t) (dst : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_float src_val)
     done
@@ -595,7 +595,7 @@ let cast_f32_to_i32 (src : (float, float32_elt) t) (dst : (int32, int32_elt) t)
 let cast_f32_to_i64 (src : (float, float32_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -617,8 +617,8 @@ let cast_f32_to_i64 (src : (float, float32_elt) t) (dst : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_float src_val)
     done
@@ -626,7 +626,7 @@ let cast_f32_to_i64 (src : (float, float32_elt) t) (dst : (int64, int64_elt) t)
 let cast_f32_to_c32 (src : (float, float32_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -648,8 +648,8 @@ let cast_f32_to_c32 (src : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k { Complex.re = src_val; im = 0.0 }
     done
@@ -657,7 +657,7 @@ let cast_f32_to_c32 (src : (float, float32_elt) t)
 let cast_f32_to_c64 (src : (float, float32_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -679,8 +679,8 @@ let cast_f32_to_c64 (src : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k { Complex.re = src_val; im = 0.0 }
     done
@@ -688,7 +688,7 @@ let cast_f32_to_c64 (src : (float, float32_elt) t)
 let cast_f32_to_int (src : (float, float32_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -710,8 +710,8 @@ let cast_f32_to_int (src : (float, float32_elt) t) (dst : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -719,7 +719,7 @@ let cast_f32_to_int (src : (float, float32_elt) t) (dst : (int, int_elt) t)
 let cast_f32_to_nativeint (src : (float, float32_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -741,8 +741,8 @@ let cast_f32_to_nativeint (src : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_float src_val)
     done
@@ -750,7 +750,7 @@ let cast_f32_to_nativeint (src : (float, float32_elt) t)
 let cast_f64_to_f16 (src : (float, float64_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -772,8 +772,8 @@ let cast_f64_to_f16 (src : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -781,7 +781,7 @@ let cast_f64_to_f16 (src : (float, float64_elt) t)
 let cast_f64_to_f32 (src : (float, float64_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -803,8 +803,8 @@ let cast_f64_to_f32 (src : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -812,7 +812,7 @@ let cast_f64_to_f32 (src : (float, float64_elt) t)
 let cast_f64_to_i8 (src : (float, float64_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -834,8 +834,8 @@ let cast_f64_to_i8 (src : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -843,7 +843,7 @@ let cast_f64_to_i8 (src : (float, float64_elt) t)
 let cast_f64_to_u8 (src : (float, float64_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -865,8 +865,8 @@ let cast_f64_to_u8 (src : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -874,7 +874,7 @@ let cast_f64_to_u8 (src : (float, float64_elt) t)
 let cast_f64_to_i16 (src : (float, float64_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -896,8 +896,8 @@ let cast_f64_to_i16 (src : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -905,7 +905,7 @@ let cast_f64_to_i16 (src : (float, float64_elt) t)
 let cast_f64_to_u16 (src : (float, float64_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -927,8 +927,8 @@ let cast_f64_to_u16 (src : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -936,7 +936,7 @@ let cast_f64_to_u16 (src : (float, float64_elt) t)
 let cast_f64_to_i32 (src : (float, float64_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -958,8 +958,8 @@ let cast_f64_to_i32 (src : (float, float64_elt) t) (dst : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_float src_val)
     done
@@ -967,7 +967,7 @@ let cast_f64_to_i32 (src : (float, float64_elt) t) (dst : (int32, int32_elt) t)
 let cast_f64_to_i64 (src : (float, float64_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -989,8 +989,8 @@ let cast_f64_to_i64 (src : (float, float64_elt) t) (dst : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_float src_val)
     done
@@ -998,7 +998,7 @@ let cast_f64_to_i64 (src : (float, float64_elt) t) (dst : (int64, int64_elt) t)
 let cast_f64_to_c32 (src : (float, float64_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1020,8 +1020,8 @@ let cast_f64_to_c32 (src : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k { Complex.re = src_val; im = 0.0 }
     done
@@ -1029,7 +1029,7 @@ let cast_f64_to_c32 (src : (float, float64_elt) t)
 let cast_f64_to_c64 (src : (float, float64_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1051,8 +1051,8 @@ let cast_f64_to_c64 (src : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k { Complex.re = src_val; im = 0.0 }
     done
@@ -1060,7 +1060,7 @@ let cast_f64_to_c64 (src : (float, float64_elt) t)
 let cast_f64_to_int (src : (float, float64_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1082,8 +1082,8 @@ let cast_f64_to_int (src : (float, float64_elt) t) (dst : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val)
     done
@@ -1091,7 +1091,7 @@ let cast_f64_to_int (src : (float, float64_elt) t) (dst : (int, int_elt) t)
 let cast_f64_to_nativeint (src : (float, float64_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1113,8 +1113,8 @@ let cast_f64_to_nativeint (src : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_float src_val)
     done
@@ -1122,7 +1122,7 @@ let cast_f64_to_nativeint (src : (float, float64_elt) t)
 let cast_i8_to_f16 (src : (int, int8_signed_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1144,8 +1144,8 @@ let cast_i8_to_f16 (src : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -1153,7 +1153,7 @@ let cast_i8_to_f16 (src : (int, int8_signed_elt) t)
 let cast_i8_to_f32 (src : (int, int8_signed_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1175,8 +1175,8 @@ let cast_i8_to_f32 (src : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -1184,7 +1184,7 @@ let cast_i8_to_f32 (src : (int, int8_signed_elt) t)
 let cast_i8_to_f64 (src : (int, int8_signed_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1206,8 +1206,8 @@ let cast_i8_to_f64 (src : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -1215,7 +1215,7 @@ let cast_i8_to_f64 (src : (int, int8_signed_elt) t)
 let cast_i8_to_u8 (src : (int, int8_signed_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1237,8 +1237,8 @@ let cast_i8_to_u8 (src : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -1246,7 +1246,7 @@ let cast_i8_to_u8 (src : (int, int8_signed_elt) t)
 let cast_i8_to_i16 (src : (int, int8_signed_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1268,8 +1268,8 @@ let cast_i8_to_i16 (src : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -1277,7 +1277,7 @@ let cast_i8_to_i16 (src : (int, int8_signed_elt) t)
 let cast_i8_to_u16 (src : (int, int8_signed_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1299,8 +1299,8 @@ let cast_i8_to_u16 (src : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -1308,7 +1308,7 @@ let cast_i8_to_u16 (src : (int, int8_signed_elt) t)
 let cast_i8_to_i32 (src : (int, int8_signed_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1330,8 +1330,8 @@ let cast_i8_to_i32 (src : (int, int8_signed_elt) t) (dst : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_int src_val)
     done
@@ -1339,7 +1339,7 @@ let cast_i8_to_i32 (src : (int, int8_signed_elt) t) (dst : (int32, int32_elt) t)
 let cast_i8_to_i64 (src : (int, int8_signed_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1361,8 +1361,8 @@ let cast_i8_to_i64 (src : (int, int8_signed_elt) t) (dst : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_int src_val)
     done
@@ -1370,7 +1370,7 @@ let cast_i8_to_i64 (src : (int, int8_signed_elt) t) (dst : (int64, int64_elt) t)
 let cast_i8_to_c32 (src : (int, int8_signed_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1397,8 +1397,8 @@ let cast_i8_to_c32 (src : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -1407,7 +1407,7 @@ let cast_i8_to_c32 (src : (int, int8_signed_elt) t)
 let cast_i8_to_c64 (src : (int, int8_signed_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1434,8 +1434,8 @@ let cast_i8_to_c64 (src : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -1444,7 +1444,7 @@ let cast_i8_to_c64 (src : (int, int8_signed_elt) t)
 let cast_i8_to_int (src : (int, int8_signed_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1466,8 +1466,8 @@ let cast_i8_to_int (src : (int, int8_signed_elt) t) (dst : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -1475,7 +1475,7 @@ let cast_i8_to_int (src : (int, int8_signed_elt) t) (dst : (int, int_elt) t)
 let cast_i8_to_nativeint (src : (int, int8_signed_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1497,8 +1497,8 @@ let cast_i8_to_nativeint (src : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_int src_val)
     done
@@ -1506,7 +1506,7 @@ let cast_i8_to_nativeint (src : (int, int8_signed_elt) t)
 let cast_u8_to_f16 (src : (int, int8_unsigned_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1528,8 +1528,8 @@ let cast_u8_to_f16 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -1537,7 +1537,7 @@ let cast_u8_to_f16 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_f32 (src : (int, int8_unsigned_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1559,8 +1559,8 @@ let cast_u8_to_f32 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -1568,7 +1568,7 @@ let cast_u8_to_f32 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_f64 (src : (int, int8_unsigned_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1590,8 +1590,8 @@ let cast_u8_to_f64 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -1599,7 +1599,7 @@ let cast_u8_to_f64 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_i8 (src : (int, int8_unsigned_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1621,8 +1621,8 @@ let cast_u8_to_i8 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -1630,7 +1630,7 @@ let cast_u8_to_i8 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_i16 (src : (int, int8_unsigned_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1652,8 +1652,8 @@ let cast_u8_to_i16 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -1661,7 +1661,7 @@ let cast_u8_to_i16 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_u16 (src : (int, int8_unsigned_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1683,8 +1683,8 @@ let cast_u8_to_u16 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -1692,7 +1692,7 @@ let cast_u8_to_u16 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_i32 (src : (int, int8_unsigned_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1714,8 +1714,8 @@ let cast_u8_to_i32 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_int src_val)
     done
@@ -1723,7 +1723,7 @@ let cast_u8_to_i32 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_i64 (src : (int, int8_unsigned_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1745,8 +1745,8 @@ let cast_u8_to_i64 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_int src_val)
     done
@@ -1754,7 +1754,7 @@ let cast_u8_to_i64 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_c32 (src : (int, int8_unsigned_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1781,8 +1781,8 @@ let cast_u8_to_c32 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -1791,7 +1791,7 @@ let cast_u8_to_c32 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_c64 (src : (int, int8_unsigned_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1818,8 +1818,8 @@ let cast_u8_to_c64 (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -1828,7 +1828,7 @@ let cast_u8_to_c64 (src : (int, int8_unsigned_elt) t)
 let cast_u8_to_int (src : (int, int8_unsigned_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1850,8 +1850,8 @@ let cast_u8_to_int (src : (int, int8_unsigned_elt) t) (dst : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -1859,7 +1859,7 @@ let cast_u8_to_int (src : (int, int8_unsigned_elt) t) (dst : (int, int_elt) t)
 let cast_u8_to_nativeint (src : (int, int8_unsigned_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1881,8 +1881,8 @@ let cast_u8_to_nativeint (src : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_int src_val)
     done
@@ -1890,7 +1890,7 @@ let cast_u8_to_nativeint (src : (int, int8_unsigned_elt) t)
 let cast_i16_to_f16 (src : (int, int16_signed_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1912,8 +1912,8 @@ let cast_i16_to_f16 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -1921,7 +1921,7 @@ let cast_i16_to_f16 (src : (int, int16_signed_elt) t)
 let cast_i16_to_f32 (src : (int, int16_signed_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1943,8 +1943,8 @@ let cast_i16_to_f32 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -1952,7 +1952,7 @@ let cast_i16_to_f32 (src : (int, int16_signed_elt) t)
 let cast_i16_to_f64 (src : (int, int16_signed_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1974,8 +1974,8 @@ let cast_i16_to_f64 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -1983,7 +1983,7 @@ let cast_i16_to_f64 (src : (int, int16_signed_elt) t)
 let cast_i16_to_i8 (src : (int, int16_signed_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2005,8 +2005,8 @@ let cast_i16_to_i8 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -2014,7 +2014,7 @@ let cast_i16_to_i8 (src : (int, int16_signed_elt) t)
 let cast_i16_to_u8 (src : (int, int16_signed_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2036,8 +2036,8 @@ let cast_i16_to_u8 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -2045,7 +2045,7 @@ let cast_i16_to_u8 (src : (int, int16_signed_elt) t)
 let cast_i16_to_u16 (src : (int, int16_signed_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2067,8 +2067,8 @@ let cast_i16_to_u16 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -2076,7 +2076,7 @@ let cast_i16_to_u16 (src : (int, int16_signed_elt) t)
 let cast_i16_to_i32 (src : (int, int16_signed_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2098,8 +2098,8 @@ let cast_i16_to_i32 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_int src_val)
     done
@@ -2107,7 +2107,7 @@ let cast_i16_to_i32 (src : (int, int16_signed_elt) t)
 let cast_i16_to_i64 (src : (int, int16_signed_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2129,8 +2129,8 @@ let cast_i16_to_i64 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_int src_val)
     done
@@ -2138,7 +2138,7 @@ let cast_i16_to_i64 (src : (int, int16_signed_elt) t)
 let cast_i16_to_c32 (src : (int, int16_signed_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2165,8 +2165,8 @@ let cast_i16_to_c32 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -2175,7 +2175,7 @@ let cast_i16_to_c32 (src : (int, int16_signed_elt) t)
 let cast_i16_to_c64 (src : (int, int16_signed_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2202,8 +2202,8 @@ let cast_i16_to_c64 (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -2212,7 +2212,7 @@ let cast_i16_to_c64 (src : (int, int16_signed_elt) t)
 let cast_i16_to_int (src : (int, int16_signed_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2234,8 +2234,8 @@ let cast_i16_to_int (src : (int, int16_signed_elt) t) (dst : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -2243,7 +2243,7 @@ let cast_i16_to_int (src : (int, int16_signed_elt) t) (dst : (int, int_elt) t)
 let cast_i16_to_nativeint (src : (int, int16_signed_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2265,8 +2265,8 @@ let cast_i16_to_nativeint (src : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_int src_val)
     done
@@ -2274,7 +2274,7 @@ let cast_i16_to_nativeint (src : (int, int16_signed_elt) t)
 let cast_u16_to_f16 (src : (int, int16_unsigned_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2296,8 +2296,8 @@ let cast_u16_to_f16 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -2305,7 +2305,7 @@ let cast_u16_to_f16 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_f32 (src : (int, int16_unsigned_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2327,8 +2327,8 @@ let cast_u16_to_f32 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -2336,7 +2336,7 @@ let cast_u16_to_f32 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_f64 (src : (int, int16_unsigned_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2358,8 +2358,8 @@ let cast_u16_to_f64 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -2367,7 +2367,7 @@ let cast_u16_to_f64 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_i8 (src : (int, int16_unsigned_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2389,8 +2389,8 @@ let cast_u16_to_i8 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -2398,7 +2398,7 @@ let cast_u16_to_i8 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_u8 (src : (int, int16_unsigned_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2420,8 +2420,8 @@ let cast_u16_to_u8 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -2429,7 +2429,7 @@ let cast_u16_to_u8 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_i16 (src : (int, int16_unsigned_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2451,8 +2451,8 @@ let cast_u16_to_i16 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -2460,7 +2460,7 @@ let cast_u16_to_i16 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_i32 (src : (int, int16_unsigned_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2482,8 +2482,8 @@ let cast_u16_to_i32 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_int src_val)
     done
@@ -2491,7 +2491,7 @@ let cast_u16_to_i32 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_i64 (src : (int, int16_unsigned_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2513,8 +2513,8 @@ let cast_u16_to_i64 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_int src_val)
     done
@@ -2522,7 +2522,7 @@ let cast_u16_to_i64 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_c32 (src : (int, int16_unsigned_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2549,8 +2549,8 @@ let cast_u16_to_c32 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -2559,7 +2559,7 @@ let cast_u16_to_c32 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_c64 (src : (int, int16_unsigned_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2586,8 +2586,8 @@ let cast_u16_to_c64 (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -2596,7 +2596,7 @@ let cast_u16_to_c64 (src : (int, int16_unsigned_elt) t)
 let cast_u16_to_int (src : (int, int16_unsigned_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2618,8 +2618,8 @@ let cast_u16_to_int (src : (int, int16_unsigned_elt) t) (dst : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -2627,7 +2627,7 @@ let cast_u16_to_int (src : (int, int16_unsigned_elt) t) (dst : (int, int_elt) t)
 let cast_u16_to_nativeint (src : (int, int16_unsigned_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2649,8 +2649,8 @@ let cast_u16_to_nativeint (src : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_int src_val)
     done
@@ -2658,7 +2658,7 @@ let cast_u16_to_nativeint (src : (int, int16_unsigned_elt) t)
 let cast_i32_to_f16 (src : (int32, int32_elt) t) (dst : (float, float16_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2680,8 +2680,8 @@ let cast_i32_to_f16 (src : (int32, int32_elt) t) (dst : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.to_float src_val)
     done
@@ -2689,7 +2689,7 @@ let cast_i32_to_f16 (src : (int32, int32_elt) t) (dst : (float, float16_elt) t)
 let cast_i32_to_f32 (src : (int32, int32_elt) t) (dst : (float, float32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2711,8 +2711,8 @@ let cast_i32_to_f32 (src : (int32, int32_elt) t) (dst : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.to_float src_val)
     done
@@ -2720,7 +2720,7 @@ let cast_i32_to_f32 (src : (int32, int32_elt) t) (dst : (float, float32_elt) t)
 let cast_i32_to_f64 (src : (int32, int32_elt) t) (dst : (float, float64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2742,8 +2742,8 @@ let cast_i32_to_f64 (src : (int32, int32_elt) t) (dst : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.to_float src_val)
     done
@@ -2751,7 +2751,7 @@ let cast_i32_to_f64 (src : (int32, int32_elt) t) (dst : (float, float64_elt) t)
 let cast_i32_to_i8 (src : (int32, int32_elt) t) (dst : (int, int8_signed_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2773,8 +2773,8 @@ let cast_i32_to_i8 (src : (int32, int32_elt) t) (dst : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.to_int src_val)
     done
@@ -2782,7 +2782,7 @@ let cast_i32_to_i8 (src : (int32, int32_elt) t) (dst : (int, int8_signed_elt) t)
 let cast_i32_to_u8 (src : (int32, int32_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2804,8 +2804,8 @@ let cast_i32_to_u8 (src : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.to_int src_val)
     done
@@ -2813,7 +2813,7 @@ let cast_i32_to_u8 (src : (int32, int32_elt) t)
 let cast_i32_to_i16 (src : (int32, int32_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2835,8 +2835,8 @@ let cast_i32_to_i16 (src : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.to_int src_val)
     done
@@ -2844,7 +2844,7 @@ let cast_i32_to_i16 (src : (int32, int32_elt) t)
 let cast_i32_to_u16 (src : (int32, int32_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2866,8 +2866,8 @@ let cast_i32_to_u16 (src : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.to_int src_val)
     done
@@ -2875,7 +2875,7 @@ let cast_i32_to_u16 (src : (int32, int32_elt) t)
 let cast_i32_to_i64 (src : (int32, int32_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2897,8 +2897,8 @@ let cast_i32_to_i64 (src : (int32, int32_elt) t) (dst : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_int32 src_val)
     done
@@ -2906,7 +2906,7 @@ let cast_i32_to_i64 (src : (int32, int32_elt) t) (dst : (int64, int64_elt) t)
 let cast_i32_to_c32 (src : (int32, int32_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2933,8 +2933,8 @@ let cast_i32_to_c32 (src : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = Int32.to_float src_val; im = 0.0 }
@@ -2943,7 +2943,7 @@ let cast_i32_to_c32 (src : (int32, int32_elt) t)
 let cast_i32_to_c64 (src : (int32, int32_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -2970,8 +2970,8 @@ let cast_i32_to_c64 (src : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = Int32.to_float src_val; im = 0.0 }
@@ -2980,7 +2980,7 @@ let cast_i32_to_c64 (src : (int32, int32_elt) t)
 let cast_i32_to_int (src : (int32, int32_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3002,8 +3002,8 @@ let cast_i32_to_int (src : (int32, int32_elt) t) (dst : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.to_int src_val)
     done
@@ -3011,7 +3011,7 @@ let cast_i32_to_int (src : (int32, int32_elt) t) (dst : (int, int_elt) t)
 let cast_i32_to_nativeint (src : (int32, int32_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3033,8 +3033,8 @@ let cast_i32_to_nativeint (src : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_int32 src_val)
     done
@@ -3042,7 +3042,7 @@ let cast_i32_to_nativeint (src : (int32, int32_elt) t)
 let cast_i64_to_f16 (src : (int64, int64_elt) t) (dst : (float, float16_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3064,8 +3064,8 @@ let cast_i64_to_f16 (src : (int64, int64_elt) t) (dst : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_float src_val)
     done
@@ -3073,7 +3073,7 @@ let cast_i64_to_f16 (src : (int64, int64_elt) t) (dst : (float, float16_elt) t)
 let cast_i64_to_f32 (src : (int64, int64_elt) t) (dst : (float, float32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3095,8 +3095,8 @@ let cast_i64_to_f32 (src : (int64, int64_elt) t) (dst : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_float src_val)
     done
@@ -3104,7 +3104,7 @@ let cast_i64_to_f32 (src : (int64, int64_elt) t) (dst : (float, float32_elt) t)
 let cast_i64_to_f64 (src : (int64, int64_elt) t) (dst : (float, float64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3126,8 +3126,8 @@ let cast_i64_to_f64 (src : (int64, int64_elt) t) (dst : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_float src_val)
     done
@@ -3135,7 +3135,7 @@ let cast_i64_to_f64 (src : (int64, int64_elt) t) (dst : (float, float64_elt) t)
 let cast_i64_to_i8 (src : (int64, int64_elt) t) (dst : (int, int8_signed_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3157,8 +3157,8 @@ let cast_i64_to_i8 (src : (int64, int64_elt) t) (dst : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_int src_val)
     done
@@ -3166,7 +3166,7 @@ let cast_i64_to_i8 (src : (int64, int64_elt) t) (dst : (int, int8_signed_elt) t)
 let cast_i64_to_u8 (src : (int64, int64_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3188,8 +3188,8 @@ let cast_i64_to_u8 (src : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_int src_val)
     done
@@ -3197,7 +3197,7 @@ let cast_i64_to_u8 (src : (int64, int64_elt) t)
 let cast_i64_to_i16 (src : (int64, int64_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3219,8 +3219,8 @@ let cast_i64_to_i16 (src : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_int src_val)
     done
@@ -3228,7 +3228,7 @@ let cast_i64_to_i16 (src : (int64, int64_elt) t)
 let cast_i64_to_u16 (src : (int64, int64_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3250,8 +3250,8 @@ let cast_i64_to_u16 (src : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_int src_val)
     done
@@ -3259,7 +3259,7 @@ let cast_i64_to_u16 (src : (int64, int64_elt) t)
 let cast_i64_to_i32 (src : (int64, int64_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3281,8 +3281,8 @@ let cast_i64_to_i32 (src : (int64, int64_elt) t) (dst : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_int32 src_val)
     done
@@ -3290,7 +3290,7 @@ let cast_i64_to_i32 (src : (int64, int64_elt) t) (dst : (int32, int32_elt) t)
 let cast_i64_to_c32 (src : (int64, int64_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3317,8 +3317,8 @@ let cast_i64_to_c32 (src : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = Int64.to_float src_val; im = 0.0 }
@@ -3327,7 +3327,7 @@ let cast_i64_to_c32 (src : (int64, int64_elt) t)
 let cast_i64_to_c64 (src : (int64, int64_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3354,8 +3354,8 @@ let cast_i64_to_c64 (src : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = Int64.to_float src_val; im = 0.0 }
@@ -3364,7 +3364,7 @@ let cast_i64_to_c64 (src : (int64, int64_elt) t)
 let cast_i64_to_int (src : (int64, int64_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3386,8 +3386,8 @@ let cast_i64_to_int (src : (int64, int64_elt) t) (dst : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_int src_val)
     done
@@ -3395,7 +3395,7 @@ let cast_i64_to_int (src : (int64, int64_elt) t) (dst : (int, int_elt) t)
 let cast_i64_to_nativeint (src : (int64, int64_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3417,8 +3417,8 @@ let cast_i64_to_nativeint (src : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.to_nativeint src_val)
     done
@@ -3426,7 +3426,7 @@ let cast_i64_to_nativeint (src : (int64, int64_elt) t)
 let cast_c32_to_f16 (src : (Complex.t, complex32_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3448,8 +3448,8 @@ let cast_c32_to_f16 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val.Complex.re
     done
@@ -3457,7 +3457,7 @@ let cast_c32_to_f16 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_f32 (src : (Complex.t, complex32_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3479,8 +3479,8 @@ let cast_c32_to_f32 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val.Complex.re
     done
@@ -3488,7 +3488,7 @@ let cast_c32_to_f32 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_f64 (src : (Complex.t, complex32_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3510,8 +3510,8 @@ let cast_c32_to_f64 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val.Complex.re
     done
@@ -3519,7 +3519,7 @@ let cast_c32_to_f64 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_i8 (src : (Complex.t, complex32_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3541,8 +3541,8 @@ let cast_c32_to_i8 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -3550,7 +3550,7 @@ let cast_c32_to_i8 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_u8 (src : (Complex.t, complex32_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3572,8 +3572,8 @@ let cast_c32_to_u8 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -3581,7 +3581,7 @@ let cast_c32_to_u8 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_i16 (src : (Complex.t, complex32_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3603,8 +3603,8 @@ let cast_c32_to_i16 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -3612,7 +3612,7 @@ let cast_c32_to_i16 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_u16 (src : (Complex.t, complex32_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3634,8 +3634,8 @@ let cast_c32_to_u16 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -3643,7 +3643,7 @@ let cast_c32_to_u16 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_i32 (src : (Complex.t, complex32_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3665,8 +3665,8 @@ let cast_c32_to_i32 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_float src_val.Complex.re)
     done
@@ -3674,7 +3674,7 @@ let cast_c32_to_i32 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_i64 (src : (Complex.t, complex32_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3696,8 +3696,8 @@ let cast_c32_to_i64 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_float src_val.Complex.re)
     done
@@ -3705,7 +3705,7 @@ let cast_c32_to_i64 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_c64 (src : (Complex.t, complex32_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3727,8 +3727,8 @@ let cast_c32_to_c64 (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -3736,7 +3736,7 @@ let cast_c32_to_c64 (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_int (src : (Complex.t, complex32_elt) t)
     (dst : (int, int_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3758,8 +3758,8 @@ let cast_c32_to_int (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -3767,7 +3767,7 @@ let cast_c32_to_int (src : (Complex.t, complex32_elt) t)
 let cast_c32_to_nativeint (src : (Complex.t, complex32_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3789,8 +3789,8 @@ let cast_c32_to_nativeint (src : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_float src_val.Complex.re)
     done
@@ -3798,7 +3798,7 @@ let cast_c32_to_nativeint (src : (Complex.t, complex32_elt) t)
 let cast_c64_to_f16 (src : (Complex.t, complex64_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3820,8 +3820,8 @@ let cast_c64_to_f16 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val.Complex.re
     done
@@ -3829,7 +3829,7 @@ let cast_c64_to_f16 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_f32 (src : (Complex.t, complex64_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3851,8 +3851,8 @@ let cast_c64_to_f32 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val.Complex.re
     done
@@ -3860,7 +3860,7 @@ let cast_c64_to_f32 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_f64 (src : (Complex.t, complex64_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3882,8 +3882,8 @@ let cast_c64_to_f64 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val.Complex.re
     done
@@ -3891,7 +3891,7 @@ let cast_c64_to_f64 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_i8 (src : (Complex.t, complex64_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3913,8 +3913,8 @@ let cast_c64_to_i8 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -3922,7 +3922,7 @@ let cast_c64_to_i8 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_u8 (src : (Complex.t, complex64_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3944,8 +3944,8 @@ let cast_c64_to_u8 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -3953,7 +3953,7 @@ let cast_c64_to_u8 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_i16 (src : (Complex.t, complex64_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -3975,8 +3975,8 @@ let cast_c64_to_i16 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -3984,7 +3984,7 @@ let cast_c64_to_i16 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_u16 (src : (Complex.t, complex64_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4006,8 +4006,8 @@ let cast_c64_to_u16 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -4015,7 +4015,7 @@ let cast_c64_to_u16 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_i32 (src : (Complex.t, complex64_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4037,8 +4037,8 @@ let cast_c64_to_i32 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_float src_val.Complex.re)
     done
@@ -4046,7 +4046,7 @@ let cast_c64_to_i32 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_i64 (src : (Complex.t, complex64_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4068,8 +4068,8 @@ let cast_c64_to_i64 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_float src_val.Complex.re)
     done
@@ -4077,7 +4077,7 @@ let cast_c64_to_i64 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_c32 (src : (Complex.t, complex64_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4099,8 +4099,8 @@ let cast_c64_to_c32 (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -4108,7 +4108,7 @@ let cast_c64_to_c32 (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_int (src : (Complex.t, complex64_elt) t)
     (dst : (int, int_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4130,8 +4130,8 @@ let cast_c64_to_int (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (int_of_float src_val.Complex.re)
     done
@@ -4139,7 +4139,7 @@ let cast_c64_to_int (src : (Complex.t, complex64_elt) t)
 let cast_c64_to_nativeint (src : (Complex.t, complex64_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4161,8 +4161,8 @@ let cast_c64_to_nativeint (src : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_float src_val.Complex.re)
     done
@@ -4170,7 +4170,7 @@ let cast_c64_to_nativeint (src : (Complex.t, complex64_elt) t)
 let cast_int_to_f16 (src : (int, int_elt) t) (dst : (float, float16_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4192,8 +4192,8 @@ let cast_int_to_f16 (src : (int, int_elt) t) (dst : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -4201,7 +4201,7 @@ let cast_int_to_f16 (src : (int, int_elt) t) (dst : (float, float16_elt) t)
 let cast_int_to_f32 (src : (int, int_elt) t) (dst : (float, float32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4223,8 +4223,8 @@ let cast_int_to_f32 (src : (int, int_elt) t) (dst : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -4232,7 +4232,7 @@ let cast_int_to_f32 (src : (int, int_elt) t) (dst : (float, float32_elt) t)
 let cast_int_to_f64 (src : (int, int_elt) t) (dst : (float, float64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4254,8 +4254,8 @@ let cast_int_to_f64 (src : (int, int_elt) t) (dst : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (float_of_int src_val)
     done
@@ -4263,7 +4263,7 @@ let cast_int_to_f64 (src : (int, int_elt) t) (dst : (float, float64_elt) t)
 let cast_int_to_i8 (src : (int, int_elt) t) (dst : (int, int8_signed_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4285,8 +4285,8 @@ let cast_int_to_i8 (src : (int, int_elt) t) (dst : (int, int8_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -4294,7 +4294,7 @@ let cast_int_to_i8 (src : (int, int_elt) t) (dst : (int, int8_signed_elt) t)
 let cast_int_to_u8 (src : (int, int_elt) t) (dst : (int, int8_unsigned_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4316,8 +4316,8 @@ let cast_int_to_u8 (src : (int, int_elt) t) (dst : (int, int8_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -4325,7 +4325,7 @@ let cast_int_to_u8 (src : (int, int_elt) t) (dst : (int, int8_unsigned_elt) t)
 let cast_int_to_i16 (src : (int, int_elt) t) (dst : (int, int16_signed_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4347,8 +4347,8 @@ let cast_int_to_i16 (src : (int, int_elt) t) (dst : (int, int16_signed_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -4356,7 +4356,7 @@ let cast_int_to_i16 (src : (int, int_elt) t) (dst : (int, int16_signed_elt) t)
 let cast_int_to_u16 (src : (int, int_elt) t) (dst : (int, int16_unsigned_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4378,8 +4378,8 @@ let cast_int_to_u16 (src : (int, int_elt) t) (dst : (int, int16_unsigned_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k src_val
     done
@@ -4387,7 +4387,7 @@ let cast_int_to_u16 (src : (int, int_elt) t) (dst : (int, int16_unsigned_elt) t)
 let cast_int_to_i32 (src : (int, int_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4409,8 +4409,8 @@ let cast_int_to_i32 (src : (int, int_elt) t) (dst : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int32.of_int src_val)
     done
@@ -4418,7 +4418,7 @@ let cast_int_to_i32 (src : (int, int_elt) t) (dst : (int32, int32_elt) t)
 let cast_int_to_i64 (src : (int, int_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4440,8 +4440,8 @@ let cast_int_to_i64 (src : (int, int_elt) t) (dst : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_int src_val)
     done
@@ -4449,7 +4449,7 @@ let cast_int_to_i64 (src : (int, int_elt) t) (dst : (int64, int64_elt) t)
 let cast_int_to_c32 (src : (int, int_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4476,8 +4476,8 @@ let cast_int_to_c32 (src : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -4486,7 +4486,7 @@ let cast_int_to_c32 (src : (int, int_elt) t)
 let cast_int_to_c64 (src : (int, int_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4513,8 +4513,8 @@ let cast_int_to_c64 (src : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = float_of_int src_val; im = 0.0 }
@@ -4523,7 +4523,7 @@ let cast_int_to_c64 (src : (int, int_elt) t)
 let cast_int_to_nativeint (src : (int, int_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4545,8 +4545,8 @@ let cast_int_to_nativeint (src : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.of_int src_val)
     done
@@ -4554,7 +4554,7 @@ let cast_int_to_nativeint (src : (int, int_elt) t)
 let cast_nativeint_to_f16 (src : (nativeint, nativeint_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4576,8 +4576,8 @@ let cast_nativeint_to_f16 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.to_float src_val)
     done
@@ -4585,7 +4585,7 @@ let cast_nativeint_to_f16 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_f32 (src : (nativeint, nativeint_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4607,8 +4607,8 @@ let cast_nativeint_to_f32 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.to_float src_val)
     done
@@ -4616,7 +4616,7 @@ let cast_nativeint_to_f32 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_f64 (src : (nativeint, nativeint_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4638,8 +4638,8 @@ let cast_nativeint_to_f64 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.to_float src_val)
     done
@@ -4647,7 +4647,7 @@ let cast_nativeint_to_f64 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_i8 (src : (nativeint, nativeint_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4669,8 +4669,8 @@ let cast_nativeint_to_i8 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.to_int src_val)
     done
@@ -4678,7 +4678,7 @@ let cast_nativeint_to_i8 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_u8 (src : (nativeint, nativeint_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4700,8 +4700,8 @@ let cast_nativeint_to_u8 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.to_int src_val)
     done
@@ -4709,7 +4709,7 @@ let cast_nativeint_to_u8 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_i16 (src : (nativeint, nativeint_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4731,8 +4731,8 @@ let cast_nativeint_to_i16 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.to_int src_val)
     done
@@ -4740,7 +4740,7 @@ let cast_nativeint_to_i16 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_u16 (src : (nativeint, nativeint_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4762,8 +4762,8 @@ let cast_nativeint_to_u16 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.to_int src_val)
     done
@@ -4771,7 +4771,7 @@ let cast_nativeint_to_u16 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_i32 (src : (nativeint, nativeint_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4793,8 +4793,8 @@ let cast_nativeint_to_i32 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.to_int32 src_val)
     done
@@ -4802,7 +4802,7 @@ let cast_nativeint_to_i32 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_i64 (src : (nativeint, nativeint_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4824,8 +4824,8 @@ let cast_nativeint_to_i64 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Int64.of_nativeint src_val)
     done
@@ -4833,7 +4833,7 @@ let cast_nativeint_to_i64 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_c32 (src : (nativeint, nativeint_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4860,8 +4860,8 @@ let cast_nativeint_to_c32 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = Nativeint.to_float src_val; im = 0.0 }
@@ -4870,7 +4870,7 @@ let cast_nativeint_to_c32 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_c64 (src : (nativeint, nativeint_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4897,8 +4897,8 @@ let cast_nativeint_to_c64 (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k
         { Complex.re = Nativeint.to_float src_val; im = 0.0 }
@@ -4907,7 +4907,7 @@ let cast_nativeint_to_c64 (src : (nativeint, nativeint_elt) t)
 let cast_nativeint_to_int (src : (nativeint, nativeint_elt) t)
     (dst : (int, int_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
-  if is_contiguous src then (
+  if is_c_contiguous src then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -4929,8 +4929,8 @@ let cast_nativeint_to_int (src : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape dst) in
-      let src_lin = index_to_offset md_index (strides src) in
+      let md_index = Shape.unravel_index k (shape dst) in
+      let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
       Array1.unsafe_set dst_buf k (Nativeint.to_int src_val)
     done

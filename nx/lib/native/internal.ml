@@ -19,12 +19,12 @@ let shape { view; _ } = View.shape view
 let strides { view; _ } = View.strides view
 let stride axis { view; _ } = View.stride axis view
 let offset { view; _ } = View.offset view
-let size { view; _ } = View.size view (* Delegates to View.numel (view t) *)
+let size { view; _ } = View.numel view (* Delegates to View.numel (view t) *)
 let numel { view; _ } = View.numel view (* Explicit numel accessor *)
-let dims { view; _ } = View.dims view (* Alias for shape *)
+let dims { view; _ } = View.shape view (* Alias for shape *)
 let dim axis { view; _ } = View.dim axis view
 let ndim { view; _ } = View.ndim view
-let is_contiguous { view; _ } = View.is_contiguous view
+let is_c_contiguous { view; _ } = View.is_c_contiguous view
 
 (* Low-level helper to create a Bigarray.Array1.t *)
 let create_buffer_unsafe (type a b) (dt : (a, b) Dtype.t)
@@ -76,7 +76,7 @@ let copy : type a b. (a, b) t -> (a, b) t =
 
   if total_elements = 0 then new_t (* Handle zero-element tensor *)
   else if
-    is_contiguous t_src
+    is_c_contiguous t_src
     && View.offset src_view = 0
     && Array1.dim (buffer t_src) = total_elements
   then (
@@ -100,12 +100,12 @@ let copy : type a b. (a, b) t -> (a, b) t =
         if dim = n_dims then
           let src_physical_idx =
             View.offset src_view
-            + View.index_to_offset current_md_idx (View.strides src_view)
+            + Shape.ravel_index current_md_idx (View.strides src_view)
           in
           (* For new_t, its view is C-contiguous and offset 0 on its own
              buffer *)
           let dst_physical_idx =
-            View.index_to_offset current_md_idx (View.strides new_view)
+            Shape.ravel_index current_md_idx (View.strides new_view)
           in
           new_buffer.{dst_physical_idx} <- (buffer t_src).{src_physical_idx}
         else
@@ -124,7 +124,7 @@ let fill : type a b. a -> (a, b) t -> unit =
   let total_elements = View.numel fill_view in
 
   if total_elements = 0 then () (* No elements to fill *)
-  else if is_contiguous t_fill && View.offset fill_view = 0 then
+  else if is_c_contiguous t_fill && View.offset fill_view = 0 then
     (* If the view is fully C-contiguous on its buffer, use fast fill *)
     Array1.fill fill_buffer value
   else
@@ -139,7 +139,7 @@ let fill : type a b. a -> (a, b) t -> unit =
         if dim = n_dims then
           let physical_idx =
             View.offset fill_view
-            + View.index_to_offset current_md_idx (View.strides fill_view)
+            + Shape.ravel_index current_md_idx (View.strides fill_view)
           in
           fill_buffer.{physical_idx} <- value
         else
@@ -157,7 +157,7 @@ let blit : type a b. (a, b) t -> (a, b) t -> unit =
 
   if View.ndim src_view <> View.ndim dst_view then
     invalid_arg "blit: tensors must have the same number of dimensions";
-  if not (View.all_eq (View.shape src_view) (View.shape dst_view)) then
+  if not (Shape.equal (View.shape src_view) (View.shape dst_view)) then
     invalid_arg "blit: tensors must have the same shape";
 
   let total_elements = View.numel src_view in
@@ -188,11 +188,11 @@ let blit : type a b. (a, b) t -> (a, b) t -> unit =
         if dim = n_dims then (
           let src_physical_offset =
             View.offset src_view
-            + View.index_to_offset current_md_idx (View.strides src_view)
+            + Shape.ravel_index current_md_idx (View.strides src_view)
           in
           let dst_physical_offset =
             View.offset dst_view
-            + View.index_to_offset current_md_idx (View.strides dst_view)
+            + Shape.ravel_index current_md_idx (View.strides dst_view)
           in
           (* Debug output *)
           if false then

@@ -1,5 +1,6 @@
 open Bigarray
 open Nx_core.Dtype
+module Shape = Nx_core.Shape
 module View = Nx_core.View
 open Internal
 
@@ -26,8 +27,8 @@ let kernel_where_float16 (cond : (int, uint8_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -68,17 +69,15 @@ let kernel_where_float16 (cond : (int, uint8_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -109,8 +108,8 @@ let kernel_where_float32 (cond : (int, uint8_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -151,17 +150,15 @@ let kernel_where_float32 (cond : (int, uint8_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -192,8 +189,8 @@ let kernel_where_float64 (cond : (int, uint8_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -234,17 +231,15 @@ let kernel_where_float64 (cond : (int, uint8_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -274,8 +269,8 @@ let kernel_where_int8 (cond : (int, uint8_elt) t) (x : (int, int8_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -316,17 +311,15 @@ let kernel_where_int8 (cond : (int, uint8_elt) t) (x : (int, int8_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -356,8 +349,8 @@ let kernel_where_uint8 (cond : (int, uint8_elt) t) (x : (int, uint8_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -398,17 +391,15 @@ let kernel_where_uint8 (cond : (int, uint8_elt) t) (x : (int, uint8_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -438,8 +429,8 @@ let kernel_where_int16 (cond : (int, uint8_elt) t) (x : (int, int16_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -480,17 +471,15 @@ let kernel_where_int16 (cond : (int, uint8_elt) t) (x : (int, int16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -520,8 +509,8 @@ let kernel_where_uint16 (cond : (int, uint8_elt) t) (x : (int, uint16_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -562,17 +551,15 @@ let kernel_where_uint16 (cond : (int, uint8_elt) t) (x : (int, uint16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -602,8 +589,8 @@ let kernel_where_int32 (cond : (int, uint8_elt) t) (x : (int32, int32_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -644,17 +631,15 @@ let kernel_where_int32 (cond : (int, uint8_elt) t) (x : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -684,8 +669,8 @@ let kernel_where_int64 (cond : (int, uint8_elt) t) (x : (int64, int64_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -726,17 +711,15 @@ let kernel_where_int64 (cond : (int, uint8_elt) t) (x : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -766,8 +749,8 @@ let kernel_where_int (cond : (int, uint8_elt) t) (x : (int, int_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -808,17 +791,15 @@ let kernel_where_int (cond : (int, uint8_elt) t) (x : (int, int_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -849,8 +830,8 @@ let kernel_where_nativeint (cond : (int, uint8_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -891,17 +872,15 @@ let kernel_where_nativeint (cond : (int, uint8_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -932,8 +911,8 @@ let kernel_where_complex32 (cond : (int, uint8_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -974,17 +953,15 @@ let kernel_where_complex32 (cond : (int, uint8_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
@@ -1015,8 +992,8 @@ let kernel_where_complex64 (cond : (int, uint8_elt) t)
   let y_off = offset y in
 
   let can_use_direct_indexing =
-    View.all_eq out_s cond_s && View.all_eq out_s x_s && View.all_eq out_s y_s
-    && is_contiguous cond && is_contiguous x && is_contiguous y
+    Shape.equal out_s cond_s && Shape.equal out_s x_s && Shape.equal out_s y_s
+    && is_c_contiguous cond && is_c_contiguous x && is_c_contiguous y
   in
 
   if can_use_direct_indexing then (
@@ -1057,17 +1034,15 @@ let kernel_where_complex64 (cond : (int, uint8_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let out_multi_idx = View.multi_index_from_linear k out_s in
+      let out_multi_idx = Shape.unravel_index k out_s in
 
-      let cond_multi_idx = View.compute_broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = View.compute_broadcast_index out_multi_idx x_s in
-      let y_multi_idx = View.compute_broadcast_index out_multi_idx y_s in
+      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
+      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
+      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
 
-      let cond_phys_idx =
-        View.index_to_offset cond_multi_idx cond_st + cond_off
-      in
-      let x_phys_idx = View.index_to_offset x_multi_idx x_st + x_off in
-      let y_phys_idx = View.index_to_offset y_multi_idx y_st + y_off in
+      let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
+      let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
+      let y_phys_idx = Shape.ravel_index y_multi_idx y_st + y_off in
 
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in

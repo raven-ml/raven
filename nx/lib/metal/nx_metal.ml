@@ -38,7 +38,7 @@ let op_contiguous t =
   let expected_bytes = view_size * Internal.sizeof_dtype t.dtype in
   let actual_bytes = t.buffer.size_bytes in
 
-  if View.is_contiguous t.view && actual_bytes >= expected_bytes then t
+  if View.is_c_contiguous t.view && actual_bytes >= expected_bytes then t
   else Ops_movement.make_contiguous t.context t
 
 (* Buffer operations *)

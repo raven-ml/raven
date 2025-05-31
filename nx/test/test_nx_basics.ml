@@ -420,19 +420,19 @@ let test_strides_after_slice () =
   let strides = Nx.strides sliced in
   check int "slice stride" 4 strides.(0)
 
-let test_is_contiguous_basic () =
+let test_is_c_contiguous_basic () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  check bool "fresh array is contiguous" true (Nx.is_contiguous t)
+  check bool "fresh array is contiguous" true (Nx.is_c_contiguous t)
 
-let test_is_contiguous_after_transpose () =
+let test_is_c_contiguous_after_transpose () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let transposed = Nx.transpose t in
-  check bool "transposed not contiguous" false (Nx.is_contiguous transposed)
+  check bool "transposed not contiguous" false (Nx.is_c_contiguous transposed)
 
-let test_is_contiguous_after_slice () =
+let test_is_c_contiguous_after_slice () =
   let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
   let sliced = Nx.slice_ranges ~steps:[ 2 ] [ 0 ] [ 10 ] t in
-  check bool "slice step=2 is contiguous" true (Nx.is_contiguous sliced)
+  check bool "slice step=2 is contiguous" true (Nx.is_c_contiguous sliced)
 
 let test_offset_after_multiple_slices () =
   let t = Nx.create Nx.float32 [| 5; 5 |] (Array.init 25 float_of_int) in
@@ -638,9 +638,9 @@ let memory_and_views =
     ("data buffer view", `Quick, test_data_buffer_view);
     ("strides after transpose", `Quick, test_strides_after_transpose);
     ("strides after slice", `Quick, test_strides_after_slice);
-    ("is contiguous basic", `Quick, test_is_contiguous_basic);
-    ("is contiguous after transpose", `Quick, test_is_contiguous_after_transpose);
-    ("is contiguous after slice", `Quick, test_is_contiguous_after_slice);
+    ("is contiguous basic", `Quick, test_is_c_contiguous_basic);
+    ("is contiguous after transpose", `Quick, test_is_c_contiguous_after_transpose);
+    ("is contiguous after slice", `Quick, test_is_c_contiguous_after_slice);
     ("offset after multiple slices", `Quick, test_offset_after_multiple_slices);
   ]
 

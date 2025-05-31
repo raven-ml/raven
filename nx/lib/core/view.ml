@@ -13,12 +13,6 @@ type t = {
 (* ───── helpers ───── *)
 
 let prod arr = Array.fold_left ( * ) 1 arr
-let all_eq a b = Array.length a = Array.length b && Array.for_all2 ( = ) a b
-
-let pp_int_array arr =
-  "["
-  ^ (Array.to_list arr |> List.map string_of_int |> String.concat "; ")
-  ^ "]"
 
 (* compute C-contiguous strides *)
 let compute_strides shape =
@@ -37,92 +31,6 @@ let compute_strides shape =
 let canonicalize_strides shape strides =
   Array.mapi (fun i s -> if shape.(i) = 1 then 0 else s) strides
 
-(* linearize a multi-dimensional index *)
-let index_to_offset md_index strides_arr =
-  if Array.length md_index <> Array.length strides_arr then
-    invalid_arg
-      ("index_to_offset: rank mismatch. Index dim "
-      ^ string_of_int (Array.length md_index)
-      ^ ", Strides dim "
-      ^ string_of_int (Array.length strides_arr));
-  let o = ref 0 in
-  Array.iteri (fun i v -> o := !o + (v * strides_arr.(i))) md_index;
-  !o
-
-(* inverse of [index_to_offset] for C-contiguous shapes *)
-let offset_to_index_contig k shape_arr =
-  let n = Array.length shape_arr in
-  if n = 0 then
-    if k = 0 then [||]
-    else invalid_arg "offset_to_index_contig: k out of bounds for scalar"
-  else if Array.exists (( = ) 0) shape_arr then
-    (* zero-size tensor; only k=0 is allowed *)
-    if k = 0 then Array.make n 0
-    else
-      invalid_arg
-        ("offset_to_index_contig: k (" ^ string_of_int k
-       ^ ") > 0 for zero-size shape " ^ pp_int_array shape_arr)
-  else
-    let total_elements = prod shape_arr in
-    if k < 0 || k >= total_elements then
-      invalid_arg
-        ("offset_to_index_contig: k (" ^ string_of_int k
-       ^ ") out of bounds for C-contiguous shape " ^ pp_int_array shape_arr
-       ^ " (size "
-        ^ string_of_int total_elements
-        ^ ")");
-
-    let idx = Array.make n 0 in
-    let temp_k = ref k in
-    for i = n - 1 downto 1 do
-      let dim_size = shape_arr.(i) in
-      idx.(i) <- !temp_k mod dim_size;
-      temp_k := !temp_k / dim_size
-    done;
-    idx.(0) <- !temp_k;
-
-    (* sanity check for the leftmost index *)
-    if idx.(0) >= shape_arr.(0) then
-      invalid_arg
-        ("offset_to_index_contig: calculated idx.(0) ("
-        ^ string_of_int idx.(0)
-        ^ ") is out of bounds for shape_arr.(0) ("
-        ^ string_of_int shape_arr.(0)
-        ^ "). This indicates an issue with k or logic.");
-    idx
-
-(* infer the dimension corresponding to [-1] in [new_shape_spec] *)
-let resolve_neg_one_shape current_shape new_shape_spec =
-  let new_shape_spec_l = Array.to_list new_shape_spec in
-  let current_numel = prod current_shape in
-  let neg_one_count =
-    new_shape_spec_l |> List.filter (( = ) (-1)) |> List.length
-  in
-  if neg_one_count > 1 then
-    invalid_arg "reshape: can only specify one unknown dimension"
-  else if neg_one_count = 0 then new_shape_spec
-  else
-    let specified_numel =
-      List.filter (( <> ) (-1)) new_shape_spec_l |> Array.of_list |> prod
-    in
-    (* when shape_spec includes zero dimensions *)
-    if specified_numel = 0 then
-      if current_numel = 0 then
-        Array.map (fun x -> if x = -1 then 0 else x) new_shape_spec
-      else
-        invalid_arg
-          "Reshape cannot infer -1 when other dimensions multiply to 0 but \
-           total size is non-zero"
-    else if current_numel mod specified_numel <> 0 then
-      invalid_arg
-        (Printf.sprintf
-           "Reshape size mismatch: Cannot reshape %d elements into shape with \
-            specified elements %d"
-           current_numel specified_numel)
-    else
-      let inferred_dim = current_numel / specified_numel in
-      Array.map (fun s -> if s = -1 then inferred_dim else s) new_shape_spec
-
 (* ───── accessors ───── *)
 
 let shape v = v.shape
@@ -136,9 +44,7 @@ let stride axis v =
 
 let offset v = v.offset
 let mask v = v.mask
-let layout v = v.layout
-let is_contiguous v = v.layout = C_contiguous
-let dims v = v.shape
+let is_c_contiguous v = v.layout = C_contiguous
 
 let dim axis v =
   if axis < 0 then invalid_arg "axis must be non-negative";
@@ -152,10 +58,8 @@ let numel v =
   let n = Array.length v.shape in
   if n = 0 then 1 else Array.fold_left ( * ) 1 v.shape
 
-let size v = numel v
-
 (* allocate a new view for [shape_arr] *)
-let create ?(offset = 0) ?mask ?strides shape_arr =
+let create ?(offset = 0) ?strides ?mask shape_arr =
   let is_zero_size = Array.exists (( = ) 0) shape_arr in
   let current_shape =
     if is_zero_size then Array.map (fun s -> max s 0) shape_arr else shape_arr
@@ -178,7 +82,7 @@ let create ?(offset = 0) ?mask ?strides shape_arr =
   let new_layout =
     if
       current_offset = 0 && current_mask = None
-      && all_eq current_strides (compute_strides current_shape)
+      && current_strides = compute_strides current_shape
     then C_contiguous
     else Strided
   in
@@ -192,9 +96,9 @@ let create ?(offset = 0) ?mask ?strides shape_arr =
 
 (* ───── offset & validation ───── *)
 
-let offset_of_indices view indices =
+let linear_index view indices =
   if Array.length indices <> Array.length view.shape then
-    invalid_arg "offset_of_indices: Rank mismatch";
+    invalid_arg "linear_index: Rank mismatch";
   let physical_offset = ref view.offset in
   Array.iteri
     (fun i idx ->
@@ -202,7 +106,6 @@ let offset_of_indices view indices =
     indices;
   !physical_offset
 
-(* Check if an index is valid according to the mask *)
 let is_valid view indices =
   match view.mask with
   | None -> true
@@ -270,72 +173,6 @@ let permute view axes =
   in
   create ~offset:view.offset ?mask:new_mask ~strides:new_strides new_shape
 
-let can_merge_dims view start_idx count =
-  (* Check if 'count' consecutive dimensions starting at start_idx can be
-     merged *)
-  if count <= 1 then true
-  else
-    let rec check i =
-      if i >= start_idx + count - 1 then true
-      else
-        let expected_stride = view.shape.(i + 1) * view.strides.(i + 1) in
-        view.strides.(i) = expected_stride && check (i + 1)
-    in
-    check start_idx
-
-let can_split_dim view dim_idx new_shape_left new_shape_right =
-  (* Check if dimension at dim_idx can be split into (new_shape_left,
-     new_shape_right) *)
-  let original_size = view.shape.(dim_idx) in
-  let original_stride = view.strides.(dim_idx) in
-  original_size = new_shape_left * new_shape_right
-  && original_stride = new_shape_right (* Assuming row-major split *)
-
-let find_reshape_mapping old_shape new_shape =
-  (* Find how old dimensions map to new dimensions *)
-  let old_numel = prod old_shape in
-  let new_numel = prod new_shape in
-  if old_numel <> new_numel then None
-  else
-    (* Try to find a valid dimension mapping *)
-    let rec try_mapping old_idx new_idx old_used new_used =
-      if old_idx >= Array.length old_shape && new_idx >= Array.length new_shape
-      then Some (old_used, new_used)
-      else if
-        old_idx >= Array.length old_shape || new_idx >= Array.length new_shape
-      then None
-      else
-        let old_size =
-          if old_idx < Array.length old_shape then old_shape.(old_idx) else 1
-        in
-        let new_size =
-          if new_idx < Array.length new_shape then new_shape.(new_idx) else 1
-        in
-
-        if old_size = new_size then
-          (* Dimensions match, map 1:1 *)
-          try_mapping (old_idx + 1) (new_idx + 1) (old_used @ [ old_idx ])
-            (new_used @ [ new_idx ])
-        else if old_size > new_size && old_size mod new_size = 0 then
-          (* Try splitting old dimension *)
-          None (* Would need more complex logic *)
-        else if new_size > old_size && new_size mod old_size = 0 then
-          (* Try merging old dimensions *)
-          let rec accumulate_dims idx acc =
-            if acc = new_size then Some idx
-            else if idx >= Array.length old_shape || acc > new_size then None
-            else accumulate_dims (idx + 1) (acc * old_shape.(idx))
-          in
-          match accumulate_dims old_idx 1 with
-          | Some end_idx ->
-              try_mapping end_idx (new_idx + 1)
-                (old_used @ List.init (end_idx - old_idx) (fun i -> old_idx + i))
-                (new_used @ [ new_idx ])
-          | None -> None
-        else None
-    in
-    try_mapping 0 0 [] []
-
 let reshape view new_shape =
   (* Early return if shapes are identical *)
   if view.shape = new_shape then view
@@ -347,8 +184,8 @@ let reshape view new_shape =
     if current_numel <> new_numel && current_numel <> 0 && new_numel <> 0 then
       invalid_arg
         (Printf.sprintf "reshape: cannot reshape array of size %d into shape %s"
-           current_numel (pp_int_array new_shape))
-      (* Handle zero-size tensors *)
+           current_numel
+           (Shape.to_string new_shape)) (* Handle zero-size tensors *)
     else if
       Array.exists (( = ) 0) view.shape || Array.exists (( = ) 0) new_shape
     then create ~offset:0 new_shape
@@ -502,9 +339,10 @@ let reshape view new_shape =
                   - Use transpose/permute operations that preserve striding\n\
                   - Check if the operation sequence can be reordered to avoid \
                   this reshape"
-                 (pp_int_array view.shape) (pp_int_array new_shape)
-                 (pp_int_array view.strides)
-                 (pp_int_array (compute_strides view.shape)))
+                 (Shape.to_string view.shape)
+                 (Shape.to_string new_shape)
+                 (Shape.to_string view.strides)
+                 (Shape.to_string (compute_strides view.shape)))
 
 (* helper used by [pad] and [shrink] *)
 let unsafe_resize view arg new_mask_opt =
@@ -606,61 +444,3 @@ let flip view flip_axes_bools =
           | None -> ()))
     flip_axes_bools;
   create ~offset:!new_offset ?mask:new_mask ~strides:new_strides view.shape
-
-(* ───── broadcasting ───── *)
-
-let broadcast_shapes shape_a shape_b =
-  let rank_a = Array.length shape_a and rank_b = Array.length shape_b in
-  let rank_out = max rank_a rank_b in
-  let out_shape = Array.make rank_out 1 in
-  for i = 0 to rank_out - 1 do
-    let dim_a =
-      if i < rank_out - rank_a then 1 else shape_a.(i - (rank_out - rank_a))
-    in
-    let dim_b =
-      if i < rank_out - rank_b then 1 else shape_b.(i - (rank_out - rank_b))
-    in
-    if dim_a = dim_b then out_shape.(i) <- dim_a
-    else if dim_a = 1 then out_shape.(i) <- dim_b
-    else if dim_b = 1 then out_shape.(i) <- dim_a
-    else
-      invalid_arg
-        (Printf.sprintf
-           "broadcast_shapes: shapes %s and %s cannot be broadcast together"
-           (pp_int_array shape_a) (pp_int_array shape_b))
-  done;
-  out_shape
-
-let compute_broadcast_index target_multi_idx source_shape =
-  let target_ndim = Array.length target_multi_idx in
-  let source_ndim = Array.length source_shape in
-  let source_multi_idx = Array.make source_ndim 0 in
-  for i = 0 to source_ndim - 1 do
-    let target_idx_pos = target_ndim - source_ndim + i in
-    let source_idx_pos = i in
-    if source_idx_pos < 0 || target_idx_pos < 0 then ()
-    else if source_shape.(source_idx_pos) = 1 then
-      source_multi_idx.(source_idx_pos) <- 0
-    else source_multi_idx.(source_idx_pos) <- target_multi_idx.(target_idx_pos)
-  done;
-  source_multi_idx
-
-let multi_index_from_linear linear_idx shape =
-  let ndim = Array.length shape in
-  let index = Array.make ndim 0 in
-  if ndim = 0 then index
-  else if Array.exists (( = ) 0) shape then index
-  else
-    let current_linear_idx = ref linear_idx in
-    let strides = Array.make ndim 1 in
-    for i = ndim - 2 downto 0 do
-      strides.(i) <- strides.(i + 1) * shape.(i + 1)
-    done;
-
-    for i = 0 to ndim - 1 do
-      if strides.(i) = 0 then index.(i) <- 0
-      else (
-        index.(i) <- !current_linear_idx / strides.(i);
-        current_linear_idx := !current_linear_idx mod strides.(i))
-    done;
-    index

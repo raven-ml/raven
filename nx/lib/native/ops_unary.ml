@@ -1,6 +1,6 @@
 open Bigarray
 open Nx_core.Dtype
-open Nx_core.View
+module Shape = Nx_core.Shape
 open Internal
 
 let complex_sin (z : Complex.t) =
@@ -24,7 +24,7 @@ let complex_exp2 (z : Complex.t) =
 let kernel_neg_float16 (a : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -46,8 +46,8 @@ let kernel_neg_float16 (a : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.neg v)
     done
@@ -55,7 +55,7 @@ let kernel_neg_float16 (a : (float, float16_elt) t)
 let kernel_neg_float32 (a : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -77,8 +77,8 @@ let kernel_neg_float32 (a : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.neg v)
     done
@@ -86,7 +86,7 @@ let kernel_neg_float32 (a : (float, float32_elt) t)
 let kernel_neg_float64 (a : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -108,8 +108,8 @@ let kernel_neg_float64 (a : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.neg v)
     done
@@ -117,7 +117,7 @@ let kernel_neg_float64 (a : (float, float64_elt) t)
 let kernel_neg_int8 (a : (int, int8_elt) t) (out : (int, int8_elt) t) start_idx
     end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -139,8 +139,8 @@ let kernel_neg_int8 (a : (int, int8_elt) t) (out : (int, int8_elt) t) start_idx
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Int.neg v)
     done
@@ -148,7 +148,7 @@ let kernel_neg_int8 (a : (int, int8_elt) t) (out : (int, int8_elt) t) start_idx
 let kernel_neg_uint8 (a : (int, uint8_elt) t) (out : (int, uint8_elt) t)
     start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -170,8 +170,8 @@ let kernel_neg_uint8 (a : (int, uint8_elt) t) (out : (int, uint8_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Int.neg v)
     done
@@ -179,7 +179,7 @@ let kernel_neg_uint8 (a : (int, uint8_elt) t) (out : (int, uint8_elt) t)
 let kernel_neg_int16 (a : (int, int16_elt) t) (out : (int, int16_elt) t)
     start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -201,8 +201,8 @@ let kernel_neg_int16 (a : (int, int16_elt) t) (out : (int, int16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Int.neg v)
     done
@@ -210,7 +210,7 @@ let kernel_neg_int16 (a : (int, int16_elt) t) (out : (int, int16_elt) t)
 let kernel_neg_uint16 (a : (int, uint16_elt) t) (out : (int, uint16_elt) t)
     start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -232,8 +232,8 @@ let kernel_neg_uint16 (a : (int, uint16_elt) t) (out : (int, uint16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Int.neg v)
     done
@@ -241,7 +241,7 @@ let kernel_neg_uint16 (a : (int, uint16_elt) t) (out : (int, uint16_elt) t)
 let kernel_neg_int32 (a : (int32, int32_elt) t) (out : (int32, int32_elt) t)
     start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -263,8 +263,8 @@ let kernel_neg_int32 (a : (int32, int32_elt) t) (out : (int32, int32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Int32.neg v)
     done
@@ -272,7 +272,7 @@ let kernel_neg_int32 (a : (int32, int32_elt) t) (out : (int32, int32_elt) t)
 let kernel_neg_int64 (a : (int64, int64_elt) t) (out : (int64, int64_elt) t)
     start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -294,8 +294,8 @@ let kernel_neg_int64 (a : (int64, int64_elt) t) (out : (int64, int64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Int64.neg v)
     done
@@ -303,7 +303,7 @@ let kernel_neg_int64 (a : (int64, int64_elt) t) (out : (int64, int64_elt) t)
 let kernel_neg_int (a : (int, int_elt) t) (out : (int, int_elt) t) start_idx
     end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -325,8 +325,8 @@ let kernel_neg_int (a : (int, int_elt) t) (out : (int, int_elt) t) start_idx
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Int.neg v)
     done
@@ -334,7 +334,7 @@ let kernel_neg_int (a : (int, int_elt) t) (out : (int, int_elt) t) start_idx
 let kernel_neg_nativeint (a : (nativeint, nativeint_elt) t)
     (out : (nativeint, nativeint_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -356,8 +356,8 @@ let kernel_neg_nativeint (a : (nativeint, nativeint_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Nativeint.neg v)
     done
@@ -365,7 +365,7 @@ let kernel_neg_nativeint (a : (nativeint, nativeint_elt) t)
 let kernel_neg_complex32 (a : (Complex.t, complex32_elt) t)
     (out : (Complex.t, complex32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -387,8 +387,8 @@ let kernel_neg_complex32 (a : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Complex.neg v)
     done
@@ -396,7 +396,7 @@ let kernel_neg_complex32 (a : (Complex.t, complex32_elt) t)
 let kernel_neg_complex64 (a : (Complex.t, complex64_elt) t)
     (out : (Complex.t, complex64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -418,8 +418,8 @@ let kernel_neg_complex64 (a : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Complex.neg v)
     done
@@ -427,7 +427,7 @@ let kernel_neg_complex64 (a : (Complex.t, complex64_elt) t)
 let kernel_sqrt_float16 (a : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -449,8 +449,8 @@ let kernel_sqrt_float16 (a : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.sqrt v)
     done
@@ -458,7 +458,7 @@ let kernel_sqrt_float16 (a : (float, float16_elt) t)
 let kernel_sqrt_float32 (a : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -480,8 +480,8 @@ let kernel_sqrt_float32 (a : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.sqrt v)
     done
@@ -489,7 +489,7 @@ let kernel_sqrt_float32 (a : (float, float32_elt) t)
 let kernel_sqrt_float64 (a : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -511,8 +511,8 @@ let kernel_sqrt_float64 (a : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.sqrt v)
     done
@@ -520,7 +520,7 @@ let kernel_sqrt_float64 (a : (float, float64_elt) t)
 let kernel_sqrt_complex32 (a : (Complex.t, complex32_elt) t)
     (out : (Complex.t, complex32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -542,8 +542,8 @@ let kernel_sqrt_complex32 (a : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Complex.sqrt v)
     done
@@ -551,7 +551,7 @@ let kernel_sqrt_complex32 (a : (Complex.t, complex32_elt) t)
 let kernel_sqrt_complex64 (a : (Complex.t, complex64_elt) t)
     (out : (Complex.t, complex64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -573,8 +573,8 @@ let kernel_sqrt_complex64 (a : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Complex.sqrt v)
     done
@@ -582,7 +582,7 @@ let kernel_sqrt_complex64 (a : (Complex.t, complex64_elt) t)
 let kernel_recip_float16 (a : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -604,8 +604,8 @@ let kernel_recip_float16 (a : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin_offset_in_a_data = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin_offset_in_a_data = Shape.ravel_index md_index (strides a) in
       let v =
         Bigarray.Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
       in
@@ -615,7 +615,7 @@ let kernel_recip_float16 (a : (float, float16_elt) t)
 let kernel_recip_float32 (a : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -637,8 +637,8 @@ let kernel_recip_float32 (a : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin_offset_in_a_data = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin_offset_in_a_data = Shape.ravel_index md_index (strides a) in
       let v =
         Bigarray.Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
       in
@@ -648,7 +648,7 @@ let kernel_recip_float32 (a : (float, float32_elt) t)
 let kernel_recip_float64 (a : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -670,8 +670,8 @@ let kernel_recip_float64 (a : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin_offset_in_a_data = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin_offset_in_a_data = Shape.ravel_index md_index (strides a) in
       let v =
         Bigarray.Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
       in
@@ -681,7 +681,7 @@ let kernel_recip_float64 (a : (float, float64_elt) t)
 let kernel_recip_complex32 (a : (Complex.t, complex32_elt) t)
     (out : (Complex.t, complex32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -703,8 +703,8 @@ let kernel_recip_complex32 (a : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Bigarray.Array1.unsafe_get a_buf (offset a + a_lin) in
       Bigarray.Array1.unsafe_set out_buf k (Complex.inv v)
     done
@@ -712,7 +712,7 @@ let kernel_recip_complex32 (a : (Complex.t, complex32_elt) t)
 let kernel_recip_complex64 (a : (Complex.t, complex64_elt) t)
     (out : (Complex.t, complex64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -734,8 +734,8 @@ let kernel_recip_complex64 (a : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Bigarray.Array1.unsafe_get a_buf (offset a + a_lin) in
       Bigarray.Array1.unsafe_set out_buf k (Complex.inv v)
     done
@@ -743,7 +743,7 @@ let kernel_recip_complex64 (a : (Complex.t, complex64_elt) t)
 let kernel_exp2_float16 (a : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -765,8 +765,8 @@ let kernel_exp2_float16 (a : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.exp2 v)
     done
@@ -774,7 +774,7 @@ let kernel_exp2_float16 (a : (float, float16_elt) t)
 let kernel_exp2_float32 (a : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -796,8 +796,8 @@ let kernel_exp2_float32 (a : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.exp2 v)
     done
@@ -805,7 +805,7 @@ let kernel_exp2_float32 (a : (float, float32_elt) t)
 let kernel_exp2_float64 (a : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -827,8 +827,8 @@ let kernel_exp2_float64 (a : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.exp2 v)
     done
@@ -836,7 +836,7 @@ let kernel_exp2_float64 (a : (float, float64_elt) t)
 let kernel_exp2_complex32 (a : (Complex.t, complex32_elt) t)
     (out : (Complex.t, complex32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -858,8 +858,8 @@ let kernel_exp2_complex32 (a : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (complex_exp2 v)
     done
@@ -867,7 +867,7 @@ let kernel_exp2_complex32 (a : (Complex.t, complex32_elt) t)
 let kernel_exp2_complex64 (a : (Complex.t, complex64_elt) t)
     (out : (Complex.t, complex64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -889,8 +889,8 @@ let kernel_exp2_complex64 (a : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (complex_exp2 v)
     done
@@ -898,7 +898,7 @@ let kernel_exp2_complex64 (a : (Complex.t, complex64_elt) t)
 let kernel_log2_float16 (a : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -920,8 +920,8 @@ let kernel_log2_float16 (a : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.log2 v)
     done
@@ -929,7 +929,7 @@ let kernel_log2_float16 (a : (float, float16_elt) t)
 let kernel_log2_float32 (a : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -951,8 +951,8 @@ let kernel_log2_float32 (a : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.log2 v)
     done
@@ -960,7 +960,7 @@ let kernel_log2_float32 (a : (float, float32_elt) t)
 let kernel_log2_float64 (a : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -982,8 +982,8 @@ let kernel_log2_float64 (a : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.log2 v)
     done
@@ -991,7 +991,7 @@ let kernel_log2_float64 (a : (float, float64_elt) t)
 let kernel_log2_complex32 (a : (Complex.t, complex32_elt) t)
     (out : (Complex.t, complex32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1013,8 +1013,8 @@ let kernel_log2_complex32 (a : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (complex_log2 v)
     done
@@ -1022,7 +1022,7 @@ let kernel_log2_complex32 (a : (Complex.t, complex32_elt) t)
 let kernel_log2_complex64 (a : (Complex.t, complex64_elt) t)
     (out : (Complex.t, complex64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1044,8 +1044,8 @@ let kernel_log2_complex64 (a : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (complex_log2 v)
     done
@@ -1053,7 +1053,7 @@ let kernel_log2_complex64 (a : (Complex.t, complex64_elt) t)
 let kernel_sin_float16 (a : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1075,8 +1075,8 @@ let kernel_sin_float16 (a : (float, float16_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.sin v)
     done
@@ -1084,7 +1084,7 @@ let kernel_sin_float16 (a : (float, float16_elt) t)
 let kernel_sin_float32 (a : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1106,8 +1106,8 @@ let kernel_sin_float32 (a : (float, float32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.sin v)
     done
@@ -1115,7 +1115,7 @@ let kernel_sin_float32 (a : (float, float32_elt) t)
 let kernel_sin_float64 (a : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1137,8 +1137,8 @@ let kernel_sin_float64 (a : (float, float64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (Float.sin v)
     done
@@ -1146,7 +1146,7 @@ let kernel_sin_float64 (a : (float, float64_elt) t)
 let kernel_sin_complex32 (a : (Complex.t, complex32_elt) t)
     (out : (Complex.t, complex32_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1168,8 +1168,8 @@ let kernel_sin_complex32 (a : (Complex.t, complex32_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (complex_sin v)
     done
@@ -1177,7 +1177,7 @@ let kernel_sin_complex32 (a : (Complex.t, complex32_elt) t)
 let kernel_sin_complex64 (a : (Complex.t, complex64_elt) t)
     (out : (Complex.t, complex64_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_contiguous a && is_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then (
     let i = ref start_idx in
     while !i + 3 < end_idx do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
@@ -1199,8 +1199,8 @@ let kernel_sin_complex64 (a : (Complex.t, complex64_elt) t)
     done)
   else
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k (shape out) in
-      let a_lin = index_to_offset md_index (strides a) in
+      let md_index = Shape.unravel_index k (shape out) in
+      let a_lin = Shape.ravel_index md_index (strides a) in
       let v = Array1.unsafe_get a_buf (offset a + a_lin) in
       Array1.unsafe_set out_buf k (complex_sin v)
     done

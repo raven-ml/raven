@@ -19,8 +19,8 @@
     {2 Memory Layout}
 
     Tensors can be C-contiguous or strided. Operations return views when
-    possible (O(1)), otherwise copy (O(n)). Use {!is_contiguous} to check layout
-    and {!contiguous} to ensure contiguity. *)
+    possible (O(1)), otherwise copy (O(n)). Use {!is_c_contiguous} to check
+    layout and {!contiguous} to ensure contiguity. *)
 
 (** {2 Type Definitions}
 
@@ -31,11 +31,6 @@ type ('a, 'b) t = ('a, 'b) Nx_native.t
 
 type context = Nx_native.context
 (** Backend-specific context for tensor operations. *)
-
-type layout = Nx_core.View.layout =
-  | C_contiguous
-  | Strided
-      (** Memory layout. [C_contiguous] for row-major contiguous arrays. *)
 
 type float16_elt = Bigarray.float16_elt
 type float32_elt = Bigarray.float32_elt
@@ -151,11 +146,8 @@ val nbytes : ('a, 'b) t -> int
 val offset : ('a, 'b) t -> int
 (** [offset t] returns element offset in underlying buffer. *)
 
-val layout : ('a, 'b) t -> layout
-(** [layout t] returns memory layout. *)
-
-val is_contiguous : ('a, 'b) t -> bool
-(** [is_contiguous t] returns true if elements are contiguous in C order. *)
+val is_c_contiguous : ('a, 'b) t -> bool
+(** [is_c_contiguous t] returns true if elements are contiguous in C order. *)
 
 val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
 (** [to_bigarray t] converts to bigarray. Makes contiguous copy. *)

@@ -1,5 +1,5 @@
 open Nx_core.Dtype
-open Nx_core.View
+module Shape = Nx_core.Shape
 open Internal
 
 (* Threefry 2x32 Core Implementation *)
@@ -44,7 +44,7 @@ let kernel_threefry_int32 (data_t : (int32, int32_elt) t)
   let c1_fixed = 0l in
   let k1_fixed = 0xCAFEBABEl in
 
-  if is_contiguous data_t && is_contiguous seed_t then (
+  if is_c_contiguous data_t && is_c_contiguous seed_t then (
     let data_offset = offset data_t in
     let seed_offset = offset seed_t in
 
@@ -104,10 +104,10 @@ let kernel_threefry_int32 (data_t : (int32, int32_elt) t)
     let seed_offset = offset seed_t in
 
     for k = start_idx to end_idx - 1 do
-      let md_index = offset_to_index_contig k out_shape in
+      let md_index = Shape.unravel_index k out_shape in
 
-      let data_lin = index_to_offset md_index data_strides in
-      let seed_lin = index_to_offset md_index seed_strides in
+      let data_lin = Shape.ravel_index md_index data_strides in
+      let seed_lin = Shape.ravel_index md_index seed_strides in
 
       let d_val =
         Bigarray.Array1.unsafe_get data_buf (data_offset + data_lin)

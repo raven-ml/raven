@@ -7,7 +7,6 @@ module Make (B : Backend_intf.S) = struct
 
   type ('a, 'b) t = ('a, 'b) B.t
   type context = B.context
-  type layout = View.layout = C_contiguous | Strided
 
   (* Concrete types for dtypes *)
   type float16_elt = Bigarray.float16_elt
@@ -90,18 +89,19 @@ module Make (B : Backend_intf.S) = struct
     let itemsize = Dtype.itemsize (B.dtype x) in
     elem_stride * itemsize
 
-  let dims x = View.dims (B.view x)
+  let dims x = View.shape (B.view x)
   let dim i x = View.dim i (B.view x)
   let ndim x = View.ndim (B.view x)
   let itemsize x = Dtype.itemsize (B.dtype x)
-  let size x = View.size (B.view x)
+  let size x = View.numel (B.view x)
   let numel x = size x
   let nbytes x = numel x * itemsize x
   let offset x = View.offset (B.view x)
-  let layout x = View.layout (B.view x)
-  let is_contiguous x = View.is_contiguous (B.view x)
+  let is_c_contiguous x = View.is_c_contiguous (B.view x)
 
   (* ───── Internal Utilities ───── *)
+
+  let array_prod arr = Array.fold_left ( * ) 1 arr
 
   (** Integer ceiling division: (a + b - 1) / b for integers a, b where b > 0.
   *)
@@ -134,7 +134,7 @@ module Make (B : Backend_intf.S) = struct
     if axis < 0 then axis + ndim else axis
 
   let reshape shape_spec x =
-    let new_shape = View.resolve_neg_one_shape (shape x) shape_spec in
+    let new_shape = Shape.resolve_neg_one (shape x) shape_spec in
     if shape x = new_shape then x else B.op_reshape x new_shape
 
   (* reshape and expand [x] to [new_shape] following numpy-style rules *)
@@ -163,13 +163,12 @@ module Make (B : Backend_intf.S) = struct
           match !first_incompatible with
           | Some i ->
               invalid_arg
-                (Printf.sprintf
-                   "broadcast_to: shapes %s and %s are not compatible for \
+                (Format.asprintf
+                   "broadcast_to: shapes %a and %a are not compatible for \
                     broadcasting at dimension %d (original size %d vs target \
                     size %d)"
-                   (View.pp_int_array current_shape)
-                   (View.pp_int_array new_shape)
-                   i padded_shape.(i) new_shape.(i))
+                   Shape.pp current_shape Shape.pp new_shape i padded_shape.(i)
+                   new_shape.(i))
           | None -> assert false
         else
           let x_reshaped =
@@ -180,7 +179,7 @@ module Make (B : Backend_intf.S) = struct
   (* return [x] and [y] broadcasted to a common shape *)
   let broadcasted ?(reverse = false) x y =
     let a, b = if reverse then (y, x) else (x, y) in
-    let broadcast_shape = View.broadcast_shapes (shape a) (shape b) in
+    let broadcast_shape = Shape.broadcast (shape a) (shape b) in
     let a_broad = broadcast_to broadcast_shape a in
     let b_broad = broadcast_to broadcast_shape b in
     (a_broad, b_broad)
@@ -227,10 +226,9 @@ module Make (B : Backend_intf.S) = struct
   let blit src dst =
     if shape src <> shape dst then
       invalid_arg
-        (Printf.sprintf
-           "blit: tensors must have the same shape. src: %s, dst: %s"
-           (View.pp_int_array (shape src))
-           (View.pp_int_array (shape dst)));
+        (Format.asprintf
+           "blit: tensors must have the same shape. src: %a, dst: %a" Shape.pp
+           (shape src) Shape.pp (shape dst));
     B.op_assign dst src
 
   let create ctx dtype shape arr =
@@ -281,14 +279,14 @@ module Make (B : Backend_intf.S) = struct
   let scalar ctx dt value = B.op_const_scalar ctx value dt
 
   let empty ctx dtype shape_arr =
-    let numel = View.prod shape_arr in
+    let numel = array_prod shape_arr in
     let buf = B.op_buffer ctx dtype numel in
     reshape shape_arr buf
 
   let full ctx dt target_shape fill_value =
     let scalar_tensor = B.op_const_scalar ctx fill_value dt in
     if Array.length target_shape = 0 then scalar_tensor
-    else if View.prod target_shape = 0 then empty ctx dt target_shape
+    else if array_prod target_shape = 0 then empty ctx dt target_shape
     else
       let rank = Array.length target_shape in
       let intermediate_shape = Array.make rank 1 in
@@ -939,9 +937,9 @@ module Make (B : Backend_intf.S) = struct
     let s_cond = shape cond in
     (* Broadcast all three to a common shape. Order matters for shape inference.
        First, find common shape for if_true and if_false. *)
-    let target_data_shape = View.broadcast_shapes s_true s_false in
+    let target_data_shape = Shape.broadcast s_true s_false in
     (* Then, find common shape for that and cond. *)
-    let final_target_shape = View.broadcast_shapes target_data_shape s_cond in
+    let final_target_shape = Shape.broadcast target_data_shape s_cond in
 
     let cond_b = broadcast_to final_target_shape cond in
     let if_true_b = broadcast_to final_target_shape if_true in
@@ -1065,7 +1063,7 @@ module Make (B : Backend_intf.S) = struct
     let num_elements_in_reduced_dims =
       if Array.length actual_axes_to_reduce = 0 then 1
       else
-        View.prod
+        array_prod
           (Array.map (fun ax_idx -> s_orig.(ax_idx)) actual_axes_to_reduce)
     in
     let num_elements_divisor_float =
@@ -1101,7 +1099,7 @@ module Make (B : Backend_intf.S) = struct
     let num_elements_in_reduced_dims =
       if Array.length actual_axes_to_reduce = 0 then 1
       else
-        View.prod
+        array_prod
           (Array.map (fun ax_idx -> s_orig.(ax_idx)) actual_axes_to_reduce)
     in
 
@@ -1152,7 +1150,7 @@ module Make (B : Backend_intf.S) = struct
     (* First, check if we can broadcast the shapes *)
     let can_broadcast =
       try
-        let _ = View.broadcast_shapes (shape x) (shape y) in
+        let _ = Shape.broadcast (shape x) (shape y) in
         true
       with _ -> false
     in
@@ -1193,12 +1191,12 @@ module Make (B : Backend_intf.S) = struct
 
     let new_shape_list =
       if r = 0 then [ 1 ] (* Flatten scalar to shape [1] *)
-      else if s = 0 && e = r - 1 then [ View.prod sh ] (* Flatten all to 1D *)
+      else if s = 0 && e = r - 1 then [ array_prod sh ] (* Flatten all to 1D *)
       else
         let pre = Array.to_list (Array.sub sh 0 s) in
         let mid_slice = Array.sub sh s (e - s + 1) in
         let mid_prod =
-          if Array.length mid_slice = 0 then 1 else View.prod mid_slice
+          if Array.length mid_slice = 0 then 1 else array_prod mid_slice
         in
         let post = Array.to_list (Array.sub sh (e + 1) (r - (e + 1))) in
         pre @ [ mid_prod ] @ post
@@ -1452,10 +1450,9 @@ module Make (B : Backend_intf.S) = struct
 
     if norm_src < 0 || norm_src >= r || norm_dst < 0 || norm_dst >= r then
       invalid_arg
-        (Printf.sprintf
-           "moveaxis: source %d or destination %d out of bounds for shape %s"
-           src dst
-           (View.pp_int_array (shape x)));
+        (Format.asprintf
+           "moveaxis: source %d or destination %d out of bounds for shape %a"
+           src dst Shape.pp (shape x));
 
     if norm_src = norm_dst then x (* No change *)
     else
@@ -1483,9 +1480,8 @@ module Make (B : Backend_intf.S) = struct
     if norm_axis1 < 0 || norm_axis1 >= r || norm_axis2 < 0 || norm_axis2 >= r
     then
       invalid_arg
-        (Printf.sprintf "swapaxes: axes (%d, %d) out of bounds for shape %s"
-           axis1 axis2
-           (View.pp_int_array (shape x)));
+        (Format.asprintf "swapaxes: axes (%d, %d) out of bounds for shape %a"
+           axis1 axis2 Shape.pp (shape x));
 
     if norm_axis1 = norm_axis2 then x (* No change *)
     else
@@ -1831,7 +1827,7 @@ module Make (B : Backend_intf.S) = struct
         (* Find broadcast shape *)
         let broadcast_shape =
           List.fold_left
-            (fun acc_shape x -> View.broadcast_shapes acc_shape (shape x))
+            (fun acc_shape x -> Shape.broadcast acc_shape (shape x))
             (shape (List.hd ts))
             (List.tl ts)
         in
@@ -2105,7 +2101,7 @@ module Make (B : Backend_intf.S) = struct
           `AllSingles
       | _ ->
           (* Check if all are contiguous ranges *)
-          let is_contiguous =
+          let is_c_contiguous =
             List.for_all
               (function
                 | I _ -> true (* Single index is a contiguous range of size 1 *)
@@ -2115,7 +2111,7 @@ module Make (B : Backend_intf.S) = struct
                 | _ -> false)
               slice
           in
-          if is_contiguous then `ContiguousRanges else `Mixed
+          if is_c_contiguous then `ContiguousRanges else `Mixed
     in
 
     match analyze_pattern full_slice with
@@ -2395,9 +2391,8 @@ module Make (B : Backend_intf.S) = struct
       let expected_shape = Array.of_list expected_shape_list in
       if expected_shape <> y_shape then
         invalid_arg
-          (Printf.sprintf "shape mismatch: expected %s but got %s"
-             (View.pp_int_array expected_shape)
-             (View.pp_int_array y_shape));
+          (Format.asprintf "shape mismatch: expected %a but got %a" Shape.pp
+             expected_shape Shape.pp y_shape);
 
       (* Check if we can use optimized paths *)
       let all_contiguous =
@@ -2449,9 +2444,8 @@ module Make (B : Backend_intf.S) = struct
             try broadcast_to (shape x_view) y
             with _ ->
               invalid_arg
-                (Printf.sprintf "cannot broadcast shape %s to %s"
-                   (View.pp_int_array y_shape)
-                   (View.pp_int_array (shape x_view)))
+                (Format.asprintf "cannot broadcast shape %a to %a" Shape.pp
+                   y_shape Shape.pp (shape x_view))
         in
         blit y_for_blit x_view
       else
@@ -2541,14 +2535,13 @@ module Make (B : Backend_intf.S) = struct
       (fun dim idx ->
         if dim >= Array.length x_shape then
           invalid_arg
-            (Printf.sprintf "get: Too many indices for shape %s"
-               (View.pp_int_array x_shape))
+            (Format.asprintf "get: Too many indices for shape %a" Shape.pp
+               x_shape)
         else if idx < 0 || idx >= x_shape.(dim) then
           invalid_arg
-            (Printf.sprintf
-               "get: Index %d at dimension %d is out of bounds for shape %s" idx
-               dim
-               (View.pp_int_array x_shape)))
+            (Format.asprintf
+               "get: Index %d at dimension %d is out of bounds for shape %a" idx
+               dim Shape.pp x_shape))
       indices;
 
     slice (List.map (fun i -> I i) indices) x
@@ -2561,14 +2554,13 @@ module Make (B : Backend_intf.S) = struct
       (fun dim idx ->
         if dim >= Array.length x_shape then
           invalid_arg
-            (Printf.sprintf "set: Too many indices for shape %s"
-               (View.pp_int_array x_shape))
+            (Format.asprintf "set: Too many indices for shape %a" Shape.pp
+               x_shape)
         else if idx < 0 || idx >= x_shape.(dim) then
           invalid_arg
-            (Printf.sprintf
-               "set: Index %d at dimension %d is out of bounds for shape %s" idx
-               dim
-               (View.pp_int_array x_shape)))
+            (Format.asprintf
+               "set: Index %d at dimension %d is out of bounds for shape %a" idx
+               dim Shape.pp x_shape))
       indices;
 
     set_slice (List.map (fun i -> I i) indices) x value
@@ -2678,7 +2670,7 @@ module Make (B : Backend_intf.S) = struct
     validate_random_params "rand" dtype shape;
 
     (* If shape has 0, return zeros *)
-    let numel = View.prod shape in
+    let numel = array_prod shape in
     if numel = 0 then zeros ctx dtype shape
     else
       (* Generate random int32 values using threefry *)
@@ -2726,7 +2718,7 @@ module Make (B : Backend_intf.S) = struct
     validate_random_params "randn" dtype shape;
 
     (* If shape has 0, return zeros *)
-    let numel = View.prod shape in
+    let numel = array_prod shape in
     if numel = 0 then zeros ctx dtype shape
     else
       (* Box-Muller transform: generate pairs of uniform random values *)
@@ -2777,7 +2769,7 @@ module Make (B : Backend_intf.S) = struct
         (Printf.sprintf "low (%d) must be less than high (%d)" low high);
 
     (* If shape has 0, return zeros *)
-    let numel = View.prod shape in
+    let numel = array_prod shape in
     if numel = 0 then zeros ctx dtype shape
     else
       (* Generate uniform random floats in [0, 1) *)
@@ -3120,11 +3112,10 @@ module Make (B : Backend_intf.S) = struct
     (* Contracting dimension sizes must match. *)
     if shape_x.(ndim_x - 1) <> shape_w.(axis_w_contract_idx) then
       invalid_arg
-        (Printf.sprintf
-           "dot: shape mismatch on contracting dimension. x_shape: %s, \
-            w_shape: %s. x_contract_dim_size: %d, w_contract_dim_size: %d"
-           (View.pp_int_array shape_x)
-           (View.pp_int_array shape_w)
+        (Format.asprintf
+           "dot: shape mismatch on contracting dimension. x_shape: %a, \
+            w_shape: %a. x_contract_dim_size: %d, w_contract_dim_size: %d"
+           Shape.pp shape_x Shape.pp shape_w
            shape_x.(ndim_x - 1)
            shape_w.(axis_w_contract_idx));
 
@@ -4312,7 +4303,7 @@ module Make (B : Backend_intf.S) = struct
     (* Compute divisor based on mode *)
     if count_include_pad && not ceil_mode then
       (* Simple case: divide by kernel size *)
-      let kernel_numel = View.prod kernel_size in
+      let kernel_numel = array_prod kernel_size in
       div_s sum_pooled (float_of_int kernel_numel)
     else
       (* Need to count valid elements *)
@@ -4365,7 +4356,7 @@ module Make (B : Backend_intf.S) = struct
 
     if not return_indices then (max_values, None)
     else
-      let prod_spatial_size = View.prod input_spatial_shape in
+      let prod_spatial_size = array_prod input_spatial_shape in
 
       (* Create forward indices directly *)
       let indices_flat =
@@ -4498,7 +4489,7 @@ module Make (B : Backend_intf.S) = struct
               let pb, pa = pads_pairs.(i) in
               ((pooled_dim_size - 1) * s) - pb - pa + ((d * (k - 1)) + 1))
     in
-    let prod_output_spatial_size = View.prod output_spatial_shape in
+    let prod_output_spatial_size = array_prod output_spatial_shape in
 
     let one_hot_mask_for_indices =
       one_hot indices_x ~num_classes:prod_output_spatial_size
@@ -4536,9 +4527,9 @@ module Make (B : Backend_intf.S) = struct
     let view = B.view x in
     let buffer = B.data x in
     let dtype = dtype x in
-    let shape = view.shape in
+    let shape = View.shape view in
     let ndim = Array.length shape in
-    let sz = View.size view in
+    let sz = View.numel view in
 
     let pp_element fmt (elt : a) =
       match dtype with
@@ -4560,7 +4551,7 @@ module Make (B : Backend_intf.S) = struct
     if sz = 0 && ndim > 0 then fprintf fmt "[]"
     else if ndim = 0 then
       if sz > 0 then
-        let value = Bigarray.Array1.unsafe_get buffer view.offset in
+        let value = Bigarray.Array1.unsafe_get buffer (View.offset view) in
         pp_element fmt value
       else fprintf fmt "<empty scalar>"
     else
@@ -4569,7 +4560,7 @@ module Make (B : Backend_intf.S) = struct
         if current_ndim = ndim then
           let md_index = Array.of_list current_indices in
           let linear_offset =
-            View.index_to_offset md_index view.strides + view.offset
+            Shape.ravel_index md_index (View.strides view) + View.offset view
           in
           if linear_offset < 0 || linear_offset >= Bigarray.Array1.dim buffer
           then
@@ -4627,13 +4618,13 @@ module Make (B : Backend_intf.S) = struct
 
     fprintf fmt "@[<v 0>";
     fprintf fmt "Nx Info:@,";
-    fprintf fmt "  Shape: %a@," pp_shape view.shape;
+    fprintf fmt "  Shape: %a@," pp_shape (View.shape view);
     fprintf fmt "  Dtype: %a@," pp_dtype (dtype x);
     fprintf fmt "  Strides: [%s]@,"
       (String.concat "; "
-         (Array.to_list (Array.map string_of_int view.strides)));
-    fprintf fmt "  Offset: %d@," view.offset;
-    fprintf fmt "  Size: %d@," (View.size view);
+         (Array.to_list (Array.map string_of_int (View.strides view))));
+    fprintf fmt "  Offset: %d@," (View.offset view);
+    fprintf fmt "  Size: %d@," (View.numel view);
     fprintf fmt "  Data: %a@," pp_data x
 
   let print x = print_with_formatter pp x
@@ -4686,7 +4677,7 @@ module Make (B : Backend_intf.S) = struct
     (* Process each element *)
     let total_size = size x in
     for i = 0 to total_size - 1 do
-      let idx = View.multi_index_from_linear i sh |> Array.to_list in
+      let idx = Shape.unravel_index i sh |> Array.to_list in
       let v = get idx x in
       let v' = f v in
       set idx result v'
@@ -4699,7 +4690,7 @@ module Make (B : Backend_intf.S) = struct
     (* Process each element *)
     let total_size = size x in
     for i = 0 to total_size - 1 do
-      let idx = View.multi_index_from_linear i sh |> Array.to_list in
+      let idx = Shape.unravel_index i sh |> Array.to_list in
       let v = get idx x in
       f v
     done
@@ -4711,7 +4702,7 @@ module Make (B : Backend_intf.S) = struct
     let total_size = size x in
     let acc = ref init in
     for i = 0 to total_size - 1 do
-      let idx = View.multi_index_from_linear i sh |> Array.to_list in
+      let idx = Shape.unravel_index i sh |> Array.to_list in
       let v = get idx x in
       acc := f !acc v
     done;

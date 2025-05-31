@@ -90,12 +90,12 @@ let kernel_sum_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
   in
 
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = View.offset_to_index_contig k out_shape in
+    let out_md_index = Shape.unravel_index k out_shape in
     let current_sum = ref (Dtype.zero (dtype out)) in
     let in_md_index = initial_input_md_index out_md_index axes rank in
     let continue_reduction = ref true in
     while !continue_reduction do
-      let a_linear_idx = View.index_to_offset in_md_index a_strides in
+      let a_linear_idx = Shape.ravel_index in_md_index a_strides in
       let a_val = Array1.unsafe_get a_buf (offset a + a_linear_idx) in
       current_sum := add_dtype (dtype a) !current_sum a_val;
       continue_reduction :=
@@ -109,7 +109,7 @@ let kernel_sum_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
   let a_buf = buffer a in
   let a_offset = offset a in
   let partial_sum = ref (Dtype.zero (dtype a)) in
-  (if is_contiguous a then
+  (if is_c_contiguous a then
      let start_buf_idx = a_offset + start_linear_idx in
      let end_buf_idx = a_offset + end_linear_idx in
      for i = start_buf_idx to end_buf_idx - 1 do
@@ -120,8 +120,8 @@ let kernel_sum_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
      let a_shape = shape a in
      let a_strides = strides a in
      for k = start_linear_idx to end_linear_idx - 1 do
-       let md_index = View.offset_to_index_contig k a_shape in
-       let buf_idx = View.index_to_offset md_index a_strides in
+       let md_index = Shape.unravel_index k a_shape in
+       let buf_idx = Shape.ravel_index md_index a_strides in
        let v = Array1.unsafe_get a_buf (a_offset + buf_idx) in
        partial_sum := add_dtype (dtype a) !partial_sum v
      done);
@@ -205,12 +205,12 @@ let kernel_prod_axis (type a b) (a : (a, b) t) (out : (a, b) t)
   in
 
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = View.offset_to_index_contig k out_shape in
+    let out_md_index = Shape.unravel_index k out_shape in
     let current_prod = ref (Dtype.one (dtype out)) in
     let in_md_index = initial_input_md_index out_md_index axes rank in
     let continue_reduction = ref true in
     while !continue_reduction do
-      let a_linear_idx = View.index_to_offset in_md_index a_strides in
+      let a_linear_idx = Shape.ravel_index in_md_index a_strides in
       let a_val = Array1.unsafe_get a_buf (offset a + a_linear_idx) in
       current_prod := mul_dtype (dtype a) !current_prod a_val;
       continue_reduction :=
@@ -224,7 +224,7 @@ let kernel_prod_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
   let a_buf = buffer a in
   let a_offset = offset a in
   let partial_prod = ref (Dtype.one (dtype a)) in
-  (if is_contiguous a then
+  (if is_c_contiguous a then
      let start_buf_idx = a_offset + start_linear_idx in
      let end_buf_idx = a_offset + end_linear_idx in
      for i = start_buf_idx to end_buf_idx - 1 do
@@ -235,8 +235,8 @@ let kernel_prod_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
      let a_shape = shape a in
      let a_strides = strides a in
      for k = start_linear_idx to end_linear_idx - 1 do
-       let md_index = View.offset_to_index_contig k a_shape in
-       let buf_idx = View.index_to_offset md_index a_strides in
+       let md_index = Shape.unravel_index k a_shape in
+       let buf_idx = Shape.ravel_index md_index a_strides in
        let v = Array1.unsafe_get a_buf (a_offset + buf_idx) in
        partial_prod := mul_dtype (dtype a) !partial_prod v
      done);
@@ -330,14 +330,14 @@ let kernel_min_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
   in
 
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = View.offset_to_index_contig k out_shape in
+    let out_md_index = Shape.unravel_index k out_shape in
     let current_min = ref None in
     let is_first = ref true in
     let in_md_index = initial_input_md_index out_md_index axes rank in
     let continue_reduction = ref true in
 
     while !continue_reduction do
-      let a_linear_idx = View.index_to_offset in_md_index a_strides in
+      let a_linear_idx = Shape.ravel_index in_md_index a_strides in
       let a_val = Array1.unsafe_get a_buf (offset a + a_linear_idx) in
       (if !is_first then (
          current_min := Some a_val;
@@ -366,7 +366,7 @@ let kernel_min_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
   if start_linear_idx >= end_linear_idx then
     invalid_arg "kernel_min_partial: Reduction over zero elements.";
 
-  (if is_contiguous a then
+  (if is_c_contiguous a then
      let start_buf_idx = a_offset + start_linear_idx in
      let end_buf_idx = a_offset + end_linear_idx in
      for i = start_buf_idx to end_buf_idx - 1 do
@@ -382,8 +382,8 @@ let kernel_min_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
      let a_shape = shape a in
      let a_strides = strides a in
      for k = start_linear_idx to end_linear_idx - 1 do
-       let md_index = View.offset_to_index_contig k a_shape in
-       let buf_idx = View.index_to_offset md_index a_strides in
+       let md_index = Shape.unravel_index k a_shape in
+       let buf_idx = Shape.ravel_index md_index a_strides in
        let v = Array1.unsafe_get a_buf (a_offset + buf_idx) in
        if !is_first then (
          partial_min := Some v;
@@ -513,7 +513,7 @@ let kernel_max_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
   let min_identity_val = min_identity (dtype a) in
 
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = View.offset_to_index_contig k out_shape in
+    let out_md_index = Shape.unravel_index k out_shape in
     let current_max = ref min_identity_val in
     let is_first = ref true in
     let in_md_index = initial_input_md_index out_md_index axes rank in
@@ -521,7 +521,7 @@ let kernel_max_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
     let has_value = ref false in
 
     while !continue_reduction do
-      let a_linear_idx = View.index_to_offset in_md_index a_strides in
+      let a_linear_idx = Shape.ravel_index in_md_index a_strides in
       let a_val = Array1.unsafe_get a_buf (offset a + a_linear_idx) in
       has_value := true;
       if !is_first then (
@@ -550,7 +550,7 @@ let kernel_max_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
   if start_linear_idx >= end_linear_idx then
     invalid_arg "kernel_max_partial: Reduction over zero elements.";
 
-  (if is_contiguous a then
+  (if is_c_contiguous a then
      let start_buf_idx = a_offset + start_linear_idx in
      let end_buf_idx = a_offset + end_linear_idx in
      for i = start_buf_idx to end_buf_idx - 1 do
@@ -565,8 +565,8 @@ let kernel_max_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
      let a_shape = shape a in
      let a_strides = strides a in
      for k = start_linear_idx to end_linear_idx - 1 do
-       let md_index = View.offset_to_index_contig k a_shape in
-       let buf_idx = View.index_to_offset md_index a_strides in
+       let md_index = Shape.unravel_index k a_shape in
+       let buf_idx = Shape.ravel_index md_index a_strides in
        let v = Array1.unsafe_get a_buf (a_offset + buf_idx) in
        has_value := true;
        if !is_first then (
