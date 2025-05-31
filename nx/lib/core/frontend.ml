@@ -1,6 +1,8 @@
 (* High-level tensor operations built on backend [B]. *)
 
 module Make (B : Backend_intf.S) = struct
+  module B = B
+
   (* ───── Core Types and Context ───── *)
 
   type ('a, 'b) t = ('a, 'b) B.t

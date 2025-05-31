@@ -27,7 +27,7 @@
 (package
  (name dev)
  (allow_empty)
- (depends odoc odoc-driver soupault))
+ (depends odoc odoc-driver soupault landmarks landmarks-ppx))
 
 (package
  (name nx)

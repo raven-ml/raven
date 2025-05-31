@@ -1,12 +1,16 @@
 (library
  (name nx_conv)
  (modules nx_conv)
- (libraries nx_core nx_native))
+ (libraries nx_core nx_native)
+ (instrumentation
+  (backend landmarks)))
 
 (executable
  (name bench_conv)
  (modules bench_conv)
- (libraries nx nx_conv ubench unix))
+ (libraries nx nx_conv ubench unix)
+ (instrumentation
+  (backend landmarks)))
 
 (test
  (name test_conv_optimized)
