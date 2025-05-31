@@ -3474,9 +3474,8 @@ module Make (B : Backend_intf.S) = struct
       (* Stack all output slices and reshape *)
       let output_list = List.rev !output_slices in
       let stacked = stack ~axis:0 output_list in
-      let stacked_cont = contiguous stacked in
       let result_reshaped =
-        reshape [| mat_rows; mat_rows; batch_size |] stacked_cont
+        reshape [| mat_rows; mat_rows; batch_size |] stacked
       in
 
       (* Reshape back to output shape *)
@@ -3544,7 +3543,7 @@ module Make (B : Backend_intf.S) = struct
           apply_recursive result_reshaped (current_dim + 1)
       in
 
-      contiguous (apply_recursive x 0)
+      apply_recursive x 0
 
   (* ───── Optimized Pool Implementation ───── *)
 
@@ -3694,7 +3693,7 @@ module Make (B : Backend_intf.S) = struct
     for j = 0 to num_spatial - 1 do
       reshape3_list := !reshape3_list @ [ k_s.(j); o_s.(j) ]
     done;
-    let x = reshape (Array.of_list !reshape3_list) (contiguous x) in
+    let x = reshape (Array.of_list !reshape3_list) x in
 
     (* Final permutation to get (..., o_1, o_2, ..., k_1, k_2, ...) *)
     let perm =
@@ -3971,99 +3970,148 @@ module Make (B : Backend_intf.S) = struct
 
     let x_padded = B.op_pad x op_pad_config_arr actual_fillvalue in
 
-    let pooled_x =
-      pool x_padded ~k_s:kernel_spatial_shape_arr ~s_s:stride_s_arr
-        ~d_s:dilation_s_arr
+    (* Key optimization: reshape BEFORE pooling when groups > 1 *)
+    let pooled_x, needs_group_processing =
+      if groups > 1 then
+        (* Reshape to (bs, groups, cin_per_group, *spatial) before pooling *)
+        let x_grouped_shape =
+          Array.concat
+            [
+              [| bs; groups; cin_per_group |];
+              Array.sub (shape x_padded) 2 num_spatial_dims;
+            ]
+        in
+        let x_grouped = reshape x_grouped_shape x_padded in
+        let pooled =
+          pool x_grouped ~k_s:kernel_spatial_shape_arr ~s_s:stride_s_arr
+            ~d_s:dilation_s_arr
+        in
+        (pooled, true)
+      else
+        (* For groups=1, pool directly *)
+        let pooled =
+          pool x_padded ~k_s:kernel_spatial_shape_arr ~s_s:stride_s_arr
+            ~d_s:dilation_s_arr
+        in
+        (pooled, false)
     in
 
     let output_spatial_shape_arr =
-      Array.init num_spatial_dims (fun i ->
-          (shape pooled_x).(num_prefix_dims + i))
+      if needs_group_processing then
+        Array.init num_spatial_dims (fun i -> (shape pooled_x).(3 + i))
+      else Array.init num_spatial_dims (fun i -> (shape pooled_x).(2 + i))
     in
 
-    (* Reshape pooled_x to (bs, groups, cin_per_group, 1, output_spatial...,
-       kernel_spatial...) *)
-    let shape_x_pre_expand_list =
-      [ bs; groups; cin_per_group; 1 ]
-      @ Array.to_list output_spatial_shape_arr
-      @ Array.to_list kernel_spatial_shape_arr
-    in
-    let pooled_x_reshaped =
-      let pooled_x_cont =
-        if groups > 1 then contiguous pooled_x else pooled_x
-      in
-      reshape (Array.of_list shape_x_pre_expand_list) pooled_x_cont
+    (* Prepare for multiplication *)
+    let x_ready, w_broadcastable =
+      if needs_group_processing then
+        let with_rcout = unsqueeze ~axes:[| 3 |] pooled_x in
+        let expanded_shape =
+          let s = shape with_rcout in
+          Array.mapi (fun i d -> if i = 3 then rcout else d) s
+        in
+        let x_expanded = expand expanded_shape with_rcout in
+
+        (* Permute to (bs, groups, rcout, output_spatial, cin_per_group,
+           kernel_spatial) *)
+        let perm_axes =
+          Array.of_list
+            ([ 0; 1; 3 ]
+            (* bs, groups, rcout *)
+            @ List.init num_spatial_dims (fun i -> 4 + i)
+            (* output_spatial *)
+            @ [ 2 ]
+            @
+            (* cin_per_group *)
+            List.init num_spatial_dims (fun i -> 4 + num_spatial_dims + i)
+            (* kernel_spatial *))
+        in
+        let x_permuted = B.op_permute x_expanded perm_axes in
+
+        (* Reshape weights to match *)
+        let w_shape =
+          Array.concat
+            [
+              [| 1; groups; rcout |];
+              Array.make num_spatial_dims 1;
+              [| cin_per_group |];
+              kernel_spatial_shape_arr;
+            ]
+        in
+        let w_reshaped = reshape w_shape (contiguous w) in
+        (x_permuted, w_reshaped)
+      else
+        (* Simpler logic for groups=1 *)
+        let pooled_x_reshaped =
+          let shape_x_pre_expand_list =
+            [ bs; cin_total; 1 ]
+            @ Array.to_list output_spatial_shape_arr
+            @ Array.to_list kernel_spatial_shape_arr
+          in
+          reshape (Array.of_list shape_x_pre_expand_list) pooled_x
+        in
+
+        let shape_x_expanded_list =
+          [ bs; cin_total; rcout ]
+          @ Array.to_list output_spatial_shape_arr
+          @ Array.to_list kernel_spatial_shape_arr
+        in
+        let pooled_x_expanded =
+          expand (Array.of_list shape_x_expanded_list) pooled_x_reshaped
+        in
+
+        (* Simpler permute for groups=1: (bs, rcout, output_spatial, cin_total,
+           kernel_spatial) *)
+        let perm_axes =
+          Array.of_list
+            ([ 0; 2 ]
+            (* bs, rcout *)
+            @ List.init num_spatial_dims (fun i -> 3 + i)
+            (* output_spatial *)
+            @ [ 1 ]
+            @
+            (* cin_total *)
+            List.init num_spatial_dims (fun i -> 3 + num_spatial_dims + i))
+        in
+        let x_permuted = B.op_permute pooled_x_expanded perm_axes in
+
+        (* Reshape weights *)
+        let w_shape =
+          Array.concat
+            [
+              [| 1; rcout |];
+              Array.make num_spatial_dims 1;
+              [| cin_total |];
+              kernel_spatial_shape_arr;
+            ]
+        in
+        let w_reshaped = reshape w_shape w in
+        (x_permuted, w_reshaped)
     in
 
-    (* Expand for rcout *)
-    let shape_x_expanded_list =
-      [ bs; groups; cin_per_group; rcout ]
-      @ Array.to_list output_spatial_shape_arr
-      @ Array.to_list kernel_spatial_shape_arr
-    in
-    let pooled_x_expanded =
-      expand (Array.of_list shape_x_expanded_list) pooled_x_reshaped
-    in
-
-    (* Permute to (bs, groups, rcout, output_spatial..., cin_per_group,
-       kernel_spatial...) *)
-    let perm_axes_list_prefix_output = [ 0; 1; 3 ] in
-    let perm_axes_list_output_spatial =
-      List.init num_spatial_dims (fun i -> 4 + i)
-    in
-    let perm_axes_list_cin_group = [ 2 ] in
-    let perm_axes_list_kernel_spatial =
-      List.init num_spatial_dims (fun i -> 4 + num_spatial_dims + i)
-    in
-    let perm_axes =
-      Array.of_list
-        (List.concat
-           [
-             perm_axes_list_prefix_output;
-             perm_axes_list_output_spatial;
-             perm_axes_list_cin_group;
-             perm_axes_list_kernel_spatial;
-           ])
-    in
-    let x_ready = B.op_permute pooled_x_expanded perm_axes in
-
-    (* Reshape w to (1, groups, rcout, 1s, cin_per_group, kernel_spatial...) *)
-    let shape_w_broadcastable_list =
-      [ 1; groups; rcout ]
-      @ Array.to_list (Array.make num_spatial_dims 1)
-      @ [ cin_per_group ]
-      @ Array.to_list kernel_spatial_shape_arr
-    in
-    let w_broadcastable =
-      reshape (Array.of_list shape_w_broadcastable_list) w
-    in
-
+    (* Multiply and reduce *)
     let multiplied = mul x_ready w_broadcastable in
-
-    (* Sum over cin_per_group and kernel_spatial_dims *)
     let ndim_multiplied = ndim multiplied in
     let num_reduce_dims = 1 + num_spatial_dims in
     let reduce_axes =
       Array.init num_reduce_dims (fun i ->
           ndim_multiplied - num_reduce_dims + i)
     in
-
     let summed = sum multiplied ~axes:reduce_axes ~keepdims:true in
 
-    let final_shape_list =
-      [ bs; cout ] @ Array.to_list output_spatial_shape_arr
+    (* Final reshape to (bs, cout, *output_spatial) *)
+    let final_shape =
+      Array.concat [ [| bs; cout |]; output_spatial_shape_arr ]
     in
-    let result_reshaped = reshape (Array.of_list final_shape_list) summed in
+    let result_reshaped = reshape final_shape summed in
 
     match bias with
     | None -> result_reshaped
     | Some b ->
-        let bias_reshape_target_list =
-          [ 1; cout ] @ Array.to_list (Array.make num_spatial_dims 1)
+        let bias_shape =
+          Array.concat [ [| 1; cout |]; Array.make num_spatial_dims 1 ]
         in
-        let bias_reshaped =
-          reshape (Array.of_list bias_reshape_target_list) b
-        in
+        let bias_reshaped = reshape bias_shape b in
         add result_reshaped bias_reshaped
 
   let correlate_nd ?(groups = 1) stride_s_arr

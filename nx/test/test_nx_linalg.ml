@@ -250,6 +250,51 @@ let test_convolve2d_multi_channel () =
   let result = Nx.convolve2d input kernel in
   check_shape "convolve2d multi-channel shape" [| 1; 2; 2; 2 |] result
 
+let test_convolve2d_winograd_eligible () =
+  (* Test a convolution that should trigger Winograd optimization: - 3x3 kernel
+     - stride 1 - groups 1 This specific test case helps catch reshape issues in
+     Winograd path *)
+  let input =
+    Nx.create Nx.float32 [| 1; 1; 8; 8 |] (Array.init 64 float_of_int)
+  in
+  let kernel = Nx.create Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
+
+  (* This should use Winograd optimization *)
+  let result = Nx.convolve2d ~stride:(1, 1) input kernel in
+  check_shape "convolve2d Winograd shape" [| 1; 1; 6; 6 |] result;
+
+  (* Verify the computation is correct *)
+  (* Each 3x3 window sums to 9 times the sum of its elements *)
+  let expected_00 = 0. +. 1. +. 2. +. 8. +. 9. +. 10. +. 16. +. 17. +. 18. in
+  check (float 1e-5) "convolve2d Winograd [0,0,0,0]" expected_00
+    (Nx.get_item [ 0; 0; 0; 0 ] result)
+
+let test_convolve2d_groups_winograd () =
+  (* Test grouped convolution with parameters that might trigger Winograd but
+     should be handled correctly *)
+  let input =
+    Nx.create Nx.float32 [| 1; 2; 8; 8 |] (Array.init 128 float_of_int)
+  in
+  let kernel = Nx.create Nx.float32 [| 2; 1; 3; 3 |] (Array.make 18 1.0) in
+
+  (* Groups=2 should disable Winograd optimization *)
+  let result = Nx.convolve2d ~groups:2 ~stride:(1, 1) input kernel in
+  check_shape "convolve2d groups Winograd shape" [| 1; 2; 6; 6 |] result
+
+let test_convolve2d_non_contiguous_input () =
+  (* Test convolution with non-contiguous input (e.g., from transpose) *)
+  let input =
+    Nx.create Nx.float32 [| 1; 4; 4; 1 |] (Array.init 16 float_of_int)
+  in
+  let input_transposed = Nx.transpose ~axes:[| 0; 3; 1; 2 |] input in
+  (* Now [1; 1; 4; 4] but non-contiguous *)
+  let kernel = Nx.create Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
+
+  let result = Nx.convolve2d input_transposed kernel in
+  check_shape "convolve2d non-contiguous shape" [| 1; 1; 2; 2 |] result;
+  check_t "convolve2d non-contiguous values" [| 1; 1; 2; 2 |]
+    [| 45.; 54.; 81.; 90. |] result
+
 let test_correlate2d_basic () =
   (* Basic 2D correlation *)
   let input =
@@ -289,6 +334,72 @@ let test_convolve_single_element_kernel () =
   let result = Nx.convolve1d input kernel in
   check_t "convolve1d single kernel" [| 1; 1; 5 |] [| 2.; 4.; 6.; 8.; 10. |]
     result
+
+let test_convolve2d_pool_reshape_edge_case () =
+  (* Test case that might trigger the reshape error seen in sanity tests This
+     tests the pool operation's reshape from [6; 6; 1; 1; 2; 2] to [6; 6; 4] *)
+  let input =
+    Nx.create Nx.float32 [| 1; 1; 6; 6 |] (Array.init 36 float_of_int)
+  in
+  let kernel = Nx.create Nx.float32 [| 1; 1; 2; 2 |] [| 1.; 1.; 1.; 1. |] in
+
+  (* Use stride 1 to get output shape [1; 1; 5; 5] *)
+  let result = Nx.convolve2d ~stride:(1, 1) input kernel in
+  check_shape "convolve2d pool edge case shape" [| 1; 1; 5; 5 |] result;
+
+  (* Verify first output value: sum of top-left 2x2 window *)
+  let expected_00 = 0. +. 1. +. 6. +. 7. in
+  check (float 1e-5) "convolve2d pool edge case [0,0,0,0]" expected_00
+    (Nx.get_item [ 0; 0; 0; 0 ] result)
+
+let test_convolve2d_groups_reshape_issue () =
+  (* Test grouped convolution that might cause reshape issues in pooling This
+     specifically tests the optimized path for groups > 1 *)
+  let input =
+    Nx.create Nx.float32 [| 1; 4; 6; 6 |] (Array.init 144 float_of_int)
+  in
+  let kernel = Nx.create Nx.float32 [| 4; 2; 2; 2 |] (Array.make 32 1.0) in
+
+  (* Groups=2: each group has 2 input channels and 2 output channels *)
+  let result = Nx.convolve2d ~groups:2 ~stride:(1, 1) input kernel in
+  check_shape "convolve2d groups reshape shape" [| 1; 4; 5; 5 |] result
+
+let test_convolve2d_dilated_non_contiguous () =
+  (* Test dilated convolution with non-contiguous tensor This can trigger
+     complex reshapes in pool_dilated_path *)
+  let input =
+    Nx.create Nx.float32 [| 1; 5; 5; 1 |] (Array.init 25 float_of_int)
+  in
+  let input_perm = Nx.transpose ~axes:[| 0; 3; 1; 2 |] input in
+  (* Now [1; 1; 5; 5] non-contiguous *)
+  let kernel =
+    Nx.create Nx.float32 [| 1; 1; 3; 3 |]
+      [| 1.; 0.; 0.; 0.; 0.; 0.; 0.; 0.; 1. |]
+  in
+  (* Only corners *)
+
+  (* Dilation 2 tests the dilated pooling path *)
+  let result = Nx.convolve2d ~dilation:(2, 2) input_perm kernel in
+  check_shape "convolve2d dilated non-contig shape" [| 1; 1; 1; 1 |] result;
+  (* With input 0-24 and corner kernel with dilation 2, we pick elements 0 and
+     24 *)
+  check_t "convolve2d dilated non-contig value" [| 1; 1; 1; 1 |] [| 24. |]
+    result
+
+let test_correlate2d_winograd_sanity_case () =
+  (* Test the exact scenario from sanity tests that triggers the reshape bug *)
+  (* This matches the failing sanity test exactly: correlate2d with 1x1x5x5 input, 1x1x3x3 kernel, all ones *)
+  let x = Nx.ones Nx.float32 [| 1; 1; 5; 5 |] in
+  let w = Nx.ones Nx.float32 [| 1; 1; 3; 3 |] in
+
+  (* This correlation should work and produce 3x3 output with all 9s *)
+  (* Note: correlate2d can also trigger Winograd when kernel is 3x3, stride 1, groups 1 *)
+  let y = Nx.correlate2d x w in
+
+  (* The expected result is a 3x3 output where each element is 9.0 *)
+  check_t ~eps:1e-6 "correlate2d values" [| 1; 1; 3; 3 |]
+    [| 9.; 9.; 9.; 9.; 9.; 9.; 9.; 9.; 9. |]
+    y
 
 (*  ─────  Solve Inverse Tests  ─────  *)
 (* Note: These functions are not exposed in nx.ml, so tests are commented out *)
@@ -480,12 +591,29 @@ let convolution_tests =
     ("convolve2d stride", `Quick, test_convolve2d_stride);
     ("convolve2d dilation", `Quick, test_convolve2d_dilation);
     ("convolve2d multi-channel", `Quick, test_convolve2d_multi_channel);
-    ("correlate2d basic", `Quick, test_correlate2d_basic);
+    ("convolve2d winograd eligible", `Quick, test_convolve2d_winograd_eligible);
+    ("convolve2d groups winograd", `Quick, test_convolve2d_groups_winograd);
+    ( "convolve2d non-contiguous input",
+      `Quick,
+      test_convolve2d_non_contiguous_input );
+    ( "convolve2d pool reshape edge case",
+      `Quick,
+      test_convolve2d_pool_reshape_edge_case );
+    ( "convolve2d groups reshape issue",
+      `Quick,
+      test_convolve2d_groups_reshape_issue );
+    ( "convolve2d dilated non-contiguous",
+      `Quick,
+      test_convolve2d_dilated_non_contiguous );
     ("convolve invalid shapes", `Quick, test_convolve_invalid_shapes);
     ("convolve empty input", `Quick, test_convolve_empty_input);
     ( "convolve single element kernel",
       `Quick,
       test_convolve_single_element_kernel );
+    ("correlate2d basic", `Quick, test_correlate2d_basic);
+    ( "correlate2d winograd sanity case",
+      `Quick,
+      test_correlate2d_winograd_sanity_case );
   ]
 
 let solve_inverse_tests =
