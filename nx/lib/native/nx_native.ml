@@ -22,7 +22,7 @@ let create_context () = Internal.{ pool = Parallel.get_or_setup_pool () }
 (* --- Backend Ops --- *)
 
 let op_buffer ctx dt size_in_elements =
-  let kind = Dtype.kind_of_dtype dt in
+  let kind = Dtype.to_bigarray_kind dt in
   let ba = Bigarray.Array1.create kind Bigarray.c_layout size_in_elements in
   let initial_view =
     if size_in_elements = 0 then View.create [| 0 |]
@@ -32,7 +32,7 @@ let op_buffer ctx dt size_in_elements =
   { context = ctx; dtype = dt; buffer = ba; view = initial_view }
 
 let op_const_scalar ctx value dt =
-  let kind = Dtype.kind_of_dtype dt in
+  let kind = Dtype.to_bigarray_kind dt in
   let ba = Bigarray.Array1.create kind Bigarray.c_layout 1 in
   Bigarray.Array1.set ba 0 value;
   let scalar_view = View.create [||] in
@@ -40,7 +40,7 @@ let op_const_scalar ctx value dt =
   { context = ctx; dtype = dt; buffer = ba; view = scalar_view }
 
 let op_const_array ctx bigarray =
-  let dtype = Dtype.dtype_of_kind (Bigarray.Array1.kind bigarray) in
+  let dtype = Dtype.of_bigarray_kind (Bigarray.Array1.kind bigarray) in
   let size = Bigarray.Array1.dim bigarray in
   let t = op_buffer ctx dtype size in
   Bigarray.Array1.blit bigarray (data t);
@@ -341,7 +341,7 @@ let op_reduce_max ~(axes : int array) ~(keepdims : bool) xensor =
     fill_buffer_with_identity
       (Internal.buffer output_tensor)
       output_numel
-      (Dtype.min_val xensor.dtype);
+      (Dtype.min_value xensor.dtype);
 
   Ops_reduce.max ctx ~axes:axes_to_reduce ~keepdims xensor output_tensor;
   output_tensor
@@ -471,7 +471,7 @@ let op_cat tensors axis =
   let output_dim_size_at_axis =
     List.fold_left
       (fun acc t ->
-        if not (Dtype.eq (Internal.dtype t) dt_ref) then
+        if not (Dtype.equal (Internal.dtype t) dt_ref) then
           failwith "op_cat: dtypes mismatch";
         if Internal.ndim t <> rank then failwith "op_cat: ranks mismatch";
         for i = 0 to rank - 1 do
@@ -633,7 +633,7 @@ let op_scatter data_template_t indices_t updates_t axis =
   let template_rank = Array.length template_shape in
 
   (* Validate inputs *)
-  if not (Dtype.eq data_template_t.dtype updates_t.dtype) then
+  if not (Dtype.equal data_template_t.dtype updates_t.dtype) then
     invalid_arg "op_scatter: data_template and updates must have same dtype";
 
   if indices_shape <> updates_shape then

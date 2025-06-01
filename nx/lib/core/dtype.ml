@@ -31,22 +31,6 @@ type ('a, 'b) t =
 (* The type parameter ['a] is the OCaml representation and ['b] is the
    corresponding Bigarray element kind (layout). *)
 
-type float16_t = (float, float16_elt) t
-type float32_t = (float, float32_elt) t
-type float64_t = (float, float64_elt) t
-type int8_t = (int, int8_elt) t
-type uint8_t = (int, uint8_elt) t
-type int16_t = (int, int16_elt) t
-type uint16_t = (int, uint16_elt) t
-type int32_t = (int32, int32_elt) t
-type int64_t = (int64, int64_elt) t
-type std_int_t = (int, int_elt) t
-type std_nativeint_t = (nativeint, nativeint_elt) t
-type complex32_t = (Complex.t, complex32_elt) t
-type complex64_t = (Complex.t, complex64_elt) t
-type 'b float_t = (float, 'b) t
-type 'b int_based_t = (int, 'b) t
-
 (* Constructor shortcuts *)
 let float16 = Float16
 let float32 = Float32
@@ -77,6 +61,8 @@ let to_string : type a b. (a, b) t -> string = function
   | NativeInt -> "nativeint"
   | Complex32 -> "complex32"
   | Complex64 -> "complex64"
+
+let pp fmt dtype = Format.fprintf fmt "%s" (to_string dtype)
 
 (* Additive identity for a given dtype. *)
 let zero : type a b. (a, b) t -> a =
@@ -150,29 +136,6 @@ let two : type a b. (a, b) t -> a =
   | Complex32 -> Complex.{ re = 2.0; im = 0.0 }
   | Complex64 -> Complex.{ re = 2.0; im = 0.0 }
 
-(* Create a power of 2 for integer shift operations *)
-let power_of_two : type a b. (a, b) t -> int -> a =
- fun dtype shift_val ->
-  if shift_val < 0 then
-    invalid_arg "power_of_two: shift_val must be non-negative";
-  match dtype with
-  | Int8 | UInt8 | Int16 | UInt16 | Int | NativeInt -> (
-      let power = 1 lsl shift_val in
-      match dtype with
-      | Int8 -> power
-      | UInt8 -> power land 0xFF
-      | Int16 -> power
-      | UInt16 -> power land 0xFFFF
-      | Int -> power
-      | NativeInt -> Nativeint.shift_left Nativeint.one shift_val
-      | _ -> failwith "Unreachable")
-  | Int32 -> Int32.shift_left Int32.one shift_val
-  | Int64 -> Int64.shift_left Int64.one shift_val
-  | _ ->
-      failwith
-        ("power_of_two: unsupported dtype: " ^ to_string dtype
-       ^ ". Expected integer type.")
-
 (* Size in bytes of one element of the dtype. *)
 let itemsize : type a b. (a, b) t -> int = function
   | Float16 -> 2
@@ -190,7 +153,7 @@ let itemsize : type a b. (a, b) t -> int = function
   | Complex64 -> 16
 
 (* Map a dtype to the corresponding Bigarray kind. *)
-let kind_of_dtype : type a b. (a, b) t -> (a, b) Bigarray.kind =
+let to_bigarray_kind : type a b. (a, b) t -> (a, b) Bigarray.kind =
  fun dtype ->
   match dtype with
   | Float16 -> Bigarray.Float16
@@ -208,7 +171,7 @@ let kind_of_dtype : type a b. (a, b) t -> (a, b) Bigarray.kind =
   | Complex64 -> Bigarray.Complex64
 
 (* Inverse of [kind_of_dtype]. Raises when the kind is not supported. *)
-let dtype_of_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
+let of_bigarray_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Float16 -> Float16
   | Bigarray.Float32 -> Float32
   | Bigarray.Float64 -> Float64
@@ -222,10 +185,10 @@ let dtype_of_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Nativeint -> NativeInt
   | Bigarray.Complex32 -> Complex32
   | Bigarray.Complex64 -> Complex64
-  | _ -> failwith "dtype_of_kind: Unsupported Bigarray kind"
+  | _ -> failwith "of_bigarray_kind: Unsupported Bigarray kind"
 
 (* Shallow equality on constructors. Useful for runtime checks. *)
-let eq (type a b c d) (dt1 : (a, b) t) (dt2 : (c, d) t) : bool =
+let equal (type a b c d) (dt1 : (a, b) t) (dt2 : (c, d) t) : bool =
   match (dt1, dt2) with
   | Float16, Float16 -> true
   | Float32, Float32 -> true
@@ -242,25 +205,23 @@ let eq (type a b c d) (dt1 : (a, b) t) (dt2 : (c, d) t) : bool =
   | Complex64, Complex64 -> true
   | _ -> false
 
-type (_, _) eq = Refl : ('x, 'x) eq
-
-let eq_gadt : type a b c d.
-    (a, b) t -> (c, d) t -> ((a, b) t, (c, d) t) eq option =
+let equal_witness : type a b c d.
+    (a, b) t -> (c, d) t -> ((a, b) t, (c, d) t) Type.eq option =
  fun dt1 dt2 ->
   match (dt1, dt2) with
-  | Float16, Float16 -> Some Refl
-  | Float32, Float32 -> Some Refl
-  | Float64, Float64 -> Some Refl
-  | Int8, Int8 -> Some Refl
-  | UInt8, UInt8 -> Some Refl
-  | Int16, Int16 -> Some Refl
-  | UInt16, UInt16 -> Some Refl
-  | Int32, Int32 -> Some Refl
-  | Int64, Int64 -> Some Refl
-  | Int, Int -> Some Refl
-  | NativeInt, NativeInt -> Some Refl
-  | Complex32, Complex32 -> Some Refl
-  | Complex64, Complex64 -> Some Refl
+  | Float16, Float16 -> Some Equal
+  | Float32, Float32 -> Some Equal
+  | Float64, Float64 -> Some Equal
+  | Int8, Int8 -> Some Equal
+  | UInt8, UInt8 -> Some Equal
+  | Int16, Int16 -> Some Equal
+  | UInt16, UInt16 -> Some Equal
+  | Int32, Int32 -> Some Equal
+  | Int64, Int64 -> Some Equal
+  | Int, Int -> Some Equal
+  | NativeInt, NativeInt -> Some Equal
+  | Complex32, Complex32 -> Some Equal
+  | Complex64, Complex64 -> Some Equal
   | _ -> None
 
 let is_float (type a b) (dt : (a, b) t) : bool =
@@ -278,7 +239,7 @@ let is_uint (type a b) (dt : (a, b) t) : bool =
   match dt with UInt8 | UInt16 -> true | _ -> false
 
 (* Minimum value for each dtype (identity for max reduction) *)
-let min_val : type a b. (a, b) t -> a =
+let min_value : type a b. (a, b) t -> a =
  fun dtype ->
   match dtype with
   | Float16 -> Float.neg_infinity
@@ -295,9 +256,27 @@ let min_val : type a b. (a, b) t -> a =
   | Complex32 -> Complex.{ re = Float.neg_infinity; im = Float.neg_infinity }
   | Complex64 -> Complex.{ re = Float.neg_infinity; im = Float.neg_infinity }
 
+(* Maximum value for each dtype (identity for min reduction) *)
+let max_value : type a b. (a, b) t -> a =
+ fun dtype ->
+  match dtype with
+  | Float16 -> Float.infinity
+  | Float32 -> Float.infinity
+  | Float64 -> Float.infinity
+  | Int8 -> 127
+  | UInt8 -> 255
+  | Int16 -> 32767
+  | UInt16 -> 65535
+  | Int32 -> Int32.max_int
+  | Int64 -> Int64.max_int
+  | Int -> Int.max_int
+  | NativeInt -> Nativeint.max_int
+  | Complex32 -> Complex.{ re = Float.infinity; im = Float.infinity }
+  | Complex64 -> Complex.{ re = Float.infinity; im = Float.infinity }
+
 (* Helper function to convert a float to the OCaml representation ('a) of a
    given Dtype. *)
-let float_to_dtype (type a b) (dtype : (a, b) t) (v_float : float) : a =
+let of_float (type a b) (dtype : (a, b) t) (v_float : float) : a =
   match dtype with
   | Float16 -> v_float
   | Float32 -> v_float

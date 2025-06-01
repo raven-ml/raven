@@ -26,7 +26,7 @@ let data : type a b. (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t =
  fun t ->
   (* Create a bigarray with the size of the view *)
   let size = Internal.numel t in
-  let kind = Dtype.kind_of_dtype t.dtype in
+  let kind = Dtype.to_bigarray_kind t.dtype in
   let ba = Bigarray.Array1.create kind Bigarray.c_layout size in
   (* Copy data from Metal buffer to bigarray, handling views correctly *)
   Internal.copy_to_bigarray t ba;
@@ -58,7 +58,7 @@ let op_const_scalar : type a b. context -> a -> (a, b) Dtype.t -> (a, b) t =
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
 
   (* Create temporary bigarray to hold the value *)
-  let kind = Dtype.kind_of_dtype dtype in
+  let kind = Dtype.to_bigarray_kind dtype in
   let ba = Bigarray.Array1.create kind Bigarray.c_layout 1 in
   Bigarray.Array1.set ba 0 value;
 
@@ -73,7 +73,7 @@ let op_const_scalar : type a b. context -> a -> (a, b) Dtype.t -> (a, b) t =
 let op_const_array : type a b.
     context -> (a, b, Bigarray.c_layout) Bigarray.Array1.t -> (a, b) t =
  fun ctx bigarray ->
-  let dtype = Dtype.dtype_of_kind (Bigarray.Array1.kind bigarray) in
+  let dtype = Dtype.of_bigarray_kind (Bigarray.Array1.kind bigarray) in
   let size = Bigarray.Array1.dim bigarray in
   let size_bytes = size * Internal.sizeof_dtype dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in

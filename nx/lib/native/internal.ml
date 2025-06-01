@@ -29,7 +29,7 @@ let is_c_contiguous { view; _ } = View.is_c_contiguous view
 (* Low-level helper to create a Bigarray.Array1.t *)
 let create_buffer_unsafe (type a b) (dt : (a, b) Dtype.t)
     (size_in_elements : int) : (a, b) buffer =
-  Bigarray.Array1.create (Dtype.kind_of_dtype dt) Bigarray.c_layout
+  Bigarray.Array1.create (Dtype.to_bigarray_kind dt) Bigarray.c_layout
     size_in_elements
 
 (* Operations (These seem like they might belong in a higher-level API or were

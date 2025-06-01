@@ -113,8 +113,8 @@ let cast : type a b c d.
     Internal.context -> (a, b) Internal.t -> (c, d) Dtype.t -> (c, d) Internal.t
     =
  fun ctx t target_dtype ->
-  match Dtype.eq_gadt t.Internal.dtype target_dtype with
-  | Some Dtype.Refl ->
+  match Dtype.equal_witness t.Internal.dtype target_dtype with
+  | Some Equal ->
       (* Same dtype - just copy *)
       let out_size = Internal.numel t in
       let size_bytes = out_size * Internal.sizeof_dtype t.Internal.dtype in

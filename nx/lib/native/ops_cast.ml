@@ -5122,8 +5122,8 @@ let cast_kernel (type a b c d) (src : (a, b) t) (dst : (c, d) t) start_idx
   | NativeInt, NativeInt -> ()
 
 let cast (type a b c d) ctx (src_tensor : (a, b) t) (dst_tensor : (c, d) t) =
-  match Dtype.eq_gadt (dtype src_tensor) (dtype dst_tensor) with
-  | Some Refl -> () (* No casting needed *)
+  match Dtype.equal_witness (dtype src_tensor) (dtype dst_tensor) with
+  | Some Equal -> () (* No casting needed *)
   | None ->
       let src_size = size src_tensor in
       if src_size = 0 then () (* Nothing to cast for empty tensors *)

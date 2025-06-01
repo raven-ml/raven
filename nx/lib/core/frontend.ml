@@ -101,6 +101,29 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Internal Utilities ───── *)
 
+  (* Create a power of 2 for integer shift operations *)
+  let power_of_two : type a b. (a, b) Dtype.t -> int -> a =
+   fun dtype shift_val ->
+    if shift_val < 0 then
+      invalid_arg "power_of_two: shift_val must be non-negative";
+    match dtype with
+    | Int8 | UInt8 | Int16 | UInt16 | Int | NativeInt -> (
+        let power = 1 lsl shift_val in
+        match dtype with
+        | Int8 -> power
+        | UInt8 -> power land 0xFF
+        | Int16 -> power
+        | UInt16 -> power land 0xFFFF
+        | Int -> power
+        | NativeInt -> Nativeint.shift_left Nativeint.one shift_val
+        | _ -> failwith "Unreachable")
+    | Int32 -> Int32.shift_left Int32.one shift_val
+    | Int64 -> Int64.shift_left Int64.one shift_val
+    | _ ->
+        failwith
+          ("power_of_two: unsupported dtype: " ^ Dtype.to_string dtype
+         ^ ". Expected integer type.")
+
   let array_prod arr = Array.fold_left ( * ) 1 arr
 
   (** Integer ceiling division: (a + b - 1) / b for integers a, b where b > 0.
@@ -209,8 +232,8 @@ module Make (B : Backend_intf.S) = struct
     broadcast_to new_shape x
 
   let cast (type a b c d) (dt : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t =
-    match Dtype.eq_gadt (dtype x) dt with
-    | Some Refl ->
+    match Dtype.equal_witness (dtype x) dt with
+    | Some Equal ->
         (* Here the compiler now *knows* that [x] has type [(c,d) t], so this
            type-safe “no-op” copy type-checks. *)
         B.op_copy x
@@ -239,7 +262,7 @@ module Make (B : Backend_intf.S) = struct
            (Array.length arr) n);
 
     (* Create bigarray buffer with proper dtype *)
-    let kind = Dtype.kind_of_dtype dtype in
+    let kind = Dtype.to_bigarray_kind dtype in
     let bigarray = Bigarray.Array1.create kind Bigarray.c_layout n in
 
     (* Copy data from OCaml array to bigarray *)
@@ -890,7 +913,7 @@ module Make (B : Backend_intf.S) = struct
 
     if shift_val = 0 then x
     else
-      let factor_val = Dtype.power_of_two dt shift_val in
+      let factor_val = power_of_two dt shift_val in
       let factor_tensor = B.op_const_scalar (B.context x) factor_val dt in
       let factor_b = broadcast_to (shape x) factor_tensor in
       B.op_mul x factor_b
@@ -906,7 +929,7 @@ module Make (B : Backend_intf.S) = struct
 
     if shift_val = 0 then x
     else
-      let divisor_val = Dtype.power_of_two dt shift_val in
+      let divisor_val = power_of_two dt shift_val in
       let divisor_tensor = B.op_const_scalar (B.context x) divisor_val dt in
       let divisor_b = broadcast_to (shape x) divisor_tensor in
       B.op_idiv x divisor_b
@@ -1072,9 +1095,7 @@ module Make (B : Backend_intf.S) = struct
          else num_elements_in_reduced_dims)
     in
 
-    let divisor_val_ocaml =
-      Dtype.float_to_dtype x_dtype num_elements_divisor_float
-    in
+    let divisor_val_ocaml = Dtype.of_float x_dtype num_elements_divisor_float in
     let divisor_scalar = scalar (B.context x) x_dtype divisor_val_ocaml in
     let divisor_tensor = broadcast_to (shape num_for_sum) divisor_scalar in
 
@@ -1106,7 +1127,7 @@ module Make (B : Backend_intf.S) = struct
     let n_corrected_val = num_elements_in_reduced_dims - ddof in
     let n_corrected_float = float_of_int (Stdlib.max 0 n_corrected_val) in
 
-    let divisor_val_ocaml = Dtype.float_to_dtype x_dtype n_corrected_float in
+    let divisor_val_ocaml = Dtype.of_float x_dtype n_corrected_float in
     let divisor_scalar = scalar (B.context x) x_dtype divisor_val_ocaml in
     let divisor_tensor = broadcast_to (shape sum_diff_sq) divisor_scalar in
 
@@ -1120,7 +1141,7 @@ module Make (B : Backend_intf.S) = struct
   let all ?axes ?(keepdims = false) x =
     let dt = dtype x in
 
-    if Dtype.eq dt Dtype.uint8 then
+    if Dtype.equal dt Dtype.uint8 then
       (* For boolean/uint8 tensors, we can use prod since 1*1*...*1 = 1 and
          1*1*...*0*...*1 = 0 *)
       let prod_val = prod ?axes ~keepdims x in
@@ -1663,7 +1684,7 @@ module Make (B : Backend_intf.S) = struct
               List.iter
                 (fun x ->
                   let x_dtype = dtype x in
-                  if not (Dtype.eq first_dtype x_dtype) then
+                  if not (Dtype.equal first_dtype x_dtype) then
                     invalid_arg
                       (Printf.sprintf "concatenate: dtype mismatch (%s vs %s)"
                          (Dtype.to_string first_dtype)
@@ -1683,7 +1704,7 @@ module Make (B : Backend_intf.S) = struct
               List.iter
                 (fun x ->
                   let x_dtype = dtype x in
-                  if not (Dtype.eq first_dtype x_dtype) then
+                  if not (Dtype.equal first_dtype x_dtype) then
                     invalid_arg
                       (Printf.sprintf "concatenate: dtype mismatch (%s vs %s)"
                          (Dtype.to_string first_dtype)
@@ -1966,14 +1987,13 @@ module Make (B : Backend_intf.S) = struct
   let linspace ctx dtype ?(endpoint = true) start_f stop_f count =
     if count < 0 then invalid_arg "linspace: count must be non-negative";
     if count = 0 then empty ctx dtype [| 0 |]
-    else if count = 1 then
-      full ctx dtype [| 1 |] (Dtype.float_to_dtype dtype start_f)
+    else if count = 1 then full ctx dtype [| 1 |] (Dtype.of_float dtype start_f)
     else
       let div_factor = float_of_int (if endpoint then count - 1 else count) in
       let step_f = (stop_f -. start_f) /. div_factor in
       let f_init idx_arr =
         let i_f = float_of_int idx_arr.(0) in
-        Dtype.float_to_dtype dtype (start_f +. (i_f *. step_f))
+        Dtype.of_float dtype (start_f +. (i_f *. step_f))
       in
       init ctx dtype [| count |] f_init
 
@@ -2815,14 +2835,14 @@ module Make (B : Backend_intf.S) = struct
 
       (* Pad to power of 2 *)
       let fill_value =
-        if descending then Dtype.min_val (dtype x)
+        if descending then Dtype.min_value (dtype x)
         else
           (* Use a large value for ascending sort *)
           match dtype x with
-          | dt when Dtype.is_float dt -> Dtype.float_to_dtype dt Float.infinity
+          | dt when Dtype.is_float dt -> Dtype.of_float dt Float.infinity
           | Dtype.Int32 -> Int32.max_int
           | Dtype.Int64 -> Int64.max_int
-          | dt -> Dtype.float_to_dtype dt 1e10 (* Fallback for other types *)
+          | dt -> Dtype.of_float dt 1e10 (* Fallback for other types *)
       in
 
       (* Handle NaN values by replacing them with infinity for sorting *)
@@ -2832,8 +2852,8 @@ module Make (B : Backend_intf.S) = struct
           let is_nan = isnan x in
           let inf_val =
             if descending then
-              full_like x (Dtype.float_to_dtype (dtype x) Float.neg_infinity)
-            else full_like x (Dtype.float_to_dtype (dtype x) Float.infinity)
+              full_like x (Dtype.of_float (dtype x) Float.neg_infinity)
+            else full_like x (Dtype.of_float (dtype x) Float.infinity)
           in
           where is_nan inf_val x
         else x
@@ -2980,17 +3000,16 @@ module Make (B : Backend_intf.S) = struct
         if Dtype.is_float (dtype x) then
           (* Where x_sorted is inf and original x had NaN, restore NaN *)
           let nan_val =
-            full_like x_sorted (Dtype.float_to_dtype (dtype x) Float.nan)
+            full_like x_sorted (Dtype.of_float (dtype x) Float.nan)
           in
           let is_inf =
             if descending then
               equal x_sorted
                 (full_like x_sorted
-                   (Dtype.float_to_dtype (dtype x) Float.neg_infinity))
+                   (Dtype.of_float (dtype x) Float.neg_infinity))
             else
               equal x_sorted
-                (full_like x_sorted
-                   (Dtype.float_to_dtype (dtype x) Float.infinity))
+                (full_like x_sorted (Dtype.of_float (dtype x) Float.infinity))
           in
           where is_inf nan_val x_sorted
         else x_sorted
@@ -4347,7 +4366,7 @@ module Make (B : Backend_intf.S) = struct
       Array.init num_spatial_dims (fun i -> pooled_ndim - num_spatial_dims + i)
     in
 
-    let fill_value = Dtype.min_val (dtype x) in
+    let fill_value = Dtype.min_value (dtype x) in
     let x_padded = pad full_pad_config fill_value x in
     let pooled = pool ~k_s:kernel_size ~s_s ~d_s x_padded in
     let max_values =
