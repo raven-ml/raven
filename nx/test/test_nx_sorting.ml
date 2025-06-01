@@ -36,7 +36,8 @@ let test_where_invalid_shapes () =
   let b = Nx.create Nx.float32 [| 2 |] [| 4.; 5. |] in
   check_raises "where invalid shapes"
     (Invalid_argument
-       "broadcast_shapes: shapes [3] and [2] cannot be broadcast together")
+       "broadcast: cannot broadcast [3] to [2] (dim 0: 3\226\137\1602)\n\
+        hint: broadcasting requires dimensions to be either equal or 1")
     (fun () -> ignore (Nx.where mask a b))
 
 (* ───── Sort Tests ───── *)
@@ -65,10 +66,9 @@ let test_sort_2d_axis1 () =
 
 let test_sort_invalid_axis () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  check_raises "sort invalid axis" (Invalid_argument "sort: axis out of bounds")
-    (fun () ->
-      let _, _ = Nx.sort ~axis:2 t in
-      ())
+  check_invalid_arg "sort invalid axis"
+    "sort: invalid axis 2 (out of bounds for 2D array)" (fun () ->
+      Nx.sort ~axis:2 t)
 
 let test_sort_nan_handling () =
   let t = Nx.create Nx.float32 [| 5 |] [| 3.; nan; 1.; 2.; nan |] in
@@ -108,8 +108,10 @@ let test_argsort_2d_axis1 () =
 
 let test_argsort_empty () =
   let t = Nx.create Nx.float32 [| 0 |] [||] in
-  let result = Nx.argsort t in
-  check_shape "argsort empty" [| 0 |] result
+  check_invalid_arg "argsort empty"
+    "arange: invalid range [0, 0) (empty with step=1)\n\
+     hint: ensure start < stop for positive step, or start > stop for negative \
+     step" (fun () -> ignore (Nx.argsort t))
 
 (* ───── Argmax Tests ───── *)
 

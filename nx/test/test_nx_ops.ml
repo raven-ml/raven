@@ -45,7 +45,8 @@ let test_broadcast_error ~op ~op_name ~dtype ~a_shape ~b_shape () =
   check_invalid_arg
     (Printf.sprintf "%s incompatible broadcast" op_name)
     (Printf.sprintf
-       "broadcast_shapes: shapes %s and %s cannot be broadcast together"
+       "broadcast: cannot broadcast %s to %s (dim 0: 3\226\137\1604)\n\
+        hint: broadcasting requires dimensions to be either equal or 1"
        (Nx.shape_to_string a_shape)
        (Nx.shape_to_string b_shape))
     (fun () -> ignore (op a b))
@@ -729,13 +730,6 @@ module Bitwise_tests = struct
         `Quick,
         test_unary_op ~op:Nx.invert ~op_name:"invert" ~dtype:Nx.int16
           ~shape:[| 3 |] ~input:[| 5; 0; 7 |] ~expected:[| -6; -1; -8 |] );
-      ( "bitwise on float error",
-        `Quick,
-        fun () ->
-          let _t1 = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
-          let _t2 = Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |] in
-          (* Skip this test for now - bitwise ops don't check dtype yet *)
-          () );
     ]
 end
 

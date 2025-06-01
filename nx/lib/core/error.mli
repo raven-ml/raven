@@ -58,6 +58,9 @@ val invalid_shape :
 (** For shape validation errors like negative dimensions or incompatible sizes.
 *)
 
+val empty_input : op:string -> what:string -> 'a
+(** For operations on empty inputs. *)
+
 (** {2 Common Checks} *)
 
 val check_bounds :

@@ -52,9 +52,8 @@ let test_matmul_shape_error () =
   let b = Nx.create Nx.float32 [| 5; 6 |] (Array.init 30 float_of_int) in
   check_raises "matmul shape error"
     (Invalid_argument
-       "dot: shape mismatch on contracting dimension. x_shape: [3; 4], \
-        w_shape: [5; 6]. x_contract_dim_size: 4, w_contract_dim_size: 5")
-    (fun () -> ignore (Nx.matmul a b))
+       "dot: cannot contract [3,4] (last axis: 4) to [5,6] (axis 0: 5) (size \
+        4\226\137\1605)") (fun () -> ignore (Nx.matmul a b))
 
 let test_matmul_empty () =
   let a = Nx.create Nx.float32 [| 0; 5 |] [||] in
@@ -317,8 +316,9 @@ let test_convolve_invalid_shapes () =
   in
 
   check_invalid_arg "convolve1d channel mismatch"
-    "Input channels 2 not compatible with groups 1 and weight cin_per_group 3"
-    (fun () -> ignore (Nx.convolve1d input_1d kernel_1d))
+    "correlate_nd: invalid channel configuration (2 \226\137\160 1\195\1513)\n\
+     hint: expected 3 channels for 1 groups with 3 channels each" (fun () ->
+      ignore (Nx.convolve1d input_1d kernel_1d))
 
 let test_convolve_empty_input () =
   (* Empty input handling - empty on spatial dimension *)

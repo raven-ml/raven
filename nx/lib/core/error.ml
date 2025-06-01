@@ -30,7 +30,7 @@ let invalid ~op ~what ?reason ?hint () =
   in
   invalid_arg msg
 
-let failed ~op ~what ?reason ?hint =
+let failed ~op ~what ?reason ?hint () =
   let msg =
     let base = Printf.sprintf "%s: %s" op what in
     let with_reason =
@@ -48,7 +48,7 @@ let shape_to_string shape =
   let elements = Array.map string_of_int shape |> Array.to_list in
   Printf.sprintf "[%s]" (String.concat "," elements)
 
-let shape_mismatch ~op ~expected ~actual ?hint =
+let shape_mismatch ~op ~expected ~actual ?hint () =
   let expected_str = shape_to_string expected in
   let actual_str = shape_to_string actual in
   let expected_size = Array.fold_left ( * ) 1 expected in
@@ -77,9 +77,9 @@ let shape_mismatch ~op ~expected ~actual ?hint =
         (Array.length actual)
   in
 
-  cannot ~op ~what:"reshape" ~from:expected_str ~to_:actual_str ~reason ?hint
+  cannot ~op ~what:"reshape" ~from:expected_str ~to_:actual_str ~reason ?hint ()
 
-let broadcast_incompatible ~op ~shape1 ~shape2 ?hint =
+let broadcast_incompatible ~op ~shape1 ~shape2 ?hint () =
   let shape1_str = shape_to_string shape1 in
   let shape2_str = shape_to_string shape2 in
 
@@ -104,25 +104,26 @@ let broadcast_incompatible ~op ~shape1 ~shape2 ?hint =
   in
   let hint = Option.value hint ~default:default_hint in
 
-  cannot ~op ~what:"broadcast" ~from:shape1_str ~to_:("with " ^ shape2_str)
-    ~reason ~hint
+  cannot ~op ~what:"broadcast" ~from:shape1_str ~to_:shape2_str ~reason ~hint ()
 
-let dtype_mismatch ~op ~expected ~actual ?hint =
+let dtype_mismatch ~op ~expected ~actual ?hint () =
   let default_hint = Printf.sprintf "cast one array to %s" expected in
   let hint = Option.value hint ~default:default_hint in
   cannot ~op ~what:op ~from:expected ~to_:("with " ^ actual)
-    ~reason:"dtype mismatch" ~hint
+    ~reason:"dtype mismatch" ~hint ()
 
-let axis_out_of_bounds ~op ~axis ~ndim ?hint =
+let axis_out_of_bounds ~op ~axis ~ndim ?hint () =
   invalid ~op
     ~what:(Printf.sprintf "axis %d" axis)
     ~reason:(Printf.sprintf "out of bounds for %dD array" ndim)
-    ?hint
+    ?hint ()
 
-let invalid_shape ~op ~shape ~reason ?hint =
+let invalid_shape ~op ~shape ~reason ?hint () =
   invalid ~op
     ~what:(Printf.sprintf "shape %s" (shape_to_string shape))
-    ~reason ?hint
+    ~reason ?hint ()
+
+let empty_input ~op ~what = invalid ~op ~what ~reason:"cannot be empty" ()
 
 let check_bounds ~op ~name ~value ?min ?max () =
   let check_min =

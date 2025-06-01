@@ -185,7 +185,9 @@ let of_bigarray_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Nativeint -> NativeInt
   | Bigarray.Complex32 -> Complex32
   | Bigarray.Complex64 -> Complex64
-  | _ -> failwith "of_bigarray_kind: Unsupported Bigarray kind"
+  | _ ->
+      Error.invalid ~op:"of_bigarray_kind" ~what:"bigarray kind"
+        ~reason:"unsupported kind" ()
 
 (* Shallow equality on constructors. Useful for runtime checks. *)
 let equal (type a b c d) (dt1 : (a, b) t) (dt2 : (c, d) t) : bool =

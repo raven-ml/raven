@@ -59,12 +59,12 @@ let test_create_max_rank () =
 
 let test_create_wrong_data_size () =
   check_invalid_arg "data size mismatch"
-    "create: array size (3) doesn't match shape (6)" (fun () ->
+    "create: invalid array size (got 3 elements, expected 6)" (fun () ->
       ignore (Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0 |]))
 
 let test_create_negative_shape () =
   check_invalid_arg "negative dimension"
-    "create: array size (2) doesn't match shape (-6)" (fun () ->
+    "create: invalid array size (got 2 elements, expected -6)" (fun () ->
       ignore (Nx.create Nx.float32 [| 2; -3 |] [| 1.0; 2.0 |]))
 
 (* ───── Special Creation Function Tests ───── *)
@@ -142,8 +142,10 @@ let test_eye_k_out_of_range () =
 (* ───── Range Generation Tests ───── *)
 
 let test_arange_empty () =
-  let t = Nx.arange Nx.int32 5 5 1 in
-  check_shape "arange(5,5) shape" [| 0 |] t
+  check_invalid_arg "arange empty"
+    "arange: invalid range [0, 0) (empty with step=1)\n\
+     hint: ensure start < stop for positive step, or start > stop for negative \
+     step" (fun () -> Nx.arange Nx.int32 0 0 1)
 
 let test_arange_negative_step () =
   let t = Nx.arange Nx.int32 10 0 (-2) in
@@ -303,17 +305,17 @@ let test_set_item_2x2 () =
 
 let test_get_item_out_of_bounds () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  check_raises "out of bounds get"
-    (Invalid_argument
-       "get: Index 2 at dimension 0 is out of bounds for shape [2; 2]")
-    (fun () -> ignore (Nx.get_item [ 2; 0 ] t))
+  check_invalid_arg "out of bounds get"
+    "get: invalid index [2,0] (out of bounds for shape [2,2])\n\
+     hint: index 0 at dim 0: 2 \226\136\137 [0, 2)" (fun () ->
+      Nx.get_item [ 2; 0 ] t)
 
 let test_set_item_out_of_bounds () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  check_raises "out of bounds set"
-    (Invalid_argument
-       "set: Index 2 at dimension 1 is out of bounds for shape [2; 2]")
-    (fun () -> Nx.set_item [ 0; 2 ] 5.0 t)
+  check_invalid_arg "out of bounds set"
+    "set: invalid index 2 at dimension 1 (out of bounds for shape [2,2])\n\
+     hint: index 1 at dim 1: 2 \226\136\137 [0, 2)" (fun () ->
+      Nx.set_item [ 0; 2 ] 5.0 t)
 
 let test_get_item_negative_indices () =
   (* unsafe_get doesn't support negative indices - would need to use get with
@@ -389,8 +391,10 @@ let test_slice_empty_range () =
 
 let test_slice_step_zero () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  check_invalid_arg "slice step zero" "Slice step cannot be zero" (fun () ->
-      ignore (Nx.slice_ranges ~steps:[ 0 ] [ 0 ] [ 5 ] t))
+  check_invalid_arg "slice step zero"
+    "slice: invalid step (cannot be zero)\n\
+     hint: use positive step for forward slicing or negative for reverse"
+    (fun () -> ignore (Nx.slice_ranges ~steps:[ 0 ] [ 0 ] [ 5 ] t))
 
 let test_slice_negative_step () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
@@ -463,7 +467,8 @@ let test_blit_incompatible () =
   let dst = Nx.zeros Nx.float32 [| 3 |] in
   check_raises "incompatible shapes"
     (Invalid_argument
-       "blit: tensors must have the same shape. src: [2], dst: [3]") (fun () ->
+       "blit: cannot reshape [3] to [2] (dim 0: 3≠2)\n\
+        hint: source and destination must have identical shapes") (fun () ->
       Nx.blit src dst)
 
 let test_fill_nan () =

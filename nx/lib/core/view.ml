@@ -37,8 +37,13 @@ let shape v = v.shape
 let strides v = v.strides
 
 let stride axis v =
-  if axis < 0 then invalid_arg "axis must be non-negative";
-  if axis >= Array.length v.strides then invalid_arg "axis out of bounds";
+  if axis < 0 then
+    Error.invalid ~op:"stride" ~what:"axis"
+      ~reason:(Printf.sprintf "%d < 0" axis)
+      ()
+  else if axis >= Array.length v.strides then
+    Error.axis_out_of_bounds ~op:"stride" ~axis ~ndim:(Array.length v.strides)
+      ();
   let stride = Array.unsafe_get v.strides axis in
   stride
 
@@ -47,8 +52,12 @@ let mask v = v.mask
 let is_c_contiguous v = v.layout = C_contiguous
 
 let dim axis v =
-  if axis < 0 then invalid_arg "axis must be non-negative";
-  if axis >= Array.length v.shape then invalid_arg "axis out of bounds";
+  if axis < 0 then
+    Error.invalid ~op:"dim" ~what:"axis"
+      ~reason:(Printf.sprintf "%d < 0" axis)
+      ()
+  else if axis >= Array.length v.shape then
+    Error.axis_out_of_bounds ~op:"dim" ~axis ~ndim:(Array.length v.shape) ();
   let dim = Array.unsafe_get v.shape axis in
   dim
 
@@ -98,7 +107,11 @@ let create ?(offset = 0) ?strides ?mask shape_arr =
 
 let linear_index view indices =
   if Array.length indices <> Array.length view.shape then
-    invalid_arg "linear_index: Rank mismatch";
+    Error.invalid ~op:"linear_index" ~what:"indices"
+      ~reason:
+        (Printf.sprintf "rank mismatch: %d vs %d" (Array.length indices)
+           (Array.length view.shape))
+      ();
   let physical_offset = ref view.offset in
   Array.iteri
     (fun i idx ->
@@ -120,7 +133,11 @@ let is_valid view indices =
 
 let expand view new_shape =
   if Array.length new_shape <> Array.length view.shape then
-    invalid_arg "expand: Rank must match";
+    Error.invalid ~op:"expand" ~what:"shape dimensions"
+      ~reason:
+        (Printf.sprintf "rank mismatch: %d vs %d" (Array.length new_shape)
+           (Array.length view.shape))
+      ();
   if Array.exists (( = ) 0) view.shape then create new_shape
   else
     let strides =
@@ -129,7 +146,12 @@ let expand view new_shape =
           let s = view.shape.(i) in
           if s = ns then view.strides.(i)
           else if s = 1 then 0
-          else invalid_arg "expand: Cannot expand non-singleton dimension")
+          else
+            (Error.cannot ~op:"expand" ~what:"expand"
+               ~from:(Printf.sprintf "dimension %d (size %d)" i s)
+               ~to_:(Printf.sprintf "size %d" ns)
+               ~reason:"can only expand singleton dimensions")
+              ())
         new_shape
     in
     let mask =
@@ -141,7 +163,13 @@ let expand view new_shape =
                (fun i (b, e) ->
                  if view.shape.(i) = 1 && new_shape.(i) <> 1 then
                    if b = 0 && e = 1 then (0, new_shape.(i))
-                   else invalid_arg "expand: Cannot expand masked singleton"
+                   else
+                     Error.invalid ~op:"expand"
+                       ~what:"masked singleton dimension"
+                       ~reason:
+                         (Printf.sprintf
+                            "bounds [%d,%d] incompatible with expansion" b e)
+                       ()
                  else (b, e))
                m)
     in
@@ -149,16 +177,24 @@ let expand view new_shape =
 
 let permute view axes =
   let n = ndim view in
-  if Array.length axes <> n then invalid_arg "permute: Invalid axes length";
+  if Array.length axes <> n then
+    Error.invalid ~op:"permute" ~what:"axes array"
+      ~reason:(Printf.sprintf "length %d != ndim %d" (Array.length axes) n)
+      ();
   let seen = Array.make n false in
   Array.iter
     (fun ax ->
       if ax < 0 || ax >= n || seen.(ax) then
-        invalid_arg "permute: Invalid axis value or duplicate";
+        Error.invalid ~op:"permute"
+          ~what:(Printf.sprintf "axis %d" ax)
+          ~reason:
+            (if ax < 0 || ax >= n then "out of bounds" else "duplicate axis")
+          ();
       seen.(ax) <- true)
     axes;
   if not (Array.for_all Fun.id seen) then
-    invalid_arg "permute: Axes do not form a permutation";
+    Error.invalid ~op:"permute" ~what:"axes"
+      ~reason:"do not form a valid permutation" ();
 
   let new_shape =
     Array.map (fun i -> view.shape.(axes.(i))) (Array.init n Fun.id)
@@ -182,16 +218,15 @@ let reshape view new_shape =
 
     (* Check size compatibility *)
     if current_numel <> new_numel && current_numel <> 0 && new_numel <> 0 then
-      invalid_arg
-        (Printf.sprintf "reshape: cannot reshape array of size %d into shape %s"
-           current_numel
-           (Shape.to_string new_shape)) (* Handle zero-size tensors *)
+      Error.shape_mismatch ~op:"reshape" ~expected:new_shape ~actual:view.shape
+        () (* Handle zero-size tensors *)
     else if
       Array.exists (( = ) 0) view.shape || Array.exists (( = ) 0) new_shape
     then create ~offset:0 new_shape
       (* Check for masks - these complicate reshape *)
     else if view.mask <> None then
-      failwith "View.reshape: cannot reshape views with masks"
+      Error.failed ~op:"reshape" ~what:"cannot reshape views with masks"
+        ~hint:"call contiguous() first to create a mask-free copy" ()
       (* Fast path for C-contiguous views *)
     else if view.layout = C_contiguous then create ~offset:view.offset new_shape
     else if
@@ -328,26 +363,25 @@ let reshape view new_shape =
             create ~offset:view.offset ~strides:new_strides new_shape
         | None ->
             (* Fall back to existing logic or error *)
-            failwith
-              (Printf.sprintf
-                 "View.reshape: cannot reshape strided view from shape %s to %s.\n\
-                  Current strides: %s (expected C-contiguous: %s)\n\
-                  This reshape would require reordering elements in memory.\n\
-                  Possible solutions:\n\
-                  - Call contiguous() before reshape to create a C-contiguous \
-                  copy\n\
-                  - Use transpose/permute operations that preserve striding\n\
-                  - Check if the operation sequence can be reordered to avoid \
-                  this reshape"
-                 (Shape.to_string view.shape)
-                 (Shape.to_string new_shape)
-                 (Shape.to_string view.strides)
-                 (Shape.to_string (compute_strides view.shape)))
+            Error.cannot ~op:"reshape" ~what:"reshape strided view"
+              ~from:(Shape.to_string view.shape)
+              ~to_:(Shape.to_string new_shape)
+              ~reason:
+                (Printf.sprintf "incompatible strides %s (expected %s)"
+                   (Shape.to_string view.strides)
+                   (Shape.to_string (compute_strides view.shape)))
+              ~hint:
+                "call contiguous() before reshape to create a C-contiguous copy"
+              ()
 
 (* helper used by [pad] and [shrink] *)
 let unsafe_resize view arg new_mask_opt =
   if Array.length arg <> Array.length view.shape then
-    invalid_arg "unsafe_resize: Argument length mismatch";
+    Error.invalid ~op:"unsafe_resize" ~what:"argument array"
+      ~reason:
+        (Printf.sprintf "length %d != ndim %d" (Array.length arg)
+           (Array.length view.shape))
+      ();
   let new_shape = Array.map (fun (a, b) -> b - a) arg in
   let new_offset = ref view.offset in
   Array.iteri
@@ -388,10 +422,16 @@ let unsafe_resize view arg new_mask_opt =
 
 let pad view arg =
   if Array.length arg <> Array.length view.shape then
-    invalid_arg "pad: Argument length mismatch";
+    Error.invalid ~op:"pad" ~what:"padding array"
+      ~reason:
+        (Printf.sprintf "length %d != ndim %d" (Array.length arg)
+           (Array.length view.shape))
+      ();
   if Array.for_all (fun (b, e) -> b = 0 && e = 0) arg then view
   else if Array.exists (fun (b, e) -> b < 0 || e < 0) arg then
-    invalid_arg "pad: Negative padding values not allowed (use shrink or slice)"
+    Error.invalid ~op:"pad" ~what:"padding values"
+      ~reason:"negative values not allowed"
+      ~hint:"use shrink or slice to remove elements" ()
   else
     let zvarg =
       Array.mapi
@@ -411,20 +451,29 @@ let pad view arg =
 
 let shrink view arg =
   if Array.length arg <> Array.length view.shape then
-    invalid_arg "shrink: Argument length mismatch";
+    Error.invalid ~op:"shrink" ~what:"bounds array"
+      ~reason:
+        (Printf.sprintf "length %d != ndim %d" (Array.length arg)
+           (Array.length view.shape))
+      ();
   if Array.for_all2 (fun (b, e) s -> b = 0 && e = s) arg view.shape then view
   else if
     Array.exists2
       (fun (b, e) s -> b < 0 || e < 0 || b > s || e > s || b >= e)
       arg view.shape
   then
-    invalid_arg
-      "shrink: Invalid shrink bounds (must be within old shape and start < end)"
+    Error.invalid ~op:"shrink" ~what:"bounds"
+      ~reason:"must be within shape and start < end" ()
   else unsafe_resize view arg None
 
 let flip view flip_axes_bools =
   if Array.length flip_axes_bools <> Array.length view.shape then
-    invalid_arg "flip: Boolean array length mismatch with view rank";
+    Error.invalid ~op:"flip" ~what:"boolean array"
+      ~reason:
+        (Printf.sprintf "length %d != ndim %d"
+           (Array.length flip_axes_bools)
+           (Array.length view.shape))
+      ();
   let new_offset = ref view.offset in
   let new_strides = Array.copy view.strides in
   let new_mask =

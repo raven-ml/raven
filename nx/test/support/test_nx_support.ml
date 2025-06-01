@@ -3,7 +3,7 @@
 open Alcotest
 
 let check_invalid_arg msg pattern f =
-  check_raises msg (Invalid_argument pattern) f
+  check_raises msg (Invalid_argument pattern) (fun () -> ignore (f ()))
 
 let check_failure msg pattern f = check_raises msg (Failure pattern) f
 
