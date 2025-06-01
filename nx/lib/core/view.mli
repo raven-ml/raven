@@ -7,7 +7,7 @@
 type t
 (** View encapsulating tensor layout information. *)
 
-(** {1 Creation} *)
+(** {2 Creation} *)
 
 val create :
   ?offset:int -> ?strides:int array -> ?mask:(int * int) array -> Shape.t -> t
@@ -16,7 +16,7 @@ val create :
     Default offset is 0. Default strides are C-contiguous. Mask specifies valid
     ranges per dimension as [(start, end)] pairs. *)
 
-(** {1 Properties} *)
+(** {2 Properties} *)
 
 val shape : t -> Shape.t
 (** [shape view] returns dimension sizes. *)
@@ -49,7 +49,7 @@ val mask : t -> (int * int) array option
 val is_c_contiguous : t -> bool
 (** [is_c_contiguous view] tests for row-major contiguous layout. *)
 
-(** {1 Index Operations} *)
+(** {2 Index Operations} *)
 
 val linear_index : t -> int array -> int
 (** [linear_index view indices] computes buffer position.
@@ -63,7 +63,7 @@ val is_valid : t -> int array -> bool
 
     Returns true if no mask or indices within all bounds. *)
 
-(** {1 Transformations} *)
+(** {2 Transformations} *)
 
 val reshape : t -> Shape.t -> t
 (** [reshape view new_shape] changes dimensions.

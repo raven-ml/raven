@@ -1,6 +1,6 @@
 (** Data types for tensor elements. *)
 
-(** {1 Element Types} *)
+(** {2 Element Types} *)
 
 type float16_elt = Bigarray.float16_elt
 type float32_elt = Bigarray.float32_elt
@@ -16,7 +16,7 @@ type nativeint_elt = Bigarray.nativeint_elt
 type complex32_elt = Bigarray.complex32_elt
 type complex64_elt = Bigarray.complex64_elt
 
-(** {1 Data Type} *)
+(** {2 Data Type} *)
 
 (** GADT representing tensor element types. First type parameter is the OCaml
     type, second is the Bigarray element type. *)
@@ -35,7 +35,7 @@ type ('a, 'b) t =
   | Complex32 : (Complex.t, complex32_elt) t
   | Complex64 : (Complex.t, complex64_elt) t
 
-(** {1 Constructors} *)
+(** {2 Constructors} *)
 
 val float16 : (float, float16_elt) t
 val float32 : (float, float32_elt) t
@@ -51,7 +51,7 @@ val nativeint : (nativeint, nativeint_elt) t
 val complex32 : (Complex.t, complex32_elt) t
 val complex64 : (Complex.t, complex64_elt) t
 
-(** {1 Properties} *)
+(** {2 Properties} *)
 
 val to_string : ('a, 'b) t -> string
 (** [to_string dtype] returns string representation. *)
@@ -62,7 +62,7 @@ val pp : Format.formatter -> ('a, 'b) t -> unit
 val itemsize : ('a, 'b) t -> int
 (** [itemsize dtype] returns size in bytes. *)
 
-(** {1 Type Classes} *)
+(** {2 Type Classes} *)
 
 val is_float : ('a, 'b) t -> bool
 (** [is_float dtype] returns true for floating-point types. *)
@@ -76,7 +76,7 @@ val is_int : ('a, 'b) t -> bool
 val is_uint : ('a, 'b) t -> bool
 (** [is_uint dtype] returns true for unsigned integer types. *)
 
-(** {1 Constants} *)
+(** {2 Constants} *)
 
 val zero : ('a, 'b) t -> 'a
 (** [zero dtype] returns zero value. *)
@@ -96,7 +96,7 @@ val min_value : ('a, 'b) t -> 'a
 val max_value : ('a, 'b) t -> 'a
 (** [max_value dtype] returns maximum representable value. *)
 
-(** {1 Conversions} *)
+(** {2 Conversions} *)
 
 val of_float : ('a, 'b) t -> float -> 'a
 (** [of_float dtype f] converts float to dtype value. *)
@@ -109,11 +109,11 @@ val of_bigarray_kind : ('a, 'b) Bigarray.kind -> ('a, 'b) t
 
     @raise Failure if kind is unsupported *)
 
-(** {1 Equality} *)
+(** {2 Equality} *)
 
 val equal : ('a, 'b) t -> ('c, 'd) t -> bool
-(** [equal dtype1 dtype2] tests dtype equality. *)
+(** [equal dtype2 dtype2] tests dtype equality. *)
 
 val equal_witness :
   ('a, 'b) t -> ('c, 'd) t -> (('a, 'b) t, ('c, 'd) t) Type.eq option
-(** [equal_witness dtype1 dtype2] returns equality proof if dtypes match. *)
+(** [equal_witness dtype2 dtype2] returns equality proof if dtypes match. *)

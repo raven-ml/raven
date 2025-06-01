@@ -6,7 +6,7 @@
 type t = int array
 (** Shape representation as array of dimension sizes. *)
 
-(** {1 Basic Operations} *)
+(** {2 Basic Operations} *)
 
 val numel : t -> int
 (** [numel shape] computes total number of elements. *)
@@ -14,14 +14,14 @@ val numel : t -> int
 val equal : t -> t -> bool
 (** [equal s1 s2] tests shape equality. *)
 
-(** {1 Strides} *)
+(** {2 Strides} *)
 
 val c_contiguous_strides : t -> int array
 (** [c_contiguous_strides shape] computes row-major strides.
 
     Handles zero-size dimensions correctly. *)
 
-(** {1 Index Conversions} *)
+(** {2 Index Conversions} *)
 
 val ravel_index : int array -> int array -> int
 (** [ravel_index indices strides] computes linear offset.
@@ -35,7 +35,7 @@ val unravel_index : int -> t -> int array
 
     @raise Invalid_argument if offset out of bounds *)
 
-(** {1 Shape Manipulation} *)
+(** {2 Shape Manipulation} *)
 
 val resolve_neg_one : t -> int array -> t
 (** [resolve_neg_one current_shape new_spec] infers dimension marked with -1.
@@ -54,7 +54,7 @@ val broadcast_index : int array -> t -> int array
 
     Returns indices in source shape corresponding to target position. *)
 
-(** {1 Pretty Printing} *)
+(** {2 Pretty Printing} *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp fmt shape] prints shape in [2x3x4] format. *)
