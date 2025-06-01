@@ -16,17 +16,17 @@ This guide establishes documentation conventions for the raven. We follow the Un
 ### Documentation Template
 
 ```ocaml
-val function_name : type_signature
-(** [function_name arg1 arg2] does X.
+val zeros : ('a, 'b) dtype -> int array -> ('a, 'b) t
+(** [zeros dtype shape] creates zero-filled tensor.   (* <-- function application pattern *)
 
-    Extended description if needed. State invariants and constraints naturally
-    in prose. Mention performance characteristics only if surprising.
+    Extended description if needed. State invariants.  (* <-- optional extended info *)
 
-    @raise Exception_name if [condition]
+    @raise Exception_name if [condition]               (* <-- exceptions *)
 
+    Example creating a 2x3 matrix of zeros:            (* <-- example with description *)
     {[
-      let result = function_name value1 value2
-      (* result = expected_output *)
+      let t = Nx.zeros Nx.float32 [|2; 3|] in
+      Nx.to_array t = [|0.; 0.; 0.; 0.; 0.; 0.|]
     ]} *)
 ```
 
@@ -38,89 +38,31 @@ val function_name : type_signature
 - No backticks - this is odoc, not Markdown
 
 #### First Line
-Always start with the function application pattern:
-```ocaml
-(** [create dtype shape data] creates a tensor from array [data]. *)
-```
-
-Not:
-```ocaml
-(** Creates a tensor with the given dtype and shape. *)
-```
+Always start with: `[function_name arg1 arg2] does X`
+Not: "Creates a tensor with..." or "This function..."
 
 #### Mathematical Notation
 - Use ASCII: `a * b`, not `a × b`
 - Use `x^2` or `x ** 2` for powers
 - Use `[start, stop)` for half-open intervals
 
-### Content Guidelines
+### What to Document
 
-#### What to Include
+✓ **Invariants and preconditions**: "Length of [data] must equal product of [shape]."  
+✓ **Surprising performance**: "Returns view if possible (O(1)), otherwise copies (O(n))."  
+✓ **Shape transformations**: "Result has shape [|m; n|] where m = length of [a]."
 
-✓ **Invariants and preconditions**
-```ocaml
-(** Length of [data] must equal product of [shape]. *)
-```
-
-✓ **Non-obvious performance characteristics**
-```ocaml
-(** Returns view if possible (O(1)), otherwise copies (O(n)). *)
-```
-
-✓ **Shape transformations**
-```ocaml
-(** Result has shape [|m; n|] where m = length of [a], n = length of [b]. *)
-```
-
-#### What to Exclude
-
-✗ **Redundant parameter descriptions**
-```ocaml
-(* Bad: *)
-(** @param dtype the data type of the tensor *)
-(* Good: include constraints in prose if needed *)
-```
-
-✗ **Obvious information**
-```ocaml
-(* Bad: *)
-(** Allocates a new tensor. *)  (* Obviously true for most operations *)
-```
-
-✗ **Implementation details**
-```ocaml
-(* Bad: *)
-(** Internally uses Gaussian elimination with partial pivoting. *)
-(* Good: *)
-(** Computes matrix inverse. *)
-```
+✗ **Not**: obvious information, implementation details, or redundant parameter descriptions
 
 ### Code Examples
 
-All code examples in documentation must be valid OCaml that can be compiled and executed. This allows for future integration with mdx testing.
-
-#### Requirements for Code Examples
-
-1. **Complete and valid syntax** - Examples must parse and typecheck
-2. **Use qualified names** - Use `Nx.function` instead of `open Nx`
-3. **Show actual values** - Use `=` to show expected results
-4. **Proper type annotations** - Include when necessary for clarity
-5. **Separate code blocks** - Each example should be in its own `{[ ... ]}` block with a description before it
-6. **Self-contained examples** - Each block should be independently executable
+Must be valid, compilable OCaml:
+- Use qualified names (`Nx.function` not `open Nx`)
+- Show expected results with `=`
+- Each example in its own `{[ ... ]}` block with a description before it
+- Self-contained (independently executable)
 
 ### Examples
-
-#### Simple Function
-```ocaml
-val zeros : ('a, 'b) dtype -> int array -> ('a, 'b) t
-(** [zeros dtype shape] creates zero-filled tensor.
-
-    Example creating a 2x3 matrix of zeros:
-    {[
-      let t = Nx.zeros Nx.float32 [|2; 3|] in
-      Nx.to_array t = [|0.; 0.; 0.; 0.; 0.; 0.|]
-    ]} *)
-```
 
 #### Function with Constraints
 ```ocaml
@@ -136,12 +78,6 @@ val arange : ('a, 'b) dtype -> int -> int -> int -> ('a, 'b) t
     {[
       let t1 = Nx.arange Nx.int32 0 10 2 in
       Nx.to_array t1 = [|0l; 2l; 4l; 6l; 8l|]
-    ]}
-
-    Counting down from 5 to 1:
-    {[
-      let t2 = Nx.arange Nx.int32 5 0 (-1) in
-      Nx.to_array t2 = [|5l; 4l; 3l; 2l; 1l|]
     ]} *)
 ```
 
@@ -162,14 +98,6 @@ val dot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       let v2 = Nx.of_array Nx.float32 [|3.; 4.|] in
       let scalar = Nx.dot v1 v2 in
       Nx.to_scalar scalar = 11.
-    ]}
-
-    Matrix multiplication of 2x2 matrices:
-    {[
-      let m1 = Nx.of_array Nx.float32 ~shape:[|2; 2|] [|1.; 2.; 3.; 4.|] in
-      let m2 = Nx.of_array Nx.float32 ~shape:[|2; 2|] [|5.; 6.; 7.; 8.|] in
-      let result = Nx.dot m1 m2 in
-      Nx.to_array result = [|19.; 22.; 43.; 50.|]
     ]} *)
 ```
 
@@ -183,7 +111,7 @@ val sum : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 
     @raise Invalid_argument if any axis is out of bounds
 
-    Summing all elements in a 2x2 matrix:
+    Summing all elements:
     {[
       let t = Nx.of_array Nx.float32 ~shape:[|2; 2|] [|1.; 2.; 3.; 4.|] in
       Nx.to_scalar (Nx.sum t) = 10.
@@ -194,21 +122,12 @@ val sum : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
       let t = Nx.of_array Nx.float32 ~shape:[|2; 2|] [|1.; 2.; 3.; 4.|] in
       let sum_axis0 = Nx.sum ~axes:[|0|] t in
       Nx.to_array sum_axis0 = [|4.; 6.|]
-    ]}
-
-    Summing along columns (axis 1) while keeping dimensions:
-    {[
-      let t = Nx.of_array Nx.float32 ~shape:[|2; 2|] [|1.; 2.; 3.; 4.|] in
-      let sum_keepdims = Nx.sum ~axes:[|1|] ~keepdims:true t in
-      Nx.shape sum_keepdims = [|2; 1|] &&
-      Nx.to_array sum_keepdims = [|3.; 7.|]
     ]} *)
 ```
 
-### Special Cases
+### Special Documentation Cases
 
-#### Broadcasting Functions
-Always explain broadcasting behavior:
+**Broadcasting**: Always explain compatibility rules
 ```ocaml
 (** [add t1 t2] computes element-wise sum with broadcasting.
 
@@ -216,16 +135,14 @@ Always explain broadcasting behavior:
     or one of them must be 1. *)
 ```
 
-#### View vs Copy Operations
-Be explicit about memory behavior:
+**Memory behavior**: Be explicit about views vs copies
 ```ocaml
 (** [transpose t] returns view with swapped axes (no copy). *)
 (** [flatten t] returns new 1-D tensor (always copies). *)
 (** [reshape shape t] returns view if possible, otherwise copies. *)
 ```
 
-#### Complex Shape Rules
-Use examples to clarify:
+**Complex shapes**: Use examples to clarify
 ```ocaml
 (** [stack axis tensors] stacks along new axis at position [axis].
 
@@ -253,55 +170,6 @@ Use examples to clarify:
     {1 Creating Tensors}
 
     Use {!create}, {!zeros}, {!ones}, or {!arange} to construct tensors... *)
-```
-
-### Checklist
-
-Before committing documentation:
-
-- [ ] First line uses `[function_name args]` pattern
-- [ ] Uses active voice ("creates" not "is created")
-- [ ] Documents invariants, not implementation
-- [ ] Includes `@raise` for all exceptions
-- [ ] Examples show actual usage with output
-- [ ] Examples are valid OCaml code with proper module opens
-- [ ] Examples use `=` to show expected results
-- [ ] No redundant parameter lists
-- [ ] Performance noted only if surprising
-- [ ] Code properly formatted with `[...]` and `{[...]}`
-
-### Anti-patterns to Avoid
-
-```ocaml
-(* Too verbose: *)
-(** [add t1 t2] performs element-wise addition.
-
-    This function takes two tensors t1 and t2 as input and returns
-    a new tensor containing their element-wise sum. The tensors must
-    have compatible shapes for broadcasting.
-
-    @param t1 first tensor
-    @param t2 second tensor
-    @return new tensor with the sum *)
-
-(* Better: *)
-(** [add t1 t2] computes element-wise sum with broadcasting.
-
-    @raise Invalid_argument if shapes incompatible *)
-```
-
-```ocaml
-(* Invalid OCaml in examples: *)
-(** {[
-      zeros float32 [|2;3|]  (* Missing module qualification and syntax error *)
-      (* [[0.;0.;0.];[0.;0.;0.]] *)
-    ]} *)
-
-(* Valid OCaml: *)
-(** {[
-      let t = Nx.zeros Nx.float32 [|2; 3|] in
-      Nx.to_array t = [|0.; 0.; 0.; 0.; 0.; 0.|]
-    ]} *)
 ```
 
 Remember: If the Unix manual wouldn't say it, neither should we.
