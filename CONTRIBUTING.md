@@ -173,3 +173,120 @@ val sum : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 ```
 
 Remember: If the Unix manual wouldn't say it, neither should we.
+
+## Error Message
+
+### Format
+
+```
+operation: cannot <action> <from> to <to> (<specific problem>)
+hint: <guidance>
+```
+
+All lowercase except dtypes. Hints are optional.
+
+**Alternative formats when needed:**
+```
+operation: invalid <thing> (<specific problem>)
+operation: <what failed> (<specific problem>)
+```
+
+### Examples
+
+```
+reshape: cannot reshape [10,10] to [12,10] (100→120 elements)
+
+broadcast: cannot broadcast [2,3] with [4,5] (dim 0: 2≠4, dim 1: 3≠5)
+hint: broadcasting requires dimensions to be either equal or 1
+
+empty: invalid shape [-1, 10] (negative dimension)
+
+matmul: cannot multiply Float32 @ Int64 (dtype mismatch)
+hint: cast one array to match the other's dtype
+```
+
+### Rules
+
+#### Always include:
+- **Operation name** - what function failed
+- **Full context** - complete shapes, not just sizes
+- **Specific problem** - which dimension/axis failed and why
+
+#### Structure consistently:
+- For transformations: `[10,10] to [12,10]`
+- For operations: `[2,3] with [4,5]`
+- For access: `[5,2] in shape [3,4]`
+- For invalid inputs: `invalid X (reason)`
+
+#### Make problems obvious:
+- Show comparisons: `2≠4`, `5≥3`, `100→120`
+- Point to location: `dim 0:`, `axis 1:`
+- State violations: `axis 2 repeated`, `multiple -1`
+
+#### Multiple issues:
+```
+conv2d: invalid configuration
+  - input channels: 3 ≠ 5 (weight expects 5)
+  - kernel [6,6] > input [5,5] with 'valid' padding
+```
+
+#### Add hints when:
+- The fix is non-obvious
+- There's a specific function to call
+- The rule isn't clear from context
+- Backend limitations exist
+
+### Special Cases
+
+**Performance warnings:**
+```
+reshape: requires copy from strided view [100,10] to [1000]
+hint: call contiguous() first to avoid copy
+```
+
+**Empty/scalar edge cases:**
+```
+squeeze: cannot squeeze scalar (already rank 0)
+argmax: empty axis returns no indices (size 0)
+```
+
+**Backend limitations:**
+```
+gather: indices dtype Int64 not supported (backend uses Int32)
+hint: cast indices to Int32
+```
+
+### Common Patterns
+
+**Shape changes:**
+```
+reshape: cannot reshape [2,5,10] to [4,26] (100→104 elements)
+```
+
+**Invalid access:**
+```
+slice: cannot slice [(0,5), (2,12)] in shape [10,10] (axis 1: 12>10)
+```
+
+**Type/value errors:**
+```
+pad: invalid padding [-1, 2] (negative values)
+hint: use shrink() to remove elements
+```
+
+**Configuration errors:**
+```
+permute: invalid axes [0,2,2] (axis 2 repeated)
+arange: invalid range [10, 5, 1] (start > stop with positive step)
+```
+
+### Don'ts
+
+❌ Vague errors: `invalid shape`
+❌ Missing context: `100 != 120`
+❌ Redundant hints: `shapes must be compatible (incompatible shapes)`
+❌ Teaching basics: `broadcasting requires...` (save for hints)
+
+### Summary
+
+Show exactly what they tried, what failed, and where. Use the standard format when possible, adapt when needed. Include hints only when they add value.
