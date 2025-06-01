@@ -68,11 +68,12 @@ let test_reshape_copy_when_not_contiguous () =
   | Failure msg ->
       let prefix = "View.reshape: cannot reshape strided view" in
       let prefix_len = String.length prefix in
-      if String.length msg >= prefix_len && String.sub msg 0 prefix_len = prefix then
-        () (* Expected failure with detailed message *)
-      else
-        Alcotest.fail (Printf.sprintf "Unexpected error message: %s" msg)
-  | e -> Alcotest.fail (Printf.sprintf "Unexpected exception: %s" (Printexc.to_string e))
+      if String.length msg >= prefix_len && String.sub msg 0 prefix_len = prefix
+      then () (* Expected failure with detailed message *)
+      else Alcotest.fail (Printf.sprintf "Unexpected error message: %s" msg)
+  | e ->
+      Alcotest.fail
+        (Printf.sprintf "Unexpected exception: %s" (Printexc.to_string e))
 
 let test_reshape_to_vector () =
   let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -432,11 +433,12 @@ let test_ravel_non_contiguous_copy () =
   | Failure msg ->
       let prefix = "View.reshape: cannot reshape strided view" in
       let prefix_len = String.length prefix in
-      if String.length msg >= prefix_len && String.sub msg 0 prefix_len = prefix then
-        () (* Expected failure with detailed message *)
-      else
-        Alcotest.fail (Printf.sprintf "Unexpected error message: %s" msg)
-  | e -> Alcotest.fail (Printf.sprintf "Unexpected exception: %s" (Printexc.to_string e))
+      if String.length msg >= prefix_len && String.sub msg 0 prefix_len = prefix
+      then () (* Expected failure with detailed message *)
+      else Alcotest.fail (Printf.sprintf "Unexpected error message: %s" msg)
+  | e ->
+      Alcotest.fail
+        (Printf.sprintf "Unexpected exception: %s" (Printexc.to_string e))
 
 let test_pad_2d () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in

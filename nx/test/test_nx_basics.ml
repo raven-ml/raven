@@ -639,7 +639,9 @@ let memory_and_views =
     ("strides after transpose", `Quick, test_strides_after_transpose);
     ("strides after slice", `Quick, test_strides_after_slice);
     ("is contiguous basic", `Quick, test_is_c_contiguous_basic);
-    ("is contiguous after transpose", `Quick, test_is_c_contiguous_after_transpose);
+    ( "is contiguous after transpose",
+      `Quick,
+      test_is_c_contiguous_after_transpose );
     ("is contiguous after slice", `Quick, test_is_c_contiguous_after_slice);
     ("offset after multiple slices", `Quick, test_offset_after_multiple_slices);
   ]
