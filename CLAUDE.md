@@ -15,8 +15,14 @@ Raven: OCaml ML ecosystem. Pre-alpha.
 3. **Update**: Keep TODO.md current
 
 ### Testing & Debugging
-- Debug with backtrace: `OCAMLRUNPARAM=b dune exec nx/test/test_foo.exe 2>&1`
 - Float comparisons need `~eps`: `check_t ~eps:1e-6 "name" shape values result`
+
+**Dune watch mode** (the user typically runs dune build in watch mode outside Claude session):
+- Check for `_build/.lock` to see if watch mode is active
+- Build errors visible via `dune build <dir>` (works with watch mode)
+- Run tests directly: `_build/default/nx/test/test_foo.exe` (dune exec doesn't work with watch mode)
+- **Never** kill dune, remove lock file, or clean build when watch mode is active
+- In watch mode, When you make changes, check if there are build errors with `dune build <dir>` first, otherwise you'll be running the old tests.
 
 When tests fail:
 1. Create a minimal repro file in `<project>/test/failing/bug_<bug_name>.ml`
@@ -34,9 +40,15 @@ When tests fail:
 dune build                        # Build everything
 dune build nx/                    # Build targets in a directory
 dune build @runtest               # Run all tests
-dune build @nx/runtest            # Run specific tests
+dune build @nx/runtest            # Run tests in a directory
 dune exec nx/test/test_foo.exe    # Run single test file
 dune build fmt                    # Format code
+```
+
+**With dune watch mode active:**
+```bash
+# Check for build errors and run
+dune build nx/test/test_foo.exe &&  _build/default/nx/test/test_foo.exe
 ```
 
 ## Code Style
@@ -71,7 +83,7 @@ dune build fmt                    # Format code
 - **Creation funcs**: Return contiguous arrays (use `init` not `broadcast_to`)
 - **NumPy compatibility**: Follows NumPy API and conventions closely
 
-### Backend (Tinygrad UOps)
+### Backend
 - Do not add new operations, unless instructed to
 - Comparison ops return uint8 (because of lack of bool array support in OCaml bigarray)
 - Cannot reshape broadcast views (zero strides)
@@ -79,3 +91,18 @@ dune build fmt                    # Format code
 ### Performance
 - Use `Bigarray.unsafe_get/set` in loops (validate indices outside)
 - Batch operations to minimize backend dispatch
+
+## Alcotest Commands
+
+### Running Tests
+- Run all tests: `test.exe`
+- List available tests: `test.exe list`
+- Run specific tests by name regex: `test.exe test <NAME_REGEX>`
+- Run specific test cases: `test.exe test <NAME_REGEX> <TESTCASES>`
+
+### Useful Options
+- Stop on first failure: `test.exe test --bail`
+- Compact output: `test.exe test -c`
+- Show test errors: `test.exe test -e`
+- Run only quick tests: `test.exe test -q`
+- Verbose output: `test.exe test -v`
