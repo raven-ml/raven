@@ -61,8 +61,8 @@ let test_reshape_copy_when_not_contiguous () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let transposed = Nx.transpose t in
   check_invalid_arg "reshape non-contiguous"
-    "reshape: cannot reshape strided view [3,2] to [6] (incompatible strides \
-     [1,3] (expected [2,1]))\n\
+    "reshape: cannot reshape strided view [3,2] to [6] (incompatible memory \
+     layout)\n\
      hint: call contiguous() before reshape to create a C-contiguous copy"
     (fun () -> Nx.reshape [| 6 |] transposed)
 

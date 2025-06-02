@@ -10,7 +10,11 @@ type t
 (** {2 Creation} *)
 
 val create :
-  ?offset:int -> ?strides:int array -> ?mask:(int * int) array -> Shape.t -> t
+  ?offset:int ->
+  ?strides:int array ->
+  ?mask:(int * int) array ->
+  Symbolic_shape.t ->
+  t
 (** [create ?offset ?strides ?mask shape] constructs view.
 
     Default offset is 0. Default strides are C-contiguous. Mask specifies valid
@@ -18,7 +22,7 @@ val create :
 
 (** {2 Properties} *)
 
-val shape : t -> Shape.t
+val shape : t -> Symbolic_shape.t
 (** [shape view] returns dimension sizes. *)
 
 val strides : t -> int array
@@ -30,10 +34,10 @@ val offset : t -> int
 val ndim : t -> int
 (** [ndim view] returns number of dimensions. *)
 
-val numel : t -> int
-(** [numel view] returns total elements. *)
+val numel : t -> Symbolic_shape.dim
+(** [numel view] returns total elements (may be symbolic). *)
 
-val dim : int -> t -> int
+val dim : int -> t -> Symbolic_shape.dim
 (** [dim axis view] returns size of dimension [axis].
 
     @raise Invalid_argument if axis out of bounds *)
@@ -56,16 +60,19 @@ val linear_index : t -> int array -> int
 
     Includes view's offset in result.
 
-    @raise Invalid_argument if rank mismatch *)
+    @raise Invalid_argument if rank mismatch
+    @raise Failure if shape is symbolic and non-contiguous *)
 
 val is_valid : t -> int array -> bool
 (** [is_valid view indices] checks mask bounds.
 
     Returns true if no mask or indices within all bounds. *)
 
+val can_be_strided : t -> bool
+
 (** {2 Transformations} *)
 
-val reshape : t -> Shape.t -> t
+val reshape : t -> Symbolic_shape.t -> t
 (** [reshape view new_shape] changes dimensions.
 
     Returns view if possible, fails if requires reordering. Handles -1
@@ -74,7 +81,7 @@ val reshape : t -> Shape.t -> t
     @raise Invalid_argument if size mismatch
     @raise Failure if cannot reshape strided view *)
 
-val expand : t -> Shape.t -> t
+val expand : t -> Symbolic_shape.t -> t
 (** [expand view new_shape] broadcasts singleton dimensions.
 
     Size-1 dimensions become size-n with stride 0.
@@ -106,3 +113,16 @@ val flip : t -> bool array -> t
     Adjusts strides to negative and updates offset.
 
     @raise Invalid_argument if array length mismatch *)
+
+(** {2 View Composition} *)
+
+val merge : t -> t -> t option
+(** [merge view1 view2] attempts to compose two views.
+
+    Returns a single view representing the composition of view1 followed by
+    view2, or None if the views cannot be merged. *)
+
+val simplify : t -> t
+(** [simplify view] attempts to simplify the view representation.
+
+    May return the same view if no simplification is possible. *)

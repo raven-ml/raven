@@ -500,7 +500,7 @@ let winograd_conv2d x w =
 
     (* Reshape to match tinygrad: [6, 6, 1, groups, rcout, cin, 1, 1] for 2D *)
     let target_shape = [| 6; 6; 1; groups; rcout; cin; 1; 1 |] in
-    let gfactors = (Nx_native.op_reshape gfactors_raw target_shape)[@landmark "winograd_weight_reshape"] in
+    let gfactors = (Nx_native.op_reshape gfactors_raw (Symbolic_shape.of_ints target_shape))[@landmark "winograd_weight_reshape"] in
 
     (* Prepare input tiles - Winograd needs 6x6 tiles with 4x4 output each *)
     (* Number of 4x4 output tiles needed *)

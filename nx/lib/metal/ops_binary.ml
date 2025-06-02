@@ -2,12 +2,12 @@ open Nx_core
 open Metal
 
 let dispatch_binary ctx op_name a b =
-  let out_shape = View.shape a.Internal.view in
-  let out_size = View.numel a.Internal.view in
+  let out_shape = Internal.shape a in
+  let out_size = Internal.numel a in
   let size_bytes = out_size * Internal.sizeof_dtype a.dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
   let metal_buffer = { Internal.buffer; size_bytes } in
-  let view = View.create out_shape in
+  let view = Lazy_view.create (Symbolic_shape.of_ints out_shape) in
   let out =
     { context = ctx; Internal.dtype = a.dtype; buffer = metal_buffer; view }
   in
@@ -32,8 +32,20 @@ let dispatch_binary ctx op_name a b =
       let a_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
       let b_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
 
-      let a_strides = View.strides a.view in
-      let b_strides = View.strides b.view in
+      let a_strides =
+        match Lazy_view.strides a.view with
+        | Some s -> s
+        | None ->
+            Error.failed ~op:"dispatch_binary"
+              ~what:"cannot get strides for non-contiguous view" ()
+      in
+      let b_strides =
+        match Lazy_view.strides b.view with
+        | Some s -> s
+        | None ->
+            Error.failed ~op:"dispatch_binary"
+              ~what:"cannot get strides for non-contiguous view" ()
+      in
 
       for i = 0 to ndim - 1 do
         Ctypes.(out_shape_arr +@ i <-@ Unsigned.UInt32.of_int out_shape.(i));
@@ -82,12 +94,12 @@ let mod_ ctx a b = dispatch_binary ctx "mod" a b
 let pow ctx a b = dispatch_binary ctx "pow" a b
 
 let dispatch_comparison ctx op_name a b =
-  let out_shape = View.shape a.Internal.view in
-  let out_size = View.numel a.Internal.view in
+  let out_shape = Internal.shape a in
+  let out_size = Internal.numel a in
   let size_bytes = out_size * Internal.sizeof_dtype Dtype.UInt8 in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
   let metal_buffer = { Internal.buffer; size_bytes } in
-  let view = View.create out_shape in
+  let view = Lazy_view.create (Symbolic_shape.of_ints out_shape) in
   let out =
     { context = ctx; Internal.dtype = Dtype.UInt8; buffer = metal_buffer; view }
   in
@@ -112,8 +124,20 @@ let dispatch_comparison ctx op_name a b =
       let a_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
       let b_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
 
-      let a_strides = View.strides a.view in
-      let b_strides = View.strides b.view in
+      let a_strides =
+        match Lazy_view.strides a.view with
+        | Some s -> s
+        | None ->
+            Error.failed ~op:"dispatch_binary"
+              ~what:"cannot get strides for non-contiguous view" ()
+      in
+      let b_strides =
+        match Lazy_view.strides b.view with
+        | Some s -> s
+        | None ->
+            Error.failed ~op:"dispatch_binary"
+              ~what:"cannot get strides for non-contiguous view" ()
+      in
 
       for i = 0 to ndim - 1 do
         Ctypes.(out_shape_arr +@ i <-@ Unsigned.UInt32.of_int out_shape.(i));
