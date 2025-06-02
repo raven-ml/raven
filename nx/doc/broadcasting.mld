@@ -1,0 +1,311 @@
+{0 Broadcasting}
+
+Broadcasting is a powerful mechanism that allows Nx to perform operations on tensors of different shapes. This guide explains broadcasting rules and provides practical examples.
+
+{1 What is Broadcasting?}
+
+Broadcasting enables element-wise operations between tensors of different shapes by automatically expanding the smaller tensor to match the larger one - without actually copying data.
+
+{[
+open Nx
+
+(* Simple example: matrix + vector *)
+let matrix = arange float32 0 12 1 |> reshape [|3; 4|]
+let vector = arange float32 0 4 1
+
+(* Broadcasting happens automatically *)
+let result = add matrix vector
+(* vector [0;1;2;3] is broadcast to shape [3;4] *)
+]}
+
+{1 Broadcasting Rules}
+
+Two tensors are compatible for broadcasting if:
+
+1. {b Dimension Alignment}: Dimensions are compared from right to left
+2. {b Size Compatibility}: Each dimension pair must be either equal or one of them must be 1
+3. {b Dimension Extension}: Missing dimensions are treated as 1
+
+{2 Rule Examples}
+
+{[
+(* Compatible shapes *)
+[|3; 4|]    and [|4|]       → [|3; 4|]    (* vector → matrix *)
+[|3; 1; 5|] and [|1; 4; 5|] → [|3; 4; 5|] (* both broadcast *)
+[|5|]       and [|3; 5|]     → [|3; 5|]    (* vector → matrix *)
+[|1|]       and [|3; 4; 5|]  → [|3; 4; 5|] (* scalar-like → 3D *)
+
+(* Incompatible shapes *)
+[|3; 4|] and [|4; 3|]  (* Error: 4 ≠ 3 in last dimension *)
+[|3; 2|] and [|2|]     (* Error: 2 ≠ 3 in first dimension *)
+]}
+
+{1 Common Broadcasting Patterns}
+
+{2 Scalar Operations}
+
+Broadcasting a scalar (0-D or 1-element tensor) to any shape:
+
+{[
+let tensor = arange float32 0 12 1 |> reshape [|3; 4|]
+let scalar = scalar float32 10.
+
+(* Scalar broadcasts to any shape *)
+let result = add tensor scalar
+(* Adds 10 to every element *)
+]}
+
+{2 Vector and Matrix}
+
+Row and column vectors broadcast differently:
+
+{[
+let matrix = arange float32 0 12 1 |> reshape [|3; 4|]
+
+(* Row vector (shape [1; 4]) *)
+let row_vec = arange float32 0 4 1 |> reshape [|1; 4|]
+let row_result = add matrix row_vec
+(* Adds [0;1;2;3] to each row *)
+
+(* Column vector (shape [3; 1]) *)
+let col_vec = arange float32 0 3 1 |> reshape [|3; 1|]
+let col_result = mul matrix col_vec
+(* Multiplies row i by i *)
+]}
+
+{2 Outer Operations}
+
+Create outer products using broadcasting:
+
+{[
+(* Outer product via broadcasting *)
+let a = arange float32 0 3 1 |> reshape [|3; 1|]  (* Column *)
+let b = arange float32 0 4 1 |> reshape [|1; 4|]  (* Row *)
+
+let outer_sum = add a b      (* Shape: [3; 4] *)
+let outer_product = mul a b  (* Shape: [3; 4] *)
+
+(* Result:
+   outer_sum = [[0;1;2;3];
+                [1;2;3;4];
+                [2;3;4;5]]
+   
+   outer_product = [[0;0;0;0];
+                    [0;1;2;3];
+                    [0;2;4;6]] *)
+]}
+
+{1 Broadcasting in Multiple Dimensions}
+
+{[
+(* 3D example *)
+let tensor_3d = arange float32 0 24 1 |> reshape [|2; 3; 4|]
+let matrix_2d = arange float32 0 12 1 |> reshape [|3; 4|]
+let vector_1d = arange float32 0 4 1
+
+(* All can be added together *)
+let result = add (add tensor_3d matrix_2d) vector_1d
+(* Shapes: [2;3;4] + [3;4] + [4] → [2;3;4] *)
+]}
+
+{1 Explicit Broadcasting}
+
+Sometimes you need to control broadcasting explicitly:
+
+{2 broadcast_to}
+
+Broadcast to a specific shape:
+
+{[
+let small = arange float32 0 3 1
+let big = broadcast_to [|5; 3|] small
+(* Creates view with shape [5;3] - no data copy *)
+
+(* Error if incompatible *)
+(* let bad = broadcast_to [|5; 4|] small *)  (* Error: 3 ≠ 4 *)
+]}
+
+{2 expand}
+
+Like broadcast_to but -1 preserves dimensions:
+
+{[
+let tensor = ones float32 [|3; 1; 5|]
+let expanded = expand [|3; -1; 5; 7|] tensor
+(* Shape: [3; 1; 5; 7] - preserves dim 1 *)
+]}
+
+{2 broadcast_arrays}
+
+Broadcast multiple arrays to common shape:
+
+{[
+let a = ones float32 [|3; 1|]
+let b = ones float32 [|1; 4|]
+let c = ones float32 [|5; 1; 1|]
+
+let [a'; b'; c'] = broadcast_arrays [a; b; c]
+(* All have shape [5; 3; 4] *)
+]}
+
+{1 Broadcasting with Reductions}
+
+When using keepdims, results remain broadcastable:
+
+{[
+let x = arange float32 0 24 1 |> reshape [|2; 3; 4|]
+
+(* Without keepdims *)
+let sum1 = sum ~axes:[|1|] x          (* Shape: [2; 4] *)
+(* Cannot directly subtract from x *)
+
+(* With keepdims *)
+let sum2 = sum ~axes:[|1|] ~keepdims:true x  (* Shape: [2; 1; 4] *)
+let normalized = div x sum2            (* Broadcasting works! *)
+]}
+
+{1 Common Use Cases}
+
+{2 Normalization}
+
+{[
+(* Normalize each row to sum to 1 *)
+let data = rand float32 [|10; 5|]
+let row_sums = sum ~axes:[|1|] ~keepdims:true data
+let normalized = div data row_sums
+
+(* Z-score normalization *)
+let mean = mean ~axes:[|0|] ~keepdims:true data
+let std = std ~axes:[|0|] ~keepdims:true data
+let z_scores = div (sub data mean) std
+]}
+
+{2 Batch Operations}
+
+{[
+(* Apply same operation to batch *)
+let batch = rand float32 [|32; 3; 224; 224|]  (* Batch of images *)
+let mean = [|0.485; 0.456; 0.406|] |> create float32 [|3|]
+       |> reshape [|1; 3; 1; 1|]
+let std = [|0.229; 0.224; 0.225|] |> create float32 [|3|]
+       |> reshape [|1; 3; 1; 1|]
+
+(* Normalize entire batch *)
+let normalized = div (sub batch mean) std
+]}
+
+{2 Grid Creation}
+
+{[
+(* Create coordinate grids *)
+let x = arange float32 0 5 1 |> reshape [|1; 5|]
+let y = arange float32 0 4 1 |> reshape [|4; 1|]
+
+let x_grid = broadcast_to [|4; 5|] x  (* x-coordinates *)
+let y_grid = broadcast_to [|4; 5|] y  (* y-coordinates *)
+
+(* Compute distances from origin *)
+let distances = sqrt (add (square x_grid) (square y_grid))
+]}
+
+{1 Performance Considerations}
+
+1. {b No data copy}: Broadcasting creates views, not copies
+2. {b Memory efficient}: Only shape/stride metadata changes
+3. {b Automatic optimization}: Operations fuse broadcasts
+4. {b Cache friendly}: Access patterns remain predictable
+
+{2 Best Practices}
+
+{[
+(* Good: Let operations handle broadcasting *)
+let result = mul matrix vector
+
+(* Avoid: Explicit broadcasting unless needed *)
+let vector_broadcast = broadcast_to (shape matrix) vector
+let result = mul matrix vector_broadcast
+
+(* Good: Use keepdims for broadcastable results *)
+let mean = mean ~axes:[|0|] ~keepdims:true data
+let centered = sub data mean
+]}
+
+{1 Debugging Broadcasting}
+
+When broadcasts fail:
+
+{[
+(* Check shapes *)
+let shape_a = shape tensor_a
+let shape_b = shape tensor_b
+Printf.printf "Shapes: %s and %s\n" 
+  (shape_to_string shape_a) 
+  (shape_to_string shape_b)
+
+(* Manually broadcast to debug *)
+let a', b' = broadcasted tensor_a tensor_b
+(* Raises exception with detailed error *)
+
+(* Test with broadcast_arrays *)
+let _ = broadcast_arrays [tensor_a; tensor_b]
+]}
+
+{1 Advanced Broadcasting}
+
+{2 Multiple Operands}
+
+{[
+(* Chain operations maintain broadcasting *)
+let a = ones float32 [|3; 1; 5|]
+let b = ones float32 [|1; 4; 5|]
+let c = ones float32 [|5|]
+
+let result = add (mul a b) c
+(* All broadcast to [3; 4; 5] *)
+]}
+
+{2 Broadcasting with Slicing}
+
+{[
+(* Selective broadcasting *)
+let data = arange float32 0 60 1 |> reshape [|3; 4; 5|]
+let factors = arange float32 1 4 1 |> reshape [|3; 1; 1|]
+
+(* Scale each "batch" differently *)
+let scaled = mul data factors
+]}
+
+{1 Common Pitfalls}
+
+{[
+(* Pitfall 1: Wrong dimension alignment *)
+let a = ones float32 [|3; 4|]
+let b = ones float32 [|3|]     (* Shape [3] *)
+(* let bad = add a b *)         (* Error! *)
+
+(* Fix: Reshape to column vector *)
+let b_col = reshape [|3; 1|] b
+let good = add a b_col          (* Works! *)
+
+(* Pitfall 2: Ambiguous broadcasting *)
+let x = ones float32 [|4; 3|]
+let y = ones float32 [|3; 4|]
+(* let bad = add x y *)         (* Error: incompatible *)
+
+(* Must transpose one *)
+let good = add x (transpose y)
+]}
+
+{1 Summary}
+
+Broadcasting in Nx:
+- Follows NumPy rules exactly
+- Works automatically in all operations
+- Creates efficient views, not copies
+- Enables expressive, vectorized code
+
+{1 Next Steps}
+
+- Explore {!shape-manipulation} for reshaping techniques
+- Study {!linear-algebra} for matrix operations
+- See examples in [nx/example/03-broadcasting/]
