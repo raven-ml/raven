@@ -16,4 +16,4 @@
   (source_tree golden))
  (build_if
   (= %{system} "macosx"))
- (libraries rune_jit rune_jit_metal test_rune_jit_support))
+ (libraries alcotest rune_jit rune_jit_metal test_rune_jit_support))

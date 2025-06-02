@@ -4,6 +4,8 @@ module Ir = Rune_jit.Ir
 module Var = Ir.Var
 module Rune_jit_metal = Rune_metal.Jit_backend
 
+let shape_prod = Array.fold_left ( * ) 1
+
 (* ───── Dtype Conversion Helpers ───── *)
 
 let nx_dtype_to_ir_dtype (type a b) (nx_dt : (a, b) Dtype.t) : a Ir.Dtype.t =
@@ -53,7 +55,7 @@ let allocate_buffer state dtype shape =
   let ir_dtype = nx_dtype_to_ir_dtype dtype in
   add_node state
     (Ir.Any_Node
-       (Ir.buffer ~dtype:ir_dtype ~size:(View.prod shape) ~device:"CPU"
+       (Ir.buffer ~dtype:ir_dtype ~size:(shape_prod shape) ~device:"CPU"
           ~out_var:var));
   record_metadata state var dtype shape;
   (var, ir_dtype)
@@ -133,7 +135,7 @@ let get_var_and_meta state tensor =
 let handle_binop state op a b =
   let var_a, meta_a = get_var_and_meta state a in
   let var_b, meta_b = get_var_and_meta state b in
-  let res_shape = View.broadcast_shapes meta_a.shape meta_b.shape in
+  let res_shape = Shape.broadcast meta_a.shape meta_b.shape in
   let res_dtype = dtype a in
   let out_var, ir_dtype = allocate_buffer state res_dtype res_shape in
   add_node state
@@ -202,7 +204,7 @@ let make_jit_handler (state : jit_tracer_state) =
           (fun k ->
             let numel = Bigarray.Array1.dim array in
             let nx_dtype =
-              Nx_core.Dtype.dtype_of_kind (Bigarray.Array1.kind array)
+              Nx_core.Dtype.of_bigarray_kind (Bigarray.Array1.kind array)
             in
             let var = Var.fresh () in
             add_node state
@@ -234,7 +236,7 @@ let make_jit_handler (state : jit_tracer_state) =
           (fun k ->
             let var_a, meta_a = get_var_and_meta state a in
             let var_b, meta_b = get_var_and_meta state b in
-            let res_shape = View.broadcast_shapes meta_a.shape meta_b.shape in
+            let res_shape = Shape.broadcast meta_a.shape meta_b.shape in
             let res_dtype = Nx_core.Dtype.uint8 in
             let out_var, ir_dtype = allocate_buffer state res_dtype res_shape in
             add_node state
@@ -248,7 +250,7 @@ let make_jit_handler (state : jit_tracer_state) =
           (fun k ->
             let var_a, meta_a = get_var_and_meta state a in
             let var_b, meta_b = get_var_and_meta state b in
-            let res_shape = View.broadcast_shapes meta_a.shape meta_b.shape in
+            let res_shape = Shape.broadcast meta_a.shape meta_b.shape in
             let res_dtype = Nx_core.Dtype.uint8 in
             let out_var, ir_dtype = allocate_buffer state res_dtype res_shape in
             add_node state
@@ -342,8 +344,8 @@ let make_jit_handler (state : jit_tracer_state) =
             let y_var, meta_y = get_var_and_meta state if_false in
             let res_dtype = dtype if_true in
             let res_shape =
-              View.broadcast_shapes
-                (View.broadcast_shapes meta_cond.shape meta_x.shape)
+              Shape.broadcast
+                (Shape.broadcast meta_cond.shape meta_x.shape)
                 meta_y.shape
             in
             let out_var, ir_dtype = allocate_buffer state res_dtype res_shape in
@@ -682,7 +684,7 @@ let execute_compiled_fn (type kernel_native)
   in
 
   let out_ba =
-    let len = View.prod state.output_shape in
+    let len = shape_prod state.output_shape in
     let kind = ir_dtype_to_bigarray_kind_any state.output_dtype in
     Bigarray.Array1.create kind Bigarray.c_layout len
   in

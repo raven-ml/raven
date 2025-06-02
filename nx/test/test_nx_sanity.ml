@@ -1,7 +1,7 @@
 (* Sanity tests for Nx - quick smoke test for every API function *)
 
 open Test_nx_support
-open Nx_core.Dtype
+open Nx
 open Alcotest
 
 (* Test helper to create simple test data *)

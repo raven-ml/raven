@@ -3,4 +3,4 @@
 (library
  (name nx_datasets)
  (public_name nx-datasets)
- (libraries unix camlzip curl csv nx))
+ (libraries unix zip curl csv nx))

@@ -19,6 +19,8 @@
 
 (version 0.1.0)
 
+(implicit_transitive_deps false)
+
 (pin
  (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
  (package

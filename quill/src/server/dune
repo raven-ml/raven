@@ -1,7 +1,16 @@
 (library
  (public_name quill.server)
  (name quill_server)
- (libraries cmdliner dream quill_top_unix quill_api dune-site)
+ (libraries
+  unix
+  yojson
+  cmdliner
+  dream
+  quill_top
+  quill_top_unix
+  quill_api
+  dune-site
+  compiler-libs.toplevel)
  (preprocess
   (pps lwt_ppx)))
 

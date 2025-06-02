@@ -1,4 +1,4 @@
 (library
  (name nx_io)
  (public_name nx.io)
- (libraries nx npy stb_image stb_image_write))
+ (libraries nx unix zip npy stb_image stb_image_write))

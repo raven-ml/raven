@@ -18,7 +18,7 @@
  (public_name nx.metal.bindings.objc)
  (enabled_if
   (= %{system} "macosx"))
- (libraries objc_c ctypes ctypes.foreign)
+ (libraries objc_c integers ctypes ctypes.foreign)
  (c_library_flags
   :standard
   (:include cclibs.sexp)))

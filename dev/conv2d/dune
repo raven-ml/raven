@@ -1,7 +1,7 @@
 (library
  (name nx_conv)
  (modules nx_conv)
- (libraries nx_core nx_native)
+ (libraries nx_core nx_native landmarks)
  (instrumentation
   (backend landmarks)))
 

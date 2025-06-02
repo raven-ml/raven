@@ -4,4 +4,4 @@
  (enabled_if
   (= %{system} "macosx"))
  (flags :standard -ccopt "-framework CoreGraphics" -ccopt "-framework Metal")
- (libraries objc))
+ (libraries integers ctypes ctypes.foreign objc))
