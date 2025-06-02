@@ -62,6 +62,15 @@ Whether you're an OCaml expert or new to the language, we'd love your help build
 
 See our [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
+## Support Raven
+
+Building a complete scientific computing ecosystem takes time and focus.
+We're raising funds to work on Raven full-time and deliver on our [roadmap](https://raven-ml.dev/docs/roadmap/).
+
+Your sponsorship helps us release a stable V1 with GPU backends, achieve NumPy/PyTorch performance parity, and build comprehensive documentation and tutorials.
+
+**[Support Raven →](https://raven-ml.dev/docs/support-raven/)**
+
 ## License
 
 Raven is available under the [ISC License](LICENSE), making it free for both personal and commercial use.
