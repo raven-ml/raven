@@ -369,7 +369,9 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
     | E_reshape { t_in = t_in_val; new_shape } ->
         Some
           (fun k ->
-            let result_val = op_reshape t_in_val new_shape in
+            let result_val =
+              op_reshape t_in_val (Symbolic_shape.of_ints new_shape)
+            in
             let forward_val = continue k result_val in
             Debug.with_context "∇reshape" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
@@ -384,7 +386,9 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
     | E_expand { t_in = t_in_val; new_target_shape } ->
         Some
           (fun k ->
-            let result_val = op_expand t_in_val new_target_shape in
+            let result_val =
+              op_expand t_in_val (Symbolic_shape.of_ints new_target_shape)
+            in
             let forward_val = continue k result_val in
             Debug.with_context "∇expand" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
@@ -1330,7 +1334,9 @@ let make_forward_handler primal_to_dual_map =
     | E_reshape { t_in; new_shape } ->
         Some
           (fun k ->
-            let result_val = op_reshape t_in new_shape in
+            let result_val =
+              op_reshape t_in (Symbolic_shape.of_ints new_shape)
+            in
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent = T.reshape new_shape dual_in.tangent in
@@ -1342,7 +1348,9 @@ let make_forward_handler primal_to_dual_map =
     | E_expand { t_in; new_target_shape } ->
         Some
           (fun k ->
-            let result_val = op_expand t_in new_target_shape in
+            let result_val =
+              op_expand t_in (Symbolic_shape.of_ints new_target_shape)
+            in
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent =

@@ -1,9 +1,19 @@
 open Nx_core
 open Internal
 
+(* Helper to get concrete shape from view *)
+let get_shape view =
+  match Symbolic_shape.eval (Lazy_view.shape view) with
+  | Some arr -> arr
+  | None ->
+      Error.failed ~op:"get_shape" ~what:"cannot evaluate symbolic shape" ()
+
+(* Helper to check if view is C-contiguous *)
+let is_c_contiguous view = Lazy_view.is_contiguous view
+
 let op_cholesky ctx ~upper t =
   let view = t.view in
-  let shape = View.shape view in
+  let shape = get_shape view in
   let ndim = Array.length shape in
 
   if ndim < 2 then
@@ -20,7 +30,7 @@ let op_cholesky ctx ~upper t =
       ();
 
   let t_contig =
-    if View.is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
+    if is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
   in
 
   let out_buffer = Buffer_pool.allocate ctx.pool t_contig.buffer.size_bytes in
@@ -37,7 +47,7 @@ let op_cholesky ctx ~upper t =
 let op_qr ctx ~reduced t =
   let dtype = t.dtype in
   let view = t.view in
-  let shape = View.shape view in
+  let shape = get_shape view in
   let ndim = Array.length shape in
 
   if ndim < 2 then
@@ -48,7 +58,7 @@ let op_qr ctx ~reduced t =
   let m = shape.(ndim - 2) in
 
   let t_contig =
-    if View.is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
+    if is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
   in
 
   let batch_shape = Array.sub shape 0 (ndim - 2) in
@@ -75,7 +85,7 @@ let op_qr ctx ~reduced t =
       context = ctx;
       dtype;
       buffer = { buffer = q_buffer; size_bytes = q_size * sizeof_dtype dtype };
-      view = View.create q_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints q_shape);
     }
   in
   let r =
@@ -83,7 +93,7 @@ let op_qr ctx ~reduced t =
       context = ctx;
       dtype;
       buffer = { buffer = r_buffer; size_bytes = r_size * sizeof_dtype dtype };
-      view = View.create r_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints r_shape);
     }
   in
 
@@ -93,7 +103,7 @@ let op_qr ctx ~reduced t =
 let op_svd ctx ~full_matrices t =
   let dtype = t.dtype in
   let view = t.view in
-  let shape = View.shape view in
+  let shape = get_shape view in
   let ndim = Array.length shape in
 
   if ndim < 2 then
@@ -104,7 +114,7 @@ let op_svd ctx ~full_matrices t =
   let m = shape.(ndim - 2) in
 
   let t_contig =
-    if View.is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
+    if is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
   in
 
   let batch_shape = Array.sub shape 0 (ndim - 2) in
@@ -136,7 +146,7 @@ let op_svd ctx ~full_matrices t =
       context = ctx;
       dtype;
       buffer = { buffer = u_buffer; size_bytes = u_size * sizeof_dtype dtype };
-      view = View.create u_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints u_shape);
     }
   in
   let vh =
@@ -144,7 +154,7 @@ let op_svd ctx ~full_matrices t =
       context = ctx;
       dtype;
       buffer = { buffer = vh_buffer; size_bytes = vh_size * sizeof_dtype dtype };
-      view = View.create vh_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints vh_shape);
     }
   in
 
@@ -158,7 +168,7 @@ let op_svd ctx ~full_matrices t =
       context = ctx;
       dtype = s_dtype;
       buffer = { buffer = s_buffer; size_bytes = s_size * sizeof_dtype s_dtype };
-      view = View.create s_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints s_shape);
     }
   in
 
@@ -174,7 +184,7 @@ let op_eig : type a b.
  fun ctx ~vectors t ->
   let _dtype = t.dtype in
   let view = t.view in
-  let shape = View.shape view in
+  let shape = get_shape view in
   let ndim = Array.length shape in
 
   if ndim < 2 then
@@ -191,7 +201,7 @@ let op_eig : type a b.
       ();
 
   let t_contig =
-    if View.is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
+    if is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
   in
 
   let batch_shape = Array.sub shape 0 (ndim - 2) in
@@ -214,7 +224,7 @@ let op_eig : type a b.
           buffer = eigenvalues_buffer;
           size_bytes = eigenvalues_size * sizeof_dtype eigenvalues_dtype;
         };
-      view = View.create eigenvalues_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints eigenvalues_shape);
     }
   in
 
@@ -237,7 +247,7 @@ let op_eig : type a b.
               buffer = eigenvectors_buffer;
               size_bytes = eigenvectors_size * sizeof_dtype eigenvectors_dtype;
             };
-          view = View.create eigenvectors_shape;
+          view = Lazy_view.create (Symbolic_shape.of_ints eigenvectors_shape);
         }
     else None
   in
@@ -269,7 +279,7 @@ let op_eig : type a b.
                 buffer = eigenvectors_buffer;
                 size_bytes = eigenvectors_size * sizeof_dtype t.dtype;
               };
-            view = View.create eigenvectors_shape;
+            view = Lazy_view.create (Symbolic_shape.of_ints eigenvectors_shape);
           }
     | None -> None
   in
@@ -290,7 +300,7 @@ let op_eigh : type a b.
  fun ctx ~vectors t ->
   let dtype = t.dtype in
   let view = t.view in
-  let shape = View.shape view in
+  let shape = get_shape view in
   let ndim = Array.length shape in
 
   if ndim < 2 then
@@ -307,7 +317,7 @@ let op_eigh : type a b.
       ();
 
   let t_contig =
-    if View.is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
+    if is_c_contiguous view then t else Ops_movement.make_contiguous ctx t
   in
 
   let batch_shape = Array.sub shape 0 (ndim - 2) in
@@ -330,7 +340,7 @@ let op_eigh : type a b.
           buffer = eigenvalues_buffer;
           size_bytes = eigenvalues_size * sizeof_dtype eigenvalues_dtype;
         };
-      view = View.create eigenvalues_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints eigenvalues_shape);
     }
   in
 
@@ -352,7 +362,7 @@ let op_eigh : type a b.
               buffer = eigenvectors_buffer;
               size_bytes = eigenvectors_size * sizeof_dtype dtype;
             };
-          view = View.create eigenvectors_shape;
+          view = Lazy_view.create (Symbolic_shape.of_ints eigenvectors_shape);
         }
     else None
   in
@@ -370,8 +380,8 @@ let op_triangular_solve ctx ~upper ~transpose ~unit_diag a b =
      let actual = Dtype.to_string b_dtype in
      Error.dtype_mismatch ~op:"triangular_solve" ~expected ~actual ());
 
-  let a_shape = View.shape a.view in
-  let b_shape = View.shape b.view in
+  let a_shape = get_shape a.view in
+  let b_shape = get_shape b.view in
   let a_ndim = Array.length a_shape in
   let b_ndim = Array.length b_shape in
 
@@ -393,12 +403,10 @@ let op_triangular_solve ctx ~upper ~transpose ~unit_diag a b =
       ();
 
   let a_contig =
-    if View.is_c_contiguous a.view then a
-    else Ops_movement.make_contiguous ctx a
+    if is_c_contiguous a.view then a else Ops_movement.make_contiguous ctx a
   in
   let b_contig =
-    if View.is_c_contiguous b.view then b
-    else Ops_movement.make_contiguous ctx b
+    if is_c_contiguous b.view then b else Ops_movement.make_contiguous ctx b
   in
 
   let out_buffer = Buffer_pool.allocate ctx.pool b_contig.buffer.size_bytes in

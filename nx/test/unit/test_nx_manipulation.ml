@@ -80,7 +80,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let transposed = Nx.transpose t in
     check_invalid_arg "reshape non-contiguous"
       "reshape: cannot reshape strided view [3,2] to [6] (incompatible strides \
-       [1,3] (expected [2,1]))\n\
+       [1,3] (expected [1]))\n\
        hint: call contiguous() before reshape to create a C-contiguous copy"
       (fun () -> Nx.reshape [| 6 |] transposed)
 
@@ -539,7 +539,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let tr = Nx.transpose t in
     check_invalid_arg "ravel non-contiguous"
       "reshape: cannot reshape strided view [2,2] to [4] (incompatible strides \
-       [1,2] (expected [2,1]))\n\
+       [1,2] (expected [1]))\n\
        hint: call contiguous() before reshape to create a C-contiguous copy"
       (fun () -> Nx.ravel tr)
 

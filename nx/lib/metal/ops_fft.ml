@@ -1,6 +1,35 @@
 open Nx_core
 open Internal
 
+(* Helper to get numel from view *)
+let get_numel view =
+  match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+  | Some n -> n
+  | None ->
+      Error.failed ~op:"get_numel" ~what:"cannot evaluate symbolic numel" ()
+
+(* Helper to get concrete shape from view *)
+let get_shape view =
+  match Symbolic_shape.eval (Lazy_view.shape view) with
+  | Some arr -> arr
+  | None ->
+      Error.failed ~op:"get_shape" ~what:"cannot evaluate symbolic shape" ()
+
+(* Helper to get strides from view *)
+let get_strides view =
+  match Lazy_view.strides view with
+  | Some s -> s
+  | None ->
+      Error.failed ~op:"get_strides"
+        ~what:"cannot get strides for non-contiguous view" ()
+
+(* Helper to get offset from view *)
+let get_offset view =
+  match Symbolic_shape.eval_dim (Lazy_view.offset view) with
+  | Some n -> n
+  | None ->
+      Error.failed ~op:"get_offset" ~what:"cannot evaluate symbolic offset" ()
+
 (* Helper to determine FFT output shape *)
 let get_fft_output_shape input_shape axes s =
   let ndim = Array.length input_shape in
@@ -43,7 +72,7 @@ let get_kernel ctx kernel_name =
 
 (* Create buffer helper *)
 let create_buffer ctx dtype view =
-  let size_elements = View.numel view in
+  let size_elements = get_numel view in
   let elem_size = sizeof_dtype dtype in
   let size_bytes = size_elements * elem_size in
   let buffer = Buffer_pool.allocate ctx.pool size_bytes in
@@ -51,15 +80,15 @@ let create_buffer ctx dtype view =
 
 (* Perform 1D FFT along a single axis *)
 let fft_1d_along_axis ctx input output axis inverse =
-  let shape = View.shape input.view in
+  let shape = get_shape input.view in
   let ndim = Array.length shape in
   let axis = if axis < 0 then ndim + axis else axis in
   let fft_size = shape.(axis) in
 
   (* Get strides and offset *)
-  let in_strides = View.strides input.view in
+  let in_strides = get_strides input.view in
   let stride = in_strides.(axis) in
-  let offset = View.offset input.view in
+  let offset = get_offset input.view in
 
   (* Compute number of FFTs to perform *)
   let num_ffts = ref 1 in
@@ -131,7 +160,7 @@ let fft_1d_along_axis ctx input output axis inverse =
 let op_fft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t =
   match input.dtype with
   | Complex64 ->
-      let input_shape = View.shape input.view in
+      let input_shape = get_shape input.view in
       let output_shape = get_fft_output_shape input_shape axes s in
 
       (* Check all FFT sizes are powers of 2 *)
@@ -162,7 +191,9 @@ let op_fft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t =
         axes;
 
       (* Create output buffer *)
-      let output_view = View.create output_shape in
+      let output_view =
+        Lazy_view.create (Symbolic_shape.of_ints output_shape)
+      in
       let output = create_buffer ctx input.dtype output_view in
 
       (* Copy input to output first *)
@@ -184,7 +215,7 @@ let op_ifft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t
     =
   match input.dtype with
   | Complex64 ->
-      let input_shape = View.shape input.view in
+      let input_shape = get_shape input.view in
       let output_shape = get_fft_output_shape input_shape axes s in
 
       (* Check all FFT sizes are powers of 2 *)
@@ -216,7 +247,9 @@ let op_ifft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t
         axes;
 
       (* Create output buffer *)
-      let output_view = View.create output_shape in
+      let output_view =
+        Lazy_view.create (Symbolic_shape.of_ints output_shape)
+      in
       let output = create_buffer ctx input.dtype output_view in
 
       (* Copy input to output first *)

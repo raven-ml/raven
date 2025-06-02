@@ -2,10 +2,20 @@ open Bigarray_ext
 module Dtype = Nx_core.Dtype
 module Shape = Nx_core.Shape
 module View = Nx_core.View
+module Lazy_view = Nx_core.Lazy_view
+module Symbolic_shape = Nx_core.Symbolic_shape
+module Error = Nx_core.Error
 open Internal
 
 (* Constants *)
 let eps = 1e-10
+
+(* Helper to get concrete shape from view *)
+let get_shape view =
+  match Symbolic_shape.eval (Lazy_view.shape view) with
+  | Some arr -> arr
+  | None ->
+      Error.failed ~op:"get_shape" ~what:"cannot evaluate symbolic shape" ()
 
 (* Helper functions for matrix operations *)
 
@@ -17,41 +27,90 @@ let[@inline] to_float (type a b) (dtype : (a, b) Dtype.t) (value : a) : float =
   | _ -> failwith "to_float: only float dtypes are supported"
 
 let[@inline] get_2d t i j =
-  let strides = View.strides t.view in
+  let strides =
+    match Lazy_view.strides t.view with
+    | Some s -> s
+    | None ->
+        Error.failed ~op:"get_2d"
+          ~what:"cannot get strides for non-contiguous view" ()
+  in
   let stride0 = strides.(0) in
   let stride1 = strides.(1) in
-  let offset = View.offset t.view in
+  let offset =
+    match Symbolic_shape.eval_dim (Lazy_view.offset t.view) with
+    | Some n -> n
+    | None ->
+        Error.failed ~op:"get_2d" ~what:"cannot evaluate symbolic offset" ()
+  in
   Array1.unsafe_get t.buffer (offset + (i * stride0) + (j * stride1))
 
 let[@inline] set_2d t i j value =
-  let strides = View.strides t.view in
+  let strides =
+    match Lazy_view.strides t.view with
+    | Some s -> s
+    | None ->
+        Error.failed ~op:"set_2d"
+          ~what:"cannot get strides for non-contiguous view" ()
+  in
   let stride0 = strides.(0) in
   let stride1 = strides.(1) in
-  let offset = View.offset t.view in
+  let offset =
+    match Symbolic_shape.eval_dim (Lazy_view.offset t.view) with
+    | Some n -> n
+    | None ->
+        Error.failed ~op:"ops_linalg" ~what:"cannot evaluate symbolic offset" ()
+  in
   Array1.unsafe_set t.buffer (offset + (i * stride0) + (j * stride1)) value
 
 let[@inline] get_3d t b i j =
-  let strides = View.strides t.view in
+  let strides =
+    match Lazy_view.strides t.view with
+    | Some s -> s
+    | None ->
+        Error.failed ~op:"ops_linalg"
+          ~what:"cannot get strides for non-contiguous view" ()
+  in
   let stride0 = strides.(0) in
   let stride1 = strides.(1) in
   let stride2 = strides.(2) in
-  let offset = View.offset t.view in
+  let offset =
+    match Symbolic_shape.eval_dim (Lazy_view.offset t.view) with
+    | Some n -> n
+    | None ->
+        Error.failed ~op:"ops_linalg" ~what:"cannot evaluate symbolic offset" ()
+  in
   Array1.unsafe_get t.buffer
     (offset + (b * stride0) + (i * stride1) + (j * stride2))
 
 let[@inline] set_3d t b i j value =
-  let strides = View.strides t.view in
+  let strides =
+    match Lazy_view.strides t.view with
+    | Some s -> s
+    | None ->
+        Error.failed ~op:"ops_linalg"
+          ~what:"cannot get strides for non-contiguous view" ()
+  in
   let stride0 = strides.(0) in
   let stride1 = strides.(1) in
   let stride2 = strides.(2) in
-  let offset = View.offset t.view in
+  let offset =
+    match Symbolic_shape.eval_dim (Lazy_view.offset t.view) with
+    | Some n -> n
+    | None ->
+        Error.failed ~op:"ops_linalg" ~what:"cannot evaluate symbolic offset" ()
+  in
   Array1.unsafe_set t.buffer
     (offset + (b * stride0) + (i * stride1) + (j * stride2))
     value
 
 (* Get matrix dimensions, handling batched case *)
 let get_matrix_dims t =
-  let shape = View.shape t.view in
+  let shape =
+    match Symbolic_shape.eval (Lazy_view.shape t.view) with
+    | Some arr -> arr
+    | None ->
+        Error.failed ~op:"ops_linalg" ~what:"cannot evaluate symbolic shape" ()
+  in
   let ndim = Array.length shape in
   if ndim < 2 then failwith "ops_linalg: input must be at least 2D"
   else if ndim = 2 then (1, shape.(0), shape.(1)) (* batch_size, m, n *)
@@ -215,7 +274,7 @@ let cholesky (type a b) ~upper ctx (input : (a, b) t) =
   let batch_size, n, m = get_matrix_dims input in
   if n <> m then failwith "op_cholesky: input must be square matrix";
 
-  let output_shape = View.shape input.view in
+  let output_shape = get_shape input.view in
   let output = create_output ctx input.dtype output_shape in
 
   (* Initialize output to zero *)
@@ -386,14 +445,14 @@ let qr (type a b) ~reduced ctx (input : (a, b) t) =
       if batch_size = 1 then [| m; k |]
       else
         Array.append
-          (Array.sub (View.shape input.view) 0
-             (Array.length (View.shape input.view) - 2))
+          (Array.sub (get_shape input.view) 0
+             (Array.length (get_shape input.view) - 2))
           [| m; k |]
     else if batch_size = 1 then [| m; m |]
     else
       Array.append
-        (Array.sub (View.shape input.view) 0
-           (Array.length (View.shape input.view) - 2))
+        (Array.sub (get_shape input.view) 0
+           (Array.length (get_shape input.view) - 2))
         [| m; m |]
   in
 
@@ -402,14 +461,14 @@ let qr (type a b) ~reduced ctx (input : (a, b) t) =
       if batch_size = 1 then [| k; n |]
       else
         Array.append
-          (Array.sub (View.shape input.view) 0
-             (Array.length (View.shape input.view) - 2))
+          (Array.sub (get_shape input.view) 0
+             (Array.length (get_shape input.view) - 2))
           [| k; n |]
     else if batch_size = 1 then [| m; n |]
     else
       Array.append
-        (Array.sub (View.shape input.view) 0
-           (Array.length (View.shape input.view) - 2))
+        (Array.sub (get_shape input.view) 0
+           (Array.length (get_shape input.view) - 2))
         [| m; n |]
   in
 
@@ -795,8 +854,8 @@ let svd (type a b) ~full_matrices ctx (input : (a, b) t) =
     if batch_size = 1 then if full_matrices then [| m; m |] else [| m; k |]
     else
       let batch_dims =
-        Array.sub (View.shape input.view) 0
-          (Array.length (View.shape input.view) - 2)
+        Array.sub (get_shape input.view) 0
+          (Array.length (get_shape input.view) - 2)
       in
       if full_matrices then Array.append batch_dims [| m; m |]
       else Array.append batch_dims [| m; k |]
@@ -806,8 +865,8 @@ let svd (type a b) ~full_matrices ctx (input : (a, b) t) =
     if batch_size = 1 then if full_matrices then [| n; n |] else [| k; n |]
     else
       let batch_dims =
-        Array.sub (View.shape input.view) 0
-          (Array.length (View.shape input.view) - 2)
+        Array.sub (get_shape input.view) 0
+          (Array.length (get_shape input.view) - 2)
       in
       if full_matrices then Array.append batch_dims [| n; n |]
       else Array.append batch_dims [| k; n |]
@@ -817,8 +876,8 @@ let svd (type a b) ~full_matrices ctx (input : (a, b) t) =
     if batch_size = 1 then [| k |]
     else
       let batch_dims =
-        Array.sub (View.shape input.view) 0
-          (Array.length (View.shape input.view) - 2)
+        Array.sub (get_shape input.view) 0
+          (Array.length (get_shape input.view) - 2)
       in
       Array.append batch_dims [| k |]
   in
@@ -1136,13 +1195,13 @@ let eigh (type a b) ~vectors ctx (input : (a, b) t) =
     if batch_size = 1 then [| n |]
     else
       let batch_dims =
-        Array.sub (View.shape input.view) 0
-          (Array.length (View.shape input.view) - 2)
+        Array.sub (get_shape input.view) 0
+          (Array.length (get_shape input.view) - 2)
       in
       Array.append batch_dims [| n |]
   in
 
-  let eigenvectors_shape = View.shape input.view in
+  let eigenvectors_shape = get_shape input.view in
 
   let eigenvalues = create_output ctx Dtype.float64 eigenvalues_shape in
   (* Always float64 *)
@@ -1290,7 +1349,7 @@ let triangular_solve (type a b) ~upper ~transpose ~unit_diag ctx (a : (a, b) t)
   if n <> m then failwith "op_triangular_solve: matrix A must be square";
 
   (* Handle 1D input b by expanding to 2D *)
-  let b_shape = View.shape b.view in
+  let b_shape = get_shape b.view in
   let b_ndim = Array.length b_shape in
   let b_is_1d = b_ndim = 1 in
 
@@ -1298,7 +1357,10 @@ let triangular_solve (type a b) ~upper ~transpose ~unit_diag ctx (a : (a, b) t)
     if b_is_1d then
       (* Expand 1D to 2D by adding a trailing dimension *)
       let new_shape = [| b_shape.(0); 1 |] in
-      { b with view = View.reshape b.view new_shape }
+      {
+        b with
+        view = Lazy_view.reshape (Symbolic_shape.of_ints new_shape) b.view;
+      }
     else b
   in
 
@@ -1315,7 +1377,7 @@ let triangular_solve (type a b) ~upper ~transpose ~unit_diag ctx (a : (a, b) t)
     failwith "op_triangular_solve: dimensions of A and b are incompatible";
 
   (* Create output with expanded shape *)
-  let output_shape = View.shape b_expanded.view in
+  let output_shape = get_shape b_expanded.view in
   let output = create_output ctx b.dtype output_shape in
 
   (* Copy b to output *)
@@ -1338,5 +1400,9 @@ let triangular_solve (type a b) ~upper ~transpose ~unit_diag ctx (a : (a, b) t)
 
   (* Reshape output to match input b shape *)
   if b_is_1d then
-    { output with view = View.reshape output.view [| b_shape.(0) |] }
+    {
+      output with
+      view =
+        Lazy_view.reshape (Symbolic_shape.of_ints [| b_shape.(0) |]) output.view;
+    }
   else output

@@ -107,11 +107,12 @@ let to_device (target_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t =
   | _, Symbolic_tensor _ -> failwith "Cannot transfer symbolic tensor to device"
 
 (* Lenses *)
-let view : type a b. (a, b) t -> View.t = function
+let view : type a b. (a, b) t -> Lazy_view.t = function
   | Ocaml_tensor t -> Nx_native.view t
   | Metal_tensor t -> Rune_metal.view t
   | C_tensor t -> Nx_c.view t
-  | Symbolic_tensor { shape; _ } -> View.create shape
+  | Symbolic_tensor { shape; _ } ->
+      Lazy_view.create (Symbolic_shape.of_ints shape)
 
 let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
   | Ocaml_tensor t -> Nx_native.dtype t
@@ -357,11 +358,43 @@ let shape_op1 eff cpu_op metal_op c_op t_in shape_arg =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> (
     match t_in with
-    | Ocaml_tensor t -> Ocaml_tensor (cpu_op t shape_arg)
-    | C_tensor t -> C_tensor (c_op t shape_arg)
-    | Metal_tensor t -> Metal_tensor (metal_op t shape_arg)
+    | Ocaml_tensor t ->
+        Ocaml_tensor (cpu_op t (Symbolic_shape.of_ints shape_arg))
+    | C_tensor t -> C_tensor (c_op t (Symbolic_shape.of_ints shape_arg))
+    | Metal_tensor t ->
+        Metal_tensor (metal_op t (Symbolic_shape.of_ints shape_arg))
     | Symbolic_tensor _ ->
         failwith "Cannot perform shape operation on symbolic tensor")
+
+let axes_op1 eff cpu_op metal_op c_op t_in axes_arg =
+  try Effect.perform (eff ())
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Ocaml_tensor t -> Ocaml_tensor (cpu_op t axes_arg)
+    | C_tensor t -> C_tensor (c_op t axes_arg)
+    | Metal_tensor t -> Metal_tensor (metal_op t axes_arg)
+    | Symbolic_tensor _ ->
+        failwith "Cannot perform axes operation on symbolic tensor")
+
+let limits_op1 eff cpu_op metal_op c_op t_in limits_arg =
+  try Effect.perform (eff ())
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Ocaml_tensor t -> Ocaml_tensor (cpu_op t limits_arg)
+    | C_tensor t -> C_tensor (c_op t limits_arg)
+    | Metal_tensor t -> Metal_tensor (metal_op t limits_arg)
+    | Symbolic_tensor _ ->
+        failwith "Cannot perform limits operation on symbolic tensor")
+
+let bool_array_op1 eff cpu_op metal_op c_op t_in bool_arg =
+  try Effect.perform (eff ())
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Ocaml_tensor t -> Ocaml_tensor (cpu_op t bool_arg)
+    | C_tensor t -> C_tensor (c_op t bool_arg)
+    | Metal_tensor t -> Metal_tensor (metal_op t bool_arg)
+    | Symbolic_tensor _ ->
+        failwith "Cannot perform bool array operation on symbolic tensor")
 
 let ternary_op eff cpu_op metal_op c_op cond if_true if_false =
   try Effect.perform (eff ())
@@ -493,28 +526,39 @@ let op_reduce_prod ~axes ~keepdims t_in =
 
 (* Shape operations *)
 let op_reshape t_in new_shape =
+  let new_shape_array =
+    match Symbolic_shape.eval new_shape with
+    | Some arr -> arr
+    | None -> failwith "Cannot reshape with symbolic shape"
+  in
   shape_op1
-    (fun () -> E_reshape { t_in; new_shape })
-    Nx_native.op_reshape Rune_metal.op_reshape Nx_c.op_reshape t_in new_shape
+    (fun () -> E_reshape { t_in; new_shape = new_shape_array })
+    Nx_native.op_reshape Rune_metal.op_reshape Nx_c.op_reshape t_in
+    new_shape_array
 
 let op_expand t_in new_target_shape =
+  let new_target_shape_array =
+    match Symbolic_shape.eval new_target_shape with
+    | Some arr -> arr
+    | None -> failwith "Cannot expand with symbolic shape"
+  in
   shape_op1
-    (fun () -> E_expand { t_in; new_target_shape })
+    (fun () -> E_expand { t_in; new_target_shape = new_target_shape_array })
     Nx_native.op_expand Rune_metal.op_expand Nx_c.op_expand t_in
-    new_target_shape
+    new_target_shape_array
 
 let op_permute t_in axes =
-  shape_op1
+  axes_op1
     (fun () -> E_permute { t_in; axes })
     Nx_native.op_permute Rune_metal.op_permute Nx_c.op_permute t_in axes
 
 let op_shrink t_in limits =
-  shape_op1
+  limits_op1
     (fun () -> E_shrink { t_in; limits })
     Nx_native.op_shrink Rune_metal.op_shrink Nx_c.op_shrink t_in limits
 
 let op_flip t_in dims_to_flip =
-  shape_op1
+  bool_array_op1
     (fun () -> E_flip { t_in; dims_to_flip })
     Nx_native.op_flip Rune_metal.op_flip Nx_c.op_flip t_in dims_to_flip
 

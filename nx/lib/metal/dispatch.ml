@@ -3,12 +3,45 @@ open Metal
 
 (* Generic dispatch helpers to reduce boilerplate in ops_*.ml files *)
 
+(* Helper to get strides from view *)
+let get_strides view =
+  match Lazy_view.strides view with
+  | Some s -> s
+  | None ->
+      Error.failed ~op:"get_strides"
+        ~what:"cannot get strides for non-contiguous view" ()
+
+(* Helper to get offset from view *)
+let get_offset view =
+  match Symbolic_shape.eval_dim (Lazy_view.offset view) with
+  | Some n -> n
+  | None ->
+      Error.failed ~op:"get_offset" ~what:"cannot evaluate symbolic offset" ()
+
 (* Helper to set shape, strides, and offset parameters *)
 let set_view_params encoder view ~shape_index ~strides_index ~offset_index
     ~ndim_index =
-  let shape = View.shape view in
-  let strides = View.strides view in
-  let offset = View.offset view in
+  let shape =
+    match Symbolic_shape.eval (Lazy_view.shape view) with
+    | Some arr -> arr
+    | None ->
+        Error.failed ~op:"set_view_params"
+          ~what:"cannot evaluate symbolic shape" ()
+  in
+  let strides =
+    match Lazy_view.strides view with
+    | Some s -> s
+    | None ->
+        Error.failed ~op:"set_view_params"
+          ~what:"cannot get strides for non-contiguous view" ()
+  in
+  let offset =
+    match Symbolic_shape.eval_dim (Lazy_view.offset view) with
+    | Some n -> n
+    | None ->
+        Error.failed ~op:"set_view_params"
+          ~what:"cannot evaluate symbolic offset" ()
+  in
   let ndim = Array.length shape in
 
   (* Allocate arrays *)
@@ -43,7 +76,13 @@ let set_view_params encoder view ~shape_index ~strides_index ~offset_index
 let dispatch_unary_op (ctx : Internal.context) (op_name : string)
     (t : ('a, 'b) Internal.t) : ('a, 'b) Internal.t =
   let shape = Internal.shape t in
-  let numel = View.numel t.view in
+  let numel =
+    match Symbolic_shape.eval_dim (Lazy_view.numel t.view) with
+    | Some n -> n
+    | None ->
+        Error.failed ~op:"dispatch_unary" ~what:"cannot evaluate symbolic numel"
+          ()
+  in
 
   (* Allocate output buffer *)
   let size_bytes = numel * Internal.sizeof_dtype t.dtype in
@@ -54,7 +93,7 @@ let dispatch_unary_op (ctx : Internal.context) (op_name : string)
       context = ctx;
       Internal.dtype = t.dtype;
       buffer = metal_buffer;
-      view = View.create shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints shape);
     }
   in
 
@@ -115,7 +154,7 @@ let dispatch_binary_op (ctx : Internal.context) (op_name : string)
       context = ctx;
       Internal.dtype = a.dtype;
       buffer = metal_buffer;
-      view = View.create out_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints out_shape);
     }
   in
 
@@ -128,7 +167,7 @@ let dispatch_binary_op (ctx : Internal.context) (op_name : string)
 
   let get_broadcast_strides tensor =
     let t_shape = Internal.shape tensor in
-    let t_strides = View.strides tensor.view in
+    let t_strides = get_strides tensor.view in
     let t_ndim = Array.length t_shape in
     let broadcast_strides = Array.make ndim 0 in
     let shape_offset = ndim - t_ndim in
@@ -188,10 +227,10 @@ let dispatch_binary_op (ctx : Internal.context) (op_name : string)
 
       (* Set offsets *)
       let a_offset_val =
-        Ctypes.(allocate int32_t (Int32.of_int (View.offset a.view)))
+        Ctypes.(allocate int32_t (Int32.of_int (get_offset a.view)))
       in
       let b_offset_val =
-        Ctypes.(allocate int32_t (Int32.of_int (View.offset b.view)))
+        Ctypes.(allocate int32_t (Int32.of_int (get_offset b.view)))
       in
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp a_offset_val)
@@ -239,7 +278,7 @@ let dispatch_comparison_op (ctx : Internal.context) (op_name : string)
       context = ctx;
       Internal.dtype = Dtype.UInt8;
       buffer = metal_buffer;
-      view = View.create out_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints out_shape);
     }
   in
 
@@ -252,7 +291,7 @@ let dispatch_comparison_op (ctx : Internal.context) (op_name : string)
 
   let get_broadcast_strides tensor =
     let t_shape = Internal.shape tensor in
-    let t_strides = View.strides tensor.view in
+    let t_strides = get_strides tensor.view in
     let t_ndim = Array.length t_shape in
     let broadcast_strides = Array.make ndim 0 in
     let shape_offset = ndim - t_ndim in
@@ -312,10 +351,10 @@ let dispatch_comparison_op (ctx : Internal.context) (op_name : string)
 
       (* Set offsets *)
       let a_offset_val =
-        Ctypes.(allocate int32_t (Int32.of_int (View.offset a.view)))
+        Ctypes.(allocate int32_t (Int32.of_int (get_offset a.view)))
       in
       let b_offset_val =
-        Ctypes.(allocate int32_t (Int32.of_int (View.offset b.view)))
+        Ctypes.(allocate int32_t (Int32.of_int (get_offset b.view)))
       in
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp a_offset_val)
@@ -371,7 +410,7 @@ let dispatch_reduce_op (ctx : Internal.context) (op_name : string)
       context = ctx;
       Internal.dtype = t.dtype;
       buffer = metal_buffer;
-      view = View.create out_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints out_shape);
     }
   in
 
@@ -457,7 +496,7 @@ let dispatch_reduce_op (ctx : Internal.context) (op_name : string)
         ~length:4 ~index:8;
 
       (* Pass input strides and offset *)
-      let in_strides = View.strides t.view in
+      let in_strides = get_strides t.view in
       let in_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
       for i = 0 to ndim - 1 do
         Ctypes.(in_strides_arr +@ i <-@ Int32.of_int in_strides.(i))
@@ -467,7 +506,7 @@ let dispatch_reduce_op (ctx : Internal.context) (op_name : string)
         ~length:(ndim * 4) ~index:9;
 
       let in_offset_val =
-        Ctypes.(allocate int32_t (Int32.of_int (View.offset t.view)))
+        Ctypes.(allocate int32_t (Int32.of_int (get_offset t.view)))
       in
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp in_offset_val)

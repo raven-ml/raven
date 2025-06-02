@@ -2,7 +2,32 @@ open Bigarray_ext
 module Dtype = Nx_core.Dtype
 module Shape = Nx_core.Shape
 module View = Nx_core.View
+module Lazy_view = Nx_core.Lazy_view
+module Symbolic_shape = Nx_core.Symbolic_shape
+module Error = Nx_core.Error
 open Internal
+
+(* Helper to get concrete shape from view *)
+let get_shape view =
+  match Symbolic_shape.eval (Lazy_view.shape view) with
+  | Some arr -> arr
+  | None ->
+      Error.failed ~op:"get_shape" ~what:"cannot evaluate symbolic shape" ()
+
+(* Helper to get strides from view *)
+let get_strides view =
+  match Lazy_view.strides view with
+  | Some s -> s
+  | None ->
+      Error.failed ~op:"get_strides"
+        ~what:"cannot get strides for non-contiguous view" ()
+
+(* Helper to get offset from view *)
+let get_offset view =
+  match Symbolic_shape.eval_dim (Lazy_view.offset view) with
+  | Some n -> n
+  | None ->
+      Error.failed ~op:"get_offset" ~what:"cannot evaluate symbolic offset" ()
 
 (* Tile sizes for the fast path (tune for your CPU) *)
 let mc = 128
@@ -126,9 +151,9 @@ let kernel_matmul_generic_float32 pool (a : (float, float32_elt) t)
   let total_units = batch_sz * m in
   (* each unit = one row of C *)
 
-  let a_str = View.strides a.view
-  and b_str = View.strides b.view
-  and c_str = View.strides out.view in
+  let a_str = get_strides a.view
+  and b_str = get_strides b.view
+  and c_str = get_strides out.view in
 
   Parallel.parallel_for pool 0 (total_units - 1) (fun u0 u1 ->
       let a_idx = Array.make nd_a 0
@@ -235,9 +260,9 @@ let kernel_matmul_generic_float64 pool (a : (float, float64_elt) t)
   let total_units = batch_sz * m in
   (* each unit = one row of C *)
 
-  let a_str = View.strides a.view
-  and b_str = View.strides b.view
-  and c_str = View.strides out.view in
+  let a_str = get_strides a.view
+  and b_str = get_strides b.view
+  and c_str = get_strides out.view in
 
   Parallel.parallel_for pool 0 (total_units - 1) (fun u0 u1 ->
       let a_idx = Array.make nd_a 0

@@ -22,7 +22,13 @@ let op_unfold ctx t ~kernel_size ~stride ~dilation ~padding =
     if Array.for_all (fun (before, after) -> before = 0 && after = 0) padding
     then t
     else
-      let old_shape = View.shape t.Internal.view in
+      let old_shape =
+        match Symbolic_shape.eval (Lazy_view.shape t.Internal.view) with
+        | Some arr -> arr
+        | None ->
+            Error.failed ~op:"ensure_3d_for_conv"
+              ~what:"cannot evaluate symbolic shape" ()
+      in
       let new_shape =
         Array.mapi
           (fun i dim ->
@@ -41,7 +47,7 @@ let op_unfold ctx t ~kernel_size ~stride ~dilation ~padding =
           context = ctx;
           Internal.dtype = t.dtype;
           buffer = metal_buffer;
-          view = View.create new_shape;
+          view = Lazy_view.create (Symbolic_shape.of_ints new_shape);
         }
       in
 
@@ -122,7 +128,13 @@ let op_unfold ctx t ~kernel_size ~stride ~dilation ~padding =
             ~length:4 ~index:6;
 
           (* Set input strides *)
-          let in_strides = View.strides t.Internal.view in
+          let in_strides =
+            match Lazy_view.strides t.Internal.view with
+            | Some s -> s
+            | None ->
+                Error.failed ~op:"unfold"
+                  ~what:"cannot get strides for non-contiguous view" ()
+          in
           let in_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
           for i = 0 to ndim - 1 do
             Ctypes.(in_strides_arr +@ i <-@ Int32.of_int in_strides.(i))
@@ -132,7 +144,15 @@ let op_unfold ctx t ~kernel_size ~stride ~dilation ~padding =
             ~length:(ndim * 4) ~index:7;
 
           (* Set input offset *)
-          let in_offset = View.offset t.Internal.view in
+          let in_offset =
+            match
+              Symbolic_shape.eval_dim (Lazy_view.offset t.Internal.view)
+            with
+            | Some n -> n
+            | None ->
+                Error.failed ~op:"unfold"
+                  ~what:"cannot evaluate symbolic offset" ()
+          in
           let in_offset_val =
             Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int in_offset))
           in
@@ -180,7 +200,7 @@ let op_unfold ctx t ~kernel_size ~stride ~dilation ~padding =
       context = ctx;
       Internal.dtype = t.dtype;
       buffer = metal_buffer;
-      view = View.create col_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints col_shape);
     }
   in
 
@@ -354,7 +374,7 @@ let op_fold ctx t ~output_size ~kernel_size ~stride ~dilation ~padding =
       context = ctx;
       Internal.dtype = t.dtype;
       buffer = metal_buffer;
-      view = View.create padded_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints padded_shape);
     }
   in
 
@@ -524,4 +544,4 @@ let op_fold ctx t ~output_size ~kernel_size ~stride ~dilation ~padding =
             output_size;
         ]
     in
-    { out_padded with view = View.shrink out_padded.view bounds }
+    { out_padded with view = Lazy_view.shrink bounds out_padded.view }

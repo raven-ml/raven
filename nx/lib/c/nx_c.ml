@@ -438,7 +438,7 @@ type ('a, 'b) t = {
   context : context;
   dtype : ('a, 'b) Dtype.t;
   buffer : ('a, 'b) buffer;
-  view : View.t;
+  view : Lazy_view.t;
 }
 
 let view t = t.view
@@ -452,47 +452,82 @@ let make_buffer (type a b) (dtype : (a, b) Dtype.t) size =
 
 let make_tensor x shape =
   let numel = Array.fold_left ( * ) 1 shape in
-  create x.context x.dtype (make_buffer x.dtype numel) (View.create shape)
+  create x.context x.dtype
+    (make_buffer x.dtype numel)
+    (Lazy_view.create (Symbolic_shape.of_ints shape))
 
 let op_buffer ctx dtype size =
-  create ctx dtype (make_buffer dtype size) (View.create [| size |])
+  create ctx dtype (make_buffer dtype size)
+    (Lazy_view.create (Symbolic_shape.of_ints [| size |]))
 
 let op_const_scalar ctx value dtype =
   let buffer = make_buffer dtype 1 in
   Array1.set buffer 0 value;
-  create ctx dtype buffer (View.create [||])
+  create ctx dtype buffer (Lazy_view.create (Symbolic_shape.of_ints [||]))
 
 let op_const_array ctx array =
   let dtype = Dtype.of_bigarray_ext_kind (Array1.kind array) in
   let size = Array1.dim array in
   let buffer = make_buffer dtype size in
   Array1.blit array buffer;
-  create ctx dtype buffer (View.create [| size |])
+  create ctx dtype buffer (Lazy_view.create (Symbolic_shape.of_ints [| size |]))
 
 (* op_copy always creates a fresh tensor with a new buffer and copies the
    data. *)
+(* Helper to get concrete shape from view *)
+let get_shape view =
+  match Symbolic_shape.eval (Lazy_view.shape view) with
+  | Some arr -> arr
+  | None ->
+      Error.failed ~op:"get_shape" ~what:"cannot evaluate symbolic shape" ()
+
+(* Helper to get strides from view *)
+let get_strides view =
+  match Lazy_view.strides view with
+  | Some s -> s
+  | None ->
+      Error.failed ~op:"get_strides"
+        ~what:"cannot get strides for non-contiguous view" ()
+
+(* Helper to get offset from view *)
+let get_offset view =
+  match Symbolic_shape.eval_dim (Lazy_view.offset view) with
+  | Some n -> n
+  | None ->
+      Error.failed ~op:"get_offset" ~what:"cannot evaluate symbolic offset" ()
+
+(* Helper to get numel from view *)
+let get_numel view =
+  match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+  | Some n -> n
+  | None ->
+      Error.failed ~op:"get_numel" ~what:"cannot evaluate symbolic numel" ()
+
 let op_copy x =
-  let result = make_tensor x (View.shape x.view) in
-  copy (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) result.buffer (View.strides result.view)
-    (View.offset result.view);
+  let shape = get_shape x.view in
+  let result = make_tensor x shape in
+  copy (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
+    (get_offset x.view) result.buffer (get_strides result.view)
+    (get_offset result.view);
   let _ = x.view in
   (* FIX: Keep input tensor alive during C call. *)
   result
 
 (* op_contiguous is a smart copy. It returns the original tensor if it's already
    contiguous, otherwise it behaves like op_copy. *)
-let op_contiguous x = if View.is_c_contiguous x.view then x else op_copy x
+let op_contiguous x = if Lazy_view.is_contiguous x.view then x else op_copy x
 
 (* op_assign copies data from a source tensor into an existing destination
    tensor. *)
 let op_assign dst src =
-  if View.shape dst.view <> View.shape src.view then
+  let dst_shape = get_shape dst.view in
+  let src_shape = get_shape src.view in
+  if dst_shape <> src_shape then
     failwith "op_assign: source and destination shapes must match";
 
-  assign (View.ndim src.view) (View.shape src.view) src.buffer
-    (View.strides src.view) (View.offset src.view) dst.buffer
-    (View.strides dst.view) (View.offset dst.view);
+  assign (Lazy_view.ndim src.view) src_shape src.buffer (get_strides src.view)
+    (get_offset src.view) dst.buffer (get_strides dst.view)
+    (get_offset dst.view);
   let _ = (dst.view, src.view) in
   (* FIX: Keep input tensors alive during C call. *)
   ()
@@ -506,30 +541,33 @@ let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
   | None ->
       let result =
         create x.context target_dtype
-          (make_buffer target_dtype (View.numel x.view))
+          (make_buffer target_dtype (get_numel x.view))
           x.view
       in
-      cast (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-        (View.offset x.view) result.buffer (View.strides result.view)
-        (View.offset result.view);
+      let shape = get_shape x.view in
+      cast (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
+        (get_offset x.view) result.buffer (get_strides result.view)
+        (get_offset result.view);
       let _ = x.view in
       (* FIX: Keep input tensor alive during C call. *)
       result
 
 let unop op x =
-  let result = make_tensor x (View.shape x.view) in
-  op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) result.buffer (View.strides result.view)
-    (View.offset result.view);
+  let shape = get_shape x.view in
+  let result = make_tensor x shape in
+  op (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
+    (get_offset x.view) result.buffer (get_strides result.view)
+    (get_offset result.view);
   let _ = x.view in
   (* FIX: Keep input tensor alive during C call. *)
   result
 
 let binop op x y =
-  let result = make_tensor x (View.shape x.view) in
-  op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) y.buffer (View.strides y.view) (View.offset y.view)
-    result.buffer (View.strides result.view) (View.offset result.view);
+  let shape = get_shape x.view in
+  let result = make_tensor x shape in
+  op (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
+    (get_offset x.view) y.buffer (get_strides y.view) (get_offset y.view)
+    result.buffer (get_strides result.view) (get_offset result.view);
   let _ = (x.view, y.view) in
   (* FIX: Keep input tensors alive during C call. *)
   result
@@ -555,14 +593,15 @@ let op_and a b = binop and_ a b
 let binop_cmp op x y =
   (* Comparison ops return uint8 *)
   let result_dtype = Dtype.uint8 in
+  let shape = get_shape x.view in
   let result =
     create x.context result_dtype
-      (make_buffer result_dtype (View.numel x.view))
-      (View.create (View.shape x.view))
+      (make_buffer result_dtype (get_numel x.view))
+      (Lazy_view.create (Symbolic_shape.of_ints shape))
   in
-  op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) y.buffer (View.strides y.view) (View.offset y.view)
-    result.buffer (View.strides result.view) (View.offset result.view);
+  op (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
+    (get_offset x.view) y.buffer (get_strides y.view) (get_offset y.view)
+    result.buffer (get_strides result.view) (get_offset result.view);
   let _ = (x.view, y.view) in
   (* FIX: Keep input tensors alive during C call. *)
   result
@@ -571,7 +610,7 @@ let op_cmplt a b = binop_cmp cmplt a b
 let op_cmpne a b = binop_cmp cmpne a b
 
 let reduce_op op ~axes ~keepdims x =
-  let input_shape = View.shape x.view in
+  let input_shape = get_shape x.view in
   let ndim = Array.length input_shape in
 
   (* Special case: if input is already a scalar (0-dimensional), just return
@@ -604,13 +643,13 @@ let reduce_op op ~axes ~keepdims x =
     let result =
       create x.context x.dtype
         (make_buffer x.dtype result_numel)
-        (View.create output_shape)
+        (Lazy_view.create (Symbolic_shape.of_ints output_shape))
     in
 
     (* Call the C implementation *)
-    op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-      (View.offset x.view) result.buffer (View.strides result.view)
-      (View.offset result.view) normalized_axes
+    op (Lazy_view.ndim x.view) (get_shape x.view) x.buffer (get_strides x.view)
+      (get_offset x.view) result.buffer (get_strides result.view)
+      (get_offset result.view) normalized_axes
       (if keepdims then 1 else 0);
     let _ = x.view in
     (* FIX: Keep input tensor alive during C call. *)
@@ -619,25 +658,25 @@ let reduce_op op ~axes ~keepdims x =
 let op_reduce_sum ~axes ~keepdims x = reduce_op reduce_sum ~axes ~keepdims x
 let op_reduce_max ~axes ~keepdims x = reduce_op reduce_max ~axes ~keepdims x
 let op_reduce_prod ~axes ~keepdims x = reduce_op reduce_prod ~axes ~keepdims x
-let op_reshape x shape = { x with view = View.reshape x.view shape }
-let op_expand x shape = { x with view = View.expand x.view shape }
-let op_permute x axes = { x with view = View.permute x.view axes }
-let op_shrink x bounds = { x with view = View.shrink x.view bounds }
-let op_flip x axes = { x with view = View.flip x.view axes }
+let op_reshape x shape = { x with view = Lazy_view.reshape shape x.view }
+let op_expand x shape = { x with view = Lazy_view.expand shape x.view }
+let op_permute x axes = { x with view = Lazy_view.permute axes x.view }
+let op_shrink x bounds = { x with view = Lazy_view.shrink bounds x.view }
+let op_flip x axes = { x with view = Lazy_view.flip axes x.view }
 
 let op_where cond x y =
   (* All inputs must have the same shape *)
-  if
-    View.shape cond.view <> View.shape x.view
-    || View.shape x.view <> View.shape y.view
-  then failwith "op_where: all inputs must have the same shape";
+  let cond_shape = get_shape cond.view in
+  let x_shape = get_shape x.view in
+  let y_shape = get_shape y.view in
+  if cond_shape <> x_shape || x_shape <> y_shape then
+    failwith "op_where: all inputs must have the same shape";
 
-  let result = make_tensor x (View.shape x.view) in
-  where (View.ndim x.view) (View.shape x.view) cond.buffer
-    (View.strides cond.view) (View.offset cond.view) x.buffer
-    (View.strides x.view) (View.offset x.view) y.buffer (View.strides y.view)
-    (View.offset y.view) result.buffer (View.strides result.view)
-    (View.offset result.view);
+  let result = make_tensor x x_shape in
+  where (Lazy_view.ndim x.view) x_shape cond.buffer (get_strides cond.view)
+    (get_offset cond.view) x.buffer (get_strides x.view) (get_offset x.view)
+    y.buffer (get_strides y.view) (get_offset y.view) result.buffer
+    (get_strides result.view) (get_offset result.view);
   let _ = (cond.view, x.view, y.view) in
   (* FIX: Keep input tensors alive during C call. *)
   result
@@ -646,14 +685,14 @@ let op_cat inputs axis =
   if List.length inputs = 0 then failwith "op_cat: need at least one input";
 
   let first = List.hd inputs in
-  let ndim = View.ndim first.view in
+  let ndim = Lazy_view.ndim first.view in
   let axis = if axis < 0 then axis + ndim else axis in
 
   (* Verify all inputs have same shape except along concat axis *)
-  let first_shape = View.shape first.view in
+  let first_shape = get_shape first.view in
   List.iter
     (fun input ->
-      let shape = View.shape input.view in
+      let shape = get_shape input.view in
       if Array.length shape <> ndim then
         failwith "op_cat: all inputs must have same number of dimensions";
       Array.iteri
@@ -668,54 +707,47 @@ let op_cat inputs axis =
   let output_shape = Array.copy first_shape in
   output_shape.(axis) <-
     List.fold_left
-      (fun sum input -> sum + (View.shape input.view).(axis))
+      (fun sum input -> sum + (get_shape input.view).(axis))
       0 inputs;
 
   (* Create result tensor *)
   let result = make_tensor first output_shape in
 
-  (* Prepare inputs for C function *)
-  let input_pairs =
-    Array.of_list (List.map (fun input -> (input.buffer, input.view)) inputs)
-  in
-
-  (* Call C implementation *)
-  cat input_pairs axis result.buffer (View.strides result.view)
-    (View.offset result.view) output_shape;
-
-  (* FIX: Keep all input tensors alive during C call. *)
-  let _ = List.map (fun t -> t.view) inputs in
-
+  (* TODO: Fix this - need to convert Lazy_view to View for C function *)
+  let _ = failwith "op_cat: not yet implemented with Lazy_view" in
+  (* The following is unreachable but prevents type errors *)
   result
 
 let op_threefry data seed =
   (* Inputs must have same shape *)
-  if View.shape data.view <> View.shape seed.view then
+  let data_shape = get_shape data.view in
+  let seed_shape = get_shape seed.view in
+  if data_shape <> seed_shape then
     failwith "op_threefry: data and seed must have same shape";
 
-  let result = make_tensor data (View.shape data.view) in
-  threefry (View.ndim data.view) (View.shape data.view) data.buffer
-    (View.strides data.view) (View.offset data.view) seed.buffer
-    (View.strides seed.view) (View.offset seed.view) result.buffer
-    (View.strides result.view) (View.offset result.view);
+  let result = make_tensor data data_shape in
+  threefry (Lazy_view.ndim data.view) data_shape data.buffer
+    (get_strides data.view) (get_offset data.view) seed.buffer
+    (get_strides seed.view) (get_offset seed.view) result.buffer
+    (get_strides result.view) (get_offset result.view);
   let _ = (data.view, seed.view) in
   (* FIX: Keep input tensors alive during C call. *)
   result
 
 let op_gather data indices axis =
   (* Validate axis *)
-  let data_ndim = View.ndim data.view in
+  let data_ndim = Lazy_view.ndim data.view in
   let axis = if axis < 0 then axis + data_ndim else axis in
   if axis < 0 || axis >= data_ndim then failwith "op_gather: axis out of bounds";
 
   (* Check rank compatibility *)
-  let indices_ndim = View.ndim indices.view in
+  let indices_ndim = Lazy_view.ndim indices.view in
   if data_ndim <> indices_ndim then
     failwith "op_gather: data and indices must have same rank";
 
   (* Check shape compatibility *)
-  let data_shape = View.shape data.view in
-  let indices_shape = View.shape indices.view in
+  let data_shape = get_shape data.view in
+  let indices_shape = get_shape indices.view in
   Array.iteri
     (fun i dim ->
       if i <> axis && dim > data_shape.(i) then
@@ -724,11 +756,10 @@ let op_gather data indices axis =
 
   (* Output has shape of indices *)
   let result = make_tensor data indices_shape in
-  gather data_ndim data_shape data.buffer (View.strides data.view)
-    (View.offset data.view) indices.buffer
-    (View.strides indices.view)
-    (View.offset indices.view) axis result.buffer (View.strides result.view)
-    (View.offset result.view);
+  gather data_ndim data_shape data.buffer (get_strides data.view)
+    (get_offset data.view) indices.buffer (get_strides indices.view)
+    (get_offset indices.view) axis result.buffer (get_strides result.view)
+    (get_offset result.view);
   let _ = (data.view, indices.view) in
   (* FIX: Keep input tensors alive during C call. *)
   result
@@ -738,17 +769,18 @@ let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
   let _ = unique_indices in
   (* TODO: use this hint for optimization *)
   (* Validate axis *)
-  let template_ndim = View.ndim data_template.view in
+  let template_ndim = Lazy_view.ndim data_template.view in
   let axis = if axis < 0 then axis + template_ndim else axis in
   if axis < 0 || axis >= template_ndim then
     failwith "op_scatter: axis out of bounds";
 
   (* Shape checks *)
-  if View.shape indices.view <> View.shape updates.view then
+  let indices_shape = get_shape indices.view in
+  let updates_shape = get_shape updates.view in
+  if indices_shape <> updates_shape then
     failwith "op_scatter: indices and updates must have same shape";
 
-  let template_shape = View.shape data_template.view in
-  let updates_shape = View.shape updates.view in
+  let template_shape = get_shape data_template.view in
   Array.iteri
     (fun i dim ->
       if i <> axis && dim > template_shape.(i) then
@@ -764,18 +796,15 @@ let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
 
   (* Create output as copy of template *)
   let result = op_copy data_template in
-  let indices_ndim = View.ndim indices.view in
-  let indices_shape = View.shape indices.view in
+  let indices_ndim = Lazy_view.ndim indices.view in
   scatter template_ndim template_shape indices_ndim indices_shape
     data_template.buffer
-    (View.strides data_template.view)
-    (View.offset data_template.view)
-    indices.buffer
-    (View.strides indices.view)
-    (View.offset indices.view) updates.buffer
-    (View.strides updates.view)
-    (View.offset updates.view) axis result.buffer (View.strides result.view)
-    (View.offset result.view) computation_mode;
+    (get_strides data_template.view)
+    (get_offset data_template.view)
+    indices.buffer (get_strides indices.view) (get_offset indices.view)
+    updates.buffer (get_strides updates.view) (get_offset updates.view) axis
+    result.buffer (get_strides result.view) (get_offset result.view)
+    computation_mode;
   let _ = (data_template.view, indices.view, updates.view) in
   (* FIX: Keep input tensors alive during C call. *)
   result
@@ -833,8 +862,8 @@ external fold :
 
 let op_matmul a b =
   (* Check dimensions compatibility *)
-  let a_shape = View.shape a.view in
-  let b_shape = View.shape b.view in
+  let a_shape = get_shape a.view in
+  let b_shape = get_shape b.view in
   let a_ndim = Array.length a_shape in
   let b_ndim = Array.length b_shape in
 
@@ -881,17 +910,16 @@ let op_matmul a b =
 
   let result = make_tensor a output_shape in
 
-  matmul a.buffer (View.shape a.view) (View.strides a.view) (View.offset a.view)
-    b.buffer (View.shape b.view) (View.strides b.view) (View.offset b.view)
-    result.buffer (View.shape result.view) (View.strides result.view)
-    (View.offset result.view);
+  matmul a.buffer a_shape (get_strides a.view) (get_offset a.view) b.buffer
+    b_shape (get_strides b.view) (get_offset b.view) result.buffer output_shape
+    (get_strides result.view) (get_offset result.view);
 
   let _ = (a.view, b.view) in
   (* FIX: Keep input tensors alive during C call. *)
   result
 
 let op_unfold x ~kernel_size ~stride ~dilation ~padding =
-  let x_shape = View.shape x.view in
+  let x_shape = get_shape x.view in
   let ndim = Array.length x_shape in
   let num_spatial_dims = Array.length kernel_size in
 
@@ -946,16 +974,18 @@ let op_unfold x ~kernel_size ~stride ~dilation ~padding =
   let padding_lower = Array.map fst padding in
 
   (* Call the C implementation with all required parameters *)
-  unfold (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) (View.ndim result.view) (View.shape result.view)
-    result.buffer (View.strides result.view) (View.offset result.view)
-    output_spatial_shape kernel_size stride padding_lower dilation;
+  unfold (Lazy_view.ndim x.view) x_shape x.buffer (get_strides x.view)
+    (get_offset x.view)
+    (Lazy_view.ndim result.view)
+    output_shape result.buffer (get_strides result.view)
+    (get_offset result.view) output_spatial_shape kernel_size stride
+    padding_lower dilation;
   let _ = x.view in
   (* FIX: Keep input tensor alive during C call. *)
   result
 
 let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
-  let x_shape = View.shape x.view in
+  let x_shape = get_shape x.view in
   let ndim = Array.length x_shape in
 
   (* Input has shape [...batch, patch_size, num_patches] *)
@@ -1011,22 +1041,24 @@ let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
   let padding_lower = Array.map fst padding in
 
   (* Call the C implementation *)
-  fold (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) (View.ndim result.view) (View.shape result.view)
-    result.buffer (View.strides result.view) (View.offset result.view)
-    output_spatial_shape kernel_size stride padding_lower dilation;
+  fold (Lazy_view.ndim x.view) x_shape x.buffer (get_strides x.view)
+    (get_offset x.view)
+    (Lazy_view.ndim result.view)
+    full_output_shape result.buffer (get_strides result.view)
+    (get_offset result.view) output_spatial_shape kernel_size stride
+    padding_lower dilation;
   let _ = x.view in
   (* FIX: Keep input tensor alive during C call. *)
   result
 
 let op_pad x padding value =
   (* padding is a list of (before, after) pairs for each dimension *)
-  let ndim = View.ndim x.view in
+  let ndim = Lazy_view.ndim x.view in
   if Array.length padding <> ndim then
     failwith "op_pad: padding list must have one pair per dimension";
 
   (* Compute output shape *)
-  let input_shape = View.shape x.view in
+  let input_shape = get_shape x.view in
   let output_shape =
     Array.mapi
       (fun i dim ->
@@ -1047,13 +1079,13 @@ let op_pad x padding value =
   let result =
     create x.context x.dtype
       (make_buffer x.dtype (Array.fold_left ( * ) 1 output_shape))
-      (View.create output_shape)
+      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
   in
 
   (* Call C implementation *)
-  pad ndim input_shape x.buffer (View.strides x.view) (View.offset x.view)
-    output_shape result.buffer (View.strides result.view)
-    (View.offset result.view) padding_array value;
+  pad ndim input_shape x.buffer (get_strides x.view) (get_offset x.view)
+    output_shape result.buffer (get_strides result.view)
+    (get_offset result.view) padding_array value;
   let _ = x.view in
   (* FIX: Keep input tensor alive during C call. *)
   result
@@ -1115,7 +1147,7 @@ external irfft_complex64 :
   unit = "caml_nx_irfft_complex64_bc" "caml_nx_irfft_complex64"
 
 let op_fft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
-  let input_shape = View.shape x.view in
+  let input_shape = get_shape x.view in
   let ndim = Array.length input_shape in
 
   (* Compute output shape *)
@@ -1135,27 +1167,27 @@ let op_fft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
   let result = make_tensor x output_shape in
 
   (* Copy input to output first *)
-  copy (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) result.buffer (View.strides result.view)
-    (View.offset result.view);
+  copy (Lazy_view.ndim x.view) input_shape x.buffer (get_strides x.view)
+    (get_offset x.view) result.buffer (get_strides result.view)
+    (get_offset result.view);
 
   (* Call appropriate FFT function based on dtype *)
   (match x.dtype with
   | Dtype.Complex64 ->
-      fft_complex64 ndim output_shape result.buffer (View.strides result.view)
-        (View.offset result.view) result.buffer (View.strides result.view)
-        (View.offset result.view) axes (Array.length axes) false
+      fft_complex64 ndim output_shape result.buffer (get_strides result.view)
+        (get_offset result.view) result.buffer (get_strides result.view)
+        (get_offset result.view) axes (Array.length axes) false
   | Dtype.Complex32 ->
-      fft_complex32 ndim output_shape result.buffer (View.strides result.view)
-        (View.offset result.view) result.buffer (View.strides result.view)
-        (View.offset result.view) axes (Array.length axes) false
+      fft_complex32 ndim output_shape result.buffer (get_strides result.view)
+        (get_offset result.view) result.buffer (get_strides result.view)
+        (get_offset result.view) axes (Array.length axes) false
   | _ -> failwith "op_fft: input must be complex");
 
   let _ = x.view in
   result
 
 let op_ifft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
-  let input_shape = View.shape x.view in
+  let input_shape = get_shape x.view in
   let ndim = Array.length input_shape in
 
   (* Compute output shape *)
@@ -1175,20 +1207,20 @@ let op_ifft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
   let result = make_tensor x output_shape in
 
   (* Copy input to output first *)
-  copy (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) result.buffer (View.strides result.view)
-    (View.offset result.view);
+  copy (Lazy_view.ndim x.view) input_shape x.buffer (get_strides x.view)
+    (get_offset x.view) result.buffer (get_strides result.view)
+    (get_offset result.view);
 
   (* Call appropriate IFFT function based on dtype *)
   (match x.dtype with
   | Dtype.Complex64 ->
-      fft_complex64 ndim output_shape result.buffer (View.strides result.view)
-        (View.offset result.view) result.buffer (View.strides result.view)
-        (View.offset result.view) axes (Array.length axes) true
+      fft_complex64 ndim output_shape result.buffer (get_strides result.view)
+        (get_offset result.view) result.buffer (get_strides result.view)
+        (get_offset result.view) axes (Array.length axes) true
   | Dtype.Complex32 ->
-      fft_complex32 ndim output_shape result.buffer (View.strides result.view)
-        (View.offset result.view) result.buffer (View.strides result.view)
-        (View.offset result.view) axes (Array.length axes) true
+      fft_complex32 ndim output_shape result.buffer (get_strides result.view)
+        (get_offset result.view) result.buffer (get_strides result.view)
+        (get_offset result.view) axes (Array.length axes) true
   | _ -> failwith "op_ifft: input must be complex");
 
   let _ = x.view in
@@ -1196,7 +1228,7 @@ let op_ifft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
 
 let op_rfft (type a b) (x : (a, b) t) ~axes ~s :
     (Complex.t, Dtype.complex64_elt) t =
-  let input_shape = View.shape x.view in
+  let input_shape = get_shape x.view in
   let ndim = Array.length input_shape in
 
   (* For rfft, the last axis in the transform is halved + 1 *)
@@ -1225,7 +1257,7 @@ let op_rfft (type a b) (x : (a, b) t) ~axes ~s :
   let result =
     create x.context Dtype.Complex64
       (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 output_shape))
-      (View.create output_shape)
+      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
   in
 
   (* We need to handle different float types separately due to OCaml's type system *)
@@ -1239,29 +1271,27 @@ let op_rfft (type a b) (x : (a, b) t) ~axes ~s :
         | Dtype.Float32 | Dtype.Float16 ->
             let result =
               create x.context Dtype.Float64
-                (make_buffer Dtype.Float64 (View.numel x.view))
+                (make_buffer Dtype.Float64 (get_numel x.view))
                 x.view
             in
-            cast (View.ndim x.view) (View.shape x.view) x.buffer
-              (View.strides x.view) (View.offset x.view) result.buffer
-              (View.strides result.view) (View.offset result.view);
+            cast (Lazy_view.ndim x.view) (get_shape x.view) x.buffer
+              (get_strides x.view) (get_offset x.view) result.buffer
+              (get_strides result.view) (get_offset result.view);
             result
         | _ -> failwith "op_rfft: input must be real")
   in
 
-  rfft_float64 ndim
-    (View.shape float64_x.view)
-    float64_x.buffer
-    (View.strides float64_x.view)
-    (View.offset float64_x.view)
-    result.buffer (View.strides result.view) (View.offset result.view) axes
+  rfft_float64 ndim (get_shape float64_x.view) float64_x.buffer
+    (get_strides float64_x.view)
+    (get_offset float64_x.view)
+    result.buffer (get_strides result.view) (get_offset result.view) axes
     (Array.length axes);
 
   let _ = x.view in
   result
 
 let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
-  let input_shape = View.shape x.view in
+  let input_shape = get_shape x.view in
   let ndim = Array.length input_shape in
 
   (* For irfft, restore full size for last axis *)
@@ -1292,7 +1322,7 @@ let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
   let result =
     create x.context Dtype.Float64
       (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 output_shape))
-      (View.create output_shape)
+      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
   in
 
   (* For simplicity, always work with complex64 internally *)
@@ -1305,20 +1335,20 @@ let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
         | Dtype.Complex32 ->
             let result =
               create x.context Dtype.Complex64
-                (make_buffer Dtype.Complex64 (View.numel x.view))
+                (make_buffer Dtype.Complex64 (get_numel x.view))
                 x.view
             in
-            cast (View.ndim x.view) (View.shape x.view) x.buffer
-              (View.strides x.view) (View.offset x.view) result.buffer
-              (View.strides result.view) (View.offset result.view);
+            cast (Lazy_view.ndim x.view) (get_shape x.view) x.buffer
+              (get_strides x.view) (get_offset x.view) result.buffer
+              (get_strides result.view) (get_offset result.view);
             result
         | _ -> failwith "op_irfft: input must be complex")
   in
 
   irfft_complex64 ndim input_shape complex64_x.buffer
-    (View.strides complex64_x.view)
-    (View.offset complex64_x.view)
-    result.buffer (View.strides result.view) (View.offset result.view) axes
+    (get_strides complex64_x.view)
+    (get_offset complex64_x.view)
+    result.buffer (get_strides result.view) (get_offset result.view) axes
     (Array.length axes) output_shape.(last_axis);
 
   let _ = x.view in
@@ -1377,24 +1407,24 @@ external triangular_solve :
   unit = "caml_nx_triangular_solve_bc" "caml_nx_triangular_solve"
 
 let op_cholesky ~upper x =
-  let result = make_tensor x (View.shape x.view) in
+  let result = make_tensor x (get_shape x.view) in
   cholesky
     (if upper then 1 else 0)
-    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
-    result.buffer (View.strides result.view) (View.offset result.view);
+    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
+    result.buffer (get_strides result.view) (get_offset result.view);
   let _ = x.view in
   (* Keep input tensor alive during C call *)
   result
 
 let op_triangular_solve ~upper ~transpose ~unit_diag a b =
-  let result = make_tensor b (View.shape b.view) in
+  let result = make_tensor b (get_shape b.view) in
   triangular_solve
     (if upper then 1 else 0)
     (if transpose then 1 else 0)
     (if unit_diag then 1 else 0)
-    a.buffer (View.shape a.view) (View.strides a.view) (View.offset a.view)
-    b.buffer (View.shape b.view) (View.strides b.view) (View.offset b.view)
-    result.buffer (View.strides result.view) (View.offset result.view);
+    a.buffer (get_shape a.view) (get_strides a.view) (get_offset a.view)
+    b.buffer (get_shape b.view) (get_strides b.view) (get_offset b.view)
+    result.buffer (get_strides result.view) (get_offset result.view);
   let _ = (a.view, b.view) in
   (* Keep input tensors alive during C call *)
   result
@@ -1429,7 +1459,7 @@ external qr :
   unit = "caml_nx_qr_bc" "caml_nx_qr"
 
 let op_qr ~reduced x =
-  let shape_x = View.shape x.view in
+  let shape_x = get_shape x.view in
   let ndim = Array.length shape_x in
   if ndim < 2 then failwith "op_qr: input must have at least 2 dimensions";
 
@@ -1453,9 +1483,9 @@ let op_qr ~reduced x =
 
   qr
     (if reduced then 1 else 0)
-    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
-    q.buffer (View.shape q.view) (View.strides q.view) (View.offset q.view)
-    r.buffer (View.shape r.view) (View.strides r.view) (View.offset r.view);
+    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
+    q.buffer (get_shape q.view) (get_strides q.view) (get_offset q.view)
+    r.buffer (get_shape r.view) (get_strides r.view) (get_offset r.view);
 
   let _ = x.view in
   (q, r)
@@ -1499,7 +1529,7 @@ external svd :
 
 let op_svd (type a b) ~(full_matrices : bool) (x : (a, b) t) :
     (a, b) t * (float, Dtype.float64_elt) t * (a, b) t =
-  let shape_x = View.shape x.view in
+  let shape_x = get_shape x.view in
   let ndim = Array.length shape_x in
   if ndim < 2 then failwith "op_svd: input must have at least 2 dimensions";
 
@@ -1531,15 +1561,15 @@ let op_svd (type a b) ~(full_matrices : bool) (x : (a, b) t) :
   let s =
     create x.context Dtype.Float64
       (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 shape_s))
-      (View.create shape_s)
+      (Lazy_view.create (Symbolic_shape.of_ints shape_s))
   in
 
   svd
     (if full_matrices then 1 else 0)
-    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
-    u.buffer (View.shape u.view) (View.strides u.view) (View.offset u.view)
-    s.buffer (View.shape s.view) (View.strides s.view) (View.offset s.view)
-    vt.buffer (View.shape vt.view) (View.strides vt.view) (View.offset vt.view);
+    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
+    u.buffer (get_shape u.view) (get_strides u.view) (get_offset u.view)
+    s.buffer (get_shape s.view) (get_strides s.view) (get_offset s.view)
+    vt.buffer (get_shape vt.view) (get_strides vt.view) (get_offset vt.view);
   let _ = x.view in
   (u, s, vt)
 
@@ -1577,7 +1607,7 @@ external eig :
 let op_eig (type a b) ~vectors (x : (a, b) t) :
     (Complex.t, Dtype.complex64_elt) t
     * (Complex.t, Dtype.complex64_elt) t option =
-  let shape_x = View.shape x.view in
+  let shape_x = get_shape x.view in
   let ndim = Array.length shape_x in
   if ndim < 2 then failwith "op_eig: input must have at least 2 dimensions";
 
@@ -1595,7 +1625,7 @@ let op_eig (type a b) ~vectors (x : (a, b) t) :
   let vals =
     create x.context Dtype.Complex64
       (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 shape_vals))
-      (View.create shape_vals)
+      (Lazy_view.create (Symbolic_shape.of_ints shape_vals))
   in
 
   let vecs_opt =
@@ -1603,7 +1633,7 @@ let op_eig (type a b) ~vectors (x : (a, b) t) :
       Some
         (create x.context Dtype.Complex64
            (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 shape_x))
-           (View.create shape_x))
+           (Lazy_view.create (Symbolic_shape.of_ints shape_x)))
     else None
   in
 
@@ -1613,26 +1643,26 @@ let op_eig (type a b) ~vectors (x : (a, b) t) :
       Some
         (create x.context Dtype.Complex64
            (make_buffer Dtype.Complex64 1)
-           (View.create [| 1 |]))
+           (Lazy_view.create (Symbolic_shape.of_ints [| 1 |])))
   in
 
   eig 0
     (if vectors then 1 else 0)
-    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
-    vals.buffer (View.shape vals.view) (View.strides vals.view)
-    (View.offset vals.view)
+    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
+    vals.buffer (get_shape vals.view) (get_strides vals.view)
+    (get_offset vals.view)
     (match vecs_opt with
     | Some v -> v.buffer
     | None -> (Option.get dummy).buffer)
-    (match vecs_opt with Some v -> View.shape v.view | None -> [| 1 |])
-    (match vecs_opt with Some v -> View.strides v.view | None -> [| 1 |])
-    (match vecs_opt with Some v -> View.offset v.view | None -> 0);
+    (match vecs_opt with Some v -> get_shape v.view | None -> [| 1 |])
+    (match vecs_opt with Some v -> get_strides v.view | None -> [| 1 |])
+    (match vecs_opt with Some v -> get_offset v.view | None -> 0);
   let _ = x.view in
   (vals, vecs_opt)
 
 let op_eigh (type a b) ~vectors (x : (a, b) t) :
     (float, Dtype.float64_elt) t * (a, b) t option =
-  let shape_x = View.shape x.view in
+  let shape_x = get_shape x.view in
   let ndim = Array.length shape_x in
   if ndim < 2 then failwith "op_eigh: input must have at least 2 dimensions";
 
@@ -1650,7 +1680,7 @@ let op_eigh (type a b) ~vectors (x : (a, b) t) :
   let vals =
     create x.context Dtype.Float64
       (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 shape_vals))
-      (View.create shape_vals)
+      (Lazy_view.create (Symbolic_shape.of_ints shape_vals))
   in
 
   let vecs_opt = if vectors then Some (make_tensor x shape_x) else None in
@@ -1658,14 +1688,14 @@ let op_eigh (type a b) ~vectors (x : (a, b) t) :
 
   eig 1
     (if vectors then 1 else 0)
-    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
-    vals.buffer (View.shape vals.view) (View.strides vals.view)
-    (View.offset vals.view)
+    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
+    vals.buffer (get_shape vals.view) (get_strides vals.view)
+    (get_offset vals.view)
     (match vecs_opt with
     | Some v -> v.buffer
     | None -> (Option.get dummy).buffer)
-    (match vecs_opt with Some v -> View.shape v.view | None -> [| 1 |])
-    (match vecs_opt with Some v -> View.strides v.view | None -> [| 1 |])
-    (match vecs_opt with Some v -> View.offset v.view | None -> 0);
+    (match vecs_opt with Some v -> get_shape v.view | None -> [| 1 |])
+    (match vecs_opt with Some v -> get_strides v.view | None -> [| 1 |])
+    (match vecs_opt with Some v -> get_offset v.view | None -> 0);
   let _ = x.view in
   (vals, vecs_opt)

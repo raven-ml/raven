@@ -1,6 +1,21 @@
 open Nx_core
 open Metal
 
+(* Helper to get strides from view *)
+let get_strides view =
+  match Lazy_view.strides view with
+  | Some s -> s
+  | None ->
+      Error.failed ~op:"get_strides"
+        ~what:"cannot get strides for non-contiguous view" ()
+
+(* Helper to get offset from view *)
+let get_offset view =
+  match Symbolic_shape.eval_dim (Lazy_view.offset view) with
+  | Some n -> n
+  | None ->
+      Error.failed ~op:"get_offset" ~what:"cannot evaluate symbolic offset" ()
+
 let copy ctx src dst =
   let size = Internal.numel src in
   let dtype_suffix = Internal.dtype_to_metal_type src.Internal.dtype in
@@ -44,10 +59,15 @@ let make_contiguous ctx t =
       context = ctx;
       Internal.dtype = t.dtype;
       buffer = metal_buffer;
-      view = View.create (Internal.shape t);
+      view = Lazy_view.create (Symbolic_shape.of_ints (Internal.shape t));
     }
   in
-  let out = { out with view = View.create (Internal.shape t) } in
+  let out =
+    {
+      out with
+      view = Lazy_view.create (Symbolic_shape.of_ints (Internal.shape t));
+    }
+  in
 
   let dtype_suffix = Internal.dtype_to_metal_type t.dtype in
   let kernel_name = Printf.sprintf "strided_copy_%s" dtype_suffix in
@@ -65,7 +85,13 @@ let make_contiguous ctx t =
 
       (* Set shape and strides *)
       let shape = Internal.shape t in
-      let strides = View.strides t.view in
+      let strides =
+        match Lazy_view.strides t.view with
+        | Some s -> s
+        | None ->
+            Error.failed ~op:"make_contiguous"
+              ~what:"cannot get strides for non-contiguous view" ()
+      in
       let ndim = Array.length shape in
 
       let shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
@@ -96,7 +122,14 @@ let make_contiguous ctx t =
 
       (* Pass the offset *)
       let offset_val =
-        Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.view)))
+        Ctypes.(
+          allocate uint32_t
+            (Unsigned.UInt32.of_int
+               (match Symbolic_shape.eval_dim (Lazy_view.offset t.view) with
+               | Some n -> n
+               | None ->
+                   Error.failed ~op:"make_contiguous"
+                     ~what:"cannot get offset with symbolic value" ())))
       in
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp offset_val)
@@ -193,7 +226,13 @@ let pad ctx t out padding fill_value =
         ~length:4 ~index:6;
 
       (* Set input strides and offset *)
-      let in_strides = View.strides t.Internal.view in
+      let in_strides =
+        match Lazy_view.strides t.Internal.view with
+        | Some s -> s
+        | None ->
+            Error.failed ~op:"make_contiguous"
+              ~what:"cannot get strides for non-contiguous view" ()
+      in
       let in_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
       for i = 0 to ndim - 1 do
         Ctypes.(in_strides_arr +@ i <-@ Int32.of_int in_strides.(i))
@@ -203,14 +242,21 @@ let pad ctx t out padding fill_value =
         ~length:(ndim * 4) ~index:7;
 
       let in_offset_val =
-        Ctypes.(allocate int32_t (Int32.of_int (View.offset t.Internal.view)))
+        let offset_val =
+          match Symbolic_shape.eval_dim (Lazy_view.offset t.Internal.view) with
+          | Some n -> n
+          | None ->
+              Error.failed ~op:"make_contiguous"
+                ~what:"cannot evaluate symbolic offset" ()
+        in
+        Ctypes.(allocate int32_t (Int32.of_int offset_val))
       in
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp in_offset_val)
         ~length:4 ~index:8;
 
       (* Pass input strides and offset for non-contiguous views *)
-      let in_strides = View.strides t.view in
+      let in_strides = get_strides t.view in
       let in_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
       for i = 0 to ndim - 1 do
         Ctypes.(in_strides_arr +@ i <-@ Int32.of_int in_strides.(i))
@@ -220,7 +266,7 @@ let pad ctx t out padding fill_value =
         ~length:(ndim * 4) ~index:7;
 
       let in_offset_val =
-        Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.view)))
+        Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (get_offset t.view)))
       in
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp in_offset_val)
@@ -278,10 +324,12 @@ let cat ctx tensors axis =
           context = ctx;
           Internal.dtype = first.dtype;
           buffer = metal_buffer;
-          view = View.create shape;
+          view = Lazy_view.create (Symbolic_shape.of_ints shape);
         }
       in
-      let out = { out with view = View.create shape } in
+      let out =
+        { out with view = Lazy_view.create (Symbolic_shape.of_ints shape) }
+      in
 
       (* Use the concat_axis kernel that handles all axes *)
       let dtype_suffix = Internal.dtype_to_metal_type first.dtype in
@@ -323,7 +371,13 @@ let cat ctx tensors axis =
                 ~length:(ndim * 4) ~index:3;
 
               (* Set input strides *)
-              let in_strides = View.strides t.Internal.view in
+              let in_strides =
+                match Lazy_view.strides t.Internal.view with
+                | Some s -> s
+                | None ->
+                    Error.failed ~op:"concat"
+                      ~what:"cannot get strides for non-contiguous view" ()
+              in
               let in_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
               for i = 0 to ndim - 1 do
                 Ctypes.(in_strides_arr +@ i <-@ Int32.of_int in_strides.(i))
@@ -345,7 +399,15 @@ let cat ctx tensors axis =
               let in_offset_val =
                 Ctypes.(
                   allocate uint32_t
-                    (Unsigned.UInt32.of_int (View.offset t.Internal.view)))
+                    (Unsigned.UInt32.of_int
+                       (match
+                          Symbolic_shape.eval_dim
+                            (Lazy_view.offset t.Internal.view)
+                        with
+                       | Some n -> n
+                       | None ->
+                           Error.failed ~op:"concat"
+                             ~what:"cannot get offset with symbolic value" ())))
               in
 
               ComputeCommandEncoder.set_bytes encoder

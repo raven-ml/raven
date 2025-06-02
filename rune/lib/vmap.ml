@@ -1,4 +1,5 @@
 open Nx_rune
+open Nx_core
 module T = Tensor
 
 (* Type to represent mapping specification for a single axis *)
@@ -228,7 +229,9 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
             let batched_tensor =
               if vm.mapped_axis >= 0 then vm.base else t_in
             in
-            let result = op_reshape batched_tensor batched_shape in
+            let result =
+              op_reshape batched_tensor (Symbolic_shape.of_ints batched_shape)
+            in
             let forward_val = continue k result in
             let vmapped_result =
               {
@@ -536,7 +539,9 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
                 Array.concat [ [| batch_size |]; new_target_shape ]
               else new_target_shape
             in
-            let result = op_expand t_in adjusted_shape in
+            let result =
+              op_expand t_in (Symbolic_shape.of_ints adjusted_shape)
+            in
             let forward_val = continue k result in
             let vmapped_result =
               {

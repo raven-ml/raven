@@ -18,13 +18,26 @@ type ('a, 'b) t = {
   context : context;
   dtype : ('a, 'b) Dtype.t;
   buffer : metal_buffer;
-  view : View.t;
+  view : Lazy_view.t;
 }
 
 let dtype t = t.dtype
 let view t = t.view
-let shape t = View.shape t.view
-let numel t = View.numel t.view
+
+let shape t =
+  match Symbolic_shape.eval (Lazy_view.shape t.view) with
+  | Some arr -> arr
+  | None ->
+      Error.failed ~op:"shape"
+        ~what:"cannot get shape with unbound symbolic dimensions" ()
+
+let numel t =
+  match Symbolic_shape.eval_dim (Lazy_view.numel t.view) with
+  | Some n -> n
+  | None ->
+      Error.failed ~op:"numel" ~what:"cannot get numel with symbolic dimensions"
+        ()
+
 let buffer t = t.buffer
 
 let create_kernel_cache () =
@@ -135,10 +148,22 @@ let copy_to_bigarray : type a b.
   | Complex64 ->
       (* Convert from float2 (Metal) to Complex64 (OCaml) *)
       let float_ptr = Ctypes.(from_voidp float contents) in
-      let view_size = View.numel view in
-      let offset = View.offset view in
+      let view_size =
+        match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+        | Some n -> n
+        | None ->
+            Error.failed ~op:"copy_from_metal_buffer"
+              ~what:"cannot copy with symbolic size" ()
+      in
+      let offset =
+        match Symbolic_shape.eval_dim (Lazy_view.offset view) with
+        | Some n -> n
+        | None ->
+            Error.failed ~op:"copy_from_metal_buffer"
+              ~what:"cannot copy with symbolic offset" ()
+      in
 
-      if View.is_c_contiguous view then
+      if Lazy_view.is_contiguous view then
         (* For contiguous views, convert directly *)
         for i = 0 to view_size - 1 do
           let idx = offset + i in
@@ -150,8 +175,20 @@ let copy_to_bigarray : type a b.
         done
       else
         (* For non-contiguous views, handle strides *)
-        let shape = View.shape view in
-        let strides = View.strides view in
+        let shape =
+          match Symbolic_shape.eval (Lazy_view.shape view) with
+          | Some arr -> arr
+          | None ->
+              Error.failed ~op:"copy_from_metal_buffer"
+                ~what:"cannot copy with symbolic shape" ()
+        in
+        let strides =
+          match Lazy_view.strides view with
+          | Some s -> s
+          | None ->
+              Error.failed ~op:"copy_from_metal_buffer"
+                ~what:"cannot copy non-contiguous symbolic view" ()
+        in
         let ndim = Array.length shape in
         let rec copy_elements indices pos dst_idx =
           if pos = ndim then (
@@ -187,13 +224,26 @@ let copy_to_bigarray : type a b.
       let metal_ba = Bigarray_ext.array1_of_genarray metal_ba_genarray in
 
       (* Check if the view is contiguous AND the buffer has enough elements *)
-      let view_size = View.numel view in
-      let required_size = View.offset view + view_size in
+      let view_size =
+        match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+        | Some n -> n
+        | None ->
+            Error.failed ~op:"copy_from_metal_buffer"
+              ~what:"cannot copy with symbolic size" ()
+      in
+      let offset_val =
+        match Symbolic_shape.eval_dim (Lazy_view.offset view) with
+        | Some n -> n
+        | None ->
+            Error.failed ~op:"copy_from_metal_buffer"
+              ~what:"cannot copy with symbolic offset" ()
+      in
+      let required_size = offset_val + view_size in
 
-      if View.is_c_contiguous view && required_size <= buffer_size then (
+      if Lazy_view.is_contiguous view && required_size <= buffer_size then (
         (* For contiguous views with sufficient buffer size, we can do a direct
            copy *)
-        let offset = View.offset view in
+        let offset = offset_val in
         if view_size > 0 then
           (* Create sub-arrays and blit *)
           let src = Array1.sub metal_ba offset view_size in
@@ -202,9 +252,21 @@ let copy_to_bigarray : type a b.
         (* For non-contiguous views, we need to copy element by element *)
         (* NOTE: For better performance, callers should use Ops_movement.make_contiguous
        before calling copy_to_bigarray on non-contiguous views *)
-        let shape = View.shape view in
-        let strides = View.strides view in
-        let offset = View.offset view in
+        let shape =
+          match Symbolic_shape.eval (Lazy_view.shape view) with
+          | Some arr -> arr
+          | None ->
+              Error.failed ~op:"copy_from_metal_buffer"
+                ~what:"cannot copy with symbolic shape" ()
+        in
+        let strides =
+          match Lazy_view.strides view with
+          | Some s -> s
+          | None ->
+              Error.failed ~op:"copy_from_metal_buffer"
+                ~what:"cannot copy non-contiguous symbolic view" ()
+        in
+        let offset = offset_val in
         let ndim = Array.length shape in
 
         (* Helper to convert multi-dimensional index to linear index *)
@@ -251,7 +313,7 @@ let copy_to_bigarray : type a b.
             done
         in
 
-        if View.numel view > 0 then copy_elements (Array.make ndim 0) 0
+        if view_size > 0 then copy_elements (Array.make ndim 0) 0
 
 let with_command_buffer ctx f =
   let buffer = Metal.CommandBuffer.on_queue ctx.queue in

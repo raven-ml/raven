@@ -1,6 +1,9 @@
 open Nx_core
 open Metal
 
+(* Helper to check if view is C-contiguous *)
+let is_c_contiguous view = Lazy_view.is_contiguous view
+
 (* Matrix multiplication operation *)
 
 let op_matmul ctx a b =
@@ -60,7 +63,7 @@ let op_matmul ctx a b =
       context = ctx;
       Internal.dtype = a.dtype;
       buffer = metal_buffer;
-      view = View.create out_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints out_shape);
     }
   in
 
@@ -70,12 +73,10 @@ let op_matmul ctx a b =
     (* Ensure inputs are contiguous - Metal kernel doesn't support strided
        views *)
     let a =
-      if View.is_c_contiguous a.view then a
-      else Ops_movement.make_contiguous ctx a
+      if is_c_contiguous a.view then a else Ops_movement.make_contiguous ctx a
     in
     let b =
-      if View.is_c_contiguous b.view then b
-      else Ops_movement.make_contiguous ctx b
+      if is_c_contiguous b.view then b else Ops_movement.make_contiguous ctx b
     in
 
     (* Get kernel - use tiled version for better performance *)

@@ -10,7 +10,7 @@ type ('a, 'b) t = ('a, 'b) Internal.t = {
   context : context;
   dtype : ('a, 'b) Dtype.t;
   buffer : ('a, 'b) buffer;
-  view : View.t;
+  view : Lazy_view.t;
 }
 
 let view t = t.view
@@ -26,9 +26,10 @@ let op_buffer ctx dt size_in_elements =
   let kind = Dtype.to_bigarray_ext_kind dt in
   let ba = Array1.create kind c_layout size_in_elements in
   let initial_view =
-    if size_in_elements = 0 then View.create [| 0 |]
+    if size_in_elements = 0 then
+      Lazy_view.create (Symbolic_shape.of_ints [| 0 |])
       (* Consistent 0-element view *)
-    else View.create [| size_in_elements |]
+    else Lazy_view.create (Symbolic_shape.of_ints [| size_in_elements |])
   in
   { context = ctx; dtype = dt; buffer = ba; view = initial_view }
 
@@ -36,7 +37,7 @@ let op_const_scalar ctx value dt =
   let kind = Dtype.to_bigarray_ext_kind dt in
   let ba = Array1.create kind c_layout 1 in
   Array1.set ba 0 value;
-  let scalar_view = View.create [||] in
+  let scalar_view = Lazy_view.create (Symbolic_shape.of_ints [||]) in
   (* 0-dim for scalar *)
   { context = ctx; dtype = dt; buffer = ba; view = scalar_view }
 
@@ -47,218 +48,110 @@ let op_const_array ctx bigarray =
   Bigarray_ext.Array1.blit bigarray (data t);
   t
 
+let op_contiguous t =
+  if Internal.is_c_contiguous t && Internal.offset t = 0 then t
+    (* Already contiguous and offset 0 *)
+  else Internal.copy t (* Internal.copy creates a new C-contiguous tensor *)
+
+let op_copy t = Internal.copy t
+
+(* Helper to ensure tensors have materializable views for operations *)
+let ensure_materializable t =
+  (* If can't get strides (e.g., broadcast views), materialize *)
+  if not (Lazy_view.can_get_strides t.view) then op_contiguous t
+  else
+    (* Can get strides - but double-check they're valid *)
+    try
+      let strides = Internal.strides t in
+      let shape = Internal.shape t in
+      if Array.length strides <> Array.length shape then
+        (* Stride/shape mismatch - materialize *)
+        op_contiguous t
+      else t
+    with _ ->
+      (* Any error getting strides - materialize *)
+      op_contiguous t
+
+let op_assign target_t source_t = Internal.blit source_t target_t
+
 (* Binary Ops *)
 
-let op_add a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.add ctx a b out_tensor;
-  out_tensor
-
-let op_mul a b =
+(* Helper for binary operations that ensures inputs are materializable first *)
+let binary_op op_func a b =
   let ctx = a.context in
   let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
+  let out_size = Internal.numel a in
+  let out_dtype = a.dtype in
   let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
+    op_buffer ctx out_dtype out_size |> fun t ->
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints out_shape))
   in
-  Ops_binary.mul ctx a b out_tensor;
+  op_func ctx a b out_tensor;
   out_tensor
 
-let op_idiv a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.idiv ctx a b out_tensor;
-  out_tensor
-
-let op_fdiv a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.fdiv ctx a b out_tensor;
-  out_tensor
-
-let op_max a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.max ctx a b out_tensor;
-  out_tensor
-
-let op_mod a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.modulo ctx a b out_tensor;
-  out_tensor
-
-let op_pow a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.pow ctx a b out_tensor;
-  out_tensor
-
-let op_cmplt a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
+(* Helper for binary comparison operations *)
+let binary_cmp_op op_func a b =
+  let a' = ensure_materializable a in
+  let b' = ensure_materializable b in
+  let ctx = a'.context in
+  let out_shape = Internal.shape a' in
+  let out_size = Internal.numel a' in
   let out_tensor =
     op_buffer ctx Dtype.uint8 out_size |> fun t ->
-    with_view t (View.create out_shape)
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints out_shape))
   in
-  Ops_binary.cmplt ctx a b out_tensor;
+  op_func ctx a' b' out_tensor;
   out_tensor
 
-let op_cmpne a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
-  let out_tensor =
-    op_buffer ctx Dtype.uint8 out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.cmpne ctx a b out_tensor;
-  out_tensor
-
-let op_xor a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.bit_xor ctx a b out_tensor;
-  out_tensor
-
-let op_or a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.bit_or ctx a b out_tensor;
-  out_tensor
-
-let op_and a b =
-  let ctx = a.context in
-  let out_shape = Internal.shape a in
-  let out_size = Internal.size a in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.bit_and ctx a b out_tensor;
-  out_tensor
+let op_add a b = binary_op Ops_binary.add a b
+let op_mul a b = binary_op Ops_binary.mul a b
+let op_idiv a b = binary_op Ops_binary.idiv a b
+let op_fdiv a b = binary_op Ops_binary.fdiv a b
+let op_max a b = binary_op Ops_binary.max a b
+let op_mod a b = binary_op Ops_binary.modulo a b
+let op_pow a b = binary_op Ops_binary.pow a b
+let op_cmplt a b = binary_cmp_op Ops_binary.cmplt a b
+let op_cmpne a b = binary_cmp_op Ops_binary.cmpne a b
+let op_xor a b = binary_op Ops_binary.bit_xor a b
+let op_or a b = binary_op Ops_binary.bit_or a b
+let op_and a b = binary_op Ops_binary.bit_and a b
 
 (* Unary Ops *)
 
-let op_neg x =
-  let ctx = x.context in
-  let out_shape = Internal.shape x in
-  let out_size = Internal.size x in
+(* Helper for unary operations that ensures input is materializable first *)
+let unary_op op_func x =
+  let x' = ensure_materializable x in
+  let ctx = x'.context in
+  let out_shape = Internal.shape x' in
+  let out_size = Internal.size x' in
   let out_tensor =
-    op_buffer ctx x.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
+    op_buffer ctx x'.dtype out_size |> fun t ->
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints out_shape))
   in
-  Ops_unary.neg ctx x out_tensor;
+  op_func ctx x' out_tensor;
   out_tensor
 
-let op_log2 x =
-  let ctx = x.context in
-  let out_shape = Internal.shape x in
-  let out_size = Internal.size x in
-  let out_tensor =
-    op_buffer ctx x.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.log2 ctx x out_tensor;
-  out_tensor
-
-let op_exp2 x =
-  let ctx = x.context in
-  let out_shape = Internal.shape x in
-  let out_size = Internal.size x in
-  let out_tensor =
-    op_buffer ctx x.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.exp2 ctx x out_tensor;
-  out_tensor
-
-let op_sin x =
-  let ctx = x.context in
-  let out_shape = Internal.shape x in
-  let out_size = Internal.size x in
-  let out_tensor =
-    op_buffer ctx x.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.sin ctx x out_tensor;
-  out_tensor
-
-let op_sqrt x =
-  let ctx = x.context in
-  let out_shape = Internal.shape x in
-  let out_size = Internal.size x in
-  let out_tensor =
-    op_buffer ctx x.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.sqrt ctx x out_tensor;
-  out_tensor
-
-let op_recip x =
-  let ctx = x.context in
-  let out_shape = Internal.shape x in
-  let out_size = Internal.size x in
-  let out_tensor =
-    op_buffer ctx x.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.recip ctx x out_tensor;
-  out_tensor
+let op_neg x = unary_op Ops_unary.neg x
+let op_log2 x = unary_op Ops_unary.log2 x
+let op_exp2 x = unary_op Ops_unary.exp2 x
+let op_sin x = unary_op Ops_unary.sin x
+let op_sqrt x = unary_op Ops_unary.sqrt x
+let op_recip x = unary_op Ops_unary.recip x
 
 (* Ternary Op *)
 let op_where cond if_true if_false =
-  let ctx = cond.context in
-  let out_shape = View.shape cond.view in
-  let out_size = View.numel cond.view in
+  (* Ensure all inputs are materializable first *)
+  let cond' = ensure_materializable cond in
+  let if_true' = ensure_materializable if_true in
+  let if_false' = ensure_materializable if_false in
+  let ctx = cond'.context in
+  let out_shape = Internal.shape cond' in
+  let out_size = Internal.numel cond' in
   let out_tensor =
-    op_buffer ctx if_true.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
+    op_buffer ctx if_true'.dtype out_size |> fun t ->
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints out_shape))
   in
-  Ops_ternary.where ctx cond if_true if_false out_tensor;
+  Ops_ternary.where ctx cond' if_true' if_false' out_tensor;
   out_tensor
 
 let fill_buffer_with_identity buf count identity_val =
@@ -267,6 +160,7 @@ let fill_buffer_with_identity buf count identity_val =
   done
 
 let op_reduce_sum ~(axes : int array) ~(keepdims : bool) xensor =
+  let xensor = ensure_materializable xensor in
   let ctx = xensor.context in
   let input_shape = Internal.shape xensor in
   let input_rank = Array.length input_shape in
@@ -296,7 +190,7 @@ let op_reduce_sum ~(axes : int array) ~(keepdims : bool) xensor =
   let output_numel = Shape.numel output_shape_final in
   let output_tensor =
     op_buffer ctx xensor.dtype output_numel |> fun t ->
-    with_view t (View.create output_shape_final)
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints output_shape_final))
   in
 
   if output_numel > 0 then
@@ -308,6 +202,7 @@ let op_reduce_sum ~(axes : int array) ~(keepdims : bool) xensor =
   output_tensor
 
 let op_reduce_max ~(axes : int array) ~(keepdims : bool) xensor =
+  let xensor = ensure_materializable xensor in
   let ctx = xensor.context in
   let input_shape = Internal.shape xensor in
   let input_rank = Array.length input_shape in
@@ -335,7 +230,7 @@ let op_reduce_max ~(axes : int array) ~(keepdims : bool) xensor =
   let output_numel = Shape.numel output_shape_final in
   let output_tensor =
     op_buffer ctx xensor.dtype output_numel |> fun t ->
-    with_view t (View.create output_shape_final)
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints output_shape_final))
   in
 
   if output_numel > 0 then
@@ -348,6 +243,7 @@ let op_reduce_max ~(axes : int array) ~(keepdims : bool) xensor =
   output_tensor
 
 let op_reduce_prod ~(axes : int array) ~(keepdims : bool) xensor =
+  let xensor = ensure_materializable xensor in
   let ctx = xensor.context in
   let input_shape = Internal.shape xensor in
   let input_rank = Array.length input_shape in
@@ -375,7 +271,7 @@ let op_reduce_prod ~(axes : int array) ~(keepdims : bool) xensor =
   let output_numel = Shape.numel output_shape_final in
   let output_tensor =
     op_buffer ctx xensor.dtype output_numel |> fun t ->
-    with_view t (View.create output_shape_final)
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints output_shape_final))
   in
 
   if output_numel > 0 then
@@ -387,21 +283,17 @@ let op_reduce_prod ~(axes : int array) ~(keepdims : bool) xensor =
   output_tensor
 
 (* Movement Ops: These just update the view *)
-let op_reshape t (new_shape : int array) =
-  match View.reshape t.view new_shape with
-  | new_view -> { t with view = new_view }
-  | exception Invalid_argument msg -> invalid_arg msg
-  | exception Failure msg -> failwith msg
+let op_reshape t (new_shape : Symbolic_shape.t) =
+  let new_view = Lazy_view.reshape new_shape t.view in
+  { t with view = new_view }
 
-let op_expand t (new_target_shape : int array) =
-  match View.expand t.view new_target_shape with
-  | new_view -> { t with view = new_view }
-  | exception Invalid_argument msg -> invalid_arg ("op_expand: " ^ msg)
+let op_expand t (new_target_shape : Symbolic_shape.t) =
+  let new_view = Lazy_view.expand new_target_shape t.view in
+  { t with view = new_view }
 
 let op_permute t (axes : int array) =
-  match View.permute t.view axes with
-  | new_view -> { t with view = new_view }
-  | exception Invalid_argument msg -> invalid_arg ("op_permute: " ^ msg)
+  let new_view = Lazy_view.permute axes t.view in
+  { t with view = new_view }
 
 let op_pad t padding_config (fill_value : 'a) =
   (* Native backend's op_pad for eager mode needs to handle fill_value. The view
@@ -411,7 +303,7 @@ let op_pad t padding_config (fill_value : 'a) =
      this op must create a new tensor. If all padding is negative (effectively a
      shrink), view update is fine. *)
   let old_view = t.view in
-  let new_view_metadata_only = View.pad old_view padding_config in
+  let new_view_metadata_only = Lazy_view.pad padding_config old_view in
 
   (* Check if padding is entirely "virtual" (i.e., all pad values are <= 0 for
      before, >= shape for after, or if the original data covers the new view
@@ -424,11 +316,17 @@ let op_pad t padding_config (fill_value : 'a) =
   if not needs_new_buffer then { t with view = new_view_metadata_only }
   else
     (* Create new tensor, fill with fill_value, then copy old data into place *)
-    let new_shape = View.shape new_view_metadata_only in
-    let new_numel = View.numel new_view_metadata_only in
+    let new_shape =
+      match Symbolic_shape.eval (Lazy_view.shape new_view_metadata_only) with
+      | Some arr -> arr
+      | None ->
+          Error.failed ~op:"op_pad" ~what:"cannot pad with symbolic dimensions"
+            ()
+    in
+    let new_numel = Shape.numel new_shape in
     let new_t =
       op_buffer t.context t.dtype new_numel |> fun nt ->
-      with_view nt (View.create new_shape)
+      with_view nt (Lazy_view.create (Symbolic_shape.of_ints new_shape))
     in
 
     (* Fill new_t with fill_value *)
@@ -438,10 +336,10 @@ let op_pad t padding_config (fill_value : 'a) =
     (* Define the slice in the new_t that corresponds to the original t *)
     let shrink_args_for_dst =
       Array.mapi
-        (fun i (pb, _pa) -> (pb, pb + (View.shape old_view).(i)))
+        (fun i (pb, _pa) -> (pb, pb + (Internal.shape t).(i)))
         padding_config
     in
-    let dst_slice_view = View.shrink new_t.view shrink_args_for_dst in
+    let dst_slice_view = Lazy_view.shrink shrink_args_for_dst new_t.view in
     let dst_slice_tensor = { new_t with view = dst_slice_view } in
 
     Internal.blit t dst_slice_tensor;
@@ -449,14 +347,12 @@ let op_pad t padding_config (fill_value : 'a) =
     new_t
 
 let op_shrink t limits =
-  match View.shrink t.view limits with
-  | new_view -> { t with view = new_view }
-  | exception Invalid_argument msg -> invalid_arg ("op_shrink: " ^ msg)
+  let new_view = Lazy_view.shrink limits t.view in
+  { t with view = new_view }
 
 let op_flip t axes_to_flip =
-  match View.flip t.view axes_to_flip with
-  | new_view -> { t with view = new_view }
-  | exception Invalid_argument msg -> invalid_arg ("op_flip: " ^ msg)
+  let new_view = Lazy_view.flip axes_to_flip t.view in
+  { t with view = new_view }
 
 let op_cat tensors axis =
   if List.length tensors = 0 then
@@ -488,7 +384,7 @@ let op_cat tensors axis =
   let output_numel = Shape.numel output_shape in
   let output_t =
     op_buffer ctx dt_ref output_numel |> fun t ->
-    with_view t (View.create output_shape)
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints output_shape))
   in
 
   let current_offset_at_axis = ref 0 in
@@ -508,7 +404,9 @@ let op_cat tensors axis =
         let shrink_args_for_dst =
           Array.init rank (fun i -> (slice_starts.(i), slice_ends.(i)))
         in
-        let dst_slice_view = View.shrink output_t.view shrink_args_for_dst in
+        let dst_slice_view =
+          Lazy_view.shrink shrink_args_for_dst output_t.view
+        in
         let dst_slice_tensor = { output_t with view = dst_slice_view } in
 
         Internal.blit src_t dst_slice_tensor);
@@ -523,19 +421,11 @@ let op_cast x target_dt =
   let out_size = Internal.size x in
   let out_tensor =
     op_buffer ctx target_dt out_size |> fun t ->
-    with_view t (View.create out_shape)
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints out_shape))
   in
   (* Use the optimized cast implementation from Ops_cast *)
   Ops_cast.cast ctx x out_tensor;
   out_tensor
-
-let op_contiguous t =
-  if Internal.is_c_contiguous t && View.offset t.view = 0 then t
-    (* Already contiguous and offset 0 *)
-  else Internal.copy t (* Internal.copy creates a new C-contiguous tensor *)
-
-let op_copy t = Internal.copy t
-let op_assign target_t source_t = Internal.blit source_t target_t
 
 let op_threefry data seed =
   let ctx = data.context in
@@ -543,7 +433,7 @@ let op_threefry data seed =
   let out_size = Internal.size data in
   let out_tensor =
     op_buffer ctx Dtype.int32 out_size |> fun t ->
-    with_view t (View.create out_shape)
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints out_shape))
   in
   Ops_threefry.threefry ctx data seed out_tensor;
   out_tensor
@@ -583,7 +473,7 @@ let op_gather data_t indices_t axis =
   let output_numel = Shape.numel output_shape in
   let output_t =
     op_buffer ctx data_t.dtype output_numel |> fun t ->
-    with_view t (View.create output_shape)
+    with_view t (Lazy_view.create (Symbolic_shape.of_ints output_shape))
   in
 
   if output_numel = 0 then output_t
@@ -591,8 +481,29 @@ let op_gather data_t indices_t axis =
     let data_buffer = Internal.buffer data_t in
     let indices_buffer = Internal.buffer indices_t in
     let output_buffer = Internal.buffer output_t in
-    let data_view = data_t.view in
-    let indices_view = indices_t.view in
+    (* Ensure tensors are materializable for gather operation *)
+    let data_view =
+      match Lazy_view.compose data_t.view with
+      | Some v -> v
+      | None -> (
+          let cont_data = op_contiguous data_t in
+          match Lazy_view.compose cont_data.view with
+          | Some v -> v
+          | None ->
+              Error.failed ~op:"op_gather" ~what:"cannot materialize data view"
+                ())
+    in
+    let indices_view =
+      match Lazy_view.compose indices_t.view with
+      | Some v -> v
+      | None -> (
+          let cont_indices = op_contiguous indices_t in
+          match Lazy_view.compose cont_indices.view with
+          | Some v -> v
+          | None ->
+              Error.failed ~op:"op_gather"
+                ~what:"cannot materialize indices view" ())
+    in
 
     (* Pre-allocate work arrays *)
     let md_idx = Array.make (Array.length output_shape) 0 in
@@ -671,11 +582,38 @@ let op_scatter (type a b) ?(mode = `Set) ?(unique_indices = false)
   if updates_numel = 0 then output_t
   else
     let output_buffer = Internal.buffer output_t in
-    let output_view = output_t.view in
+    (* Ensure views can be composed *)
+    let output_view =
+      match Lazy_view.compose output_t.view with
+      | Some v -> v
+      | None ->
+          Error.failed ~op:"op_scatter" ~what:"cannot materialize output view"
+            ()
+    in
     let updates_buffer = Internal.buffer updates_t in
-    let updates_view = updates_t.view in
+    let updates_view =
+      match Lazy_view.compose updates_t.view with
+      | Some v -> v
+      | None -> (
+          let cont_updates = op_contiguous updates_t in
+          match Lazy_view.compose cont_updates.view with
+          | Some v -> v
+          | None ->
+              Error.failed ~op:"op_scatter"
+                ~what:"cannot materialize updates view" ())
+    in
     let indices_buffer = Internal.buffer indices_t in
-    let indices_view = indices_t.view in
+    let indices_view =
+      match Lazy_view.compose indices_t.view with
+      | Some v -> v
+      | None -> (
+          let cont_indices = op_contiguous indices_t in
+          match Lazy_view.compose cont_indices.view with
+          | Some v -> v
+          | None ->
+              Error.failed ~op:"op_scatter"
+                ~what:"cannot materialize indices view" ())
+    in
 
     (* Pre-allocate work arrays *)
     let md_idx = Array.make (Array.length updates_shape) 0 in

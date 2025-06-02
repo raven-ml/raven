@@ -2,6 +2,41 @@ open Nx_core
 open Bigarray_ext
 open Metal
 
+(* Helper to check if view is C-contiguous *)
+let is_c_contiguous view = Lazy_view.is_contiguous view
+
+(* Helper to get offset from view *)
+let get_offset view =
+  match Symbolic_shape.eval_dim (Lazy_view.offset view) with
+  | Some n -> n
+  | None ->
+      Error.failed ~op:"get_offset" ~what:"cannot evaluate symbolic offset" ()
+
+(* Helper to get strides from view *)
+let get_strides view =
+  match Lazy_view.strides view with
+  | Some s -> s
+  | None ->
+      Error.failed ~op:"get_strides"
+        ~what:"cannot get strides for non-contiguous view" ()
+
+(* Helper to get linear index from view *)
+let linear_index view indices =
+  (* Since Lazy_view doesn't have linear_index, we need to compute it *)
+  let ndim = Symbolic_shape.rank (Lazy_view.shape view) in
+  if Array.length indices <> ndim then
+    Error.invalid ~op:"linear_index" ~what:"indices"
+      ~reason:
+        (Printf.sprintf "rank mismatch: %d vs %d" (Array.length indices) ndim)
+      ();
+  let strides = get_strides view in
+  let offset = get_offset view in
+  let physical_offset = ref offset in
+  Array.iteri
+    (fun i idx -> physical_offset := !physical_offset + (idx * strides.(i)))
+    indices;
+  !physical_offset
+
 let where ctx cond if_true if_false =
   (* All inputs should have the same shape *)
   let shape = Internal.shape if_true in
@@ -15,7 +50,7 @@ let where ctx cond if_true if_false =
       context = ctx;
       Internal.dtype = if_true.dtype;
       buffer = metal_buffer;
-      view = View.create shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints shape);
     }
   in
 
@@ -48,7 +83,13 @@ let where ctx cond if_true if_false =
 
       (* Set strides for each input *)
       let set_strides view index =
-        let strides = View.strides view in
+        let strides =
+          match Lazy_view.strides view with
+          | Some s -> s
+          | None ->
+              Error.failed ~op:"where"
+                ~what:"cannot get strides for non-contiguous view" ()
+        in
         let strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
         for i = 0 to ndim - 1 do
           Ctypes.(strides_arr +@ i <-@ Int32.of_int strides.(i))
@@ -71,17 +112,40 @@ let where ctx cond if_true if_false =
       let cond_offset =
         Ctypes.(
           allocate uint32_t
-            (Unsigned.UInt32.of_int (View.offset cond.Internal.view)))
+            (Unsigned.UInt32.of_int
+               (match
+                  Symbolic_shape.eval_dim (Lazy_view.offset cond.Internal.view)
+                with
+               | Some n -> n
+               | None ->
+                   Error.failed ~op:"where"
+                     ~what:"cannot get offset with symbolic value" ())))
       in
       let true_offset =
         Ctypes.(
           allocate uint32_t
-            (Unsigned.UInt32.of_int (View.offset if_true.Internal.view)))
+            (Unsigned.UInt32.of_int
+               (match
+                  Symbolic_shape.eval_dim
+                    (Lazy_view.offset if_true.Internal.view)
+                with
+               | Some n -> n
+               | None ->
+                   Error.failed ~op:"where"
+                     ~what:"cannot get offset with symbolic value" ())))
       in
       let false_offset =
         Ctypes.(
           allocate uint32_t
-            (Unsigned.UInt32.of_int (View.offset if_false.Internal.view)))
+            (Unsigned.UInt32.of_int
+               (match
+                  Symbolic_shape.eval_dim
+                    (Lazy_view.offset if_false.Internal.view)
+                with
+               | Some n -> n
+               | None ->
+                   Error.failed ~op:"where"
+                     ~what:"cannot get offset with symbolic value" ())))
       in
 
       ComputeCommandEncoder.set_bytes encoder
@@ -197,10 +261,7 @@ let cast : type a b c d.
 
 let assign ctx dst src =
   (* Check if destination is contiguous - if not, fall back to CPU *)
-  if
-    not
-      (View.is_c_contiguous dst.Internal.view
-      && View.offset dst.Internal.view = 0)
+  if not (is_c_contiguous dst.Internal.view && get_offset dst.Internal.view = 0)
   then
     (* Destination is strided - use CPU fallback for now *)
     Internal.with_command_buffer ctx (fun _cmd_buffer ->
@@ -229,8 +290,8 @@ let assign ctx dst src =
           Shape.unravel_index_into linear_idx shape md_idx;
 
           (* Get offsets in source and destination *)
-          let src_offset = View.linear_index src.view md_idx in
-          let dst_offset = View.linear_index dst.view md_idx in
+          let src_offset = linear_index src.view md_idx in
+          let dst_offset = linear_index dst.view md_idx in
 
           (* Copy value *)
           let value = Array1.unsafe_get src_arr src_offset in
@@ -266,7 +327,7 @@ let assign ctx dst src =
           ~length:(ndim * 4) ~index:2;
 
         (* Set source strides *)
-        let src_strides = View.strides src.Internal.view in
+        let src_strides = get_strides src.Internal.view in
         let strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
         for i = 0 to ndim - 1 do
           Ctypes.(strides_arr +@ i <-@ Int32.of_int src_strides.(i))
@@ -287,7 +348,7 @@ let assign ctx dst src =
         let src_offset =
           Ctypes.(
             allocate uint32_t
-              (Unsigned.UInt32.of_int (View.offset src.Internal.view)))
+              (Unsigned.UInt32.of_int (get_offset src.Internal.view)))
         in
         ComputeCommandEncoder.set_bytes encoder
           ~bytes:Ctypes.(to_voidp src_offset)
@@ -331,8 +392,11 @@ let gather ctx data indices axis =
       context = ctx;
       Internal.dtype = data.dtype;
       buffer = metal_buffer;
-      view = View.create out_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints out_shape);
     }
+  in
+  let out =
+    { out with view = Lazy_view.create (Symbolic_shape.of_ints out_shape) }
   in
 
   (* Use Metal kernel for NumPy-style gather *)
@@ -371,7 +435,7 @@ let gather ctx data indices axis =
         ~length:(ndim * 4) ~index:4;
 
       (* Set data strides *)
-      let data_strides = View.strides data.Internal.view in
+      let data_strides = get_strides data.Internal.view in
       let strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
       for i = 0 to ndim - 1 do
         Ctypes.(strides_arr +@ i <-@ Int32.of_int data_strides.(i))
@@ -381,7 +445,7 @@ let gather ctx data indices axis =
         ~length:(ndim * 4) ~index:5;
 
       (* Set indices strides *)
-      let indices_strides = View.strides indices.Internal.view in
+      let indices_strides = get_strides indices.Internal.view in
       let indices_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
       for i = 0 to ndim - 1 do
         Ctypes.(indices_strides_arr +@ i <-@ Int32.of_int indices_strides.(i))
@@ -406,12 +470,12 @@ let gather ctx data indices axis =
       let data_offset =
         Ctypes.(
           allocate uint32_t
-            (Unsigned.UInt32.of_int (View.offset data.Internal.view)))
+            (Unsigned.UInt32.of_int (get_offset data.Internal.view)))
       in
       let indices_offset =
         Ctypes.(
           allocate uint32_t
-            (Unsigned.UInt32.of_int (View.offset indices.Internal.view)))
+            (Unsigned.UInt32.of_int (get_offset indices.Internal.view)))
       in
 
       ComputeCommandEncoder.set_bytes encoder
