@@ -6,6 +6,12 @@ module Rune_jit_metal = Rune_metal.Jit_backend
 
 let shape_prod = Array.fold_left ( * ) 1
 
+(* Helper to get shape from view *)
+let get_shape view =
+  match Symbolic_shape.eval (Lazy_view.shape view) with
+  | Some arr -> arr
+  | None -> failwith "Cannot evaluate symbolic shape in JIT"
+
 (* ───── Dtype Conversion Helpers ───── *)
 
 let nx_dtype_to_ir_dtype (type a b) (nx_dt : (a, b) Dtype.t) : a Ir.Dtype.t =
@@ -119,7 +125,7 @@ let get_var_and_meta state tensor =
   | _ ->
       let var = Var.fresh () in
       let dt = dtype tensor in
-      let shape = View.shape (view tensor) in
+      let shape = get_shape (view tensor) in
       add_node state
         (Ir.Any_Node
            (Ir.Placeholder
@@ -744,7 +750,7 @@ let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
           (module B : Rune_jit.Backend_intf.S
             with type callable_kernel_native = _)
         in
-        let input_shape = View.shape (view input) in
+        let input_shape = get_shape (view input) in
         match Hashtbl.find_opt metal_cache input_shape with
         | Some state -> execute_compiled_fn ~backend state input
         | None -> (
@@ -764,7 +770,7 @@ let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
                   executable;
                   input_vars = graph.input_vars;
                   output_vars = graph.output_vars;
-                  output_shape = View.shape (view symbolic_result);
+                  output_shape = get_shape (view symbolic_result);
                   output_dtype =
                     nx_dtype_to_ir_any_dtype (dtype symbolic_result);
                 }

@@ -76,28 +76,113 @@ module Make (B : Backend_intf.S) = struct
   (* ───── Basic Tensor Properties ───── *)
 
   let unsafe_data x = B.data x
-  let shape x = View.shape (B.view x)
+
+  let shape x =
+    let view = B.view x in
+    match Symbolic_shape.eval (Lazy_view.shape view) with
+    | Some arr -> arr
+    | None ->
+        Error.failed ~op:"shape"
+          ~what:"cannot get shape with unbound symbolic dimensions" ()
+
   let dtype x = B.dtype x
+  let itemsize x = Dtype.itemsize (B.dtype x)
 
   let strides x =
-    let elem_strides = View.strides (B.view x) in
-    let itemsize = Dtype.itemsize (B.dtype x) in
-    Array.map (fun s -> s * itemsize) elem_strides
+    let view = B.view x in
+    let itemsize = itemsize x in
+
+    (* Use high-level API instead of accessing internals *)
+    match Lazy_view.strides view with
+    | None ->
+        let reason =
+          if not (Lazy_view.is_materializable view) then
+            "view has non-materializable layout"
+          else if not (Symbolic_shape.is_static (Lazy_view.shape view)) then
+            "view has symbolic shape"
+          else "view has complex striding pattern"
+        in
+        Error.failed ~op:"strides" ~what:reason
+          ~hint:"call contiguous() to get a standard layout" ()
+    | Some elem_strides -> Array.map (fun s -> s * itemsize) elem_strides
 
   let stride i x =
-    let elem_stride = View.stride i (B.view x) in
-    let itemsize = Dtype.itemsize (B.dtype x) in
-    elem_stride * itemsize
+    let view = B.view x in
+    let itemsize = itemsize x in
 
-  let dims x = View.shape (B.view x)
-  let dim i x = View.dim i (B.view x)
-  let ndim x = View.ndim (B.view x)
-  let itemsize x = Dtype.itemsize (B.dtype x)
-  let size x = View.numel (B.view x)
+    (* Get strides if available *)
+    match Lazy_view.strides view with
+    | None ->
+        Error.failed ~op:"stride"
+          ~what:(Printf.sprintf "stride for dimension %d" i)
+          ~reason:"tensor does not have defined strides"
+          ~hint:"call contiguous() first or check has_strides()" ()
+    | Some elem_strides ->
+        let ndim = Lazy_view.ndim view in
+        let i = if i < 0 then i + ndim else i in
+        if i < 0 || i >= ndim then
+          Error.axis_out_of_bounds ~op:"stride" ~axis:i ~ndim ()
+        else elem_strides.(i) * itemsize
+
+  let dims x =
+    let view = B.view x in
+    let sym_shape = Lazy_view.shape view in
+    match Symbolic_shape.eval sym_shape with
+    | Some arr -> arr
+    | None ->
+        Error.failed ~op:"dims"
+          ~what:"cannot get dimensions with unbound symbolic values" ()
+
+  let dim i x =
+    let view = B.view x in
+    let shape = Lazy_view.shape view in
+    let ndim = Symbolic_shape.rank shape in
+    let i = if i < 0 then i + ndim else i in
+    if i < 0 || i >= ndim then
+      Error.axis_out_of_bounds ~op:"dim" ~axis:i ~ndim ()
+    else
+      match shape.(i) with
+      | Symbolic_shape.Static n -> n
+      | Symbolic_shape.Dynamic _ ->
+          Error.failed ~op:"dim"
+            ~what:"cannot get dimension with unbound symbolic value" ()
+
+  let ndim x =
+    let view = B.view x in
+    Lazy_view.ndim view
+
+  let size x =
+    let view = B.view x in
+    match Lazy_view.numel view with
+    | Symbolic_shape.Static n -> n
+    | Symbolic_shape.Dynamic _ ->
+        Error.failed ~op:"size"
+          ~what:"cannot get size of tensor with symbolic shape"
+          ~hint:"bind symbolic dimensions first" ()
+
   let numel x = size x
-  let nbytes x = numel x * itemsize x
-  let offset x = View.offset (B.view x)
-  let is_c_contiguous x = View.is_c_contiguous (B.view x)
+
+  let nbytes x =
+    (* This might also need to handle symbolic case *)
+    let itemsize = itemsize x in
+    try numel x * itemsize
+    with _ ->
+      (* If numel fails due to symbolic shape, we might still compute symbolic
+         nbytes *)
+      Error.failed ~op:"nbytes" ~what:"cannot compute bytes for symbolic tensor"
+        ()
+
+  let offset x =
+    let view = B.view x in
+    match Lazy_view.offset view with
+    | Symbolic_shape.Static n -> n
+    | Symbolic_shape.Dynamic _ ->
+        Error.failed ~op:"offset" ~what:"tensor has symbolic offset"
+          ~hint:"bind symbolic variables first" ()
+
+  let is_c_contiguous x =
+    let view = B.view x in
+    Lazy_view.is_contiguous view
 
   (* ───── Internal Utilities ───── *)
 
@@ -164,7 +249,8 @@ module Make (B : Backend_intf.S) = struct
 
   let reshape shape_spec x =
     let new_shape = Shape.resolve_neg_one (shape x) shape_spec in
-    if shape x = new_shape then x else B.op_reshape x new_shape
+    if shape x = new_shape then x
+    else B.op_reshape x (Symbolic_shape.of_ints new_shape)
 
   (* reshape and expand [x] to [new_shape] following numpy-style rules *)
   let broadcast_to new_shape x =
@@ -207,7 +293,7 @@ module Make (B : Backend_intf.S) = struct
           let x_reshaped =
             if padded_shape <> current_shape then reshape padded_shape x else x
           in
-          B.op_expand x_reshaped new_shape
+          B.op_expand x_reshaped (Symbolic_shape.of_ints new_shape)
 
   (* return [x] and [y] broadcasted to a common shape *)
   let broadcasted ?(reverse = false) x y =
@@ -282,7 +368,7 @@ module Make (B : Backend_intf.S) = struct
     (* Create flat tensor and reshape if needed *)
     let tensor_1d = B.op_const_array ctx bigarray in
     if Array.length shape = 1 && shape.(0) = n then tensor_1d
-    else B.op_reshape tensor_1d shape
+    else B.op_reshape tensor_1d (Symbolic_shape.of_ints shape)
 
   let init ctx dtype shape f =
     let size = Array.fold_left ( * ) 1 shape in
@@ -309,35 +395,40 @@ module Make (B : Backend_intf.S) = struct
     create ctx dtype shape arr
 
   let scalar ctx dt value = B.op_const_scalar ctx value dt
+  let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
+
+  let fill value x =
+    let value_tensor = scalar_like x value in
+    let value_broadcasted = broadcast_to (shape x) value_tensor in
+    B.op_assign x value_broadcasted;
+    x
 
   let empty ctx dtype shape_arr =
     let numel = array_prod shape_arr in
     let buf = B.op_buffer ctx dtype numel in
     reshape shape_arr buf
 
-  let full ctx dt target_shape fill_value =
-    let scalar_tensor = B.op_const_scalar ctx fill_value dt in
-    if Array.length target_shape = 0 then scalar_tensor
-    else if array_prod target_shape = 0 then empty ctx dt target_shape
-    else
-      let rank = Array.length target_shape in
-      let intermediate_shape = Array.make rank 1 in
-      let reshaped_scalar = reshape intermediate_shape scalar_tensor in
-      expand target_shape reshaped_scalar
-
   let zeros ctx dtype shape_arr =
-    let zero_val = Dtype.zero dtype in
-    let result = full ctx dtype shape_arr zero_val in
-    (* Ensure the result is contiguous for write operations *)
-    contiguous result
+    (* Don't use broadcast views - create actual zeros *)
+    let numel = array_prod shape_arr in
+    let buf = B.op_buffer ctx dtype numel in
+    let t = reshape shape_arr buf in
+    (* Buffer is already initialized to zeros by op_buffer *)
+    t
 
   let ones ctx dtype shape_arr =
-    let one_val = Dtype.one dtype in
-    let result = full ctx dtype shape_arr one_val in
-    (* Ensure the result is contiguous for write operations *)
-    contiguous result
+    (* Create actual ones, not broadcast *)
+    let numel = array_prod shape_arr in
+    let buf = B.op_buffer ctx dtype numel in
+    let t = reshape shape_arr buf in
+    fill (Dtype.one dtype) t
 
-  let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
+  let full ctx dt target_shape fill_value =
+    (* Create actual filled tensor, not broadcast *)
+    let numel = array_prod target_shape in
+    let buf = B.op_buffer ctx dt numel in
+    let t = reshape target_shape buf in
+    fill fill_value t
 
   (* Generic _like helper *)
   let create_like x_ref fill_fn =
@@ -352,12 +443,6 @@ module Make (B : Backend_intf.S) = struct
 
   let zeros_like x = full_like x (Dtype.zero (B.dtype x))
   let ones_like x = full_like x (Dtype.one (B.dtype x))
-
-  let fill value x =
-    let value_tensor = scalar_like x value in
-    let value_broadcasted = broadcast_to (shape x) value_tensor in
-    B.op_assign x value_broadcasted;
-    x
 
   (* ───── Tensor Conversion ───── *)
 
@@ -1489,7 +1574,8 @@ module Make (B : Backend_intf.S) = struct
             (fun ax_val -> if ax_val < 0 then ax_val + r else ax_val)
             ax_arr
     in
-    B.op_permute x resolved_axes
+    let result = B.op_permute x resolved_axes in
+    result
 
   let flip ?axes x =
     let r = ndim x in
@@ -1907,32 +1993,18 @@ module Make (B : Backend_intf.S) = struct
     if rows <= 0 || cols <= 0 || k_val >= cols || k_val <= -rows then
       zeros ctx dtype final_shape
     else
-      (* Create row indices: tensor([0, 1, ..., rows-1]) -> [[0], [1], ...,
-         [rows-1]] -> broadcasted *)
-      let r_arange =
-        init ctx Dtype.int32 [| rows |] (fun i -> Int32.of_int i.(0))
-      in
-      let r_indices_col_vec = reshape [| rows; 1 |] r_arange in
-      let r_indices = broadcast_to final_shape r_indices_col_vec in
+      (* Simple implementation: create array and set diagonal elements *)
+      let arr = Array.make (rows * cols) (Dtype.zero dtype) in
 
-      (* Create col indices: tensor([0, 1, ..., cols-1]) -> [[0, 1, ...,
-         cols-1]] -> broadcasted *)
-      let c_arange =
-        init ctx Dtype.int32 [| cols |] (fun i -> Int32.of_int i.(0))
-      in
-      let c_indices_row_vec = reshape [| 1; cols |] c_arange in
-      let c_indices = broadcast_to final_shape c_indices_row_vec in
+      (* Set diagonal elements to one *)
+      let one = Dtype.one dtype in
+      for i = 0 to (if rows < cols then rows else cols) - 1 do
+        let row = i in
+        let col = i + k_val in
+        if col >= 0 && col < cols then arr.((row * cols) + col) <- one
+      done;
 
-      (* Condition: c_indices - r_indices = k_val *)
-      let diff = sub c_indices r_indices in
-      let k_tensor_scalar = scalar ctx Dtype.int32 (Int32.of_int k_val) in
-      (* Create the diagonal mask *)
-      let diag_mask = cmpeq diff k_tensor_scalar in
-
-      let zeros_tensor = zeros ctx dtype final_shape in
-      let one_val = Dtype.one dtype in
-      let ones_fill = full_like zeros_tensor one_val in
-      where diag_mask ones_fill zeros_tensor
+      create ctx dtype final_shape arr
 
   let identity ctx dtype n = eye ctx ~m:n ~k:0 dtype n
 
@@ -2718,14 +2790,32 @@ module Make (B : Backend_intf.S) = struct
     set_slice (List.map (fun i -> I i) indices) x value
 
   let unsafe_get indices x =
+    (* Get the element at the specified indices *)
     let scalar_tensor = get indices x in
+    (* For a scalar tensor, we need to read the single element *)
     let ba = unsafe_data scalar_tensor in
-    (* For a scalar tensor (result of get), the data is already at index 0 *)
-    if List.length indices = 0 && numel scalar_tensor = 1 then
-      Bigarray.Array1.get ba 0
-    else
-      let view_offset = offset scalar_tensor in
-      Bigarray.Array1.get ba view_offset
+
+    (* The scalar tensor should be 0-dimensional or have been squeezed to
+       scalar *)
+    if numel scalar_tensor <> 1 then
+      Error.failed ~op:"unsafe_get" ~what:"expected scalar result"
+        ~reason:(Printf.sprintf "got %d elements" (numel scalar_tensor))
+        ();
+
+    (* For scalar tensors, there are two cases: *)
+    match Lazy_view.strides (B.view scalar_tensor) with
+    | Some _ ->
+        (* Has valid strides - use the offset *)
+        let view_offset = offset scalar_tensor in
+        Bigarray.Array1.get ba view_offset
+    | None ->
+        (* Non-composable views - the scalar should have been materialized by get *)
+        (* If it's truly a scalar with 1 element, it should be at index 0 *)
+        if Bigarray.Array1.dim ba = 1 then Bigarray.Array1.get ba 0
+        else
+          Error.failed ~op:"unsafe_get"
+            ~what:"cannot read from non-composable scalar view"
+            ~hint:"this is likely a bug in get/slice implementation" ()
 
   let unsafe_set indices value x =
     let scalar_tensor = scalar (B.context x) (dtype x) value in
@@ -5307,9 +5397,21 @@ module Make (B : Backend_intf.S) = struct
     let view = B.view x in
     let buffer = B.data x in
     let dtype = dtype x in
-    let shape = View.shape view in
+    let shape =
+      match Symbolic_shape.eval (Lazy_view.shape view) with
+      | Some arr -> arr
+      | None ->
+          Error.failed ~op:"pp_data"
+            ~what:"cannot print tensor with symbolic shape" ()
+    in
     let ndim = Array.length shape in
-    let sz = View.numel view in
+    let sz =
+      match Lazy_view.numel view with
+      | Symbolic_shape.Static n -> n
+      | Symbolic_shape.Dynamic _ ->
+          Error.failed ~op:"pp_data"
+            ~what:"cannot print tensor with symbolic size" ()
+    in
 
     let pp_element fmt (elt : a) =
       match dtype with
@@ -5331,7 +5433,14 @@ module Make (B : Backend_intf.S) = struct
     if sz = 0 && ndim > 0 then fprintf fmt "[]"
     else if ndim = 0 then
       if sz > 0 then
-        let value = Bigarray.Array1.unsafe_get buffer (View.offset view) in
+        let value =
+          Bigarray.Array1.unsafe_get buffer
+            (match Lazy_view.offset view with
+            | Symbolic_shape.Static n -> n
+            | Symbolic_shape.Dynamic _ ->
+                Error.failed ~op:"pp_data"
+                  ~what:"cannot access data with symbolic offset" ())
+        in
         pp_element fmt value
       else fprintf fmt "<empty scalar>"
     else
@@ -5340,7 +5449,21 @@ module Make (B : Backend_intf.S) = struct
         if current_ndim = ndim then
           let md_index = Array.of_list current_indices in
           let linear_offset =
-            Shape.ravel_index md_index (View.strides view) + View.offset view
+            let strides =
+              match Lazy_view.strides view with
+              | Some s -> s
+              | None ->
+                  Error.failed ~op:"pp_data"
+                    ~what:"cannot print non-contiguous symbolic tensor" ()
+            in
+            let offset =
+              match Lazy_view.offset view with
+              | Symbolic_shape.Static n -> n
+              | Symbolic_shape.Dynamic _ ->
+                  Error.failed ~op:"pp_data"
+                    ~what:"cannot print tensor with symbolic offset" ()
+            in
+            Shape.ravel_index md_index strides + offset
           in
           if linear_offset < 0 || linear_offset >= Bigarray.Array1.dim buffer
           then
@@ -5398,13 +5521,24 @@ module Make (B : Backend_intf.S) = struct
 
     fprintf fmt "@[<v 0>";
     fprintf fmt "Nx Info:@,";
-    fprintf fmt "  Shape: %a@," pp_shape (View.shape view);
+    fprintf fmt "  Shape: %s@,"
+      (Symbolic_shape.to_string (Lazy_view.shape view));
     fprintf fmt "  Dtype: %a@," pp_dtype (dtype x);
-    fprintf fmt "  Strides: [%s]@,"
-      (String.concat "; "
-         (Array.to_list (Array.map string_of_int (View.strides view))));
-    fprintf fmt "  Offset: %d@," (View.offset view);
-    fprintf fmt "  Size: %d@," (View.numel view);
+    fprintf fmt "  Strides: %s@,"
+      (match Lazy_view.strides view with
+      | Some s ->
+          "["
+          ^ String.concat "; " (Array.to_list (Array.map string_of_int s))
+          ^ "]"
+      | None -> "<symbolic>");
+    fprintf fmt "  Offset: %s@,"
+      (match Lazy_view.offset view with
+      | Symbolic_shape.Static n -> string_of_int n
+      | Symbolic_shape.Dynamic _ -> "<symbolic>");
+    fprintf fmt "  Size: %s@,"
+      (match Lazy_view.numel view with
+      | Symbolic_shape.Static n -> string_of_int n
+      | Symbolic_shape.Dynamic _ -> "<symbolic>");
     fprintf fmt "  Data: %a@," pp_data x
 
   let print x = print_with_formatter pp x
