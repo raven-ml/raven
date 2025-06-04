@@ -44,10 +44,15 @@ let make_contiguous ctx t =
       context = ctx;
       Internal.dtype = t.dtype;
       buffer = metal_buffer;
-      view = View.create (Internal.shape t);
+      view = Lazy_view.create (Symbolic_shape.of_ints (Internal.shape t));
     }
   in
-  let out = { out with view = View.create (Internal.shape t) } in
+  let out =
+    {
+      out with
+      view = Lazy_view.create (Symbolic_shape.of_ints (Internal.shape t));
+    }
+  in
 
   let dtype_suffix = Internal.dtype_to_metal_type t.dtype in
   let kernel_name = Printf.sprintf "strided_copy_%s" dtype_suffix in
@@ -65,7 +70,13 @@ let make_contiguous ctx t =
 
       (* Set shape and strides *)
       let shape = Internal.shape t in
-      let strides = View.strides t.view in
+      let strides =
+        match Lazy_view.strides t.view with
+        | Some s -> s
+        | None ->
+            Error.failed ~op:"make_contiguous"
+              ~what:"cannot get strides for non-contiguous view" ()
+      in
       let ndim = Array.length shape in
 
       let shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
@@ -96,7 +107,14 @@ let make_contiguous ctx t =
 
       (* Pass the offset *)
       let offset_val =
-        Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.view)))
+        Ctypes.(
+          allocate uint32_t
+            (Unsigned.UInt32.of_int
+               (match Lazy_view.offset t.view with
+               | Symbolic_shape.Static n -> n
+               | Symbolic_shape.Dynamic _ ->
+                   Error.failed ~op:"make_contiguous"
+                     ~what:"cannot get offset with symbolic value" ())))
       in
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp offset_val)
@@ -244,10 +262,12 @@ let cat ctx tensors axis =
           context = ctx;
           Internal.dtype = first.dtype;
           buffer = metal_buffer;
-          view = View.create shape;
+          view = Lazy_view.create (Symbolic_shape.of_ints shape);
         }
       in
-      let out = { out with view = View.create shape } in
+      let out =
+        { out with view = Lazy_view.create (Symbolic_shape.of_ints shape) }
+      in
 
       (* Use the concat_axis kernel that handles all axes *)
       let dtype_suffix = Internal.dtype_to_metal_type first.dtype in
@@ -289,7 +309,13 @@ let cat ctx tensors axis =
                 ~length:(ndim * 4) ~index:3;
 
               (* Set input strides *)
-              let in_strides = View.strides t.Internal.view in
+              let in_strides =
+                match Lazy_view.strides t.Internal.view with
+                | Some s -> s
+                | None ->
+                    Error.failed ~op:"concat"
+                      ~what:"cannot get strides for non-contiguous view" ()
+              in
               let in_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
               for i = 0 to ndim - 1 do
                 Ctypes.(in_strides_arr +@ i <-@ Int32.of_int in_strides.(i))
@@ -311,7 +337,12 @@ let cat ctx tensors axis =
               let in_offset_val =
                 Ctypes.(
                   allocate uint32_t
-                    (Unsigned.UInt32.of_int (View.offset t.Internal.view)))
+                    (Unsigned.UInt32.of_int
+                       (match Lazy_view.offset t.Internal.view with
+                       | Symbolic_shape.Static n -> n
+                       | Symbolic_shape.Dynamic _ ->
+                           Error.failed ~op:"concat"
+                             ~what:"cannot get offset with symbolic value" ())))
               in
 
               ComputeCommandEncoder.set_bytes encoder

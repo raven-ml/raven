@@ -37,7 +37,7 @@ let dispatch_reduce ctx op_name t ~axes ~keepdims =
     if keepdims then out_shape
     else Array.of_list (List.filter (( <> ) 1) (Array.to_list out_shape))
   in
-  let view = View.create final_shape in
+  let view = Lazy_view.create (Symbolic_shape.of_ints final_shape) in
   let out =
     { context = ctx; Internal.dtype = t.dtype; buffer = metal_buffer; view }
   in

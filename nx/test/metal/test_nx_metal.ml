@@ -3,8 +3,18 @@ open Nx_core
 
 (* Helper to compare tensors *)
 let tensor_equal_float32 ?(eps = 1e-6) msg t1 t2 =
-  let shape1 = Nx_metal.view t1 |> View.shape in
-  let shape2 = Nx_metal.view t2 |> View.shape in
+  let shape1 =
+    Nx_metal.view t1 |> Lazy_view.shape |> fun s ->
+    match Symbolic_shape.eval s with
+    | Some arr -> arr
+    | None -> failwith "symbolic shape"
+  in
+  let shape2 =
+    Nx_metal.view t2 |> Lazy_view.shape |> fun s ->
+    match Symbolic_shape.eval s with
+    | Some arr -> arr
+    | None -> failwith "symbolic shape"
+  in
   check (array int) (msg ^ " shape") shape1 shape2;
 
   let data1 = Nx_metal.data t1 in
@@ -35,7 +45,11 @@ let test_buffer_allocation () =
   List.iter
     (fun size ->
       let t = Nx_metal.op_buffer ctx Dtype.Float32 size in
-      let actual_size = Nx_metal.view t |> View.numel in
+      let actual_size =
+        Nx_metal.view t |> Lazy_view.numel |> function
+        | Symbolic_shape.Static n -> n
+        | Symbolic_shape.Dynamic _ -> failwith "symbolic size"
+      in
       check int (Printf.sprintf "buffer size %d" size) size actual_size)
     sizes
 
@@ -45,7 +59,12 @@ let test_const_scalar () =
 
   (* Float scalar *)
   let t1 = Nx_metal.op_const_scalar ctx 42.0 Dtype.Float32 in
-  let shape1 = Nx_metal.view t1 |> View.shape in
+  let shape1 =
+    Nx_metal.view t1 |> Lazy_view.shape |> fun s ->
+    match Symbolic_shape.eval s with
+    | Some arr -> arr
+    | None -> failwith "symbolic shape"
+  in
   check (array int) "scalar shape" [||] shape1;
   let data1 = Nx_metal.data t1 in
   check (float 0.001) "scalar value" 42.0 (Bigarray.Array1.get data1 0);
@@ -66,7 +85,12 @@ let test_const_array () =
   done;
 
   let t = Nx_metal.op_const_array ctx ba in
-  let shape = Nx_metal.view t |> View.shape in
+  let shape =
+    Nx_metal.view t |> Lazy_view.shape |> fun s ->
+    match Symbolic_shape.eval s with
+    | Some arr -> arr
+    | None -> failwith "symbolic shape"
+  in
   check (array int) "array shape" [| 5 |] shape;
 
   let data = Nx_metal.data t in
@@ -156,12 +180,16 @@ let test_reduce_ops () =
   done;
 
   let t = Nx_metal.op_const_array ctx ba in
-  let t = Nx_metal.op_reshape t [| 2; 3 |] in
+  let t = Nx_metal.op_reshape t (Symbolic_shape.of_ints [| 2; 3 |]) in
 
   (* Test sum along axis 0 *)
   let sum0 = Nx_metal.op_reduce_sum ~axes:[| 0 |] ~keepdims:false t in
   let sum0_data = Nx_metal.data sum0 in
-  check (array int) "sum axis 0 shape" [| 3 |] (Nx_metal.view sum0 |> View.shape);
+  check (array int) "sum axis 0 shape" [| 3 |]
+    ( Nx_metal.view sum0 |> Lazy_view.shape |> fun s ->
+      match Symbolic_shape.eval s with
+      | Some arr -> arr
+      | None -> failwith "symbolic shape" );
   check (float 0.001) "sum0[0]" 5.0 (Bigarray.Array1.get sum0_data 0);
   check (float 0.001) "sum0[1]" 7.0 (Bigarray.Array1.get sum0_data 1);
   check (float 0.001) "sum0[2]" 9.0 (Bigarray.Array1.get sum0_data 2);
@@ -169,7 +197,11 @@ let test_reduce_ops () =
   (* Test sum along axis 1 *)
   let sum1 = Nx_metal.op_reduce_sum ~axes:[| 1 |] ~keepdims:false t in
   let sum1_data = Nx_metal.data sum1 in
-  check (array int) "sum axis 1 shape" [| 2 |] (Nx_metal.view sum1 |> View.shape);
+  check (array int) "sum axis 1 shape" [| 2 |]
+    ( Nx_metal.view sum1 |> Lazy_view.shape |> fun s ->
+      match Symbolic_shape.eval s with
+      | Some arr -> arr
+      | None -> failwith "symbolic shape" );
   check (float 0.001) "sum1[0]" 6.0 (Bigarray.Array1.get sum1_data 0);
   check (float 0.001) "sum1[1]" 15.0 (Bigarray.Array1.get sum1_data 1)
 
@@ -185,16 +217,28 @@ let test_view_ops () =
   let t = Nx_metal.op_const_array ctx ba in
 
   (* Test reshape *)
-  let t2x6 = Nx_metal.op_reshape t [| 2; 6 |] in
-  check (array int) "reshape 2x6" [| 2; 6 |] (Nx_metal.view t2x6 |> View.shape);
+  let t2x6 = Nx_metal.op_reshape t (Symbolic_shape.of_ints [| 2; 6 |]) in
+  check (array int) "reshape 2x6" [| 2; 6 |]
+    ( Nx_metal.view t2x6 |> Lazy_view.shape |> fun s ->
+      match Symbolic_shape.eval s with
+      | Some arr -> arr
+      | None -> failwith "symbolic shape" );
 
-  let t3x4 = Nx_metal.op_reshape t [| 3; 4 |] in
-  check (array int) "reshape 3x4" [| 3; 4 |] (Nx_metal.view t3x4 |> View.shape);
+  let t3x4 = Nx_metal.op_reshape t (Symbolic_shape.of_ints [| 3; 4 |]) in
+  check (array int) "reshape 3x4" [| 3; 4 |]
+    ( Nx_metal.view t3x4 |> Lazy_view.shape |> fun s ->
+      match Symbolic_shape.eval s with
+      | Some arr -> arr
+      | None -> failwith "symbolic shape" );
 
   (* Test permute *)
-  let t4x3 = Nx_metal.op_reshape t [| 4; 3 |] in
+  let t4x3 = Nx_metal.op_reshape t (Symbolic_shape.of_ints [| 4; 3 |]) in
   let tp = Nx_metal.op_permute t4x3 [| 1; 0 |] in
-  check (array int) "permute shape" [| 3; 4 |] (Nx_metal.view tp |> View.shape)
+  check (array int) "permute shape" [| 3; 4 |]
+    ( Nx_metal.view tp |> Lazy_view.shape |> fun s ->
+      match Symbolic_shape.eval s with
+      | Some arr -> arr
+      | None -> failwith "symbolic shape" )
 
 (* Test copy and contiguous *)
 let test_copy_contiguous () =

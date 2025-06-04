@@ -14,7 +14,7 @@ let where ctx cond if_true if_false =
       context = ctx;
       Internal.dtype = if_true.dtype;
       buffer = metal_buffer;
-      view = View.create shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints shape);
     }
   in
 
@@ -47,7 +47,13 @@ let where ctx cond if_true if_false =
 
       (* Set strides for each input *)
       let set_strides view index =
-        let strides = View.strides view in
+        let strides =
+          match Lazy_view.strides view with
+          | Some s -> s
+          | None ->
+              Error.failed ~op:"where"
+                ~what:"cannot get strides for non-contiguous view" ()
+        in
         let strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
         for i = 0 to ndim - 1 do
           Ctypes.(strides_arr +@ i <-@ Int32.of_int strides.(i))
@@ -70,17 +76,32 @@ let where ctx cond if_true if_false =
       let cond_offset =
         Ctypes.(
           allocate uint32_t
-            (Unsigned.UInt32.of_int (View.offset cond.Internal.view)))
+            (Unsigned.UInt32.of_int
+               (match Lazy_view.offset cond.Internal.view with
+               | Symbolic_shape.Static n -> n
+               | Symbolic_shape.Dynamic _ ->
+                   Error.failed ~op:"where"
+                     ~what:"cannot get offset with symbolic value" ())))
       in
       let true_offset =
         Ctypes.(
           allocate uint32_t
-            (Unsigned.UInt32.of_int (View.offset if_true.Internal.view)))
+            (Unsigned.UInt32.of_int
+               (match Lazy_view.offset if_true.Internal.view with
+               | Symbolic_shape.Static n -> n
+               | Symbolic_shape.Dynamic _ ->
+                   Error.failed ~op:"where"
+                     ~what:"cannot get offset with symbolic value" ())))
       in
       let false_offset =
         Ctypes.(
           allocate uint32_t
-            (Unsigned.UInt32.of_int (View.offset if_false.Internal.view)))
+            (Unsigned.UInt32.of_int
+               (match Lazy_view.offset if_false.Internal.view with
+               | Symbolic_shape.Static n -> n
+               | Symbolic_shape.Dynamic _ ->
+                   Error.failed ~op:"where"
+                     ~what:"cannot get offset with symbolic value" ())))
       in
 
       ComputeCommandEncoder.set_bytes encoder
@@ -205,10 +226,12 @@ let gather ctx data indices axis =
       context = ctx;
       Internal.dtype = data.dtype;
       buffer = metal_buffer;
-      view = View.create out_shape;
+      view = Lazy_view.create (Symbolic_shape.of_ints out_shape);
     }
   in
-  let out = { out with view = View.create out_shape } in
+  let out =
+    { out with view = Lazy_view.create (Symbolic_shape.of_ints out_shape) }
+  in
 
   (* Compute dimensions for gather *)
   let axis_size = data_shape.(axis) in

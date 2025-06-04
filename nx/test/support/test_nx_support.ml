@@ -7,28 +7,28 @@ let check_invalid_arg msg pattern f =
 
 let check_failure msg pattern f = check_raises msg (Failure pattern) f
 
-let testable_of_dtype (type a b) ?(eps = 1e-10) (dtype : (a, b) Nx_core.Dtype.t)
-    : a testable =
+let testable_of_dtype (type a b) ?(eps = 1e-10) (dtype : (a, b) Nx.dtype) :
+    a testable =
   match dtype with
-  | Nx_core.Dtype.Float16 -> Alcotest.float eps
-  | Nx_core.Dtype.Float32 -> Alcotest.float eps
-  | Nx_core.Dtype.Float64 -> Alcotest.float eps
-  | Nx_core.Dtype.Int8 -> Alcotest.int
-  | Nx_core.Dtype.Int16 -> Alcotest.int
-  | Nx_core.Dtype.Int32 -> Alcotest.int32
-  | Nx_core.Dtype.Int64 -> Alcotest.int64
-  | Nx_core.Dtype.UInt8 -> Alcotest.int
-  | Nx_core.Dtype.UInt16 -> Alcotest.int
-  | Nx_core.Dtype.Int -> Alcotest.int
-  | Nx_core.Dtype.NativeInt ->
+  | Nx.Float16 -> Alcotest.float eps
+  | Nx.Float32 -> Alcotest.float eps
+  | Nx.Float64 -> Alcotest.float eps
+  | Nx.Int8 -> Alcotest.int
+  | Nx.Int16 -> Alcotest.int
+  | Nx.Int32 -> Alcotest.int32
+  | Nx.Int64 -> Alcotest.int64
+  | Nx.UInt8 -> Alcotest.int
+  | Nx.UInt16 -> Alcotest.int
+  | Nx.Int -> Alcotest.int
+  | Nx.NativeInt ->
       Alcotest.testable
         (fun ppf v -> Format.fprintf ppf "%nd" v)
         Nativeint.equal
-  | Nx_core.Dtype.Complex32 ->
+  | Nx.Complex32 ->
       Alcotest.testable
         (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
         (fun a b -> a.re = b.re && a.im = b.im)
-  | Nx_core.Dtype.Complex64 ->
+  | Nx.Complex64 ->
       Alcotest.testable
         (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
         (fun a b -> a.re = b.re && a.im = b.im)

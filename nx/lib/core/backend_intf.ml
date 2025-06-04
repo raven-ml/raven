@@ -19,8 +19,8 @@ module type S = sig
 
   (* lenses *)
 
-  val view : ('a, 'b) t -> View.t
-  (** Return the logical view metadata of [t]. *)
+  val view : ('a, 'b) t -> Lazy_view.t
+  (** Return the view tracker for [t]. *)
 
   val dtype : ('a, 'b) t -> ('a, 'b) Dtype.t
   (** Element type of [t]. *)
@@ -129,10 +129,10 @@ module type S = sig
 
   (* Movement Ops - manipulate view metadata *)
 
-  val op_expand : ('a, 'b) t -> int array -> ('a, 'b) t
+  val op_expand : ('a, 'b) t -> Symbolic_shape.t -> ('a, 'b) t
   (** Broadcast dimensions of size 1 to a new shape. *)
 
-  val op_reshape : ('a, 'b) t -> int array -> ('a, 'b) t
+  val op_reshape : ('a, 'b) t -> Symbolic_shape.t -> ('a, 'b) t
   (** Change the logical shape without moving data. *)
 
   val op_permute : ('a, 'b) t -> int array -> ('a, 'b) t

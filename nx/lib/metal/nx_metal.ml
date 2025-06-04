@@ -7,7 +7,7 @@ type ('a, 'b) t = ('a, 'b) Internal.t = {
   context : context;
   dtype : ('a, 'b) Dtype.t;
   buffer : buffer;
-  view : View.t;
+  view : Lazy_view.t;
 }
 
 let view t = t.view
@@ -34,11 +34,11 @@ let data : type a b. (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t =
 
 let op_contiguous t =
   (* Check if view is contiguous AND buffer has the expected size *)
-  let view_size = View.numel t.view in
+  let view_size = Internal.numel t in
   let expected_bytes = view_size * Internal.sizeof_dtype t.dtype in
   let actual_bytes = t.buffer.size_bytes in
 
-  if View.is_c_contiguous t.view && actual_bytes >= expected_bytes then t
+  if Lazy_view.is_contiguous t.view && actual_bytes >= expected_bytes then t
   else Ops_movement.make_contiguous t.context t
 
 (* Buffer operations *)
@@ -47,8 +47,9 @@ let op_buffer ctx dtype size_in_elements =
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
   let metal_buffer = { Internal.buffer; size_bytes } in
   let view =
-    if size_in_elements = 0 then View.create [| 0 |]
-    else View.create [| size_in_elements |]
+    if size_in_elements = 0 then
+      Lazy_view.create (Symbolic_shape.of_ints [| 0 |])
+    else Lazy_view.create (Symbolic_shape.of_ints [| size_in_elements |])
   in
   { context = ctx; dtype; buffer = metal_buffer; view }
 
@@ -65,7 +66,12 @@ let op_const_scalar : type a b. context -> a -> (a, b) Dtype.t -> (a, b) t =
   (* Copy to Metal buffer *)
   let metal_buffer = { Internal.buffer; size_bytes } in
   let t =
-    { context = ctx; dtype; buffer = metal_buffer; view = View.create [||] }
+    {
+      context = ctx;
+      dtype;
+      buffer = metal_buffer;
+      view = Lazy_view.create (Symbolic_shape.of_ints [||]);
+    }
   in
   Internal.copy_from_bigarray ctx metal_buffer ba;
   t
@@ -78,7 +84,7 @@ let op_const_array : type a b.
   let size_bytes = size * Internal.sizeof_dtype dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
   let metal_buffer = { Internal.buffer; size_bytes } in
-  let view = View.create [| size |] in
+  let view = Lazy_view.create (Symbolic_shape.of_ints [| size |]) in
   let t = { context = ctx; dtype; buffer = metal_buffer; view } in
   Internal.copy_from_bigarray ctx metal_buffer bigarray;
   t
@@ -87,28 +93,28 @@ let op_const_array : type a b.
 let op_expand t new_shape =
   (* Expand changes the view metadata, setting strides to 0 for broadcast
      dimensions *)
-  { t with view = View.expand t.view new_shape }
+  { t with view = Lazy_view.expand new_shape t.view }
 
 let op_reshape t new_shape =
   (* Reshape changes the view metadata *)
-  { t with view = View.reshape t.view new_shape }
+  { t with view = Lazy_view.reshape new_shape t.view }
 
 let op_permute t axes =
   (* Permute changes the view metadata *)
-  { t with view = View.permute t.view axes }
+  { t with view = Lazy_view.permute axes t.view }
 
 let op_shrink t bounds =
   (* Shrink changes the view metadata *)
-  { t with view = View.shrink t.view bounds }
+  { t with view = Lazy_view.shrink bounds t.view }
 
 let op_flip t axes_to_flip =
   (* Flip changes the view metadata *)
-  { t with view = View.flip t.view axes_to_flip }
+  { t with view = Lazy_view.flip axes_to_flip t.view }
 
 let op_pad t padding fill_value =
   (* Padding requires actual computation *)
   let ctx = t.context in
-  let old_shape = View.shape t.view in
+  let old_shape = Internal.shape t in
   let new_shape =
     Array.mapi
       (fun i dim ->
@@ -119,7 +125,9 @@ let op_pad t padding fill_value =
       old_shape
   in
   let out = op_buffer ctx t.dtype (Array.fold_left ( * ) 1 new_shape) in
-  let out = { out with view = View.create new_shape } in
+  let out =
+    { out with view = Lazy_view.create (Symbolic_shape.of_ints new_shape) }
+  in
 
   (* Convert fill_value to float for the kernel - handle by checking dtype
      size *)
@@ -155,7 +163,7 @@ let rec op_cat tensors axis =
 and op_copy t =
   let ctx = t.context in
   let out = op_buffer ctx t.dtype (Internal.numel t) in
-  let out = { out with view = View.create (View.shape t.view) } in
+  let out = { out with view = Lazy_view.create (Lazy_view.shape t.view) } in
   Ops_movement.copy ctx t out;
   out
 

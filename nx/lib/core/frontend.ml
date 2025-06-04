@@ -76,28 +76,113 @@ module Make (B : Backend_intf.S) = struct
   (* ───── Basic Tensor Properties ───── *)
 
   let unsafe_data x = B.data x
-  let shape x = View.shape (B.view x)
+
+  let shape x =
+    let view = B.view x in
+    match Symbolic_shape.eval (Lazy_view.shape view) with
+    | Some arr -> arr
+    | None ->
+        Error.failed ~op:"shape"
+          ~what:"cannot get shape with unbound symbolic dimensions" ()
+
   let dtype x = B.dtype x
+  let itemsize x = Dtype.itemsize (B.dtype x)
 
   let strides x =
-    let elem_strides = View.strides (B.view x) in
-    let itemsize = Dtype.itemsize (B.dtype x) in
-    Array.map (fun s -> s * itemsize) elem_strides
+    let view = B.view x in
+    let itemsize = itemsize x in
+
+    (* Use high-level API instead of accessing internals *)
+    match Lazy_view.strides view with
+    | None ->
+        let reason =
+          if not (Lazy_view.is_materializable view) then
+            "view has non-materializable layout"
+          else if not (Symbolic_shape.is_static (Lazy_view.shape view)) then
+            "view has symbolic shape"
+          else "view has complex striding pattern"
+        in
+        Error.failed ~op:"strides" ~what:reason
+          ~hint:"call contiguous() to get a standard layout" ()
+    | Some elem_strides -> Array.map (fun s -> s * itemsize) elem_strides
 
   let stride i x =
-    let elem_stride = View.stride i (B.view x) in
-    let itemsize = Dtype.itemsize (B.dtype x) in
-    elem_stride * itemsize
+    let view = B.view x in
+    let itemsize = itemsize x in
 
-  let dims x = View.shape (B.view x)
-  let dim i x = View.dim i (B.view x)
-  let ndim x = View.ndim (B.view x)
-  let itemsize x = Dtype.itemsize (B.dtype x)
-  let size x = View.numel (B.view x)
+    (* Get strides if available *)
+    match Lazy_view.strides view with
+    | None ->
+        Error.failed ~op:"stride"
+          ~what:(Printf.sprintf "stride for dimension %d" i)
+          ~reason:"tensor does not have defined strides"
+          ~hint:"call contiguous() first or check has_strides()" ()
+    | Some elem_strides ->
+        let ndim = Lazy_view.ndim view in
+        let i = if i < 0 then i + ndim else i in
+        if i < 0 || i >= ndim then
+          Error.axis_out_of_bounds ~op:"stride" ~axis:i ~ndim ()
+        else elem_strides.(i) * itemsize
+
+  let dims x =
+    let view = B.view x in
+    let sym_shape = Lazy_view.shape view in
+    match Symbolic_shape.eval sym_shape with
+    | Some arr -> arr
+    | None ->
+        Error.failed ~op:"dims"
+          ~what:"cannot get dimensions with unbound symbolic values" ()
+
+  let dim i x =
+    let view = B.view x in
+    let shape = Lazy_view.shape view in
+    let ndim = Symbolic_shape.rank shape in
+    let i = if i < 0 then i + ndim else i in
+    if i < 0 || i >= ndim then
+      Error.axis_out_of_bounds ~op:"dim" ~axis:i ~ndim ()
+    else
+      match shape.(i) with
+      | Symbolic_shape.Static n -> n
+      | Symbolic_shape.Dynamic _ ->
+          Error.failed ~op:"dim"
+            ~what:"cannot get dimension with unbound symbolic value" ()
+
+  let ndim x =
+    let view = B.view x in
+    Lazy_view.ndim view
+
+  let size x =
+    let view = B.view x in
+    match Lazy_view.numel view with
+    | Symbolic_shape.Static n -> n
+    | Symbolic_shape.Dynamic _ ->
+        Error.failed ~op:"size"
+          ~what:"cannot get size of tensor with symbolic shape"
+          ~hint:"bind symbolic dimensions first" ()
+
   let numel x = size x
-  let nbytes x = numel x * itemsize x
-  let offset x = View.offset (B.view x)
-  let is_c_contiguous x = View.is_c_contiguous (B.view x)
+
+  let nbytes x =
+    (* This might also need to handle symbolic case *)
+    let itemsize = itemsize x in
+    try numel x * itemsize
+    with _ ->
+      (* If numel fails due to symbolic shape, we might still compute symbolic
+         nbytes *)
+      Error.failed ~op:"nbytes" ~what:"cannot compute bytes for symbolic tensor"
+        ()
+
+  let offset x =
+    let view = B.view x in
+    match Lazy_view.offset view with
+    | Symbolic_shape.Static n -> n
+    | Symbolic_shape.Dynamic _ ->
+        Error.failed ~op:"offset" ~what:"tensor has symbolic offset"
+          ~hint:"bind symbolic variables first" ()
+
+  let is_c_contiguous x =
+    let view = B.view x in
+    Lazy_view.is_contiguous view
 
   (* ───── Internal Utilities ───── *)
 
@@ -164,7 +249,8 @@ module Make (B : Backend_intf.S) = struct
 
   let reshape shape_spec x =
     let new_shape = Shape.resolve_neg_one (shape x) shape_spec in
-    if shape x = new_shape then x else B.op_reshape x new_shape
+    if shape x = new_shape then x
+    else B.op_reshape x (Symbolic_shape.of_ints new_shape)
 
   (* reshape and expand [x] to [new_shape] following numpy-style rules *)
   let broadcast_to new_shape x =
@@ -207,7 +293,7 @@ module Make (B : Backend_intf.S) = struct
           let x_reshaped =
             if padded_shape <> current_shape then reshape padded_shape x else x
           in
-          B.op_expand x_reshaped new_shape
+          B.op_expand x_reshaped (Symbolic_shape.of_ints new_shape)
 
   (* return [x] and [y] broadcasted to a common shape *)
   let broadcasted ?(reverse = false) x y =
@@ -282,7 +368,7 @@ module Make (B : Backend_intf.S) = struct
     (* Create flat tensor and reshape if needed *)
     let tensor_1d = B.op_const_array ctx bigarray in
     if Array.length shape = 1 && shape.(0) = n then tensor_1d
-    else B.op_reshape tensor_1d shape
+    else B.op_reshape tensor_1d (Symbolic_shape.of_ints shape)
 
   let init ctx dtype shape f =
     let size = Array.fold_left ( * ) 1 shape in
@@ -309,35 +395,40 @@ module Make (B : Backend_intf.S) = struct
     create ctx dtype shape arr
 
   let scalar ctx dt value = B.op_const_scalar ctx value dt
+  let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
+
+  let fill value x =
+    let value_tensor = scalar_like x value in
+    let value_broadcasted = broadcast_to (shape x) value_tensor in
+    B.op_assign x value_broadcasted;
+    x
 
   let empty ctx dtype shape_arr =
     let numel = array_prod shape_arr in
     let buf = B.op_buffer ctx dtype numel in
     reshape shape_arr buf
 
-  let full ctx dt target_shape fill_value =
-    let scalar_tensor = B.op_const_scalar ctx fill_value dt in
-    if Array.length target_shape = 0 then scalar_tensor
-    else if array_prod target_shape = 0 then empty ctx dt target_shape
-    else
-      let rank = Array.length target_shape in
-      let intermediate_shape = Array.make rank 1 in
-      let reshaped_scalar = reshape intermediate_shape scalar_tensor in
-      expand target_shape reshaped_scalar
-
   let zeros ctx dtype shape_arr =
-    let zero_val = Dtype.zero dtype in
-    let result = full ctx dtype shape_arr zero_val in
-    (* Ensure the result is contiguous for write operations *)
-    contiguous result
+    (* Don't use broadcast views - create actual zeros *)
+    let numel = array_prod shape_arr in
+    let buf = B.op_buffer ctx dtype numel in
+    let t = reshape shape_arr buf in
+    (* Buffer is already initialized to zeros by op_buffer *)
+    t
 
   let ones ctx dtype shape_arr =
-    let one_val = Dtype.one dtype in
-    let result = full ctx dtype shape_arr one_val in
-    (* Ensure the result is contiguous for write operations *)
-    contiguous result
+    (* Create actual ones, not broadcast *)
+    let numel = array_prod shape_arr in
+    let buf = B.op_buffer ctx dtype numel in
+    let t = reshape shape_arr buf in
+    fill (Dtype.one dtype) t
 
-  let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
+  let full ctx dt target_shape fill_value =
+    (* Create actual filled tensor, not broadcast *)
+    let numel = array_prod target_shape in
+    let buf = B.op_buffer ctx dt numel in
+    let t = reshape target_shape buf in
+    fill fill_value t
 
   (* Generic _like helper *)
   let create_like x_ref fill_fn =
@@ -352,12 +443,6 @@ module Make (B : Backend_intf.S) = struct
 
   let zeros_like x = full_like x (Dtype.zero (B.dtype x))
   let ones_like x = full_like x (Dtype.one (B.dtype x))
-
-  let fill value x =
-    let value_tensor = scalar_like x value in
-    let value_broadcasted = broadcast_to (shape x) value_tensor in
-    B.op_assign x value_broadcasted;
-    x
 
   (* ───── Tensor Conversion ───── *)
 
@@ -1483,7 +1568,8 @@ module Make (B : Backend_intf.S) = struct
             (fun ax_val -> if ax_val < 0 then ax_val + r else ax_val)
             ax_arr
     in
-    B.op_permute x resolved_axes
+    let result = B.op_permute x resolved_axes in
+    result
 
   let flip ?axes x =
     let r = ndim x in
@@ -1901,32 +1987,18 @@ module Make (B : Backend_intf.S) = struct
     if rows <= 0 || cols <= 0 || k_val >= cols || k_val <= -rows then
       zeros ctx dtype final_shape
     else
-      (* Create row indices: tensor([0, 1, ..., rows-1]) -> [[0], [1], ...,
-         [rows-1]] -> broadcasted *)
-      let r_arange =
-        init ctx Dtype.int32 [| rows |] (fun i -> Int32.of_int i.(0))
-      in
-      let r_indices_col_vec = reshape [| rows; 1 |] r_arange in
-      let r_indices = broadcast_to final_shape r_indices_col_vec in
+      (* Simple implementation: create array and set diagonal elements *)
+      let arr = Array.make (rows * cols) (Dtype.zero dtype) in
 
-      (* Create col indices: tensor([0, 1, ..., cols-1]) -> [[0, 1, ...,
-         cols-1]] -> broadcasted *)
-      let c_arange =
-        init ctx Dtype.int32 [| cols |] (fun i -> Int32.of_int i.(0))
-      in
-      let c_indices_row_vec = reshape [| 1; cols |] c_arange in
-      let c_indices = broadcast_to final_shape c_indices_row_vec in
+      (* Set diagonal elements to one *)
+      let one = Dtype.one dtype in
+      for i = 0 to (if rows < cols then rows else cols) - 1 do
+        let row = i in
+        let col = i + k_val in
+        if col >= 0 && col < cols then arr.((row * cols) + col) <- one
+      done;
 
-      (* Condition: c_indices - r_indices = k_val *)
-      let diff = sub c_indices r_indices in
-      let k_tensor_scalar = scalar ctx Dtype.int32 (Int32.of_int k_val) in
-      (* Create the diagonal mask *)
-      let diag_mask = cmpeq diff k_tensor_scalar in
-
-      let zeros_tensor = zeros ctx dtype final_shape in
-      let one_val = Dtype.one dtype in
-      let ones_fill = full_like zeros_tensor one_val in
-      where diag_mask ones_fill zeros_tensor
+      create ctx dtype final_shape arr
 
   let identity ctx dtype n = eye ctx ~m:n ~k:0 dtype n
 
@@ -2678,14 +2750,32 @@ module Make (B : Backend_intf.S) = struct
     set_slice (List.map (fun i -> I i) indices) x value
 
   let unsafe_get indices x =
+    (* Get the element at the specified indices *)
     let scalar_tensor = get indices x in
+    (* For a scalar tensor, we need to read the single element *)
     let ba = unsafe_data scalar_tensor in
-    (* For a scalar tensor (result of get), the data is already at index 0 *)
-    if List.length indices = 0 && numel scalar_tensor = 1 then
-      Bigarray.Array1.get ba 0
-    else
-      let view_offset = offset scalar_tensor in
-      Bigarray.Array1.get ba view_offset
+
+    (* The scalar tensor should be 0-dimensional or have been squeezed to
+       scalar *)
+    if numel scalar_tensor <> 1 then
+      Error.failed ~op:"unsafe_get" ~what:"expected scalar result"
+        ~reason:(Printf.sprintf "got %d elements" (numel scalar_tensor))
+        ();
+
+    (* For scalar tensors, there are two cases: *)
+    match Lazy_view.strides (B.view scalar_tensor) with
+    | Some _ ->
+        (* Has valid strides - use the offset *)
+        let view_offset = offset scalar_tensor in
+        Bigarray.Array1.get ba view_offset
+    | None ->
+        (* Non-composable views - the scalar should have been materialized by get *)
+        (* If it's truly a scalar with 1 element, it should be at index 0 *)
+        if Bigarray.Array1.dim ba = 1 then Bigarray.Array1.get ba 0
+        else
+          Error.failed ~op:"unsafe_get"
+            ~what:"cannot read from non-composable scalar view"
+            ~hint:"this is likely a bug in get/slice implementation" ()
 
   let unsafe_set indices value x =
     let scalar_tensor = scalar (B.context x) (dtype x) value in
@@ -3476,11 +3566,11 @@ module Make (B : Backend_intf.S) = struct
   (* Winograd F(4x4, 3x3) transformation matrices *)
   let winograd_f4x4_3x3_g =
     [|
-      [| 1.0; 0.0; 0.0 |];
-      [| -2.0 /. 3.0; -1.0 /. 3.0; -1.0 /. 3.0 |];
-      [| -2.0 /. 3.0; 1.0 /. 3.0; -1.0 /. 3.0 |];
-      [| 1.0 /. 6.0; 1.0 /. 3.0; 2.0 /. 3.0 |];
-      [| 1.0 /. 6.0; -1.0 /. 3.0; 2.0 /. 3.0 |];
+      [| 1.0 /. 4.0; 0.0; 0.0 |];
+      [| -1.0 /. 6.0; -1.0 /. 6.0; -1.0 /. 6.0 |];
+      [| -1.0 /. 6.0; 1.0 /. 6.0; -1.0 /. 6.0 |];
+      [| 1.0 /. 24.0; 1.0 /. 12.0; 1.0 /. 6.0 |];
+      [| 1.0 /. 24.0; -1.0 /. 12.0; 1.0 /. 6.0 |];
       [| 0.0; 0.0; 1.0 |];
     |]
 
@@ -3520,25 +3610,12 @@ module Make (B : Backend_intf.S) = struct
             in
             B.op_cat col_tensors dim))
 
-  (* Apply Winograd transformation matrix to tensor *)
   let apply_winograd_matrix ctx mat x dims =
-    (* This function applies a transformation matrix to the first 'dims'
-       dimensions of a tensor. For Winograd, it transforms spatial dimensions
-       according to the transformation matrices.
-
-       If x has shape [d1, d2, ..., dn] and dims=2, and mat is m×k, then output
-       has shape [m, m, d3, ..., dn] where each output[i,j] is a linear
-       combination of input values according to mat. *)
     let t_shape = shape x in
-    if dims > Array.length t_shape then
-      Error.invalid ~op:"apply_winograd_matrix" ~what:"dims"
-        ~reason:"exceeds tensor rank" ();
-
-    let device_dtype = dtype x in
     let mat_rows = Array.length mat in
     let mat_cols = Array.length mat.(0) in
 
-    (* Verify input dimensions match matrix columns *)
+    (* Verify input dimensions *)
     for i = 0 to dims - 1 do
       if t_shape.(i) <> mat_cols then
         Error.invalid ~op:"apply_winograd_matrix"
@@ -3558,120 +3635,72 @@ module Make (B : Backend_intf.S) = struct
         ]
     in
 
-    (* For 2D case with input [3,3,C,N], we want to compute output[i,j,C,N] =
-       sum_a,b mat[i][a] * mat[j][b] * input[a,b,C,N] *)
-    if dims = 2 then (
-      (* Optimized path for 2D case (most common for Winograd) *)
-      let h_in, w_in = (t_shape.(0), t_shape.(1)) in
-      let remaining_shape = Array.sub t_shape 2 (Array.length t_shape - 2) in
-      let batch_size = Array.fold_left ( * ) 1 remaining_shape in
+    (* Initialize result tensor with zeros *)
+    let result = zeros ctx (dtype x) output_shape in
 
-      (* Reshape input to [h_in, w_in, batch] *)
-      let x_reshaped = reshape [| h_in; w_in; batch_size |] x in
+    (* For each output position in the transformed dimensions *)
+    let rec iterate_output out_indices dim =
+      if dim = dims then (
+        (* We have a complete output index for the transformed dimensions *)
+        (* Now sum over all input combinations that contribute to this output *)
 
-      (* Build output by computing each output position *)
-      let output_slices = ref [] in
+        (* Initialize accumulator for this output position *)
+        let acc = ref None in
 
-      for i = 0 to mat_rows - 1 do
-        for j = 0 to mat_rows - 1 do
-          let acc = ref None in
-          for a = 0 to h_in - 1 do
-            for b = 0 to w_in - 1 do
-              let coeff = mat.(i).(a) *. mat.(j).(b) in
-              if coeff <> 0.0 then
-                let term =
-                  let slice = get [ a; b ] x_reshaped in
-                  (* Shape: [batch_size] *)
-                  mul slice (full ctx device_dtype (shape slice) coeff)
-                in
-                acc :=
-                  match !acc with
-                  | None -> Some term
-                  | Some prev -> Some (add prev term)
-            done
-          done;
-          let value =
-            match !acc with
-            | Some v -> v
-            | None -> zeros ctx device_dtype [| batch_size |]
-          in
-          output_slices := value :: !output_slices
-        done
-      done;
+        (* Iterate over all input combinations *)
+        let rec iterate_input in_indices dim =
+          if dim = dims then (
+            (* We have a complete input index - compute contribution *)
 
-      (* Stack all output slices and reshape *)
-      let output_list = List.rev !output_slices in
-      let stacked = stack ~axis:0 output_list in
-      let result_reshaped =
-        reshape [| mat_rows; mat_rows; batch_size |] stacked
-      in
+            (* Calculate the coefficient from the matrix elements *)
+            let coeff = ref 1.0 in
+            for d = 0 to dims - 1 do
+              coeff := !coeff *. mat.(out_indices.(d)).(in_indices.(d))
+            done;
 
-      (* Reshape back to output shape *)
-      reshape output_shape result_reshaped)
-    else
-      (* General case for arbitrary dims *)
-      let rec apply_recursive x current_dim =
-        if current_dim = dims then x
-        else
-          (* Apply transformation to dimension current_dim *)
-          let shape_before = Array.sub (shape x) 0 current_dim in
-          let shape_after =
-            Array.sub (shape x) (current_dim + 1)
-              (Array.length (shape x) - current_dim - 1)
-          in
-          let dim_size = (shape x).(current_dim) in
+            if !coeff <> 0.0 then
+              (* Get the slice of x at this input position *)
+              let slice_spec = List.init dims (fun i -> I in_indices.(i)) in
+              let x_slice = slice slice_spec x in
 
-          (* Reshape to isolate current dimension *)
-          let batch_before = Array.fold_left ( * ) 1 shape_before in
-          let batch_after = Array.fold_left ( * ) 1 shape_after in
-          let x_reshaped =
-            reshape [| batch_before; dim_size; batch_after |] x
-          in
+              (* Scale by coefficient *)
+              let contrib = mul_s x_slice !coeff in
 
-          (* Build output slices *)
-          let output_slices = ref [] in
-
-          for i = 0 to batch_before - 1 do
-            for j = 0 to mat_rows - 1 do
-              let acc = ref None in
-              for k = 0 to dim_size - 1 do
-                let coeff = mat.(j).(k) in
-                if coeff <> 0.0 then
-                  let slice = get [ i; k ] x_reshaped in
-                  (* Shape: [batch_after] *)
-                  let term =
-                    mul slice (full ctx device_dtype (shape slice) coeff)
-                  in
-                  acc :=
-                    match !acc with
-                    | None -> Some term
-                    | Some prev -> Some (add prev term)
-              done;
-              let value =
+              (* Add to accumulator *)
+              acc :=
                 match !acc with
-                | Some v -> v
-                | None -> zeros ctx device_dtype [| batch_after |]
-              in
-              output_slices := value :: !output_slices
+                | None -> Some contrib
+                | Some a -> Some (add a contrib))
+          else
+            (* Recurse for next input dimension *)
+            for i = 0 to mat_cols - 1 do
+              in_indices.(dim) <- i;
+              iterate_input in_indices (dim + 1)
             done
-          done;
+        in
 
-          (* Stack and reshape *)
-          let output_list = List.rev !output_slices in
-          let stacked = stack ~axis:0 output_list in
-          let result_reshaped =
-            reshape [| batch_before; mat_rows; batch_after |] stacked
-          in
+        let in_indices = Array.make dims 0 in
+        iterate_input in_indices 0;
 
-          (* Reshape back and continue *)
-          let new_shape =
-            Array.concat [ shape_before; [| mat_rows |]; shape_after ]
-          in
-          let result_reshaped = reshape new_shape result_reshaped in
-          apply_recursive result_reshaped (current_dim + 1)
-      in
+        (* Set the result at this output position *)
+        match !acc with
+        | Some value ->
+            (* Create the slice specification for the output *)
+            let out_slice_spec = List.init dims (fun i -> I out_indices.(i)) in
+            set_slice out_slice_spec result value
+        | None -> () (* Leave as zeros *))
+      else
+        (* Recurse for next output dimension *)
+        for i = 0 to mat_rows - 1 do
+          out_indices.(dim) <- i;
+          iterate_output out_indices (dim + 1)
+        done
+    in
 
-      apply_recursive x 0
+    let out_indices = Array.make dims 0 in
+    iterate_output out_indices 0;
+
+    result
 
   (* ───── Optimized Pool Implementation ───── *)
 
@@ -3778,8 +3807,6 @@ module Make (B : Backend_intf.S) = struct
       let kj, ij, fj, dj = (k_s.(j), spatial_shape_in.(j), f_s.(j), d_s.(j)) in
       reshape1_list := !reshape1_list @ [ kj; (ij * fj) + dj ]
     done;
-    (* Make contiguous before reshape to avoid strided view issues *)
-    let x = contiguous x in
     let x = reshape (Array.of_list !reshape1_list) x in
 
     (* Second shrink to output size *)
@@ -3801,7 +3828,7 @@ module Make (B : Backend_intf.S) = struct
     for j = 0 to num_spatial - 1 do
       reshape2_list := !reshape2_list @ [ k_s.(j); o_s.(j); s_s.(j) ]
     done;
-    let x = reshape (Array.of_list !reshape2_list) (contiguous x) in
+    let x = reshape (Array.of_list !reshape2_list) x in
 
     (* Third shrink to stride=1 (select every s_s-th element) *)
     let shrink3_config =
@@ -3875,121 +3902,6 @@ module Make (B : Backend_intf.S) = struct
           pool_dilated_path x_padded_input ~noop_rank ~o_s ~s_s ~k_s ~d_s
             ~prefix_shape ~spatial_shape_in
 
-  (* ───── Optimized Convolution with Winograd ───── *)
-
-  let should_use_winograd ~kernel_size ~stride ~groups =
-    groups = 1
-    && Array.length kernel_size = 2
-    && kernel_size.(0) = 3
-    && kernel_size.(1) = 3
-    && stride.(0) = 1
-    && stride.(1) = 1
-
-  let winograd_conv2d x w =
-    let bs, cin, h, w_dim = (dim 0 x, dim 1 x, dim 2 x, dim 3 x) in
-    let cout, _, _kh, _kw = (dim 0 w, dim 1 w, dim 2 w, dim 3 w) in
-    let groups = 1 in
-    (* Winograd only for groups=1 *)
-    let rcout = cout / groups in
-
-    (* Following tinygrad's approach *)
-    (* First, permute weights to move HW to the front: [3, 3, cout, cin] *)
-    let g = transpose ~axes:[| 2; 3; 0; 1 |] w in
-
-    (* Transform weights using Winograd G matrix *)
-    (* apply_winograd_matrix with dims=2 will transform the first 2 dimensions *)
-    let gfactors_raw =
-      apply_winograd_matrix (B.context x) winograd_f4x4_3x3_g g 2
-    in
-    (* Result shape should be [6, 6, cout, cin] *)
-
-    (* Reshape to match tinygrad: [6, 6, 1, groups, rcout, cin, 1, 1] for 2D *)
-    let target_shape = [| 6; 6; 1; groups; rcout; cin; 1; 1 |] in
-    let gfactors = B.op_reshape gfactors_raw target_shape in
-
-    (* Prepare input tiles - Winograd needs 6x6 tiles with 4x4 output each *)
-    (* Number of 4x4 output tiles needed *)
-    let tile_h = (h + 3) / 4 in
-    let tile_w = (w_dim + 3) / 4 in
-
-    (* For Winograd F(4,3), we need 6x6 input tiles to produce 4x4 output tiles *)
-    (* With stride 4, the tiles overlap by 2 pixels *)
-    (* Total padded size needs to be: (tile_count - 1) * 4 + 6 *)
-    let padded_h = ((tile_h - 1) * 4) + 6 in
-    let padded_w = ((tile_w - 1) * 4) + 6 in
-
-    (* Calculate padding needed *)
-    let pad_top = 1 in
-    (* 1 pixel padding for first tile *)
-    let pad_left = 1 in
-    let pad_bottom = padded_h - h - pad_top in
-    let pad_right = padded_w - w_dim - pad_left in
-
-    let x_padded =
-      pad
-        [| (0, 0); (0, 0); (pad_top, pad_bottom); (pad_left, pad_right) |]
-        (Dtype.zero (dtype x))
-        x
-    in
-
-    (* Extract 6x6 tiles with 4x4 stride *)
-    let d = pool x_padded ~k_s:[| 6; 6 |] ~s_s:[| 4; 4 |] ~d_s:[| 1; 1 |] in
-    (* Shape: (bs, cin, tile_h, tile_w, 6, 6) *)
-
-    (* Permute to move HW to the front: [6, 6, bs, cin, tile_h, tile_w] *)
-    let d_perm = transpose ~axes:[| 4; 5; 0; 1; 2; 3 |] d in
-
-    (* Apply B^T transformation *)
-    let dfactors_raw =
-      apply_winograd_matrix (B.context x) winograd_f4x4_3x3_bt
-        (contiguous d_perm) 2
-    in
-    (* Result shape should be [6, 6, bs, cin, tile_h, tile_w] *)
-
-    (* Reshape to match tinygrad: [6, 6, bs, groups, 1, cin, tile_h, tile_w] *)
-    let dfactors =
-      let s = shape dfactors_raw in
-      let target = [| s.(0); s.(1); bs; groups; 1; cin; s.(4); s.(5) |] in
-      reshape target dfactors_raw
-    in
-
-    (* Element-wise multiplication in transform space and sum over cin *)
-    (* gfactors: [6, 6, 1, groups, rcout, cin, 1, 1] *)
-    (* dfactors: [6, 6, bs, groups, 1, cin, tile_h, tile_w] *)
-    let prod = mul gfactors dfactors in
-    (* prod: [6, 6, bs, groups, rcout, cin, tile_h, tile_w] *)
-    let y_transformed = sum prod ~axes:[| 5 |] in
-    (* sum over cin (axis 5) -> [6, 6, bs, groups, rcout, tile_h, tile_w] *)
-
-    (* Apply A^T transformation *)
-    let ret =
-      apply_winograd_matrix (B.context x) winograd_f4x4_3x3_at y_transformed 2
-    in
-    (* Result: [4, 4, bs, groups, rcout, tile_h, tile_w] *)
-
-    (* IMPORTANT: Winograd F(4,3) produces outputs that need scaling *)
-    (* Based on our tests, we need to scale by 9/64 *)
-    let scaling_factor = 9.0 /. 64.0 in
-    let ret =
-      mul ret (full (B.context x) (dtype ret) (shape ret) scaling_factor)
-    in
-
-    (* Interleave tyx and HWO as in tinygrad *)
-    (* permute: [bs, groups, rcout, tile_h, 4, tile_w, 4] *)
-    let ret_perm = transpose ~axes:[| 2; 3; 4; 5; 0; 6; 1 |] ret in
-
-    (* Merge groups*rcout and reshape to final output *)
-    let final_h = tile_h * 4 in
-    let final_w = tile_w * 4 in
-    let ret_reshaped =
-      reshape [| bs; cout; final_h; final_w |] (contiguous ret_perm)
-    in
-
-    (* Shrink to final output size *)
-    let shrink_config = [| (0, bs); (0, cout); (0, h); (0, w_dim) |] in
-    let result = shrink shrink_config ret_reshaped in
-    result
-
   let calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
       ~(mode : [< `Full | `Valid | `Same ])
       ~(op_type : [ `Convolution | `Correlation ]) =
@@ -4036,6 +3948,173 @@ module Make (B : Backend_intf.S) = struct
             in
             (pad_before, pad_after))
 
+  (* ───── Optimized Convolution with Winograd ───── *)
+
+  let should_use_winograd ~kernel_size ~stride ~groups =
+    groups = 1
+    && Array.length kernel_size = 2
+    && kernel_size.(0) = 3
+    && kernel_size.(1) = 3
+    && stride.(0) = 1
+    && stride.(1) = 1
+
+  let winograd_conv2d ?(padding_mode = `Valid) x w =
+    let bs, cin, h, w_dim = (dim 0 x, dim 1 x, dim 2 x, dim 3 x) in
+    let cout, _, _kh, _kw = (dim 0 w, dim 1 w, dim 2 w, dim 3 w) in
+    let groups = 1 in
+    let rcout = cout / groups in
+
+    (* Calculate actual output size based on padding mode *)
+    let h_out, w_out =
+      match padding_mode with
+      | `Valid -> (h - 2, w_dim - 2)
+      | `Same -> (h, w_dim)
+      | `Full ->
+          Error.invalid ~op:"winograd_conv2d" ~what:"padding mode"
+            ~reason:"'Full' padding is not supported" ()
+    in
+
+    (* Winograd F(4x4,3x3) transformation matrices *)
+    let winograd_G =
+      [|
+        [| 1.0 /. 4.0; 0.0; 0.0 |];
+        [| -1.0 /. 6.0; -1.0 /. 6.0; -1.0 /. 6.0 |];
+        [| -1.0 /. 6.0; 1.0 /. 6.0; -1.0 /. 6.0 |];
+        [| 1.0 /. 24.0; 1.0 /. 12.0; 1.0 /. 6.0 |];
+        [| 1.0 /. 24.0; -1.0 /. 12.0; 1.0 /. 6.0 |];
+        [| 0.0; 0.0; 1.0 |];
+      |]
+    in
+    let winograd_Bt =
+      [|
+        [| 4.0; 0.0; -5.0; 0.0; 1.0; 0.0 |];
+        [| 0.0; -4.0; -4.0; 1.0; 1.0; 0.0 |];
+        [| 0.0; 4.0; -4.0; -1.0; 1.0; 0.0 |];
+        [| 0.0; -2.0; -1.0; 2.0; 1.0; 0.0 |];
+        [| 0.0; 2.0; -1.0; -2.0; 1.0; 0.0 |];
+        [| 0.0; 4.0; 0.0; -5.0; 0.0; 1.0 |];
+      |]
+    in
+    let winograd_At =
+      [|
+        [| 1.0; 1.0; 1.0; 1.0; 1.0; 0.0 |];
+        [| 0.0; 1.0; -1.0; 2.0; -2.0; 0.0 |];
+        [| 0.0; 1.0; 1.0; 4.0; 4.0; 0.0 |];
+        [| 0.0; 1.0; -1.0; 8.0; -8.0; 1.0 |];
+      |]
+    in
+
+    (* Following tinygrad's approach *)
+    (* First, permute weights to move HW to the front: [3, 3, cout, cin] *)
+    let g = transpose ~axes:[| 2; 3; 0; 1 |] w in
+
+    (* Transform weights using Winograd G matrix *)
+    let gfactors_raw = apply_winograd_matrix (B.context x) winograd_G g 2 in
+
+    (* Reshape to match tinygrad: [6, 6, 1, groups, rcout, cin, 1, 1] for 2D *)
+    let target_shape = [| 6; 6; 1; groups; rcout; cin; 1; 1 |] in
+    let gfactors =
+      B.op_reshape gfactors_raw (Symbolic_shape.of_ints target_shape)
+    in
+
+    (* For valid convolution, we need to ensure we have enough input data *)
+    (* Each 4x4 output tile needs a 6x6 input tile *)
+    (* For a 3x3 output, we need at least a 5x5 input (which we have) *)
+
+    (* Calculate number of output tiles *)
+    let tile_h = ceildiv h_out 4 in
+    (* (3+3)/4 = 1 *)
+    let tile_w = ceildiv w_out 4 in
+    (* (3+3)/4 = 1 *)
+
+    (* Calculate padding for Winograd tile alignment *)
+    let calculate_winograd_padding h w existing_pad_h existing_pad_w =
+      let pad_h_before, pad_h_after = existing_pad_h in
+      let pad_w_before, pad_w_after = existing_pad_w in
+
+      let h_with_pad = h + pad_h_before + pad_h_after in
+      let w_with_pad = w + pad_w_before + pad_w_after in
+
+      (* Calculate additional padding needed for 4x4 tile alignment *)
+      (* Use a proper modulo that always returns non-negative values *)
+      let positive_mod a b = ((a mod b) + b) mod b in
+
+      let extra_pad_h = positive_mod (-(h_with_pad - 2)) 4 in
+      let extra_pad_w = positive_mod (-(w_with_pad - 2)) 4 in
+
+      let final_pad_h = (pad_h_before, pad_h_after + extra_pad_h) in
+      let final_pad_w = (pad_w_before, pad_w_after + extra_pad_w) in
+
+      (final_pad_h, final_pad_w)
+    in
+
+    (* Update the padding section *)
+    let final_pad_h, final_pad_w =
+      match padding_mode with
+      | `Valid -> calculate_winograd_padding h w_dim (0, 0) (0, 0)
+      | `Same ->
+          let existing_pads =
+            calculate_padding_for_mode [| h; w_dim |] ~k_s:[| 3; 3 |]
+              ~s_s:[| 1; 1 |] ~d_s:[| 1; 1 |] ~mode:`Same ~op_type:`Convolution
+          in
+          calculate_winograd_padding h w_dim existing_pads.(0) existing_pads.(1)
+      | `Full ->
+          Error.invalid ~op:"winograd_conv2d" ~what:"padding mode"
+            ~reason:"'Full' padding is not supported" ()
+    in
+
+    let x_padded =
+      pad
+        [| (0, 0); (0, 0); final_pad_h; final_pad_w |]
+        (Dtype.zero (dtype x))
+        x
+    in
+
+    (* Extract 6x6 tiles with 4x4 stride *)
+    let d = pool x_padded ~k_s:[| 6; 6 |] ~s_s:[| 4; 4 |] ~d_s:[| 1; 1 |] in
+    (* Shape: (bs, cin, tile_h, tile_w, 6, 6) *)
+
+    (* Permute to move HW to the front: [6, 6, bs, cin, tile_h, tile_w] *)
+    let d_perm = transpose ~axes:[| 4; 5; 0; 1; 2; 3 |] d in
+
+    (* Apply B^T transformation *)
+    let dfactors_raw =
+      apply_winograd_matrix (B.context x) winograd_Bt d_perm 2
+    in
+
+    (* Reshape to match tinygrad: [6, 6, bs, groups, 1, cin, tile_h, tile_w] *)
+    let dfactors =
+      let s = shape dfactors_raw in
+      let target = [| s.(0); s.(1); bs; groups; 1; cin; s.(4); s.(5) |] in
+      reshape target dfactors_raw
+    in
+
+    (* Element-wise multiplication in transform space and sum over cin *)
+    let prod = mul gfactors dfactors in
+    let y_transformed = sum prod ~axes:[| 5 |] in
+
+    (* Apply A^T transformation *)
+    let ret = apply_winograd_matrix (B.context x) winograd_At y_transformed 2 in
+    (* Result: [4, 4, bs, groups, rcout, tile_h, tile_w] *)
+
+    (* Interleave tyx and HWO as in tinygrad *)
+    (* permute: [bs, groups, rcout, tile_h, 4, tile_w, 4] *)
+    let ret_perm = transpose ~axes:[| 2; 3; 4; 5; 0; 6; 1 |] ret in
+
+    (* Merge groups*rcout and reshape to final output *)
+    let ret_reshaped = reshape [| bs; cout; tile_h; 4; tile_w; 4 |] ret_perm in
+
+    (* Merge tile dimensions *)
+    let final_h = tile_h * 4 in
+    let final_w = tile_w * 4 in
+    let ret_reshaped = reshape [| bs; cout; final_h; final_w |] ret_reshaped in
+
+    (* For valid convolution, extract the correct portion *)
+    (* The output starts at position (1,1) in the Winograd output due to the convolution math *)
+    (* For valid convolution, extract the correct portion *)
+    let shrink_config = [| (0, bs); (0, cout); (0, h_out); (0, w_out) |] in
+    shrink shrink_config ret_reshaped
+
   let correlate_nd_general ~groups stride_s_arr ~padding_mode dilation_s_arr
       ?fillvalue num_spatial_dims ?bias ~op_type x w =
     if ndim w <> num_spatial_dims + 2 then
@@ -4065,6 +4144,7 @@ module Make (B : Backend_intf.S) = struct
       Array.init num_spatial_dims (fun i -> dim (i + 2) w)
     in
 
+    (* Validate channel configuration if dimensions are concrete *)
     if cin_total <> groups * cin_per_group then
       Error.invalid ~op:"correlate_nd"
         ~what:(Printf.sprintf "channel configuration")
@@ -4075,6 +4155,7 @@ module Make (B : Backend_intf.S) = struct
              (groups * cin_per_group) groups cin_per_group)
         ();
     let rcout = cout / groups in
+    (* Validate if concrete *)
     if groups * rcout <> cout then
       Error.invalid ~op:"correlate_nd"
         ~what:(Printf.sprintf "cout %d" cout)
@@ -4110,14 +4191,23 @@ module Make (B : Backend_intf.S) = struct
     let pooled_x, needs_group_processing =
       if groups > 1 then
         (* Reshape to (bs, groups, cin_per_group, *spatial) before pooling *)
+        let x_padded_shape = Lazy_view.shape (B.view x_padded) in
+        let x_padded_shape_concrete =
+          match Symbolic_shape.eval x_padded_shape with
+          | Some arr -> arr
+          | None ->
+              Error.failed ~op:"correlate_nd"
+                ~what:"cannot get shape with symbolic dimensions" ()
+        in
         let x_grouped_shape =
           Array.concat
             [
               [| bs; groups; cin_per_group |];
-              Array.sub (shape x_padded) 2 num_spatial_dims;
+              Array.sub x_padded_shape_concrete 2 num_spatial_dims;
             ]
         in
-        let x_grouped = reshape x_grouped_shape x_padded in
+        let x_grouped_shape_concrete = x_grouped_shape in
+        let x_grouped = reshape x_grouped_shape_concrete x_padded in
         let pooled =
           pool x_grouped ~k_s:kernel_spatial_shape_arr ~s_s:stride_s_arr
             ~d_s:dilation_s_arr
@@ -4171,10 +4261,11 @@ module Make (B : Backend_intf.S) = struct
               [| 1; groups; rcout |];
               Array.make num_spatial_dims 1;
               [| cin_per_group |];
+              (* already checked above *)
               kernel_spatial_shape_arr;
             ]
         in
-        let w_reshaped = reshape w_shape (contiguous w) in
+        let w_reshaped = reshape w_shape w in
         (x_permuted, w_reshaped)
       else
         (* Simpler logic for groups=1 *)
@@ -4260,30 +4351,8 @@ module Make (B : Backend_intf.S) = struct
            ~kernel_size:(Array.sub (shape w) 2 2)
            ~stride:stride_s_arr ~groups
     then
-      let result = winograd_conv2d x w in
-      (* Winograd produces 'same' padding output, adjust for padding_mode *)
-      let result =
-        match padding_mode with
-        | `Valid ->
-            (* For valid padding with 3x3 kernel, shrink by 1 on each side *)
-            let h_out = dim 2 x - 2 in
-            let w_out = dim 3 x - 2 in
-            shrink
-              [|
-                (0, dim 0 result);
-                (0, dim 1 result);
-                (1, 1 + h_out);
-                (1, 1 + w_out);
-              |]
-              result
-        | `Same -> result
-        | `Full ->
-            Error.invalid ~op:"convolve2d_winograd" ~what:"padding mode"
-              ~reason:"'Full' is not supported" ()
-      in
-      match bias with
-      | None -> result
-      | Some b -> add result (reshape [| 1; dim 0 b; 1; 1 |] b)
+      let result = winograd_conv2d x w ~padding_mode in
+      result
     else
       (* Original implementation *)
       correlate_nd_general ~groups stride_s_arr ~padding_mode dilation_s_arr
@@ -4676,9 +4745,21 @@ module Make (B : Backend_intf.S) = struct
     let view = B.view x in
     let buffer = B.data x in
     let dtype = dtype x in
-    let shape = View.shape view in
+    let shape =
+      match Symbolic_shape.eval (Lazy_view.shape view) with
+      | Some arr -> arr
+      | None ->
+          Error.failed ~op:"pp_data"
+            ~what:"cannot print tensor with symbolic shape" ()
+    in
     let ndim = Array.length shape in
-    let sz = View.numel view in
+    let sz =
+      match Lazy_view.numel view with
+      | Symbolic_shape.Static n -> n
+      | Symbolic_shape.Dynamic _ ->
+          Error.failed ~op:"pp_data"
+            ~what:"cannot print tensor with symbolic size" ()
+    in
 
     let pp_element fmt (elt : a) =
       match dtype with
@@ -4700,7 +4781,14 @@ module Make (B : Backend_intf.S) = struct
     if sz = 0 && ndim > 0 then fprintf fmt "[]"
     else if ndim = 0 then
       if sz > 0 then
-        let value = Bigarray.Array1.unsafe_get buffer (View.offset view) in
+        let value =
+          Bigarray.Array1.unsafe_get buffer
+            (match Lazy_view.offset view with
+            | Symbolic_shape.Static n -> n
+            | Symbolic_shape.Dynamic _ ->
+                Error.failed ~op:"pp_data"
+                  ~what:"cannot access data with symbolic offset" ())
+        in
         pp_element fmt value
       else fprintf fmt "<empty scalar>"
     else
@@ -4709,7 +4797,21 @@ module Make (B : Backend_intf.S) = struct
         if current_ndim = ndim then
           let md_index = Array.of_list current_indices in
           let linear_offset =
-            Shape.ravel_index md_index (View.strides view) + View.offset view
+            let strides =
+              match Lazy_view.strides view with
+              | Some s -> s
+              | None ->
+                  Error.failed ~op:"pp_data"
+                    ~what:"cannot print non-contiguous symbolic tensor" ()
+            in
+            let offset =
+              match Lazy_view.offset view with
+              | Symbolic_shape.Static n -> n
+              | Symbolic_shape.Dynamic _ ->
+                  Error.failed ~op:"pp_data"
+                    ~what:"cannot print tensor with symbolic offset" ()
+            in
+            Shape.ravel_index md_index strides + offset
           in
           if linear_offset < 0 || linear_offset >= Bigarray.Array1.dim buffer
           then
@@ -4767,13 +4869,24 @@ module Make (B : Backend_intf.S) = struct
 
     fprintf fmt "@[<v 0>";
     fprintf fmt "Nx Info:@,";
-    fprintf fmt "  Shape: %a@," pp_shape (View.shape view);
+    fprintf fmt "  Shape: %s@,"
+      (Symbolic_shape.to_string (Lazy_view.shape view));
     fprintf fmt "  Dtype: %a@," pp_dtype (dtype x);
-    fprintf fmt "  Strides: [%s]@,"
-      (String.concat "; "
-         (Array.to_list (Array.map string_of_int (View.strides view))));
-    fprintf fmt "  Offset: %d@," (View.offset view);
-    fprintf fmt "  Size: %d@," (View.numel view);
+    fprintf fmt "  Strides: %s@,"
+      (match Lazy_view.strides view with
+      | Some s ->
+          "["
+          ^ String.concat "; " (Array.to_list (Array.map string_of_int s))
+          ^ "]"
+      | None -> "<symbolic>");
+    fprintf fmt "  Offset: %s@,"
+      (match Lazy_view.offset view with
+      | Symbolic_shape.Static n -> string_of_int n
+      | Symbolic_shape.Dynamic _ -> "<symbolic>");
+    fprintf fmt "  Size: %s@,"
+      (match Lazy_view.numel view with
+      | Symbolic_shape.Static n -> string_of_int n
+      | Symbolic_shape.Dynamic _ -> "<symbolic>");
     fprintf fmt "  Data: %a@," pp_data x
 
   let print x = print_with_formatter pp x
