@@ -221,4 +221,10 @@ module type S = sig
       into a tensor. For an input of shape (N, C * prod(kernel_size), L),
       produces output of shape (N, C, *output_size). Inverse of unfold.
       Overlapping values are summed. Works for any number of spatial dimensions. *)
+
+  val op_matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** Matrix multiplication. For 2D tensors, computes standard matrix multiplication.
+      For higher dimensions, performs batched matrix multiplication on the last two
+      dimensions, broadcasting batch dimensions as needed. The last dimension of the
+      first tensor must match the second-to-last dimension of the second tensor. *)
 end

@@ -546,3 +546,12 @@ let op_fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
   | Cpu_tensor t -> Cpu_tensor (Nx_native.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
   | Metal_tensor t -> Metal_tensor (Rune_metal.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
   | Symbolic_tensor _ -> failwith "todo: op_fold for symbolic tensors"
+
+(* Matrix multiplication *)
+let op_matmul a b =
+  let a', b' = ensure_same_device a b in
+  match (a', b') with
+  | Cpu_tensor a_t, Cpu_tensor b_t -> Cpu_tensor (Nx_native.op_matmul a_t b_t)
+  | Metal_tensor a_t, Metal_tensor b_t -> Metal_tensor (Rune_metal.op_matmul a_t b_t)
+  | Symbolic_tensor _, _ | _, Symbolic_tensor _ -> failwith "todo: op_matmul for symbolic tensors"
+  | _ -> assert false

@@ -3229,87 +3229,29 @@ module Make (B : Backend_intf.S) = struct
       Error.invalid ~op:"dot" ~what:"tensors" ~reason:"both must be at least 1D"
         ();
 
-    let shape_x = shape x_tensor in
-    let shape_w = shape w_tensor in
-
-    (* Contraction axis for w_tensor: - If w is 1D, its only axis (index 0). -
-       If w is >=2D, its second-to-last axis (index ndim_w - 2). This matches
-       Python's w.shape[-min(w.ndim,2)] behavior. *)
-    let axis_w_contract_idx = if ndim_w = 1 then 0 else ndim_w - 2 in
-
-    (* Contracting dimension sizes must match. *)
-    if shape_x.(ndim_x - 1) <> shape_w.(axis_w_contract_idx) then
-      Error.cannot ~op:"dot" ~what:"contract"
-        ~from:
-          (Printf.sprintf "%s (last axis: %d)" (Shape.to_string shape_x)
-             shape_x.(ndim_x - 1))
-        ~to_:
-          (Printf.sprintf "%s (axis %d: %d)" (Shape.to_string shape_w)
-             axis_w_contract_idx
-             shape_w.(axis_w_contract_idx))
-        ~reason:
-          (Printf.sprintf "size %d≠%d"
-             shape_x.(ndim_x - 1)
-             shape_w.(axis_w_contract_idx))
-        ();
-
-    (* k_ones determines if an extra dimension of size 1 needs to be inserted
-       for broadcasting the "matrix" parts. It's 1 if both tensors are >= 2D. *)
-    let k_ones = Stdlib.min (Stdlib.min (ndim_x - 1) (ndim_w - 1)) 1 in
-
-    let x_prepared =
-      if k_ones = 0 then x_tensor (* No reshape if x or w is 1D *)
-      else (* Both x and w are >= 2D *)
-        let prefix_x = Array.sub shape_x 0 (ndim_x - 1) in
-        let last_dim_x = shape_x.(ndim_x - 1) in
-        (* Insert a '1' before the last dimension: e.g., (..., m, k) -> (..., m,
-           1, k) *)
-        let new_shape_x =
-          Array.concat [ prefix_x; [| 1 |]; [| last_dim_x |] ]
-        in
-        reshape new_shape_x x_tensor
-    in
-
-    let w_intermediate_prepared =
-      if k_ones = 0 then w_tensor (* No reshape if x or w is 1D *)
-      else (* Both x and w are >= 2D. ndim_w >= 2 is implied by k_ones = 1. *)
-        let prefix_w = Array.sub shape_w 0 (ndim_w - 2) in
-        let suffix_w = Array.sub shape_w (ndim_w - 2) 2 in
-        (* Last two dims of original w *)
-        (* Insert a '1' before the last two dimensions of original w: e.g.,
-           (..., k, n) -> (..., 1, k, n) *)
-        let new_shape_w_intermediate =
-          Array.concat [ prefix_w; [| 1 |]; suffix_w ]
-        in
-        reshape new_shape_w_intermediate w_tensor
-    in
-
-    let w_prepared =
-      let rank_w_intermediate = ndim w_intermediate_prepared in
-      if rank_w_intermediate < 2 then w_intermediate_prepared
-        (* No transpose if less than 2D (e.g. if original w was 1D) *)
-      else
-        (* Transpose the (new) last two dimensions. E.g., (..., b, 1, k, n) ->
-           (..., b, 1, n, k) Or if original w was 2D (k,n): (1,k,n) ->
-           (1,n,k) *)
-        let p = Array.init rank_w_intermediate Fun.id in
-        let last = rank_w_intermediate - 1 in
-        let second_last = rank_w_intermediate - 2 in
-        p.(last) <- second_last;
-        p.(second_last) <- last;
-        transpose ~axes:p w_intermediate_prepared
-    in
-
-    (* Element-wise multiplication. Broadcasting handles batch dimensions.
-       Example: x_prepared(..., m, 1, k) and w_prepared(..., 1, n, k) broadcasts
-       to (..., m, n, k) *)
-    let multiplied = mul x_prepared w_prepared in
-
-    (* Sum over the last dimension (the contracting dimension k) *)
-    let sum_axis_idx = ndim multiplied - 1 in
-    (* The sum function handles accumulation dtype and potential cast back to
-       ('a,'b) x *)
-    sum ~axes:[| sum_axis_idx |] multiplied
+    (* Handle special cases for 1D tensors *)
+    match (ndim_x, ndim_w) with
+    | 1, 1 ->
+        (* 1D x 1D -> scalar (sum of element-wise product) *)
+        let product = mul x_tensor w_tensor in
+        sum product
+    | 1, _ ->
+        (* 1D x ND -> contract on first axis of w *)
+        (* Reshape x to (1, k) and use matmul *)
+        let x_2d = unsqueeze ~axes:[| 0 |] x_tensor in
+        let result = B.op_matmul x_2d w_tensor in
+        (* Result has shape (..., 1, n) -> squeeze the 1 *)
+        squeeze ~axes:[| ndim result - 2 |] result
+    | _, 1 ->
+        (* ND x 1D -> contract on last axis of x *)
+        (* Reshape w to (k, 1) and use matmul *)
+        let w_2d = unsqueeze ~axes:[| 1 |] w_tensor in
+        let result = B.op_matmul x_tensor w_2d in
+        (* Result has shape (..., m, 1) -> squeeze the 1 *)
+        squeeze ~axes:[| ndim result - 1 |] result
+    | _ ->
+        (* ND x ND -> use matmul directly *)
+        B.op_matmul x_tensor w_tensor
 
   let matmul a_orig b_orig =
     let ndim_a_orig = ndim a_orig in
@@ -3334,26 +3276,22 @@ module Make (B : Backend_intf.S) = struct
         (a_orig, b_orig)
     in
 
-    let result_intermediate = dot a b in
+    let result_intermediate = B.op_matmul a b in
 
     (* Squeeze the result if original inputs were 1D to match matmul
        semantics *)
     if ndim_a_orig = 1 && ndim_b_orig = 1 then
-      (* Original (k) @ (k) -> result (1,1) from dot -> squeeze to scalar () *)
+      (* Original (k) @ (k) -> result (1,1) from backend -> squeeze to scalar () *)
       squeeze result_intermediate
     else if ndim_a_orig = 1 then
-      (* Original (k) @ (...,k,n) -> result (...,1,n) from dot -> squeeze first matrix dim *)
-      (* The '1' was prepended to a's matrix dimensions.
-           If b was (k,n), dot result (1,n). Squeeze axis 0.
-           If b was (B,k,n), dot result (B,1,n). Squeeze axis ndim-2.
-        *)
+      (* Original (k) @ (...,k,n) -> result (...,1,n) from backend -> squeeze first matrix dim *)
       squeeze ~axes:[| ndim result_intermediate - 2 |] result_intermediate
     else if ndim_b_orig = 1 then
-      (* Original (...,m,k) @ (k) -> result (...,m,1) from dot -> squeeze last
+      (* Original (...,m,k) @ (k) -> result (...,m,1) from backend -> squeeze last
          matrix dim *)
       squeeze ~axes:[| ndim result_intermediate - 1 |] result_intermediate
     else
-      (* Both original inputs were >= 2D, result from dot is already
+      (* Both original inputs were >= 2D, result from backend is already
          (...,m,n) *)
       result_intermediate
 
