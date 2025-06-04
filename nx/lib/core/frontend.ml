@@ -3572,21 +3572,9 @@ module Make (B : Backend_intf.S) = struct
       let w_cont = B.op_contiguous w in
       let w_reshaped = reshape [| cout; cin_total * kernel_elements |] w_cont in
       
-      (* Use matmul: w_reshaped @ x_col = [cout, cin*k] @ [cin*k, num_blocks] -> [cout, num_blocks] *)
-      (* But we need to handle batch dimension, so use batched approach *)
-      
-      (* Add singleton dimension to weights for broadcasting *)
-      let w_for_matmul = unsqueeze ~axes:[| 0 |] w_reshaped in (* [1, cout, cin*k] *)
-      
-      (* Transpose x_col for matmul: need [bs, cin*k, num_blocks] *)
-      (* x_col is already [bs, cin*k, num_blocks] *)
-      
-      (* Use matmul with broadcasting: [1, cout, cin*k] @ [bs, cin*k, num_blocks] -> [bs, cout, num_blocks] *)
-      let result = matmul w_for_matmul x_col in
-      
-      (* Remove the singleton batch dimension from result if it was added *)
-      (* Actually matmul should broadcast correctly, so result is [bs, cout, num_blocks] *)
-      result
+      (* Use matmul: w_reshaped @ x_col = [cout, cin*k] @ [bs, cin*k, num_blocks] -> [bs, cout, num_blocks] *)
+      (* matmul handles broadcasting automatically for 2D × 3D case *)
+      matmul w_reshaped x_col
     else
       (* Grouped convolution *)
       (* x_col: [bs, cin_total * kernel_elements, num_blocks] *)

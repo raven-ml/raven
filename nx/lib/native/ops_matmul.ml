@@ -77,13 +77,16 @@ let kernel_matmul_float32 context (a : (float, float32_elt) t)
   let stride_b_batch = k * n in
   let stride_out_batch = m * n in
   
+  (* Pre-allocate work array for batch coordinates *)
+  let max_batch_dims = max (ndim_a - 2) (ndim_b - 2) in
+  let batch_coord = Array.make max_batch_dims 0 in
+  
   (* Helper to calculate batch index with broadcasting *)
   let get_batch_offset batch_idx shape ndim stride_batch =
     let idx = ref batch_idx in
     let batch_dims = ndim - 2 in
     
     (* Calculate multi-dimensional batch index *)
-    let batch_coord = Array.make batch_dims 0 in
     for i = batch_dims - 1 downto 0 do
       let dim_size = out_shape.(i) in
       batch_coord.(i) <- !idx mod dim_size;

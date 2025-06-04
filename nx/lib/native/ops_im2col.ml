@@ -66,15 +66,18 @@ let kernel_unfold_float32 (input : (float, float32_elt) t)
   let kernel_elements = Array.fold_left ( * ) 1 kernel_size in
   let num_blocks = Array.fold_left ( * ) 1 output_spatial in
   
-  (* Helper to convert flat index to multi-dimensional index *)
-  let unravel_spatial flat_idx dims =
-    let indices = Array.make (Array.length dims) 0 in
+  (* Pre-allocate work arrays to avoid allocations in loops *)
+  let out_spatial_coords = Array.make num_spatial_dims 0 in
+  let kernel_coords = Array.make num_spatial_dims 0 in
+  let input_coords = Array.make num_spatial_dims 0 in
+  
+  (* Helper to convert flat index to multi-dimensional index (in-place) *)
+  let unravel_spatial_inplace flat_idx dims result =
     let idx = ref flat_idx in
     for i = Array.length dims - 1 downto 0 do
-      indices.(i) <- !idx mod dims.(i);
+      result.(i) <- !idx mod dims.(i);
       idx := !idx / dims.(i)
-    done;
-    indices
+    done
   in
   
   (* Helper to convert multi-dimensional index to flat index *)
@@ -92,20 +95,20 @@ let kernel_unfold_float32 (input : (float, float32_elt) t)
   for block_idx = start_block to end_block - 1 do
     for batch_idx = 0 to batch_size - 1 do
       (* Convert block index to output spatial coordinates *)
-      let out_spatial_coords = unravel_spatial block_idx output_spatial in
+      unravel_spatial_inplace block_idx output_spatial out_spatial_coords;
       
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        let kernel_coords = unravel_spatial kernel_idx kernel_size in
+        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
         
         (* Calculate corresponding input coordinates *)
         let valid = ref true in
-        let input_coords = Array.init num_spatial_dims (fun i ->
+        for i = 0 to num_spatial_dims - 1 do
           let coord = out_spatial_coords.(i) * stride.(i) + kernel_coords.(i) * dilation.(i) - (fst padding.(i)) in
           if coord < 0 || coord >= input_spatial.(i) then valid := false;
-          coord
-        ) in
+          input_coords.(i) <- coord
+        done;
         
         (* Iterate through all channels *)
         for c = 0 to channels - 1 do
@@ -165,15 +168,18 @@ let kernel_fold_float32 (input : (float, float32_elt) t)
   
   (* Note: Output buffer must be initialized to zero before calling this function *)
   
-  (* Helper to convert flat index to multi-dimensional index *)
-  let unravel_spatial flat_idx dims =
-    let indices = Array.make (Array.length dims) 0 in
+  (* Pre-allocate work arrays to avoid allocations in loops *)
+  let unfolded_coords = Array.make num_spatial_dims 0 in
+  let kernel_coords = Array.make num_spatial_dims 0 in
+  let output_coords = Array.make num_spatial_dims 0 in
+  
+  (* Helper to convert flat index to multi-dimensional index (in-place) *)
+  let unravel_spatial_inplace flat_idx dims result =
     let idx = ref flat_idx in
     for i = Array.length dims - 1 downto 0 do
-      indices.(i) <- !idx mod dims.(i);
+      result.(i) <- !idx mod dims.(i);
       idx := !idx / dims.(i)
-    done;
-    indices
+    done
   in
   
   (* Helper to convert multi-dimensional index to flat index *)
@@ -191,20 +197,20 @@ let kernel_fold_float32 (input : (float, float32_elt) t)
   for block_idx = start_block to end_block - 1 do
     for batch_idx = 0 to batch_size - 1 do
       (* Convert block index to unfolded spatial coordinates *)
-      let unfolded_coords = unravel_spatial block_idx unfolded_spatial in
+      unravel_spatial_inplace block_idx unfolded_spatial unfolded_coords;
       
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        let kernel_coords = unravel_spatial kernel_idx kernel_size in
+        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
         
         (* Calculate corresponding output coordinates *)
         let valid = ref true in
-        let output_coords = Array.init num_spatial_dims (fun i ->
+        for i = 0 to num_spatial_dims - 1 do
           let coord = unfolded_coords.(i) * stride.(i) + kernel_coords.(i) * dilation.(i) - (fst padding.(i)) in
           if coord < 0 || coord >= output_spatial.(i) then valid := false;
-          coord
-        ) in
+          output_coords.(i) <- coord
+        done;
         
         (* Iterate through all channels *)
         for c = 0 to channels - 1 do
