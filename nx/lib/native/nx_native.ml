@@ -77,17 +77,15 @@ let op_assign target_t source_t = Internal.blit source_t target_t
 
 (* Helper for binary operations that ensures inputs are materializable first *)
 let binary_op op_func a b =
-  let a' = ensure_materializable a in
-  let b' = ensure_materializable b in
-  let ctx = a'.context in
-  let out_shape = Internal.shape a' in
-  let out_size = Internal.numel a' in
-  let out_dtype = a'.dtype in
+  let ctx = a.context in
+  let out_shape = Internal.shape a in
+  let out_size = Internal.numel a in
+  let out_dtype = a.dtype in
   let out_tensor =
     op_buffer ctx out_dtype out_size |> fun t ->
     with_view t (Lazy_view.create (Symbolic_shape.of_ints out_shape))
   in
-  op_func ctx a' b' out_tensor;
+  op_func ctx a b out_tensor;
   out_tensor
 
 (* Helper for binary comparison operations *)

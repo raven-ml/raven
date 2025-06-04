@@ -14,12 +14,12 @@ type ('a, 'b) t = {
 (* Helper to map logical indices through a chain of view transformations *)
 (* This is needed when views can't be composed into a single view *)
 let iterate_view_indices shape indices f =
-  (* Helper to iterate through all indices of a tensor *)
   let ndim = Array.length shape in
   if ndim = 0 then f indices
   else
     let rec iter_dim d =
-      if d = ndim then f (Array.copy indices)
+      if d = ndim then
+        f indices
       else
         for i = 0 to shape.(d) - 1 do
           indices.(d) <- i;

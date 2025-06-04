@@ -2,3 +2,9 @@
  (name bench_nx)
  (modules bench_nx)
  (libraries nx ubench))
+
+
+(executable
+ (name bench_conv)
+ (modules bench_conv)
+ (libraries nx ubench))
