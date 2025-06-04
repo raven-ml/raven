@@ -1,0 +1,3 @@
+(library
+ (name nx_text)
+ (libraries nx nx_core re uutf uucp))
