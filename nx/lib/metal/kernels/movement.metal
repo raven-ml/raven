@@ -362,3 +362,4 @@ kernel void pad_float(device float* out [[buffer(0)]],
         out[gid] = pad_value;
     }
 }
+

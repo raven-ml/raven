@@ -395,6 +395,14 @@ let op_flip t_in dims_to_flip =
     (fun () -> E_flip { t_in; dims_to_flip })
     Nx_native.op_flip Rune_metal.op_flip t_in dims_to_flip
 
+(* TODO: Add when backend interface includes op_unfold
+let op_unfold t_in ~kernel_size ~stride ~dilation ~padding =
+  match t_in with
+  | Cpu_tensor t -> Cpu_tensor (Nx_native.op_unfold t ~kernel_size ~stride ~dilation ~padding)
+  | Metal_tensor t -> Metal_tensor (Rune_metal.op_unfold t ~kernel_size ~stride ~dilation ~padding)
+  | Symbolic_tensor _ -> failwith "Cannot unfold symbolic tensor"
+*)
+
 (* Pad operation (needs special handling for fill_value) *)
 let op_pad t_in padding_config fill_value =
   try Effect.perform (E_pad { t_in; padding_config; fill_value })
@@ -524,3 +532,17 @@ let op_threefry key ctr =
   binary_op
     (fun () -> E_threefry { key; ctr })
     Nx_native.op_threefry Rune_metal.op_threefry key ctr
+
+(* Unfold operation *)
+let op_unfold t_in ~kernel_size ~stride ~dilation ~padding =
+  match t_in with
+  | Cpu_tensor t -> Cpu_tensor (Nx_native.op_unfold t ~kernel_size ~stride ~dilation ~padding)
+  | Metal_tensor t -> Metal_tensor (Rune_metal.op_unfold t ~kernel_size ~stride ~dilation ~padding)
+  | Symbolic_tensor _ -> failwith "todo: op_unfold for symbolic tensors"
+
+(* Fold operation *)
+let op_fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
+  match t_in with
+  | Cpu_tensor t -> Cpu_tensor (Nx_native.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
+  | Metal_tensor t -> Metal_tensor (Rune_metal.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
+  | Symbolic_tensor _ -> failwith "todo: op_fold for symbolic tensors"

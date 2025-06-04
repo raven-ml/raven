@@ -208,3 +208,9 @@ let op_scatter data_template indices updates axis =
   Ops_special.scatter data_template.context data_template indices updates axis
 
 let op_threefry key counter = Ops_special.threefry key.context key counter
+
+let op_unfold t ~kernel_size ~stride ~dilation ~padding =
+  Ops_im2col.op_unfold t.context t ~kernel_size ~stride ~dilation ~padding
+
+let op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding =
+  Ops_im2col.op_fold t.context t ~output_size ~kernel_size ~stride ~dilation ~padding

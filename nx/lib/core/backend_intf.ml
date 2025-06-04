@@ -196,4 +196,29 @@ module type S = sig
   (** Scatter [updates] into a new tensor shaped like [data_template] along
       [axis] using [indices]. Returns a new tensor. If multiple updates target
       the same index, the last one typically wins. *)
+
+  val op_unfold :
+    ('a, 'b) t ->
+    kernel_size:int array ->
+    stride:int array ->
+    dilation:int array ->
+    padding:(int * int) array ->
+    ('a, 'b) t
+  (** Unfold (im2col) operation. Extracts sliding local blocks from a 
+      batched input tensor. For an input of shape (N, C, *spatial_dims),
+      produces output of shape (N, C * prod(kernel_size), L) where L is
+      the number of blocks. Works for any number of spatial dimensions. *)
+
+  val op_fold :
+    ('a, 'b) t ->
+    output_size:int array ->
+    kernel_size:int array ->
+    stride:int array ->
+    dilation:int array ->
+    padding:(int * int) array ->
+    ('a, 'b) t
+  (** Fold (col2im) operation. Combines an array of sliding local blocks 
+      into a tensor. For an input of shape (N, C * prod(kernel_size), L),
+      produces output of shape (N, C, *output_size). Inverse of unfold.
+      Overlapping values are summed. Works for any number of spatial dimensions. *)
 end

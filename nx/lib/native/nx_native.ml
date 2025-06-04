@@ -701,3 +701,9 @@ let op_scatter data_template_t indices_t updates_t axis =
       (* Out of bounds indices are silently ignored *)
     done;
     output_t
+
+let op_unfold x ~kernel_size ~stride ~dilation ~padding =
+  Ops_im2col.unfold x.context x ~kernel_size ~stride ~dilation ~padding
+
+let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
+  Ops_im2col.fold x.context x ~output_size ~kernel_size ~stride ~dilation ~padding
