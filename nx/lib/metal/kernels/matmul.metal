@@ -80,6 +80,8 @@ kernel void matmul_float(device float* out [[buffer(0)]],
 }
 
 // Matrix multiplication kernel for double
+// NOTE: Commented out because Metal doesn't support double on most hardware
+/*
 kernel void matmul_double(device double* out [[buffer(0)]],
                          device const double* a [[buffer(1)]],
                          device const double* b [[buffer(2)]],
@@ -148,6 +150,7 @@ kernel void matmul_double(device double* out [[buffer(0)]],
     uint out_idx = batch_idx * (m * n) + row * n + col;
     out[out_idx] = sum;
 }
+*/
 
 // Matrix multiplication kernel for int
 kernel void matmul_int(device int* out [[buffer(0)]],

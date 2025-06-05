@@ -35,6 +35,13 @@ val unravel_index : int -> t -> int array
 
     @raise Invalid_argument if offset out of bounds *)
 
+val unravel_index_into : int -> t -> int array -> unit
+(** [unravel_index_into offset shape result] writes indices into result array.
+
+    In-place version to avoid allocations in loops.
+
+    @raise Invalid_argument if offset out of bounds *)
+
 (** {2 Shape Manipulation} *)
 
 val resolve_neg_one : t -> int array -> t
@@ -53,6 +60,11 @@ val broadcast_index : int array -> t -> int array
 (** [broadcast_index target_indices source_shape] maps indices for broadcasting.
 
     Returns indices in source shape corresponding to target position. *)
+
+val broadcast_index_into : int array -> t -> int array -> unit
+(** [broadcast_index_into target_indices source_shape result] writes broadcast indices into result array.
+
+    In-place version to avoid allocations in loops. *)
 
 (** {2 Pretty Printing} *)
 

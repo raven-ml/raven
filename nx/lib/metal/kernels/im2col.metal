@@ -317,6 +317,8 @@ kernel void fold_int(device int* out [[buffer(0)]],
 }
 
 // Double versions of unfold/fold
+// NOTE: Commented out because Metal doesn't support double on most hardware
+/*
 kernel void unfold_double(device double* out [[buffer(0)]],
                          device const double* in [[buffer(1)]],
                          constant uint* in_shape [[buffer(2)]],
@@ -611,4 +613,4 @@ kernel void fold_long(device long* out [[buffer(0)]],
         out_offset = out_offset * padded_size[i] + out_coords[i];
     }
     out[out_offset] = sum;
-}
+}*/

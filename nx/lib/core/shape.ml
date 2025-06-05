@@ -70,6 +70,46 @@ let unravel_index k shape =
         ~hint:"this indicates an issue with k or logic" ();
     idx
 
+let unravel_index_into k shape result =
+  let n = Array.length shape in
+  if n = 0 then (
+    if k <> 0 then
+      Error.invalid ~op:"unravel_index_into" ~what:"k"
+        ~reason:(Printf.sprintf "%d out of bounds for scalar" k)
+        ()
+    (* else: k=0 for scalar, result stays empty *))
+  else if Array.exists (( = ) 0) shape then (
+    (* zero-size tensor; only k=0 is allowed *)
+    if k = 0 then
+      for i = 0 to n - 1 do result.(i) <- 0 done
+    else
+      Error.invalid ~op:"unravel_index_into" ~what:"k"
+        ~reason:(Printf.sprintf "%d > 0 for zero-size shape" k)
+        ())
+  else
+    let total_elements = numel shape in
+    if k < 0 || k >= total_elements then
+      Error.invalid ~op:"unravel_index_into" ~what:"k"
+        ~reason:
+          (Printf.sprintf "%d out of bounds for shape (size %d)" k
+             total_elements)
+        ()
+    else
+      let temp_k = ref k in
+      for i = n - 1 downto 1 do
+        let dim_size = shape.(i) in
+        result.(i) <- !temp_k mod dim_size;
+        temp_k := !temp_k / dim_size
+      done;
+      result.(0) <- !temp_k;
+
+      (* sanity check for the leftmost index *)
+      if result.(0) >= shape.(0) then
+        Error.invalid ~op:"unravel_index_into"
+          ~what:(Printf.sprintf "calculated result.(0)=%d" result.(0))
+          ~reason:(Printf.sprintf "out of bounds for shape.(0)=%d" shape.(0))
+          ()
+
 let resolve_neg_one current_shape new_shape_spec =
   let new_shape_spec_l = Array.to_list new_shape_spec in
   let current_numel = numel current_shape in
@@ -141,5 +181,17 @@ let to_string shape =
     Array.map string_of_int shape |> Array.to_list |> String.concat ","
   in
   Printf.sprintf "[%s]" shape_str
+
+let broadcast_index_into target_multi_idx source_shape result =
+  let target_ndim = Array.length target_multi_idx in
+  let source_ndim = Array.length source_shape in
+  for i = 0 to source_ndim - 1 do
+    let target_idx_pos = target_ndim - source_ndim + i in
+    let source_idx_pos = i in
+    if source_idx_pos < 0 || target_idx_pos < 0 then ()
+    else if source_shape.(source_idx_pos) = 1 then
+      result.(source_idx_pos) <- 0
+    else result.(source_idx_pos) <- target_multi_idx.(target_idx_pos)
+  done
 
 let pp fmt shape = Format.fprintf fmt "%s" (to_string shape)

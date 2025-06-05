@@ -12,8 +12,11 @@ if [ ! -d "$KERNELS_DIR" ]; then
     exit 1
 fi
 
-# Concatenate all Metal source files
-cat $KERNELS_DIR/*.metal > "$SCRIPT_DIR/all_kernels.metal"
+# Concatenate all Metal source files with newlines between them
+for f in $KERNELS_DIR/*.metal; do
+    cat "$f"
+    echo  # Add newline between files
+done > "$SCRIPT_DIR/all_kernels.metal"
 
 # Convert to C string
 echo '#include <caml/mlvalues.h>' > "$OUTPUT_C"
