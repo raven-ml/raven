@@ -1,0 +1,14 @@
+(library
+ (name nx_cblas)
+ (public_name nx.cblas)
+ (libraries nx_core)
+ (foreign_stubs
+  (language c)
+  (names nx_cblas_stubs nx_cblas_ops_impl)
+  (flags (:include c_flags.sexp)))
+ (c_library_flags (:include c_library_flags.sexp)))
+
+(rule
+ (targets c_library_flags.sexp c_flags.sexp)
+ (action
+  (run config/discover.exe)))

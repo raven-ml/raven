@@ -42,6 +42,8 @@
   dune
   ; nx.io
   camlzip
+  ; nx.cblas (uses dune-configurator to find BLAS)
+  (dune-configurator :build)
   (alcotest :with-test))
  (tags
   (numerical-computation tensor-library machine-learning)))
