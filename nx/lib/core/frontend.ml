@@ -3800,7 +3800,11 @@ module Make (B : Backend_intf.S) = struct
     
     (* Reshape to separate channels and kernel elements *)
     let num_blocks = (shape x_unfolded).(Array.length (shape x_unfolded) - 1) in
-    let x_reshaped = reshape (Array.concat [prefix_shape; [| channels; kernel_elements; num_blocks |]]) x_unfolded in
+    (* For max/avg pooling, we need to handle the unfolded tensor correctly.
+       x_unfolded has shape [batch, channels * kernel_elements, num_blocks]
+       We want to reshape to [batch, channels, kernel_elements, num_blocks] *)
+    let batch_size = if Array.length prefix_shape >= 1 then prefix_shape.(0) else 1 in
+    let x_reshaped = reshape [| batch_size; channels; kernel_elements; num_blocks |] x_unfolded in
     
     (* Compute sum over kernel elements *)
     let sum_pooled = sum x_reshaped ~axes:[| Array.length (shape x_reshaped) - 2 |] in
@@ -3860,7 +3864,11 @@ module Make (B : Backend_intf.S) = struct
     
     (* Reshape to separate channels and kernel elements *)
     let num_blocks = (shape x_unfolded).(Array.length (shape x_unfolded) - 1) in
-    let x_reshaped = reshape (Array.concat [prefix_shape; [| channels; kernel_elements; num_blocks |]]) x_unfolded in
+    (* For max/avg pooling, we need to handle the unfolded tensor correctly.
+       x_unfolded has shape [batch, channels * kernel_elements, num_blocks]
+       We want to reshape to [batch, channels, kernel_elements, num_blocks] *)
+    let batch_size = if Array.length prefix_shape >= 1 then prefix_shape.(0) else 1 in
+    let x_reshaped = reshape [| batch_size; channels; kernel_elements; num_blocks |] x_unfolded in
     
     (* Compute max over kernel elements *)
     let max_pooled = B.op_reduce_max x_reshaped ~axes:[| Array.length (shape x_reshaped) - 2 |] ~keepdims:false in

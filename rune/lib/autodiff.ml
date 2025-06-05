@@ -766,6 +766,50 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
             let _twg_ctr = get_or_init_twg ctr_val in
             let _twg_res = get_or_init_twg result_val in
             continue k result_val)
+    | E_unfold { t_in = t_in_val; kernel_size; stride; dilation; padding } ->
+        Some
+          (fun k ->
+            let result_val = op_unfold t_in_val ~kernel_size ~stride ~dilation ~padding in
+            let twg_in = get_or_init_twg t_in_val in
+            let twg_res = get_or_init_twg result_val in
+            let original_forward_val = continue k result_val in
+            let d_loss_d_result = grad_of twg_res in
+            (* Gradient of unfold is fold operation *)
+            let input_shape = T.shape (value_of twg_in) in
+            let num_spatial_dims = Array.length kernel_size in
+            let output_size = Array.sub input_shape ((Array.length input_shape) - num_spatial_dims) num_spatial_dims in
+            let grad_contrib_in = Nx_rune.op_fold d_loss_d_result ~output_size ~kernel_size ~stride ~dilation ~padding in
+            twg_in.bv <- T.add twg_in.bv grad_contrib_in;
+            original_forward_val)
+    | E_fold { t_in = t_in_val; output_size; kernel_size; stride; dilation; padding } ->
+        Some
+          (fun k ->
+            let result_val = op_fold t_in_val ~output_size ~kernel_size ~stride ~dilation ~padding in
+            let twg_in = get_or_init_twg t_in_val in
+            let twg_res = get_or_init_twg result_val in
+            let original_forward_val = continue k result_val in
+            let d_loss_d_result = grad_of twg_res in
+            (* Gradient of fold is unfold operation *)
+            let grad_contrib_in = Nx_rune.op_unfold d_loss_d_result ~kernel_size ~stride ~dilation ~padding in
+            twg_in.bv <- T.add twg_in.bv grad_contrib_in;
+            original_forward_val)
+    | E_matmul { a = a_val; b = b_val } ->
+        Some
+          (fun k ->
+            let result_val = op_matmul a_val b_val in
+            let twg_a = get_or_init_twg a_val in
+            let twg_b = get_or_init_twg b_val in
+            let twg_res = get_or_init_twg result_val in
+            let original_forward_val = continue k result_val in
+            let d_loss_d_result = grad_of twg_res in
+            (* For C = A @ B:
+               dL/dA = dL/dC @ B^T
+               dL/dB = A^T @ dL/dC *)
+            let grad_contrib_to_a = T.matmul d_loss_d_result (T.transpose b_val) in
+            let grad_contrib_to_b = T.matmul (T.transpose a_val) d_loss_d_result in
+            twg_a.bv <- T.add twg_a.bv grad_contrib_to_a;
+            twg_b.bv <- T.add twg_b.bv grad_contrib_to_b;
+            original_forward_val)
     | _ -> None
   in
 

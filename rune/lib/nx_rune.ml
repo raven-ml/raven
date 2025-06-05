@@ -219,6 +219,28 @@ type _ Effect.t +=
       t_in : ('a, 'b) t;
     }
       -> ('a, 'b) t Effect.t
+  | E_unfold : {
+      t_in : ('a, 'b) t;
+      kernel_size : int array;
+      stride : int array;
+      dilation : int array;
+      padding : (int * int) array;
+    }
+      -> ('a, 'b) t Effect.t
+  | E_fold : {
+      t_in : ('a, 'b) t;
+      output_size : int array;
+      kernel_size : int array;
+      stride : int array;
+      dilation : int array;
+      padding : (int * int) array;
+    }
+      -> ('a, 'b) t Effect.t
+  | E_matmul : {
+      a : ('a, 'b) t;
+      b : ('a, 'b) t;
+    }
+      -> ('a, 'b) t Effect.t
 
 (* Helper functions for different operation types *)
 

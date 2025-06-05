@@ -1,0 +1,5 @@
+(executables
+ (public_names test_conv test_mnist_simple)
+ (names test_conv test_mnist_simple)
+ (package rune)
+ (libraries rune))

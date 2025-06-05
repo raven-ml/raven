@@ -137,7 +137,7 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
     let epoch_correct = ref 0 in
     let epoch_samples = ref 0 in
 
-    for batch_idx = 0 to num_batches - 1 do
+    for batch_idx = 0 to Stdlib.min 20 (num_batches - 1) do  (* Just train on first 20 batches for testing *)
       let x_batch, y_batch =
         get_batch x_train y_train_onehot batch_size batch_idx
       in
@@ -167,10 +167,12 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
       epoch_correct := !epoch_correct + correct_count;
       epoch_samples := !epoch_samples + dim 0 x_batch;
 
-      (* Update parameters *)
+      (* Update parameters with gradient clipping *)
       List.combine params grad_params
       |> List.iter (fun (param, grad) ->
-             isub param (mul (scalar ctx Float32 learning_rate) grad) |> ignore);
+             (* Clip gradients to prevent NaN *)
+             let grad_clipped = clip grad ~min:(-.1.0) ~max:1.0 in
+             isub param (mul (scalar ctx Float32 learning_rate) grad_clipped) |> ignore);
 
       (* Print progress *)
       Printf.printf "Epoch %d, Batch %d/%d: Loss = %.4f\n%!" epoch batch_idx
@@ -224,9 +226,9 @@ let () =
 
   (* Training parameters *)
   let batch_size = 64 in
-  let learning_rate = 0.01 in
+  let learning_rate = 0.001 in
   (* Lower learning rate for CNN *)
-  let epochs = 10 in
+  let epochs = 1 in
 
   Printf.printf "Starting LeNet training on MNIST...\n";
   Printf.printf "Training samples: %d, Test samples: %d\n%!" (dim 0 x_train)
