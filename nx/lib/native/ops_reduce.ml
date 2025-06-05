@@ -17,19 +17,17 @@ let reduction_output_shape (in_shape : int array) (axes : int list)
   done;
   Array.of_list (List.rev !out_dims)
 
-(* Creates an initial multi-dimensional index for the input tensor based on an
-   output index and the axes being reduced. *)
-let initial_input_md_index (out_md_index : int array) (axes : int list)
-    (rank : int) : int array =
-  let in_md_index = Array.make rank 0 in
+(* Initialize the input multi-dimensional index based on an output index and the
+   axes being reduced. Works in-place to avoid allocations. *)
+let init_input_md_index_inplace (out_md_index : int array) (in_md_index : int array)
+    (axes : int list) (rank : int) : unit =
   if Array.length out_md_index = rank then (
     (* keepdims = true *)
     for d = 0 to rank - 1 do
       if List.mem d axes then in_md_index.(d) <- 0
       else in_md_index.(d) <- out_md_index.(d)
-    done;
-    in_md_index)
-  else
+    done)
+  else (
     (* keepdims = false *)
     let non_reduced_pos = ref 0 in
     for d = 0 to rank - 1 do
@@ -37,8 +35,7 @@ let initial_input_md_index (out_md_index : int array) (axes : int list)
       else (
         in_md_index.(d) <- out_md_index.(!non_reduced_pos);
         incr non_reduced_pos)
-    done;
-    in_md_index
+    done)
 
 (* Increments the input multi-dimensional index, primarily along the reduction
    axes. *)
@@ -89,10 +86,17 @@ let kernel_sum_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
       (List.map (fun ax -> if ax < 0 then ax + rank else ax) axes)
   in
 
+  (* Pre-allocate work arrays to avoid allocations in loop *)
+  let out_md_index = Array.make (Array.length out_shape) 0 in
+  let in_md_index = Array.make rank 0 in
+  
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = Shape.unravel_index k out_shape in
+    Shape.unravel_index_into k out_shape out_md_index;
     let current_sum = ref (Dtype.zero (dtype out)) in
-    let in_md_index = initial_input_md_index out_md_index axes rank in
+    
+    (* Initialize in_md_index based on out_md_index *)
+    init_input_md_index_inplace out_md_index in_md_index axes rank;
+    
     let continue_reduction = ref true in
     while !continue_reduction do
       let a_linear_idx = Shape.ravel_index in_md_index a_strides in
@@ -119,8 +123,9 @@ let kernel_sum_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
    else
      let a_shape = shape a in
      let a_strides = strides a in
+     let md_index = Array.make (Array.length a_shape) 0 in
      for k = start_linear_idx to end_linear_idx - 1 do
-       let md_index = Shape.unravel_index k a_shape in
+       Shape.unravel_index_into k a_shape md_index;
        let buf_idx = Shape.ravel_index md_index a_strides in
        let v = Array1.unsafe_get a_buf (a_offset + buf_idx) in
        partial_sum := add_dtype (dtype a) !partial_sum v
@@ -204,10 +209,17 @@ let kernel_prod_axis (type a b) (a : (a, b) t) (out : (a, b) t)
       (List.map (fun ax -> if ax < 0 then ax + rank else ax) axes)
   in
 
+  (* Pre-allocate work arrays to avoid allocations in loop *)
+  let out_md_index = Array.make (Array.length out_shape) 0 in
+  let in_md_index = Array.make rank 0 in
+  
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = Shape.unravel_index k out_shape in
+    Shape.unravel_index_into k out_shape out_md_index;
     let current_prod = ref (Dtype.one (dtype out)) in
-    let in_md_index = initial_input_md_index out_md_index axes rank in
+    
+    (* Initialize in_md_index based on out_md_index *)
+    init_input_md_index_inplace out_md_index in_md_index axes rank;
+    
     let continue_reduction = ref true in
     while !continue_reduction do
       let a_linear_idx = Shape.ravel_index in_md_index a_strides in
@@ -234,8 +246,9 @@ let kernel_prod_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
    else
      let a_shape = shape a in
      let a_strides = strides a in
+     let md_index = Array.make (Array.length a_shape) 0 in
      for k = start_linear_idx to end_linear_idx - 1 do
-       let md_index = Shape.unravel_index k a_shape in
+       Shape.unravel_index_into k a_shape md_index;
        let buf_idx = Shape.ravel_index md_index a_strides in
        let v = Array1.unsafe_get a_buf (a_offset + buf_idx) in
        partial_prod := mul_dtype (dtype a) !partial_prod v
@@ -329,11 +342,15 @@ let kernel_min_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
       (List.map (fun ax -> if ax < 0 then ax + rank else ax) axes)
   in
 
+  (* Pre-allocate work arrays to avoid allocations in loop *)
+  let out_md_index = Array.make (Array.length out_shape) 0 in
+  let in_md_index = Array.make rank 0 in
+  
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = Shape.unravel_index k out_shape in
+    Shape.unravel_index_into k out_shape out_md_index;
     let current_min = ref None in
     let is_first = ref true in
-    let in_md_index = initial_input_md_index out_md_index axes rank in
+    init_input_md_index_inplace out_md_index in_md_index axes rank;
     let continue_reduction = ref true in
 
     while !continue_reduction do
@@ -381,8 +398,9 @@ let kernel_min_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
    else
      let a_shape = shape a in
      let a_strides = strides a in
+     let md_index = Array.make (Array.length a_shape) 0 in
      for k = start_linear_idx to end_linear_idx - 1 do
-       let md_index = Shape.unravel_index k a_shape in
+       Shape.unravel_index_into k a_shape md_index;
        let buf_idx = Shape.ravel_index md_index a_strides in
        let v = Array1.unsafe_get a_buf (a_offset + buf_idx) in
        if !is_first then (
@@ -512,11 +530,15 @@ let kernel_max_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
   in
   let min_identity_val = min_identity (dtype a) in
 
+  (* Pre-allocate work arrays to avoid allocations in loop *)
+  let out_md_index = Array.make (Array.length out_shape) 0 in
+  let in_md_index = Array.make rank 0 in
+  
   for k = start_out_idx to end_out_idx - 1 do
-    let out_md_index = Shape.unravel_index k out_shape in
+    Shape.unravel_index_into k out_shape out_md_index;
     let current_max = ref min_identity_val in
     let is_first = ref true in
-    let in_md_index = initial_input_md_index out_md_index axes rank in
+    init_input_md_index_inplace out_md_index in_md_index axes rank;
     let continue_reduction = ref true in
     let has_value = ref false in
 
@@ -564,8 +586,9 @@ let kernel_max_partial (type a b) (a : (a, b) t) (start_linear_idx : int)
    else
      let a_shape = shape a in
      let a_strides = strides a in
+     let md_index = Array.make (Array.length a_shape) 0 in
      for k = start_linear_idx to end_linear_idx - 1 do
-       let md_index = Shape.unravel_index k a_shape in
+       Shape.unravel_index_into k a_shape md_index;
        let buf_idx = Shape.ravel_index md_index a_strides in
        let v = Array1.unsafe_get a_buf (a_offset + buf_idx) in
        has_value := true;

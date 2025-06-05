@@ -68,14 +68,17 @@ let kernel_where_float16 (cond : (int, uint8_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -151,14 +154,17 @@ let kernel_where_float32 (cond : (int, uint8_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -234,14 +240,17 @@ let kernel_where_float64 (cond : (int, uint8_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -316,14 +325,17 @@ let kernel_where_int8 (cond : (int, uint8_elt) t) (x : (int, int8_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -398,14 +410,17 @@ let kernel_where_uint8 (cond : (int, uint8_elt) t) (x : (int, uint8_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -480,14 +495,17 @@ let kernel_where_int16 (cond : (int, uint8_elt) t) (x : (int, int16_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -562,14 +580,17 @@ let kernel_where_uint16 (cond : (int, uint8_elt) t) (x : (int, uint16_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -644,14 +665,17 @@ let kernel_where_int32 (cond : (int, uint8_elt) t) (x : (int32, int32_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -726,14 +750,17 @@ let kernel_where_int64 (cond : (int, uint8_elt) t) (x : (int64, int64_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -808,14 +835,17 @@ let kernel_where_int (cond : (int, uint8_elt) t) (x : (int, int_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -891,14 +921,17 @@ let kernel_where_nativeint (cond : (int, uint8_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -974,14 +1007,17 @@ let kernel_where_complex32 (cond : (int, uint8_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in
@@ -1057,14 +1093,17 @@ let kernel_where_complex64 (cond : (int, uint8_elt) t)
       incr k
     done)
   else
-    (* Pre-allocate work array to avoid allocations in loop *)
+    (* Pre-allocate work arrays to avoid allocations in loop *)
     let out_multi_idx = Array.make (Array.length out_s) 0 in
+    let cond_multi_idx = Array.make (Array.length cond_s) 0 in
+    let x_multi_idx = Array.make (Array.length x_s) 0 in
+    let y_multi_idx = Array.make (Array.length y_s) 0 in
     for k = start_idx to end_idx - 1 do
       Shape.unravel_index_into k out_s out_multi_idx;
 
-      let cond_multi_idx = Shape.broadcast_index out_multi_idx cond_s in
-      let x_multi_idx = Shape.broadcast_index out_multi_idx x_s in
-      let y_multi_idx = Shape.broadcast_index out_multi_idx y_s in
+      Shape.broadcast_index_into out_multi_idx cond_s cond_multi_idx;
+      Shape.broadcast_index_into out_multi_idx x_s x_multi_idx;
+      Shape.broadcast_index_into out_multi_idx y_s y_multi_idx;
 
       let cond_phys_idx = Shape.ravel_index cond_multi_idx cond_st + cond_off in
       let x_phys_idx = Shape.ravel_index x_multi_idx x_st + x_off in

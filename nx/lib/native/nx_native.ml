@@ -593,10 +593,14 @@ let op_gather data_t indices_t axis =
     let data_view = data_t.view in
     let indices_view = indices_t.view in
 
+    (* Pre-allocate work arrays *)
+    let md_idx = Array.make (Array.length output_shape) 0 in
+    let src_idx = Array.make (Array.length output_shape) 0 in
+    
     (* Process each output element *)
     for linear_idx = 0 to output_numel - 1 do
       (* Get multi-dimensional index in output/indices *)
-      let md_idx = Shape.unravel_index linear_idx output_shape in
+      Shape.unravel_index_into linear_idx output_shape md_idx;
 
       (* Read the index value from indices tensor *)
       let indices_offset = View.linear_index indices_view md_idx in
@@ -614,7 +618,7 @@ let op_gather data_t indices_t axis =
       let clamped_idx = max 0 (min (data_size_at_axis - 1) normalized_idx) in
 
       (* Build source index for data tensor *)
-      let src_idx = Array.copy md_idx in
+      Array.blit md_idx 0 src_idx 0 (Array.length md_idx);
       src_idx.(axis) <- clamped_idx;
 
       (* Copy value from data to output *)
@@ -667,10 +671,14 @@ let op_scatter data_template_t indices_t updates_t axis =
     let indices_buffer = Internal.buffer indices_t in
     let indices_view = indices_t.view in
 
+    (* Pre-allocate work arrays *)
+    let md_idx = Array.make (Array.length updates_shape) 0 in
+    let dst_idx = Array.make (Array.length updates_shape) 0 in
+    
     (* Process each update *)
     for linear_idx = 0 to updates_numel - 1 do
       (* Get multi-dimensional index in updates/indices *)
-      let md_idx = Shape.unravel_index linear_idx updates_shape in
+      Shape.unravel_index_into linear_idx updates_shape md_idx;
 
       (* Read the target index from indices tensor *)
       let indices_offset = View.linear_index indices_view md_idx in
@@ -687,7 +695,7 @@ let op_scatter data_template_t indices_t updates_t axis =
       (* Check bounds *)
       if normalized_idx >= 0 && normalized_idx < template_size_at_axis then (
         (* Build destination index *)
-        let dst_idx = Array.copy md_idx in
+        Array.blit md_idx 0 dst_idx 0 (Array.length md_idx);
         dst_idx.(axis) <- normalized_idx;
 
         (* Write update value to output if destination is valid *)
