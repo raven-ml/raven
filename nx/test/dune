@@ -1,10 +1,16 @@
-(tests
- (names
-  test_nx_basics
-  test_nx_indexing
-  test_nx_linalg
-  test_nx_manipulation
-  test_nx_ops
-  test_nx_sanity
-  test_nx_sorting)
- (libraries nx alcotest test_nx_support))
+(test
+ (name test_backend_native)
+ (modules test_backend_native)
+ (libraries nx_native alcotest test_nx_unit))
+
+(test
+ (name test_backend_cblas)
+ (modules test_backend_cblas)
+ (libraries nx_cblas alcotest test_nx_unit))
+
+(test
+ (name test_backend_metal)
+ (modules test_backend_metal)
+ (libraries nx_metal alcotest test_nx_unit)
+ (build_if
+  (= %{system} "macosx")))

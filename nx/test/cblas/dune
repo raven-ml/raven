@@ -1,3 +1,0 @@
-(test
- (name test_nx_cblas)
- (libraries nx.cblas nx.core alcotest))

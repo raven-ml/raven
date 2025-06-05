@@ -220,6 +220,9 @@ external reduce_sum :
 type ('a, 'b) buffer = ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
 type context = unit
 
+(* Create context *)
+let create_context () = ()
+
 type ('a, 'b) t = {
   context : context;
   dtype : ('a, 'b) Dtype.t;
@@ -339,16 +342,16 @@ let op_cmpne x y = cmp_op cmpne x y
 
 (* Reductions *)
 let op_reduce_sum ~axes ~keepdims x =
-  match axes with
-  | None ->
-      let result_shape =
-        if keepdims then Array.make (View.ndim x.view) 1 else [||]
-      in
-      let result = make_tensor x result_shape in
-      reduce_sum (View.ndim x.view) (View.shape x.view) x.buffer
-        (View.strides x.view) (View.offset x.view) keepdims result.buffer;
-      result
-  | Some _ -> failwith "partial reduction not implemented"
+  if Array.length axes = 0 then
+    (* Full reduction *)
+    let result_shape =
+      if keepdims then Array.make (View.ndim x.view) 1 else [||]
+    in
+    let result = make_tensor x result_shape in
+    reduce_sum (View.ndim x.view) (View.shape x.view) x.buffer
+      (View.strides x.view) (View.offset x.view) keepdims result.buffer;
+    result
+  else failwith "partial reduction not implemented"
 
 (* Movement operations *)
 let op_expand x shape = { x with view = View.expand x.view shape }
@@ -485,28 +488,28 @@ let op_where cond x y =
 
 (* Reductions *)
 let op_reduce_max ~axes ~keepdims x =
-  match axes with
-  | None ->
-      let result_shape =
-        if keepdims then Array.make (View.ndim x.view) 1 else [||]
-      in
-      let result = make_tensor x result_shape in
-      reduce_max (View.ndim x.view) (View.shape x.view) x.buffer
-        (View.strides x.view) (View.offset x.view) keepdims result.buffer;
-      result
-  | Some _ -> failwith "partial reduction not implemented"
+  if Array.length axes = 0 then
+    (* Full reduction *)
+    let result_shape =
+      if keepdims then Array.make (View.ndim x.view) 1 else [||]
+    in
+    let result = make_tensor x result_shape in
+    reduce_max (View.ndim x.view) (View.shape x.view) x.buffer
+      (View.strides x.view) (View.offset x.view) keepdims result.buffer;
+    result
+  else failwith "partial reduction not implemented"
 
 let op_reduce_prod ~axes ~keepdims x =
-  match axes with
-  | None ->
-      let result_shape =
-        if keepdims then Array.make (View.ndim x.view) 1 else [||]
-      in
-      let result = make_tensor x result_shape in
-      reduce_prod (View.ndim x.view) (View.shape x.view) x.buffer
-        (View.strides x.view) (View.offset x.view) keepdims result.buffer;
-      result
-  | Some _ -> failwith "partial reduction not implemented"
+  if Array.length axes = 0 then
+    (* Full reduction *)
+    let result_shape =
+      if keepdims then Array.make (View.ndim x.view) 1 else [||]
+    in
+    let result = make_tensor x result_shape in
+    reduce_prod (View.ndim x.view) (View.shape x.view) x.buffer
+      (View.strides x.view) (View.offset x.view) keepdims result.buffer;
+    result
+  else failwith "partial reduction not implemented"
 
 (* Additional external functions for pad and cast *)
 external pad :

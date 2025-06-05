@@ -11,8 +11,3 @@
  (libraries nx nx_conv ubench unix)
  (instrumentation
   (backend landmarks)))
-
-(test
- (name test_conv)
- (modules test_conv)
- (libraries nx nx_conv alcotest test_nx_support))

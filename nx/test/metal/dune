@@ -1,5 +1,0 @@
-(tests
- (names test_nx_metal test_nx_metal_frontend)
- (build_if
-  (= %{system} "macosx"))
- (libraries nx.metal nx.core alcotest))

@@ -1,0 +1,3 @@
+(library
+ (name test_nx_unit)
+ (libraries nx_core alcotest))

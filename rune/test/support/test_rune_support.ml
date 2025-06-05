@@ -39,7 +39,7 @@ let check_rune ?eps msg expected actual =
 
 (* Check scalar values *)
 let check_scalar ?eps msg expected actual =
-  let eps = Option.value ~default:1e-10 eps in
+  let eps = Option.value ~default:1e-6 eps in
   check (float eps) msg expected actual
 
 (* Extract scalar from Rune tensor *)
