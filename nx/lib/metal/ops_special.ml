@@ -131,6 +131,15 @@ let cast : type a b c d.
       Ops_movement.copy ctx t out;
       out
   | None ->
+      (* Check if source or target types are unsupported *)
+      let is_complex_type : type x y. (x, y) Dtype.t -> bool = function
+        | Dtype.Complex32 -> true
+        | Dtype.Complex64 -> true
+        | _ -> false
+      in
+      if is_complex_type t.Internal.dtype || is_complex_type target_dtype then
+        failwith "Metal backend does not support complex types"
+      else
       let out_size = Internal.numel t in
       let size_bytes = out_size * Internal.sizeof_dtype target_dtype in
       let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
@@ -194,8 +203,13 @@ let gather ctx data indices axis =
   let ndim = Array.length data_shape in
   let axis = if axis < 0 then ndim + axis else axis in
 
-  (* Output shape is indices shape *)
-  let out_shape = indices_shape in
+  (* Output shape: data.shape[:axis] + indices.shape + data.shape[axis+1:] *)
+  let out_shape = 
+    Array.concat [
+      Array.sub data_shape 0 axis;
+      indices_shape;
+      Array.sub data_shape (axis + 1) (ndim - axis - 1)
+    ] in
   let out_size = Array.fold_left ( * ) 1 out_shape in
   let size_bytes = out_size * Internal.sizeof_dtype data.Internal.dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
@@ -215,6 +229,10 @@ let gather ctx data indices axis =
   let inner_size =
     let rec prod i = if i >= ndim then 1 else data_shape.(i) * prod (i + 1) in
     prod (axis + 1)
+  in
+  let outer_size = 
+    let rec prod i = if i >= axis then 1 else data_shape.(i) * prod (i + 1) in
+    prod 0
   in
   let indices_size = Internal.numel indices in
 
@@ -243,6 +261,9 @@ let gather ctx data indices axis =
       let indices_size_val =
         Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int indices_size))
       in
+      let outer_size_val =
+        Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int outer_size))
+      in
 
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp axis_size_val)
@@ -253,8 +274,11 @@ let gather ctx data indices axis =
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp indices_size_val)
         ~length:4 ~index:5;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp outer_size_val)
+        ~length:4 ~index:6;
 
-      let total_work = indices_size * inner_size in
+      let total_work = outer_size * indices_size * inner_size in
       let threads_per_group, num_groups =
         Internal.compute_thread_groups total_work
       in
