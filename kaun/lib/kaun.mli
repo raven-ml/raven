@@ -1,111 +1,153 @@
-(** Kaun – a Flax‑inspired deep‑learning library for OCaml, powered by Rune *)
-
 type ('layout, 'dev) tensor = (float, 'layout) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 type 'dev device = 'dev Rune.device
+type ('layout, 'dev) params
+type model
 
-type ('layout, 'dev) ptree =
-  | Tensor of ('layout, 'dev) tensor
-  | List of ('layout, 'dev) ptree list
-  | Record of (string * ('layout, 'dev) ptree) list
-
-type ('model, 'layout, 'dev) lens = {
-  to_ptree : 'model -> ('layout, 'dev) ptree;
-  of_ptree : ('layout, 'dev) ptree -> 'model;
-}
-
-module Rng : sig
+module Rngs : sig
   type t
 
-  val create : ?seed:int -> unit -> t
-
-  val normal :
-    t ->
-    device:'dev device ->
-    dtype:'layout dtype ->
-    shape:int array ->
-    ('layout, [ `cpu ]) tensor
-
-  val uniform :
-    t ->
-    device:'dev device ->
-    dtype:'layout dtype ->
-    shape:int array ->
-    ('layout, [ `cpu ]) tensor
+  val create : seed:int -> unit -> t
+  val split : t -> t * t
 end
 
-module Activation : sig
-  type ('layout, 'dev) t = ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+val init :
+  model -> rngs:Rngs.t -> ('layout, 'dev) tensor -> ('layout, 'dev) params
 
-  val identity : ('layout, 'dev) t
-  val relu : ('layout, 'dev) t
-  val tanh : ('layout, 'dev) t
-  val sigmoid : ('layout, 'dev) t
-  val elu : float -> ('layout, 'dev) t
-  val leaky_relu : float -> ('layout, 'dev) t
-  val softplus : float -> ('layout, 'dev) t
-end
+val apply :
+  model -> ('layout, 'dev) params -> training:bool -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
 
-module Initializer : sig
-  type ('layout, 'dev) t =
-    Rng.t -> int array -> 'dev device -> 'layout dtype -> ('layout, 'dev) tensor
+val value_and_grad :
+  (('layout, 'dev) params -> ('layout, 'dev) tensor) -> ('layout, 'dev) params -> ('layout, 'dev) tensor * ('layout, 'dev) params
 
-  val constant : float -> ('layout, 'dev) t
-  val glorot_uniform : in_axis:int -> out_axis:int -> ('layout, 'dev) t
-end
+val grad : (('layout, 'dev) params -> ('layout, 'dev) tensor) -> ('layout, 'dev) params -> ('layout, 'dev) params
 
-module Linear : sig
-  type ('layout, 'dev) t
+module Metrics : sig
+  type t
+  type metric
 
-  val init :
-    rng:Rng.t ->
-    ?use_bias:bool ->
-    dtype:(float, 'layout) Rune.dtype ->
-    device:[ `cpu ] Rune.device ->
-    int ->
-    int ->
-    ('layout, 'dev) t
-  (** [init ~rng ?use_bias ~dtype ~device in_features out_features] *)
+  (* Metric constructors *)
+  val avg : string -> metric
+  val sum : string -> metric
+  val accuracy : string -> metric
 
-  val forward :
-    ('layout, 'dev) t -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+  (* Create metrics collection *)
+  val create : metric list -> t
 
+  (* Update with values *)
   val update :
-    lr:float -> ('layout, 'dev) t -> ('layout, 'dev) t -> ('layout, 'dev) t
+    t ->
+    ?loss:('layout, 'dev) tensor ->
+    ?logits:('layout, 'dev) tensor ->
+    ?labels:('layout, 'dev) tensor ->  (* Class indices, not one-hot *)
+    unit ->
+    unit
 
-  val params : ('a, 'b) t -> ('a, 'c) ptree
-  val of_ptree : ('a, 'b) ptree -> ('a, 'c) t
-  val lens : (('a, 'b) t, 'a, 'c) lens
+  (* Get computed values *)
+  val compute : t -> (string * float) list
+  val get : t -> string -> float
+
+  (* Reset all metrics *)
+  val reset : t -> unit
+end
+
+module Dataset : sig
+  type 'a t
+
+  (* Creation *)
+  val of_xy :
+    ('l1, 'dev) tensor * ('l2, 'dev) tensor ->
+    (('l1, 'dev) tensor * ('l2, 'dev) tensor) t
+
+  (* Transformations *)
+  val map : ('a -> 'b) -> 'a t -> 'b t
+  val batch : int -> 'a t -> 'a t
+  val batch_xy : int -> (('l1, 'dev) tensor * ('l2, 'dev) tensor) t -> (('l1, 'dev) tensor * ('l2, 'dev) tensor) t
+  val shuffle : ?seed:int -> 'a t -> 'a t
+
+  (* Iteration *)
+  val iter : ('a -> unit) -> 'a t -> unit
+  val length : 'a t -> int
 end
 
 module Loss : sig
-  type ('layout, 'dev) t = ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+  val softmax_cross_entropy :
+    ('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
 
-  val sigmoid_binary_cross_entropy :
+  val softmax_cross_entropy_with_indices :
+    ('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+
+  val binary_cross_entropy :
+    ('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+
+  val mse :
+    ('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+
+  val mae :
     ('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
 end
 
-module Optimizer : sig
-  type 'op spec
-  type (_, _, _, _) t
+module Initializer : sig
+  type t
 
-  val sgd : lr:float -> [ `sgd ] spec
+  val constant : float -> t
+  val glorot_uniform : in_axis:int -> out_axis:int -> t
+  val normal : mean:float -> std:float -> t
+end
+
+module Layer : sig
+  val conv2d :
+    in_channels:int ->
+    out_channels:int ->
+    ?kernel_size:int * int ->
+    rngs:Rngs.t ->
+    unit ->
+    model
+
+  val linear :
+    in_features:int ->
+    out_features:int ->
+    ?weight_init:Initializer.t ->
+    (* default: glorot_uniform *)
+    ?bias_init:Initializer.t ->
+    (* default: zeros *)
+    rngs:Rngs.t ->
+    unit ->
+    model
+
+  val dropout : rate:float -> rngs:Rngs.t -> unit -> model
+  val batch_norm : num_features:int -> rngs:Rngs.t -> unit -> model
+  val max_pool2d : kernel_size:int * int -> ?stride:int * int -> unit -> model
+  val avg_pool2d : kernel_size:int * int -> ?stride:int * int -> unit -> model
+  val flatten : unit -> model
+  val relu : unit -> model
+  val sigmoid : unit -> model
+  val tanh : unit -> model
+  val sequential : model list -> model
+end
+
+module Optimizer : sig
+  type ('layout, 'dev) t
+  type transform
+
+  (* Optimizers *)
+  val sgd : lr:float -> ?momentum:float -> unit -> transform
 
   val adam :
+    lr:float -> ?beta1:float -> ?beta2:float -> ?eps:float -> unit -> transform
+
+  val adamw :
     lr:float ->
     ?beta1:float ->
     ?beta2:float ->
     ?eps:float ->
     ?weight_decay:float ->
     unit ->
-    [ `adam ] spec
+    transform
 
-  val init : lens:('m, 'l, 'd) lens -> 'm -> 'op spec -> ('op, 'm, 'l, 'd) t
-  val update : ('op, 'a, 'b, 'c) t -> ('b, 'c) ptree -> unit
+  (* Create optimizer with transform *)
+  val create : transform -> ('layout, 'dev) t
+
+  (* Takes parameters and gradients, updates the parameters in-place *)
+  val update : ('layout, 'dev) t -> ('layout, 'dev) params -> ('layout, 'dev) params -> unit
 end
-
-val value_and_grad :
-  lens:('model, 'l, 'd) lens ->
-  ('model -> ('layout, 'dev) tensor) ->
-  'model ->
-  ('layout, 'dev) tensor * ('l, 'd) ptree

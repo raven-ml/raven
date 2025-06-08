@@ -82,6 +82,22 @@
   (alcotest :with-test)))
 
 (package
+ (name kaun)
+ (synopsis "???")
+ (description "???")
+ (depends
+  (ocaml
+   (>= 5.0.0))
+  dune
+  (rune
+   (= :version))
+  (nx-datasets
+   (= :version))
+  (alcotest :with-test))
+ (tags
+  (neural-networks machine-learning deep-learning)))
+
+(package
  (name sowilo)
  (synopsis "Computer vision extensions for Rune")
  (description

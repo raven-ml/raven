@@ -1,3 +1,4 @@
 (library
  (name kaun)
+ (public_name kaun)
  (libraries rune))

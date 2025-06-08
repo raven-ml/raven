@@ -1,3 +1,4 @@
+(* Core types *)
 type ('layout, 'dev) tensor = (float, 'layout) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 type 'dev device = 'dev Rune.device
@@ -8,11 +9,40 @@ type ('layout, 'dev) ptree =
   | List of ('layout, 'dev) ptree list
   | Record of (string * ('layout, 'dev) ptree) list
 
-type ('model, 'layout, 'dev) lens = {
-  to_ptree : 'model -> ('layout, 'dev) ptree;
-  of_ptree : ('layout, 'dev) ptree -> 'model;
-}
+(* Params type is now parameterized by layout and device *)
+type ('layout, 'dev) params = ('layout, 'dev) ptree
 
+(* Rngs module *)
+module Rngs = struct
+  type t = int
+
+  let create ~seed () = seed
+
+  let split t =
+    let new_seed1 = (t * 1664525) + 1013904223 in
+    let new_seed2 = (new_seed1 * 1664525) + 1013904223 in
+    (new_seed1, new_seed2)
+end
+
+(* Model type - stores the structure and initialization logic *)
+type model =
+  | Model : {
+      init :
+        'layout 'dev.
+        rngs:Rngs.t -> ('layout, 'dev) tensor -> ('layout, 'dev) params;
+      apply :
+        'layout 'dev.
+        ('layout, 'dev) params ->
+        training:bool ->
+        ('layout, 'dev) tensor ->
+        ('layout, 'dev) tensor;
+    }
+      -> model
+
+let init (Model m) ~rngs x = m.init ~rngs x
+let apply (Model m) params ~training x = m.apply params ~training x
+
+(* Helper functions for ptree manipulation *)
 let split_at n lst =
   let rec aux i acc = function
     | [] -> (List.rev acc, [])
@@ -21,9 +51,10 @@ let split_at n lst =
   in
   aux n [] lst
 
-(* Updated flatten_ptree to handle parameter trees and silence pattern match
-   warning *)
-let rec flatten_ptree = function
+let rec flatten_ptree : type layout dev.
+    (layout, dev) ptree ->
+    (layout, dev) tensor list
+    * ((layout, dev) tensor list -> (layout, dev) ptree) = function
   | Tensor t ->
       ( [ t ],
         function
@@ -66,233 +97,187 @@ let rec flatten_ptree = function
       in
       (tensors, rebuild)
 
-module Rng = struct
-  type t = int
+let value_and_grad f params =
+  let tensors, rebuild = flatten_ptree params in
+  let f_on_list ts =
+    let params' = rebuild ts in
+    f params'
+  in
+  let value, grads_list = Rune.value_and_grads f_on_list tensors in
+  let grad_ptree = rebuild grads_list in
+  (value, grad_ptree)
 
-  let create ?seed () =
-    match seed with Some s -> s | None -> Random.int 1_000_000
+let grad f params =
+  let _, grads = value_and_grad f params in
+  grads
 
-  let normal key ~device ~dtype ~shape =
-    let tensor = Rune.randn device dtype ~seed:key shape in
-    tensor
+(* Metrics module *)
+module Metrics = struct
+  type metric_type = Avg | Sum | Accuracy
+  type metric = { name : string; metric_type : metric_type }
 
-  let uniform key ~device ~dtype ~shape =
-    let tensor = Rune.rand device dtype ~seed:key shape in
-    tensor
-end
-
-module Activation = struct
-  type ('layout, 'dev) t = ('layout, 'dev) tensor -> ('layout, 'dev) tensor
-
-  let identity x = x
-  let relu = Rune.relu
-  let tanh = Rune.tanh
-  let sigmoid = Rune.sigmoid
-  let elu alpha = Rune.elu ~alpha
-  let leaky_relu negative_slope = Rune.leaky_relu ~negative_slope
-  let softplus _beta = Rune.softplus (* TODO: Rune’s softplus lacks beta *)
-end
-
-module Initializer = struct
-  type ('layout, 'dev) t =
-    Rng.t -> int array -> 'dev device -> 'layout dtype -> ('layout, 'dev) tensor
-
-  let constant value =
-   fun _rng shape dev dtype -> Rune.full dev dtype shape value
-
-  let glorot_uniform ~in_axis ~out_axis =
-   fun rng shape dev dtype ->
-    let din = shape.(in_axis) in
-    let dout = shape.(out_axis) in
-    let fan_in = din in
-    let fan_out = dout in
-    let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
-    let u01 = Rng.uniform rng ~device:dev ~dtype ~shape in
-    let scale = Rune.scalar dev dtype (2.0 *. limit) in
-    let shift = Rune.scalar dev dtype limit in
-    Rune.(sub (mul u01 scale) shift)
-end
-
-module Linear = struct
-  type ('layout, 'dev) t = {
-    w : ('layout, 'dev) tensor;
-    b : ('layout, 'dev) tensor option;
+  type t = {
+    metrics : metric list;
+    mutable values : (string * float) list;
+    mutable counts : (string * int) list;
   }
 
-  let init ~rng ?(use_bias = true) ~dtype ~device in_features out_features =
-    let glorot_uniform = Initializer.glorot_uniform ~in_axis:0 ~out_axis:1 in
-    let w = glorot_uniform rng [| in_features; out_features |] device dtype in
-    let b =
-      if use_bias then Some (Rune.zeros device dtype [| out_features |])
-      else None
-    in
-    { w; b }
+  let avg name = { name; metric_type = Avg }
+  let sum name = { name; metric_type = Sum }
+  let accuracy name = { name; metric_type = Accuracy }
 
-  let forward { w; b } x =
-    let z = Rune.matmul x w in
-    match b with Some b -> Rune.add z b | None -> z
+  let create metrics =
+    let values = List.map (fun m -> (m.name, 0.0)) metrics in
+    let counts = List.map (fun m -> (m.name, 0)) metrics in
+    { metrics; values; counts }
 
-  let update ~lr { w; b } { w = dw; b = db_opt } =
-    let dev = Rune.device w in
-    let dtype = Rune.dtype w in
-    let lr_t = Rune.scalar dev dtype lr in
-    let w' = Rune.sub w (Rune.mul lr_t dw) in
-    let b' =
-      match (b, db_opt) with
-      | Some b, Some db -> Some (Rune.sub b (Rune.mul lr_t db))
-      | _ -> b
-    in
-    { w = w'; b = b' }
+  let update t ?loss ?logits ?labels () =
+    (* Update loss metric if provided *)
+    (match loss with
+    | Some loss_tensor ->
+        let loss_val = Rune.unsafe_get [] loss_tensor in
+        t.values <-
+          List.map
+            (fun (n, v) -> if n = "loss" then (n, v +. loss_val) else (n, v))
+            t.values;
+        t.counts <-
+          List.map
+            (fun (n, c) -> if n = "loss" then (n, c + 1) else (n, c))
+            t.counts
+    | None -> ());
 
-  let params { w; b } =
-    match b with
-    | Some b -> Record [ ("w", Tensor w); ("b", Tensor b) ]
-    | None -> Record [ ("w", Tensor w) ]
+    (* Update accuracy metric if both logits and labels are provided *)
+    match (logits, labels) with
+    | Some logits_tensor, Some labels_tensor ->
+        let predictions = Rune.argmax logits_tensor ~axis:(-1) in
+        (* Labels should be class indices *)
+        let labels_int = Rune.cast (Rune.dtype predictions) labels_tensor in
+        let correct = Rune.equal predictions labels_int in
+        let accuracy_val =
+          Rune.unsafe_get []
+            (Rune.mean (Rune.cast (Rune.dtype logits_tensor) correct))
+        in
+        t.values <-
+          List.map
+            (fun (n, v) ->
+              if n = "accuracy" then (n, v +. accuracy_val) else (n, v))
+            t.values;
+        t.counts <-
+          List.map
+            (fun (n, c) -> if n = "accuracy" then (n, c + 1) else (n, c))
+            t.counts
+    | _ -> ()
 
-  let of_ptree = function
-    | Record [ ("w", Tensor w); ("b", Tensor b) ] -> { w; b = Some b }
-    | Record [ ("w", Tensor w) ] -> { w; b = None }
-    | _ -> failwith "Invalid param_tree for Linear"
+  let compute t =
+    List.map2
+      (fun metric (name, total) ->
+        let count = List.assoc name t.counts in
+        match metric.metric_type with
+        | Avg -> (name, if count = 0 then 0.0 else total /. float_of_int count)
+        | Sum -> (name, total)
+        | Accuracy ->
+            (name, if count = 0 then 0.0 else total /. float_of_int count))
+      t.metrics t.values
 
-  let lens = { to_ptree = params; of_ptree }
+  let get t name =
+    let total = List.assoc name t.values in
+    let count = List.assoc name t.counts in
+    let metric = List.find (fun m -> m.name = name) t.metrics in
+    match metric.metric_type with
+    | Avg | Accuracy -> if count = 0 then 0.0 else total /. float_of_int count
+    | Sum -> total
+
+  let reset t =
+    t.values <- List.map (fun (n, _) -> (n, 0.0)) t.values;
+    t.counts <- List.map (fun (n, _) -> (n, 0)) t.counts
 end
 
-module Optimizer = struct
-  module Sgd = struct
-    type cfg = { lr : float }
+(* Dataset module based on Seq *)
+module Dataset = struct
+  type 'a t = 'a Seq.t
 
-    let make ~lr = { lr }
+  let of_xy (x, y) =
+    let n_samples = (Rune.shape x).(0) in
+    let indices = Seq.ints 0 |> Seq.take n_samples in
+    Seq.map
+      (fun i ->
+        let x_i = Rune.get [ i ] x in
+        let y_i = Rune.get [ i ] y in
+        (x_i, y_i))
+      indices
 
-    let updates { lr } (grads : ('l, 'd) tensor list) =
-      List.map
-        (fun g ->
-          let dtype = Rune.dtype g in
-          let dev = Rune.device g in
-          let scale = Rune.scalar dev dtype (-.lr) in
-          Rune.mul g scale)
-        grads
-  end
+  let map f ds = Seq.map f ds
 
-  module Adam = struct
-    type cfg = {
-      lr : float;
-      beta1 : float;
-      beta2 : float;
-      eps : float;
-      weight_decay : float;
-    }
+  (* Batch function for tensor pairs *)
+  let batch_xy batch_size ds =
+    let rec batch_seq seq =
+      if Seq.is_empty seq then Seq.empty
+      else
+        let batch = Seq.take batch_size seq in
+        let rest = Seq.drop batch_size seq in
+        let batch_list = List.of_seq batch in
+        if batch_list = [] then Seq.empty
+        else
+          match batch_list with
+          | [] -> batch_seq rest
+          | samples ->
+              let xs = List.map fst samples in
+              let ys = List.map snd samples in
+              let x_batch = Rune.stack xs ~axis:0 in
+              let y_batch = Rune.stack ys ~axis:0 in
+              Seq.cons (x_batch, y_batch) (batch_seq rest)
+    in
+    batch_seq ds
+    
+  (* Generic batch function - for now just returns the dataset unchanged *)
+  (* TODO: Implement proper polymorphic batching *)
+  let batch _batch_size ds = ds
 
-    let make ~lr ~beta1 ~beta2 ~eps ~weight_decay =
-      { lr; beta1; beta2; eps; weight_decay }
+  let shuffle ?seed ds =
+    let rng =
+      match seed with
+      | Some s -> Random.State.make [| s |]
+      | None -> Random.State.make_self_init ()
+    in
+    let array = Array.of_seq ds in
+    let n = Array.length array in
+    (* Fisher-Yates shuffle *)
+    for i = n - 1 downto 1 do
+      let j = Random.State.int rng (i + 1) in
+      let tmp = array.(i) in
+      array.(i) <- array.(j);
+      array.(j) <- tmp
+    done;
+    Array.to_seq array
 
-    type ('l, 'd) state = {
-      mutable m : ('l, 'd) ptree;
-      mutable v : ('l, 'd) ptree;
-      mutable t : int;
-    }
-  end
-
-  type _ spec =
-    | Sgd : Sgd.cfg -> [ `sgd ] spec
-    | Adam : Adam.cfg -> [ `adam ] spec
-
-  let sgd ~lr : [ `sgd ] spec = Sgd (Sgd.make ~lr)
-
-  let adam ~lr ?(beta1 = 0.9) ?(beta2 = 0.999) ?(eps = 1e-8)
-      ?(weight_decay = 0.) () : [ `adam ] spec =
-    Adam (Adam.make ~lr ~beta1 ~beta2 ~eps ~weight_decay)
-
-  type (_, _, _, _) t =
-    | Sgd : {
-        cfg : Sgd.cfg;
-        lens : ('m, 'l, 'd) lens;
-        model : 'm ref;
-      }
-        -> ([ `sgd ], 'm, 'l, 'd) t
-    | Adam : {
-        cfg : Adam.cfg;
-        lens : ('m, 'l, 'd) lens;
-        model : 'm ref;
-        state : ('l, 'd) Adam.state;
-      }
-        -> ([ `adam ], 'm, 'l, 'd) t
-
-  let init ~(lens : ('m, 'l, 'd) lens) (model : 'm) (type op) (spec : op spec) :
-      (op, 'm, 'l, 'd) t =
-    match spec with
-    | Sgd cfg -> Sgd { cfg; lens; model = ref model }
-    | Adam cfg ->
-        let p_ts, rebuild = flatten_ptree (lens.to_ptree model) in
-        let m_ts = List.map Rune.zeros_like p_ts in
-        let v_ts = List.map Rune.zeros_like p_ts in
-        let state : ('l, 'd) Adam.state =
-          { Adam.m = rebuild m_ts; v = rebuild v_ts; t = 0 }
-        in
-        Adam { cfg; lens; model = ref model; state }
-
-  let update (type op m l d) (opt : (op, m, l, d) t) (grads : (l, d) ptree) :
-      unit =
-    match opt with
-    | Sgd { cfg; lens; model } ->
-        let params_pt = lens.to_ptree !model in
-        let p_list, rebuild = flatten_ptree params_pt in
-        let g_list, _ = flatten_ptree grads in
-        let updates = Sgd.updates cfg g_list in
-        let new_params = List.map2 Rune.iadd p_list updates in
-        model := lens.of_ptree (rebuild new_params)
-    | Adam { cfg; lens; model; state } ->
-        let p_ts, rebuild_p = flatten_ptree (lens.to_ptree !model) in
-        let g_ts, _ = flatten_ptree grads in
-        let m_ts, rebuild_m = flatten_ptree state.m in
-        let v_ts, rebuild_v = flatten_ptree state.v in
-        state.t <- state.t + 1;
-        let t_f = float_of_int state.t in
-        let { Adam.lr; beta1; beta2; eps; weight_decay } = cfg in
-        let bc1 = 1. -. (beta1 ** t_f) in
-        let bc2 = 1. -. (beta2 ** t_f) in
-        let rec aux ps gs ms vs acc_m acc_v acc_u =
-          match (ps, gs, ms, vs) with
-          | p :: ps', g :: gs', m_old :: ms', v_old :: vs' ->
-              let dtype = Rune.dtype p in
-              let dev = Rune.device p in
-              let b1t = Rune.scalar dev dtype beta1 in
-              let b1_ = Rune.scalar dev dtype (1. -. beta1) in
-              let m_new = Rune.(add (mul b1t m_old) (mul b1_ g)) in
-              let b2t = Rune.scalar dev dtype beta2 in
-              let b2_ = Rune.scalar dev dtype (1. -. beta2) in
-              let gg = Rune.mul g g in
-              let v_new = Rune.(add (mul b2t v_old) (mul b2_ gg)) in
-              let bc1_t = Rune.scalar dev dtype bc1 in
-              let bc2_t = Rune.scalar dev dtype bc2 in
-              let m_hat = Rune.div m_new bc1_t in
-              let v_hat = Rune.div v_new bc2_t in
-              let lr_t = Rune.scalar dev dtype lr in
-              let eps_t = Rune.scalar dev dtype eps in
-              let upd =
-                Rune.(mul lr_t (div m_hat (add (Rune.sqrt v_hat) eps_t)))
-              in
-              let upd =
-                if weight_decay = 0. then upd
-                else
-                  let wd_t = Rune.scalar dev dtype (lr *. weight_decay) in
-                  Rune.(add upd (mul wd_t p))
-              in
-              aux ps' gs' ms' vs' (m_new :: acc_m) (v_new :: acc_v)
-                (upd :: acc_u)
-          | [], [], [], [] -> (List.rev acc_m, List.rev acc_v, List.rev acc_u)
-          | _ -> failwith "Mismatched list lengths"
-        in
-        let m_ts', v_ts', us = aux p_ts g_ts m_ts v_ts [] [] [] in
-        state.m <- rebuild_m m_ts';
-        state.v <- rebuild_v v_ts';
-        let updated_params = List.map2 Rune.isub p_ts us in
-        model := lens.of_ptree (rebuild_p updated_params)
+  let iter f ds = Seq.iter f ds
+  let length ds = Seq.length ds
 end
 
+(* Loss module *)
 module Loss = struct
-  type ('layout, 'dev) t = ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+  let softmax_cross_entropy logits labels =
+    (* Assumes labels are one-hot encoded *)
+    let max_logits = Rune.max logits ~axes:[| -1 |] ~keepdims:true in
+    let exp_logits = Rune.exp (Rune.sub logits max_logits) in
+    let sum_exp = Rune.sum exp_logits ~axes:[| -1 |] ~keepdims:true in
+    let log_softmax =
+      Rune.sub logits (Rune.add max_logits (Rune.log sum_exp))
+    in
+    let loss =
+      Rune.neg (Rune.sum (Rune.mul labels log_softmax) ~axes:[| -1 |])
+    in
+    Rune.mean loss
 
-  let sigmoid_binary_cross_entropy logits labels =
+  let softmax_cross_entropy_with_indices logits indices =
+    (* Convert indices to one-hot encoding *)
+    let indices_int = Rune.cast Rune.int32 indices in
+    let num_classes = (Rune.shape logits).(1) in
+    let one_hot = Rune.one_hot ~num_classes indices_int in
+    let one_hot_float = Rune.cast (Rune.dtype logits) one_hot in
+    softmax_cross_entropy logits one_hot_float
+
+  let binary_cross_entropy logits labels =
     let dtype = Rune.dtype logits in
     let dev = Rune.device logits in
     let one = Rune.scalar dev dtype 1.0 in
@@ -302,14 +287,544 @@ module Loss = struct
     let term2 = Rune.mul (Rune.sub one labels) log_sig_neg in
     let loss_per_example = Rune.neg (Rune.add term1 term2) in
     Rune.mean loss_per_example
+
+  let mse predictions targets =
+    let diff = Rune.sub predictions targets in
+    let squared = Rune.mul diff diff in
+    Rune.mean squared
+
+  let mae predictions targets =
+    let diff = Rune.sub predictions targets in
+    let abs_diff = Rune.abs diff in
+    Rune.mean abs_diff
 end
 
-let value_and_grad ~(lens : ('model, 'l, 'd) lens)
-    (f : 'model -> ('v_l, 'v_d) Rune.t) (model : 'model) :
-    ('v_l, 'v_d) Rune.t * ('l, 'd) ptree =
-  let ptree = lens.to_ptree model in
-  let tensors, rebuild = flatten_ptree ptree in
-  let f_on_list ts = f (lens.of_ptree (rebuild ts)) in
-  let value, grads_list = Rune.value_and_grads f_on_list tensors in
-  let grad_ptree = rebuild grads_list in
-  (value, grad_ptree)
+(* Initializer module *)
+module Initializer = struct
+  type t =
+    | Constant of float
+    | GlorotUniform of { in_axis : int; out_axis : int }
+    | Normal of { mean : float; std : float }
+
+  let constant value = Constant value
+  let glorot_uniform ~in_axis ~out_axis = GlorotUniform { in_axis; out_axis }
+  let normal ~mean ~std = Normal { mean; std }
+
+  (* Helper function to apply an initializer - not exposed in interface *)
+  let apply init rng shape dev dtype =
+    match init with
+    | Constant value -> 
+        Rune.full dev dtype shape value
+    | GlorotUniform { in_axis; out_axis } ->
+        let fan_in = shape.(in_axis) in
+        let fan_out = shape.(out_axis) in
+        let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
+        let u01 = Rune.rand dev dtype ~seed:rng shape in
+        let scale = Rune.scalar dev dtype (2.0 *. limit) in
+        let shift = Rune.scalar dev dtype limit in
+        Rune.(sub (mul u01 scale) shift)
+    | Normal { mean; std } ->
+        let z = Rune.randn dev dtype ~seed:rng shape in
+        let z = Rune.mul z (Rune.scalar dev dtype std) in
+        Rune.add z (Rune.scalar dev dtype mean)
+end
+
+(* Layer module *)
+module Layer = struct
+  let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) ~rngs () =
+    let rng1, _rng2 = Rngs.split rngs in
+    let kh, kw = kernel_size in
+    Model
+      {
+        init =
+          (fun (type l d) ~rngs:_ (x : (l, d) tensor) ->
+            let dev = Rune.device x in
+            let dtype = Rune.dtype x in
+            let fan_in = in_channels * kh * kw in
+            let fan_out = out_channels * kh * kw in
+            let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
+            let weight_shape = [| out_channels; in_channels; kh; kw |] in
+            let w = Rune.rand dev dtype ~seed:rng1 weight_shape in
+            let w =
+              Rune.sub
+                (Rune.mul w (Rune.scalar dev dtype (2.0 *. limit)))
+                (Rune.scalar dev dtype limit)
+            in
+            let b = Rune.zeros dev dtype [| out_channels |] in
+            Record [ ("weight", Tensor w); ("bias", Tensor b) ]);
+        apply =
+          (fun (type l d)
+            (params : (l, d) params)
+            ~training:_
+            (x : (l, d) tensor)
+          ->
+            match params with
+            | Record fields ->
+                (* Handle fields in any order *)
+                let w = match List.assoc_opt "weight" fields with
+                  | Some (Tensor t) -> t
+                  | _ -> failwith "conv2d: missing or invalid weight parameter"
+                in
+                let b = match List.assoc_opt "bias" fields with
+                  | Some (Tensor t) -> t
+                  | _ -> failwith "conv2d: missing or invalid bias parameter"
+                in
+                let conv =
+                  Rune.convolve2d x w ~stride:(1, 1) ~padding_mode:`Same
+                in
+                let b_reshaped = Rune.reshape [| 1; out_channels; 1; 1 |] b in
+                Rune.add conv b_reshaped
+            | _ -> failwith "conv2d: invalid params structure");
+      }
+
+  let linear ~in_features ~out_features ?weight_init ?bias_init ~rngs () =
+    let rng1, rng2 = Rngs.split rngs in
+    let weight_init = 
+      match weight_init with
+      | Some init -> init
+      | None -> Initializer.glorot_uniform ~in_axis:0 ~out_axis:1
+    in
+    let bias_init =
+      match bias_init with
+      | Some init -> init
+      | None -> Initializer.constant 0.0
+    in
+    Model
+      {
+        init = (fun (type layout dev) ~rngs:_ (x : (layout, dev) tensor) : (layout, dev) params ->
+          let dev = Rune.device x in
+          let dtype = Rune.dtype x in
+          let w = Initializer.apply weight_init rng1 [| in_features; out_features |] dev dtype in
+          let b = Initializer.apply bias_init rng2 [| out_features |] dev dtype in
+          Record [ ("weight", Tensor w); ("bias", Tensor b) ]
+        );
+        apply = (fun (type l d) (params : (l, d) params) ~training:_ (x : (l, d) tensor) ->
+          match params with
+          | Record fields ->
+              (* Handle fields in any order *)
+              let w = match List.assoc_opt "weight" fields with
+                | Some (Tensor t) -> t
+                | _ -> failwith "linear: missing or invalid weight parameter"
+              in
+              let b = match List.assoc_opt "bias" fields with
+                | Some (Tensor t) -> t
+                | _ -> failwith "linear: missing or invalid bias parameter"
+              in
+              let z = Rune.matmul x w in
+              Rune.add z b
+          | _ -> failwith "linear: invalid params structure"
+        );
+      }
+
+  let dropout ~rate ~rngs () =
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply =
+          (fun _params ~training x ->
+            if training && rate > 0.0 then
+              (* Generate dropout mask *)
+              let dev = Rune.device x in
+              let dtype = Rune.dtype x in
+              let shape = Rune.shape x in
+              let seed = Rngs.split rngs |> fst in
+              let mask = Rune.rand dev dtype ~seed shape in
+              let keep_prob = 1.0 -. rate in
+              let threshold = Rune.scalar dev dtype keep_prob in
+              let binary_mask = Rune.less mask threshold in
+              let binary_mask_float = Rune.cast dtype binary_mask in
+              let scale = Rune.scalar dev dtype (1.0 /. keep_prob) in
+              (* Apply mask and scale *)
+              Rune.mul x (Rune.mul binary_mask_float scale)
+            else x);
+      }
+
+  let batch_norm ~num_features ~rngs () =
+    let _rng1, _rng2 = Rngs.split rngs in
+    Model
+      { 
+        init = (fun ~rngs:_ x ->
+          let dev = Rune.device x in
+          let dtype = Rune.dtype x in
+          (* Initialize scale (gamma) to 1 and bias (beta) to 0 *)
+          let scale = Rune.ones dev dtype [| num_features |] in
+          let bias = Rune.zeros dev dtype [| num_features |] in
+          (* We don't track running stats in this simple implementation *)
+          Record [ ("scale", Tensor scale); ("bias", Tensor bias) ]
+        );
+        apply = (fun params ~training:_ x ->
+          match params with
+          | Record fields ->
+              (* Handle fields in any order *)
+              let scale = match List.assoc_opt "scale" fields with
+                | Some (Tensor t) -> t
+                | _ -> failwith "batch_norm: missing or invalid scale parameter"
+              in
+              let bias = match List.assoc_opt "bias" fields with
+                | Some (Tensor t) -> t
+                | _ -> failwith "batch_norm: missing or invalid bias parameter"
+              in
+              (* Compute batch statistics *)
+              let axes = 
+                match Array.length (Rune.shape x) with
+                | 2 -> [| 0 |]  (* (batch, features) *)
+                | 4 -> [| 0; 2; 3 |]  (* (batch, channels, height, width) *)
+                | _ -> [| 0 |]  (* Default to first axis *)
+              in
+              let mean = Rune.mean x ~axes ~keepdims:true in
+              let variance = Rune.var x ~axes ~keepdims:true in
+              let eps = 1e-5 in
+              let dtype = Rune.dtype x in
+              let dev = Rune.device x in
+              let epsilon = Rune.scalar dev dtype eps in
+              (* Normalize *)
+              let x_normalized = Rune.div (Rune.sub x mean) (Rune.sqrt (Rune.add variance epsilon)) in
+              (* Scale and shift *)
+              let scale_shape = 
+                match Array.length (Rune.shape x) with
+                | 2 -> [| 1; num_features |]
+                | 4 -> [| 1; num_features; 1; 1 |]
+                | _ -> [| 1; num_features |]
+              in
+              let scale_reshaped = Rune.reshape scale_shape scale in
+              let bias_reshaped = Rune.reshape scale_shape bias in
+              Rune.add (Rune.mul x_normalized scale_reshaped) bias_reshaped
+          | _ -> failwith "batch_norm: invalid params structure"
+        ) 
+      }
+
+  let max_pool2d ~kernel_size ?stride () =
+    let stride = match stride with Some s -> s | None -> kernel_size in
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply =
+          (fun _params ~training:_ x -> 
+            let pooled, _ = Rune.max_pool2d x ~kernel_size ~stride in
+            pooled);
+      }
+
+  let avg_pool2d ~kernel_size ?stride () =
+    let stride = match stride with Some s -> s | None -> kernel_size in
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply =
+          (fun _params ~training:_ x -> 
+            Rune.avg_pool2d x ~kernel_size ~stride);
+      }
+
+  let flatten () =
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply =
+          (fun _params ~training:_ x ->
+            let shape = Rune.shape x in
+            let batch_size = shape.(0) in
+            let flat_size =
+              Array.fold_left ( * ) 1
+                (Array.sub shape 1 (Array.length shape - 1))
+            in
+            Rune.reshape [| batch_size; flat_size |] x);
+      }
+
+  let relu () =
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply = (fun _params ~training:_ x -> Rune.relu x);
+      }
+
+  let sigmoid () =
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply = (fun _params ~training:_ x -> Rune.sigmoid x);
+      }
+
+  let tanh () =
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply = (fun _params ~training:_ x -> Rune.tanh x);
+      }
+
+  let sequential models =
+    Model
+      {
+        init =
+          (fun ~rngs x ->
+            (* Initialize each layer sequentially, threading the output shape
+               through *)
+            let rec init_layers models x acc =
+              match models with
+              | [] -> List (List.rev acc)
+              | Model m :: rest ->
+                  let params = m.init ~rngs x in
+                  (* Apply this layer to get output shape for next layer *)
+                  let x' = m.apply params ~training:false x in
+                  init_layers rest x' (params :: acc)
+            in
+            init_layers models x []);
+        apply =
+          (fun params ~training x ->
+            match params with
+            | List param_list ->
+                (* Apply each layer in sequence *)
+                let rec apply_layers models params x =
+                  match (models, params) with
+                  | [], [] -> x
+                  | Model m :: ms, p :: ps ->
+                      let x' = m.apply p ~training x in
+                      apply_layers ms ps x'
+                  | _ -> failwith "sequential: mismatched models and params"
+                in
+                apply_layers models param_list x
+            | _ -> failwith "sequential: invalid params structure");
+      }
+end
+
+(* Optimizer module *)
+module Optimizer = struct
+  type transform =
+    | SGD of { lr : float; momentum : float option }
+    | Adam of { lr : float; beta1 : float; beta2 : float; eps : float }
+    | AdamW of {
+        lr : float;
+        beta1 : float;
+        beta2 : float;
+        eps : float;
+        weight_decay : float;
+      }
+
+  type ('layout, 'dev) state = {
+    m_tensors : ('layout, 'dev) tensor list;
+    v_tensors : ('layout, 'dev) tensor list;
+  }
+
+  type ('layout, 'dev) t = {
+    transform : transform;
+    mutable state : ('layout, 'dev) state option;
+    mutable step : int;
+  }
+
+  let sgd ~lr ?momentum () = SGD { lr; momentum }
+
+  let adam ~lr ?(beta1 = 0.9) ?(beta2 = 0.999) ?(eps = 1e-8) () =
+    Adam { lr; beta1; beta2; eps }
+
+  let adamw ~lr ?(beta1 = 0.9) ?(beta2 = 0.999) ?(eps = 1e-8)
+      ?(weight_decay = 0.01) () =
+    AdamW { lr; beta1; beta2; eps; weight_decay }
+
+  let create transform = { transform; state = None; step = 0 }
+
+  let rec apply_updates_inplace : type a b. (a, b) ptree -> (a, b) ptree -> unit
+      =
+   fun params updates ->
+    match (params, updates) with
+    | Tensor t, Tensor u -> ignore (Rune.isub t u)
+    | List ps, List us -> List.iter2 apply_updates_inplace ps us
+    | Record ps, Record us ->
+        let sorted_ps =
+          List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) ps
+        in
+        let sorted_us =
+          List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) us
+        in
+        List.iter2
+          (fun (k1, p) (k2, u) ->
+            assert (k1 = k2);
+            apply_updates_inplace p u)
+          sorted_ps sorted_us
+    | _ -> failwith "Mismatched parameter structure"
+
+  let update opt params grads =
+    opt.step <- opt.step + 1;
+    let params_tensors, rebuild_params = flatten_ptree params in
+    let grads_tensors, _ = flatten_ptree grads in
+
+    match opt.transform with
+    | SGD { lr; momentum } ->
+        (* Handle momentum if specified *)
+        let updates = match momentum with
+          | None ->
+              (* Simple SGD without momentum *)
+              List.map
+                (fun g ->
+                  let dev = Rune.device g in
+                  let dt = Rune.dtype g in
+                  Rune.mul g (Rune.scalar dev dt lr))
+                grads_tensors
+          | Some momentum_val ->
+              (* SGD with momentum *)
+              let state =
+                match opt.state with
+                | None ->
+                    (* Initialize velocity tensors *)
+                    let v_tensors = List.map Rune.zeros_like params_tensors in
+                    let s = { m_tensors = v_tensors; v_tensors = [] } in
+                    opt.state <- Some s;
+                    s
+                | Some s -> s
+              in
+              
+              (* Update velocities and compute updates *)
+              let new_velocities, updates =
+                List.fold_left2
+                  (fun (v_acc, u_acc) g v_old ->
+                    let dev = Rune.device g in
+                    let dt = Rune.dtype g in
+                    (* v = momentum * v_old + lr * grad *)
+                    let v_new = Rune.(
+                      add
+                        (mul (scalar dev dt momentum_val) v_old)
+                        (mul (scalar dev dt lr) g)
+                    ) in
+                    (v_new :: v_acc, v_new :: u_acc))
+                  ([], [])
+                  grads_tensors
+                  state.m_tensors
+              in
+              
+              (* Update state with new velocities *)
+              opt.state <- Some { m_tensors = List.rev new_velocities; v_tensors = [] };
+              List.rev updates
+        in
+        apply_updates_inplace params (rebuild_params updates)
+    | Adam { lr; beta1; beta2; eps } ->
+        (* Initialize state if needed *)
+        let state =
+          match opt.state with
+          | None ->
+              let m_tensors = List.map Rune.zeros_like params_tensors in
+              let v_tensors = List.map Rune.zeros_like params_tensors in
+              let s = { m_tensors; v_tensors } in
+              opt.state <- Some s;
+              s
+          | Some s -> s
+        in
+
+        let t_f = float_of_int opt.step in
+        let bc1 = 1. -. (beta1 ** t_f) in
+        let bc2 = 1. -. (beta2 ** t_f) in
+
+        let new_m_tensors, new_v_tensors, updates =
+          List.fold_left2
+            (fun (m_acc, v_acc, u_acc) (p, g) (m_old, v_old) ->
+              let dev = Rune.device p in
+              let dt = Rune.dtype p in
+
+              (* Update biased first moment estimate *)
+              let m_new =
+                Rune.(
+                  add
+                    (mul (scalar dev dt beta1) m_old)
+                    (mul (scalar dev dt (1. -. beta1)) g))
+              in
+
+              (* Update biased second moment estimate *)
+              let v_new =
+                Rune.(
+                  add
+                    (mul (scalar dev dt beta2) v_old)
+                    (mul (scalar dev dt (1. -. beta2)) (mul g g)))
+              in
+
+              (* Bias correction *)
+              let m_hat = Rune.div m_new (Rune.scalar dev dt bc1) in
+              let v_hat = Rune.div v_new (Rune.scalar dev dt bc2) in
+
+              (* Compute update *)
+              let update =
+                Rune.(
+                  mul (scalar dev dt lr)
+                    (div m_hat (add (sqrt v_hat) (scalar dev dt eps))))
+              in
+
+              (m_new :: m_acc, v_new :: v_acc, update :: u_acc))
+            ([], [], [])
+            (List.combine params_tensors grads_tensors)
+            (List.combine state.m_tensors state.v_tensors)
+        in
+
+        opt.state <-
+          Some
+            {
+              m_tensors = List.rev new_m_tensors;
+              v_tensors = List.rev new_v_tensors;
+            };
+        apply_updates_inplace params (rebuild_params (List.rev updates))
+    | AdamW { lr; beta1; beta2; eps; weight_decay } ->
+        (* Initialize state if needed *)
+        let state =
+          match opt.state with
+          | None ->
+              let m_tensors = List.map Rune.zeros_like params_tensors in
+              let v_tensors = List.map Rune.zeros_like params_tensors in
+              let s = { m_tensors; v_tensors } in
+              opt.state <- Some s;
+              s
+          | Some s -> s
+        in
+
+        let t_f = float_of_int opt.step in
+        let bc1 = 1. -. (beta1 ** t_f) in
+        let bc2 = 1. -. (beta2 ** t_f) in
+
+        let new_m_tensors, new_v_tensors, updates =
+          List.fold_left2
+            (fun (m_acc, v_acc, u_acc) (p, g) (m_old, v_old) ->
+              let dev = Rune.device p in
+              let dt = Rune.dtype p in
+
+              (* Update biased first moment estimate *)
+              let m_new =
+                Rune.(
+                  add
+                    (mul (scalar dev dt beta1) m_old)
+                    (mul (scalar dev dt (1. -. beta1)) g))
+              in
+
+              (* Update biased second moment estimate *)
+              let v_new =
+                Rune.(
+                  add
+                    (mul (scalar dev dt beta2) v_old)
+                    (mul (scalar dev dt (1. -. beta2)) (mul g g)))
+              in
+
+              (* Bias correction *)
+              let m_hat = Rune.div m_new (Rune.scalar dev dt bc1) in
+              let v_hat = Rune.div v_new (Rune.scalar dev dt bc2) in
+
+              (* Compute update with weight decay applied directly to parameters *)
+              let adam_update =
+                Rune.(
+                  mul (scalar dev dt lr)
+                    (div m_hat (add (sqrt v_hat) (scalar dev dt eps))))
+              in
+              
+              (* Add weight decay term: lr * weight_decay * param *)
+              let decay_update = 
+                Rune.mul (Rune.scalar dev dt (lr *. weight_decay)) p
+              in
+              
+              (* Total update = adam_update + decay_update *)
+              let total_update = Rune.add adam_update decay_update in
+
+              (m_new :: m_acc, v_new :: v_acc, total_update :: u_acc))
+            ([], [], [])
+            (List.combine params_tensors grads_tensors)
+            (List.combine state.m_tensors state.v_tensors)
+        in
+
+        opt.state <-
+          Some
+            {
+              m_tensors = List.rev new_m_tensors;
+              v_tensors = List.rev new_v_tensors;
+            };
+        apply_updates_inplace params (rebuild_params (List.rev updates))
+end
