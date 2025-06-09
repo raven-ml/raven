@@ -3339,8 +3339,24 @@ module Make (B : Backend_intf.S) = struct
 
   (* Log-Sigmoid: log(sigmoid(x)) *)
   let log_sigmoid x =
-    let sig_x = sigmoid x in
-    log sig_x
+    (* Numerically stable log(sigmoid(x)) implementation *)
+    (* For x > 0: log(sigmoid(x)) = -log(1 + exp(-x)) *)
+    (* For x <= 0: log(sigmoid(x)) = x - log(1 + exp(x)) *)
+    let zero = scalar_like x 0.0 in
+    let one = scalar_like x 1.0 in
+    let is_positive = greater x zero in
+    
+    (* Branch 1: x > 0 -> -log(1 + exp(-x)) *)
+    let neg_x = neg x in
+    let exp_neg_x = exp neg_x in
+    let branch1 = neg (log (add one exp_neg_x)) in
+    
+    (* Branch 2: x <= 0 -> x - log(1 + exp(x)) *)
+    let exp_x = exp x in
+    let branch2 = sub x (log (add one exp_x)) in
+    
+    (* Select based on condition *)
+    where is_positive branch1 branch2
 
   (* Leaky ReLU: max(x, negative_slope * x) *)
   let leaky_relu ?(negative_slope = 0.01) x =
