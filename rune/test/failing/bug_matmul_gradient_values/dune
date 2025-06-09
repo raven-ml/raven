@@ -1,0 +1,6 @@
+(executable
+ (name bug_matmul_gradient_values)
+ (libraries rune))
+
+(cram
+ (deps bug_matmul_gradient_values.exe))
