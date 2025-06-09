@@ -1,0 +1,4 @@
+(executable
+ (name bug_matmul_gradients)
+ (modules bug_matmul_gradients)
+ (libraries rune))
