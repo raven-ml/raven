@@ -4,8 +4,15 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
-- fix convolution being _extremely_ slow in nx/rune
-  - implement lazy view + realization (implicit? explicit?), that should be equivalent to the VIEW uop. think of the interaction with jit. need a shape tracker in core.
+- kaun: run mnist 
+  - EXTREMELY slow: normalization (Rune.div) takes 12s for 60k 28x28 images (should be <1s)
+  - Training is 12-18x slower than PyTorch CPU:
+    - PyTorch: ~17ms per batch, 2.7 min for 10 epochs (source: PyImageSearch benchmark)
+    - Our impl: ~200-300ms per batch, ~62 min for 10 epochs
+    - Conv ops are 3-5x slower than PyTorch (15ms vs 3-5ms)
+    - Forward+backward pass: ~150ms (should be ~15ms)
+  - Transpose creates non-contiguous tensors as expected (zero-copy operation)
+  - dataset: API is fine but implementation needs work (fixed loading twice)
 
 ## alpha release
 

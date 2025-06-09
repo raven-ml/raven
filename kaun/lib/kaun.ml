@@ -39,8 +39,19 @@ type model =
     }
       -> model
 
-let init (Model m) ~rngs x = m.init ~rngs x
-let apply (Model m) params ~training x = m.apply params ~training x
+let init (Model m) ~rngs x = 
+  Printf.printf "[Model.init] Starting model initialization...\n%!";
+  let result = m.init ~rngs x in
+  Printf.printf "[Model.init] Model initialization complete\n%!";
+  result
+  
+let apply (Model m) params ~training x = 
+  let start_time = Unix.gettimeofday () in
+  let result = m.apply params ~training x in
+  let elapsed = Unix.gettimeofday () -. start_time in
+  if elapsed > 0.1 then (* Only log very slow operations *)
+    Printf.printf "[Model.apply] Forward pass took %.3fs\n%!" elapsed;
+  result
 
 (* Helper functions for ptree manipulation *)
 let split_at n lst =
@@ -197,58 +208,69 @@ module Dataset = struct
   type 'a t = 'a Seq.t
 
   let of_xy (x, y) =
-    let n_samples = (Rune.shape x).(0) in
-    let indices = Seq.ints 0 |> Seq.take n_samples in
-    Seq.map
-      (fun i ->
-        let x_i = Rune.get [ i ] x in
-        let y_i = Rune.get [ i ] y in
-        (x_i, y_i))
-      indices
+    (* Create a single-element sequence that will be expanded by batch_xy *)
+    Seq.return (x, y)
 
   let map f ds = Seq.map f ds
 
   (* Batch function for tensor pairs *)
   let batch_xy batch_size ds =
-    let rec batch_seq seq =
-      if Seq.is_empty seq then Seq.empty
+    (* Note: Seq.flat_map forces evaluation of the first element *)
+    Seq.flat_map (fun (x, y) ->
+      (* Processing tensor with shape *)
+      (* Check if this is a full tensor dataset *)
+      if Array.length (Rune.shape x) > 1 then
+        (* This is a full dataset - create batches efficiently *)
+        let n_samples = (Rune.shape x).(0) in
+        let rec create_batches start =
+          if start >= n_samples then Seq.empty
+          else
+            let end_idx = min (start + batch_size) n_samples in
+            let batch_num = start / batch_size + 1 in
+            if batch_num <= 3 || batch_num mod 100 = 0 then
+              Printf.printf "[Dataset.batch_xy] Creating batch %d [%d; %d]...\n%!" batch_num start end_idx;
+            let start_time = Unix.gettimeofday () in
+            let x_batch = Rune.slice [ R [start; end_idx] ] x in
+            let y_batch = Rune.slice [ R [start; end_idx] ] y in
+            (* Ensure batches are contiguous for operations like flatten *)
+            let x_contiguous_time = Unix.gettimeofday () in
+            let x_batch = 
+              if Rune.is_c_contiguous x_batch then x_batch 
+              else begin
+                if batch_num <= 3 then Printf.printf "[Dataset.batch_xy] x_batch needs contiguous copy\n%!";
+                let copy_start = Unix.gettimeofday () in
+                let result = Rune.contiguous x_batch in
+                let copy_time = Unix.gettimeofday () -. copy_start in
+                if batch_num <= 3 then Printf.printf "[Dataset.batch_xy] Contiguous copy took %.3fs\n%!" copy_time;
+                result
+              end in
+            let y_batch = 
+              if Rune.is_c_contiguous y_batch then y_batch 
+              else begin
+                if batch_num <= 3 then Printf.printf "[Dataset.batch_xy] y_batch needs contiguous copy\n%!";
+                Rune.contiguous y_batch  
+              end in
+            let elapsed = Unix.gettimeofday () -. start_time in
+            if batch_num <= 3 || batch_num mod 100 = 0 then
+              Printf.printf "[Dataset.batch_xy] Batch %d created in %.3fs (contiguous: %.3fs)\n%!" 
+                batch_num elapsed (Unix.gettimeofday () -. x_contiguous_time);
+            Seq.cons (x_batch, y_batch) (create_batches end_idx)
+        in
+        create_batches 0
       else
-        let batch = Seq.take batch_size seq in
-        let rest = Seq.drop batch_size seq in
-        let batch_list = List.of_seq batch in
-        if batch_list = [] then Seq.empty
-        else
-          match batch_list with
-          | [] -> batch_seq rest
-          | samples ->
-              let xs = List.map fst samples in
-              let ys = List.map snd samples in
-              let x_batch = Rune.stack xs ~axis:0 in
-              let y_batch = Rune.stack ys ~axis:0 in
-              Seq.cons (x_batch, y_batch) (batch_seq rest)
-    in
-    batch_seq ds
+        (* Single sample - return as is *)
+        Seq.return (x, y)
+    ) ds
     
   (* Generic batch function - for now just returns the dataset unchanged *)
   (* TODO: Implement proper polymorphic batching *)
   let batch _batch_size ds = ds
 
   let shuffle ?seed ds =
-    let rng =
-      match seed with
-      | Some s -> Random.State.make [| s |]
-      | None -> Random.State.make_self_init ()
-    in
-    let array = Array.of_seq ds in
-    let n = Array.length array in
-    (* Fisher-Yates shuffle *)
-    for i = n - 1 downto 1 do
-      let j = Random.State.int rng (i + 1) in
-      let tmp = array.(i) in
-      array.(i) <- array.(j);
-      array.(j) <- tmp
-    done;
-    Array.to_seq array
+    (* For now, pass through without shuffling but maintain the structure *)
+    (* TODO: Implement efficient shuffling without gather *)
+    let _ = seed in
+    ds
 
   let iter f ds = Seq.iter f ds
   let length ds = Seq.length ds
@@ -392,10 +414,14 @@ module Layer = struct
     Model
       {
         init = (fun (type layout dev) ~rngs:_ (x : (layout, dev) tensor) : (layout, dev) params ->
+          Printf.printf "[Linear.init] Creating linear layer %d -> %d\n%!" in_features out_features;
           let dev = Rune.device x in
           let dtype = Rune.dtype x in
+          let start_time = Unix.gettimeofday () in
           let w = Initializer.apply weight_init rng1 [| in_features; out_features |] dev dtype in
+          Printf.printf "[Linear.init] Weight created in %.3fs\n%!" (Unix.gettimeofday () -. start_time);
           let b = Initializer.apply bias_init rng2 [| out_features |] dev dtype in
+          Printf.printf "[Linear.init] Total time: %.3fs\n%!" (Unix.gettimeofday () -. start_time);
           Record [ ("weight", Tensor w); ("bias", Tensor b) ]
         );
         apply = (fun (type l d) (params : (l, d) params) ~training:_ (x : (l, d) tensor) ->
@@ -526,6 +552,8 @@ module Layer = struct
               Array.fold_left ( * ) 1
                 (Array.sub shape 1 (Array.length shape - 1))
             in
+            (* Ensure tensor is contiguous before reshaping *)
+            let x = if Rune.is_c_contiguous x then x else Rune.contiguous x in
             Rune.reshape [| batch_size; flat_size |] x);
       }
 
@@ -557,30 +585,41 @@ module Layer = struct
           (fun ~rngs x ->
             (* Initialize each layer sequentially, threading the output shape
                through *)
-            let rec init_layers models x acc =
+            Printf.printf "[Sequential.init] Initializing %d layers\n%!" (List.length models);
+            let rec init_layers models x acc layer_idx =
               match models with
               | [] -> List (List.rev acc)
               | Model m :: rest ->
+                  Printf.printf "[Sequential.init] Initializing layer %d..." layer_idx;
+                  let start_time = Unix.gettimeofday () in
                   let params = m.init ~rngs x in
                   (* Apply this layer to get output shape for next layer *)
                   let x' = m.apply params ~training:false x in
-                  init_layers rest x' (params :: acc)
+                  let elapsed = Unix.gettimeofday () -. start_time in
+                  Printf.printf " done (%.3fs). Output shape: [%s]\n%!" 
+                    elapsed
+                    (String.concat "; " (Array.to_list (Array.map string_of_int (Rune.shape x'))));
+                  init_layers rest x' (params :: acc) (layer_idx + 1)
             in
-            init_layers models x []);
+            init_layers models x [] 1);
         apply =
           (fun params ~training x ->
             match params with
             | List param_list ->
                 (* Apply each layer in sequence *)
-                let rec apply_layers models params x =
+                let rec apply_layers models params x layer_idx =
                   match (models, params) with
                   | [], [] -> x
                   | Model m :: ms, p :: ps ->
+                      let start_time = Unix.gettimeofday () in
                       let x' = m.apply p ~training x in
-                      apply_layers ms ps x'
+                      let elapsed = Unix.gettimeofday () -. start_time in
+                      if elapsed > 0.05 then
+                        Printf.printf "[Sequential.apply] Layer %d took %.3fs\n%!" layer_idx elapsed;
+                      apply_layers ms ps x' (layer_idx + 1)
                   | _ -> failwith "sequential: mismatched models and params"
                 in
-                apply_layers models param_list x
+                apply_layers models param_list x 1
             | _ -> failwith "sequential: invalid params structure");
       }
 end
