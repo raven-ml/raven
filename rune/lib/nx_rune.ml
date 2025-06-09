@@ -557,23 +557,43 @@ let op_threefry key ctr =
 
 (* Unfold operation *)
 let op_unfold t_in ~kernel_size ~stride ~dilation ~padding =
-  match t_in with
-  | Cpu_tensor t -> Cpu_tensor (Nx_native.op_unfold t ~kernel_size ~stride ~dilation ~padding)
-  | Metal_tensor t -> Metal_tensor (Rune_metal.op_unfold t ~kernel_size ~stride ~dilation ~padding)
-  | Symbolic_tensor _ -> failwith "todo: op_unfold for symbolic tensors"
+  try Effect.perform (E_unfold { t_in; kernel_size; stride; dilation; padding })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Cpu_tensor t ->
+        Cpu_tensor
+          (Nx_native.op_unfold t ~kernel_size ~stride ~dilation ~padding)
+    | Metal_tensor t ->
+        Metal_tensor
+          (Rune_metal.op_unfold t ~kernel_size ~stride ~dilation ~padding)
+    | Symbolic_tensor _ -> failwith "todo: op_unfold for symbolic tensors")
 
 (* Fold operation *)
 let op_fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
-  match t_in with
-  | Cpu_tensor t -> Cpu_tensor (Nx_native.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
-  | Metal_tensor t -> Metal_tensor (Rune_metal.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
-  | Symbolic_tensor _ -> failwith "todo: op_fold for symbolic tensors"
+  try
+    Effect.perform
+      (E_fold { t_in; output_size; kernel_size; stride; dilation; padding })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Cpu_tensor t ->
+        Cpu_tensor
+          (Nx_native.op_fold t ~output_size ~kernel_size ~stride ~dilation
+             ~padding)
+    | Metal_tensor t ->
+        Metal_tensor
+          (Rune_metal.op_fold t ~output_size ~kernel_size ~stride ~dilation
+             ~padding)
+    | Symbolic_tensor _ -> failwith "todo: op_fold for symbolic tensors")
 
 (* Matrix multiplication *)
 let op_matmul a b =
-  let a', b' = ensure_same_device a b in
-  match (a', b') with
-  | Cpu_tensor a_t, Cpu_tensor b_t -> Cpu_tensor (Nx_native.op_matmul a_t b_t)
-  | Metal_tensor a_t, Metal_tensor b_t -> Metal_tensor (Rune_metal.op_matmul a_t b_t)
-  | Symbolic_tensor _, _ | _, Symbolic_tensor _ -> failwith "todo: op_matmul for symbolic tensors"
-  | _ -> assert false
+  try Effect.perform (E_matmul { a; b })
+  with Effect.Unhandled _ -> (
+    let a', b' = ensure_same_device a b in
+    match (a', b') with
+    | Cpu_tensor a_t, Cpu_tensor b_t -> Cpu_tensor (Nx_native.op_matmul a_t b_t)
+    | Metal_tensor a_t, Metal_tensor b_t ->
+        Metal_tensor (Rune_metal.op_matmul a_t b_t)
+    | Symbolic_tensor _, _ | _, Symbolic_tensor _ ->
+        failwith "todo: op_matmul for symbolic tensors"
+    | _ -> assert false)
