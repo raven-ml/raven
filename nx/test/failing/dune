@@ -1,8 +1,3 @@
-(executables
- (names
-  bug_logspace_division_by_zero
-  bug_slice_batch_process_bounds
-  bug_set_slice_debug
-  bug_blit_overlapping
-  bug_conv_memory_simple)
- (libraries nx))
+; Enable cram tests for all subdirectories
+(cram
+ (applies_to :whole_subtree))

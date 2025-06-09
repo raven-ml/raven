@@ -1,0 +1,6 @@
+(executable
+ (name bug_blit_overlapping)
+ (libraries nx))
+
+(cram
+ (deps bug_blit_overlapping.exe))

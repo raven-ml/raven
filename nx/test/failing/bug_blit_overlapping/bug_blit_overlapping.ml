@@ -19,7 +19,7 @@ let () =
   Printf.printf "Attempting blit view1 -> view2...\n";
   try
     blit view1 view2;
-    Printf.printf "Success! Result: [";
+    Printf.printf "Result: [";
     Array.iter (Printf.printf "%.0f ") (to_array t);
     Printf.printf "]\n";
     Printf.printf "Expected: [1 2 1 2 3]\n"
