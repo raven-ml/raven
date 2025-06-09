@@ -23,6 +23,7 @@ Raven: OCaml ML ecosystem. Pre-alpha.
 - Run tests directly: `_build/default/nx/test/test_foo.exe` (dune exec doesn't work with watch mode)
 - **Never** kill dune, remove lock file, or clean build when watch mode is active
 - In watch mode, When you make changes, check if there are build errors with `dune build <dir>` first, otherwise you'll be running the old tests.
+- Do not create new stanzas (e.g. new `executable`), instead reuse existing stanzas (e.g. `executables`), otherwise dune watch mode won't build the new targets.
 
 When tests fail:
 1. Create a minimal repro file in `<project>/test/failing/bug_<bug_name>.ml`
