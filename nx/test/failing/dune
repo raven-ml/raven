@@ -4,5 +4,6 @@
   bug_slice_batch_process_bounds
   bug_set_slice_debug
   bug_blit_overlapping
-  bug_conv_memory_simple)
+  bug_conv_memory_simple
+  bug_log_sigmoid_stability)
  (libraries nx))
