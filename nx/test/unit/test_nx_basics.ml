@@ -32,14 +32,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t = Nx.scalar ctx Nx_core.Dtype.int64 100L in
     check_t "scalar int64" [||] [| 100L |] t
 
-  let test_create_complex64 ctx () =
-    let t =
-      Nx.create ctx Nx_core.Dtype.complex64 [| 2 |]
-        [| Complex.{ re = 1.0; im = 2.0 }; { re = 3.0; im = 4.0 } |]
-    in
-    check_t "create complex64" [| 2 |]
-      [| Complex.{ re = 1.0; im = 2.0 }; { re = 3.0; im = 4.0 } |]
-      t
+  let test_create_int16 ctx () =
+    let t = Nx.create ctx Nx_core.Dtype.int16 [| 4 |] [| 1; 2; 3; 4 |] in
+    check_t "create int16" [| 4 |] [| 1; 2; 3; 4 |] t
 
   let test_create_empty_shapes ctx () =
     (* Empty 1D array *)
@@ -597,20 +592,19 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let u = Nx.astype Nx_core.Dtype.float32 t in
     check_t "astype to float32" [| 3 |] [| 1.0; 2.0; 3.0 |] u
 
-  let test_astype_float32_to_complex32 ctx () =
-    let t = Nx.create ctx Nx_core.Dtype.float32 [| 2 |] [| 1.0; 2.0 |] in
-    let u = Nx.astype Nx_core.Dtype.complex32 t in
-    check_t "astype to complex32" [| 2 |]
-      [| { Complex.re = 1.0; im = 0.0 }; { re = 2.0; im = 0.0 } |]
-      u
-
-  let test_astype_complex64_to_float32 ctx () =
+  let test_astype_float32_to_int16 ctx () =
     let t =
-      Nx.create ctx Nx_core.Dtype.complex64 [| 2 |]
-        [| { Complex.re = 1.0; im = 2.0 }; { re = 3.0; im = 4.0 } |]
+      Nx.create ctx Nx_core.Dtype.float32 [| 4 |] [| 1.0; 2.5; 3.9; 255.0 |]
+    in
+    let u = Nx.astype Nx_core.Dtype.int16 t in
+    check_t "astype to int16" [| 4 |] [| 1; 2; 3; 255 |] u
+
+  let test_astype_int64_to_float32 ctx () =
+    let t =
+      Nx.create ctx Nx_core.Dtype.int64 [| 3 |] [| 1000L; 2000L; 3000L |]
     in
     let u = Nx.astype Nx_core.Dtype.float32 t in
-    check_t "astype complex64 to float32" [| 2 |] [| 1.0; 3.0 |] u
+    check_t "astype int64 to float32" [| 3 |] [| 1000.0; 2000.0; 3000.0 |] u
 
   (* Test Suite Organization *)
 
@@ -621,7 +615,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       ("create 2x2x2 float32", `Quick, test_create_2x2x2_float32 ctx);
       ("scalar float32", `Quick, test_scalar_float32 ctx);
       ("scalar int64", `Quick, test_scalar_int64 ctx);
-      ("create complex64", `Quick, test_create_complex64 ctx);
+      ("create int16", `Quick, test_create_int16 ctx);
       ("create empty shapes", `Quick, test_create_empty_shapes ctx);
       ("create max rank", `Quick, test_create_max_rank ctx);
       ("create wrong data size", `Quick, test_create_wrong_data_size ctx);
@@ -747,12 +741,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       ("to array", `Quick, test_to_array ctx);
       ("astype float32 to int32", `Quick, test_astype_float32_to_int32 ctx);
       ("astype int32 to float32", `Quick, test_astype_int32_to_float32 ctx);
-      ( "astype float32 to complex32",
-        `Quick,
-        test_astype_float32_to_complex32 ctx );
-      ( "astype complex64 to float32",
-        `Quick,
-        test_astype_complex64_to_float32 ctx );
+      ("astype float32 to int16", `Quick, test_astype_float32_to_int16 ctx);
+      ("astype int64 to float32", `Quick, test_astype_int64_to_float32 ctx);
     ]
 
   let suite backend_name ctx =
