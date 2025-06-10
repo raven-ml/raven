@@ -302,6 +302,8 @@ kernel void pad_float(device float* out [[buffer(0)]],
                      constant uint* pad_before [[buffer(4)]],
                      constant float& pad_value [[buffer(5)]],
                      constant uint& ndim [[buffer(6)]],
+                     constant int* in_strides [[buffer(7)]],
+                     constant uint& in_offset [[buffer(8)]],
                      uint gid [[thread_position_in_grid]]) {
     uint out_size = out_shape[0];
     if (ndim > 1) out_size *= out_shape[1];
@@ -352,10 +354,11 @@ kernel void pad_float(device float* out [[buffer(0)]],
     }
     
     if (in_bounds) {
-        // Compute input index
-        uint in_idx = in_pos.x;
-        if (ndim > 1) in_idx = in_idx * in_shape[1] + in_pos.y;
-        if (ndim > 2) in_idx = in_idx * in_shape[2] + in_pos.z;
+        // Compute input index using strides
+        uint in_idx = in_offset;
+        if (ndim > 0) in_idx += in_pos.x * in_strides[0];
+        if (ndim > 1) in_idx += in_pos.y * in_strides[1];
+        if (ndim > 2) in_idx += in_pos.z * in_strides[2];
         
         out[gid] = in[in_idx];
     } else {
