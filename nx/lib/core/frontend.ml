@@ -2345,22 +2345,11 @@ module Make (B : Backend_intf.S) = struct
                                  tensor)
                           else
                             (* Create index tensor and gather *)
-                            (* For gather to work with multi-dimensional tensors, we need to
-                             create an index tensor that matches the rank of the data tensor *)
-                            let tensor_shape = shape tensor in
-                            let idx_shape = Array.copy tensor_shape in
-                            idx_shape.(current_dim) <- List.length indices;
-
+                            (* The index tensor should be 1D, containing just the indices to gather *)
                             let idx_tensor =
-                              init (B.context x) Dtype.int32 idx_shape
+                              init (B.context x) Dtype.int32 [| List.length indices |]
                                 (fun arr ->
-                                  (* For the gather dimension, use the indices list *)
-                                  (* For other dimensions, use the identity mapping *)
-                                  if arr.(current_dim) < List.length indices
-                                  then
-                                    Int32.of_int
-                                      (List.nth indices arr.(current_dim))
-                                  else Int32.of_int arr.(current_dim))
+                                  Int32.of_int (List.nth indices arr.(0)))
                             in
                             B.op_gather tensor idx_tensor current_dim
                         in
