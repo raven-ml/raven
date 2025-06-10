@@ -12,7 +12,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     Printexc.record_backtrace true;
 
     (* Run all test suites *)
-    Alcotest.run "Nx Native Backend"
+    Alcotest.run
+      ("Nx " ^ backend_name ^ " Backend")
       (List.concat
          [
            Basics_tests.suite backend_name ctx;
