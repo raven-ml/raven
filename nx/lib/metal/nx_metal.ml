@@ -24,13 +24,16 @@ let create_context () =
 
 let data : type a b. (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t =
  fun t ->
-  (* Create a bigarray with the size of the view *)
-  let size = Internal.numel t in
+  (* For compatibility with the frontend's unsafe_get, we need to return a
+     bigarray that preserves the view's offset. This means returning the entire
+     buffer, not just the viewed portion. *)
+  let contents = Metal.Buffer.contents t.buffer.buffer in
   let kind = Dtype.to_bigarray_kind t.dtype in
-  let ba = Bigarray.Array1.create kind Bigarray.c_layout size in
-  (* Copy data from Metal buffer to bigarray, handling views correctly *)
-  Internal.copy_to_bigarray t ba;
-  ba
+  let elem_size = Internal.sizeof_dtype t.dtype in
+  let buffer_size = t.buffer.size_bytes / elem_size in
+
+  (* Create a bigarray view of the entire Metal buffer *)
+  Ctypes.bigarray_of_ptr Ctypes.array1 buffer_size kind (Obj.magic contents)
 
 let op_contiguous t =
   (* Check if view is contiguous AND buffer has the expected size *)
