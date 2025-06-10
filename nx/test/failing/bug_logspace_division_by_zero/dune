@@ -1,6 +1,0 @@
-(executable
- (name bug_logspace_division_by_zero)
- (libraries nx))
-
-(cram
- (deps bug_logspace_division_by_zero.exe))

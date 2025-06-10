@@ -1,6 +1,0 @@
-(executable
- (name bug_set_slice_debug)
- (libraries nx))
-
-(cram
- (deps bug_set_slice_debug.exe))

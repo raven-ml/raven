@@ -1,3 +1,18 @@
-; Enable cram tests for all subdirectories
+(executables
+ (names
+  bug_blit_overlapping
+  bug_conv_memory_simple
+  bug_gather_index_shape
+  bug_logspace_division_by_zero
+  bug_slice_batch_process_bounds)
+ (libraries nx))
+
+(executables
+ (names bug_metal_reduce_stride bug_metal_unsafe_get)
+ (enabled_if
+  (= %{system} "macosx"))
+ (libraries nx_core nx_metal))
+
 (cram
- (applies_to :whole_subtree))
+ (deps
+  (glob_files *.exe)))

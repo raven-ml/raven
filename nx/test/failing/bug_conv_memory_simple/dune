@@ -1,6 +1,0 @@
-(executable
- (name bug_conv_memory_simple)
- (libraries nx))
-
-(cram
- (deps bug_conv_memory_simple.exe))

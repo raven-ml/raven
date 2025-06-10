@@ -1,6 +1,0 @@
-(executable
- (name bug_gather_index_shape)
- (libraries nx))
-
-(cram
- (deps bug_gather_index_shape.exe))

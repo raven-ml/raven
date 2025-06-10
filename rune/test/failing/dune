@@ -1,3 +1,7 @@
-; Enable cram tests for all subdirectories
+(executables
+ (names bug_matmul_gradient_values)
+ (libraries rune))
+
 (cram
- (applies_to :whole_subtree))
+ (deps
+  (glob_files *.exe)))

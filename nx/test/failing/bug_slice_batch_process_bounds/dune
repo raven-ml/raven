@@ -1,6 +1,0 @@
-(executable
- (name bug_slice_batch_process_bounds)
- (libraries nx))
-
-(cram
- (deps bug_slice_batch_process_bounds.exe))
