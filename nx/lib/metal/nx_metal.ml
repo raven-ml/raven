@@ -43,6 +43,8 @@ let op_contiguous t =
 
 (* Buffer operations *)
 let op_buffer ctx dtype size_in_elements =
+  (* Check if dtype is supported by Metal *)
+  let _ = Internal.dtype_to_metal_type dtype in
   let size_bytes = size_in_elements * Internal.sizeof_dtype dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
   let metal_buffer = { Internal.buffer; size_bytes } in
@@ -54,6 +56,8 @@ let op_buffer ctx dtype size_in_elements =
 
 let op_const_scalar : type a b. context -> a -> (a, b) Dtype.t -> (a, b) t =
  fun ctx value dtype ->
+  (* Check if dtype is supported by Metal *)
+  let _ = Internal.dtype_to_metal_type dtype in
   let size_bytes = Internal.sizeof_dtype dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
 
@@ -74,6 +78,8 @@ let op_const_array : type a b.
     context -> (a, b, Bigarray.c_layout) Bigarray.Array1.t -> (a, b) t =
  fun ctx bigarray ->
   let dtype = Dtype.of_bigarray_kind (Bigarray.Array1.kind bigarray) in
+  (* Check if dtype is supported by Metal *)
+  let _ = Internal.dtype_to_metal_type dtype in
   let size = Bigarray.Array1.dim bigarray in
   let size_bytes = size * Internal.sizeof_dtype dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
