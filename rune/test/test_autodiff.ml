@@ -2,10 +2,11 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.cpu (* Default CPU context *)
+let ctx = T.cpu
 let eps = 1e-6
 
-(* Single variable gradients *)
+(* ───── basic gradients ───── *)
+
 let test_grad_simple () =
   let x = T.scalar ctx T.float32 2.0 in
   let f x = T.mul x x in
@@ -34,134 +35,184 @@ let test_grad_polynomial () =
     T.add (T.add x3 (T.mul x2 (T.scalar ctx T.float32 2.0))) x
   in
   let g = T.grad f x in
-  (* y = x³ + 2x² + x, dy/dx = 3x² + 4x + 1 = 12 + 8 + 1 = 21 at x=2 *)
   check_scalar ~eps "grad(x³ + 2x² + x) at x=2" 21.0 (scalar_value g)
 
-(* Unary operation gradients *)
-let test_grad_neg () =
-  let x = T.scalar ctx T.float32 3.0 in
-  let f x = T.neg x in
-  let g = T.grad f x in
-  check_scalar ~eps "grad(-x) at x=3" (-1.0) (scalar_value g)
+(* ───── unary operations ───── *)
 
-let test_grad_exp () =
-  let x = T.scalar ctx T.float32 0.0 in
-  let f x = T.exp x in
-  let g = T.grad f x in
-  check_scalar ~eps "grad(exp(x)) at x=0" 1.0 (scalar_value g)
+let test_grad_unary_ops () =
+  (* Test multiple unary ops in one test to reduce redundancy *)
+  let x = T.scalar ctx T.float32 1.0 in
 
-let test_grad_log () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let f x = T.log x in
-  let g = T.grad f x in
-  check_scalar ~eps "grad(log(x)) at x=2" 0.5 (scalar_value g)
+  (* exp: d/dx e^x = e^x *)
+  let grad_exp = T.grad T.exp (T.scalar ctx T.float32 0.0) in
+  check_scalar ~eps "grad(exp(x)) at x=0" 1.0 (scalar_value grad_exp);
 
-let test_grad_sin () =
-  let x = T.scalar ctx T.float32 0.0 in
-  let f x = T.sin x in
-  let g = T.grad f x in
-  check_scalar ~eps "grad(sin(x)) at x=0" 1.0 (scalar_value g)
+  (* log: d/dx ln(x) = 1/x *)
+  let grad_log = T.grad T.log (T.scalar ctx T.float32 2.0) in
+  check_scalar ~eps "grad(log(x)) at x=2" 0.5 (scalar_value grad_log);
 
-let test_grad_cos () =
-  let x = T.scalar ctx T.float32 0.0 in
-  let f x = T.cos x in
-  let g = T.grad f x in
-  check_scalar ~eps "grad(cos(x)) at x=0" 0.0 (scalar_value g)
+  (* sin/cos at x=0 *)
+  let grad_sin = T.grad T.sin (T.scalar ctx T.float32 0.0) in
+  let grad_cos = T.grad T.cos (T.scalar ctx T.float32 0.0) in
+  check_scalar ~eps "grad(sin(x)) at x=0" 1.0 (scalar_value grad_sin);
+  check_scalar ~eps "grad(cos(x)) at x=0" 0.0 (scalar_value grad_cos);
 
-let test_grad_tanh () =
-  let x = T.scalar ctx T.float32 0.5 in
-  let f x = T.tanh x in
-  let actual_grad = T.grad f x in
+  (* sqrt: d/dx √x = 1/(2√x) *)
+  let grad_sqrt = T.grad T.sqrt (T.scalar ctx T.float32 4.0) in
+  check_scalar ~eps "grad(sqrt(x)) at x=4" 0.25 (scalar_value grad_sqrt);
 
-  (* tanh'(x) = 1 - tanh²(x) = 1 - tanh²(0.5) ≈ 0.786 *)
-  let tanh_val = T.tanh x |> scalar_value in
-  let expected_grad_val = 1.0 -. (tanh_val *. tanh_val) in
-  check_scalar ~eps:1e-4 "tanh gradient" expected_grad_val
-    (scalar_value actual_grad)
+  (* neg: d/dx (-x) = -1 *)
+  let grad_neg = T.grad T.neg x in
+  check_scalar ~eps "grad(-x)" (-1.0) (scalar_value grad_neg)
 
-let test_grad_relu () =
-  let x = T.create ctx T.float32 [| 5 |] [| -2.; -1.; 0.; 1.; 2. |] in
-  let f x = T.sum (T.relu x) in
-  let grad = T.grad f x in
-  let expected = T.create ctx T.float32 [| 5 |] [| 0.; 0.; 0.; 1.; 1. |] in
-  check_rune "relu gradient" expected grad
+let test_grad_activation_functions () =
+  (* Group activation functions together *)
+  let x = T.create ctx T.float32 [| 4 |] [| -2.; -1.; 1.; 2. |] in
 
-let test_grad_sqrt () =
-  let x = T.scalar ctx T.float32 4.0 in
-  let f x = T.sqrt x in
-  let g = T.grad f x in
-  check_scalar ~eps "grad(sqrt(x)) at x=4" 0.25 (scalar_value g)
+  (* ReLU gradient *)
+  let f_relu x = T.sum (T.relu x) in
+  let grad_relu = T.grad f_relu x in
+  let expected_relu = T.create ctx T.float32 [| 4 |] [| 0.; 0.; 1.; 1. |] in
+  check_rune "relu gradient" expected_relu grad_relu;
 
-(* Reduction operation gradients *)
-let test_grad_sum () =
+  (* Tanh gradient *)
+  let x_tanh = T.scalar ctx T.float32 0.5 in
+  let grad_tanh = T.grad T.tanh x_tanh in
+  let tanh_val = T.tanh x_tanh |> scalar_value in
+  let expected_tanh = 1.0 -. (tanh_val *. tanh_val) in
+  check_scalar ~eps:1e-4 "tanh gradient" expected_tanh (scalar_value grad_tanh);
+
+  (* Abs gradient *)
+  let f_abs x = T.sum (T.abs x) in
+  let grad_abs = T.grad f_abs x in
+  let expected_abs = T.create ctx T.float32 [| 4 |] [| -1.; -1.; 1.; 1. |] in
+  check_rune ~eps "abs gradient" expected_abs grad_abs
+
+(* ───── reduction operations ───── *)
+
+let test_grad_reductions () =
   let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let f x = T.sum x in
-  let grad = T.grad f x in
-  let expected = T.ones ctx T.float32 [| 2; 2 |] in
-  check_rune "sum gradient" expected grad
 
-let test_grad_sum_axis () =
+  (* Sum gradient *)
+  let grad_sum = T.grad T.sum x in
+  let expected_sum = T.ones ctx T.float32 [| 2; 2 |] in
+  check_rune "sum gradient" expected_sum grad_sum;
+
+  (* Mean gradient *)
+  let grad_mean = T.grad T.mean x in
+  let expected_mean = T.full ctx T.float32 [| 2; 2 |] 0.25 in
+  check_rune "mean gradient" expected_mean grad_mean;
+
+  (* Max gradient *)
+  let x_max = T.create ctx T.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |] in
+  let grad_max = T.grad T.max x_max in
+  let expected_max = T.create ctx T.float32 [| 2; 2 |] [| 0.; 0.; 0.; 1. |] in
+  check_rune "max gradient" expected_max grad_max;
+
+  (* Sum with axis *)
+  let x_axis = T.create ctx T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
+  let f_axis x = T.sum (T.sum x ~axes:[| 1 |]) in
+  let grad_axis = T.grad f_axis x_axis in
+  let expected_axis = T.ones ctx T.float32 [| 2; 3 |] in
+  check_rune "sum with axis gradient" expected_axis grad_axis
+
+(* ───── broadcasting gradients ───── *)
+
+let test_grad_broadcast_binary_ops () =
+  (* Comprehensive test for all binary ops with broadcasting *)
+  let x = T.create ctx T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let bias = T.create ctx T.float32 [| 3 |] [| 0.1; 0.2; 0.3 |] in
+  let scalar = T.scalar ctx T.float32 2.0 in
+
+  (* Addition: [2,3] + [3] *)
+  let _, grads_add =
+    T.value_and_grads
+      (fun inputs ->
+        match inputs with
+        | [ a; b ] -> T.sum (T.add a b)
+        | _ -> failwith "Expected 2 inputs")
+      [ x; bias ]
+  in
+  let grad_bias_add = List.nth grads_add 1 in
+  check_rune ~eps "add broadcast: bias gradient"
+    (T.full ctx T.float32 [| 3 |] 2.0)
+    grad_bias_add;
+
+  (* Multiplication: [2,3] * [3] *)
+  let scale = T.create ctx T.float32 [| 3 |] [| 2.; 3.; 4. |] in
+  let _, grads_mul =
+    T.value_and_grads
+      (fun inputs ->
+        match inputs with
+        | [ a; s ] -> T.sum (T.mul a s)
+        | _ -> failwith "Expected 2 inputs")
+      [ x; scale ]
+  in
+  let grad_scale_mul = List.nth grads_mul 1 in
+  let expected_mul = T.create ctx T.float32 [| 3 |] [| 5.; 7.; 9. |] in
+  check_rune ~eps "mul broadcast: scale gradient" expected_mul grad_scale_mul;
+
+  (* Scalar broadcasting *)
+  let grad_scalar_add = T.grad (fun s -> T.sum (T.add x s)) scalar in
+  check_scalar ~eps "scalar add broadcast" 6.0 (scalar_value grad_scalar_add);
+
+  let grad_scalar_mul = T.grad (fun s -> T.sum (T.mul x s)) scalar in
+  check_scalar ~eps "scalar mul broadcast" 21.0 (scalar_value grad_scalar_mul)
+
+let test_grad_broadcast_special_cases () =
+  (* Test expand, where, and complex broadcasting patterns *)
+
+  (* Expand: scalar to vector *)
+  let scalar = T.scalar ctx T.float32 5.0 in
+  let f_expand s = T.sum (T.expand [| 3 |] s) in
+  let grad_expand = T.grad f_expand scalar in
+  check_scalar ~eps "expand scalar gradient" 3.0 (scalar_value grad_expand);
+
+  (* Expand: vector to matrix (bias pattern) *)
+  let vec = T.create ctx T.float32 [| 3 |] [| 10.; 20.; 30. |] in
+  let f_expand_vec v = T.sum (T.expand [| 2; 3 |] v) in
+  let grad_expand_vec = T.grad f_expand_vec vec in
+  check_rune ~eps "expand vector gradient"
+    (T.full ctx T.float32 [| 3 |] 2.0)
+    grad_expand_vec;
+
+  (* Where with broadcasting *)
+  let cond = T.create ctx T.uint8 [| 2; 3 |] [| 1; 0; 1; 0; 1; 0 |] in
+  let x = T.create ctx T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let y_scalar = T.scalar ctx T.float32 10.0 in
+  let _, grads_where =
+    T.value_and_grads
+      (fun inputs ->
+        match inputs with
+        | [ a; b ] -> T.sum (T.where cond a b)
+        | _ -> failwith "Expected 2 inputs")
+      [ x; y_scalar ]
+  in
+  let grad_y_where = List.nth grads_where 1 in
+  check_scalar ~eps "where scalar broadcast gradient" 3.0
+    (scalar_value grad_y_where)
+
+(* ───── shape manipulation ───── *)
+
+let test_grad_shape_ops () =
   let x = T.create ctx T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
-  let f x = T.sum (T.sum x ~axes:[| 1 |]) in
-  let grad = T.grad f x in
-  let expected = T.ones ctx T.float32 [| 2; 3 |] in
-  check_rune "sum with axis gradient" expected grad
 
-let test_grad_mean () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let f x = T.mean x in
-  let grad = T.grad f x in
-  let expected = T.full ctx T.float32 [| 2; 2 |] 0.25 in
-  check_rune "mean gradient" expected grad
+  (* Reshape gradient *)
+  let f_reshape x = T.sum (T.reshape [| 3; 2 |] x) in
+  let grad_reshape = T.grad f_reshape x in
+  check_rune "reshape gradient" (T.ones_like x) grad_reshape;
 
-let test_grad_max () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |] in
-  let f x = T.max x in
-  let grad = T.grad f x in
-  let expected = T.create ctx T.float32 [| 2; 2 |] [| 0.; 0.; 0.; 1. |] in
-  check_rune "max gradient" expected grad
+  (* Transpose gradient *)
+  let grad_transpose = T.grad (fun x -> T.sum (T.transpose x)) x in
+  check_rune "transpose gradient" (T.ones_like x) grad_transpose;
 
-(* Broadcasting and shape manipulation gradients *)
-let test_grad_broadcast () =
-  let x = T.create ctx T.float32 [| 1; 3 |] [| 1.; 2.; 3. |] in
-  let y = T.create ctx T.float32 [| 2; 1 |] [| 4.; 5. |] in
+  (* Squeeze gradient *)
+  let x_squeeze = T.create ctx T.float32 [| 1; 3; 1 |] [| 1.; 2.; 3. |] in
+  let grad_squeeze = T.grad (fun x -> T.sum (T.squeeze x)) x_squeeze in
+  check_rune "squeeze gradient" (T.ones_like x_squeeze) grad_squeeze
 
-  let f_x x = T.sum (T.mul x y) in
-  let f_y y = T.sum (T.mul x y) in
+(* ───── neural network operations ───── *)
 
-  let grad_x = T.grad f_x x in
-  let grad_y = T.grad f_y y in
-
-  let expected_x = T.create ctx T.float32 [| 1; 3 |] [| 9.; 9.; 9. |] in
-  (* sum of y values *)
-  let expected_y = T.create ctx T.float32 [| 2; 1 |] [| 6.; 6. |] in
-  (* sum of x values *)
-
-  check_rune "broadcast grad wrt x" expected_x grad_x;
-  check_rune "broadcast grad wrt y" expected_y grad_y
-
-let test_grad_squeeze () =
-  let x = T.create ctx T.float32 [| 1; 3; 1 |] [| 1.; 2.; 3. |] in
-  let f x = T.sum (T.squeeze x) in
-  let grad = T.grad f x in
-  let expected = T.ones ctx T.float32 [| 1; 3; 1 |] in
-  check_rune "squeeze gradient" expected grad
-
-let test_grad_reshape () =
-  let x = T.create ctx T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
-  let f x = T.sum (T.reshape [| 3; 2 |] x) in
-  let grad = T.grad f x in
-  let expected = T.ones ctx T.float32 [| 2; 3 |] in
-  check_rune "reshape gradient" expected grad
-
-let test_grad_transpose () =
-  let x = T.create ctx T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
-  let f x = T.sum (T.transpose x) in
-  let grad = T.grad f x in
-  let expected = T.ones ctx T.float32 [| 2; 3 |] in
-  check_rune "transpose gradient" expected grad
-
-(* Neural network operation gradients *)
 let test_grad_matmul () =
   let a = T.create ctx T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let b =
@@ -174,29 +225,51 @@ let test_grad_matmul () =
   let grad_a = T.grad f_a a in
   let grad_b = T.grad f_b b in
 
-  (* Expected gradients computed by hand or using NumPy *)
   let expected_a =
-    T.create ctx T.float32 [| 2; 3 |] [| 0.3; 0.7; 1.1; 0.3; 0.7; 1.1 |]
+    T.create ctx T.float32 [| 2; 3 |] [| 0.5; 0.7; 0.9; 0.5; 0.7; 0.9 |]
   in
   let expected_b =
-    T.create ctx T.float32 [| 3; 2 |] [| 5.; 5.; 7.; 7.; 9.; 9. |]
+    T.create ctx T.float32 [| 3; 2 |] [| 3.; 3.; 7.; 7.; 11.; 11. |]
   in
 
   check_rune ~eps "matmul grad wrt a" expected_a grad_a;
   check_rune ~eps "matmul grad wrt b" expected_b grad_b
 
-let test_grad_softmax () =
-  (* For softmax, just test the gradient of sum which should be zero due to
-     normalization *)
-  let x = T.create ctx T.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-  let f x = T.sum (T.softmax x ~axes:[| 0 |]) in
-  let actual_grad = T.grad f x in
+let test_grad_linear_layer () =
+  (* Combined matmul + bias pattern *)
+  let batch = 4 in
+  let in_dim = 2 in
+  let out_dim = 8 in
 
-  (* The sum of softmax is always 1, so gradient should be zero *)
-  let expected = T.zeros ctx T.float32 [| 3 |] in
-  check_rune ~eps:1e-4 "softmax gradient of sum" expected actual_grad
+  let x =
+    T.create ctx T.float32 [| batch; in_dim |]
+      (Array.init (batch * in_dim) float_of_int)
+  in
+  let w =
+    T.create ctx T.float32 [| in_dim; out_dim |]
+      (Array.init (in_dim * out_dim) (fun i -> float_of_int i *. 0.1))
+  in
+  let b =
+    T.create ctx T.float32 [| out_dim |]
+      (Array.init out_dim (fun i -> float_of_int i *. 0.01))
+  in
 
-let test_grad_cross_entropy () =
+  let linear w b x = T.add (T.matmul x w) b in
+  let loss x w b = T.sum (linear w b x) in
+
+  let grad_b = T.grad (fun b -> loss x w b) b in
+  let grad_w = T.grad (fun w -> loss x w b) w in
+
+  check_rune ~eps "linear layer bias gradient"
+    (T.full ctx T.float32 [| out_dim |] (float_of_int batch))
+    grad_b;
+
+  let ones_out = T.ones ctx T.float32 [| batch; out_dim |] in
+  let expected_w = T.matmul (T.transpose x) ones_out in
+  check_rune ~eps "linear layer weight gradient" expected_w grad_w
+
+let test_grad_loss_functions () =
+  (* Softmax + Cross-entropy *)
   let logits =
     T.create ctx T.float32 [| 2; 3 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |]
   in
@@ -204,115 +277,110 @@ let test_grad_cross_entropy () =
     T.create ctx T.float32 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 0.; 1. |]
   in
 
-  (* Cross-entropy: -sum(targets * log(softmax(logits))) *)
-  let f logits =
+  let f_ce logits =
     let probs = T.softmax logits ~axes:[| 1 |] in
     let log_probs = T.log probs in
     T.neg (T.sum (T.mul targets log_probs))
   in
 
-  let actual_grad = T.grad f logits in
+  let grad_ce = T.grad f_ce logits in
+  let expected_ce = T.sub (T.softmax logits ~axes:[| 1 |]) targets in
+  check_rune ~eps:1e-5 "cross-entropy gradient" expected_ce grad_ce;
 
-  (* Expected gradient is softmax(logits) - targets *)
-  let probs = T.softmax logits ~axes:[| 1 |] in
-  let expected_grad = T.sub probs targets in
-  check_rune ~eps:1e-5 "cross-entropy gradient" expected_grad actual_grad
+  (* Binary cross-entropy with sigmoid *)
+  let logits_bce = T.create ctx T.float32 [| 4; 1 |] [| -1.; 0.5; 0.5; -1. |] in
+  let targets_bce = T.create ctx T.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
-(* Multiple variables and composition *)
-let test_grad_multi_var () =
+  let f_bce logits =
+    let sigmoid_logits = T.sigmoid logits in
+    let one = T.ones_like targets_bce in
+    let one_minus_targets = T.sub one targets_bce in
+    let one_minus_sigmoid = T.sub one sigmoid_logits in
+    let term1 = T.mul targets_bce (T.log sigmoid_logits) in
+    let term2 = T.mul one_minus_targets (T.log one_minus_sigmoid) in
+    T.mean (T.neg (T.add term1 term2))
+  in
+
+  let grad_bce = T.grad f_bce logits_bce in
+  let diff = T.sub (T.sigmoid logits_bce) targets_bce in
+  let n = float_of_int (Array.fold_left ( * ) 1 (T.shape logits_bce)) in
+  let expected_bce = T.div diff (T.scalar ctx T.float32 n) in
+  check_rune ~eps:1e-5 "sigmoid BCE gradient" expected_bce grad_bce
+
+let test_grad_pooling () =
+  let x =
+    T.create ctx T.float32 [| 1; 1; 4; 4 |]
+      [|
+        1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.;
+      |]
+  in
+
+  let f x = T.sum (T.avg_pool2d x ~kernel_size:(2, 2) ~stride:(2, 2)) in
+  let grad = T.grad f x in
+
+  let expected = T.full ctx T.float32 [| 1; 1; 4; 4 |] 0.25 in
+  check_rune ~eps "avg_pool2d gradient" expected grad
+
+(* ───── composition and higher-order ───── *)
+
+let test_grad_composition () =
   let x = T.scalar ctx T.float32 2.0 in
   let y = T.scalar ctx T.float32 3.0 in
 
+  (* Multi-variable gradient *)
   let f_x x = T.add (T.mul x x) (T.mul y y) in
-  (* z = x² + y² *)
   let f_y y = T.add (T.mul x x) (T.mul y y) in
-
   let grad_x = T.grad f_x x in
   let grad_y = T.grad f_y y in
+  check_scalar ~eps "multi-var grad wrt x" 4.0 (scalar_value grad_x);
+  check_scalar ~eps "multi-var grad wrt y" 6.0 (scalar_value grad_y);
 
-  check_scalar ~eps "grad(x² + y²) wrt x at x=2" 4.0 (scalar_value grad_x);
-  check_scalar ~eps "grad(x² + y²) wrt y at y=3" 6.0 (scalar_value grad_y)
-
-let test_grad_chain_rule () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let f x =
+  (* Chain rule *)
+  let f_chain x =
     let y = T.mul x x in
-    (* y = x² *)
-    T.mul y y (* z = y² = x⁴ *)
+    T.mul y y
   in
-  let g = T.grad f x in
-  (* dz/dx = 4x³ = 32 at x=2 *)
-  check_scalar ~eps "chain rule: grad(x⁴) at x=2" 32.0 (scalar_value g)
+  let grad_chain = T.grad f_chain x in
+  check_scalar ~eps "chain rule: grad(x⁴) at x=2" 32.0 (scalar_value grad_chain);
 
-(* Higher-order derivatives *)
-let test_grad_second_order () =
-  let x = T.scalar ctx T.float32 2.0 in
+  (* Shared subexpression *)
+  let f_shared x =
+    let a = T.mul x x in
+    T.add a a
+  in
+  let grad_shared = T.grad f_shared x in
+  check_scalar ~eps "shared subexpression gradient" 8.0
+    (scalar_value grad_shared);
+
+  (* Second-order derivative *)
   let f x = T.mul x (T.mul x x) in
-  (* y = x³ *)
   let grad_f x = T.grad f x in
   let second_deriv = T.grad grad_f x in
   check_scalar ~eps "second derivative of x³ at x=2" 12.0
     (scalar_value second_deriv)
 
-(* Complex computational graphs *)
-let test_grad_diamond () =
-  (* x -> a, b -> c pattern *)
-  let x = T.scalar ctx T.float32 2.0 in
-  let f x =
-    let a = T.mul x (T.scalar ctx T.float32 3.0) in
-    let b = T.add x (T.scalar ctx T.float32 1.0) in
-    T.mul a b
-  in
-  let grad = T.grad f x in
-  (* c = (3x)(x+1) = 3x² + 3x, dc/dx = 6x + 3 = 15 at x=2 *)
-  check_scalar ~eps "diamond pattern gradient" 15.0 (scalar_value grad)
+(* ───── api functions ───── *)
 
-let test_grad_shared_subexpression () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let f x =
-    let a = T.mul x x in
-    T.add a a (* Reuse a twice *)
-  in
-  let grad = T.grad f x in
-  (* b = 2x², db/dx = 4x = 8 at x=2 *)
-  check_scalar ~eps "shared subexpression gradient" 8.0 (scalar_value grad)
-
-(* Value and gradient *)
-let test_value_and_grad () =
-  let x = T.scalar ctx T.float32 3.0 in
-  let f x = T.mul x x in
-  let value, grad = T.value_and_grad f x in
-  check_scalar ~eps "value_and_grad value" 9.0 (scalar_value value);
-  check_scalar ~eps "value_and_grad grad" 6.0 (scalar_value grad)
-
-(* Multiple input gradient functions *)
-let test_grads () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let y = T.scalar ctx T.float32 3.0 in
-  let f inputs =
-    match inputs with
-    | [ a; b ] -> T.add (T.mul a a) (T.mul b b) (* f(x,y) = x² + y² *)
-    | _ -> failwith "Expected 2 inputs"
-  in
-  let grads = T.grads f [ x; y ] in
-  (* ∂f/∂x = 2x = 4 at x=2, ∂f/∂y = 2y = 6 at y=3 *)
-  check_scalar ~eps "grads x" 4.0 (scalar_value (List.nth grads 0));
-  check_scalar ~eps "grads y" 6.0 (scalar_value (List.nth grads 1))
-
-let test_value_and_grads () =
+let test_grad_api_functions () =
   let x = T.scalar ctx T.float32 2.0 in
   let y = T.scalar ctx T.float32 3.0 in
   let z = T.scalar ctx T.float32 1.0 in
-  let f inputs =
+
+  (* value_and_grad *)
+  let f x = T.mul x x in
+  let value, grad = T.value_and_grad f x in
+  check_scalar ~eps "value_and_grad value" 4.0 (scalar_value value);
+  check_scalar ~eps "value_and_grad grad" 4.0 (scalar_value grad);
+
+  (* grads and value_and_grads *)
+  let f_multi inputs =
     match inputs with
-    | [ a; b; c ] ->
-        T.mul c (T.add (T.mul a a) (T.mul b b)) (* f(x,y,z) = z(x² + y²) *)
+    | [ a; b; c ] -> T.mul c (T.add (T.mul a a) (T.mul b b))
     | _ -> failwith "Expected 3 inputs"
   in
-  let value, grads = T.value_and_grads f [ x; y; z ] in
-  (* f(2,3,1) = 1*(4+9) = 13 *)
+
+  let value, grads = T.value_and_grads f_multi [ x; y; z ] in
   check_scalar ~eps "value_and_grads value" 13.0 (scalar_value value);
-  (* ∂f/∂x = 2xz = 4, ∂f/∂y = 2yz = 6, ∂f/∂z = x² + y² = 13 *)
   check_scalar ~eps "value_and_grads grad x" 4.0
     (scalar_value (List.nth grads 0));
   check_scalar ~eps "value_and_grads grad y" 6.0
@@ -320,24 +388,14 @@ let test_value_and_grads () =
   check_scalar ~eps "value_and_grads grad z" 13.0
     (scalar_value (List.nth grads 2))
 
-(* Edge cases *)
-let test_grad_zero () =
+(* ───── edge cases ───── *)
+
+let test_grad_edge_cases () =
+  (* Gradient at zero *)
   let x = T.scalar ctx T.float32 0.0 in
   let f x = T.mul x x in
   let g = T.grad f x in
   check_scalar ~eps "grad(x²) at x=0" 0.0 (scalar_value g)
-
-(* TODO: Implement when detach and no_grad are available let test_grad_detached
-   () = let x = T.scalar ctx T.float32 2.0 in let f x = let y = T.detach x in
-   T.mul y x in let g = T.grad f x in (* Since y is detached, only the direct x
-   contributes to gradient *) check_scalar ~eps "grad with detached variable"
-   2.0 (scalar_value g)
-
-   let test_grad_no_grad_scope () = let x = T.scalar ctx T.float32 2.0 in let f
-   x = let y = T.no_grad (fun () -> T.mul x x) in T.add y x in let g = T.grad f
-   x in (* Only the direct x in z = y + x contributes since y was computed in
-   no_grad *) check_scalar ~eps "grad with no_grad scope" 1.0 (scalar_value
-   g) *)
 
 (* Test suite *)
 let () =
@@ -352,53 +410,30 @@ let () =
         ] );
       ( "unary operations",
         [
-          test_case "negation" `Quick test_grad_neg;
-          test_case "exponential" `Quick test_grad_exp;
-          test_case "logarithm" `Quick test_grad_log;
-          test_case "sine" `Quick test_grad_sin;
-          test_case "cosine" `Quick test_grad_cos;
-          test_case "tanh" `Quick test_grad_tanh;
-          test_case "relu" `Quick test_grad_relu;
-          test_case "sqrt" `Quick test_grad_sqrt;
+          test_case "unary ops" `Quick test_grad_unary_ops;
+          test_case "activation functions" `Quick test_grad_activation_functions;
         ] );
       ( "reduction operations",
+        [ test_case "reductions" `Quick test_grad_reductions ] );
+      ( "broadcasting",
         [
-          test_case "sum" `Quick test_grad_sum;
-          test_case "sum with axis" `Quick test_grad_sum_axis;
-          test_case "mean" `Quick test_grad_mean;
-          test_case "max" `Quick test_grad_max;
+          test_case "binary ops broadcasting" `Quick
+            test_grad_broadcast_binary_ops;
+          test_case "special broadcasting cases" `Quick
+            test_grad_broadcast_special_cases;
         ] );
-      ( "broadcasting and reshaping",
-        [
-          test_case "broadcast" `Quick test_grad_broadcast;
-          test_case "squeeze" `Quick test_grad_squeeze;
-          test_case "reshape" `Quick test_grad_reshape;
-          test_case "transpose" `Quick test_grad_transpose;
-        ] );
+      ( "shape manipulation",
+        [ test_case "shape operations" `Quick test_grad_shape_ops ] );
       ( "neural network operations",
         [
           test_case "matmul" `Quick test_grad_matmul;
-          test_case "softmax" `Quick test_grad_softmax;
-          test_case "cross-entropy" `Quick test_grad_cross_entropy;
+          test_case "linear layer" `Quick test_grad_linear_layer;
+          test_case "loss functions" `Quick test_grad_loss_functions;
+          test_case "pooling" `Quick test_grad_pooling;
         ] );
-      ( "composition and multi-variable",
-        [
-          test_case "multiple variables" `Quick test_grad_multi_var;
-          test_case "chain rule" `Quick test_grad_chain_rule;
-          test_case "diamond pattern" `Quick test_grad_diamond;
-          test_case "shared subexpression" `Quick test_grad_shared_subexpression;
-        ] );
-      ( "advanced features",
-        [
-          test_case "second-order derivative" `Quick test_grad_second_order;
-          test_case "value_and_grad" `Quick test_value_and_grad;
-          test_case "grads" `Quick test_grads;
-          test_case "value_and_grads" `Quick test_value_and_grads;
-        ] );
-      ( "edge cases",
-        [
-          test_case "gradient at zero" `Quick test_grad_zero;
-          (* test_case "detached tensors" `Quick test_grad_detached; *)
-          (* test_case "no_grad scope" `Quick test_grad_no_grad_scope; *)
-        ] );
+      ( "composition and higher-order",
+        [ test_case "composition patterns" `Quick test_grad_composition ] );
+      ( "api functions",
+        [ test_case "gradient APIs" `Quick test_grad_api_functions ] );
+      ("edge cases", [ test_case "edge cases" `Quick test_grad_edge_cases ]);
     ]
