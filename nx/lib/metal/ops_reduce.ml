@@ -110,6 +110,23 @@ let dispatch_reduce ctx op_name t ~axes ~keepdims =
         ~bytes:Ctypes.(to_voidp naxes_val)
         ~length:4 ~index:8;
 
+      (* Pass input strides and offset for non-contiguous views *)
+      let in_strides = View.strides t.view in
+      let in_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
+      for i = 0 to ndim - 1 do
+        Ctypes.(in_strides_arr +@ i <-@ Int32.of_int in_strides.(i))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp in_strides_arr)
+        ~length:(ndim * 4) ~index:9;
+
+      let in_offset_val = 
+        Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.view)))
+      in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp in_offset_val)
+        ~length:4 ~index:10;
+
       (* Set threadgroup memory size based on dtype *)
       let elem_size = Internal.sizeof_dtype t.dtype in
       let threadgroup_memory_size = 256 * elem_size in

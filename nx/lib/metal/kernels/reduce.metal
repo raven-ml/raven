@@ -7,6 +7,7 @@ constant uint REDUCE_THREADS = 256;
 // Helper to compute strided index for reductions
 inline uint compute_strided_index(uint reduction_id, uint element_in_reduction,
                                  constant uint* shape, constant uint* axes,
+                                 constant int* strides, uint offset,
                                  uint ndim, uint naxes) {
     // Compute the multi-dimensional output index
     uint out_idx[8]; // Max 8 dimensions
@@ -37,12 +38,10 @@ inline uint compute_strided_index(uint reduction_id, uint element_in_reduction,
         temp /= shape[axis];
     }
     
-    // Convert multi-dimensional index to linear index
-    uint linear_idx = 0;
-    uint stride = 1;
-    for (int i = ndim - 1; i >= 0; i--) {
-        linear_idx += out_idx[i] * stride;
-        stride *= shape[i];
+    // Convert multi-dimensional index to linear index using strides
+    uint linear_idx = offset;
+    for (uint i = 0; i < ndim; i++) {
+        linear_idx += out_idx[i] * strides[i];
     }
     
     return linear_idx;
@@ -58,6 +57,8 @@ kernel void reduce_sum_float(device float* out [[buffer(0)]],
                             constant uint* axes [[buffer(6)]],
                             constant uint& ndim [[buffer(7)]],
                             constant uint& naxes [[buffer(8)]],
+                            constant int* in_strides [[buffer(9)]],
+                            constant uint& in_offset [[buffer(10)]],
                             threadgroup float* shared [[threadgroup(0)]],
                             uint tid [[thread_index_in_threadgroup]],
                             uint gid [[thread_position_in_grid]],
@@ -71,7 +72,7 @@ kernel void reduce_sum_float(device float* out [[buffer(0)]],
     
     // Grid-stride loop for this reduction
     for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
-        uint idx = compute_strided_index(reduction_id, i, shape, axes, ndim, naxes);
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
         if (idx < in_size) {
             sum += in[idx];
         }
@@ -105,6 +106,8 @@ kernel void reduce_sum_int(device int* out [[buffer(0)]],
                           constant uint* axes [[buffer(6)]],
                           constant uint& ndim [[buffer(7)]],
                           constant uint& naxes [[buffer(8)]],
+                          constant int* in_strides [[buffer(9)]],
+                          constant uint& in_offset [[buffer(10)]],
                           threadgroup int* shared [[threadgroup(0)]],
                           uint tid [[thread_index_in_threadgroup]],
                           uint gid [[thread_position_in_grid]],
@@ -116,7 +119,7 @@ kernel void reduce_sum_int(device int* out [[buffer(0)]],
     int sum = 0;
     
     for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
-        uint idx = compute_strided_index(reduction_id, i, shape, axes, ndim, naxes);
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
         if (idx < in_size) {
             sum += in[idx];
         }
@@ -147,6 +150,8 @@ kernel void reduce_max_float(device float* out [[buffer(0)]],
                             constant uint* axes [[buffer(6)]],
                             constant uint& ndim [[buffer(7)]],
                             constant uint& naxes [[buffer(8)]],
+                            constant int* in_strides [[buffer(9)]],
+                            constant uint& in_offset [[buffer(10)]],
                             threadgroup float* shared [[threadgroup(0)]],
                             uint tid [[thread_index_in_threadgroup]],
                             uint gid [[thread_position_in_grid]],
@@ -158,7 +163,7 @@ kernel void reduce_max_float(device float* out [[buffer(0)]],
     float max_val = -INFINITY;
     
     for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
-        uint idx = compute_strided_index(reduction_id, i, shape, axes, ndim, naxes);
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
         if (idx < in_size) {
             max_val = fmax(max_val, in[idx]);
         }
@@ -188,6 +193,8 @@ kernel void reduce_max_int(device int* out [[buffer(0)]],
                           constant uint* axes [[buffer(6)]],
                           constant uint& ndim [[buffer(7)]],
                           constant uint& naxes [[buffer(8)]],
+                          constant int* in_strides [[buffer(9)]],
+                          constant uint& in_offset [[buffer(10)]],
                           threadgroup int* shared [[threadgroup(0)]],
                           uint tid [[thread_index_in_threadgroup]],
                           uint gid [[thread_position_in_grid]],
@@ -199,7 +206,7 @@ kernel void reduce_max_int(device int* out [[buffer(0)]],
     int max_val = INT_MIN;
     
     for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
-        uint idx = compute_strided_index(reduction_id, i, shape, axes, ndim, naxes);
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
         if (idx < in_size) {
             max_val = max(max_val, in[idx]);
         }
@@ -230,6 +237,8 @@ kernel void reduce_prod_float(device float* out [[buffer(0)]],
                              constant uint* axes [[buffer(6)]],
                              constant uint& ndim [[buffer(7)]],
                              constant uint& naxes [[buffer(8)]],
+                             constant int* in_strides [[buffer(9)]],
+                             constant uint& in_offset [[buffer(10)]],
                              threadgroup float* shared [[threadgroup(0)]],
                              uint tid [[thread_index_in_threadgroup]],
                              uint gid [[thread_position_in_grid]],
@@ -241,7 +250,7 @@ kernel void reduce_prod_float(device float* out [[buffer(0)]],
     float prod = 1.0f;
     
     for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
-        uint idx = compute_strided_index(reduction_id, i, shape, axes, ndim, naxes);
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
         if (idx < in_size) {
             prod *= in[idx];
         }
@@ -271,6 +280,8 @@ kernel void reduce_prod_int(device int* out [[buffer(0)]],
                            constant uint* axes [[buffer(6)]],
                            constant uint& ndim [[buffer(7)]],
                            constant uint& naxes [[buffer(8)]],
+                           constant int* in_strides [[buffer(9)]],
+                           constant uint& in_offset [[buffer(10)]],
                            threadgroup int* shared [[threadgroup(0)]],
                            uint tid [[thread_index_in_threadgroup]],
                            uint gid [[thread_position_in_grid]],
@@ -282,7 +293,7 @@ kernel void reduce_prod_int(device int* out [[buffer(0)]],
     int prod = 1;
     
     for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
-        uint idx = compute_strided_index(reduction_id, i, shape, axes, ndim, naxes);
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
         if (idx < in_size) {
             prod *= in[idx];
         }
