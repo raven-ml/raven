@@ -44,7 +44,7 @@ inline uint compute_strided_index(uint reduction_id, uint element_in_reduction,
         linear_idx += out_idx[i] * strides[i];
     }
     
-    return linear_idx;
+    return uint(linear_idx);
 }
 
 // Sum reduction kernels

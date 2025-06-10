@@ -360,7 +360,7 @@ kernel void pad_float(device float* out [[buffer(0)]],
         if (ndim > 1) in_idx += in_pos.y * in_strides[1];
         if (ndim > 2) in_idx += in_pos.z * in_strides[2];
         
-        out[gid] = in[in_idx];
+        out[gid] = in[uint(in_idx)];
     } else {
         out[gid] = pad_value;
     }

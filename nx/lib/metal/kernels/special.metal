@@ -249,6 +249,22 @@ kernel void cast_int_to_uchar(device uchar* out [[buffer(0)]],
     out[gid] = uchar(in[gid] != 0 ? 1 : 0);
 }
 
+kernel void cast_float_to_uchar(device uchar* out [[buffer(0)]],
+                               device const float* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = uchar(in[gid]);
+}
+
+kernel void cast_float_to_short(device short* out [[buffer(0)]],
+                               device const float* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = short(in[gid]);
+}
+
 // Fill kernel - assigns a constant value
 kernel void fill_float(device float* out [[buffer(0)]],
                       constant float& value [[buffer(1)]],
@@ -290,16 +306,22 @@ kernel void gather_float(device float* out [[buffer(0)]],
                         constant uint& axis_size [[buffer(3)]],
                         constant uint& inner_size [[buffer(4)]],
                         constant uint& indices_size [[buffer(5)]],
+                        constant uint& outer_size [[buffer(6)]],
                         uint gid [[thread_position_in_grid]]) {
-    if (gid >= indices_size * inner_size) return;
+    if (gid >= outer_size * indices_size * inner_size) return;
     
-    uint idx_pos = gid / inner_size;
-    uint inner_pos = gid % inner_size;
+    // Decompose global id into outer, index, and inner positions
+    uint temp = gid;
+    uint inner_pos = temp % inner_size;
+    temp /= inner_size;
+    uint idx_pos = temp % indices_size;
+    uint outer_pos = temp / indices_size;
     
     int idx = indices[idx_pos];
     if (idx < 0) idx += axis_size;
     
-    uint data_idx = uint(idx) * inner_size + inner_pos;
+    // Compute source index: outer_pos * (axis_size * inner_size) + idx * inner_size + inner_pos
+    uint data_idx = outer_pos * axis_size * inner_size + uint(idx) * inner_size + inner_pos;
     out[gid] = data[data_idx];
 }
 
@@ -309,16 +331,22 @@ kernel void gather_int(device int* out [[buffer(0)]],
                       constant uint& axis_size [[buffer(3)]],
                       constant uint& inner_size [[buffer(4)]],
                       constant uint& indices_size [[buffer(5)]],
+                      constant uint& outer_size [[buffer(6)]],
                       uint gid [[thread_position_in_grid]]) {
-    if (gid >= indices_size * inner_size) return;
+    if (gid >= outer_size * indices_size * inner_size) return;
     
-    uint idx_pos = gid / inner_size;
-    uint inner_pos = gid % inner_size;
+    // Decompose global id into outer, index, and inner positions
+    uint temp = gid;
+    uint inner_pos = temp % inner_size;
+    temp /= inner_size;
+    uint idx_pos = temp % indices_size;
+    uint outer_pos = temp / indices_size;
     
     int idx = indices[idx_pos];
     if (idx < 0) idx += axis_size;
     
-    uint data_idx = uint(idx) * inner_size + inner_pos;
+    // Compute source index: outer_pos * (axis_size * inner_size) + idx * inner_size + inner_pos
+    uint data_idx = outer_pos * axis_size * inner_size + uint(idx) * inner_size + inner_pos;
     out[gid] = data[data_idx];
 }
 
