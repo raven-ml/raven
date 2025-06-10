@@ -137,7 +137,8 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
     let epoch_correct = ref 0 in
     let epoch_samples = ref 0 in
 
-    for batch_idx = 0 to Stdlib.min 20 (num_batches - 1) do  (* Just train on first 20 batches for testing *)
+    for batch_idx = 0 to Stdlib.min 20 (num_batches - 1) do
+      (* Just train on first 20 batches for testing *)
       let x_batch, y_batch =
         get_batch x_train y_train_onehot batch_size batch_idx
       in
@@ -171,8 +172,9 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
       List.combine params grad_params
       |> List.iter (fun (param, grad) ->
              (* Clip gradients to prevent NaN *)
-             let grad_clipped = clip grad ~min:(-.1.0) ~max:1.0 in
-             isub param (mul (scalar ctx Float32 learning_rate) grad_clipped) |> ignore);
+             let grad_clipped = clip grad ~min:(-1.0) ~max:1.0 in
+             isub param (mul (scalar ctx Float32 learning_rate) grad_clipped)
+             |> ignore);
 
       (* Print progress *)
       Printf.printf "Epoch %d, Batch %d/%d: Loss = %.4f\n%!" epoch batch_idx

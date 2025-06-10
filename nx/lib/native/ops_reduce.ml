@@ -19,15 +19,17 @@ let reduction_output_shape (in_shape : int array) (axes : int list)
 
 (* Initialize the input multi-dimensional index based on an output index and the
    axes being reduced. Works in-place to avoid allocations. *)
-let init_input_md_index_inplace (out_md_index : int array) (in_md_index : int array)
-    (axes : int list) (rank : int) : unit =
-  if Array.length out_md_index = rank then (
-    (* keepdims = true *)
-    for d = 0 to rank - 1 do
+let init_input_md_index_inplace (out_md_index : int array)
+    (in_md_index : int array) (axes : int list) (rank : int) : unit =
+  if Array.length out_md_index = rank then
+    for
+      (* keepdims = true *)
+      d = 0 to rank - 1
+    do
       if List.mem d axes then in_md_index.(d) <- 0
       else in_md_index.(d) <- out_md_index.(d)
-    done)
-  else (
+    done
+  else
     (* keepdims = false *)
     let non_reduced_pos = ref 0 in
     for d = 0 to rank - 1 do
@@ -35,7 +37,7 @@ let init_input_md_index_inplace (out_md_index : int array) (in_md_index : int ar
       else (
         in_md_index.(d) <- out_md_index.(!non_reduced_pos);
         incr non_reduced_pos)
-    done)
+    done
 
 (* Increments the input multi-dimensional index, primarily along the reduction
    axes. *)
@@ -89,14 +91,14 @@ let kernel_sum_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
   (* Pre-allocate work arrays to avoid allocations in loop *)
   let out_md_index = Array.make (Array.length out_shape) 0 in
   let in_md_index = Array.make rank 0 in
-  
+
   for k = start_out_idx to end_out_idx - 1 do
     Shape.unravel_index_into k out_shape out_md_index;
     let current_sum = ref (Dtype.zero (dtype out)) in
-    
+
     (* Initialize in_md_index based on out_md_index *)
     init_input_md_index_inplace out_md_index in_md_index axes rank;
-    
+
     let continue_reduction = ref true in
     while !continue_reduction do
       let a_linear_idx = Shape.ravel_index in_md_index a_strides in
@@ -212,14 +214,14 @@ let kernel_prod_axis (type a b) (a : (a, b) t) (out : (a, b) t)
   (* Pre-allocate work arrays to avoid allocations in loop *)
   let out_md_index = Array.make (Array.length out_shape) 0 in
   let in_md_index = Array.make rank 0 in
-  
+
   for k = start_out_idx to end_out_idx - 1 do
     Shape.unravel_index_into k out_shape out_md_index;
     let current_prod = ref (Dtype.one (dtype out)) in
-    
+
     (* Initialize in_md_index based on out_md_index *)
     init_input_md_index_inplace out_md_index in_md_index axes rank;
-    
+
     let continue_reduction = ref true in
     while !continue_reduction do
       let a_linear_idx = Shape.ravel_index in_md_index a_strides in
@@ -345,7 +347,7 @@ let kernel_min_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
   (* Pre-allocate work arrays to avoid allocations in loop *)
   let out_md_index = Array.make (Array.length out_shape) 0 in
   let in_md_index = Array.make rank 0 in
-  
+
   for k = start_out_idx to end_out_idx - 1 do
     Shape.unravel_index_into k out_shape out_md_index;
     let current_min = ref None in
@@ -533,7 +535,7 @@ let kernel_max_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
   (* Pre-allocate work arrays to avoid allocations in loop *)
   let out_md_index = Array.make (Array.length out_shape) 0 in
   let in_md_index = Array.make rank 0 in
-  
+
   for k = start_out_idx to end_out_idx - 1 do
     Shape.unravel_index_into k out_shape out_md_index;
     let current_max = ref min_identity_val in

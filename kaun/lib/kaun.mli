@@ -15,12 +15,21 @@ val init :
   model -> rngs:Rngs.t -> ('layout, 'dev) tensor -> ('layout, 'dev) params
 
 val apply :
-  model -> ('layout, 'dev) params -> training:bool -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+  model ->
+  ('layout, 'dev) params ->
+  training:bool ->
+  ('layout, 'dev) tensor ->
+  ('layout, 'dev) tensor
 
 val value_and_grad :
-  (('layout, 'dev) params -> ('layout, 'dev) tensor) -> ('layout, 'dev) params -> ('layout, 'dev) tensor * ('layout, 'dev) params
+  (('layout, 'dev) params -> ('layout, 'dev) tensor) ->
+  ('layout, 'dev) params ->
+  ('layout, 'dev) tensor * ('layout, 'dev) params
 
-val grad : (('layout, 'dev) params -> ('layout, 'dev) tensor) -> ('layout, 'dev) params -> ('layout, 'dev) params
+val grad :
+  (('layout, 'dev) params -> ('layout, 'dev) tensor) ->
+  ('layout, 'dev) params ->
+  ('layout, 'dev) params
 
 module Metrics : sig
   type t
@@ -39,7 +48,8 @@ module Metrics : sig
     t ->
     ?loss:('layout, 'dev) tensor ->
     ?logits:('layout, 'dev) tensor ->
-    ?labels:('layout, 'dev) tensor ->  (* Class indices, not one-hot *)
+    ?labels:('layout, 'dev) tensor ->
+    (* Class indices, not one-hot *)
     unit ->
     unit
 
@@ -62,7 +72,12 @@ module Dataset : sig
   (* Transformations *)
   val map : ('a -> 'b) -> 'a t -> 'b t
   val batch : int -> 'a t -> 'a t
-  val batch_xy : int -> (('l1, 'dev) tensor * ('l2, 'dev) tensor) t -> (('l1, 'dev) tensor * ('l2, 'dev) tensor) t
+
+  val batch_xy :
+    int ->
+    (('l1, 'dev) tensor * ('l2, 'dev) tensor) t ->
+    (('l1, 'dev) tensor * ('l2, 'dev) tensor) t
+
   val shuffle : ?seed:int -> 'a t -> 'a t
 
   (* Iteration *)
@@ -149,5 +164,9 @@ module Optimizer : sig
   val create : transform -> ('layout, 'dev) t
 
   (* Takes parameters and gradients, updates the parameters in-place *)
-  val update : ('layout, 'dev) t -> ('layout, 'dev) params -> ('layout, 'dev) params -> unit
+  val update :
+    ('layout, 'dev) t ->
+    ('layout, 'dev) params ->
+    ('layout, 'dev) params ->
+    unit
 end

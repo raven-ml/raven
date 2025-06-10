@@ -596,7 +596,7 @@ let op_gather data_t indices_t axis =
     (* Pre-allocate work arrays *)
     let md_idx = Array.make (Array.length output_shape) 0 in
     let src_idx = Array.make (Array.length output_shape) 0 in
-    
+
     (* Process each output element *)
     for linear_idx = 0 to output_numel - 1 do
       (* Get multi-dimensional index in output/indices *)
@@ -674,7 +674,7 @@ let op_scatter data_template_t indices_t updates_t axis =
     (* Pre-allocate work arrays *)
     let md_idx = Array.make (Array.length updates_shape) 0 in
     let dst_idx = Array.make (Array.length updates_shape) 0 in
-    
+
     (* Process each update *)
     for linear_idx = 0 to updates_numel - 1 do
       (* Get multi-dimensional index in updates/indices *)
@@ -714,7 +714,7 @@ let op_unfold x ~kernel_size ~stride ~dilation ~padding =
   Ops_im2col.unfold x.context x ~kernel_size ~stride ~dilation ~padding
 
 let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
-  Ops_im2col.fold x.context x ~output_size ~kernel_size ~stride ~dilation ~padding
+  Ops_im2col.fold x.context x ~output_size ~kernel_size ~stride ~dilation
+    ~padding
 
-let op_matmul a b =
-  Ops_matmul.matmul a.context a b
+let op_matmul a b = Ops_matmul.matmul a.context a b

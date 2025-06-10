@@ -76,16 +76,19 @@ let unravel_index_into k shape result =
     if k <> 0 then
       Error.invalid ~op:"unravel_index_into" ~what:"k"
         ~reason:(Printf.sprintf "%d out of bounds for scalar" k)
-        ()
-    (* else: k=0 for scalar, result stays empty *))
-  else if Array.exists (( = ) 0) shape then (
-    (* zero-size tensor; only k=0 is allowed *)
-    if k = 0 then
-      for i = 0 to n - 1 do result.(i) <- 0 done
+        () (* else: k=0 for scalar, result stays empty *))
+  else if Array.exists (( = ) 0) shape then
+    if
+      (* zero-size tensor; only k=0 is allowed *)
+      k = 0
+    then
+      for i = 0 to n - 1 do
+        result.(i) <- 0
+      done
     else
       Error.invalid ~op:"unravel_index_into" ~what:"k"
         ~reason:(Printf.sprintf "%d > 0 for zero-size shape" k)
-        ())
+        ()
   else
     let total_elements = numel shape in
     if k < 0 || k >= total_elements then
@@ -189,8 +192,7 @@ let broadcast_index_into target_multi_idx source_shape result =
     let target_idx_pos = target_ndim - source_ndim + i in
     let source_idx_pos = i in
     if source_idx_pos < 0 || target_idx_pos < 0 then ()
-    else if source_shape.(source_idx_pos) = 1 then
-      result.(source_idx_pos) <- 0
+    else if source_shape.(source_idx_pos) = 1 then result.(source_idx_pos) <- 0
     else result.(source_idx_pos) <- target_multi_idx.(target_idx_pos)
   done
 

@@ -10,5 +10,7 @@ val mnist :
   ?data_format:[ `NCHW | `NHWC ] ->
   (* default: `NCHW *)
   unit ->
-  ((Bigarray.float32_elt, 'dev) Kaun.tensor * (Bigarray.float32_elt, 'dev) Kaun.tensor) Kaun.Dataset.t
+  ((Bigarray.float32_elt, 'dev) Kaun.tensor
+  * (Bigarray.float32_elt, 'dev) Kaun.tensor)
+  Kaun.Dataset.t
 (** MNIST handwritten digits dataset *)

@@ -204,10 +204,10 @@ module type S = sig
     dilation:int array ->
     padding:(int * int) array ->
     ('a, 'b) t
-  (** Unfold (im2col) operation. Extracts sliding local blocks from a 
-      batched input tensor. For an input of shape (N, C, *spatial_dims),
-      produces output of shape (N, C * prod(kernel_size), L) where L is
-      the number of blocks. Works for any number of spatial dimensions. *)
+  (** Unfold (im2col) operation. Extracts sliding local blocks from a batched
+      input tensor. For an input of shape (N, C, *spatial_dims), produces output
+      of shape (N, C * prod(kernel_size), L) where L is the number of blocks.
+      Works for any number of spatial dimensions. *)
 
   val op_fold :
     ('a, 'b) t ->
@@ -217,14 +217,15 @@ module type S = sig
     dilation:int array ->
     padding:(int * int) array ->
     ('a, 'b) t
-  (** Fold (col2im) operation. Combines an array of sliding local blocks 
-      into a tensor. For an input of shape (N, C * prod(kernel_size), L),
-      produces output of shape (N, C, *output_size). Inverse of unfold.
-      Overlapping values are summed. Works for any number of spatial dimensions. *)
+  (** Fold (col2im) operation. Combines an array of sliding local blocks into a
+      tensor. For an input of shape (N, C * prod(kernel_size), L), produces
+      output of shape (N, C, *output_size). Inverse of unfold. Overlapping
+      values are summed. Works for any number of spatial dimensions. *)
 
   val op_matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** Matrix multiplication. For 2D tensors, computes standard matrix multiplication.
-      For higher dimensions, performs batched matrix multiplication on the last two
-      dimensions, broadcasting batch dimensions as needed. The last dimension of the
-      first tensor must match the second-to-last dimension of the second tensor. *)
+  (** Matrix multiplication. For 2D tensors, computes standard matrix
+      multiplication. For higher dimensions, performs batched matrix
+      multiplication on the last two dimensions, broadcasting batch dimensions
+      as needed. The last dimension of the first tensor must match the
+      second-to-last dimension of the second tensor. *)
 end

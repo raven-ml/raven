@@ -44,8 +44,13 @@ let op_permute _t = not_available ()
 let op_pad _t = not_available ()
 let op_shrink _t = not_available ()
 let op_flip _t = not_available ()
-let op_unfold _t ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ = not_available ()
-let op_fold _t ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ = not_available ()
+
+let op_unfold _t ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
+  not_available ()
+
+let op_fold _t ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
+  not_available ()
+
 let op_matmul _a _b = not_available ()
 let op_cat _t = not_available ()
 let op_cast _t = not_available ()

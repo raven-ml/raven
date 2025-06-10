@@ -87,7 +87,9 @@ let kernel_where_float16 (cond : (int, uint8_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_float32 (cond : (int, uint8_elt) t)
@@ -173,7 +175,9 @@ let kernel_where_float32 (cond : (int, uint8_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_float64 (cond : (int, uint8_elt) t)
@@ -259,7 +263,9 @@ let kernel_where_float64 (cond : (int, uint8_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_int8 (cond : (int, uint8_elt) t) (x : (int, int8_elt) t)
@@ -344,7 +350,9 @@ let kernel_where_int8 (cond : (int, uint8_elt) t) (x : (int, int8_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_uint8 (cond : (int, uint8_elt) t) (x : (int, uint8_elt) t)
@@ -429,7 +437,9 @@ let kernel_where_uint8 (cond : (int, uint8_elt) t) (x : (int, uint8_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_int16 (cond : (int, uint8_elt) t) (x : (int, int16_elt) t)
@@ -514,7 +524,9 @@ let kernel_where_int16 (cond : (int, uint8_elt) t) (x : (int, int16_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_uint16 (cond : (int, uint8_elt) t) (x : (int, uint16_elt) t)
@@ -599,7 +611,9 @@ let kernel_where_uint16 (cond : (int, uint8_elt) t) (x : (int, uint16_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_int32 (cond : (int, uint8_elt) t) (x : (int32, int32_elt) t)
@@ -684,7 +698,9 @@ let kernel_where_int32 (cond : (int, uint8_elt) t) (x : (int32, int32_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_int64 (cond : (int, uint8_elt) t) (x : (int64, int64_elt) t)
@@ -769,7 +785,9 @@ let kernel_where_int64 (cond : (int, uint8_elt) t) (x : (int64, int64_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_int (cond : (int, uint8_elt) t) (x : (int, int_elt) t)
@@ -854,7 +872,9 @@ let kernel_where_int (cond : (int, uint8_elt) t) (x : (int, int_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_nativeint (cond : (int, uint8_elt) t)
@@ -940,7 +960,9 @@ let kernel_where_nativeint (cond : (int, uint8_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_complex32 (cond : (int, uint8_elt) t)
@@ -1026,7 +1048,9 @@ let kernel_where_complex32 (cond : (int, uint8_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where_complex64 (cond : (int, uint8_elt) t)
@@ -1112,7 +1136,9 @@ let kernel_where_complex64 (cond : (int, uint8_elt) t)
       let cond_val = Array1.unsafe_get cond_buf cond_phys_idx in
       let x_val = Array1.unsafe_get x_buf x_phys_idx in
       let y_val = Array1.unsafe_get y_buf y_phys_idx in
-      Array1.unsafe_set out_buf (offset out + k) (if cond_val <> 0 then x_val else y_val)
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (if cond_val <> 0 then x_val else y_val)
     done
 
 let kernel_where (type a b) (cond : (int, uint8_elt) t) (if_true : (a, b) t)

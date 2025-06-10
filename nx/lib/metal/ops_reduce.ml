@@ -120,7 +120,7 @@ let dispatch_reduce ctx op_name t ~axes ~keepdims =
         ~bytes:Ctypes.(to_voidp in_strides_arr)
         ~length:(ndim * 4) ~index:9;
 
-      let in_offset_val = 
+      let in_offset_val =
         Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.view)))
       in
       ComputeCommandEncoder.set_bytes encoder

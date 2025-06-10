@@ -102,7 +102,7 @@ let kernel_threefry_int32 (data_t : (int32, int32_elt) t)
     let seed_strides = strides seed_t in
     let data_offset = offset data_t in
     let seed_offset = offset seed_t in
-    
+
     (* Pre-allocate work array *)
     let md_index = Array.make (Array.length out_shape) 0 in
 

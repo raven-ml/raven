@@ -342,7 +342,7 @@ let op_cmpne x y = cmp_op cmpne x y
 
 (* Reductions *)
 let op_reduce_sum ~axes ~keepdims x =
-  if Array.length axes = 0 then
+  if Array.length axes = 0 then (
     (* Full reduction *)
     let result_shape =
       if keepdims then Array.make (View.ndim x.view) 1 else [||]
@@ -350,7 +350,7 @@ let op_reduce_sum ~axes ~keepdims x =
     let result = make_tensor x result_shape in
     reduce_sum (View.ndim x.view) (View.shape x.view) x.buffer
       (View.strides x.view) (View.offset x.view) keepdims result.buffer;
-    result
+    result)
   else failwith "partial reduction not implemented"
 
 (* Movement operations *)
@@ -488,7 +488,7 @@ let op_where cond x y =
 
 (* Reductions *)
 let op_reduce_max ~axes ~keepdims x =
-  if Array.length axes = 0 then
+  if Array.length axes = 0 then (
     (* Full reduction *)
     let result_shape =
       if keepdims then Array.make (View.ndim x.view) 1 else [||]
@@ -496,11 +496,11 @@ let op_reduce_max ~axes ~keepdims x =
     let result = make_tensor x result_shape in
     reduce_max (View.ndim x.view) (View.shape x.view) x.buffer
       (View.strides x.view) (View.offset x.view) keepdims result.buffer;
-    result
+    result)
   else failwith "partial reduction not implemented"
 
 let op_reduce_prod ~axes ~keepdims x =
-  if Array.length axes = 0 then
+  if Array.length axes = 0 then (
     (* Full reduction *)
     let result_shape =
       if keepdims then Array.make (View.ndim x.view) 1 else [||]
@@ -508,7 +508,7 @@ let op_reduce_prod ~axes ~keepdims x =
     let result = make_tensor x result_shape in
     reduce_prod (View.ndim x.view) (View.shape x.view) x.buffer
       (View.strides x.view) (View.offset x.view) keepdims result.buffer;
-    result
+    result)
   else failwith "partial reduction not implemented"
 
 (* Additional external functions for pad and cast *)
@@ -885,6 +885,7 @@ let op_scatter data_template indices updates axis =
     (View.offset result.view);
 
   result
+
 (* External functions for new operations *)
 external matmul :
   int ->
@@ -943,63 +944,69 @@ let op_matmul a b =
   let shape_b = View.shape b.view in
   let ndim_a = Array.length shape_a in
   let ndim_b = Array.length shape_b in
-  
-  if ndim_a < 2 || ndim_b < 2 then
-    failwith "matmul: inputs must be at least 2D";
-    
+
+  if ndim_a < 2 || ndim_b < 2 then failwith "matmul: inputs must be at least 2D";
+
   (* Check matrix dimensions compatibility *)
   let m = shape_a.(ndim_a - 2) in
   let k_a = shape_a.(ndim_a - 1) in
   let k_b = shape_b.(ndim_b - 2) in
   let n = shape_b.(ndim_b - 1) in
-  
+
   if k_a <> k_b then
-    invalid_arg (Printf.sprintf "matmul: cannot contract %s (last axis: %d) to %s (axis %d: %d) (size %d≠%d)"
-      (Shape.to_string shape_a) k_a (Shape.to_string shape_b) (ndim_b - 2) k_b k_a k_b);
-  
+    invalid_arg
+      (Printf.sprintf
+         "matmul: cannot contract %s (last axis: %d) to %s (axis %d: %d) (size \
+          %d≠%d)"
+         (Shape.to_string shape_a) k_a (Shape.to_string shape_b) (ndim_b - 2)
+         k_b k_a k_b);
+
   (* Extract batch dimensions *)
   let batch_a = Array.sub shape_a 0 (ndim_a - 2) in
   let batch_b = Array.sub shape_b 0 (ndim_b - 2) in
-  
+
   (* Broadcast batch dimensions *)
   let max_batch_ndim = max (Array.length batch_a) (Array.length batch_b) in
   let batch_shape = Array.make max_batch_ndim 1 in
-  
+
   (* Fill from the right *)
   for i = 0 to Array.length batch_a - 1 do
     batch_shape.(max_batch_ndim - Array.length batch_a + i) <- batch_a.(i)
   done;
-  
+
   for i = 0 to Array.length batch_b - 1 do
     let idx = max_batch_ndim - Array.length batch_b + i in
-    if batch_shape.(idx) = 1 then
-      batch_shape.(idx) <- batch_b.(i)
+    if batch_shape.(idx) = 1 then batch_shape.(idx) <- batch_b.(i)
     else if batch_b.(i) <> 1 && batch_b.(i) <> batch_shape.(idx) then
-      failwith (Printf.sprintf "matmul: cannot broadcast shapes %s and %s"
-        (Shape.to_string shape_a) (Shape.to_string shape_b))
+      failwith
+        (Printf.sprintf "matmul: cannot broadcast shapes %s and %s"
+           (Shape.to_string shape_a) (Shape.to_string shape_b))
   done;
-  
+
   (* Output shape is batch_shape + [m; n] *)
-  let out_shape = Array.concat [batch_shape; [| m; n |]] in
-  
+  let out_shape = Array.concat [ batch_shape; [| m; n |] ] in
+
   (* Create output *)
-  let result = create a.context a.dtype 
-    (make_buffer a.dtype (Array.fold_left ( * ) 1 out_shape))
-    (View.create out_shape)
+  let result =
+    create a.context a.dtype
+      (make_buffer a.dtype (Array.fold_left ( * ) 1 out_shape))
+      (View.create out_shape)
   in
-  
+
   (* For CBLAS, we need to ensure inputs are contiguous *)
   let a_contig = if View.is_c_contiguous a.view then a else op_contiguous a in
   let b_contig = if View.is_c_contiguous b.view then b else op_contiguous b in
-  
+
   (* Call the C implementation *)
   matmul (View.ndim a_contig.view) (View.shape a_contig.view) a_contig.buffer
-    (View.strides a_contig.view) (View.offset a_contig.view)
+    (View.strides a_contig.view)
+    (View.offset a_contig.view)
     (View.shape b_contig.view) b_contig.buffer
-    (View.strides b_contig.view) (View.offset b_contig.view)
-    (View.shape result.view) result.buffer
-    (View.strides result.view) (View.offset result.view);
-  
+    (View.strides b_contig.view)
+    (View.offset b_contig.view)
+    (View.shape result.view) result.buffer (View.strides result.view)
+    (View.offset result.view);
+
   result
 
 (* UNFOLD operation *)
@@ -1007,21 +1014,23 @@ let op_unfold t ~kernel_size ~stride ~dilation ~padding =
   let t_shape = View.shape t.view in
   let ndim = Array.length t_shape in
   let n_spatial = Array.length kernel_size in
-  
+
   if ndim < n_spatial + 2 then
-    invalid_arg "op_unfold: input must have at least batch and channel dimensions";
-    
+    invalid_arg
+      "op_unfold: input must have at least batch and channel dimensions";
+
   let batch_size = t_shape.(0) in
   let channels = t_shape.(1) in
   let _spatial_dims = Array.sub t_shape 2 n_spatial in
-  
+
   (* Apply padding if needed *)
-  let t_padded = 
-    if Array.for_all (fun (before, after) -> before = 0 && after = 0) padding then
-      t
+  let t_padded =
+    if Array.for_all (fun (before, after) -> before = 0 && after = 0) padding
+    then t
     else
-      let pad_config = Array.concat [Array.make 2 (0, 0); padding] in
-      let fill_value : type a b. (a, b) t -> a = fun t ->
+      let pad_config = Array.concat [ Array.make 2 (0, 0); padding ] in
+      let fill_value : type a b. (a, b) t -> a =
+       fun t ->
         match t.dtype with
         | Dtype.Float16 -> 0.0
         | Dtype.Float32 -> 0.0
@@ -1039,96 +1048,109 @@ let op_unfold t ~kernel_size ~stride ~dilation ~padding =
       in
       op_pad t pad_config (fill_value t)
   in
-  
+
   let padded_shape = View.shape t_padded.view in
   let padded_spatial = Array.sub padded_shape 2 n_spatial in
-  
+
   (* Calculate output spatial dimensions *)
-  let out_spatial = Array.init n_spatial (fun i ->
-    let input_size = padded_spatial.(i) in
-    let kernel = kernel_size.(i) in
-    let s = stride.(i) in
-    let d = dilation.(i) in
-    let effective_kernel = 1 + (kernel - 1) * d in
-    (input_size - effective_kernel) / s + 1
-  ) in
-  
+  let out_spatial =
+    Array.init n_spatial (fun i ->
+        let input_size = padded_spatial.(i) in
+        let kernel = kernel_size.(i) in
+        let s = stride.(i) in
+        let d = dilation.(i) in
+        let effective_kernel = 1 + ((kernel - 1) * d) in
+        ((input_size - effective_kernel) / s) + 1)
+  in
+
   (* Calculate number of patches *)
   let num_patches = Array.fold_left ( * ) 1 out_spatial in
   let patch_size = channels * Array.fold_left ( * ) 1 kernel_size in
-  
+
   (* Output shape is [batch_size; patch_size; num_patches] *)
   let out_shape = [| batch_size; patch_size; num_patches |] in
-  
+
   (* Create output *)
-  let result = create t.context t.dtype 
-    (make_buffer t.dtype (Array.fold_left ( * ) 1 out_shape))
-    (View.create out_shape)
+  let result =
+    create t.context t.dtype
+      (make_buffer t.dtype (Array.fold_left ( * ) 1 out_shape))
+      (View.create out_shape)
   in
-  
+
   (* Ensure input is contiguous *)
-  let t_contig = if View.is_c_contiguous t_padded.view then t_padded else op_contiguous t_padded in
-  
+  let t_contig =
+    if View.is_c_contiguous t_padded.view then t_padded
+    else op_contiguous t_padded
+  in
+
   (* Call the C implementation *)
   unfold (View.ndim t_contig.view) (View.shape t_contig.view) t_contig.buffer
-    (View.strides t_contig.view) (View.offset t_contig.view)
-    (View.shape result.view) result.buffer
-    (View.strides result.view) (View.offset result.view)
-    n_spatial kernel_size stride dilation padding;
-    
+    (View.strides t_contig.view)
+    (View.offset t_contig.view)
+    (View.shape result.view) result.buffer (View.strides result.view)
+    (View.offset result.view) n_spatial kernel_size stride dilation padding;
+
   result
 
 (* FOLD operation *)
 let op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding =
   let t_shape = View.shape t.view in
   let n_spatial = Array.length kernel_size in
-  
+
   if Array.length t_shape <> 3 then
     invalid_arg "op_fold: input must be 3D [batch; patch_size; num_patches]";
-    
+
   let batch_size = t_shape.(0) in
   let patch_size = t_shape.(1) in
   let _num_patches = t_shape.(2) in
-  
+
   (* Calculate expected patch size *)
   let channels = patch_size / Array.fold_left ( * ) 1 kernel_size in
   if channels * Array.fold_left ( * ) 1 kernel_size <> patch_size then
-    invalid_arg "op_fold: patch_size must be divisible by product of kernel_size";
-    
+    invalid_arg
+      "op_fold: patch_size must be divisible by product of kernel_size";
+
   (* Calculate padded output size *)
-  let padded_size = Array.init n_spatial (fun i ->
-    let (pad_before, pad_after) = padding.(i) in
-    output_size.(i) + pad_before + pad_after
-  ) in
-  
-  (* Output shape is [batch_size; channels; *padded_size] *)
-  let out_shape = Array.concat [[| batch_size; channels |]; padded_size] in
-  
-  (* Create output *)
-  let result = create t.context t.dtype 
-    (make_buffer t.dtype (Array.fold_left ( * ) 1 out_shape))
-    (View.create out_shape)
+  let padded_size =
+    Array.init n_spatial (fun i ->
+        let pad_before, pad_after = padding.(i) in
+        output_size.(i) + pad_before + pad_after)
   in
-  
+
+  (* Output shape is [batch_size; channels; *padded_size] *)
+  let out_shape = Array.concat [ [| batch_size; channels |]; padded_size ] in
+
+  (* Create output *)
+  let result =
+    create t.context t.dtype
+      (make_buffer t.dtype (Array.fold_left ( * ) 1 out_shape))
+      (View.create out_shape)
+  in
+
   (* Ensure input is contiguous *)
   let t_contig = if View.is_c_contiguous t.view then t else op_contiguous t in
-  
+
   (* Call the C implementation *)
   fold (View.ndim t_contig.view) (View.shape t_contig.view) t_contig.buffer
-    (View.strides t_contig.view) (View.offset t_contig.view)
-    (View.shape result.view) result.buffer
-    (View.strides result.view) (View.offset result.view)
-    n_spatial output_size kernel_size stride dilation padding;
-    
+    (View.strides t_contig.view)
+    (View.offset t_contig.view)
+    (View.shape result.view) result.buffer (View.strides result.view)
+    (View.offset result.view) n_spatial output_size kernel_size stride dilation
+    padding;
+
   (* Remove padding if needed *)
   if Array.for_all (fun (before, after) -> before = 0 && after = 0) padding then
     result
   else
-    let shrink_bounds = Array.concat [
-      [| (0, batch_size); (0, channels) |];
-      Array.mapi (fun i _ ->
-        let (pad_before, _) = padding.(i) in
-        (pad_before, pad_before + output_size.(i))
-      ) output_size
-    ] in
+    let shrink_bounds =
+      Array.concat
+        [
+          [| (0, batch_size); (0, channels) |];
+          Array.mapi
+            (fun i _ ->
+              let pad_before, _ = padding.(i) in
+              (pad_before, pad_before + output_size.(i)))
+            output_size;
+        ]
+    in
     op_shrink result shrink_bounds

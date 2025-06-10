@@ -202,7 +202,7 @@ let pad ctx t out padding fill_value =
         ~bytes:Ctypes.(to_voidp in_strides_arr)
         ~length:(ndim * 4) ~index:7;
 
-      let in_offset_val = 
+      let in_offset_val =
         Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int (View.offset t.view)))
       in
       ComputeCommandEncoder.set_bytes encoder

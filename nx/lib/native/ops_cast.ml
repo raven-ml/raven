@@ -297,7 +297,9 @@ let cast_f16_to_c32 (src : (float, float16_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) { Complex.re = src_val; im = 0.0 }
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        { Complex.re = src_val; im = 0.0 }
     done
 
 let cast_f16_to_c64 (src : (float, float16_elt) t)
@@ -330,7 +332,9 @@ let cast_f16_to_c64 (src : (float, float16_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) { Complex.re = src_val; im = 0.0 }
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        { Complex.re = src_val; im = 0.0 }
     done
 
 let cast_f16_to_int (src : (float, float16_elt) t) (dst : (int, int_elt) t)
@@ -693,7 +697,9 @@ let cast_f32_to_c32 (src : (float, float32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) { Complex.re = src_val; im = 0.0 }
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        { Complex.re = src_val; im = 0.0 }
     done
 
 let cast_f32_to_c64 (src : (float, float32_elt) t)
@@ -726,7 +732,9 @@ let cast_f32_to_c64 (src : (float, float32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) { Complex.re = src_val; im = 0.0 }
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        { Complex.re = src_val; im = 0.0 }
     done
 
 let cast_f32_to_int (src : (float, float32_elt) t) (dst : (int, int_elt) t)
@@ -1089,7 +1097,9 @@ let cast_f64_to_c32 (src : (float, float64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) { Complex.re = src_val; im = 0.0 }
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        { Complex.re = src_val; im = 0.0 }
     done
 
 let cast_f64_to_c64 (src : (float, float64_elt) t)
@@ -1122,7 +1132,9 @@ let cast_f64_to_c64 (src : (float, float64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) { Complex.re = src_val; im = 0.0 }
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        { Complex.re = src_val; im = 0.0 }
     done
 
 let cast_f64_to_int (src : (float, float64_elt) t) (dst : (int, int_elt) t)
@@ -1490,7 +1502,8 @@ let cast_i8_to_c32 (src : (int, int8_signed_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -1529,7 +1542,8 @@ let cast_i8_to_c64 (src : (int, int8_signed_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -1898,7 +1912,8 @@ let cast_u8_to_c32 (src : (int, int8_unsigned_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -1937,7 +1952,8 @@ let cast_u8_to_c64 (src : (int, int8_unsigned_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -2306,7 +2322,8 @@ let cast_i16_to_c32 (src : (int, int16_signed_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -2345,7 +2362,8 @@ let cast_i16_to_c64 (src : (int, int16_signed_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -2714,7 +2732,8 @@ let cast_u16_to_c32 (src : (int, int16_unsigned_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -2753,7 +2772,8 @@ let cast_u16_to_c64 (src : (int, int16_unsigned_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -3122,7 +3142,8 @@ let cast_i32_to_c32 (src : (int32, int32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = Int32.to_float src_val; im = 0.0 }
     done
 
@@ -3161,7 +3182,8 @@ let cast_i32_to_c64 (src : (int32, int32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = Int32.to_float src_val; im = 0.0 }
     done
 
@@ -3530,7 +3552,8 @@ let cast_i64_to_c32 (src : (int64, int64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = Int64.to_float src_val; im = 0.0 }
     done
 
@@ -3569,7 +3592,8 @@ let cast_i64_to_c64 (src : (int64, int64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = Int64.to_float src_val; im = 0.0 }
     done
 
@@ -3768,7 +3792,9 @@ let cast_c32_to_i8 (src : (Complex.t, complex32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c32_to_u8 (src : (Complex.t, complex32_elt) t)
@@ -3801,7 +3827,9 @@ let cast_c32_to_u8 (src : (Complex.t, complex32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c32_to_i16 (src : (Complex.t, complex32_elt) t)
@@ -3834,7 +3862,9 @@ let cast_c32_to_i16 (src : (Complex.t, complex32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c32_to_u16 (src : (Complex.t, complex32_elt) t)
@@ -3867,7 +3897,9 @@ let cast_c32_to_u16 (src : (Complex.t, complex32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c32_to_i32 (src : (Complex.t, complex32_elt) t)
@@ -3900,7 +3932,9 @@ let cast_c32_to_i32 (src : (Complex.t, complex32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (Int32.of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (Int32.of_float src_val.Complex.re)
     done
 
 let cast_c32_to_i64 (src : (Complex.t, complex32_elt) t)
@@ -3933,7 +3967,9 @@ let cast_c32_to_i64 (src : (Complex.t, complex32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (Int64.of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (Int64.of_float src_val.Complex.re)
     done
 
 let cast_c32_to_c64 (src : (Complex.t, complex32_elt) t)
@@ -3999,7 +4035,9 @@ let cast_c32_to_int (src : (Complex.t, complex32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c32_to_nativeint (src : (Complex.t, complex32_elt) t)
@@ -4032,7 +4070,9 @@ let cast_c32_to_nativeint (src : (Complex.t, complex32_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (Nativeint.of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (Nativeint.of_float src_val.Complex.re)
     done
 
 let cast_c64_to_f16 (src : (Complex.t, complex64_elt) t)
@@ -4164,7 +4204,9 @@ let cast_c64_to_i8 (src : (Complex.t, complex64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c64_to_u8 (src : (Complex.t, complex64_elt) t)
@@ -4197,7 +4239,9 @@ let cast_c64_to_u8 (src : (Complex.t, complex64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c64_to_i16 (src : (Complex.t, complex64_elt) t)
@@ -4230,7 +4274,9 @@ let cast_c64_to_i16 (src : (Complex.t, complex64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c64_to_u16 (src : (Complex.t, complex64_elt) t)
@@ -4263,7 +4309,9 @@ let cast_c64_to_u16 (src : (Complex.t, complex64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c64_to_i32 (src : (Complex.t, complex64_elt) t)
@@ -4296,7 +4344,9 @@ let cast_c64_to_i32 (src : (Complex.t, complex64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (Int32.of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (Int32.of_float src_val.Complex.re)
     done
 
 let cast_c64_to_i64 (src : (Complex.t, complex64_elt) t)
@@ -4329,7 +4379,9 @@ let cast_c64_to_i64 (src : (Complex.t, complex64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (Int64.of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (Int64.of_float src_val.Complex.re)
     done
 
 let cast_c64_to_c32 (src : (Complex.t, complex64_elt) t)
@@ -4395,7 +4447,9 @@ let cast_c64_to_int (src : (Complex.t, complex64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (int_of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (int_of_float src_val.Complex.re)
     done
 
 let cast_c64_to_nativeint (src : (Complex.t, complex64_elt) t)
@@ -4428,7 +4482,9 @@ let cast_c64_to_nativeint (src : (Complex.t, complex64_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k) (Nativeint.of_float src_val.Complex.re)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
+        (Nativeint.of_float src_val.Complex.re)
     done
 
 let cast_int_to_f16 (src : (int, int_elt) t) (dst : (float, float16_elt) t)
@@ -4763,7 +4819,8 @@ let cast_int_to_c32 (src : (int, int_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -4802,7 +4859,8 @@ let cast_int_to_c64 (src : (int, int_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = float_of_int src_val; im = 0.0 }
     done
 
@@ -5171,7 +5229,8 @@ let cast_nativeint_to_c32 (src : (nativeint, nativeint_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = Nativeint.to_float src_val; im = 0.0 }
     done
 
@@ -5210,7 +5269,8 @@ let cast_nativeint_to_c64 (src : (nativeint, nativeint_elt) t)
       Shape.unravel_index_into k (shape dst) md_index;
       let src_lin = Shape.ravel_index md_index (strides src) in
       let src_val = Array1.unsafe_get src_buf (offset src + src_lin) in
-      Array1.unsafe_set dst_buf (offset dst + k)
+      Array1.unsafe_set dst_buf
+        (offset dst + k)
         { Complex.re = Nativeint.to_float src_val; im = 0.0 }
     done
 

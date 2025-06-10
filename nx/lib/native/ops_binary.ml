@@ -2413,7 +2413,9 @@ let kernel_idiv_float16 (a : (float, float16_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (Float.trunc (Float.div a_val b_val))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (Float.trunc (Float.div a_val b_val))
     done
 
 let kernel_idiv_float32 (a : (float, float32_elt) t)
@@ -2458,7 +2460,9 @@ let kernel_idiv_float32 (a : (float, float32_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (Float.trunc (Float.div a_val b_val))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (Float.trunc (Float.div a_val b_val))
     done
 
 let kernel_idiv_float64 (a : (float, float64_elt) t)
@@ -2503,7 +2507,9 @@ let kernel_idiv_float64 (a : (float, float64_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (Float.trunc (Float.div a_val b_val))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (Float.trunc (Float.div a_val b_val))
     done
 
 let kernel_idiv_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
@@ -3565,7 +3571,9 @@ let kernel_equal_float16 (a : (float, float16_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (Float.equal a_val b_val))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (Float.equal a_val b_val))
     done
 
 let kernel_modulo_float16 (a : (float, float16_elt) t)
@@ -5248,7 +5256,9 @@ let kernel_cmplt_complex32 (a : (Complex.t, complex32_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val.re < b_val.re))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (a_val.re < b_val.re))
     done
 
 let kernel_cmplt_complex64 (a : (Complex.t, complex64_elt) t)
@@ -5337,7 +5347,9 @@ let kernel_cmpne_float16 (a : (float, float16_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_float32 (a : (float, float32_elt) t)
@@ -5381,7 +5393,9 @@ let kernel_cmpne_float32 (a : (float, float32_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_float64 (a : (float, float64_elt) t)
@@ -5425,7 +5439,9 @@ let kernel_cmpne_float64 (a : (float, float64_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
@@ -5469,7 +5485,9 @@ let kernel_cmpne_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
@@ -5513,7 +5531,9 @@ let kernel_cmpne_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
@@ -5557,7 +5577,9 @@ let kernel_cmpne_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
@@ -5601,7 +5623,9 @@ let kernel_cmpne_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
@@ -5645,7 +5669,9 @@ let kernel_cmpne_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
@@ -5689,7 +5715,9 @@ let kernel_cmpne_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_int (a : (int, int_elt) t) (b : (int, int_elt) t)
@@ -5733,7 +5761,9 @@ let kernel_cmpne_int (a : (int, int_elt) t) (b : (int, int_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_nativeint (a : (nativeint, nativeint_elt) t)
@@ -5778,7 +5808,9 @@ let kernel_cmpne_nativeint (a : (nativeint, nativeint_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_complex32 (a : (Complex.t, complex32_elt) t)
@@ -5823,7 +5855,9 @@ let kernel_cmpne_complex32 (a : (Complex.t, complex32_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_cmpne_complex64 (a : (Complex.t, complex64_elt) t)
@@ -5868,7 +5902,9 @@ let kernel_cmpne_complex64 (a : (Complex.t, complex64_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (not (a_val = b_val)))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
     done
 
 let kernel_bit_and_float16 (a : (float, float16_elt) t)

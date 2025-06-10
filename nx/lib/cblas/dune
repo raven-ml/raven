@@ -5,8 +5,10 @@
  (foreign_stubs
   (language c)
   (names nx_cblas_stubs nx_cblas_ops_impl)
-  (flags (:include c_flags.sexp)))
- (c_library_flags (:include c_library_flags.sexp)))
+  (flags
+   (:include c_flags.sexp)))
+ (c_library_flags
+  (:include c_library_flags.sexp)))
 
 (rule
  (targets c_library_flags.sexp c_flags.sexp)

@@ -219,7 +219,7 @@ let op_unfold t ~kernel_size ~stride ~dilation ~padding =
   Ops_im2col.op_unfold t.context t ~kernel_size ~stride ~dilation ~padding
 
 let op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding =
-  Ops_im2col.op_fold t.context t ~output_size ~kernel_size ~stride ~dilation ~padding
+  Ops_im2col.op_fold t.context t ~output_size ~kernel_size ~stride ~dilation
+    ~padding
 
-let op_matmul a b =
-  Ops_matmul.op_matmul a.context a b
+let op_matmul a b = Ops_matmul.op_matmul a.context a b

@@ -234,8 +234,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     check_t "slice of slice values" [| 3 |] [| 3.; 4.; 5. |] slice2;
     (* Modify original and check if visible *)
     Nx.unsafe_set [ 3 ] 99.0 t;
-    check (float 1e-6) "slice of slice offset" 99.0
-      (Nx.unsafe_get [ 0 ] slice2)
+    check (float 1e-6) "slice of slice offset" 99.0 (Nx.unsafe_get [ 0 ] slice2)
 
   (* ───── Additional Edge Cases ───── *)
 

@@ -26,10 +26,12 @@ let train () =
     |> Dataset.shuffle ~seed:42 |> Dataset.batch_xy 32
   in
 
-  let test_ds = Kaun_datasets.mnist ~train:false ~flatten:false () |> Dataset.batch_xy 100 in
-  
+  let test_ds =
+    Kaun_datasets.mnist ~train:false ~flatten:false () |> Dataset.batch_xy 100
+  in
+
   (* Initialize model with dummy input to get params *)
-  let dummy_input = Rune.zeros Rune.cpu Rune.float32 [|1; 1; 28; 28|] in
+  let dummy_input = Rune.zeros Rune.cpu Rune.float32 [| 1; 1; 28; 28 |] in
   let params = init model ~rngs dummy_input in
   let optimizer = Optimizer.create (Optimizer.adam ~lr:0.001 ()) in
 

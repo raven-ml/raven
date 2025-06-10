@@ -62,7 +62,8 @@ val broadcast_index : int array -> t -> int array
     Returns indices in source shape corresponding to target position. *)
 
 val broadcast_index_into : int array -> t -> int array -> unit
-(** [broadcast_index_into target_indices source_shape result] writes broadcast indices into result array.
+(** [broadcast_index_into target_indices source_shape result] writes broadcast
+    indices into result array.
 
     In-place version to avoid allocations in loops. *)
 

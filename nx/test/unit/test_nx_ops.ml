@@ -285,8 +285,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
               Nx.create ctx Nx_core.Dtype.float32 [| 3 |] [| 0.0; 0.0; 0.0 |]
             in
             let result = Nx.div a b in
-            check (float 1e-6) "1/0" Float.infinity
-              (Nx.unsafe_get [ 0 ] result);
+            check (float 1e-6) "1/0" Float.infinity (Nx.unsafe_get [ 0 ] result);
             check (float 1e-6) "-1/0" Float.neg_infinity
               (Nx.unsafe_get [ 1 ] result);
             check bool "0/0" true (Float.is_nan (Nx.unsafe_get [ 2 ] result)) );
@@ -801,8 +800,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
         ( "invert",
           `Quick,
           test_unary_op ~op:Nx.invert ~op_name:"invert" ~dtype:Nx.int32
-            ~shape:[| 3 |] ~input:[| 5l; 0l; 7l |] ~expected:[| -6l; -1l; -8l |] ctx
-        );
+            ~shape:[| 3 |] ~input:[| 5l; 0l; 7l |] ~expected:[| -6l; -1l; -8l |]
+            ctx );
       ]
   end
 

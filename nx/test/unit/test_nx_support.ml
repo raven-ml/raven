@@ -10,8 +10,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
 
   let check_failure msg pattern f = check_raises msg (Failure pattern) f
 
-  let testable_of_dtype (type a b) ?(eps = 1e-6) (dtype : (a, b) Nx_core.Dtype.t)
-      : a testable =
+  let testable_of_dtype (type a b) ?(eps = 1e-6)
+      (dtype : (a, b) Nx_core.Dtype.t) : a testable =
     match dtype with
     | Nx_core.Dtype.Float16 -> Alcotest.float eps
     | Nx_core.Dtype.Float32 -> Alcotest.float eps
@@ -37,7 +37,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           (fun a b -> a.re = b.re && a.im = b.im)
 
   (* Check function to test a tensor against an array *)
-  let check_data (type a b) ?eps msg (expected : a array) (actual : (a, b) Nx.t) =
+  let check_data (type a b) ?eps msg (expected : a array) (actual : (a, b) Nx.t)
+      =
     let dt_testable = testable_of_dtype ?eps (Nx.dtype actual) in
     let actual = Nx.unsafe_to_array actual in
     check (array dt_testable) msg expected actual
@@ -82,8 +83,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       | _ ->
           let equal = Nx.array_equal expected actual in
           if not (equal |> Nx.unsafe_get [] = 0) then
-            Alcotest.failf "%s: tensors not equal\nExpected:\n%s\nActual:\n%s" msg
-              (Nx.to_string expected) (Nx.to_string actual)
+            Alcotest.failf "%s: tensors not equal\nExpected:\n%s\nActual:\n%s"
+              msg (Nx.to_string expected) (Nx.to_string actual)
 
   let check_nx_scalar ctx dtype msg expected actual =
     let expected_t = Nx.scalar ctx dtype expected in

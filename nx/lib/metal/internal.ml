@@ -195,7 +195,5 @@ let uint32_array_to_buffer arr =
   let len = Array.length arr in
   let open Ctypes in
   let ptr = allocate_n uint32_t ~count:len in
-  Array.iteri (fun i v ->
-    (ptr +@ i) <-@ Unsigned.UInt32.of_int v
-  ) arr;
+  Array.iteri (fun i v -> ptr +@ i <-@ Unsigned.UInt32.of_int v) arr;
   to_voidp ptr

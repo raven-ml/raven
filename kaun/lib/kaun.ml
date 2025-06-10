@@ -228,7 +228,7 @@ module Dataset = struct
               Seq.cons (x_batch, y_batch) (batch_seq rest)
     in
     batch_seq ds
-    
+
   (* Generic batch function - for now just returns the dataset unchanged *)
   (* TODO: Implement proper polymorphic batching *)
   let batch _batch_size ds = ds
@@ -313,8 +313,7 @@ module Initializer = struct
   (* Helper function to apply an initializer - not exposed in interface *)
   let apply init rng shape dev dtype =
     match init with
-    | Constant value -> 
-        Rune.full dev dtype shape value
+    | Constant value -> Rune.full dev dtype shape value
     | GlorotUniform { in_axis; out_axis } ->
         let fan_in = shape.(in_axis) in
         let fan_out = shape.(out_axis) in
@@ -361,11 +360,13 @@ module Layer = struct
             match params with
             | Record fields ->
                 (* Handle fields in any order *)
-                let w = match List.assoc_opt "weight" fields with
+                let w =
+                  match List.assoc_opt "weight" fields with
                   | Some (Tensor t) -> t
                   | _ -> failwith "conv2d: missing or invalid weight parameter"
                 in
-                let b = match List.assoc_opt "bias" fields with
+                let b =
+                  match List.assoc_opt "bias" fields with
                   | Some (Tensor t) -> t
                   | _ -> failwith "conv2d: missing or invalid bias parameter"
                 in
@@ -379,7 +380,7 @@ module Layer = struct
 
   let linear ~in_features ~out_features ?weight_init ?bias_init ~rngs () =
     let rng1, rng2 = Rngs.split rngs in
-    let weight_init = 
+    let weight_init =
       match weight_init with
       | Some init -> init
       | None -> Initializer.glorot_uniform ~in_axis:0 ~out_axis:1
@@ -391,29 +392,46 @@ module Layer = struct
     in
     Model
       {
-        init = (fun (type layout dev) ~rngs:_ (x : (layout, dev) tensor) : (layout, dev) params ->
-          let dev = Rune.device x in
-          let dtype = Rune.dtype x in
-          let w = Initializer.apply weight_init rng1 [| in_features; out_features |] dev dtype in
-          let b = Initializer.apply bias_init rng2 [| out_features |] dev dtype in
-          Record [ ("weight", Tensor w); ("bias", Tensor b) ]
-        );
-        apply = (fun (type l d) (params : (l, d) params) ~training:_ (x : (l, d) tensor) ->
-          match params with
-          | Record fields ->
-              (* Handle fields in any order *)
-              let w = match List.assoc_opt "weight" fields with
-                | Some (Tensor t) -> t
-                | _ -> failwith "linear: missing or invalid weight parameter"
-              in
-              let b = match List.assoc_opt "bias" fields with
-                | Some (Tensor t) -> t
-                | _ -> failwith "linear: missing or invalid bias parameter"
-              in
-              let z = Rune.matmul x w in
-              Rune.add z b
-          | _ -> failwith "linear: invalid params structure"
-        );
+        init =
+          (fun (type layout dev)
+            ~rngs:_
+            (x : (layout, dev) tensor)
+            :
+            (layout, dev) params
+          ->
+            let dev = Rune.device x in
+            let dtype = Rune.dtype x in
+            let w =
+              Initializer.apply weight_init rng1
+                [| in_features; out_features |]
+                dev dtype
+            in
+            let b =
+              Initializer.apply bias_init rng2 [| out_features |] dev dtype
+            in
+            Record [ ("weight", Tensor w); ("bias", Tensor b) ]);
+        apply =
+          (fun (type l d)
+            (params : (l, d) params)
+            ~training:_
+            (x : (l, d) tensor)
+          ->
+            match params with
+            | Record fields ->
+                (* Handle fields in any order *)
+                let w =
+                  match List.assoc_opt "weight" fields with
+                  | Some (Tensor t) -> t
+                  | _ -> failwith "linear: missing or invalid weight parameter"
+                in
+                let b =
+                  match List.assoc_opt "bias" fields with
+                  | Some (Tensor t) -> t
+                  | _ -> failwith "linear: missing or invalid bias parameter"
+                in
+                let z = Rune.matmul x w in
+                Rune.add z b
+            | _ -> failwith "linear: invalid params structure");
       }
 
   let dropout ~rate ~rngs () =
@@ -442,55 +460,63 @@ module Layer = struct
   let batch_norm ~num_features ~rngs () =
     let _rng1, _rng2 = Rngs.split rngs in
     Model
-      { 
-        init = (fun ~rngs:_ x ->
-          let dev = Rune.device x in
-          let dtype = Rune.dtype x in
-          (* Initialize scale (gamma) to 1 and bias (beta) to 0 *)
-          let scale = Rune.ones dev dtype [| num_features |] in
-          let bias = Rune.zeros dev dtype [| num_features |] in
-          (* We don't track running stats in this simple implementation *)
-          Record [ ("scale", Tensor scale); ("bias", Tensor bias) ]
-        );
-        apply = (fun params ~training:_ x ->
-          match params with
-          | Record fields ->
-              (* Handle fields in any order *)
-              let scale = match List.assoc_opt "scale" fields with
-                | Some (Tensor t) -> t
-                | _ -> failwith "batch_norm: missing or invalid scale parameter"
-              in
-              let bias = match List.assoc_opt "bias" fields with
-                | Some (Tensor t) -> t
-                | _ -> failwith "batch_norm: missing or invalid bias parameter"
-              in
-              (* Compute batch statistics *)
-              let axes = 
-                match Array.length (Rune.shape x) with
-                | 2 -> [| 0 |]  (* (batch, features) *)
-                | 4 -> [| 0; 2; 3 |]  (* (batch, channels, height, width) *)
-                | _ -> [| 0 |]  (* Default to first axis *)
-              in
-              let mean = Rune.mean x ~axes ~keepdims:true in
-              let variance = Rune.var x ~axes ~keepdims:true in
-              let eps = 1e-5 in
-              let dtype = Rune.dtype x in
-              let dev = Rune.device x in
-              let epsilon = Rune.scalar dev dtype eps in
-              (* Normalize *)
-              let x_normalized = Rune.div (Rune.sub x mean) (Rune.sqrt (Rune.add variance epsilon)) in
-              (* Scale and shift *)
-              let scale_shape = 
-                match Array.length (Rune.shape x) with
-                | 2 -> [| 1; num_features |]
-                | 4 -> [| 1; num_features; 1; 1 |]
-                | _ -> [| 1; num_features |]
-              in
-              let scale_reshaped = Rune.reshape scale_shape scale in
-              let bias_reshaped = Rune.reshape scale_shape bias in
-              Rune.add (Rune.mul x_normalized scale_reshaped) bias_reshaped
-          | _ -> failwith "batch_norm: invalid params structure"
-        ) 
+      {
+        init =
+          (fun ~rngs:_ x ->
+            let dev = Rune.device x in
+            let dtype = Rune.dtype x in
+            (* Initialize scale (gamma) to 1 and bias (beta) to 0 *)
+            let scale = Rune.ones dev dtype [| num_features |] in
+            let bias = Rune.zeros dev dtype [| num_features |] in
+            (* We don't track running stats in this simple implementation *)
+            Record [ ("scale", Tensor scale); ("bias", Tensor bias) ]);
+        apply =
+          (fun params ~training:_ x ->
+            match params with
+            | Record fields ->
+                (* Handle fields in any order *)
+                let scale =
+                  match List.assoc_opt "scale" fields with
+                  | Some (Tensor t) -> t
+                  | _ ->
+                      failwith "batch_norm: missing or invalid scale parameter"
+                in
+                let bias =
+                  match List.assoc_opt "bias" fields with
+                  | Some (Tensor t) -> t
+                  | _ ->
+                      failwith "batch_norm: missing or invalid bias parameter"
+                in
+                (* Compute batch statistics *)
+                let axes =
+                  match Array.length (Rune.shape x) with
+                  | 2 -> [| 0 |] (* (batch, features) *)
+                  | 4 -> [| 0; 2; 3 |] (* (batch, channels, height, width) *)
+                  | _ -> [| 0 |]
+                  (* Default to first axis *)
+                in
+                let mean = Rune.mean x ~axes ~keepdims:true in
+                let variance = Rune.var x ~axes ~keepdims:true in
+                let eps = 1e-5 in
+                let dtype = Rune.dtype x in
+                let dev = Rune.device x in
+                let epsilon = Rune.scalar dev dtype eps in
+                (* Normalize *)
+                let x_normalized =
+                  Rune.div (Rune.sub x mean)
+                    (Rune.sqrt (Rune.add variance epsilon))
+                in
+                (* Scale and shift *)
+                let scale_shape =
+                  match Array.length (Rune.shape x) with
+                  | 2 -> [| 1; num_features |]
+                  | 4 -> [| 1; num_features; 1; 1 |]
+                  | _ -> [| 1; num_features |]
+                in
+                let scale_reshaped = Rune.reshape scale_shape scale in
+                let bias_reshaped = Rune.reshape scale_shape bias in
+                Rune.add (Rune.mul x_normalized scale_reshaped) bias_reshaped
+            | _ -> failwith "batch_norm: invalid params structure");
       }
 
   let max_pool2d ~kernel_size ?stride () =
@@ -499,7 +525,7 @@ module Layer = struct
       {
         init = (fun ~rngs:_ _x -> List []);
         apply =
-          (fun _params ~training:_ x -> 
+          (fun _params ~training:_ x ->
             let pooled, _ = Rune.max_pool2d x ~kernel_size ~stride in
             pooled);
       }
@@ -510,8 +536,7 @@ module Layer = struct
       {
         init = (fun ~rngs:_ _x -> List []);
         apply =
-          (fun _params ~training:_ x -> 
-            Rune.avg_pool2d x ~kernel_size ~stride);
+          (fun _params ~training:_ x -> Rune.avg_pool2d x ~kernel_size ~stride);
       }
 
   let flatten () =
@@ -648,7 +673,8 @@ module Optimizer = struct
     match opt.transform with
     | SGD { lr; momentum } ->
         (* Handle momentum if specified *)
-        let updates = match momentum with
+        let updates =
+          match momentum with
           | None ->
               (* Simple SGD without momentum *)
               List.map
@@ -669,7 +695,7 @@ module Optimizer = struct
                     s
                 | Some s -> s
               in
-              
+
               (* Update velocities and compute updates *)
               let new_velocities, updates =
                 List.fold_left2
@@ -677,19 +703,19 @@ module Optimizer = struct
                     let dev = Rune.device g in
                     let dt = Rune.dtype g in
                     (* v = momentum * v_old + lr * grad *)
-                    let v_new = Rune.(
-                      add
-                        (mul (scalar dev dt momentum_val) v_old)
-                        (mul (scalar dev dt lr) g)
-                    ) in
+                    let v_new =
+                      Rune.(
+                        add
+                          (mul (scalar dev dt momentum_val) v_old)
+                          (mul (scalar dev dt lr) g))
+                    in
                     (v_new :: v_acc, v_new :: u_acc))
-                  ([], [])
-                  grads_tensors
-                  state.m_tensors
+                  ([], []) grads_tensors state.m_tensors
               in
-              
+
               (* Update state with new velocities *)
-              opt.state <- Some { m_tensors = List.rev new_velocities; v_tensors = [] };
+              opt.state <-
+                Some { m_tensors = List.rev new_velocities; v_tensors = [] };
               List.rev updates
         in
         apply_updates_inplace params (rebuild_params updates)
@@ -799,18 +825,19 @@ module Optimizer = struct
               let m_hat = Rune.div m_new (Rune.scalar dev dt bc1) in
               let v_hat = Rune.div v_new (Rune.scalar dev dt bc2) in
 
-              (* Compute update with weight decay applied directly to parameters *)
+              (* Compute update with weight decay applied directly to
+                 parameters *)
               let adam_update =
                 Rune.(
                   mul (scalar dev dt lr)
                     (div m_hat (add (sqrt v_hat) (scalar dev dt eps))))
               in
-              
+
               (* Add weight decay term: lr * weight_decay * param *)
-              let decay_update = 
+              let decay_update =
                 Rune.mul (Rune.scalar dev dt (lr *. weight_decay)) p
               in
-              
+
               (* Total update = adam_update + decay_update *)
               let total_update = Rune.add adam_update decay_update in
 
