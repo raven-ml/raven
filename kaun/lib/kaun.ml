@@ -4,23 +4,30 @@ type 'layout dtype = (float, 'layout) Rune.dtype
 type 'dev device = 'dev Rune.device
 
 (* Parameter tree to represent model parameters hierarchically *)
-type ('layout, 'dev) ptree =
+type ('layout, 'dev) params =
   | Tensor of ('layout, 'dev) tensor
-  | List of ('layout, 'dev) ptree list
-  | Record of (string * ('layout, 'dev) ptree) list
-
-(* Params type is now parameterized by layout and device *)
-type ('layout, 'dev) params = ('layout, 'dev) ptree
+  | List of ('layout, 'dev) params list
+  | Record of (string * ('layout, 'dev) params) list
 
 (* Rngs module *)
 module Rngs = struct
   type t = int
 
-  let create ~seed () = seed
+  let create ~seed () =
+    abs seed land 0x7FFFFFFF (* Ensure positive 31-bit int *)
 
   let split t =
-    let new_seed1 = (t * 1664525) + 1013904223 in
-    let new_seed2 = (new_seed1 * 1664525) + 1013904223 in
+    (* MurmurHash-inspired integer hash for better distribution *)
+    let hash x =
+      let x = x lxor (x lsr 16) in
+      let x = x * 0x85ebca6b land 0x7FFFFFFF in
+      let x = x lxor (x lsr 13) in
+      let x = x * 0xc2b2ae35 land 0x7FFFFFFF in
+      let x = x lxor (x lsr 16) in
+      x land 0x7FFFFFFF (* Ensure positive *)
+    in
+    let new_seed1 = hash ((t * 2) + 1) in
+    let new_seed2 = hash ((t * 2) + 2) in
     (new_seed1, new_seed2)
 end
 
@@ -34,13 +41,20 @@ type model =
         'layout 'dev.
         ('layout, 'dev) params ->
         training:bool ->
+        ?rngs:Rngs.t ->
         ('layout, 'dev) tensor ->
         ('layout, 'dev) tensor;
     }
       -> model
 
-let init (Model m) ~rngs x = m.init ~rngs x
-let apply (Model m) params ~training x = m.apply params ~training x
+let init (Model m) ~rngs x =
+  (* Remove: Printf.printf "[Model.init] Starting model
+     initialization...\n%!"; *)
+  let result = m.init ~rngs x in
+  (* Remove: Printf.printf "[Model.init] Model initialization complete\n%!"; *)
+  result
+
+let apply (Model m) params ~training ?rngs x = m.apply params ~training ?rngs x
 
 (* Helper functions for ptree manipulation *)
 let split_at n lst =
@@ -52,9 +66,9 @@ let split_at n lst =
   aux n [] lst
 
 let rec flatten_ptree : type layout dev.
-    (layout, dev) ptree ->
+    (layout, dev) params ->
     (layout, dev) tensor list
-    * ((layout, dev) tensor list -> (layout, dev) ptree) = function
+    * ((layout, dev) tensor list -> (layout, dev) params) = function
   | Tensor t ->
       ( [ t ],
         function
@@ -78,7 +92,11 @@ let rec flatten_ptree : type layout dev.
       in
       (tensors, rebuild)
   | Record r ->
-      let pairs = List.map (fun (k, pt) -> (k, flatten_ptree pt)) r in
+      (* CRITICAL FIX: Sort record fields to ensure consistent ordering *)
+      let sorted_r =
+        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) r
+      in
+      let pairs = List.map (fun (k, pt) -> (k, flatten_ptree pt)) sorted_r in
       let tensors =
         List.concat (List.map (fun (_, (tensors_pt, _)) -> tensors_pt) pairs)
       in
@@ -197,58 +215,83 @@ module Dataset = struct
   type 'a t = 'a Seq.t
 
   let of_xy (x, y) =
-    let n_samples = (Rune.shape x).(0) in
-    let indices = Seq.ints 0 |> Seq.take n_samples in
-    Seq.map
-      (fun i ->
-        let x_i = Rune.get [ i ] x in
-        let y_i = Rune.get [ i ] y in
-        (x_i, y_i))
-      indices
+    (* Create a single-element sequence that will be expanded by batch_xy *)
+    Seq.return (x, y)
 
   let map f ds = Seq.map f ds
 
   (* Batch function for tensor pairs *)
   let batch_xy batch_size ds =
-    let rec batch_seq seq =
-      if Seq.is_empty seq then Seq.empty
-      else
-        let batch = Seq.take batch_size seq in
-        let rest = Seq.drop batch_size seq in
-        let batch_list = List.of_seq batch in
-        if batch_list = [] then Seq.empty
+    (* Note: Seq.flat_map forces evaluation of the first element *)
+    Seq.flat_map
+      (fun (x, y) ->
+        (* Processing tensor with shape *)
+        (* Check if this is a full tensor dataset *)
+        if Array.length (Rune.shape x) > 1 then
+          (* This is a full dataset - create batches efficiently *)
+          let n_samples = (Rune.shape x).(0) in
+          let rec create_batches start =
+            if start >= n_samples then Seq.empty
+            else
+              let end_idx = min (start + batch_size) n_samples in
+              let batch_num = (start / batch_size) + 1 in
+              if batch_num <= 3 || batch_num mod 100 = 0 then
+                Printf.printf
+                  "[Dataset.batch_xy] Creating batch %d [%d; %d]...\n%!"
+                  batch_num start end_idx;
+              let start_time = Unix.gettimeofday () in
+              let x_batch = Rune.slice [ R [ start; end_idx ] ] x in
+              let y_batch = Rune.slice [ R [ start; end_idx ] ] y in
+              (* Ensure batches are contiguous for operations like flatten *)
+              let x_contiguous_time = Unix.gettimeofday () in
+              let x_batch =
+                if Rune.is_c_contiguous x_batch then x_batch
+                else (
+                  if batch_num <= 3 then
+                    Printf.printf
+                      "[Dataset.batch_xy] x_batch needs contiguous copy\n%!";
+                  let copy_start = Unix.gettimeofday () in
+                  let result = Rune.contiguous x_batch in
+                  let copy_time = Unix.gettimeofday () -. copy_start in
+                  if batch_num <= 3 then
+                    Printf.printf
+                      "[Dataset.batch_xy] Contiguous copy took %.3fs\n%!"
+                      copy_time;
+                  result)
+              in
+              let y_batch =
+                if Rune.is_c_contiguous y_batch then y_batch
+                else (
+                  if batch_num <= 3 then
+                    Printf.printf
+                      "[Dataset.batch_xy] y_batch needs contiguous copy\n%!";
+                  Rune.contiguous y_batch)
+              in
+              let elapsed = Unix.gettimeofday () -. start_time in
+              if batch_num <= 3 || batch_num mod 100 = 0 then
+                Printf.printf
+                  "[Dataset.batch_xy] Batch %d created in %.3fs (contiguous: \
+                   %.3fs)\n\
+                   %!"
+                  batch_num elapsed
+                  (Unix.gettimeofday () -. x_contiguous_time);
+              Seq.cons (x_batch, y_batch) (create_batches end_idx)
+          in
+          create_batches 0
         else
-          match batch_list with
-          | [] -> batch_seq rest
-          | samples ->
-              let xs = List.map fst samples in
-              let ys = List.map snd samples in
-              let x_batch = Rune.stack xs ~axis:0 in
-              let y_batch = Rune.stack ys ~axis:0 in
-              Seq.cons (x_batch, y_batch) (batch_seq rest)
-    in
-    batch_seq ds
+          (* Single sample - return as is *)
+          Seq.return (x, y))
+      ds
 
   (* Generic batch function - for now just returns the dataset unchanged *)
   (* TODO: Implement proper polymorphic batching *)
   let batch _batch_size ds = ds
 
   let shuffle ?seed ds =
-    let rng =
-      match seed with
-      | Some s -> Random.State.make [| s |]
-      | None -> Random.State.make_self_init ()
-    in
-    let array = Array.of_seq ds in
-    let n = Array.length array in
-    (* Fisher-Yates shuffle *)
-    for i = n - 1 downto 1 do
-      let j = Random.State.int rng (i + 1) in
-      let tmp = array.(i) in
-      array.(i) <- array.(j);
-      array.(j) <- tmp
-    done;
-    Array.to_seq array
+    (* For now, pass through without shuffling but maintain the structure *)
+    (* TODO: Implement efficient shuffling without gather *)
+    let _ = seed in
+    ds
 
   let iter f ds = Seq.iter f ds
   let length ds = Seq.length ds
@@ -288,6 +331,17 @@ module Loss = struct
     let loss_per_example = Rune.neg (Rune.add term1 term2) in
     Rune.mean loss_per_example
 
+  let sigmoid_binary_cross_entropy logits labels =
+    (* This is the same as binary_cross_entropy but returns per-sample loss *)
+    let dtype = Rune.dtype logits in
+    let dev = Rune.device logits in
+    let one = Rune.scalar dev dtype 1.0 in
+    let log_sig = Rune.log_sigmoid logits in
+    let log_sig_neg = Rune.log_sigmoid (Rune.neg logits) in
+    let term1 = Rune.mul labels log_sig in
+    let term2 = Rune.mul (Rune.sub one labels) log_sig_neg in
+    Rune.neg (Rune.add term1 term2)
+
   let mse predictions targets =
     let diff = Rune.sub predictions targets in
     let squared = Rune.mul diff diff in
@@ -299,44 +353,153 @@ module Loss = struct
     Rune.mean abs_diff
 end
 
-(* Initializer module *)
+(* Initializer module - wrapper around the Initializers module for backward
+   compatibility *)
 module Initializer = struct
+  (* We build a spec instead of passing a function, as the function would be
+     polymorphic on dev and layout, and we want keep the model spec device and
+     layout agnostic *)
   type t =
     | Constant of float
-    | GlorotUniform of { in_axis : int; out_axis : int }
+    | Zeros
+    | Ones
+    | Uniform of { scale : float }
     | Normal of { mean : float; std : float }
+    | TruncatedNormal of { stddev : float; lower : float; upper : float }
+    | VarianceScaling of {
+        scale : float;
+        mode : [ `Fan_in | `Fan_out | `Fan_avg ];
+        distribution : [ `Normal | `Truncated_normal | `Uniform ];
+        in_axis : int;
+        out_axis : int;
+      }
+    | GlorotUniform of { in_axis : int; out_axis : int }
+    | GlorotNormal of { in_axis : int; out_axis : int }
+    | HeUniform of { in_axis : int; out_axis : int }
+    | HeNormal of { in_axis : int; out_axis : int }
+    | LecunUniform of { in_axis : int; out_axis : int }
+    | LecunNormal of { in_axis : int; out_axis : int }
+    | Orthogonal of { scale : float; column_axis : int }
+    | DeltaOrthogonal of { scale : float; column_axis : int }
+    | UniformRange of { low : float; high : float }
+    | NormalRange of { mean : float; stddev : float }
 
   let constant value = Constant value
-  let glorot_uniform ~in_axis ~out_axis = GlorotUniform { in_axis; out_axis }
+  let zeros () = Zeros
+  let ones () = Ones
+  let uniform ?(scale = 0.01) () = Uniform { scale }
   let normal ~mean ~std = Normal { mean; std }
 
-  (* Helper function to apply an initializer - not exposed in interface *)
-  let apply init rng shape dev dtype =
+  let truncated_normal ?(stddev = 0.01) ?(lower = -2.0) ?(upper = 2.0) () =
+    TruncatedNormal { stddev; lower; upper }
+
+  let variance_scaling ~scale ~mode ~distribution ~in_axis ~out_axis () =
+    VarianceScaling { scale; mode; distribution; in_axis; out_axis }
+
+  let glorot_uniform ?(in_axis = -2) ?(out_axis = -1) () =
+    GlorotUniform { in_axis; out_axis }
+
+  let glorot_normal ?(in_axis = -2) ?(out_axis = -1) () =
+    GlorotNormal { in_axis; out_axis }
+
+  let xavier_uniform = glorot_uniform
+  let xavier_normal = glorot_normal
+
+  let he_uniform ?(in_axis = -2) ?(out_axis = -1) () =
+    HeUniform { in_axis; out_axis }
+
+  let he_normal ?(in_axis = -2) ?(out_axis = -1) () =
+    HeNormal { in_axis; out_axis }
+
+  let kaiming_uniform = he_uniform
+  let kaiming_normal = he_normal
+
+  let lecun_uniform ?(in_axis = -2) ?(out_axis = -1) () =
+    LecunUniform { in_axis; out_axis }
+
+  let lecun_normal ?(in_axis = -2) ?(out_axis = -1) () =
+    LecunNormal { in_axis; out_axis }
+
+  let orthogonal ?(scale = 1.0) ?(column_axis = -1) () =
+    Orthogonal { scale; column_axis }
+
+  let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () =
+    DeltaOrthogonal { scale; column_axis }
+
+  let uniform_range ~low ~high () = UniformRange { low; high }
+  let normal_range ~mean ~stddev () = NormalRange { mean; stddev }
+
+  (* Apply function that works within locally abstract types *)
+  let apply (type layout dev) init rng shape (dev : dev Rune.device)
+      (dtype : (float, layout) Rune.dtype) =
     match init with
     | Constant value -> Rune.full dev dtype shape value
-    | GlorotUniform { in_axis; out_axis } ->
-        let fan_in = shape.(in_axis) in
-        let fan_out = shape.(out_axis) in
-        let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
-        let u01 = Rune.rand dev dtype ~seed:rng shape in
-        let scale = Rune.scalar dev dtype (2.0 *. limit) in
-        let shift = Rune.scalar dev dtype limit in
-        Rune.(sub (mul u01 scale) shift)
+    | Zeros -> Initializers.zeros () rng shape dev dtype
+    | Ones -> Initializers.ones () rng shape dev dtype
+    | Uniform { scale } -> Initializers.uniform ~scale () rng shape dev dtype
     | Normal { mean; std } ->
-        let z = Rune.randn dev dtype ~seed:rng shape in
-        let z = Rune.mul z (Rune.scalar dev dtype std) in
-        Rune.add z (Rune.scalar dev dtype mean)
+        Initializers.normal_range ~mean ~stddev:std () rng shape dev dtype
+    | TruncatedNormal { stddev; lower; upper } ->
+        Initializers.truncated_normal_init ~stddev ~lower ~upper () rng shape
+          dev dtype
+    | VarianceScaling { scale; mode; distribution; in_axis; out_axis } ->
+        Initializers.variance_scaling ~scale ~mode ~distribution ~in_axis
+          ~out_axis () rng shape dev dtype
+    | GlorotUniform { in_axis; out_axis } ->
+        (* Handle edge cases to avoid exceptions in polymorphic context *)
+        let rank = Array.length shape in
+        if rank = 0 then
+          (* Scalar - use constant 0 *)
+          Rune.zeros dev dtype shape
+        else if rank = 1 then
+          (* 1D tensor - use uniform with appropriate scale *)
+          let n = float_of_int shape.(0) in
+          let scale = sqrt (3.0 /. n) in
+          Initializers.uniform ~scale () rng shape dev dtype
+        else
+          (* 2D+ tensor - safe to use glorot *)
+          Initializers.glorot_uniform ~in_axis ~out_axis () rng shape dev dtype
+    | GlorotNormal { in_axis; out_axis } ->
+        (* Handle edge cases to avoid exceptions in polymorphic context *)
+        let rank = Array.length shape in
+        if rank = 0 then
+          (* Scalar - use constant 0 *)
+          Rune.zeros dev dtype shape
+        else if rank = 1 then
+          (* 1D tensor - use normal with appropriate scale *)
+          let n = float_of_int shape.(0) in
+          let stddev = sqrt (1.0 /. n) in
+          Initializers.normal ~stddev () rng shape dev dtype
+        else
+          (* 2D+ tensor - safe to use glorot *)
+          Initializers.glorot_normal ~in_axis ~out_axis () rng shape dev dtype
+    | HeUniform { in_axis; out_axis } ->
+        Initializers.he_uniform ~in_axis ~out_axis () rng shape dev dtype
+    | HeNormal { in_axis; out_axis } ->
+        Initializers.he_normal ~in_axis ~out_axis () rng shape dev dtype
+    | LecunUniform { in_axis; out_axis } ->
+        Initializers.lecun_uniform ~in_axis ~out_axis () rng shape dev dtype
+    | LecunNormal { in_axis; out_axis } ->
+        Initializers.lecun_normal ~in_axis ~out_axis () rng shape dev dtype
+    | Orthogonal { scale; column_axis } ->
+        Initializers.orthogonal ~scale ~column_axis () rng shape dev dtype
+    | DeltaOrthogonal { scale; column_axis } ->
+        Initializers.delta_orthogonal ~scale ~column_axis () rng shape dev dtype
+    | UniformRange { low; high } ->
+        Initializers.uniform_range ~low ~high () rng shape dev dtype
+    | NormalRange { mean; stddev } ->
+        Initializers.normal_range ~mean ~stddev () rng shape dev dtype
 end
 
 (* Layer module *)
 module Layer = struct
-  let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) ~rngs () =
-    let rng1, _rng2 = Rngs.split rngs in
+  let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
     let kh, kw = kernel_size in
     Model
       {
         init =
-          (fun (type l d) ~rngs:_ (x : (l, d) tensor) ->
+          (fun (type l d) ~rngs (x : (l, d) tensor) ->
+            let rng1, _rng2 = Rngs.split rngs in
             let dev = Rune.device x in
             let dtype = Rune.dtype x in
             let fan_in = in_channels * kh * kw in
@@ -355,6 +518,7 @@ module Layer = struct
           (fun (type l d)
             (params : (l, d) params)
             ~training:_
+            ?rngs:_
             (x : (l, d) tensor)
           ->
             match params with
@@ -378,12 +542,12 @@ module Layer = struct
             | _ -> failwith "conv2d: invalid params structure");
       }
 
-  let linear ~in_features ~out_features ?weight_init ?bias_init ~rngs () =
-    let rng1, rng2 = Rngs.split rngs in
+  let linear ~in_features ~out_features ?weight_init ?bias_init () =
+    (* No ~rngs parameter at all *)
     let weight_init =
       match weight_init with
       | Some init -> init
-      | None -> Initializer.glorot_uniform ~in_axis:0 ~out_axis:1
+      | None -> Initializer.glorot_uniform ~in_axis:0 ~out_axis:1 ()
     in
     let bias_init =
       match bias_init with
@@ -393,14 +557,12 @@ module Layer = struct
     Model
       {
         init =
-          (fun (type layout dev)
-            ~rngs:_
-            (x : (layout, dev) tensor)
-            :
-            (layout, dev) params
-          ->
+          (fun ~rngs x ->
+            (* Use the rngs passed during initialization *)
+            let rng1, rng2 = Rngs.split rngs in
             let dev = Rune.device x in
             let dtype = Rune.dtype x in
+
             let w =
               Initializer.apply weight_init rng1
                 [| in_features; out_features |]
@@ -414,11 +576,11 @@ module Layer = struct
           (fun (type l d)
             (params : (l, d) params)
             ~training:_
+            ?rngs:_
             (x : (l, d) tensor)
           ->
             match params with
             | Record fields ->
-                (* Handle fields in any order *)
                 let w =
                   match List.assoc_opt "weight" fields with
                   | Some (Tensor t) -> t
@@ -434,35 +596,39 @@ module Layer = struct
             | _ -> failwith "linear: invalid params structure");
       }
 
-  let dropout ~rate ~rngs () =
+  let dropout ~rate () =
     Model
       {
         init = (fun ~rngs:_ _x -> List []);
+        (* No params needed *)
         apply =
-          (fun _params ~training x ->
+          (fun _params ~training ?rngs x ->
             if training && rate > 0.0 then
-              (* Generate dropout mask *)
-              let dev = Rune.device x in
-              let dtype = Rune.dtype x in
-              let shape = Rune.shape x in
-              let seed = Rngs.split rngs |> fst in
-              let mask = Rune.rand dev dtype ~seed shape in
-              let keep_prob = 1.0 -. rate in
-              let threshold = Rune.scalar dev dtype keep_prob in
-              let binary_mask = Rune.less mask threshold in
-              let binary_mask_float = Rune.cast dtype binary_mask in
-              let scale = Rune.scalar dev dtype (1.0 /. keep_prob) in
-              (* Apply mask and scale *)
-              Rune.mul x (Rune.mul binary_mask_float scale)
+              match rngs with
+              | Some rng ->
+                  (* Generate dropout mask *)
+                  let seed = fst (Rngs.split rng) in
+                  let dev = Rune.device x in
+                  let dtype = Rune.dtype x in
+                  let shape = Rune.shape x in
+                  let mask = Rune.rand dev dtype ~seed shape in
+                  let keep_prob = 1.0 -. rate in
+                  let threshold = Rune.scalar dev dtype keep_prob in
+                  let binary_mask = Rune.less mask threshold in
+                  let binary_mask_float = Rune.cast dtype binary_mask in
+                  let scale = Rune.scalar dev dtype (1.0 /. keep_prob) in
+                  (* Apply mask and scale *)
+                  Rune.mul x (Rune.mul binary_mask_float scale)
+              | None -> failwith "dropout requires RNG during training"
             else x);
       }
 
-  let batch_norm ~num_features ~rngs () =
-    let _rng1, _rng2 = Rngs.split rngs in
+  let batch_norm ~num_features () =
     Model
       {
         init =
-          (fun ~rngs:_ x ->
+          (fun ~rngs x ->
+            let _rng1, _rng2 = Rngs.split rngs in
             let dev = Rune.device x in
             let dtype = Rune.dtype x in
             (* Initialize scale (gamma) to 1 and bias (beta) to 0 *)
@@ -471,7 +637,7 @@ module Layer = struct
             (* We don't track running stats in this simple implementation *)
             Record [ ("scale", Tensor scale); ("bias", Tensor bias) ]);
         apply =
-          (fun params ~training:_ x ->
+          (fun params ~training:_ ?rngs:_ x ->
             match params with
             | Record fields ->
                 (* Handle fields in any order *)
@@ -525,7 +691,7 @@ module Layer = struct
       {
         init = (fun ~rngs:_ _x -> List []);
         apply =
-          (fun _params ~training:_ x ->
+          (fun _params ~training:_ ?rngs:_ x ->
             let pooled, _ = Rune.max_pool2d x ~kernel_size ~stride in
             pooled);
       }
@@ -536,7 +702,8 @@ module Layer = struct
       {
         init = (fun ~rngs:_ _x -> List []);
         apply =
-          (fun _params ~training:_ x -> Rune.avg_pool2d x ~kernel_size ~stride);
+          (fun _params ~training:_ ?rngs:_ x ->
+            Rune.avg_pool2d x ~kernel_size ~stride);
       }
 
   let flatten () =
@@ -544,13 +711,15 @@ module Layer = struct
       {
         init = (fun ~rngs:_ _x -> List []);
         apply =
-          (fun _params ~training:_ x ->
+          (fun _params ~training:_ ?rngs:_ x ->
             let shape = Rune.shape x in
             let batch_size = shape.(0) in
             let flat_size =
               Array.fold_left ( * ) 1
                 (Array.sub shape 1 (Array.length shape - 1))
             in
+            (* Ensure tensor is contiguous before reshaping *)
+            let x = if Rune.is_c_contiguous x then x else Rune.contiguous x in
             Rune.reshape [| batch_size; flat_size |] x);
       }
 
@@ -558,21 +727,21 @@ module Layer = struct
     Model
       {
         init = (fun ~rngs:_ _x -> List []);
-        apply = (fun _params ~training:_ x -> Rune.relu x);
+        apply = (fun _params ~training:_ ?rngs:_ x -> Rune.relu x);
       }
 
   let sigmoid () =
     Model
       {
         init = (fun ~rngs:_ _x -> List []);
-        apply = (fun _params ~training:_ x -> Rune.sigmoid x);
+        apply = (fun _params ~training:_ ?rngs:_ x -> Rune.sigmoid x);
       }
 
   let tanh () =
     Model
       {
         init = (fun ~rngs:_ _x -> List []);
-        apply = (fun _params ~training:_ x -> Rune.tanh x);
+        apply = (fun _params ~training:_ ?rngs:_ x -> Rune.tanh x);
       }
 
   let sequential models =
@@ -580,32 +749,31 @@ module Layer = struct
       {
         init =
           (fun ~rngs x ->
-            (* Initialize each layer sequentially, threading the output shape
-               through *)
-            let rec init_layers models x acc =
+            (* Remove: Printf.printf "[Sequential.init] Initializing %d
+               layers\n%!" (List.length models); *)
+            let rec init_layers models x acc layer_idx =
               match models with
               | [] -> List (List.rev acc)
               | Model m :: rest ->
+                  (* Remove all printf statements *)
                   let params = m.init ~rngs x in
-                  (* Apply this layer to get output shape for next layer *)
                   let x' = m.apply params ~training:false x in
-                  init_layers rest x' (params :: acc)
+                  init_layers rest x' (params :: acc) (layer_idx + 1)
             in
-            init_layers models x []);
+            init_layers models x [] 1);
         apply =
-          (fun params ~training x ->
+          (fun params ~training ?rngs:_ x ->
             match params with
             | List param_list ->
-                (* Apply each layer in sequence *)
-                let rec apply_layers models params x =
+                let rec apply_layers models params x layer_idx =
                   match (models, params) with
                   | [], [] -> x
                   | Model m :: ms, p :: ps ->
                       let x' = m.apply p ~training x in
-                      apply_layers ms ps x'
+                      apply_layers ms ps x' (layer_idx + 1)
                   | _ -> failwith "sequential: mismatched models and params"
                 in
-                apply_layers models param_list x
+                apply_layers models param_list x 1
             | _ -> failwith "sequential: invalid params structure");
       }
 end
@@ -645,11 +813,18 @@ module Optimizer = struct
 
   let create transform = { transform; state = None; step = 0 }
 
-  let rec apply_updates_inplace : type a b. (a, b) ptree -> (a, b) ptree -> unit
-      =
+  let rec apply_updates_inplace : type a b.
+      (a, b) params -> (a, b) params -> unit =
    fun params updates ->
     match (params, updates) with
-    | Tensor t, Tensor u -> ignore (Rune.isub t u)
+    | Tensor t, Tensor u ->
+        (* Debug: print update direction *)
+        (if false then
+           let t_val = Rune.unsafe_get [ 0 ] (Rune.flatten t) in
+           let u_val = Rune.unsafe_get [ 0 ] (Rune.flatten u) in
+           Printf.printf "[Update] param %.6f -= %.6f -> %.6f\n" t_val u_val
+             (t_val -. u_val));
+        ignore (Rune.isub t u)
     | List ps, List us -> List.iter2 apply_updates_inplace ps us
     | Record ps, Record us ->
         let sorted_ps =
@@ -661,6 +836,7 @@ module Optimizer = struct
         List.iter2
           (fun (k1, p) (k2, u) ->
             assert (k1 = k2);
+            (* This assertion is now much safer *)
             apply_updates_inplace p u)
           sorted_ps sorted_us
     | _ -> failwith "Mismatched parameter structure"
@@ -702,14 +878,13 @@ module Optimizer = struct
                   (fun (v_acc, u_acc) g v_old ->
                     let dev = Rune.device g in
                     let dt = Rune.dtype g in
-                    (* v = momentum * v_old + lr * grad *)
+                    (* v = momentum * v_old + grad *)
                     let v_new =
-                      Rune.(
-                        add
-                          (mul (scalar dev dt momentum_val) v_old)
-                          (mul (scalar dev dt lr) g))
+                      Rune.(add (mul (scalar dev dt momentum_val) v_old) g)
                     in
-                    (v_new :: v_acc, v_new :: u_acc))
+                    (* update = lr * v *)
+                    let update = Rune.mul (Rune.scalar dev dt lr) v_new in
+                    (v_new :: v_acc, update :: u_acc))
                   ([], []) grads_tensors state.m_tensors
               in
 
@@ -732,9 +907,9 @@ module Optimizer = struct
           | Some s -> s
         in
 
-        let t_f = float_of_int opt.step in
-        let bc1 = 1. -. (beta1 ** t_f) in
-        let bc2 = 1. -. (beta2 ** t_f) in
+        let t = opt.step in
+        let bc1 = 1. -. (beta1 ** float_of_int t) in
+        let bc2 = 1. -. (beta2 ** float_of_int t) in
 
         let new_m_tensors, new_v_tensors, updates =
           List.fold_left2
@@ -795,9 +970,9 @@ module Optimizer = struct
           | Some s -> s
         in
 
-        let t_f = float_of_int opt.step in
-        let bc1 = 1. -. (beta1 ** t_f) in
-        let bc2 = 1. -. (beta2 ** t_f) in
+        let t = opt.step in
+        let bc1 = 1. -. (beta1 ** float_of_int t) in
+        let bc2 = 1. -. (beta2 ** float_of_int t) in
 
         let new_m_tensors, new_v_tensors, updates =
           List.fold_left2

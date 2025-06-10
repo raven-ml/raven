@@ -1,15 +1,33 @@
 type ('layout, 'dev) tensor = (float, 'layout) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 type 'dev device = 'dev Rune.device
-type ('layout, 'dev) params
-type model
+
+type ('layout, 'dev) params =
+  | Tensor of ('layout, 'dev) tensor
+  | List of ('layout, 'dev) params list
+  | Record of (string * ('layout, 'dev) params) list
 
 module Rngs : sig
-  type t
+  type t = int
 
   val create : seed:int -> unit -> t
   val split : t -> t * t
 end
+
+type model =
+  | Model : {
+      init :
+        'layout 'dev.
+        rngs:Rngs.t -> ('layout, 'dev) tensor -> ('layout, 'dev) params;
+      apply :
+        'layout 'dev.
+        ('layout, 'dev) params ->
+        training:bool ->
+        ?rngs:Rngs.t ->
+        ('layout, 'dev) tensor ->
+        ('layout, 'dev) tensor;
+    }
+      -> model
 
 val init :
   model -> rngs:Rngs.t -> ('layout, 'dev) tensor -> ('layout, 'dev) params
@@ -18,6 +36,7 @@ val apply :
   model ->
   ('layout, 'dev) params ->
   training:bool ->
+  ?rngs:Rngs.t ->
   ('layout, 'dev) tensor ->
   ('layout, 'dev) tensor
 
@@ -95,6 +114,9 @@ module Loss : sig
   val binary_cross_entropy :
     ('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
 
+  val sigmoid_binary_cross_entropy :
+    ('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
+
   val mse :
     ('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor
 
@@ -105,9 +127,67 @@ end
 module Initializer : sig
   type t
 
+  (** {1 Basic Initializers} *)
+
   val constant : float -> t
-  val glorot_uniform : in_axis:int -> out_axis:int -> t
+  val zeros : unit -> t
+  val ones : unit -> t
+
+  (** {1 Random Initializers} *)
+
+  val uniform : ?scale:float -> unit -> t
   val normal : mean:float -> std:float -> t
+
+  val truncated_normal :
+    ?stddev:float -> ?lower:float -> ?upper:float -> unit -> t
+
+  (** {1 Variance Scaling} *)
+
+  val variance_scaling :
+    scale:float ->
+    mode:[ `Fan_in | `Fan_out | `Fan_avg ] ->
+    distribution:[ `Normal | `Truncated_normal | `Uniform ] ->
+    in_axis:int ->
+    out_axis:int ->
+    unit ->
+    t
+
+  (** {1 Glorot/Xavier Initializers} *)
+
+  val glorot_uniform : ?in_axis:int -> ?out_axis:int -> unit -> t
+  val glorot_normal : ?in_axis:int -> ?out_axis:int -> unit -> t
+  val xavier_uniform : ?in_axis:int -> ?out_axis:int -> unit -> t
+  val xavier_normal : ?in_axis:int -> ?out_axis:int -> unit -> t
+
+  (** {1 He/Kaiming Initializers} *)
+
+  val he_uniform : ?in_axis:int -> ?out_axis:int -> unit -> t
+  val he_normal : ?in_axis:int -> ?out_axis:int -> unit -> t
+  val kaiming_uniform : ?in_axis:int -> ?out_axis:int -> unit -> t
+  val kaiming_normal : ?in_axis:int -> ?out_axis:int -> unit -> t
+
+  (** {1 LeCun Initializers} *)
+
+  val lecun_uniform : ?in_axis:int -> ?out_axis:int -> unit -> t
+  val lecun_normal : ?in_axis:int -> ?out_axis:int -> unit -> t
+
+  (** {1 Orthogonal Initializers} *)
+
+  val orthogonal : ?scale:float -> ?column_axis:int -> unit -> t
+  val delta_orthogonal : ?scale:float -> ?column_axis:int -> unit -> t
+
+  (** {1 Utility Initializers} *)
+
+  val uniform_range : low:float -> high:float -> unit -> t
+  val normal_range : mean:float -> stddev:float -> unit -> t
+
+  val apply :
+    t ->
+    int ->
+    int array ->
+    Rune.context ->
+    (float, 'layout) Rune.dtype ->
+    (float, 'layout) Rune.t
 end
 
 module Layer : sig
@@ -115,7 +195,6 @@ module Layer : sig
     in_channels:int ->
     out_channels:int ->
     ?kernel_size:int * int ->
-    rngs:Rngs.t ->
     unit ->
     model
 
@@ -126,12 +205,11 @@ module Layer : sig
     (* default: glorot_uniform *)
     ?bias_init:Initializer.t ->
     (* default: zeros *)
-    rngs:Rngs.t ->
     unit ->
     model
 
-  val dropout : rate:float -> rngs:Rngs.t -> unit -> model
-  val batch_norm : num_features:int -> rngs:Rngs.t -> unit -> model
+  val dropout : rate:float -> unit -> model
+  val batch_norm : num_features:int -> unit -> model
   val max_pool2d : kernel_size:int * int -> ?stride:int * int -> unit -> model
   val avg_pool2d : kernel_size:int * int -> ?stride:int * int -> unit -> model
   val flatten : unit -> model
