@@ -56,6 +56,21 @@ let dispatch_binary ctx op_name a b =
         ~bytes:Ctypes.(to_voidp ndim_val)
         ~length:4 ~index:6;
 
+      (* Pass view offsets *)
+      let a_offset_val =
+        Ctypes.(allocate int32_t (Int32.of_int (View.offset a.Internal.view)))
+      in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp a_offset_val)
+        ~length:4 ~index:7;
+
+      let b_offset_val =
+        Ctypes.(allocate int32_t (Int32.of_int (View.offset b.Internal.view)))
+      in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp b_offset_val)
+        ~length:4 ~index:8;
+
       (* Dispatch threads *)
       let threads_per_group, num_groups =
         Internal.compute_thread_groups out_size
@@ -135,6 +150,21 @@ let dispatch_comparison ctx op_name a b =
       ComputeCommandEncoder.set_bytes encoder
         ~bytes:Ctypes.(to_voidp ndim_val)
         ~length:4 ~index:6;
+
+      (* Pass view offsets *)
+      let a_offset_val =
+        Ctypes.(allocate int32_t (Int32.of_int (View.offset a.Internal.view)))
+      in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp a_offset_val)
+        ~length:4 ~index:7;
+
+      let b_offset_val =
+        Ctypes.(allocate int32_t (Int32.of_int (View.offset b.Internal.view)))
+      in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp b_offset_val)
+        ~length:4 ~index:8;
 
       (* Dispatch threads *)
       let threads_per_group, num_groups =
