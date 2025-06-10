@@ -47,6 +47,7 @@ let kernel_threefry_int32 (data_t : (int32, int32_elt) t)
   if is_c_contiguous data_t && is_c_contiguous seed_t then (
     let data_offset = offset data_t in
     let seed_offset = offset seed_t in
+    let out_offset = offset out_t in
 
     let i = ref start_idx in
     while !i + 3 < end_idx do
@@ -57,28 +58,28 @@ let kernel_threefry_int32 (data_t : (int32, int32_elt) t)
       let res0_0, _ =
         Threefry_impl.threefry2x32_20_rounds d_val0 c1_fixed s_val0 k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf i0 res0_0;
+      Bigarray.Array1.unsafe_set out_buf (out_offset + i0) res0_0;
 
       let d_val1 = Bigarray.Array1.unsafe_get data_buf (data_offset + i1) in
       let s_val1 = Bigarray.Array1.unsafe_get seed_buf (seed_offset + i1) in
       let res0_1, _ =
         Threefry_impl.threefry2x32_20_rounds d_val1 c1_fixed s_val1 k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf i1 res0_1;
+      Bigarray.Array1.unsafe_set out_buf (out_offset + i1) res0_1;
 
       let d_val2 = Bigarray.Array1.unsafe_get data_buf (data_offset + i2) in
       let s_val2 = Bigarray.Array1.unsafe_get seed_buf (seed_offset + i2) in
       let res0_2, _ =
         Threefry_impl.threefry2x32_20_rounds d_val2 c1_fixed s_val2 k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf i2 res0_2;
+      Bigarray.Array1.unsafe_set out_buf (out_offset + i2) res0_2;
 
       let d_val3 = Bigarray.Array1.unsafe_get data_buf (data_offset + i3) in
       let s_val3 = Bigarray.Array1.unsafe_get seed_buf (seed_offset + i3) in
       let res0_3, _ =
         Threefry_impl.threefry2x32_20_rounds d_val3 c1_fixed s_val3 k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf i3 res0_3;
+      Bigarray.Array1.unsafe_set out_buf (out_offset + i3) res0_3;
 
       i := !i + 4
     done;
