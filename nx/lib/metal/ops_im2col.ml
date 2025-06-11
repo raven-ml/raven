@@ -180,83 +180,100 @@ let op_unfold ctx t ~kernel_size ~stride ~dilation ~padding =
       ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:1
         t_padded.Internal.buffer.buffer;
 
-      (* Set dimensions and parameters *)
-      let params =
-        Ctypes.(allocate_n uint32_t ~count:(6 + (6 * n_spatial) + 2))
-      in
-
-      (* Basic dimensions *)
-      Ctypes.(params +@ 0 <-@ Unsigned.UInt32.of_int batch_size);
-      Ctypes.(params +@ 1 <-@ Unsigned.UInt32.of_int channels);
-      Ctypes.(params +@ 2 <-@ Unsigned.UInt32.of_int n_spatial);
-
-      (* Padded spatial dimensions *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(params +@ (3 + i) <-@ Unsigned.UInt32.of_int padded_spatial.(i))
+      (* Set shape arrays - in_shape includes batch, channels, and spatial dims *)
+      let in_shape = Array.concat [[| batch_size; channels |]; padded_spatial] in
+      let in_shape_arr = Ctypes.(allocate_n uint32_t ~count:(Array.length in_shape)) in
+      for i = 0 to Array.length in_shape - 1 do
+        Ctypes.(in_shape_arr +@ i <-@ Unsigned.UInt32.of_int in_shape.(i))
       done;
-
-      (* Kernel sizes *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + n_spatial + i)
-          <-@ Unsigned.UInt32.of_int kernel_size.(i))
-      done;
-
-      (* Strides *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + (2 * n_spatial) + i)
-          <-@ Unsigned.UInt32.of_int stride.(i))
-      done;
-
-      (* Dilations *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + (3 * n_spatial) + i)
-          <-@ Unsigned.UInt32.of_int dilation.(i))
-      done;
-
-      (* Padding *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + (4 * n_spatial) + i)
-          <-@ Unsigned.UInt32.of_int (fst padding.(i)))
-      done;
-
-      (* Output spatial dimensions *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + (5 * n_spatial) + i)
-          <-@ Unsigned.UInt32.of_int output_spatial_dims.(i))
-      done;
-
-      Ctypes.(
-        params +@ (3 + (6 * n_spatial)) <-@ Unsigned.UInt32.of_int num_blocks);
-      Ctypes.(
-        params +@ (3 + (6 * n_spatial) + 1)
-        <-@ Unsigned.UInt32.of_int kernel_elements);
-
       ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp params)
-        ~length:((6 + (6 * n_spatial) + 2) * 4)
-        ~index:2;
+        ~bytes:Ctypes.(to_voidp in_shape_arr)
+        ~length:(Array.length in_shape * 4) ~index:2;
 
-      (* Dispatch kernel *)
-      let total_threads =
-        batch_size * num_blocks * channels * kernel_elements
-      in
-      let threads_per_group, num_groups =
-        Internal.compute_thread_groups total_threads
-      in
-      let grid_size =
-        { Metal.Size.width = num_groups; height = 1; depth = 1 }
-      in
+      (* Set kernel_size array *)
+      let kernel_size_arr = Ctypes.(allocate_n uint32_t ~count:n_spatial) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(kernel_size_arr +@ i <-@ Unsigned.UInt32.of_int kernel_size.(i))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp kernel_size_arr)
+        ~length:(n_spatial * 4) ~index:3;
+
+      (* Set stride array *)
+      let stride_arr = Ctypes.(allocate_n uint32_t ~count:n_spatial) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(stride_arr +@ i <-@ Unsigned.UInt32.of_int stride.(i))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp stride_arr)
+        ~length:(n_spatial * 4) ~index:4;
+
+      (* Set dilation array *)
+      let dilation_arr = Ctypes.(allocate_n uint32_t ~count:n_spatial) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(dilation_arr +@ i <-@ Unsigned.UInt32.of_int dilation.(i))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp dilation_arr)
+        ~length:(n_spatial * 4) ~index:5;
+
+      (* Set padding array - pad_before and pad_after for each dim *)
+      let padding_arr = Ctypes.(allocate_n uint32_t ~count:(n_spatial * 2)) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(padding_arr +@ (i * 2) <-@ Unsigned.UInt32.of_int (fst padding.(i)));
+        Ctypes.(padding_arr +@ (i * 2 + 1) <-@ Unsigned.UInt32.of_int (snd padding.(i)))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp padding_arr)
+        ~length:(n_spatial * 2 * 4) ~index:6;
+
+      (* Set output spatial dimensions *)
+      let out_spatial_arr = Ctypes.(allocate_n uint32_t ~count:n_spatial) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(out_spatial_arr +@ i <-@ Unsigned.UInt32.of_int output_spatial_dims.(i))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp out_spatial_arr)
+        ~length:(n_spatial * 4) ~index:7;
+
+      (* Set scalar values *)
+      let n_spatial_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int n_spatial)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp n_spatial_val)
+        ~length:4 ~index:8;
+
+      let channels_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int channels)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp channels_val)
+        ~length:4 ~index:9;
+
+      let kernel_elements_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int kernel_elements)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp kernel_elements_val)
+        ~length:4 ~index:10;
+
+      let num_blocks_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int num_blocks)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp num_blocks_val)
+        ~length:4 ~index:11;
+
+      (* Dispatch kernel - using 3D grid for better thread organization *)
+      let threads_per_group = 256 in
+      let col_row_size = channels * kernel_elements in
       let group_size =
-        { Metal.Size.width = threads_per_group; height = 1; depth = 1 }
+        { 
+          Metal.Size.width = min threads_per_group col_row_size; 
+          height = 1; 
+          depth = 1 
+        }
       in
 
       ComputeCommandEncoder.dispatch_threadgroups encoder
-        ~threadgroups_per_grid:grid_size ~threads_per_threadgroup:group_size;
+        ~threadgroups_per_grid:{ 
+          Metal.Size.width = (col_row_size + threads_per_group - 1) / threads_per_group;
+          height = num_blocks;
+          depth = batch_size 
+        } ~threads_per_threadgroup:group_size;
       ComputeCommandEncoder.end_encoding encoder);
 
   out
