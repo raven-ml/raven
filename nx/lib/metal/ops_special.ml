@@ -336,7 +336,7 @@ let gather ctx data indices axis =
 
   (* Use Metal kernel for NumPy-style gather *)
   let dtype_suffix = Internal.dtype_to_metal_type data.dtype in
-  let kernel_name = Printf.sprintf "gather_%s" dtype_suffix in
+  let kernel_name = Printf.sprintf "gather_strided_%s" dtype_suffix in
   let func = Kernels.get_special_kernel ctx kernel_name in
   let pipeline = Kernels.create_compute_pipeline ctx.device func in
 

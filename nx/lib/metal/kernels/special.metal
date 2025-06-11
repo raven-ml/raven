@@ -524,7 +524,7 @@ kernel void assign_strided_uchar(device uchar* dst [[buffer(0)]],
 }
 
 // NumPy-style gather operation with multi-dimensional indices
-kernel void gather_float(device float* out [[buffer(0)]],
+kernel void gather_strided_float(device float* out [[buffer(0)]],
                               device const float* data [[buffer(1)]],
                               device const int* indices [[buffer(2)]],
                               constant uint* out_shape [[buffer(3)]],
@@ -578,7 +578,7 @@ kernel void gather_float(device float* out [[buffer(0)]],
     out[gid] = data[data_idx];
 }
 
-kernel void gather_int(device int* out [[buffer(0)]],
+kernel void gather_strided_int(device int* out [[buffer(0)]],
                             device const int* data [[buffer(1)]],
                             device const int* indices [[buffer(2)]],
                             constant uint* out_shape [[buffer(3)]],
@@ -632,7 +632,7 @@ kernel void gather_int(device int* out [[buffer(0)]],
     out[gid] = data[data_idx];
 }
 
-kernel void gather_uchar(device uchar* out [[buffer(0)]],
+kernel void gather_strided_uchar(device uchar* out [[buffer(0)]],
                               device const uchar* data [[buffer(1)]],
                               device const int* indices [[buffer(2)]],
                               constant uint* out_shape [[buffer(3)]],
