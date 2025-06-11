@@ -64,13 +64,16 @@ let op_matmul ctx a b =
     }
   in
 
-  (* Get kernel *)
-  let dtype_suffix = Internal.dtype_to_metal_type a.dtype in
-  let kernel_name = Printf.sprintf "matmul_%s" dtype_suffix in
-  let func = Kernels.get_special_kernel ctx kernel_name in
-  let pipeline = Kernels.create_compute_pipeline ctx.device func in
+  (* Handle empty matrices - if any dimension is 0, return empty output *)
+  if m = 0 || n = 0 || k_a = 0 then out
+  else (
+    (* Get kernel *)
+    let dtype_suffix = Internal.dtype_to_metal_type a.dtype in
+    let kernel_name = Printf.sprintf "matmul_%s" dtype_suffix in
+    let func = Kernels.get_special_kernel ctx kernel_name in
+    let pipeline = Kernels.create_compute_pipeline ctx.device func in
 
-  Internal.with_command_buffer ctx (fun cmd_buffer ->
+    Internal.with_command_buffer ctx (fun cmd_buffer ->
       let encoder = ComputeCommandEncoder.on_buffer cmd_buffer in
 
       ComputeCommandEncoder.set_compute_pipeline_state encoder pipeline;
@@ -148,4 +151,4 @@ let op_matmul ctx a b =
         ~threads_per_threadgroup:group_size;
       ComputeCommandEncoder.end_encoding encoder);
 
-  out
+    out)
