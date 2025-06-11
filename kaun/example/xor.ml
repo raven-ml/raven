@@ -8,9 +8,9 @@ let train_xor () =
   let model =
     Layer.sequential
       [
-        Layer.linear ~in_features:2 ~out_features:4 ~rngs ();
+        Layer.linear ~in_features:2 ~out_features:4 ();
         Layer.tanh ();
-        Layer.linear ~in_features:4 ~out_features:1 ~rngs ();
+        Layer.linear ~in_features:4 ~out_features:1 ();
         Layer.sigmoid ();
       ]
   in
