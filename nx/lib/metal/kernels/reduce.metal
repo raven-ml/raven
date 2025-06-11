@@ -165,7 +165,13 @@ kernel void reduce_max_float(device float* out [[buffer(0)]],
     for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
         uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
         if (idx < in_size) {
-            max_val = fmax(max_val, in[idx]);
+            float val = in[idx];
+            // Propagate NaN - if either is NaN, result is NaN
+            if (isnan(val) || isnan(max_val)) {
+                max_val = NAN;
+            } else {
+                max_val = fmax(max_val, val);
+            }
         }
     }
     
@@ -174,7 +180,14 @@ kernel void reduce_max_float(device float* out [[buffer(0)]],
     
     for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
         if (tid < s && tid + s < REDUCE_THREADS) {
-            shared[tid] = fmax(shared[tid], shared[tid + s]);
+            float a = shared[tid];
+            float b = shared[tid + s];
+            // Propagate NaN - if either is NaN, result is NaN
+            if (isnan(a) || isnan(b)) {
+                shared[tid] = NAN;
+            } else {
+                shared[tid] = fmax(a, b);
+            }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }

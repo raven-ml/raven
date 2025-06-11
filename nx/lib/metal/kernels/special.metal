@@ -257,6 +257,7 @@ kernel void cast_float_to_uchar(device uchar* out [[buffer(0)]],
     out[gid] = uchar(in[gid]);
 }
 
+
 kernel void cast_float_to_short(device short* out [[buffer(0)]],
                                device const float* in [[buffer(1)]],
                                constant uint& size [[buffer(2)]],

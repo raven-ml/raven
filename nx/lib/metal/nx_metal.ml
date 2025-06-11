@@ -115,6 +115,15 @@ let op_flip t axes_to_flip =
   { t with view = View.flip t.view axes_to_flip }
 
 let op_pad t padding fill_value =
+  (* Validate padding values *)
+  Array.iter
+    (fun (before, after) ->
+      if before < 0 || after < 0 then
+        Nx_core.Error.invalid ~op:"pad" ~what:"padding values"
+          ~reason:"negative values not allowed"
+          ~hint:"use shrink or slice to remove elements" ())
+    padding;
+  
   (* Padding requires actual computation *)
   let ctx = t.context in
   let old_shape = View.shape t.view in
