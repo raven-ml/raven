@@ -47,24 +47,20 @@ kernel void strided_copy_float(device float* out [[buffer(0)]],
     if (gid >= size) return;
     
     // Compute position from linear index
+    uint coords[8]; // Support up to 8 dimensions
     uint temp = gid;
-    uint3 pos = uint3(0, 0, 0);
     
-    if (ndim > 2) {
-        pos.z = temp % shape[2];
-        temp /= shape[2];
+    // Convert linear index to coordinates
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
     }
-    if (ndim > 1) {
-        pos.y = temp % shape[1];
-        temp /= shape[1];
-    }
-    pos.x = temp;
     
     // Compute strided index with offset
     uint in_idx = offset;
-    if (ndim > 0) in_idx += pos.x * strides[0];
-    if (ndim > 1) in_idx += pos.y * strides[1];
-    if (ndim > 2) in_idx += pos.z * strides[2];
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * strides[i];
+    }
     
     out[gid] = in[in_idx];
 }
@@ -80,23 +76,21 @@ kernel void strided_copy_int(device int* out [[buffer(0)]],
                             uint gid [[thread_position_in_grid]]) {
     if (gid >= size) return;
     
+    // Compute position from linear index
+    uint coords[8]; // Support up to 8 dimensions
     uint temp = gid;
-    uint3 pos = uint3(0, 0, 0);
     
-    if (ndim > 2) {
-        pos.z = temp % shape[2];
-        temp /= shape[2];
+    // Convert linear index to coordinates
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
     }
-    if (ndim > 1) {
-        pos.y = temp % shape[1];
-        temp /= shape[1];
-    }
-    pos.x = temp;
     
+    // Compute strided index with offset
     uint in_idx = offset;
-    if (ndim > 0) in_idx += pos.x * strides[0];
-    if (ndim > 1) in_idx += pos.y * strides[1];
-    if (ndim > 2) in_idx += pos.z * strides[2];
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * strides[i];
+    }
     
     out[gid] = in[in_idx];
 }
@@ -111,23 +105,21 @@ kernel void strided_copy_uchar(device uchar* out [[buffer(0)]],
                               uint gid [[thread_position_in_grid]]) {
     if (gid >= size) return;
     
+    // Compute position from linear index
+    uint coords[8]; // Support up to 8 dimensions
     uint temp = gid;
-    uint3 pos = uint3(0, 0, 0);
     
-    if (ndim > 2) {
-        pos.z = temp % shape[2];
-        temp /= shape[2];
+    // Convert linear index to coordinates
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
     }
-    if (ndim > 1) {
-        pos.y = temp % shape[1];
-        temp /= shape[1];
-    }
-    pos.x = temp;
     
+    // Compute strided index with offset
     uint in_idx = offset;
-    if (ndim > 0) in_idx += pos.x * strides[0];
-    if (ndim > 1) in_idx += pos.y * strides[1];
-    if (ndim > 2) in_idx += pos.z * strides[2];
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * strides[i];
+    }
     
     out[gid] = in[in_idx];
 }
