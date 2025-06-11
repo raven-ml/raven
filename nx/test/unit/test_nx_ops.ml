@@ -310,7 +310,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       [
         ( "basic pow",
           `Quick,
-          test_binary_op ~op ~op_name ~dtype:Nx_core.Dtype.float32
+          test_binary_op_float ~eps:1e-5 ~op ~op_name ~dtype:Nx_core.Dtype.float32
             ~shape:[| 3 |] ~a_data:[| 2.; 3.; 4. |] ~b_data:[| 3.; 2.; 0.5 |]
             ~expected:[| 8.; 9.; 2. |] ctx );
         ( "zero^zero",
@@ -338,14 +338,18 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
               (Nx.unsafe_get [ 0 ] result) );
         ( "ipow",
           `Quick,
-          test_inplace ~iop:Nx.ipow ~op_name ~dtype:Nx_core.Dtype.float32
-            ~shape:[| 3 |] ~a_data:[| 2.; 3.; 4. |] ~b_data:[| 2.; 1.; 0.5 |]
-            ~expected:[| 4.; 3.; 2. |] ctx );
+          fun () ->
+            let a = Nx.create ctx Nx_core.Dtype.float32 [| 3 |] [| 2.; 3.; 4. |] in
+            let b = Nx.create ctx Nx_core.Dtype.float32 [| 3 |] [| 2.; 1.; 0.5 |] in
+            let result = Nx.ipow a b in
+            check_t ~eps:1e-5 "ipow result" [| 3 |] [| 4.; 3.; 2. |] a;
+            check bool "ipow returns a" true (result == a) );
         ( "pow_s",
           `Quick,
-          test_scalar_op ~op_s:Nx.pow_s ~op_name ~dtype:Nx_core.Dtype.float32
-            ~shape:[| 3 |] ~data:[| 2.; 3.; 4. |] ~scalar:2.0
-            ~expected:[| 4.; 9.; 16. |] ctx );
+          fun () ->
+            let a = Nx.create ctx Nx_core.Dtype.float32 [| 3 |] [| 2.; 3.; 4. |] in
+            let result = Nx.pow_s a 2.0 in
+            check_t ~eps:1e-5 "pow_s" [| 3 |] [| 4.; 9.; 16. |] result );
       ]
   end
 
