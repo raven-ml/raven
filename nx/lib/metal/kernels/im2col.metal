@@ -42,16 +42,19 @@ kernel void unfold_float(device float* out [[buffer(0)]],
         temp /= kernel_size[i];
     }
     
-    // Calculate padded input coordinates
-    uint padded_coords[16];
+    // Calculate input coordinates
+    // Note: The input tensor is already padded, so we just need to calculate
+    // the coordinates directly without additional padding logic
+    uint input_coords[16];
     bool in_bounds = true;
     for (uint i = 0; i < n_spatial; i++) {
         int coord = block_coords[i] * stride[i] + kernel_coords[i] * dilation[i];
-        if (coord < int(padding[2*i]) || coord >= int(padding[2*i] + in_shape[2+i])) {
+        // Check if coordinate is within the padded input bounds
+        if (coord < 0 || coord >= int(in_shape[2+i])) {
             in_bounds = false;
             break;
         }
-        padded_coords[i] = coord - padding[2*i];
+        input_coords[i] = coord;
     }
     
     float value = 0.0;
@@ -62,7 +65,7 @@ kernel void unfold_float(device float* out [[buffer(0)]],
         
         // Add spatial offsets
         for (uint i = 0; i < n_spatial; i++) {
-            in_offset = in_offset * in_shape[2+i] + padded_coords[i];
+            in_offset = in_offset * in_shape[2+i] + input_coords[i];
         }
         
         value = in[in_offset];
@@ -205,15 +208,16 @@ kernel void unfold_int(device int* out [[buffer(0)]],
         temp /= kernel_size[i];
     }
     
-    uint padded_coords[16];
+    // Calculate input coordinates (input is already padded)
+    uint input_coords[16];
     bool in_bounds = true;
     for (uint i = 0; i < n_spatial; i++) {
         int coord = block_coords[i] * stride[i] + kernel_coords[i] * dilation[i];
-        if (coord < int(padding[2*i]) || coord >= int(padding[2*i] + in_shape[2+i])) {
+        if (coord < 0 || coord >= int(in_shape[2+i])) {
             in_bounds = false;
             break;
         }
-        padded_coords[i] = coord - padding[2*i];
+        input_coords[i] = coord;
     }
     
     int value = 0;
@@ -222,7 +226,7 @@ kernel void unfold_int(device int* out [[buffer(0)]],
         in_offset = (in_offset + c);
         
         for (uint i = 0; i < n_spatial; i++) {
-            in_offset = in_offset * in_shape[2+i] + padded_coords[i];
+            in_offset = in_offset * in_shape[2+i] + input_coords[i];
         }
         
         value = in[in_offset];
@@ -504,15 +508,16 @@ kernel void unfold_long(device long* out [[buffer(0)]],
         temp /= kernel_size[i];
     }
     
-    uint padded_coords[16];
+    // Calculate input coordinates (input is already padded)
+    uint input_coords[16];
     bool in_bounds = true;
     for (uint i = 0; i < n_spatial; i++) {
         int coord = block_coords[i] * stride[i] + kernel_coords[i] * dilation[i];
-        if (coord < int(padding[2*i]) || coord >= int(padding[2*i] + in_shape[2+i])) {
+        if (coord < 0 || coord >= int(in_shape[2+i])) {
             in_bounds = false;
             break;
         }
-        padded_coords[i] = coord - padding[2*i];
+        input_coords[i] = coord;
     }
     
     long value = 0;
@@ -521,7 +526,7 @@ kernel void unfold_long(device long* out [[buffer(0)]],
         in_offset = (in_offset + c);
         
         for (uint i = 0; i < n_spatial; i++) {
-            in_offset = in_offset * in_shape[2+i] + padded_coords[i];
+            in_offset = in_offset * in_shape[2+i] + input_coords[i];
         }
         
         value = in[in_offset];
