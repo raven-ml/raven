@@ -419,6 +419,7 @@ void nx_cblas_sub_f32(const strided_array_t *x, const strided_array_t *y,
   }
 }
 
+BINARY_OP_F32(mul, MUL)
 BINARY_OP_F32(div, DIV)
 BINARY_OP_F32(max, MAX)
 
@@ -806,45 +807,7 @@ static int is_matrix_mul(const strided_array_t *x, const strided_array_t *y,
   return 1;
 }
 
-void nx_cblas_mul_f32(const strided_array_t *x, const strided_array_t *y,
-                      strided_array_t *z) {
-  if (is_matrix_mul(x, y, z)) {
-    int batch_size = 1;
-    for (int i = 0; i < x->ndim - 2; i++) {
-      batch_size *= x->shape[i];
-    }
-
-    int m = x->shape[x->ndim - 2];
-    int k = x->shape[x->ndim - 1];
-    int n = y->shape[y->ndim - 1];
-
-    float *a_data = (float *)x->data + x->offset;
-    float *b_data = (float *)y->data + y->offset;
-    float *c_data = (float *)z->data + z->offset;
-
-    /* Calculate batch strides */
-    int a_batch_stride = (x->ndim > 2) ? x->strides[x->ndim - 3] : 0;
-    int b_batch_stride = (y->ndim > 2) ? y->strides[y->ndim - 3] : 0;
-    int c_batch_stride = (z->ndim > 2) ? z->strides[z->ndim - 3] : 0;
-
-    if (batch_size == 1) {
-      /* Single matrix multiplication */
-      cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0f,
-                  a_data, k, b_data, n, 0.0f, c_data, n);
-    } else {
-/* Batched matrix multiplication */
-#pragma omp parallel for if (batch_size > 4)
-      for (int b = 0; b < batch_size; b++) {
-        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0f,
-                    a_data + b * a_batch_stride, k, b_data + b * b_batch_stride,
-                    n, 0.0f, c_data + b * c_batch_stride, n);
-      }
-    }
-  } else {
-    /* Element-wise multiplication */
-    nx_cblas_mul_f32(x, y, z);
-  }
-}
+/* Matrix multiplication dispatch removed - OCaml handles the logic */
 
 /* =========================== Comparison Operations ===========================
  */
