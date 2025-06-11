@@ -437,3 +437,251 @@ kernel void threefry_int32(device int* out [[buffer(0)]],
     
     out[gid] = int(x0 ^ x1);
 }
+
+// Strided-to-contiguous assign operation (simplified)
+kernel void assign_strided_float(device float* dst [[buffer(0)]],
+                                device const float* src [[buffer(1)]],
+                                constant uint* shape [[buffer(2)]],
+                                constant int* src_strides [[buffer(3)]],
+                                constant uint& ndim [[buffer(4)]],
+                                constant uint& src_offset [[buffer(5)]],
+                                uint gid [[thread_position_in_grid]]) {
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= shape[i];
+    }
+    if (gid >= total_size) return;
+    
+    // Convert linear index to multi-dimensional position
+    uint temp = gid;
+    uint src_idx = src_offset;
+    
+    // Calculate source index using strides
+    for (int i = int(ndim) - 1; i >= 0; i--) {
+        uint coord = temp % shape[i];
+        temp /= shape[i];
+        src_idx += coord * src_strides[i];
+    }
+    
+    // Write to contiguous destination
+    dst[gid] = src[src_idx];
+}
+
+kernel void assign_strided_int(device int* dst [[buffer(0)]],
+                              device const int* src [[buffer(1)]],
+                              constant uint* shape [[buffer(2)]],
+                              constant int* src_strides [[buffer(3)]],
+                              constant uint& ndim [[buffer(4)]],
+                              constant uint& src_offset [[buffer(5)]],
+                              uint gid [[thread_position_in_grid]]) {
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= shape[i];
+    }
+    if (gid >= total_size) return;
+    
+    // Convert linear index to multi-dimensional position
+    uint temp = gid;
+    uint src_idx = src_offset;
+    
+    // Calculate source index using strides
+    for (int i = int(ndim) - 1; i >= 0; i--) {
+        uint coord = temp % shape[i];
+        temp /= shape[i];
+        src_idx += coord * src_strides[i];
+    }
+    
+    // Write to contiguous destination
+    dst[gid] = src[src_idx];
+}
+
+kernel void assign_strided_uchar(device uchar* dst [[buffer(0)]],
+                                device const uchar* src [[buffer(1)]],
+                                constant uint* shape [[buffer(2)]],
+                                constant int* src_strides [[buffer(3)]],
+                                constant uint& ndim [[buffer(4)]],
+                                constant uint& src_offset [[buffer(5)]],
+                                uint gid [[thread_position_in_grid]]) {
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= shape[i];
+    }
+    if (gid >= total_size) return;
+    
+    // Convert linear index to multi-dimensional position
+    uint temp = gid;
+    uint src_idx = src_offset;
+    
+    // Calculate source index using strides
+    for (int i = int(ndim) - 1; i >= 0; i--) {
+        uint coord = temp % shape[i];
+        temp /= shape[i];
+        src_idx += coord * src_strides[i];
+    }
+    
+    // Write to contiguous destination
+    dst[gid] = src[src_idx];
+}
+
+// NumPy-style gather operation with multi-dimensional indices
+kernel void gather_float(device float* out [[buffer(0)]],
+                              device const float* data [[buffer(1)]],
+                              device const int* indices [[buffer(2)]],
+                              constant uint* out_shape [[buffer(3)]],
+                              constant uint* data_shape [[buffer(4)]],
+                              constant int* data_strides [[buffer(5)]],
+                              constant int* indices_strides [[buffer(6)]],
+                              constant uint& ndim [[buffer(7)]],
+                              constant uint& axis [[buffer(8)]],
+                              constant uint& data_offset [[buffer(9)]],
+                              constant uint& indices_offset [[buffer(10)]],
+                              uint gid [[thread_position_in_grid]]) {
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (gid >= total_size) return;
+    
+    // Convert linear index to multi-dimensional position
+    uint temp = gid;
+    uint data_idx = data_offset;
+    uint indices_idx = indices_offset;
+    
+    // Process dimensions from right to left
+    for (int i = int(ndim) - 1; i >= 0; i--) {
+        uint coord = temp % out_shape[i];
+        temp /= out_shape[i];
+        
+        if (uint(i) == axis) {
+            // For the gather axis, use the index from indices tensor
+            indices_idx += coord * indices_strides[i];
+        } else {
+            // For other axes, use the coordinate directly
+            data_idx += coord * data_strides[i];
+        }
+    }
+    
+    // Read the index value
+    int idx = indices[indices_idx];
+    
+    // Handle negative indices
+    int axis_size = int(data_shape[axis]);
+    if (idx < 0) idx += axis_size;
+    
+    // Clamp to valid range
+    idx = clamp(idx, 0, axis_size - 1);
+    
+    // Add the indexed position along the gather axis
+    data_idx += uint(idx) * data_strides[axis];
+    
+    // Copy the value
+    out[gid] = data[data_idx];
+}
+
+kernel void gather_int(device int* out [[buffer(0)]],
+                            device const int* data [[buffer(1)]],
+                            device const int* indices [[buffer(2)]],
+                            constant uint* out_shape [[buffer(3)]],
+                            constant uint* data_shape [[buffer(4)]],
+                            constant int* data_strides [[buffer(5)]],
+                            constant int* indices_strides [[buffer(6)]],
+                            constant uint& ndim [[buffer(7)]],
+                            constant uint& axis [[buffer(8)]],
+                            constant uint& data_offset [[buffer(9)]],
+                            constant uint& indices_offset [[buffer(10)]],
+                            uint gid [[thread_position_in_grid]]) {
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (gid >= total_size) return;
+    
+    // Convert linear index to multi-dimensional position
+    uint temp = gid;
+    uint data_idx = data_offset;
+    uint indices_idx = indices_offset;
+    
+    // Process dimensions from right to left
+    for (int i = int(ndim) - 1; i >= 0; i--) {
+        uint coord = temp % out_shape[i];
+        temp /= out_shape[i];
+        
+        if (uint(i) == axis) {
+            // For the gather axis, use the index from indices tensor
+            indices_idx += coord * indices_strides[i];
+        } else {
+            // For other axes, use the coordinate directly
+            data_idx += coord * data_strides[i];
+        }
+    }
+    
+    // Read the index value
+    int idx = indices[indices_idx];
+    
+    // Handle negative indices
+    int axis_size = int(data_shape[axis]);
+    if (idx < 0) idx += axis_size;
+    
+    // Clamp to valid range
+    idx = clamp(idx, 0, axis_size - 1);
+    
+    // Add the indexed position along the gather axis
+    data_idx += uint(idx) * data_strides[axis];
+    
+    // Copy the value
+    out[gid] = data[data_idx];
+}
+
+kernel void gather_uchar(device uchar* out [[buffer(0)]],
+                              device const uchar* data [[buffer(1)]],
+                              device const int* indices [[buffer(2)]],
+                              constant uint* out_shape [[buffer(3)]],
+                              constant uint* data_shape [[buffer(4)]],
+                              constant int* data_strides [[buffer(5)]],
+                              constant int* indices_strides [[buffer(6)]],
+                              constant uint& ndim [[buffer(7)]],
+                              constant uint& axis [[buffer(8)]],
+                              constant uint& data_offset [[buffer(9)]],
+                              constant uint& indices_offset [[buffer(10)]],
+                              uint gid [[thread_position_in_grid]]) {
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (gid >= total_size) return;
+    
+    // Convert linear index to multi-dimensional position
+    uint temp = gid;
+    uint data_idx = data_offset;
+    uint indices_idx = indices_offset;
+    
+    // Process dimensions from right to left
+    for (int i = int(ndim) - 1; i >= 0; i--) {
+        uint coord = temp % out_shape[i];
+        temp /= out_shape[i];
+        
+        if (uint(i) == axis) {
+            // For the gather axis, use the index from indices tensor
+            indices_idx += coord * indices_strides[i];
+        } else {
+            // For other axes, use the coordinate directly
+            data_idx += coord * data_strides[i];
+        }
+    }
+    
+    // Read the index value
+    int idx = indices[indices_idx];
+    
+    // Handle negative indices
+    int axis_size = int(data_shape[axis]);
+    if (idx < 0) idx += axis_size;
+    
+    // Clamp to valid range
+    idx = clamp(idx, 0, axis_size - 1);
+    
+    // Add the indexed position along the gather axis
+    data_idx += uint(idx) * data_strides[axis];
+    
+    // Copy the value
+    out[gid] = data[data_idx];
+}
