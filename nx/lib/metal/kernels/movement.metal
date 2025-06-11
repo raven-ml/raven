@@ -305,62 +305,42 @@ kernel void pad_float(device float* out [[buffer(0)]],
                      constant int* in_strides [[buffer(7)]],
                      constant uint& in_offset [[buffer(8)]],
                      uint gid [[thread_position_in_grid]]) {
-    uint out_size = out_shape[0];
-    if (ndim > 1) out_size *= out_shape[1];
-    if (ndim > 2) out_size *= out_shape[2];
+    // Compute total output size for all dimensions
+    uint out_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        out_size *= out_shape[i];
+    }
     
     if (gid >= out_size) return;
     
-    // Compute output position
+    // Compute output position for all dimensions
+    uint out_pos[8]; // Max 8 dimensions
     uint temp = gid;
-    uint3 out_pos = uint3(0, 0, 0);
-    
-    if (ndim > 2) {
-        out_pos.z = temp % out_shape[2];
-        temp /= out_shape[2];
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_pos[i] = temp % out_shape[i];
+        temp /= out_shape[i];
     }
-    if (ndim > 1) {
-        out_pos.y = temp % out_shape[1];
-        temp /= out_shape[1];
-    }
-    out_pos.x = temp;
     
     // Check if we're in padding region
     bool in_bounds = true;
-    uint3 in_pos = out_pos;
+    uint in_pos[8];
     
-    if (ndim > 0) {
-        if (out_pos.x < pad_before[0] || out_pos.x >= pad_before[0] + in_shape[0]) {
+    for (uint i = 0; i < ndim; i++) {
+        if (out_pos[i] < pad_before[i] || out_pos[i] >= pad_before[i] + in_shape[i]) {
             in_bounds = false;
-        } else {
-            in_pos.x = out_pos.x - pad_before[0];
+            break;
         }
-    }
-    
-    if (ndim > 1 && in_bounds) {
-        if (out_pos.y < pad_before[1] || out_pos.y >= pad_before[1] + in_shape[1]) {
-            in_bounds = false;
-        } else {
-            in_pos.y = out_pos.y - pad_before[1];
-        }
-    }
-    
-    if (ndim > 2 && in_bounds) {
-        if (out_pos.z < pad_before[2] || out_pos.z >= pad_before[2] + in_shape[2]) {
-            in_bounds = false;
-        } else {
-            in_pos.z = out_pos.z - pad_before[2];
-        }
+        in_pos[i] = out_pos[i] - pad_before[i];
     }
     
     if (in_bounds) {
         // Compute input index using strides
         uint in_idx = in_offset;
-        if (ndim > 0) in_idx += in_pos.x * in_strides[0];
-        if (ndim > 1) in_idx += in_pos.y * in_strides[1];
-        if (ndim > 2) in_idx += in_pos.z * in_strides[2];
+        for (uint i = 0; i < ndim; i++) {
+            in_idx += in_pos[i] * in_strides[i];
+        }
         
-        out[gid] = in[uint(in_idx)];
+        out[gid] = in[in_idx];
     } else {
         out[gid] = pad_value;
     }

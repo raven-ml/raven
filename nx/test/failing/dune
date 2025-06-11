@@ -8,7 +8,7 @@
  (libraries nx))
 
 (executables
- (names bug_metal_reduce_stride bug_metal_unsafe_get bug_metal_convolution bug_metal_conv_padding)
+ (names bug_metal_reduce_stride bug_metal_unsafe_get bug_metal_convolution bug_metal_conv_padding bug_metal_conv2d_padding)
  (enabled_if
   (= %{system} "macosx"))
  (libraries nx_core nx_metal))
