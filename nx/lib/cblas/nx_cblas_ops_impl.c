@@ -4148,7 +4148,44 @@ void nx_cblas_unfold_f32(const strided_array_t *input, strided_array_t *output,
   int batch_size = input->shape[0];
   int channels = input->shape[1];
   
-  // Only handle 2D case for now
+  // Handle 1D case
+  if (n_spatial == 1) {
+    int w_in = input->shape[2];
+    int kw = kernel_size[0];
+    int sw = stride[0];
+    int dw = dilation[0];
+    
+    // Calculate output dimensions
+    int w_out = (w_in - (kw - 1) * dw - 1) / sw + 1;
+    
+    int patch_size = channels * kw;
+    int num_patches = w_out;
+    
+    // Extract patches
+    for (int b = 0; b < batch_size; b++) {
+      for (int ow = 0; ow < w_out; ow++) {
+        int patch_idx = ow;
+        
+        for (int c = 0; c < channels; c++) {
+          for (int kw_idx = 0; kw_idx < kw; kw_idx++) {
+            int w = ow * sw + kw_idx * dw;
+            
+            int in_idx = (b * channels + c) * w_in + w;
+            int out_idx = (b * patch_size + c * kw + kw_idx) * num_patches + patch_idx;
+            
+            if (w >= 0 && w < w_in) {
+              out_data[out_idx] = in_data[in_idx];
+            } else {
+              out_data[out_idx] = 0.0f;
+            }
+          }
+        }
+      }
+    }
+    return;
+  }
+  
+  // Handle 2D case
   if (n_spatial != 2) {
     return; // TODO: Add support for other dimensions
   }
@@ -4208,7 +4245,44 @@ void nx_cblas_unfold_f64(const strided_array_t *input, strided_array_t *output,
   int batch_size = input->shape[0];
   int channels = input->shape[1];
   
-  // Only handle 2D case for now
+  // Handle 1D case
+  if (n_spatial == 1) {
+    int w_in = input->shape[2];
+    int kw = kernel_size[0];
+    int sw = stride[0];
+    int dw = dilation[0];
+    
+    // Calculate output dimensions
+    int w_out = (w_in - (kw - 1) * dw - 1) / sw + 1;
+    
+    int patch_size = channels * kw;
+    int num_patches = w_out;
+    
+    // Extract patches
+    for (int b = 0; b < batch_size; b++) {
+      for (int ow = 0; ow < w_out; ow++) {
+        int patch_idx = ow;
+        
+        for (int c = 0; c < channels; c++) {
+          for (int kw_idx = 0; kw_idx < kw; kw_idx++) {
+            int w = ow * sw + kw_idx * dw;
+            
+            int in_idx = (b * channels + c) * w_in + w;
+            int out_idx = (b * patch_size + c * kw + kw_idx) * num_patches + patch_idx;
+            
+            if (w >= 0 && w < w_in) {
+              out_data[out_idx] = in_data[in_idx];
+            } else {
+              out_data[out_idx] = 0.0;
+            }
+          }
+        }
+      }
+    }
+    return;
+  }
+  
+  // Handle 2D case
   if (n_spatial != 2) {
     return; // TODO: Add support for other dimensions
   }
@@ -4271,7 +4345,48 @@ void nx_cblas_fold_f32(const strided_array_t *input, strided_array_t *output,
   int patch_size = input->shape[1];
   int num_patches = input->shape[2];
   
-  // Only handle 2D case for now
+  // Handle 1D case
+  if (n_spatial == 1) {
+    int kw = kernel_size[0];
+    int sw = stride[0];
+    int dw = dilation[0];
+    
+    int channels = patch_size / kw;
+    int w_out = output_size[0];
+    
+    // Initialize output to zero
+    int out_total = batch_size * channels * w_out;
+    for (int i = 0; i < out_total; i++) {
+      out_data[i] = 0.0f;
+    }
+    
+    // Calculate patch grid dimensions
+    int effective_kw = 1 + (kw - 1) * dw;
+    int w_patches = (w_out - effective_kw) / sw + 1;
+    
+    // Accumulate patches
+    for (int b = 0; b < batch_size; b++) {
+      for (int pw = 0; pw < w_patches; pw++) {
+        int patch_idx = pw;
+        
+        for (int c = 0; c < channels; c++) {
+          for (int kw_idx = 0; kw_idx < kw; kw_idx++) {
+            int w = pw * sw + kw_idx * dw;
+            
+            if (w >= 0 && w < w_out) {
+              int in_idx = (b * patch_size + c * kw + kw_idx) * num_patches + patch_idx;
+              int out_idx = (b * channels + c) * w_out + w;
+              
+              out_data[out_idx] += in_data[in_idx];
+            }
+          }
+        }
+      }
+    }
+    return;
+  }
+  
+  // Handle 2D case
   if (n_spatial != 2) {
     return; // TODO: Add support for other dimensions
   }
@@ -4337,6 +4452,47 @@ void nx_cblas_fold_f64(const strided_array_t *input, strided_array_t *output,
   int batch_size = input->shape[0];
   int patch_size = input->shape[1];
   int num_patches = input->shape[2];
+  
+  // Handle 1D case
+  if (n_spatial == 1) {
+    int kw = kernel_size[0];
+    int sw = stride[0];
+    int dw = dilation[0];
+    
+    int channels = patch_size / kw;
+    int w_out = output_size[0];
+    
+    // Initialize output to zero
+    int out_total = batch_size * channels * w_out;
+    for (int i = 0; i < out_total; i++) {
+      out_data[i] = 0.0;
+    }
+    
+    // Calculate patch grid dimensions
+    int effective_kw = 1 + (kw - 1) * dw;
+    int w_patches = (w_out - effective_kw) / sw + 1;
+    
+    // Accumulate patches
+    for (int b = 0; b < batch_size; b++) {
+      for (int pw = 0; pw < w_patches; pw++) {
+        int patch_idx = pw;
+        
+        for (int c = 0; c < channels; c++) {
+          for (int kw_idx = 0; kw_idx < kw; kw_idx++) {
+            int w = pw * sw + kw_idx * dw;
+            
+            if (w >= 0 && w < w_out) {
+              int in_idx = (b * patch_size + c * kw + kw_idx) * num_patches + patch_idx;
+              int out_idx = (b * channels + c) * w_out + w;
+              
+              out_data[out_idx] += in_data[in_idx];
+            }
+          }
+        }
+      }
+    }
+    return;
+  }
   
   // Only handle 2D case for now
   if (n_spatial != 2) {

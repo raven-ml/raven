@@ -338,13 +338,20 @@ let op_cmpne x y = cmp_op cmpne x y
 
 (* Reductions *)
 let op_reduce_sum ~axes ~keepdims x =
-  if Array.length axes = 0 then (
+  let ndim = View.ndim x.view in
+  let is_full_reduction = 
+    Array.length axes = 0 || 
+    (Array.length axes = ndim && 
+     Array.for_all2 (=) axes (Array.init ndim Fun.id))
+  in
+  
+  if is_full_reduction then (
     (* Full reduction *)
     let result_shape =
-      if keepdims then Array.make (View.ndim x.view) 1 else [||]
+      if keepdims then Array.make ndim 1 else [||]
     in
     let result = make_tensor x result_shape in
-    reduce_sum (View.ndim x.view) (View.shape x.view) x.buffer
+    reduce_sum ndim (View.shape x.view) x.buffer
       (View.strides x.view) (View.offset x.view) keepdims result.buffer;
     result)
   else failwith "partial reduction not implemented"
@@ -487,25 +494,58 @@ let op_where cond x y =
 
 (* Reductions *)
 let op_reduce_max ~axes ~keepdims x =
-  if Array.length axes = 0 then (
+  let ndim = View.ndim x.view in
+  let is_full_reduction = 
+    Array.length axes = 0 || 
+    (Array.length axes = ndim && 
+     Array.for_all2 (=) axes (Array.init ndim Fun.id))
+  in
+  
+  if is_full_reduction then (
     (* Full reduction *)
     let result_shape =
-      if keepdims then Array.make (View.ndim x.view) 1 else [||]
+      if keepdims then Array.make ndim 1 else [||]
     in
     let result = make_tensor x result_shape in
-    reduce_max (View.ndim x.view) (View.shape x.view) x.buffer
+    reduce_max ndim (View.shape x.view) x.buffer
       (View.strides x.view) (View.offset x.view) keepdims result.buffer;
     result)
   else failwith "partial reduction not implemented"
 
 let op_reduce_prod ~axes ~keepdims x =
-  if Array.length axes = 0 then (
+  let ndim = View.ndim x.view in
+  let is_full_reduction = 
+    Array.length axes = 0 || 
+    (Array.length axes = ndim && 
+     Array.for_all2 (=) axes (Array.init ndim Fun.id))
+  in
+  
+  if is_full_reduction then (
     (* Full reduction *)
     let result_shape =
-      if keepdims then Array.make (View.ndim x.view) 1 else [||]
+      if keepdims then Array.make ndim 1 else [||]
     in
     let result = make_tensor x result_shape in
-    reduce_prod (View.ndim x.view) (View.shape x.view) x.buffer
+    reduce_prod ndim (View.shape x.view) x.buffer
+      (View.strides x.view) (View.offset x.view) keepdims result.buffer;
+    result)
+  else failwith "partial reduction not implemented"
+
+let op_reduce_min ~axes ~keepdims x =
+  let ndim = View.ndim x.view in
+  let is_full_reduction = 
+    Array.length axes = 0 || 
+    (Array.length axes = ndim && 
+     Array.for_all2 (=) axes (Array.init ndim Fun.id))
+  in
+  
+  if is_full_reduction then (
+    (* Full reduction *)
+    let result_shape =
+      if keepdims then Array.make ndim 1 else [||]
+    in
+    let result = make_tensor x result_shape in
+    reduce_min ndim (View.shape x.view) x.buffer
       (View.strides x.view) (View.offset x.view) keepdims result.buffer;
     result)
   else failwith "partial reduction not implemented"
@@ -1045,7 +1085,7 @@ let op_matmul a b =
   if k_a <> k_b then
     invalid_arg
       (Printf.sprintf
-         "matmul: cannot contract %s (last axis: %d) to %s (axis %d: %d) (size \
+         "dot: cannot contract %s (last axis: %d) to %s (axis %d: %d) (size \
           %d≠%d)"
          (Shape.to_string shape_a) k_a (Shape.to_string shape_b) (ndim_b - 2)
          k_b k_a k_b);
