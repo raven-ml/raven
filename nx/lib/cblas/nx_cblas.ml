@@ -607,6 +607,46 @@ let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
           let v : float = Bigarray.Array1.get x.buffer i in
           Bigarray.Array1.set result_buffer i v
         done
+    | Dtype.Float32, Dtype.Int16 ->
+        for i = 0 to total - 1 do
+          let v : float = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (int_of_float v)
+        done
+    | Dtype.Float64, Dtype.Int16 ->
+        for i = 0 to total - 1 do
+          let v : float = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (int_of_float v)
+        done
+    | Dtype.Int16, Dtype.Float32 ->
+        for i = 0 to total - 1 do
+          let v : int = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (float_of_int v)
+        done
+    | Dtype.Int16, Dtype.Float64 ->
+        for i = 0 to total - 1 do
+          let v : int = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (float_of_int v)
+        done
+    | Dtype.Int32, Dtype.Int16 ->
+        for i = 0 to total - 1 do
+          let v : int32 = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int32.to_int v)
+        done
+    | Dtype.Int16, Dtype.Int32 ->
+        for i = 0 to total - 1 do
+          let v : int = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int32.of_int v)
+        done
+    | Dtype.Int64, Dtype.Int16 ->
+        for i = 0 to total - 1 do
+          let v : int64 = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int64.to_int v)
+        done
+    | Dtype.Int16, Dtype.Int64 ->
+        for i = 0 to total - 1 do
+          let v : int = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int64.of_int v)
+        done
     | _, _ when Dtype.equal x.dtype target_dtype ->
         (* Same type, just copy - but we can't do this due to type
            constraints *)
