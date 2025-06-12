@@ -74,6 +74,8 @@ extern void nx_cblas_pow_f64(const strided_array_t *x, const strided_array_t *y,
 extern void nx_cblas_mod_f64(const strided_array_t *x, const strided_array_t *y,
                              strided_array_t *z);
 extern void nx_cblas_neg_f64(const strided_array_t *x, strided_array_t *z);
+extern void nx_cblas_neg_i32(const strided_array_t *x, strided_array_t *z);
+extern void nx_cblas_neg_i64(const strided_array_t *x, strided_array_t *z);
 extern void nx_cblas_sqrt_f64(const strided_array_t *x, strided_array_t *z);
 extern void nx_cblas_sin_f64(const strided_array_t *x, strided_array_t *z);
 extern void nx_cblas_exp2_f64(const strided_array_t *x, strided_array_t *z);
@@ -82,7 +84,15 @@ extern void nx_cblas_recip_f64(const strided_array_t *x, strided_array_t *z);
 extern void nx_cblas_copy_f64(const strided_array_t *x, strided_array_t *z);
 extern void nx_cblas_cmplt_f64(const strided_array_t *x,
                                const strided_array_t *y, strided_array_t *z);
+extern void nx_cblas_cmplt_i32(const strided_array_t *x,
+                               const strided_array_t *y, strided_array_t *z);
+extern void nx_cblas_cmplt_i64(const strided_array_t *x,
+                               const strided_array_t *y, strided_array_t *z);
 extern void nx_cblas_cmpne_f64(const strided_array_t *x,
+                               const strided_array_t *y, strided_array_t *z);
+extern void nx_cblas_cmpne_i32(const strided_array_t *x,
+                               const strided_array_t *y, strided_array_t *z);
+extern void nx_cblas_cmpne_i64(const strided_array_t *x,
                                const strided_array_t *y, strided_array_t *z);
 extern void nx_cblas_reduce_sum_f64(const strided_array_t *x, void *result);
 extern void nx_cblas_reduce_max_f64(const strided_array_t *x, void *result);
@@ -91,6 +101,26 @@ extern void nx_cblas_reduce_prod_f32(const strided_array_t *x, void *result);
 extern void nx_cblas_reduce_prod_f64(const strided_array_t *x, void *result);
 
 /* Integer operations */
+extern void nx_cblas_add_i32(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
+extern void nx_cblas_add_i64(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
+extern void nx_cblas_sub_i32(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
+extern void nx_cblas_sub_i64(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
+extern void nx_cblas_mul_i32(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
+extern void nx_cblas_mul_i64(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
+extern void nx_cblas_div_i32(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
+extern void nx_cblas_div_i64(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
+extern void nx_cblas_max_i32(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
+extern void nx_cblas_max_i64(const strided_array_t *x, const strided_array_t *y,
+                             strided_array_t *z);
 extern void nx_cblas_idiv_i32(const strided_array_t *x,
                               const strided_array_t *y, strided_array_t *z);
 extern void nx_cblas_idiv_i64(const strided_array_t *x,
@@ -131,6 +161,12 @@ extern void nx_cblas_where_f32(const strided_array_t *cond,
 extern void nx_cblas_where_f64(const strided_array_t *cond,
                                const strided_array_t *x,
                                const strided_array_t *y, strided_array_t *z);
+extern void nx_cblas_where_i32(const strided_array_t *cond,
+                               const strided_array_t *x,
+                               const strided_array_t *y, strided_array_t *z);
+extern void nx_cblas_where_i64(const strided_array_t *cond,
+                               const strided_array_t *x,
+                               const strided_array_t *y, strided_array_t *z);
 
 /* Pad operations */
 extern void nx_cblas_pad_f32(const strided_array_t *x, strided_array_t *z,
@@ -163,6 +199,14 @@ extern void nx_cblas_scatter_f32(const strided_array_t *data_template,
                                  const strided_array_t *updates, int axis,
                                  strided_array_t *z);
 extern void nx_cblas_scatter_f64(const strided_array_t *data_template,
+                                 const strided_array_t *indices,
+                                 const strided_array_t *updates, int axis,
+                                 strided_array_t *z);
+extern void nx_cblas_scatter_i32(const strided_array_t *data_template,
+                                 const strided_array_t *indices,
+                                 const strided_array_t *updates, int axis,
+                                 strided_array_t *z);
+extern void nx_cblas_scatter_i64(const strided_array_t *data_template,
                                  const strided_array_t *indices,
                                  const strided_array_t *updates, int axis,
                                  strided_array_t *z);
@@ -277,11 +321,252 @@ static void init_strided_array(strided_array_t *arr, value vData, int ndim,
                      argv[6], argv[7], argv[8], argv[9], argv[10]);        \
   }
 
-DEFINE_BINARY_STUB(add)
-DEFINE_BINARY_STUB(sub)
-DEFINE_BINARY_STUB(mul)
-DEFINE_BINARY_STUB(div)
-DEFINE_BINARY_STUB(max)
+/* Custom implementations for operations that support integers */
+
+CAMLprim value nx_add(value vNdim, value vShape, value vX,
+                     value vXStrides, value vXOffset, value vY,
+                     value vYStrides, value vYOffset, value vZ,
+                     value vZStrides, value vZOffset) {
+  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
+  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
+
+  int ndim = Int_val(vNdim);
+  strided_array_t x, y, z;
+
+  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
+  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
+  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+
+  caml_enter_blocking_section();
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  if (kind == CAML_BA_FLOAT32) {
+    nx_cblas_add_f32(&x, &y, &z);
+  } else if (kind == CAML_BA_FLOAT64) {
+    nx_cblas_add_f64(&x, &y, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_add_i32(&x, &y, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_add_i64(&x, &y, &z);
+  } else {
+    caml_leave_blocking_section();
+    nx_cblas_free_strided_array(&x);
+    nx_cblas_free_strided_array(&y);
+    nx_cblas_free_strided_array(&z);
+    caml_failwith("add: unsupported dtype");
+  }
+
+  caml_leave_blocking_section();
+
+  nx_cblas_free_strided_array(&x);
+  nx_cblas_free_strided_array(&y);
+  nx_cblas_free_strided_array(&z);
+
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value nx_add_bc(value *argv, int argn) {
+  return nx_add(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                argv[6], argv[7], argv[8], argv[9], argv[10]);
+}
+
+CAMLprim value nx_sub(value vNdim, value vShape, value vX,
+                     value vXStrides, value vXOffset, value vY,
+                     value vYStrides, value vYOffset, value vZ,
+                     value vZStrides, value vZOffset) {
+  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
+  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
+
+  int ndim = Int_val(vNdim);
+  strided_array_t x, y, z;
+
+  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
+  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
+  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+
+  caml_enter_blocking_section();
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  if (kind == CAML_BA_FLOAT32) {
+    nx_cblas_sub_f32(&x, &y, &z);
+  } else if (kind == CAML_BA_FLOAT64) {
+    nx_cblas_sub_f64(&x, &y, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_sub_i32(&x, &y, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_sub_i64(&x, &y, &z);
+  } else {
+    caml_leave_blocking_section();
+    nx_cblas_free_strided_array(&x);
+    nx_cblas_free_strided_array(&y);
+    nx_cblas_free_strided_array(&z);
+    caml_failwith("sub: unsupported dtype");
+  }
+
+  caml_leave_blocking_section();
+
+  nx_cblas_free_strided_array(&x);
+  nx_cblas_free_strided_array(&y);
+  nx_cblas_free_strided_array(&z);
+
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value nx_sub_bc(value *argv, int argn) {
+  return nx_sub(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                argv[6], argv[7], argv[8], argv[9], argv[10]);
+}
+
+CAMLprim value nx_mul(value vNdim, value vShape, value vX,
+                     value vXStrides, value vXOffset, value vY,
+                     value vYStrides, value vYOffset, value vZ,
+                     value vZStrides, value vZOffset) {
+  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
+  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
+
+  int ndim = Int_val(vNdim);
+  strided_array_t x, y, z;
+
+  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
+  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
+  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+
+  caml_enter_blocking_section();
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  if (kind == CAML_BA_FLOAT32) {
+    nx_cblas_mul_f32(&x, &y, &z);
+  } else if (kind == CAML_BA_FLOAT64) {
+    nx_cblas_mul_f64(&x, &y, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_mul_i32(&x, &y, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_mul_i64(&x, &y, &z);
+  } else {
+    caml_leave_blocking_section();
+    nx_cblas_free_strided_array(&x);
+    nx_cblas_free_strided_array(&y);
+    nx_cblas_free_strided_array(&z);
+    caml_failwith("mul: unsupported dtype");
+  }
+
+  caml_leave_blocking_section();
+
+  nx_cblas_free_strided_array(&x);
+  nx_cblas_free_strided_array(&y);
+  nx_cblas_free_strided_array(&z);
+
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value nx_mul_bc(value *argv, int argn) {
+  return nx_mul(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                argv[6], argv[7], argv[8], argv[9], argv[10]);
+}
+
+CAMLprim value nx_div(value vNdim, value vShape, value vX,
+                     value vXStrides, value vXOffset, value vY,
+                     value vYStrides, value vYOffset, value vZ,
+                     value vZStrides, value vZOffset) {
+  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
+  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
+
+  int ndim = Int_val(vNdim);
+  strided_array_t x, y, z;
+
+  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
+  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
+  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+
+  caml_enter_blocking_section();
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  if (kind == CAML_BA_FLOAT32) {
+    nx_cblas_div_f32(&x, &y, &z);
+  } else if (kind == CAML_BA_FLOAT64) {
+    nx_cblas_div_f64(&x, &y, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_div_i32(&x, &y, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_div_i64(&x, &y, &z);
+  } else {
+    caml_leave_blocking_section();
+    nx_cblas_free_strided_array(&x);
+    nx_cblas_free_strided_array(&y);
+    nx_cblas_free_strided_array(&z);
+    caml_failwith("div: unsupported dtype");
+  }
+
+  caml_leave_blocking_section();
+
+  nx_cblas_free_strided_array(&x);
+  nx_cblas_free_strided_array(&y);
+  nx_cblas_free_strided_array(&z);
+
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value nx_div_bc(value *argv, int argn) {
+  return nx_div(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                argv[6], argv[7], argv[8], argv[9], argv[10]);
+}
+
+CAMLprim value nx_max(value vNdim, value vShape, value vX,
+                     value vXStrides, value vXOffset, value vY,
+                     value vYStrides, value vYOffset, value vZ,
+                     value vZStrides, value vZOffset) {
+  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
+  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
+
+  int ndim = Int_val(vNdim);
+  strided_array_t x, y, z;
+
+  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
+  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
+  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+
+  caml_enter_blocking_section();
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  if (kind == CAML_BA_FLOAT32) {
+    nx_cblas_max_f32(&x, &y, &z);
+  } else if (kind == CAML_BA_FLOAT64) {
+    nx_cblas_max_f64(&x, &y, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_max_i32(&x, &y, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_max_i64(&x, &y, &z);
+  } else {
+    caml_leave_blocking_section();
+    nx_cblas_free_strided_array(&x);
+    nx_cblas_free_strided_array(&y);
+    nx_cblas_free_strided_array(&z);
+    caml_failwith("max: unsupported dtype");
+  }
+
+  caml_leave_blocking_section();
+
+  nx_cblas_free_strided_array(&x);
+  nx_cblas_free_strided_array(&y);
+  nx_cblas_free_strided_array(&z);
+
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value nx_max_bc(value *argv, int argn) {
+  return nx_max(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                argv[6], argv[7], argv[8], argv[9], argv[10]);
+}
 DEFINE_BINARY_STUB(pow)
 DEFINE_BINARY_STUB(mod)
 
@@ -329,7 +614,51 @@ DEFINE_BINARY_STUB(mod)
                      argv[6], argv[7]);                                    \
   }
 
-DEFINE_UNARY_STUB(neg)
+/* Special neg that handles integers */
+CAMLprim value nx_neg(value vNdim, value vShape, value vX,
+                     value vXStrides, value vXOffset, value vZ,
+                     value vZStrides, value vZOffset) {
+  CAMLparam5(vShape, vX, vXStrides, vZ, vZStrides);
+  CAMLxparam1(vZOffset);
+
+  int ndim = Int_val(vNdim);
+  strided_array_t x, z;
+
+  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
+  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+
+  caml_enter_blocking_section();
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  if (kind == CAML_BA_FLOAT32) {
+    nx_cblas_neg_f32(&x, &z);
+  } else if (kind == CAML_BA_FLOAT64) {
+    nx_cblas_neg_f64(&x, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_neg_i32(&x, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_neg_i64(&x, &z);
+  } else {
+    caml_leave_blocking_section();
+    nx_cblas_free_strided_array(&x);
+    nx_cblas_free_strided_array(&z);
+    caml_failwith("neg: unsupported dtype");
+  }
+
+  caml_leave_blocking_section();
+
+  nx_cblas_free_strided_array(&x);
+  nx_cblas_free_strided_array(&z);
+
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value nx_neg_bc(value *argv, int argn) {
+  return nx_neg(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+               argv[6], argv[7]);
+}
 DEFINE_UNARY_STUB(sqrt)
 DEFINE_UNARY_STUB(sin)
 DEFINE_UNARY_STUB(exp2)
@@ -426,8 +755,105 @@ CAMLprim value nx_copy_bc(value *argv, int argn) {
                      argv[6], argv[7], argv[8], argv[9], argv[10]);        \
   }
 
-DEFINE_CMP_STUB(cmplt)
-DEFINE_CMP_STUB(cmpne)
+/* Custom implementations for comparison operations that support integers */
+
+CAMLprim value nx_cmplt(value vNdim, value vShape, value vX,
+                       value vXStrides, value vXOffset, value vY,
+                       value vYStrides, value vYOffset, value vZ,
+                       value vZStrides, value vZOffset) {
+  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
+  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
+
+  int ndim = Int_val(vNdim);
+  strided_array_t x, y, z;
+
+  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
+  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
+  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+
+  caml_enter_blocking_section();
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  if (kind == CAML_BA_FLOAT32) {
+    nx_cblas_cmplt_f32(&x, &y, &z);
+  } else if (kind == CAML_BA_FLOAT64) {
+    nx_cblas_cmplt_f64(&x, &y, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_cmplt_i32(&x, &y, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_cmplt_i64(&x, &y, &z);
+  } else {
+    caml_leave_blocking_section();
+    nx_cblas_free_strided_array(&x);
+    nx_cblas_free_strided_array(&y);
+    nx_cblas_free_strided_array(&z);
+    caml_failwith("cmplt: unsupported dtype");
+  }
+
+  caml_leave_blocking_section();
+
+  nx_cblas_free_strided_array(&x);
+  nx_cblas_free_strided_array(&y);
+  nx_cblas_free_strided_array(&z);
+
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value nx_cmplt_bc(value *argv, int argn) {
+  return nx_cmplt(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                  argv[6], argv[7], argv[8], argv[9], argv[10]);
+}
+
+CAMLprim value nx_cmpne(value vNdim, value vShape, value vX,
+                       value vXStrides, value vXOffset, value vY,
+                       value vYStrides, value vYOffset, value vZ,
+                       value vZStrides, value vZOffset) {
+  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
+  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
+
+  int ndim = Int_val(vNdim);
+  strided_array_t x, y, z;
+
+  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
+  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
+  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+
+  caml_enter_blocking_section();
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  if (kind == CAML_BA_FLOAT32) {
+    nx_cblas_cmpne_f32(&x, &y, &z);
+  } else if (kind == CAML_BA_FLOAT64) {
+    nx_cblas_cmpne_f64(&x, &y, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_cmpne_i32(&x, &y, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_cmpne_i64(&x, &y, &z);
+  } else {
+    caml_leave_blocking_section();
+    nx_cblas_free_strided_array(&x);
+    nx_cblas_free_strided_array(&y);
+    nx_cblas_free_strided_array(&z);
+    caml_failwith("cmpne: unsupported dtype");
+  }
+
+  caml_leave_blocking_section();
+
+  nx_cblas_free_strided_array(&x);
+  nx_cblas_free_strided_array(&y);
+  nx_cblas_free_strided_array(&z);
+
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value nx_cmpne_bc(value *argv, int argn) {
+  return nx_cmpne(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                  argv[6], argv[7], argv[8], argv[9], argv[10]);
+}
 
 /* =========================== Reduction Operations ===========================
  */
@@ -713,6 +1139,10 @@ CAMLprim value nx_where(value vNdim, value vShape, value vCond,
     nx_cblas_where_f32(&cond, &x, &y, &z);
   } else if (kind == CAML_BA_FLOAT64) {
     nx_cblas_where_f64(&cond, &x, &y, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_where_i32(&cond, &x, &y, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_where_i64(&cond, &x, &y, &z);
   } else {
     caml_leave_blocking_section();
     nx_cblas_free_strided_array(&cond);
@@ -971,6 +1401,10 @@ CAMLprim value nx_scatter(value vTemplateNdim, value vTemplateShape,
     nx_cblas_scatter_f32(&data_template, &indices, &updates, axis, &z);
   } else if (kind == CAML_BA_FLOAT64) {
     nx_cblas_scatter_f64(&data_template, &indices, &updates, axis, &z);
+  } else if (kind == CAML_BA_INT32) {
+    nx_cblas_scatter_i32(&data_template, &indices, &updates, axis, &z);
+  } else if (kind == CAML_BA_INT64) {
+    nx_cblas_scatter_i64(&data_template, &indices, &updates, axis, &z);
   } else {
     caml_leave_blocking_section();
     nx_cblas_free_strided_array(&data_template);

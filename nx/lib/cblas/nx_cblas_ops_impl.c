@@ -734,7 +734,7 @@ void nx_cblas_copy_f32(const strided_array_t *x, strided_array_t *z) {
   float *z_data = (float *)z->data;
 
   if (is_contiguous(x) && is_contiguous(z)) {
-    cblas_scopy(total, x_data, 1, z_data, 1);
+    cblas_scopy(total, x_data + x->offset, 1, z_data + z->offset, 1);
   } else if (x->ndim <= MAX_STACK_DIMS) {
     iterator_state_t it;
     init_unary_iterator(&it, x, z);
@@ -872,6 +872,227 @@ void nx_cblas_cmpne_f32(const strided_array_t *x, const strided_array_t *y,
   int total = total_elements(x);
   float *x_data = (float *)x->data;
   float *y_data = (float *)y->data;
+  uint8_t *z_data = (uint8_t *)z->data;
+
+  if (is_contiguous(x) && is_contiguous(y) && is_contiguous(z)) {
+#pragma omp simd aligned(x_data, y_data : 32)
+    for (int i = 0; i < total; i++) {
+      z_data[i] = (x_data[i] != y_data[i]) ? 1 : 0;
+    }
+  } else if (x->ndim <= MAX_STACK_DIMS) {
+    iterator_state_t it;
+    init_binary_iterator(&it, x, y, z);
+
+    int indices[MAX_STACK_DIMS] = {0};
+    for (int i = 0; i < total; i++) {
+      int idx_x = it.offset_x;
+      int idx_y = it.offset_y;
+      int idx_z = it.offset_z;
+      for (int d = 0; d < it.ndim; d++) {
+        idx_x += indices[d] * it.strides_x[d];
+        idx_y += indices[d] * it.strides_y[d];
+        idx_z += indices[d] * it.strides_z[d];
+      }
+      z_data[idx_z] = (x_data[idx_x] != y_data[idx_y]) ? 1 : 0;
+
+      for (int d = it.ndim - 1; d >= 0; d--) {
+        if (++indices[d] < it.shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+  } else {
+    int *indices = (int *)calloc(x->ndim, sizeof(int));
+    for (int i = 0; i < total; i++) {
+      int idx_x = x->offset;
+      int idx_y = y->offset;
+      int idx_z = z->offset;
+      for (int d = 0; d < x->ndim; d++) {
+        idx_x += indices[d] * x->strides[d];
+        idx_y += indices[d] * y->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = (x_data[idx_x] != y_data[idx_y]) ? 1 : 0;
+
+      for (int d = x->ndim - 1; d >= 0; d--) {
+        if (++indices[d] < x->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+    free(indices);
+  }
+}
+
+/* Integer comparison operations */
+void nx_cblas_cmplt_i32(const strided_array_t *x, const strided_array_t *y,
+                        strided_array_t *z) {
+  int total = total_elements(x);
+  int32_t *x_data = (int32_t *)x->data;
+  int32_t *y_data = (int32_t *)y->data;
+  uint8_t *z_data = (uint8_t *)z->data;
+
+  if (is_contiguous(x) && is_contiguous(y) && is_contiguous(z)) {
+#pragma omp simd aligned(x_data, y_data : 32)
+    for (int i = 0; i < total; i++) {
+      z_data[i] = (x_data[i] < y_data[i]) ? 1 : 0;
+    }
+  } else if (x->ndim <= MAX_STACK_DIMS) {
+    iterator_state_t it;
+    init_binary_iterator(&it, x, y, z);
+
+    int indices[MAX_STACK_DIMS] = {0};
+    for (int i = 0; i < total; i++) {
+      int idx_x = it.offset_x;
+      int idx_y = it.offset_y;
+      int idx_z = it.offset_z;
+      for (int d = 0; d < it.ndim; d++) {
+        idx_x += indices[d] * it.strides_x[d];
+        idx_y += indices[d] * it.strides_y[d];
+        idx_z += indices[d] * it.strides_z[d];
+      }
+      z_data[idx_z] = (x_data[idx_x] < y_data[idx_y]) ? 1 : 0;
+
+      for (int d = it.ndim - 1; d >= 0; d--) {
+        if (++indices[d] < it.shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+  } else {
+    int *indices = (int *)calloc(x->ndim, sizeof(int));
+    for (int i = 0; i < total; i++) {
+      int idx_x = x->offset;
+      int idx_y = y->offset;
+      int idx_z = z->offset;
+      for (int d = 0; d < x->ndim; d++) {
+        idx_x += indices[d] * x->strides[d];
+        idx_y += indices[d] * y->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = (x_data[idx_x] < y_data[idx_y]) ? 1 : 0;
+
+      for (int d = x->ndim - 1; d >= 0; d--) {
+        if (++indices[d] < x->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+    free(indices);
+  }
+}
+
+void nx_cblas_cmplt_i64(const strided_array_t *x, const strided_array_t *y,
+                        strided_array_t *z) {
+  int total = total_elements(x);
+  int64_t *x_data = (int64_t *)x->data;
+  int64_t *y_data = (int64_t *)y->data;
+  uint8_t *z_data = (uint8_t *)z->data;
+
+  if (is_contiguous(x) && is_contiguous(y) && is_contiguous(z)) {
+#pragma omp simd aligned(x_data, y_data : 32)
+    for (int i = 0; i < total; i++) {
+      z_data[i] = (x_data[i] < y_data[i]) ? 1 : 0;
+    }
+  } else if (x->ndim <= MAX_STACK_DIMS) {
+    iterator_state_t it;
+    init_binary_iterator(&it, x, y, z);
+
+    int indices[MAX_STACK_DIMS] = {0};
+    for (int i = 0; i < total; i++) {
+      int idx_x = it.offset_x;
+      int idx_y = it.offset_y;
+      int idx_z = it.offset_z;
+      for (int d = 0; d < it.ndim; d++) {
+        idx_x += indices[d] * it.strides_x[d];
+        idx_y += indices[d] * it.strides_y[d];
+        idx_z += indices[d] * it.strides_z[d];
+      }
+      z_data[idx_z] = (x_data[idx_x] < y_data[idx_y]) ? 1 : 0;
+
+      for (int d = it.ndim - 1; d >= 0; d--) {
+        if (++indices[d] < it.shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+  } else {
+    int *indices = (int *)calloc(x->ndim, sizeof(int));
+    for (int i = 0; i < total; i++) {
+      int idx_x = x->offset;
+      int idx_y = y->offset;
+      int idx_z = z->offset;
+      for (int d = 0; d < x->ndim; d++) {
+        idx_x += indices[d] * x->strides[d];
+        idx_y += indices[d] * y->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = (x_data[idx_x] < y_data[idx_y]) ? 1 : 0;
+
+      for (int d = x->ndim - 1; d >= 0; d--) {
+        if (++indices[d] < x->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+    free(indices);
+  }
+}
+
+void nx_cblas_cmpne_i32(const strided_array_t *x, const strided_array_t *y,
+                        strided_array_t *z) {
+  int total = total_elements(x);
+  int32_t *x_data = (int32_t *)x->data;
+  int32_t *y_data = (int32_t *)y->data;
+  uint8_t *z_data = (uint8_t *)z->data;
+
+  if (is_contiguous(x) && is_contiguous(y) && is_contiguous(z)) {
+#pragma omp simd aligned(x_data, y_data : 32)
+    for (int i = 0; i < total; i++) {
+      z_data[i] = (x_data[i] != y_data[i]) ? 1 : 0;
+    }
+  } else if (x->ndim <= MAX_STACK_DIMS) {
+    iterator_state_t it;
+    init_binary_iterator(&it, x, y, z);
+
+    int indices[MAX_STACK_DIMS] = {0};
+    for (int i = 0; i < total; i++) {
+      int idx_x = it.offset_x;
+      int idx_y = it.offset_y;
+      int idx_z = it.offset_z;
+      for (int d = 0; d < it.ndim; d++) {
+        idx_x += indices[d] * it.strides_x[d];
+        idx_y += indices[d] * it.strides_y[d];
+        idx_z += indices[d] * it.strides_z[d];
+      }
+      z_data[idx_z] = (x_data[idx_x] != y_data[idx_y]) ? 1 : 0;
+
+      for (int d = it.ndim - 1; d >= 0; d--) {
+        if (++indices[d] < it.shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+  } else {
+    int *indices = (int *)calloc(x->ndim, sizeof(int));
+    for (int i = 0; i < total; i++) {
+      int idx_x = x->offset;
+      int idx_y = y->offset;
+      int idx_z = z->offset;
+      for (int d = 0; d < x->ndim; d++) {
+        idx_x += indices[d] * x->strides[d];
+        idx_y += indices[d] * y->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = (x_data[idx_x] != y_data[idx_y]) ? 1 : 0;
+
+      for (int d = x->ndim - 1; d >= 0; d--) {
+        if (++indices[d] < x->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+    free(indices);
+  }
+}
+
+void nx_cblas_cmpne_i64(const strided_array_t *x, const strided_array_t *y,
+                        strided_array_t *z) {
+  int total = total_elements(x);
+  int64_t *x_data = (int64_t *)x->data;
+  int64_t *y_data = (int64_t *)y->data;
   uint8_t *z_data = (uint8_t *)z->data;
 
   if (is_contiguous(x) && is_contiguous(y) && is_contiguous(z)) {
@@ -1809,6 +2030,184 @@ UNARY_OP_F64(exp2, exp2)
 UNARY_OP_F64(log2, log2)
 UNARY_OP_F64(recip, RECIP_F64)
 
+/* neg for int32 */
+void nx_cblas_neg_i32(const strided_array_t *x, strided_array_t *z) {
+  int32_t *x_data = (int32_t *)x->data;
+  int32_t *z_data = (int32_t *)z->data;
+  int total = total_elements(x);
+
+  if (is_contiguous(x) && is_contiguous(z)) {
+    if (total > PARALLEL_THRESHOLD * 4) {
+#pragma omp parallel for simd
+      for (int i = 0; i < total; i++) {
+        z_data[i] = -x_data[i];
+      }
+    } else {
+#pragma omp simd
+      for (int i = 0; i < total; i++) {
+        z_data[i] = -x_data[i];
+      }
+    }
+  } else {
+    int *indices = (int *)calloc(x->ndim, sizeof(int));
+    for (int i = 0; i < total; i++) {
+      int idx_x = x->offset;
+      int idx_z = z->offset;
+      for (int d = 0; d < x->ndim; d++) {
+        idx_x += indices[d] * x->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = -x_data[idx_x];
+
+      for (int d = x->ndim - 1; d >= 0; d--) {
+        if (++indices[d] < x->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+    free(indices);
+  }
+}
+
+/* neg for int64 */
+void nx_cblas_neg_i64(const strided_array_t *x, strided_array_t *z) {
+  int64_t *x_data = (int64_t *)x->data;
+  int64_t *z_data = (int64_t *)z->data;
+  int total = total_elements(x);
+
+  if (is_contiguous(x) && is_contiguous(z)) {
+    if (total > PARALLEL_THRESHOLD * 4) {
+#pragma omp parallel for simd
+      for (int i = 0; i < total; i++) {
+        z_data[i] = -x_data[i];
+      }
+    } else {
+#pragma omp simd
+      for (int i = 0; i < total; i++) {
+        z_data[i] = -x_data[i];
+      }
+    }
+  } else {
+    int *indices = (int *)calloc(x->ndim, sizeof(int));
+    for (int i = 0; i < total; i++) {
+      int idx_x = x->offset;
+      int idx_z = z->offset;
+      for (int d = 0; d < x->ndim; d++) {
+        idx_x += indices[d] * x->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = -x_data[idx_x];
+
+      for (int d = x->ndim - 1; d >= 0; d--) {
+        if (++indices[d] < x->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+    free(indices);
+  }
+}
+
+/* =========================== Integer Binary Operations =========================== */
+
+/* Macro for int32 binary operations */
+#define BINARY_OP_I32(name, OP)                                                       \
+  void nx_cblas_##name##_i32(const strided_array_t *x, const strided_array_t *y,     \
+                            strided_array_t *z) {                                    \
+    int32_t *x_data = (int32_t *)x->data;                                            \
+    int32_t *y_data = (int32_t *)y->data;                                            \
+    int32_t *z_data = (int32_t *)z->data;                                            \
+    int total = total_elements(x);                                                   \
+                                                                                     \
+    if (is_contiguous(x) && is_contiguous(y) && is_contiguous(z)) {                 \
+      if (total > PARALLEL_THRESHOLD * 4) {                                          \
+        _Pragma("omp parallel for simd") for (int i = 0; i < total; i++) {          \
+          z_data[i] = OP(x_data[i], y_data[i]);                                     \
+        }                                                                            \
+      } else {                                                                       \
+        _Pragma("omp simd") for (int i = 0; i < total; i++) {                       \
+          z_data[i] = OP(x_data[i], y_data[i]);                                     \
+        }                                                                            \
+      }                                                                              \
+    } else {                                                                         \
+      int *indices = (int *)calloc(x->ndim, sizeof(int));                           \
+      for (int i = 0; i < total; i++) {                                             \
+        int idx_x = x->offset;                                                       \
+        int idx_y = y->offset;                                                       \
+        int idx_z = z->offset;                                                       \
+        for (int d = 0; d < x->ndim; d++) {                                         \
+          idx_x += indices[d] * x->strides[d];                                      \
+          idx_y += indices[d] * y->strides[d];                                      \
+          idx_z += indices[d] * z->strides[d];                                      \
+        }                                                                            \
+        z_data[idx_z] = OP(x_data[idx_x], y_data[idx_y]);                           \
+                                                                                     \
+        for (int d = x->ndim - 1; d >= 0; d--) {                                    \
+          if (++indices[d] < x->shape[d]) break;                                    \
+          indices[d] = 0;                                                            \
+        }                                                                            \
+      }                                                                              \
+      free(indices);                                                                 \
+    }                                                                                \
+  }
+
+/* Macro for int64 binary operations */
+#define BINARY_OP_I64(name, OP)                                                       \
+  void nx_cblas_##name##_i64(const strided_array_t *x, const strided_array_t *y,     \
+                            strided_array_t *z) {                                    \
+    int64_t *x_data = (int64_t *)x->data;                                            \
+    int64_t *y_data = (int64_t *)y->data;                                            \
+    int64_t *z_data = (int64_t *)z->data;                                            \
+    int total = total_elements(x);                                                   \
+                                                                                     \
+    if (is_contiguous(x) && is_contiguous(y) && is_contiguous(z)) {                 \
+      if (total > PARALLEL_THRESHOLD * 4) {                                          \
+        _Pragma("omp parallel for simd") for (int i = 0; i < total; i++) {          \
+          z_data[i] = OP(x_data[i], y_data[i]);                                     \
+        }                                                                            \
+      } else {                                                                       \
+        _Pragma("omp simd") for (int i = 0; i < total; i++) {                       \
+          z_data[i] = OP(x_data[i], y_data[i]);                                     \
+        }                                                                            \
+      }                                                                              \
+    } else {                                                                         \
+      int *indices = (int *)calloc(x->ndim, sizeof(int));                           \
+      for (int i = 0; i < total; i++) {                                             \
+        int idx_x = x->offset;                                                       \
+        int idx_y = y->offset;                                                       \
+        int idx_z = z->offset;                                                       \
+        for (int d = 0; d < x->ndim; d++) {                                         \
+          idx_x += indices[d] * x->strides[d];                                      \
+          idx_y += indices[d] * y->strides[d];                                      \
+          idx_z += indices[d] * z->strides[d];                                      \
+        }                                                                            \
+        z_data[idx_z] = OP(x_data[idx_x], y_data[idx_y]);                           \
+                                                                                     \
+        for (int d = x->ndim - 1; d >= 0; d--) {                                    \
+          if (++indices[d] < x->shape[d]) break;                                    \
+          indices[d] = 0;                                                            \
+        }                                                                            \
+      }                                                                              \
+      free(indices);                                                                 \
+    }                                                                                \
+  }
+
+#define ADD_I(x, y) ((x) + (y))
+#define SUB_I(x, y) ((x) - (y))
+#define MUL_I(x, y) ((x) * (y))
+#define DIV_I(x, y) ((x) / (y))
+#define MAX_I(x, y) ((x) > (y) ? (x) : (y))
+
+BINARY_OP_I32(add, ADD_I)
+BINARY_OP_I32(sub, SUB_I)
+BINARY_OP_I32(mul, MUL_I)
+BINARY_OP_I32(div, DIV_I)
+BINARY_OP_I32(max, MAX_I)
+
+BINARY_OP_I64(add, ADD_I)
+BINARY_OP_I64(sub, SUB_I)
+BINARY_OP_I64(mul, MUL_I)
+BINARY_OP_I64(div, DIV_I)
+BINARY_OP_I64(max, MAX_I)
+
 /* copy for float64 */
 void nx_cblas_copy_f64(const strided_array_t *x, strided_array_t *z) {
   int total = total_elements(x);
@@ -1816,7 +2215,7 @@ void nx_cblas_copy_f64(const strided_array_t *x, strided_array_t *z) {
   double *z_data = (double *)z->data;
 
   if (is_contiguous(x) && is_contiguous(z)) {
-    cblas_dcopy(total, x_data, 1, z_data, 1);
+    cblas_dcopy(total, x_data + x->offset, 1, z_data + z->offset, 1);
   } else if (x->ndim <= MAX_STACK_DIMS) {
     iterator_state_t it;
     init_unary_iterator(&it, x, z);
@@ -2508,6 +2907,131 @@ void nx_cblas_where_f64(const strided_array_t *cond, const strided_array_t *x,
   }
 }
 
+/* Integer where operations */
+void nx_cblas_where_i32(const strided_array_t *cond, const strided_array_t *x,
+                        const strided_array_t *y, strided_array_t *z) {
+  int total = total_elements(cond);
+  uint8_t *cond_data = (uint8_t *)cond->data;
+  int32_t *x_data = (int32_t *)x->data;
+  int32_t *y_data = (int32_t *)y->data;
+  int32_t *z_data = (int32_t *)z->data;
+
+  if (is_contiguous(cond) && is_contiguous(x) && is_contiguous(y) &&
+      is_contiguous(z)) {
+#pragma omp parallel for simd
+    for (int i = 0; i < total; i++) {
+      z_data[i] = cond_data[i] ? x_data[i] : y_data[i];
+    }
+  } else if (cond->ndim <= MAX_STACK_DIMS) {
+    /* Initialize iterator for ternary operation */
+    int ndim = x->ndim;
+    int indices[MAX_STACK_DIMS] = {0};
+
+    for (int i = 0; i < total; i++) {
+      int idx_cond = cond->offset;
+      int idx_x = x->offset;
+      int idx_y = y->offset;
+      int idx_z = z->offset;
+
+      for (int d = 0; d < ndim; d++) {
+        idx_cond += indices[d] * cond->strides[d];
+        idx_x += indices[d] * x->strides[d];
+        idx_y += indices[d] * y->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = cond_data[idx_cond] ? x_data[idx_x] : y_data[idx_y];
+
+      for (int d = ndim - 1; d >= 0; d--) {
+        if (++indices[d] < x->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+  } else {
+    int *indices = (int *)calloc(cond->ndim, sizeof(int));
+    for (int i = 0; i < total; i++) {
+      int idx_cond = cond->offset;
+      int idx_x = x->offset;
+      int idx_y = y->offset;
+      int idx_z = z->offset;
+      for (int d = 0; d < cond->ndim; d++) {
+        idx_cond += indices[d] * cond->strides[d];
+        idx_x += indices[d] * x->strides[d];
+        idx_y += indices[d] * y->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = cond_data[idx_cond] ? x_data[idx_x] : y_data[idx_y];
+
+      for (int d = cond->ndim - 1; d >= 0; d--) {
+        if (++indices[d] < cond->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+    free(indices);
+  }
+}
+
+void nx_cblas_where_i64(const strided_array_t *cond, const strided_array_t *x,
+                        const strided_array_t *y, strided_array_t *z) {
+  int total = total_elements(cond);
+  uint8_t *cond_data = (uint8_t *)cond->data;
+  int64_t *x_data = (int64_t *)x->data;
+  int64_t *y_data = (int64_t *)y->data;
+  int64_t *z_data = (int64_t *)z->data;
+
+  if (is_contiguous(cond) && is_contiguous(x) && is_contiguous(y) &&
+      is_contiguous(z)) {
+#pragma omp parallel for simd
+    for (int i = 0; i < total; i++) {
+      z_data[i] = cond_data[i] ? x_data[i] : y_data[i];
+    }
+  } else if (cond->ndim <= MAX_STACK_DIMS) {
+    /* Initialize iterator for ternary operation */
+    int ndim = x->ndim;
+    int indices[MAX_STACK_DIMS] = {0};
+
+    for (int i = 0; i < total; i++) {
+      int idx_cond = cond->offset;
+      int idx_x = x->offset;
+      int idx_y = y->offset;
+      int idx_z = z->offset;
+
+      for (int d = 0; d < ndim; d++) {
+        idx_cond += indices[d] * cond->strides[d];
+        idx_x += indices[d] * x->strides[d];
+        idx_y += indices[d] * y->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = cond_data[idx_cond] ? x_data[idx_x] : y_data[idx_y];
+
+      for (int d = ndim - 1; d >= 0; d--) {
+        if (++indices[d] < x->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+  } else {
+    int *indices = (int *)calloc(cond->ndim, sizeof(int));
+    for (int i = 0; i < total; i++) {
+      int idx_cond = cond->offset;
+      int idx_x = x->offset;
+      int idx_y = y->offset;
+      int idx_z = z->offset;
+      for (int d = 0; d < cond->ndim; d++) {
+        idx_cond += indices[d] * cond->strides[d];
+        idx_x += indices[d] * x->strides[d];
+        idx_y += indices[d] * y->strides[d];
+        idx_z += indices[d] * z->strides[d];
+      }
+      z_data[idx_z] = cond_data[idx_cond] ? x_data[idx_x] : y_data[idx_y];
+
+      for (int d = cond->ndim - 1; d >= 0; d--) {
+        if (++indices[d] < cond->shape[d]) break;
+        indices[d] = 0;
+      }
+    }
+    free(indices);
+  }
+}
+
 /* =========================== Reduction Product =========================== */
 
 void nx_cblas_reduce_prod_f32(const strided_array_t *x, void *result) {
@@ -2611,7 +3135,8 @@ void nx_cblas_copy_generic(const strided_array_t *x, strided_array_t *z,
   int total = total_elements(x);
 
   if (is_contiguous(x) && is_contiguous(z)) {
-    memcpy(z->data, x->data, total * elem_size);
+    memcpy((char *)z->data + z->offset * elem_size, 
+           (char *)x->data + x->offset * elem_size, total * elem_size);
   } else {
     /* Use stack allocation for common case */
     if (x->ndim <= MAX_STACK_DIMS) {
@@ -2875,8 +3400,14 @@ void nx_cblas_gather_f32(const strided_array_t *data,
     int idx[MAX_STACK_DIMS] = {0};
 
     for (int i = 0; i < total; i++) {
+      /* Calculate position in indices array */
+      int indices_idx = indices->offset;
+      for (int d = 0; d < ndim; d++) {
+        indices_idx += idx[d] * indices->strides[d];
+      }
+      
       /* Get the index value for the gather axis */
-      int gather_idx = indices_ptr[i];
+      int gather_idx = indices_ptr[indices_idx];
 
       /* Bounds check */
       if (gather_idx < 0 || gather_idx >= data->shape[axis]) {
@@ -2899,7 +3430,6 @@ void nx_cblas_gather_f32(const strided_array_t *data,
 
       /* Increment indices */
       for (int d = ndim - 1; d >= 0; d--) {
-        if (d == axis) continue;
         if (++idx[d] < indices->shape[d]) break;
         idx[d] = 0;
       }
@@ -2909,8 +3439,14 @@ void nx_cblas_gather_f32(const strided_array_t *data,
     int *idx = (int *)calloc(ndim, sizeof(int));
 
     for (int i = 0; i < total; i++) {
+      /* Calculate position in indices array */
+      int indices_idx = indices->offset;
+      for (int d = 0; d < ndim; d++) {
+        indices_idx += idx[d] * indices->strides[d];
+      }
+      
       /* Get the index value for the gather axis */
-      int gather_idx = indices_ptr[i];
+      int gather_idx = indices_ptr[indices_idx];
 
       /* Bounds check */
       if (gather_idx < 0 || gather_idx >= data->shape[axis]) {
@@ -2932,8 +3468,7 @@ void nx_cblas_gather_f32(const strided_array_t *data,
       z_data[i] = data_ptr[src_idx];
 
       /* Increment indices */
-      for (int d = ndim - 1; d >= 0; d--) {
-        if (d == axis) continue;
+      for (int d = ndim - 1; d >= 0; d++) {
         if (++idx[d] < indices->shape[d]) break;
         idx[d] = 0;
       }
@@ -2958,8 +3493,14 @@ void nx_cblas_gather_f64(const strided_array_t *data,
     int idx[MAX_STACK_DIMS] = {0};
 
     for (int i = 0; i < total; i++) {
+      /* Calculate position in indices array */
+      int indices_idx = indices->offset;
+      for (int d = 0; d < ndim; d++) {
+        indices_idx += idx[d] * indices->strides[d];
+      }
+      
       /* Get the index value for the gather axis */
-      int gather_idx = indices_ptr[i];
+      int gather_idx = indices_ptr[indices_idx];
 
       /* Bounds check */
       if (gather_idx < 0 || gather_idx >= data->shape[axis]) {
@@ -2992,8 +3533,14 @@ void nx_cblas_gather_f64(const strided_array_t *data,
     int *idx = (int *)calloc(ndim, sizeof(int));
 
     for (int i = 0; i < total; i++) {
+      /* Calculate position in indices array */
+      int indices_idx = indices->offset;
+      for (int d = 0; d < ndim; d++) {
+        indices_idx += idx[d] * indices->strides[d];
+      }
+      
       /* Get the index value for the gather axis */
-      int gather_idx = indices_ptr[i];
+      int gather_idx = indices_ptr[indices_idx];
 
       /* Bounds check */
       if (gather_idx < 0 || gather_idx >= data->shape[axis]) {
@@ -3278,6 +3825,133 @@ void nx_cblas_scatter_f64(const strided_array_t *data_template,
 
     free(idx);
   }
+}
+
+/* Integer scatter operations */
+void nx_cblas_scatter_i32(const strided_array_t *data_template,
+                          const strided_array_t *indices,
+                          const strided_array_t *updates, int axis,
+                          strided_array_t *z) {
+  int32_t *template_data = (int32_t *)data_template->data;
+  int32_t *indices_data = (int32_t *)indices->data;
+  int32_t *updates_data = (int32_t *)updates->data;
+  int32_t *z_data = (int32_t *)z->data;
+
+  int ndim = data_template->ndim;
+  int total_indices = total_elements(indices);
+
+  /* First copy the template to output */
+  int total_z = total_elements(z);
+#pragma omp simd
+  for (int i = 0; i < total_z; i++) {
+    z_data[i] = template_data[i];
+  }
+
+  /* Calculate strides for each dimension */
+  int *strides = (int *)malloc(ndim * sizeof(int));
+  strides[ndim - 1] = 1;
+  for (int d = ndim - 2; d >= 0; d--) {
+    strides[d] = strides[d + 1] * z->shape[d + 1];
+  }
+
+  /* For each element in indices/updates */
+  for (int i = 0; i < total_indices; i++) {
+    /* Get the index for the scatter axis */
+    int scatter_idx = indices_data[i];
+
+    /* Calculate the multi-dimensional index for this element */
+    int *idx = (int *)malloc(ndim * sizeof(int));
+    int temp = i;
+    for (int d = ndim - 1; d >= 0; d--) {
+      if (d == axis) {
+        idx[d] = scatter_idx;
+      } else {
+        int dim_size = (d < axis) ? indices->shape[d] : indices->shape[d - 1];
+        if (dim_size > 0) {
+          idx[d] = temp % dim_size;
+          temp /= dim_size;
+        } else {
+          idx[d] = 0;
+        }
+      }
+    }
+
+    /* Calculate linear index in output */
+    int linear_idx = 0;
+    for (int d = 0; d < ndim; d++) {
+      linear_idx += idx[d] * strides[d];
+    }
+
+    /* Scatter the update value */
+    z_data[linear_idx] = updates_data[i];
+
+    free(idx);
+  }
+
+  free(strides);
+}
+
+void nx_cblas_scatter_i64(const strided_array_t *data_template,
+                          const strided_array_t *indices,
+                          const strided_array_t *updates, int axis,
+                          strided_array_t *z) {
+  int64_t *template_data = (int64_t *)data_template->data;
+  int32_t *indices_data = (int32_t *)indices->data;
+  int64_t *updates_data = (int64_t *)updates->data;
+  int64_t *z_data = (int64_t *)z->data;
+
+  int ndim = data_template->ndim;
+  int total_indices = total_elements(indices);
+
+  /* First copy the template to output */
+  int total_z = total_elements(z);
+#pragma omp simd
+  for (int i = 0; i < total_z; i++) {
+    z_data[i] = template_data[i];
+  }
+
+  /* Calculate strides for each dimension */
+  int *strides = (int *)malloc(ndim * sizeof(int));
+  strides[ndim - 1] = 1;
+  for (int d = ndim - 2; d >= 0; d--) {
+    strides[d] = strides[d + 1] * z->shape[d + 1];
+  }
+
+  /* For each element in indices/updates */
+  for (int i = 0; i < total_indices; i++) {
+    /* Get the index for the scatter axis */
+    int scatter_idx = indices_data[i];
+
+    /* Calculate the multi-dimensional index for this element */
+    int *idx = (int *)malloc(ndim * sizeof(int));
+    int temp = i;
+    for (int d = ndim - 1; d >= 0; d--) {
+      if (d == axis) {
+        idx[d] = scatter_idx;
+      } else {
+        int dim_size = (d < axis) ? indices->shape[d] : indices->shape[d - 1];
+        if (dim_size > 0) {
+          idx[d] = temp % dim_size;
+          temp /= dim_size;
+        } else {
+          idx[d] = 0;
+        }
+      }
+    }
+
+    /* Calculate linear index in output */
+    int linear_idx = 0;
+    for (int d = 0; d < ndim; d++) {
+      linear_idx += idx[d] * strides[d];
+    }
+
+    /* Scatter the update value */
+    z_data[linear_idx] = updates_data[i];
+
+    free(idx);
+  }
+
+  free(strides);
 }
 
 /* =========================== Cast Operation =========================== */
