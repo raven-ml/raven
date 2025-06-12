@@ -313,7 +313,13 @@ let op_contiguous x =
       (View.offset result.view);
     result
 
-let op_copy = op_contiguous
+let op_copy x =
+  (* Always create a new copy, even if already contiguous *)
+  let result = make_tensor x (View.shape x.view) in
+  copy (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
+    (View.offset x.view) result.buffer (View.strides result.view)
+    (View.offset result.view);
+  result
 
 (* Comparisons *)
 let cmp_op op x y =
@@ -348,7 +354,10 @@ let op_expand x shape = { x with view = View.expand x.view shape }
 
 let op_reshape x shape =
   if View.is_c_contiguous x.view then { x with view = View.create shape }
-  else failwith "reshape needs contiguous"
+  else 
+    (* Need to make it contiguous first *)
+    let x_contig = op_contiguous x in
+    { x_contig with view = View.create shape }
 
 let op_permute x axes = { x with view = View.permute x.view axes }
 let op_shrink x bounds = { x with view = View.shrink x.view bounds }
