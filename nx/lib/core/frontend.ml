@@ -2810,17 +2810,17 @@ module Make (B : Backend_intf.S) = struct
         else bits_flat
       in
 
-      (* Convert to float64 for precision during normalization *)
-      let bits_float64 = cast Dtype.float64 bits_needed in
+      (* Convert to float32 - Metal doesn't support float64 on most devices *)
+      let bits_float32 = cast Dtype.float32 bits_needed in
 
       (* Add 2^31 to shift from signed [-2^31, 2^31-1] to unsigned [0, 2^32-1]
          range *)
-      let offset = scalar ctx Dtype.float64 2147483648.0 in
+      let offset = scalar ctx Dtype.float32 2147483648.0 in
       (* 2^31 *)
-      let shifted = add bits_float64 offset in
+      let shifted = add bits_float32 offset in
 
       (* Normalize to [0, 1) by dividing by 2^32 *)
-      let normalizer = scalar ctx Dtype.float64 4294967296.0 in
+      let normalizer = scalar ctx Dtype.float32 4294967296.0 in
       (* 2^32 *)
       let normalized = div shifted normalizer in
 
