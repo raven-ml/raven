@@ -281,24 +281,7 @@ let unop op x =
 let op_add x y = binop add x y
 let op_sub x y = binop sub x y
 
-let op_mul x y =
-  let xs = View.shape x.view and ys = View.shape y.view in
-  let xn = Array.length xs and yn = Array.length ys in
-
-  let result_shape =
-    if xn >= 2 && yn >= 2 && xs.(xn - 1) = ys.(yn - 2) then (
-      let rs = Array.copy xs in
-      rs.(xn - 1) <- ys.(yn - 1);
-      rs)
-    else if Shape.equal xs ys then xs
-    else failwith "incompatible shapes for mul"
-  in
-
-  let result = make_tensor x result_shape in
-  mul (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) y.buffer (View.strides y.view) (View.offset y.view)
-    result.buffer (View.strides result.view) (View.offset result.view);
-  result
+let op_mul x y = binop mul x y
 
 let op_fdiv x y = binop div x y
 let op_max x y = binop max_ x y
