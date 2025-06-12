@@ -264,6 +264,13 @@ let op_const_array ctx array =
 
 (* Generic wrappers *)
 let binop op x y =
+  (* For broadcasting to work, both inputs must have the same shape after broadcast.
+     The frontend should have already expanded views to matching shapes. *)
+  if View.shape x.view <> View.shape y.view then
+    failwith (Printf.sprintf "binop: shapes must match after broadcast (got %s and %s)"
+              (Shape.to_string (View.shape x.view)) 
+              (Shape.to_string (View.shape y.view)));
+  
   let result = make_tensor x (View.shape x.view) in
   op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
     (View.offset x.view) y.buffer (View.strides y.view) (View.offset y.view)
