@@ -12,6 +12,7 @@ type kernel_cache = {
   mutable unary_f64 : (string, Metal.Function.t) Hashtbl.t;
   mutable unary_i32 : (string, Metal.Function.t) Hashtbl.t;
   mutable unary_i64 : (string, Metal.Function.t) Hashtbl.t;
+  mutable unary_u8 : (string, Metal.Function.t) Hashtbl.t;
   mutable reduce : (string, Metal.Function.t) Hashtbl.t;
   mutable special : (string, Metal.Function.t) Hashtbl.t;
 }
@@ -48,6 +49,7 @@ let create_kernel_cache () =
     unary_f64 = Hashtbl.create 32;
     unary_i32 = Hashtbl.create 32;
     unary_i64 = Hashtbl.create 32;
+    unary_u8 = Hashtbl.create 32;
     reduce = Hashtbl.create 32;
     special = Hashtbl.create 32;
   }
@@ -62,7 +64,7 @@ let dtype_to_metal_type : type a b. (a, b) Dtype.t -> string = function
   | Dtype.UInt16 -> "ushort"
   | Dtype.Int8 -> "char"
   | Dtype.Int16 -> "short"
-  | Dtype.Int -> "int"
+  | Dtype.Int -> if Sys.word_size = 64 then "long" else "int"
   | Dtype.NativeInt -> "long"
   | Dtype.Complex32 | Dtype.Complex64 ->
       failwith "dtype_to_metal_type: complex types not supported"

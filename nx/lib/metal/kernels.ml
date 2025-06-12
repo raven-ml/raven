@@ -23,6 +23,7 @@ let get_binary_kernel (type a b) ctx (dtype : (a, b) Nx_core.Dtype.t) op_name =
     | Nx_core.Dtype.Float64 -> ctx.Internal.kernels.binary_f64
     | Nx_core.Dtype.Int32 -> ctx.Internal.kernels.binary_i32
     | Nx_core.Dtype.Int64 -> ctx.Internal.kernels.binary_i64
+    | Nx_core.Dtype.Int -> if Sys.word_size = 64 then ctx.Internal.kernels.binary_i64 else ctx.Internal.kernels.binary_i32
     | Nx_core.Dtype.UInt8 -> ctx.Internal.kernels.binary_u8
     | _ -> failwith "get_binary_kernel: unsupported dtype"
   in
@@ -43,6 +44,8 @@ let get_unary_kernel (type a b) ctx (dtype : (a, b) Nx_core.Dtype.t) op_name =
     | Nx_core.Dtype.Float64 -> ctx.Internal.kernels.unary_f64
     | Nx_core.Dtype.Int32 -> ctx.Internal.kernels.unary_i32
     | Nx_core.Dtype.Int64 -> ctx.Internal.kernels.unary_i64
+    | Nx_core.Dtype.Int -> if Sys.word_size = 64 then ctx.Internal.kernels.unary_i64 else ctx.Internal.kernels.unary_i32
+    | Nx_core.Dtype.UInt8 -> ctx.Internal.kernels.unary_u8
     | _ ->
         failwith
           (Printf.sprintf "get_unary_kernel: unsupported dtype %s"

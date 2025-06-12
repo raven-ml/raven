@@ -1159,32 +1159,29 @@ module Make (B : Backend_intf.S) = struct
 
   (* Check if all elements are true (non-zero) *)
   let all ?axes ?(keepdims = false) x =
-    let dt = dtype x in
-
-    if Dtype.equal dt Dtype.uint8 then
-      (* For boolean/uint8 tensors, we can use prod since 1*1*...*1 = 1 and
-         1*1*...*0*...*1 = 0 *)
-      let prod_val = prod ?axes ~keepdims x in
-      (* Check if product is non-zero (which means all elements were 1) *)
-      let zero_val = Dtype.zero dt in
-      let zero_tensor = full_like prod_val zero_val in
-      cmpne prod_val zero_tensor
-    else
-      (* For other numeric types, we check if min != 0 *)
-      let min_val = min ?axes ~keepdims x in
-      let zero_val = Dtype.zero dt in
-      let zero_tensor = full_like min_val zero_val in
-      cmpne min_val zero_tensor
+    (* Convert to boolean first by comparing with zero *)
+    let zero_val = Dtype.zero (dtype x) in
+    let zero_tensor = full_like x zero_val in
+    let bool_tensor = cmpne x zero_tensor in
+    
+    (* Now use prod on the boolean tensor *)
+    let prod_val = prod ?axes ~keepdims bool_tensor in
+    
+    (* The result is already 0 or 1, just return it *)
+    prod_val
 
   (* Check if any element is true (non-zero) *)
   let any ?axes ?(keepdims = false) x =
-    let dt = dtype x in
-
-    (* For any type, we check if max != 0 *)
-    let max_val = max ?axes ~keepdims x in
-    let zero_val = Dtype.zero dt in
-    let zero_tensor = full_like max_val zero_val in
-    cmpne max_val zero_tensor
+    (* Convert to boolean first by comparing with zero *)
+    let zero_val = Dtype.zero (dtype x) in
+    let zero_tensor = full_like x zero_val in
+    let bool_tensor = cmpne x zero_tensor in
+    
+    (* Now use max on the boolean tensor - any 1 will give 1 *)
+    let max_val = max ?axes ~keepdims bool_tensor in
+    
+    (* The result is already 0 or 1, just return it *)
+    max_val
 
   (* Check if two arrays are element-wise equal *)
   let array_equal x y =

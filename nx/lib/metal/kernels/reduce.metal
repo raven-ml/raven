@@ -140,6 +140,92 @@ kernel void reduce_sum_int(device int* out [[buffer(0)]],
     }
 }
 
+kernel void reduce_sum_long(device long* out [[buffer(0)]],
+                           device const long* in [[buffer(1)]],
+                           constant uint& in_size [[buffer(2)]],
+                           constant uint& reduction_size [[buffer(3)]],
+                           constant uint& num_reductions [[buffer(4)]],
+                           constant uint* shape [[buffer(5)]],
+                           constant uint* axes [[buffer(6)]],
+                           constant uint& ndim [[buffer(7)]],
+                           constant uint& naxes [[buffer(8)]],
+                           constant int* in_strides [[buffer(9)]],
+                           constant uint& in_offset [[buffer(10)]],
+                           threadgroup long* shared [[threadgroup(0)]],
+                           uint tid [[thread_index_in_threadgroup]],
+                           uint gid [[thread_position_in_grid]],
+                           uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    long sum = 0;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            sum += in[idx];
+        }
+    }
+    
+    shared[tid] = sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            shared[tid] += shared[tid + s];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
+kernel void reduce_sum_uchar(device uchar* out [[buffer(0)]],
+                            device const uchar* in [[buffer(1)]],
+                            constant uint& in_size [[buffer(2)]],
+                            constant uint& reduction_size [[buffer(3)]],
+                            constant uint& num_reductions [[buffer(4)]],
+                            constant uint* shape [[buffer(5)]],
+                            constant uint* axes [[buffer(6)]],
+                            constant uint& ndim [[buffer(7)]],
+                            constant uint& naxes [[buffer(8)]],
+                            constant int* in_strides [[buffer(9)]],
+                            constant uint& in_offset [[buffer(10)]],
+                            threadgroup uchar* shared [[threadgroup(0)]],
+                            uint tid [[thread_index_in_threadgroup]],
+                            uint gid [[thread_position_in_grid]],
+                            uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    uchar sum = 0;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            sum += in[idx];
+        }
+    }
+    
+    shared[tid] = sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            shared[tid] += shared[tid + s];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
 // Max reduction kernels
 kernel void reduce_max_float(device float* out [[buffer(0)]],
                             device const float* in [[buffer(1)]],
@@ -217,6 +303,92 @@ kernel void reduce_max_int(device int* out [[buffer(0)]],
     if (reduction_id >= num_reductions) return;
     
     int max_val = INT_MIN;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            max_val = max(max_val, in[idx]);
+        }
+    }
+    
+    shared[tid] = max_val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            shared[tid] = max(shared[tid], shared[tid + s]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
+kernel void reduce_max_long(device long* out [[buffer(0)]],
+                           device const long* in [[buffer(1)]],
+                           constant uint& in_size [[buffer(2)]],
+                           constant uint& reduction_size [[buffer(3)]],
+                           constant uint& num_reductions [[buffer(4)]],
+                           constant uint* shape [[buffer(5)]],
+                           constant uint* axes [[buffer(6)]],
+                           constant uint& ndim [[buffer(7)]],
+                           constant uint& naxes [[buffer(8)]],
+                           constant int* in_strides [[buffer(9)]],
+                           constant uint& in_offset [[buffer(10)]],
+                           threadgroup long* shared [[threadgroup(0)]],
+                           uint tid [[thread_index_in_threadgroup]],
+                           uint gid [[thread_position_in_grid]],
+                           uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    long max_val = LONG_MIN;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            max_val = max(max_val, in[idx]);
+        }
+    }
+    
+    shared[tid] = max_val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            shared[tid] = max(shared[tid], shared[tid + s]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
+kernel void reduce_max_uchar(device uchar* out [[buffer(0)]],
+                            device const uchar* in [[buffer(1)]],
+                            constant uint& in_size [[buffer(2)]],
+                            constant uint& reduction_size [[buffer(3)]],
+                            constant uint& num_reductions [[buffer(4)]],
+                            constant uint* shape [[buffer(5)]],
+                            constant uint* axes [[buffer(6)]],
+                            constant uint& ndim [[buffer(7)]],
+                            constant uint& naxes [[buffer(8)]],
+                            constant int* in_strides [[buffer(9)]],
+                            constant uint& in_offset [[buffer(10)]],
+                            threadgroup uchar* shared [[threadgroup(0)]],
+                            uint tid [[thread_index_in_threadgroup]],
+                            uint gid [[thread_position_in_grid]],
+                            uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    uchar max_val = 0;
     
     for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
         uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
@@ -318,6 +490,278 @@ kernel void reduce_prod_int(device int* out [[buffer(0)]],
     for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
         if (tid < s && tid + s < REDUCE_THREADS) {
             shared[tid] *= shared[tid + s];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
+kernel void reduce_prod_long(device long* out [[buffer(0)]],
+                            device const long* in [[buffer(1)]],
+                            constant uint& in_size [[buffer(2)]],
+                            constant uint& reduction_size [[buffer(3)]],
+                            constant uint& num_reductions [[buffer(4)]],
+                            constant uint* shape [[buffer(5)]],
+                            constant uint* axes [[buffer(6)]],
+                            constant uint& ndim [[buffer(7)]],
+                            constant uint& naxes [[buffer(8)]],
+                            constant int* in_strides [[buffer(9)]],
+                            constant uint& in_offset [[buffer(10)]],
+                            threadgroup long* shared [[threadgroup(0)]],
+                            uint tid [[thread_index_in_threadgroup]],
+                            uint gid [[thread_position_in_grid]],
+                            uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    long prod = 1;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            prod *= in[idx];
+        }
+    }
+    
+    shared[tid] = prod;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            shared[tid] *= shared[tid + s];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
+kernel void reduce_prod_uchar(device uchar* out [[buffer(0)]],
+                             device const uchar* in [[buffer(1)]],
+                             constant uint& in_size [[buffer(2)]],
+                             constant uint& reduction_size [[buffer(3)]],
+                             constant uint& num_reductions [[buffer(4)]],
+                             constant uint* shape [[buffer(5)]],
+                             constant uint* axes [[buffer(6)]],
+                             constant uint& ndim [[buffer(7)]],
+                             constant uint& naxes [[buffer(8)]],
+                             constant int* in_strides [[buffer(9)]],
+                             constant uint& in_offset [[buffer(10)]],
+                             threadgroup uchar* shared [[threadgroup(0)]],
+                             uint tid [[thread_index_in_threadgroup]],
+                             uint gid [[thread_position_in_grid]],
+                             uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    uchar prod = 1;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            prod *= in[idx];
+        }
+    }
+    
+    shared[tid] = prod;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            shared[tid] *= shared[tid + s];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
+// Reduce min operations
+kernel void reduce_min_float(device float* out [[buffer(0)]],
+                            device const float* in [[buffer(1)]],
+                            constant uint& in_size [[buffer(2)]],
+                            constant uint& reduction_size [[buffer(3)]],
+                            constant uint& num_reductions [[buffer(4)]],
+                            constant uint* shape [[buffer(5)]],
+                            constant uint* axes [[buffer(6)]],
+                            constant uint& ndim [[buffer(7)]],
+                            constant uint& naxes [[buffer(8)]],
+                            constant int* in_strides [[buffer(9)]],
+                            constant uint& in_offset [[buffer(10)]],
+                            threadgroup float* shared [[threadgroup(0)]],
+                            uint tid [[thread_index_in_threadgroup]],
+                            uint gid [[thread_position_in_grid]],
+                            uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    float min_val = INFINITY;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            float val = in[idx];
+            // Propagate NaN - if either is NaN, result is NaN
+            if (isnan(val) || isnan(min_val)) {
+                min_val = NAN;
+            } else {
+                min_val = fmin(min_val, val);
+            }
+        }
+    }
+    
+    shared[tid] = min_val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            float a = shared[tid];
+            float b = shared[tid + s];
+            // Propagate NaN - if either is NaN, result is NaN
+            if (isnan(a) || isnan(b)) {
+                shared[tid] = NAN;
+            } else {
+                shared[tid] = fmin(a, b);
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
+kernel void reduce_min_int(device int* out [[buffer(0)]],
+                          device const int* in [[buffer(1)]],
+                          constant uint& in_size [[buffer(2)]],
+                          constant uint& reduction_size [[buffer(3)]],
+                          constant uint& num_reductions [[buffer(4)]],
+                          constant uint* shape [[buffer(5)]],
+                          constant uint* axes [[buffer(6)]],
+                          constant uint& ndim [[buffer(7)]],
+                          constant uint& naxes [[buffer(8)]],
+                          constant int* in_strides [[buffer(9)]],
+                          constant uint& in_offset [[buffer(10)]],
+                          threadgroup int* shared [[threadgroup(0)]],
+                          uint tid [[thread_index_in_threadgroup]],
+                          uint gid [[thread_position_in_grid]],
+                          uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    int min_val = INT_MAX;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            min_val = min(min_val, in[idx]);
+        }
+    }
+    
+    shared[tid] = min_val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            shared[tid] = min(shared[tid], shared[tid + s]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
+kernel void reduce_min_long(device long* out [[buffer(0)]],
+                           device const long* in [[buffer(1)]],
+                           constant uint& in_size [[buffer(2)]],
+                           constant uint& reduction_size [[buffer(3)]],
+                           constant uint& num_reductions [[buffer(4)]],
+                           constant uint* shape [[buffer(5)]],
+                           constant uint* axes [[buffer(6)]],
+                           constant uint& ndim [[buffer(7)]],
+                           constant uint& naxes [[buffer(8)]],
+                           constant int* in_strides [[buffer(9)]],
+                           constant uint& in_offset [[buffer(10)]],
+                           threadgroup long* shared [[threadgroup(0)]],
+                           uint tid [[thread_index_in_threadgroup]],
+                           uint gid [[thread_position_in_grid]],
+                           uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    long min_val = LONG_MAX;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            min_val = min(min_val, in[idx]);
+        }
+    }
+    
+    shared[tid] = min_val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            shared[tid] = min(shared[tid], shared[tid + s]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    if (tid == 0) {
+        out[reduction_id] = shared[0];
+    }
+}
+
+kernel void reduce_min_uchar(device uchar* out [[buffer(0)]],
+                            device const uchar* in [[buffer(1)]],
+                            constant uint& in_size [[buffer(2)]],
+                            constant uint& reduction_size [[buffer(3)]],
+                            constant uint& num_reductions [[buffer(4)]],
+                            constant uint* shape [[buffer(5)]],
+                            constant uint* axes [[buffer(6)]],
+                            constant uint& ndim [[buffer(7)]],
+                            constant uint& naxes [[buffer(8)]],
+                            constant int* in_strides [[buffer(9)]],
+                            constant uint& in_offset [[buffer(10)]],
+                            threadgroup uchar* shared [[threadgroup(0)]],
+                            uint tid [[thread_index_in_threadgroup]],
+                            uint gid [[thread_position_in_grid]],
+                            uint group_id [[threadgroup_position_in_grid]]) {
+    
+    uint reduction_id = group_id;
+    if (reduction_id >= num_reductions) return;
+    
+    uchar min_val = UCHAR_MAX;
+    
+    for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) {
+        uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes);
+        if (idx < in_size) {
+            min_val = min(min_val, in[idx]);
+        }
+    }
+    
+    shared[tid] = min_val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) {
+        if (tid < s && tid + s < REDUCE_THREADS) {
+            shared[tid] = min(shared[tid], shared[tid + s]);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
