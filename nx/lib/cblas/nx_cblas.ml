@@ -616,6 +616,56 @@ let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
           let v : float = Bigarray.Array1.get x.buffer i in
           Bigarray.Array1.set result_buffer i v
         done
+    | Dtype.Float32, Dtype.Int32 ->
+        for i = 0 to total - 1 do
+          let v : float = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int32.of_float v)
+        done
+    | Dtype.Float64, Dtype.Int32 ->
+        for i = 0 to total - 1 do
+          let v : float = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int32.of_float v)
+        done
+    | Dtype.Float32, Dtype.Int64 ->
+        for i = 0 to total - 1 do
+          let v : float = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int64.of_float v)
+        done
+    | Dtype.Float64, Dtype.Int64 ->
+        for i = 0 to total - 1 do
+          let v : float = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int64.of_float v)
+        done
+    | Dtype.Int32, Dtype.Float32 ->
+        for i = 0 to total - 1 do
+          let v : int32 = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int32.to_float v)
+        done
+    | Dtype.Int32, Dtype.Float64 ->
+        for i = 0 to total - 1 do
+          let v : int32 = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int32.to_float v)
+        done
+    | Dtype.Int64, Dtype.Float32 ->
+        for i = 0 to total - 1 do
+          let v : int64 = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int64.to_float v)
+        done
+    | Dtype.Int64, Dtype.Float64 ->
+        for i = 0 to total - 1 do
+          let v : int64 = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int64.to_float v)
+        done
+    | Dtype.Int32, Dtype.Int64 ->
+        for i = 0 to total - 1 do
+          let v : int32 = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int64.of_int32 v)
+        done
+    | Dtype.Int64, Dtype.Int32 ->
+        for i = 0 to total - 1 do
+          let v : int64 = Bigarray.Array1.get x.buffer i in
+          Bigarray.Array1.set result_buffer i (Int64.to_int32 v)
+        done
     | Dtype.Float32, Dtype.Int16 ->
         for i = 0 to total - 1 do
           let v : float = Bigarray.Array1.get x.buffer i in
