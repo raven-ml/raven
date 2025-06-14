@@ -4,13 +4,22 @@ type buffer_entry = { buffer : Buffer.t; size : int; mutable in_use : bool }
 
 type t = {
   device : Device.t;
-  mutable buffers : buffer_entry list;
+  (* Free buffers grouped by size for O(1) lookup *)
+  free_buffers : (int, buffer_entry list) Hashtbl.t;
+  (* In-use buffers indexed by buffer for O(1) release *)
+  in_use_buffers : (Buffer.t, buffer_entry) Hashtbl.t;
   mutable total_allocated : int;
   mutable total_in_use : int;
 }
 
 let create device =
-  { device; buffers = []; total_allocated = 0; total_in_use = 0 }
+  {
+    device;
+    free_buffers = Hashtbl.create 32;
+    in_use_buffers = Hashtbl.create 128;
+    total_allocated = 0;
+    total_in_use = 0;
+  }
 
 let round_up_size size =
   (* Round up to next power of 2 or multiple of 256 bytes for better reuse *)
@@ -27,53 +36,65 @@ let round_up_size size =
 let allocate pool size =
   let size = round_up_size size in
 
-  (* First, try to find a free buffer of sufficient size *)
-  let rec find_free_buffer = function
-    | [] -> None
-    | entry :: rest ->
-        if (not entry.in_use) && entry.size >= size then (
-          entry.in_use <- true;
-          pool.total_in_use <- pool.total_in_use + entry.size;
-          Some entry.buffer)
-        else find_free_buffer rest
-  in
-
-  match find_free_buffer pool.buffers with
-  | Some buffer -> buffer
-  | None ->
+  (* Try to find a free buffer of the exact size - O(1) operation *)
+  match Hashtbl.find_opt pool.free_buffers size with
+  | Some (entry :: rest) ->
+      (* Found a free buffer of the right size *)
+      entry.in_use <- true;
+      pool.total_in_use <- pool.total_in_use + entry.size;
+      (* Update free list *)
+      if rest = [] then Hashtbl.remove pool.free_buffers size
+      else Hashtbl.replace pool.free_buffers size rest;
+      (* Add to in-use table *)
+      Hashtbl.add pool.in_use_buffers entry.buffer entry;
+      entry.buffer
+  | Some [] | None ->
       (* No suitable buffer found, allocate a new one *)
       let options =
         ResourceOptions.(storage_mode_shared + hazard_tracking_mode_tracked)
       in
       let buffer = Buffer.on_device pool.device ~length:size options in
       let entry = { buffer; size; in_use = true } in
-      pool.buffers <- entry :: pool.buffers;
+      (* Add to in-use table *)
+      Hashtbl.add pool.in_use_buffers buffer entry;
       pool.total_allocated <- pool.total_allocated + size;
       pool.total_in_use <- pool.total_in_use + size;
       buffer
 
 let release pool buffer =
-  let rec mark_free = function
-    | [] -> ()
-    | entry :: rest ->
-        if entry.buffer = buffer then (
-          entry.in_use <- false;
-          pool.total_in_use <- pool.total_in_use - entry.size)
-        else mark_free rest
-  in
-  mark_free pool.buffers
+  (* O(1) lookup in the in-use table *)
+  match Hashtbl.find_opt pool.in_use_buffers buffer with
+  | Some entry ->
+      entry.in_use <- false;
+      pool.total_in_use <- pool.total_in_use - entry.size;
+      (* Remove from in-use table *)
+      Hashtbl.remove pool.in_use_buffers buffer;
+      (* Add to free list for this size *)
+      let current_list =
+        Option.value ~default:[] (Hashtbl.find_opt pool.free_buffers entry.size)
+      in
+      Hashtbl.replace pool.free_buffers entry.size (entry :: current_list)
+  | None ->
+      (* Buffer not found - this shouldn't happen in normal operation *)
+      ()
 
 let cleanup pool =
-  (* Remove buffers that haven't been used recently *)
-  (* For now, just remove all unused buffers *)
-  let in_use, free = List.partition (fun e -> e.in_use) pool.buffers in
-  let freed_size = List.fold_left (fun acc e -> acc + e.size) 0 free in
-  pool.buffers <- in_use;
-  pool.total_allocated <- pool.total_allocated - freed_size
+  (* Remove all free buffers to reclaim memory *)
+  let freed_size = ref 0 in
+  Hashtbl.iter
+    (fun size entries ->
+      List.iter (fun entry -> freed_size := !freed_size + entry.size) entries)
+    pool.free_buffers;
+  Hashtbl.clear pool.free_buffers;
+  pool.total_allocated <- pool.total_allocated - !freed_size
 
 let stats pool =
-  let num_buffers = List.length pool.buffers in
-  let num_in_use = List.length (List.filter (fun e -> e.in_use) pool.buffers) in
+  let num_in_use = Hashtbl.length pool.in_use_buffers in
+  let num_free = ref 0 in
+  Hashtbl.iter
+    (fun _ entries -> num_free := !num_free + List.length entries)
+    pool.free_buffers;
+  let num_buffers = num_in_use + !num_free in
   Printf.sprintf
     "BufferPool: %d buffers, %d in use, %d bytes allocated, %d bytes in use"
     num_buffers num_in_use pool.total_allocated pool.total_in_use

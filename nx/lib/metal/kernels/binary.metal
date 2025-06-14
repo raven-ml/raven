@@ -338,6 +338,29 @@ kernel void cmpne_float(device uchar* out [[buffer(0)]],
     out[out_idx] = a[a_idx] != b[b_idx] ? 1 : 0;
 }
 
+kernel void cmpeq_float(device uchar* out [[buffer(0)]],
+                       device const float* a [[buffer(1)]],
+                       device const float* b [[buffer(2)]],
+                       constant uint* out_shape [[buffer(3)]],
+                       constant int* a_strides [[buffer(4)]],
+                       constant int* b_strides [[buffer(5)]],
+                       constant uint& ndim [[buffer(6)]],
+                    constant int& a_offset [[buffer(7)]],
+                    constant int& b_offset [[buffer(8)]],
+                    uint3 gid [[thread_position_in_grid]]) {
+    uint out_idx = gid.x;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint a_idx = compute_index_from_linear(out_idx, out_shape, a_strides, ndim) + a_offset;
+    uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
+    
+    out[out_idx] = a[a_idx] == b[b_idx] ? 1 : 0;
+}
+
 kernel void cmpne_int(device uchar* out [[buffer(0)]],
                      device const int* a [[buffer(1)]],
                      device const int* b [[buffer(2)]],
@@ -359,6 +382,29 @@ kernel void cmpne_int(device uchar* out [[buffer(0)]],
     uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
     
     out[out_idx] = a[a_idx] != b[b_idx] ? 1 : 0;
+}
+
+kernel void cmpeq_int(device uchar* out [[buffer(0)]],
+                     device const int* a [[buffer(1)]],
+                     device const int* b [[buffer(2)]],
+                     constant uint* out_shape [[buffer(3)]],
+                     constant int* a_strides [[buffer(4)]],
+                     constant int* b_strides [[buffer(5)]],
+                     constant uint& ndim [[buffer(6)]],
+                    constant int& a_offset [[buffer(7)]],
+                    constant int& b_offset [[buffer(8)]],
+                    uint3 gid [[thread_position_in_grid]]) {
+    uint out_idx = gid.x;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint a_idx = compute_index_from_linear(out_idx, out_shape, a_strides, ndim) + a_offset;
+    uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
+    
+    out[out_idx] = a[a_idx] == b[b_idx] ? 1 : 0;
 }
 
 kernel void cmplt_uchar(device uchar* out [[buffer(0)]],
@@ -407,6 +453,29 @@ kernel void cmpne_uchar(device uchar* out [[buffer(0)]],
     out[out_idx] = a[a_idx] != b[b_idx] ? 1 : 0;
 }
 
+kernel void cmpeq_uchar(device uchar* out [[buffer(0)]],
+                       device const uchar* a [[buffer(1)]],
+                       device const uchar* b [[buffer(2)]],
+                       constant uint* out_shape [[buffer(3)]],
+                       constant int* a_strides [[buffer(4)]],
+                       constant int* b_strides [[buffer(5)]],
+                       constant uint& ndim [[buffer(6)]],
+                    constant int& a_offset [[buffer(7)]],
+                    constant int& b_offset [[buffer(8)]],
+                    uint3 gid [[thread_position_in_grid]]) {
+    uint out_idx = gid.x;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint a_idx = compute_index_from_linear(out_idx, out_shape, a_strides, ndim) + a_offset;
+    uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
+    
+    out[out_idx] = a[a_idx] == b[b_idx] ? 1 : 0;
+}
+
 kernel void cmplt_long(device uchar* out [[buffer(0)]],
                       device const long* a [[buffer(1)]],
                       device const long* b [[buffer(2)]],
@@ -451,6 +520,29 @@ kernel void cmpne_long(device uchar* out [[buffer(0)]],
     uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
     
     out[out_idx] = a[a_idx] != b[b_idx] ? 1 : 0;
+}
+
+kernel void cmpeq_long(device uchar* out [[buffer(0)]],
+                      device const long* a [[buffer(1)]],
+                      device const long* b [[buffer(2)]],
+                      constant uint* out_shape [[buffer(3)]],
+                      constant int* a_strides [[buffer(4)]],
+                      constant int* b_strides [[buffer(5)]],
+                      constant uint& ndim [[buffer(6)]],
+                      constant int& a_offset [[buffer(7)]],
+                      constant int& b_offset [[buffer(8)]],
+                      uint3 gid [[thread_position_in_grid]]) {
+    uint out_idx = gid.x;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint a_idx = compute_index_from_linear(out_idx, out_shape, a_strides, ndim) + a_offset;
+    uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
+    
+    out[out_idx] = a[a_idx] == b[b_idx] ? 1 : 0;
 }
 
 // Bitwise operations

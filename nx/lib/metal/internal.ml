@@ -2,20 +2,8 @@ open Nx_core
 
 type metal_buffer = { buffer : Metal.Buffer.t; size_bytes : int }
 
-type kernel_cache = {
-  mutable binary_f32 : (string, Metal.Function.t) Hashtbl.t;
-  mutable binary_f64 : (string, Metal.Function.t) Hashtbl.t;
-  mutable binary_i32 : (string, Metal.Function.t) Hashtbl.t;
-  mutable binary_i64 : (string, Metal.Function.t) Hashtbl.t;
-  mutable binary_u8 : (string, Metal.Function.t) Hashtbl.t;
-  mutable unary_f32 : (string, Metal.Function.t) Hashtbl.t;
-  mutable unary_f64 : (string, Metal.Function.t) Hashtbl.t;
-  mutable unary_i32 : (string, Metal.Function.t) Hashtbl.t;
-  mutable unary_i64 : (string, Metal.Function.t) Hashtbl.t;
-  mutable unary_u8 : (string, Metal.Function.t) Hashtbl.t;
-  mutable reduce : (string, Metal.Function.t) Hashtbl.t;
-  mutable special : (string, Metal.Function.t) Hashtbl.t;
-}
+(* Nested hashtable structure: category -> kernel_name -> function *)
+type kernel_cache = (string, (string, Metal.Function.t) Hashtbl.t) Hashtbl.t
 
 type context = {
   device : Metal.Device.t;
@@ -39,50 +27,40 @@ let numel t = View.numel t.view
 let buffer t = t.buffer
 
 let create_kernel_cache () =
-  {
-    binary_f32 = Hashtbl.create 32;
-    binary_f64 = Hashtbl.create 32;
-    binary_i32 = Hashtbl.create 32;
-    binary_i64 = Hashtbl.create 32;
-    binary_u8 = Hashtbl.create 32;
-    unary_f32 = Hashtbl.create 32;
-    unary_f64 = Hashtbl.create 32;
-    unary_i32 = Hashtbl.create 32;
-    unary_i64 = Hashtbl.create 32;
-    unary_u8 = Hashtbl.create 32;
-    reduce = Hashtbl.create 32;
-    special = Hashtbl.create 32;
-  }
+  let cache = Hashtbl.create 8 in
+  (* Initialize the main categories *)
+  Hashtbl.add cache "binary" (Hashtbl.create 32);
+  Hashtbl.add cache "unary" (Hashtbl.create 32);
+  Hashtbl.add cache "reduce" (Hashtbl.create 32);
+  Hashtbl.add cache "special" (Hashtbl.create 128);
+  cache
 
-let dtype_to_metal_type : type a b. (a, b) Dtype.t -> string = function
-  | Dtype.Float16 -> "half"
-  | Dtype.Float32 -> "float"
-  | Dtype.Float64 -> "double"
-  | Dtype.Int32 -> "int"
-  | Dtype.Int64 -> "long"
-  | Dtype.UInt8 -> "uchar"
-  | Dtype.UInt16 -> "ushort"
-  | Dtype.Int8 -> "char"
-  | Dtype.Int16 -> "short"
-  | Dtype.Int -> if Sys.word_size = 64 then "long" else "int"
-  | Dtype.NativeInt -> "long"
-  | Dtype.Complex32 | Dtype.Complex64 ->
-      failwith "dtype_to_metal_type: complex types not supported"
+type dtype_info = {
+  metal_name : string;
+  size_bytes : int;
+      (* Add more fields as needed, e.g., initial values for reductions *)
+}
 
-let sizeof_dtype : type a b. (a, b) Dtype.t -> int = function
-  | Dtype.Float16 -> 2
-  | Dtype.Float32 -> 4
-  | Dtype.Float64 -> 8
-  | Dtype.Int32 -> 4
-  | Dtype.Int64 -> 8
-  | Dtype.UInt8 -> 1
-  | Dtype.UInt16 -> 2
-  | Dtype.Int8 -> 1
-  | Dtype.Int16 -> 2
-  | Dtype.Int -> Sys.word_size / 8
-  | Dtype.NativeInt -> Sys.word_size / 8
-  | Dtype.Complex32 -> 8
-  | Dtype.Complex64 -> 16
+let get_dtype_info : type a b. (a, b) Dtype.t -> dtype_info = function
+  | Dtype.Float16 -> { metal_name = "half"; size_bytes = 2 }
+  | Dtype.Float32 -> { metal_name = "float"; size_bytes = 4 }
+  | Dtype.Float64 -> { metal_name = "double"; size_bytes = 8 }
+  | Dtype.Int32 -> { metal_name = "int"; size_bytes = 4 }
+  | Dtype.Int64 -> { metal_name = "long"; size_bytes = 8 }
+  | Dtype.UInt8 -> { metal_name = "uchar"; size_bytes = 1 }
+  | Dtype.UInt16 -> { metal_name = "ushort"; size_bytes = 2 }
+  | Dtype.Int8 -> { metal_name = "char"; size_bytes = 1 }
+  | Dtype.Int16 -> { metal_name = "short"; size_bytes = 2 }
+  | Dtype.Int ->
+      if Sys.word_size = 64 then { metal_name = "long"; size_bytes = 8 }
+      else { metal_name = "int"; size_bytes = 4 }
+  | Dtype.NativeInt -> { metal_name = "long"; size_bytes = Sys.word_size / 8 }
+  | Dtype.Complex32 -> failwith "get_dtype_info: complex types not supported"
+  | Dtype.Complex64 -> failwith "get_dtype_info: complex types not supported"
+
+(* Convenience functions for backward compatibility *)
+let dtype_to_metal_type dtype = (get_dtype_info dtype).metal_name
+let sizeof_dtype dtype = (get_dtype_info dtype).size_bytes
 
 let copy_from_bigarray : type a b.
     context ->
@@ -132,6 +110,8 @@ let copy_to_bigarray : type a b.
       Bigarray.Array1.blit src ba)
   else
     (* For non-contiguous views, we need to copy element by element *)
+    (* NOTE: For better performance, callers should use Ops_movement.make_contiguous
+       before calling copy_to_bigarray on non-contiguous views *)
     let shape = View.shape view in
     let strides = View.strides view in
     let offset = View.offset view in

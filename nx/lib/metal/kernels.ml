@@ -16,67 +16,37 @@ let compile_library device =
       (Printf.sprintf "kernels: failed to compile Metal library: %s"
          (Printexc.to_string e))
 
-let get_binary_kernel (type a b) ctx (dtype : (a, b) Nx_core.Dtype.t) op_name =
-  let cache_table =
-    match dtype with
-    | Nx_core.Dtype.Float32 -> ctx.Internal.kernels.binary_f32
-    | Nx_core.Dtype.Float64 -> ctx.Internal.kernels.binary_f64
-    | Nx_core.Dtype.Int32 -> ctx.Internal.kernels.binary_i32
-    | Nx_core.Dtype.Int64 -> ctx.Internal.kernels.binary_i64
-    | Nx_core.Dtype.Int -> if Sys.word_size = 64 then ctx.Internal.kernels.binary_i64 else ctx.Internal.kernels.binary_i32
-    | Nx_core.Dtype.UInt8 -> ctx.Internal.kernels.binary_u8
-    | _ -> failwith "get_binary_kernel: unsupported dtype"
+(* Generic kernel getter using the nested cache structure *)
+let get_kernel ctx category kernel_name =
+  (* Get the category cache *)
+  let category_cache =
+    match Hashtbl.find_opt ctx.Internal.kernels category with
+    | Some cache -> cache
+    | None -> failwith (Printf.sprintf "Unknown kernel category: %s" category)
   in
-
-  match Hashtbl.find_opt cache_table op_name with
+  (* Check if kernel exists in cache *)
+  match Hashtbl.find_opt category_cache kernel_name with
   | Some func -> func
   | None ->
-      let metal_type = Internal.dtype_to_metal_type dtype in
-      let kernel_name = Printf.sprintf "%s_%s" op_name metal_type in
+      (* Compile and cache the kernel *)
       let func = get_function ctx.Internal.library kernel_name in
-      Hashtbl.add cache_table op_name func;
+      Hashtbl.add category_cache kernel_name func;
       func
+
+let get_binary_kernel (type a b) ctx (dtype : (a, b) Nx_core.Dtype.t) op_name =
+  let dtype_suffix = Internal.dtype_to_metal_type dtype in
+  get_kernel ctx "binary" (Printf.sprintf "%s_%s" op_name dtype_suffix)
 
 let get_unary_kernel (type a b) ctx (dtype : (a, b) Nx_core.Dtype.t) op_name =
-  let cache_table =
-    match dtype with
-    | Nx_core.Dtype.Float32 -> ctx.Internal.kernels.unary_f32
-    | Nx_core.Dtype.Float64 -> ctx.Internal.kernels.unary_f64
-    | Nx_core.Dtype.Int32 -> ctx.Internal.kernels.unary_i32
-    | Nx_core.Dtype.Int64 -> ctx.Internal.kernels.unary_i64
-    | Nx_core.Dtype.Int -> if Sys.word_size = 64 then ctx.Internal.kernels.unary_i64 else ctx.Internal.kernels.unary_i32
-    | Nx_core.Dtype.UInt8 -> ctx.Internal.kernels.unary_u8
-    | _ ->
-        failwith
-          (Printf.sprintf "get_unary_kernel: unsupported dtype %s"
-             (Nx_core.Dtype.to_string dtype))
-  in
-
-  match Hashtbl.find_opt cache_table op_name with
-  | Some func -> func
-  | None ->
-      let metal_type = Internal.dtype_to_metal_type dtype in
-      let kernel_name = Printf.sprintf "%s_%s" op_name metal_type in
-      let func = get_function ctx.Internal.library kernel_name in
-      Hashtbl.add cache_table op_name func;
-      func
+  let dtype_suffix = Internal.dtype_to_metal_type dtype in
+  get_kernel ctx "unary" (Printf.sprintf "%s_%s" op_name dtype_suffix)
 
 let get_reduce_kernel ctx op_name dtype_suffix =
-  let cache_key = Printf.sprintf "%s_%s" op_name dtype_suffix in
-  match Hashtbl.find_opt ctx.Internal.kernels.reduce cache_key with
-  | Some func -> func
-  | None ->
-      let func = get_function ctx.Internal.library cache_key in
-      Hashtbl.add ctx.Internal.kernels.reduce cache_key func;
-      func
+  get_kernel ctx "reduce" (Printf.sprintf "%s_%s" op_name dtype_suffix)
 
 let get_special_kernel ctx kernel_name =
-  match Hashtbl.find_opt ctx.Internal.kernels.special kernel_name with
-  | Some func -> func
-  | None ->
-      let func = get_function ctx.Internal.library kernel_name in
-      Hashtbl.add ctx.Internal.kernels.special kernel_name func;
-      func
+  (* For special kernels, we use the kernel name as-is *)
+  get_kernel ctx "special" kernel_name
 
 let create_compute_pipeline device func =
   try

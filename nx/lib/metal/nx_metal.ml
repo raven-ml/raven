@@ -123,7 +123,7 @@ let op_pad t padding fill_value =
           ~reason:"negative values not allowed"
           ~hint:"use shrink or slice to remove elements" ())
     padding;
-  
+
   (* Padding requires actual computation *)
   let ctx = t.context in
   let old_shape = View.shape t.view in
@@ -187,6 +187,7 @@ let op_mod a b = Ops_binary.mod_ a.context a b
 let op_pow a b = Ops_binary.pow a.context a b
 let op_cmplt a b = Ops_binary.cmplt a.context a b
 let op_cmpne a b = Ops_binary.cmpne a.context a b
+let op_cmpeq a b = Ops_binary.cmpeq a.context a b
 let op_xor a b = Ops_binary.xor a.context a b
 let op_or a b = Ops_binary.or_ a.context a b
 let op_and a b = Ops_binary.and_ a.context a b
@@ -204,14 +205,11 @@ let op_where cond if_true if_false =
   Ops_special.where cond.context cond if_true if_false
 
 (* Reduction operations *)
-let op_reduce_sum ~axes ~keepdims t =
-  Ops_reduce.reduce_sum t.context ~axes ~keepdims t
-
-let op_reduce_max ~axes ~keepdims t =
-  Ops_reduce.reduce_max t.context ~axes ~keepdims t
+let op_reduce_sum ~axes ~keepdims t = Ops_reduce.sum t.context t ~axes ~keepdims
+let op_reduce_max ~axes ~keepdims t = Ops_reduce.max t.context t ~axes ~keepdims
 
 let op_reduce_prod ~axes ~keepdims t =
-  Ops_reduce.reduce_prod t.context ~axes ~keepdims t
+  Ops_reduce.prod t.context t ~axes ~keepdims
 
 (* Special operations *)
 let op_cast : type a b c d. (a, b) t -> (c, d) Dtype.t -> (c, d) t =
