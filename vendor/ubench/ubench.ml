@@ -558,7 +558,10 @@ let print_csv (results : analysis_result list) =
   List.iter
     (fun (r : analysis_result) ->
       let time_regression =
-        try List.find (fun (reg : regression_result) -> reg.responder = Time_per_run) r.regressions
+        try
+          List.find
+            (fun (reg : regression_result) -> reg.responder = Time_per_run)
+            r.regressions
         with Not_found ->
           {
             responder = Time_per_run;
@@ -584,7 +587,7 @@ let print_pretty_table results =
   let green = "\x1b[32m" in
   let cyan = "\x1b[36m" in
   let colorize code text = code ^ text ^ reset in
-  
+
   let strip_ansi_codes s =
     let len = String.length s in
     let buf = Buffer.create len in
@@ -603,7 +606,7 @@ let print_pretty_table results =
     done;
     Buffer.contents buf
   in
-  
+
   (* Count visual width of string (handling UTF-8 properly) *)
   let visual_width s =
     let s = strip_ansi_codes s in
@@ -615,30 +618,29 @@ let print_pretty_table results =
       if c < 0x80 then (
         (* ASCII character *)
         incr count;
-        incr i
-      ) else if c < 0xE0 then (
+        incr i)
+      else if c < 0xE0 then (
         (* 2-byte UTF-8 *)
         incr count;
-        i := !i + 2
-      ) else if c < 0xF0 then (
+        i := !i + 2)
+      else if c < 0xF0 then (
         (* 3-byte UTF-8 *)
         incr count;
-        i := !i + 3
-      ) else (
+        i := !i + 3)
+      else (
         (* 4-byte UTF-8 *)
         incr count;
-        i := !i + 4
-      )
+        i := !i + 4)
     done;
     !count
   in
-  
+
   let pad_left s width =
     let visible_len = visual_width s in
     if visible_len >= width then s
     else String.make (width - visible_len) ' ' ^ s
   in
-  
+
   let pad_right s width =
     let visible_len = visual_width s in
     if visible_len >= width then s
@@ -646,21 +648,27 @@ let print_pretty_table results =
   in
 
   (* Find the fastest time and lowest memory for color coding *)
-  let fastest_time = 
-    List.fold_left (fun acc r -> min acc r.time_stats.avg) Float.max_float results
+  let fastest_time =
+    List.fold_left
+      (fun acc r -> min acc r.time_stats.avg)
+      Float.max_float results
   in
-  let lowest_memory = 
-    List.fold_left (fun acc r -> min acc r.memory_stats.avg) Float.max_float results
+  let lowest_memory =
+    List.fold_left
+      (fun acc r -> min acc r.memory_stats.avg)
+      Float.max_float results
   in
 
   (* Sort results by time *)
-  let sorted_results = List.sort (fun r1 r2 -> compare r1.time_stats.avg r2.time_stats.avg) results in
+  let sorted_results =
+    List.sort (fun r1 r2 -> compare r1.time_stats.avg r2.time_stats.avg) results
+  in
 
   (* Create row data with coloring *)
   let rows_data =
     List.map
       (fun r ->
-        let vs_fastest = (r.time_stats.avg /. fastest_time) *. 100.0 in
+        let vs_fastest = r.time_stats.avg /. fastest_time *. 100.0 in
         ( r,
           [
             r.name;
@@ -670,22 +678,20 @@ let print_pretty_table results =
             (if r.memory_stats.avg = lowest_memory then colorize cyan
              else fun x -> x)
               (format_words r.memory_stats.avg);
-            (if vs_fastest = 100.0 then colorize green
-             else fun x -> x)
+            (if vs_fastest = 100.0 then colorize green else fun x -> x)
               (Printf.sprintf "%.2f%%" vs_fastest);
           ] ))
       sorted_results
   in
-  
+
   let headers = [ "Name"; "Time/Run"; "mWd/Run"; "vs Fastest" ] in
-  
+
   (* Calculate column widths based on actual data *)
   let widths =
     List.fold_left
       (fun acc (_, row_strs_colored) ->
         List.map2
-          (fun w s_colored ->
-            max w (visual_width s_colored))
+          (fun w s_colored -> max w (visual_width s_colored))
           acc row_strs_colored)
       (List.map visual_width headers)
       rows_data
@@ -717,13 +723,13 @@ let print_pretty_table results =
     ^ String.concat mid (List.map (fun w -> repeat_str hline (w + 2)) widths)
     ^ right
   in
-  
+
   let top_border = make_border top_left top_mid top_right in
   let separator = make_border mid_left mid_mid mid_right in
   let bottom_border = make_border bot_left bot_mid bot_right in
-  
+
   Printf.printf "%s\n" top_border;
-  
+
   (* Print headers *)
   let print_header_row headers =
     let padded_headers =
@@ -739,7 +745,7 @@ let print_pretty_table results =
   in
   print_header_row headers;
   Printf.printf "%s\n" separator;
-  
+
   (* Print data rows *)
   let print_data_row (_result_record, row_strings_colored) =
     let padded_colored_row =
@@ -881,7 +887,7 @@ let run_with_cli_config quota output_format fork_benchmarks warmup stabilize_gc
   | Pretty_table -> print_pretty_table results
   | JSON -> print_json results
   | CSV -> print_csv results);
-  
+
   results
 
 let cli_term =

@@ -81,14 +81,16 @@ module Make_benchmarks (Backend : Nx_core.Backend_intf.S) = struct
           (fun (Nx_core.Dtype.Pack dtype) ->
             (* Conv2D benchmark *)
             let conv2d_bench =
-              let input_shape = [| 1; 3; size; size |] in  (* NCHW format *)
-              let kernel_shape = [| 16; 3; 3; 3 |] in      (* Out_channels x In_channels x H x W *)
+              let input_shape = [| 1; 3; size; size |] in
+              (* NCHW format *)
+              let kernel_shape = [| 16; 3; 3; 3 |] in
+              (* Out_channels x In_channels x H x W *)
               let input = Nx.rand ctx dtype input_shape in
               let kernel = Nx.rand ctx dtype kernel_shape in
               create (make_name "Conv2D 3x3" size dtype backend_name) (fun () ->
                   ignore (Nx.convolve2d input kernel))
             in
-            
+
             (* Conv2D with larger kernel *)
             let conv2d_5x5_bench =
               let input_shape = [| 1; 3; size; size |] in
@@ -98,7 +100,7 @@ module Make_benchmarks (Backend : Nx_core.Backend_intf.S) = struct
               create (make_name "Conv2D 5x5" size dtype backend_name) (fun () ->
                   ignore (Nx.convolve2d input kernel))
             in
-            
+
             benchmarks := [ conv2d_bench; conv2d_5x5_bench ] @ !benchmarks)
           dtypes)
       conv_sizes;
