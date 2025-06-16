@@ -1,227 +1,125 @@
-/* nx_cblas_stubs.c - OCaml stubs for CBLAS backend */
-
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
-#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
-#include <caml/threads.h>
+#include <complex.h>  // Required for complex number support
+#include <limits.h>
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-/* =========================== Type Definitions =========================== */
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+#ifdef __APPLE__
+#include <Accelerate/Accelerate.h>
+#else
+#include <cblas.h>
+#endif
+
+// Consolidated NATIVE_WRAPPER definitions
+#define NATIVE_WRAPPER_8(name)                                            \
+  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4,   \
+                                value v5, value v6, value v7, value v8) { \
+    value argv[8] = {v1, v2, v3, v4, v5, v6, v7, v8};                     \
+    return caml_nx_##name##_bc(argv, 8);                                  \
+  }
+
+#define NATIVE_WRAPPER_9(name)                                          \
+  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4, \
+                                value v5, value v6, value v7, value v8, \
+                                value v9) {                             \
+    value argv[9] = {v1, v2, v3, v4, v5, v6, v7, v8, v9};               \
+    return caml_nx_##name##_bc(argv, 9);                                \
+  }
+
+#define NATIVE_WRAPPER_10(name)                                         \
+  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4, \
+                                value v5, value v6, value v7, value v8, \
+                                value v9, value v10) {                  \
+    value argv[10] = {v1, v2, v3, v4, v5, v6, v7, v8, v9, v10};         \
+    return caml_nx_##name##_bc(argv, 10);                               \
+  }
+
+#define REDUCE_NATIVE_WRAPPER_10(name)                                         \
+  CAMLprim value caml_nx_reduce_##name(value v1, value v2, value v3, value v4, \
+                                       value v5, value v6, value v7, value v8, \
+                                       value v9, value v10) {                  \
+    value argv[10] = {v1, v2, v3, v4, v5, v6, v7, v8, v9, v10};                \
+    return caml_nx_reduce_##name##_bc(argv, 10);                               \
+  }
+
+#define NATIVE_WRAPPER_11(name)                                         \
+  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4, \
+                                value v5, value v6, value v7, value v8, \
+                                value v9, value v10, value v11) {       \
+    value argv[11] = {v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11};    \
+    return caml_nx_##name##_bc(argv, 11);                               \
+  }
+
+#define NATIVE_WRAPPER_12(name)                                              \
+  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4,      \
+                                value v5, value v6, value v7, value v8,      \
+                                value v9, value v10, value v11, value v12) { \
+    value argv[12] = {v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12};    \
+    return caml_nx_##name##_bc(argv, 12);                                    \
+  }
+
+#define NATIVE_WRAPPER_13(name)                                               \
+  CAMLprim value caml_nx_##name(                                              \
+      value arg1, value arg2, value arg3, value arg4, value arg5, value arg6, \
+      value arg7, value arg8, value arg9, value arg10, value arg11,           \
+      value arg12, value arg13) {                                             \
+    value argv[13] = {arg1, arg2, arg3,  arg4,  arg5,  arg6, arg7,            \
+                      arg8, arg9, arg10, arg11, arg12, arg13};                \
+    return caml_nx_##name##_bc(argv, 13);                                     \
+  }
+
+#define NATIVE_WRAPPER_14(name)                                            \
+  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4,    \
+                                value v5, value v6, value v7, value v8,    \
+                                value v9, value v10, value v11, value v12, \
+                                value v13, value v14) {                    \
+    value argv[14] = {v1, v2, v3,  v4,  v5,  v6,  v7,                      \
+                      v8, v9, v10, v11, v12, v13, v14};                    \
+    return caml_nx_##name##_bc(argv, 14);                                  \
+  }
+
+#define NATIVE_WRAPPER_15(name)                                            \
+  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4,    \
+                                value v5, value v6, value v7, value v8,    \
+                                value v9, value v10, value v11, value v12, \
+                                value v13, value v14, value v15) {         \
+    value argv[15] = {v1, v2,  v3,  v4,  v5,  v6,  v7, v8,                 \
+                      v9, v10, v11, v12, v13, v14, v15};                   \
+    return caml_nx_##name##_bc(argv, 15);                                  \
+  }
+
+#ifndef M_LN2
+#define M_LN2 0.69314718055994530942
+#endif
+
+// Internal C implementation details
+// ---------------------------------
 
 typedef struct {
   void *data;
   int ndim;
-  int *shape;
-  int *strides;
+  const int *shape;
+  const int *strides;
   int offset;
-} strided_array_t;
+} ndarray_t;
 
-/* =========================== External Function Declarations
- * =========================== */
+// Use typedefs for complex types to generate clean function names with macros.
+typedef float _Complex c32_t;
+typedef double _Complex c64_t;
 
-/* From nx_cblas_ops_impl.c */
-extern void nx_cblas_init_strided_array(strided_array_t *arr, void *data,
-                                        int ndim, const int *shape,
-                                        const int *strides, int offset);
-extern void nx_cblas_free_strided_array(strided_array_t *arr);
-
-/* Float32 operations */
-extern void nx_cblas_add_f32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_sub_f32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_mul_f32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_div_f32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_max_f32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_pow_f32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_mod_f32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_neg_f32(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_sqrt_f32(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_sin_f32(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_exp2_f32(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_log2_f32(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_recip_f32(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_copy_f32(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_cmplt_f32(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_cmpne_f32(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_reduce_sum_f32(const strided_array_t *x, void *result);
-extern void nx_cblas_reduce_max_f32(const strided_array_t *x, void *result);
-extern void nx_cblas_reduce_min_f32(const strided_array_t *x, void *result);
-
-/* Float64 operations */
-extern void nx_cblas_add_f64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_sub_f64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_mul_f64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_div_f64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_max_f64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_pow_f64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_mod_f64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_neg_f64(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_neg_i32(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_neg_i64(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_sqrt_f64(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_sin_f64(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_exp2_f64(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_log2_f64(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_recip_f64(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_copy_f64(const strided_array_t *x, strided_array_t *z);
-extern void nx_cblas_cmplt_f64(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_cmplt_i32(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_cmplt_i64(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_cmpne_f64(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_cmpne_i32(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_cmpne_i64(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_reduce_sum_f64(const strided_array_t *x, void *result);
-extern void nx_cblas_reduce_max_f64(const strided_array_t *x, void *result);
-extern void nx_cblas_reduce_min_f64(const strided_array_t *x, void *result);
-extern void nx_cblas_reduce_prod_f32(const strided_array_t *x, void *result);
-extern void nx_cblas_reduce_prod_f64(const strided_array_t *x, void *result);
-
-/* Integer operations */
-extern void nx_cblas_add_i32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_add_i64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_sub_i32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_sub_i64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_mul_i32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_mul_i64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_div_i32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_div_i64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_max_i32(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_max_i64(const strided_array_t *x, const strided_array_t *y,
-                             strided_array_t *z);
-extern void nx_cblas_idiv_i32(const strided_array_t *x,
-                              const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_idiv_i64(const strided_array_t *x,
-                              const strided_array_t *y, strided_array_t *z);
-
-/* Bitwise operations */
-extern void nx_cblas_xor_int32(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_xor_int64(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_xor_uint8(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_xor_uint16(const strided_array_t *x,
-                                const strided_array_t *y, strided_array_t *z);
-
-extern void nx_cblas_or_int32(const strided_array_t *x,
-                              const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_or_int64(const strided_array_t *x,
-                              const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_or_uint8(const strided_array_t *x,
-                              const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_or_uint16(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-
-extern void nx_cblas_and_int32(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_and_int64(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_and_uint8(const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_and_uint16(const strided_array_t *x,
-                                const strided_array_t *y, strided_array_t *z);
-
-/* Ternary operations */
-extern void nx_cblas_where_f32(const strided_array_t *cond,
-                               const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_where_f64(const strided_array_t *cond,
-                               const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_where_i32(const strided_array_t *cond,
-                               const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-extern void nx_cblas_where_i64(const strided_array_t *cond,
-                               const strided_array_t *x,
-                               const strided_array_t *y, strided_array_t *z);
-
-/* Pad operations */
-extern void nx_cblas_pad_f32(const strided_array_t *x, strided_array_t *z,
-                             const int *pad_config, float fill_value);
-extern void nx_cblas_pad_f64(const strided_array_t *x, strided_array_t *z,
-                             const int *pad_config, double fill_value);
-
-/* Cast operations */
-extern void nx_cblas_cast_f32_to_f64(const strided_array_t *x,
-                                     strided_array_t *z);
-extern void nx_cblas_cast_f64_to_f32(const strided_array_t *x,
-                                     strided_array_t *z);
-
-/* Threefry operation */
-extern void nx_cblas_threefry(const strided_array_t *key,
-                              const strided_array_t *counter,
-                              strided_array_t *z);
-
-/* Gather operations */
-extern void nx_cblas_gather_f32(const strided_array_t *data,
-                                const strided_array_t *indices, int axis,
-                                strided_array_t *z);
-extern void nx_cblas_gather_f64(const strided_array_t *data,
-                                const strided_array_t *indices, int axis,
-                                strided_array_t *z);
-
-/* Scatter operations */
-extern void nx_cblas_scatter_f32(const strided_array_t *data_template,
-                                 const strided_array_t *indices,
-                                 const strided_array_t *updates, int axis,
-                                 strided_array_t *z);
-extern void nx_cblas_scatter_f64(const strided_array_t *data_template,
-                                 const strided_array_t *indices,
-                                 const strided_array_t *updates, int axis,
-                                 strided_array_t *z);
-extern void nx_cblas_scatter_i32(const strided_array_t *data_template,
-                                 const strided_array_t *indices,
-                                 const strided_array_t *updates, int axis,
-                                 strided_array_t *z);
-extern void nx_cblas_scatter_i64(const strided_array_t *data_template,
-                                 const strided_array_t *indices,
-                                 const strided_array_t *updates, int axis,
-                                 strided_array_t *z);
-
-/* Generic copy for other types */
-extern void nx_cblas_copy_generic(const strided_array_t *x, strided_array_t *z,
-                                  size_t elem_size);
-
-/* =========================== Helper Macros =========================== */
-
-/* Use the built-in macro from bigarray.h instead of redefining it */
-
-/* =========================== Helper Functions =========================== */
-
-static size_t get_element_size(int kind) {
+static inline size_t get_element_size(int kind) {
   switch (kind) {
     case CAML_BA_FLOAT32:
       return sizeof(float);
@@ -244,1402 +142,3114 @@ static size_t get_element_size(int kind) {
     case CAML_BA_NATIVE_INT:
       return sizeof(intnat);
     case CAML_BA_COMPLEX32:
-      return 2 * sizeof(float);
+      return sizeof(c32_t);
     case CAML_BA_COMPLEX64:
-      return 2 * sizeof(double);
+      return sizeof(c64_t);
     default:
-      return 0;
+      return 0;  // Should not happen with supported types
   }
 }
 
-/* Initialize strided array info from OCaml values */
-static void init_strided_array(strided_array_t *arr, value vData, int ndim,
-                               value vShape, value vStrides, value vOffset) {
-  struct caml_ba_array *ba = Caml_ba_array_val(vData);
-  void *data = ba->data;
-  int offset = Int_val(vOffset);
-
-  int *shape = (int *)malloc(ndim * sizeof(int));
-  int *strides = (int *)malloc(ndim * sizeof(int));
-
-  for (int i = 0; i < ndim; i++) {
-    shape[i] = Int_val(Field(vShape, i));
-    strides[i] = Int_val(Field(vStrides, i));
-  }
-
-  nx_cblas_init_strided_array(arr, data, ndim, shape, strides, offset);
-
-  free(shape);
-  free(strides);
+static inline long total_elements(const ndarray_t *arr) {
+  if (arr->ndim == 0) return 1;
+  long total = 1;
+  for (int i = 0; i < arr->ndim; i++) total *= arr->shape[i];
+  return total;
 }
 
-/* =========================== Binary Operations =========================== */
+static inline int is_c_contiguous(const ndarray_t *arr) {
+  long expected_stride = 1;
+  for (int i = arr->ndim - 1; i >= 0; i--) {
+    if (arr->shape[i] > 1 && arr->strides[i] != expected_stride) return 0;
+    expected_stride *= arr->shape[i];
+  }
+  return 1;
+}
 
-#define DEFINE_BINARY_STUB(name)                                           \
-  CAMLprim value nx_##name(value vNdim, value vShape, value vX,            \
-                           value vXStrides, value vXOffset, value vY,      \
-                           value vYStrides, value vYOffset, value vZ,      \
-                           value vZStrides, value vZOffset) {              \
-    CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);                      \
-    CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);                        \
+// Optimized N-dimensional iterator that avoids division/modulo in inner loop
+// This structure maintains indices for each dimension
+typedef struct {
+  int ndim;
+  const int *shape;
+  const int *x_strides;
+  const int *y_strides;  // May be NULL for unary ops
+  const int *z_strides;
+  long x_offset;
+  long y_offset;  // May be unused for unary ops
+  long z_offset;
+  long indices[16];    // Stack allocation for common cases (ndim <= 16)
+  long *heap_indices;  // Heap allocation for larger ndim
+} nd_iterator_t;
+
+static inline void nd_iterator_init(nd_iterator_t *it, const ndarray_t *x,
+                                    const ndarray_t *y, const ndarray_t *z) {
+  it->ndim = x->ndim;
+  it->shape = x->shape;
+  it->x_strides = x->strides;
+  it->y_strides = y ? y->strides : NULL;
+  it->z_strides = z->strides;
+  it->x_offset = x->offset;
+  it->y_offset = y ? y->offset : 0;
+  it->z_offset = z->offset;
+
+  // Initialize indices to 0
+  if (it->ndim <= 16) {
+    it->heap_indices = NULL;
+    for (int i = 0; i < it->ndim; i++) it->indices[i] = 0;
+  } else {
+    it->heap_indices = calloc(it->ndim, sizeof(long));
+    if (it->heap_indices == NULL) {
+      caml_failwith("nd_iterator_init: failed to allocate memory for indices");
+    }
+  }
+}
+
+static inline void nd_iterator_destroy(nd_iterator_t *it) {
+  if (it->heap_indices) {
+    free(it->heap_indices);
+    it->heap_indices = NULL;
+  }
+}
+
+static inline int nd_iterator_next(nd_iterator_t *it) {
+  long *indices = it->heap_indices ? it->heap_indices : it->indices;
+
+  // Increment indices from innermost dimension
+  for (int d = it->ndim - 1; d >= 0; d--) {
+    indices[d]++;
+    if (indices[d] < it->shape[d]) {
+      return 1;  // More elements to process
+    }
+    indices[d] = 0;  // Reset and carry to next dimension
+  }
+  return 0;  // All elements processed
+}
+
+static inline void nd_iterator_get_offsets(const nd_iterator_t *it, long *x_off,
+                                           long *y_off, long *z_off) {
+  const long *indices = it->heap_indices ? it->heap_indices : it->indices;
+  *x_off = it->x_offset;
+  *z_off = it->z_offset;
+  if (y_off) *y_off = it->y_offset;
+
+  for (int d = 0; d < it->ndim; d++) {
+    *x_off += indices[d] * it->x_strides[d];
+    *z_off += indices[d] * it->z_strides[d];
+    if (y_off && it->y_strides) {
+      *y_off += indices[d] * it->y_strides[d];
+    }
+  }
+}
+
+// Parallel iteration helper for non-contiguous arrays
+// This function iterates over all elements except the outermost dimension
+static inline void iterate_inner_dims(
+    const ndarray_t *x, const ndarray_t *y, const ndarray_t *z, long outer_idx,
+    void (*op)(void *, void *, void *, long, long, long), void *x_data,
+    void *y_data, void *z_data) {
+  if (x->ndim == 1) {
+    // Base case: 1D array, just apply the operation
+    long x_off = x->offset + outer_idx * x->strides[0];
+    long y_off = y ? (y->offset + outer_idx * y->strides[0]) : 0;
+    long z_off = z->offset + outer_idx * z->strides[0];
+    op(x_data, y_data, z_data, x_off, y_off, z_off);
+  } else if (x->ndim == 2) {
+    // Common case: 2D array
+    long x_base = x->offset + outer_idx * x->strides[0];
+    long y_base = y ? (y->offset + outer_idx * y->strides[0]) : 0;
+    long z_base = z->offset + outer_idx * z->strides[0];
+
+    for (long j = 0; j < x->shape[1]; j++) {
+      long x_off = x_base + j * x->strides[1];
+      long y_off = y ? (y_base + j * y->strides[1]) : 0;
+      long z_off = z_base + j * z->strides[1];
+      op(x_data, y_data, z_data, x_off, y_off, z_off);
+    }
+  } else {
+    // General case: use iterator for inner dimensions
+    nd_iterator_t it;
+    it.ndim = x->ndim - 1;
+    it.shape = x->shape + 1;  // Skip first dimension
+    it.x_strides = x->strides + 1;
+    it.y_strides = y ? (y->strides + 1) : NULL;
+    it.z_strides = z->strides + 1;
+    it.x_offset = x->offset + outer_idx * x->strides[0];
+    it.y_offset = y ? (y->offset + outer_idx * y->strides[0]) : 0;
+    it.z_offset = z->offset + outer_idx * z->strides[0];
+
+    if (it.ndim <= 16) {
+      it.heap_indices = NULL;
+      for (int i = 0; i < it.ndim; i++) it.indices[i] = 0;
+    } else {
+      it.heap_indices = calloc(it.ndim, sizeof(long));
+      if (it.heap_indices == NULL) {
+        caml_failwith("iterate_inner_dims: failed to allocate memory");
+      }
+    }
+
+    do {
+      long x_off, y_off, z_off;
+      nd_iterator_get_offsets(&it, &x_off, y ? &y_off : NULL, &z_off);
+      op(x_data, y_data, z_data, x_off, y_off, z_off);
+    } while (nd_iterator_next(&it));
+
+    nd_iterator_destroy(&it);
+  }
+}
+
+static void nx_cblas_generic_copy(const ndarray_t *x, ndarray_t *z,
+                                  size_t elem_size) {
+  long total = total_elements(x);
+  if (total == 0) return;
+
+  if (is_c_contiguous(x) && is_c_contiguous(z)) {
+    memcpy((char *)z->data + z->offset * elem_size,
+           (char *)x->data + x->offset * elem_size, total * elem_size);
+  } else {
+    // Use optimized iterator for non-contiguous case
+    nd_iterator_t it;
+    nd_iterator_init(&it, x, NULL, z);
+
+    char *x_data = (char *)x->data;
+    char *z_data = (char *)z->data;
+
+    do {
+      long x_off, z_off;
+      nd_iterator_get_offsets(&it, &x_off, NULL, &z_off);
+      memcpy(z_data + z_off * elem_size, x_data + x_off * elem_size, elem_size);
+    } while (nd_iterator_next(&it));
+
+    nd_iterator_destroy(&it);
+  }
+}
+
+// Cast operation kernel for use with parallel iterator
+#define DEFINE_CAST_OP_KERNEL(T_SRC, T_DST, CAST_OP)                    \
+  static void nx_cblas_cast_##T_SRC##_to_##T_DST##_kernel(              \
+      void *x_data, void *y_data, void *z_data, long x_off, long y_off, \
+      long z_off) {                                                     \
+    (void)y_data;                                                       \
+    (void)y_off; /* Unused for cast ops */                              \
+    T_SRC *x = (T_SRC *)x_data;                                         \
+    T_DST *z = (T_DST *)z_data;                                         \
+    z[z_off] = CAST_OP(x[x_off]);                                       \
+  }
+
+#define DEFINE_CAST_OP(T_SRC, T_DST, CAST_OP)                              \
+  DEFINE_CAST_OP_KERNEL(T_SRC, T_DST, CAST_OP)                             \
+  static void nx_cblas_cast_##T_SRC##_to_##T_DST(const ndarray_t *x,       \
+                                                 ndarray_t *z) {           \
+    T_SRC *x_data = (T_SRC *)x->data;                                      \
+    T_DST *z_data = (T_DST *)z->data;                                      \
+    long total = total_elements(x);                                        \
+    if (total == 0) return;                                                \
                                                                            \
-    int ndim = Int_val(vNdim);                                             \
-    strided_array_t x, y, z;                                               \
-                                                                           \
-    init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);         \
-    init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);         \
-    init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);         \
-                                                                           \
-    caml_enter_blocking_section();                                         \
-                                                                           \
-    struct caml_ba_array *ba = Caml_ba_array_val(vX);                      \
-    int kind = ba->flags & CAML_BA_KIND_MASK;                              \
-                                                                           \
-    if (kind == CAML_BA_FLOAT32) {                                         \
-      nx_cblas_##name##_f32(&x, &y, &z);                                   \
-    } else if (kind == CAML_BA_FLOAT64) {                                  \
-      nx_cblas_##name##_f64(&x, &y, &z);                                   \
+    if (is_c_contiguous(x) && is_c_contiguous(z)) {                        \
+      T_SRC *x_ptr = x_data + x->offset;                                   \
+      T_DST *z_ptr = z_data + z->offset;                                   \
+      _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {  \
+        z_ptr[i] = CAST_OP(x_ptr[i]);                                      \
+      }                                                                    \
+    } else if (x->ndim > 0) {                                              \
+      /* Parallelize over the outermost dimension */                       \
+      _Pragma("omp parallel for") for (long i = 0; i < x->shape[0]; i++) { \
+        iterate_inner_dims(x, NULL, z, i,                                  \
+                           nx_cblas_cast_##T_SRC##_to_##T_DST##_kernel,    \
+                           x_data, NULL, z_data);                          \
+      }                                                                    \
     } else {                                                               \
-      caml_leave_blocking_section();                                       \
-      nx_cblas_free_strided_array(&x);                                     \
-      nx_cblas_free_strided_array(&y);                                     \
-      nx_cblas_free_strided_array(&z);                                     \
-      caml_failwith(#name ": unsupported dtype");                          \
+      /* Scalar case */                                                    \
+      z_data[z->offset] = CAST_OP(x_data[x->offset]);                      \
     }                                                                      \
-                                                                           \
-    caml_leave_blocking_section();                                         \
-                                                                           \
-    nx_cblas_free_strided_array(&x);                                       \
-    nx_cblas_free_strided_array(&y);                                       \
-    nx_cblas_free_strided_array(&z);                                       \
-                                                                           \
-    CAMLreturn(Val_unit);                                                  \
-  }                                                                        \
-                                                                           \
-  CAMLprim value nx_##name##_bc(value *argv, int argn) {                   \
-    return nx_##name(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], \
-                     argv[6], argv[7], argv[8], argv[9], argv[10]);        \
   }
 
-/* Custom implementations for operations that support integers */
+DEFINE_CAST_OP(float, double, (double))
+DEFINE_CAST_OP(double, float, (float))
+DEFINE_CAST_OP(int32_t, float, (float))
+DEFINE_CAST_OP(int64_t, float, (float))
+DEFINE_CAST_OP(float, int32_t, (int32_t))
+DEFINE_CAST_OP(float, int64_t, (int64_t))
+DEFINE_CAST_OP(double, int32_t, (int32_t))
+DEFINE_CAST_OP(double, int64_t, (int64_t))
+DEFINE_CAST_OP(int32_t, double, (double))
+DEFINE_CAST_OP(int64_t, double, (double))
+DEFINE_CAST_OP(int16_t, float, (float))
+DEFINE_CAST_OP(int16_t, double, (double))
+DEFINE_CAST_OP(int16_t, int32_t, (int32_t))
+DEFINE_CAST_OP(int16_t, int64_t, (int64_t))
+DEFINE_CAST_OP(int32_t, int16_t, (int16_t))
+DEFINE_CAST_OP(int64_t, int16_t, (int16_t))
+DEFINE_CAST_OP(float, int16_t, (int16_t))
+DEFINE_CAST_OP(double, int16_t, (int16_t))
+DEFINE_CAST_OP(uint8_t, int32_t, (int32_t))
+DEFINE_CAST_OP(uint8_t, float, (float))
+DEFINE_CAST_OP(uint8_t, double, (double))
+DEFINE_CAST_OP(int32_t, uint8_t, (uint8_t))
+DEFINE_CAST_OP(float, uint8_t, (uint8_t))
+DEFINE_CAST_OP(double, uint8_t, (uint8_t))
 
-CAMLprim value nx_add(value vNdim, value vShape, value vX,
-                     value vXStrides, value vXOffset, value vY,
-                     value vYStrides, value vYOffset, value vZ,
-                     value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
-  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, y, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_add_f32(&x, &y, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_add_f64(&x, &y, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_add_i32(&x, &y, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_add_i64(&x, &y, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&y);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("add: unsupported dtype");
+// Unary operation kernel for use with parallel iterator
+#define DEFINE_UNARY_OP_KERNEL(name, T, OP)                              \
+  static void nx_cblas_##name##_##T##_kernel(void *x_data, void *y_data, \
+                                             void *z_data, long x_off,   \
+                                             long y_off, long z_off) {   \
+    (void)y_data;                                                        \
+    (void)y_off; /* Unused for unary ops */                              \
+    T *x = (T *)x_data;                                                  \
+    T *z = (T *)z_data;                                                  \
+    z[z_off] = OP(x[x_off]);                                             \
   }
 
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&y);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_add_bc(value *argv, int argn) {
-  return nx_add(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                argv[6], argv[7], argv[8], argv[9], argv[10]);
-}
-
-CAMLprim value nx_sub(value vNdim, value vShape, value vX,
-                     value vXStrides, value vXOffset, value vY,
-                     value vYStrides, value vYOffset, value vZ,
-                     value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
-  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, y, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_sub_f32(&x, &y, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_sub_f64(&x, &y, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_sub_i32(&x, &y, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_sub_i64(&x, &y, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&y);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("sub: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&y);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_sub_bc(value *argv, int argn) {
-  return nx_sub(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                argv[6], argv[7], argv[8], argv[9], argv[10]);
-}
-
-CAMLprim value nx_mul(value vNdim, value vShape, value vX,
-                     value vXStrides, value vXOffset, value vY,
-                     value vYStrides, value vYOffset, value vZ,
-                     value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
-  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, y, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_mul_f32(&x, &y, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_mul_f64(&x, &y, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_mul_i32(&x, &y, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_mul_i64(&x, &y, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&y);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("mul: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&y);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_mul_bc(value *argv, int argn) {
-  return nx_mul(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                argv[6], argv[7], argv[8], argv[9], argv[10]);
-}
-
-CAMLprim value nx_div(value vNdim, value vShape, value vX,
-                     value vXStrides, value vXOffset, value vY,
-                     value vYStrides, value vYOffset, value vZ,
-                     value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
-  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, y, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_div_f32(&x, &y, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_div_f64(&x, &y, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_div_i32(&x, &y, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_div_i64(&x, &y, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&y);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("div: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&y);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_div_bc(value *argv, int argn) {
-  return nx_div(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                argv[6], argv[7], argv[8], argv[9], argv[10]);
-}
-
-CAMLprim value nx_max(value vNdim, value vShape, value vX,
-                     value vXStrides, value vXOffset, value vY,
-                     value vYStrides, value vYOffset, value vZ,
-                     value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
-  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, y, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_max_f32(&x, &y, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_max_f64(&x, &y, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_max_i32(&x, &y, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_max_i64(&x, &y, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&y);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("max: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&y);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_max_bc(value *argv, int argn) {
-  return nx_max(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                argv[6], argv[7], argv[8], argv[9], argv[10]);
-}
-DEFINE_BINARY_STUB(pow)
-DEFINE_BINARY_STUB(mod)
-
-/* =========================== Unary Operations =========================== */
-
-#define DEFINE_UNARY_STUB(name)                                            \
-  CAMLprim value nx_##name(value vNdim, value vShape, value vX,            \
-                           value vXStrides, value vXOffset, value vZ,      \
-                           value vZStrides, value vZOffset) {              \
-    CAMLparam5(vShape, vX, vXStrides, vZ, vZStrides);                      \
-    CAMLxparam1(vZOffset);                                                 \
+#define DEFINE_UNARY_OP(name, T, OP)                                       \
+  DEFINE_UNARY_OP_KERNEL(name, T, OP)                                      \
+  static void nx_cblas_##name##_##T(const ndarray_t *x, ndarray_t *z) {    \
+    T *x_data = (T *)x->data;                                              \
+    T *z_data = (T *)z->data;                                              \
+    long total = total_elements(x);                                        \
+    if (total == 0) return;                                                \
                                                                            \
-    int ndim = Int_val(vNdim);                                             \
-    strided_array_t x, z;                                                  \
-                                                                           \
-    init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);         \
-    init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);         \
-                                                                           \
-    caml_enter_blocking_section();                                         \
-                                                                           \
-    struct caml_ba_array *ba = Caml_ba_array_val(vX);                      \
-    int kind = ba->flags & CAML_BA_KIND_MASK;                              \
-                                                                           \
-    if (kind == CAML_BA_FLOAT32) {                                         \
-      nx_cblas_##name##_f32(&x, &z);                                       \
-    } else if (kind == CAML_BA_FLOAT64) {                                  \
-      nx_cblas_##name##_f64(&x, &z);                                       \
+    if (is_c_contiguous(x) && is_c_contiguous(z)) {                        \
+      T *x_ptr = x_data + x->offset;                                       \
+      T *z_ptr = z_data + z->offset;                                       \
+      _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {  \
+        z_ptr[i] = OP(x_ptr[i]);                                           \
+      }                                                                    \
+    } else if (x->ndim > 0) {                                              \
+      /* Parallelize over the outermost dimension */                       \
+      _Pragma("omp parallel for") for (long i = 0; i < x->shape[0]; i++) { \
+        iterate_inner_dims(x, NULL, z, i, nx_cblas_##name##_##T##_kernel,  \
+                           x_data, NULL, z_data);                          \
+      }                                                                    \
     } else {                                                               \
-      caml_leave_blocking_section();                                       \
-      nx_cblas_free_strided_array(&x);                                     \
-      nx_cblas_free_strided_array(&z);                                     \
-      caml_failwith(#name ": unsupported dtype");                          \
+      /* Scalar case */                                                    \
+      z_data[z->offset] = OP(x_data[x->offset]);                           \
     }                                                                      \
-                                                                           \
-    caml_leave_blocking_section();                                         \
-                                                                           \
-    nx_cblas_free_strided_array(&x);                                       \
-    nx_cblas_free_strided_array(&z);                                       \
-                                                                           \
-    CAMLreturn(Val_unit);                                                  \
-  }                                                                        \
-                                                                           \
-  CAMLprim value nx_##name##_bc(value *argv, int argn) {                   \
-    return nx_##name(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], \
-                     argv[6], argv[7]);                                    \
   }
 
-/* Special neg that handles integers */
-CAMLprim value nx_neg(value vNdim, value vShape, value vX,
-                     value vXStrides, value vXOffset, value vZ,
-                     value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vZ, vZStrides);
-  CAMLxparam1(vZOffset);
+// -- Negation Implementations --
+DEFINE_UNARY_OP(neg_generic, float, -)
+DEFINE_UNARY_OP(neg_generic, double, -)
+DEFINE_UNARY_OP(neg_generic, c32_t, -)
+DEFINE_UNARY_OP(neg_generic, c64_t, -)
 
-  int ndim = Int_val(vNdim);
-  strided_array_t x, z;
+static void nx_cblas_neg_float(const ndarray_t *x, ndarray_t *z) {
+  if (is_c_contiguous(x) && is_c_contiguous(z)) {
+    long total = total_elements(x);
+    float *x_ptr = (float *)x->data + x->offset;
+    float *z_ptr = (float *)z->data + z->offset;
 
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_neg_f32(&x, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_neg_f64(&x, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_neg_i32(&x, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_neg_i64(&x, &z);
+    _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {
+      z_ptr[i] = -x_ptr[i];
+    }
   } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("neg: unsupported dtype");
+    nx_cblas_neg_generic_float(x, z);
+  }
+}
+static void nx_cblas_neg_double(const ndarray_t *x, ndarray_t *z) {
+  if (is_c_contiguous(x) && is_c_contiguous(z)) {
+    long total = total_elements(x);
+    double *x_ptr = (double *)x->data + x->offset;
+    double *z_ptr = (double *)z->data + z->offset;
+
+    _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {
+      z_ptr[i] = -x_ptr[i];
+    }
+  } else {
+    nx_cblas_neg_generic_double(x, z);
+  }
+}
+DEFINE_UNARY_OP(neg, int8_t, -)
+DEFINE_UNARY_OP(neg, int16_t, -)
+DEFINE_UNARY_OP(neg, int32_t, -)
+DEFINE_UNARY_OP(neg, int64_t, -)
+DEFINE_UNARY_OP(neg, intnat, -)  // Covers both int and nativeint
+DEFINE_UNARY_OP(neg, c32_t, -)
+DEFINE_UNARY_OP(neg, c64_t, -)
+
+// -- Other Unary Implementations --
+DEFINE_UNARY_OP(sqrt, float, sqrtf)
+DEFINE_UNARY_OP(sqrt, double, sqrt)
+DEFINE_UNARY_OP(sqrt, c32_t, csqrtf)
+DEFINE_UNARY_OP(sqrt, c64_t, csqrt)
+
+DEFINE_UNARY_OP(sin, float, sinf)
+DEFINE_UNARY_OP(sin, double, sin)
+DEFINE_UNARY_OP(sin, c32_t, csinf)
+DEFINE_UNARY_OP(sin, c64_t, csin)
+
+DEFINE_UNARY_OP(exp2, float, exp2f)
+DEFINE_UNARY_OP(exp2, double, exp2)
+// Note: exp2 is not in the C standard for complex, must be built from exp
+static inline c32_t cexp2f_op(c32_t v) { return cexpf(v * M_LN2); }
+static inline c64_t cexp2_op(c64_t v) { return cexp(v * M_LN2); }
+DEFINE_UNARY_OP(exp2, c32_t, cexp2f_op)
+DEFINE_UNARY_OP(exp2, c64_t, cexp2_op)
+
+DEFINE_UNARY_OP(log2, float, log2f)
+DEFINE_UNARY_OP(log2, double, log2)
+// Note: log2 is not in the C standard for complex, must be built from log
+static inline c32_t clog2f_op(c32_t v) { return clogf(v) / M_LN2; }
+static inline c64_t clog2_op(c64_t v) { return clog(v) / M_LN2; }
+DEFINE_UNARY_OP(log2, c32_t, clog2f_op)
+DEFINE_UNARY_OP(log2, c64_t, clog2_op)
+
+static inline float recipf_op(float v) { return 1.0f / v; }
+static inline double recip_op(double v) { return 1.0 / v; }
+static inline c32_t crecipf_op(c32_t v) { return 1.0f / v; }
+static inline c64_t crecip_op(c64_t v) { return 1.0 / v; }
+DEFINE_UNARY_OP(recip, float, recipf_op)
+DEFINE_UNARY_OP(recip, double, recip_op)
+DEFINE_UNARY_OP(recip, c32_t, crecipf_op)
+DEFINE_UNARY_OP(recip, c64_t, crecip_op)
+
+#define ADD_OP(a, b) ((a) + (b))
+#define SUB_OP(a, b) ((a) - (b))
+#define MUL_OP(a, b) ((a) * (b))
+#define DIV_OP(a, b) ((a) / (b))
+#define MOD_OP(a, b) ((a) % (b))
+#define MAX_OP(a, b) ((a) > (b) ? (a) : (b))
+#define POW_OP(a, b) pow(a, b)
+#define FMAX_OP(a, b) fmax(a, b)
+#define MAX_NAN_OP(a, b) (isnan(a) || isnan(b) ? NAN : fmax(a, b))
+#define MIN_NAN_OP(a, b) (isnan(a) || isnan(b) ? NAN : fmin(a, b))
+#define FMOD_OP(a, b) fmod(a, b)
+#define XOR_OP(a, b) ((a) ^ (b))
+#define OR_OP(a, b) ((a) | (b))
+#define AND_OP(a, b) ((a) & (b))
+#define CMPLT_OP(a, b) ((a) < (b))
+#define CMPNE_OP(a, b) ((a) != (b))
+
+static inline int32_t idiv_op_i32(int32_t a, int32_t b) {
+  return b == 0 ? 0 : a / b;
+}
+static inline int64_t idiv_op_i64(int64_t a, int64_t b) {
+  return b == 0 ? 0 : a / b;
+}
+
+// Binary operation kernel for use with parallel iterator
+#define DEFINE_BINARY_OP_KERNEL(name, T, OP)                             \
+  static void nx_cblas_##name##_##T##_kernel(void *x_data, void *y_data, \
+                                             void *z_data, long x_off,   \
+                                             long y_off, long z_off) {   \
+    T *x = (T *)x_data;                                                  \
+    T *y = (T *)y_data;                                                  \
+    T *z = (T *)z_data;                                                  \
+    z[z_off] = OP(x[x_off], y[y_off]);                                   \
   }
 
-  caml_leave_blocking_section();
+// Comparison operation kernel that returns uint8_t
+#define DEFINE_COMPARE_OP_KERNEL(name, T, OP)                            \
+  static void nx_cblas_##name##_##T##_kernel(void *x_data, void *y_data, \
+                                             void *z_data, long x_off,   \
+                                             long y_off, long z_off) {   \
+    T *x = (T *)x_data;                                                  \
+    T *y = (T *)y_data;                                                  \
+    uint8_t *z = (uint8_t *)z_data;                                      \
+    z[z_off] = OP(x[x_off], y[y_off]) ? 1 : 0;                           \
+  }
 
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&z);
+// The DEFINE_BINARY_OP macro with parallel support for non-contiguous arrays
+#define DEFINE_BINARY_OP(name, T, OP)                                          \
+  DEFINE_BINARY_OP_KERNEL(name, T, OP)                                         \
+  static void nx_cblas_##name##_##T(const ndarray_t *x, const ndarray_t *y,    \
+                                    ndarray_t *z) {                            \
+    T *x_data = (T *)x->data;                                                  \
+    T *y_data = (T *)y->data;                                                  \
+    T *z_data = (T *)z->data;                                                  \
+    long total = total_elements(x);                                            \
+    if (total == 0) return;                                                    \
+    if (is_c_contiguous(x) && is_c_contiguous(y) && is_c_contiguous(z)) {      \
+      T *x_ptr = x_data + x->offset;                                           \
+      T *y_ptr = y_data + y->offset;                                           \
+      T *z_ptr = z_data + z->offset;                                           \
+      _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {      \
+        z_ptr[i] = OP(x_ptr[i], y_ptr[i]);                                     \
+      }                                                                        \
+    } else if (x->ndim > 0) {                                                  \
+      /* Parallelize over the outermost dimension */                           \
+      _Pragma("omp parallel for") for (long i = 0; i < x->shape[0]; i++) {     \
+        iterate_inner_dims(x, y, z, i, nx_cblas_##name##_##T##_kernel, x_data, \
+                           y_data, z_data);                                    \
+      }                                                                        \
+    } else {                                                                   \
+      /* Scalar case */                                                        \
+      z_data[z->offset] = OP(x_data[x->offset], y_data[y->offset]);            \
+    }                                                                          \
+  }
 
-  CAMLreturn(Val_unit);
-}
+// BLAS-able ops
+DEFINE_BINARY_OP(add_generic, float, ADD_OP)
+static void nx_cblas_add_float(const ndarray_t *x, const ndarray_t *y,
+                               ndarray_t *z) {
+  if (is_c_contiguous(x) && is_c_contiguous(y) && is_c_contiguous(z)) {
+    long total = total_elements(x);
+    float *x_ptr = (float *)x->data + x->offset;
+    float *y_ptr = (float *)y->data + y->offset;
+    float *z_ptr = (float *)z->data + z->offset;
 
-CAMLprim value nx_neg_bc(value *argv, int argn) {
-  return nx_neg(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-               argv[6], argv[7]);
-}
-DEFINE_UNARY_STUB(sqrt)
-DEFINE_UNARY_STUB(sin)
-DEFINE_UNARY_STUB(exp2)
-DEFINE_UNARY_STUB(log2)
-DEFINE_UNARY_STUB(recip)
-
-/* =========================== Copy Operation =========================== */
-
-CAMLprim value nx_copy(value vNdim, value vShape, value vX, value vXStrides,
-                       value vXOffset, value vZ, value vZStrides,
-                       value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vZ, vZStrides);
-  CAMLxparam1(vZOffset);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_copy_f32(&x, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_copy_f64(&x, &z);
+    _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {
+      z_ptr[i] = x_ptr[i] + y_ptr[i];
+    }
   } else {
+    nx_cblas_add_generic_float(x, y, z);
+  }
+}
+DEFINE_BINARY_OP(sub_generic, float, SUB_OP)
+static void nx_cblas_sub_float(const ndarray_t *x, const ndarray_t *y,
+                               ndarray_t *z) {
+  if (is_c_contiguous(x) && is_c_contiguous(y) && is_c_contiguous(z)) {
+    long total = total_elements(x);
+    float *x_ptr = (float *)x->data + x->offset;
+    float *y_ptr = (float *)y->data + y->offset;
+    float *z_ptr = (float *)z->data + z->offset;
+
+    _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {
+      z_ptr[i] = x_ptr[i] - y_ptr[i];
+    }
+  } else {
+    nx_cblas_sub_generic_float(x, y, z);
+  }
+}
+
+// FIX: Use the new operator macros
+DEFINE_BINARY_OP(add, int32_t, ADD_OP)
+DEFINE_BINARY_OP(sub, int32_t, SUB_OP)
+DEFINE_BINARY_OP(mul, int32_t, MUL_OP)
+DEFINE_BINARY_OP(idiv, int32_t, idiv_op_i32)
+DEFINE_BINARY_OP(max, int32_t, MAX_OP)
+DEFINE_BINARY_OP(mod, int32_t, MOD_OP)
+DEFINE_BINARY_OP(xor, int32_t, XOR_OP)
+DEFINE_BINARY_OP(or, int32_t, OR_OP)
+DEFINE_BINARY_OP(and, int32_t, AND_OP)
+
+DEFINE_BINARY_OP(add, int64_t, ADD_OP)
+DEFINE_BINARY_OP(sub, int64_t, SUB_OP)
+DEFINE_BINARY_OP(mul, int64_t, MUL_OP)
+DEFINE_BINARY_OP(idiv, int64_t, idiv_op_i64)
+DEFINE_BINARY_OP(max, int64_t, MAX_OP)
+DEFINE_BINARY_OP(mod, int64_t, MOD_OP)
+DEFINE_BINARY_OP(xor, int64_t, XOR_OP)
+DEFINE_BINARY_OP(or, int64_t, OR_OP)
+DEFINE_BINARY_OP(and, int64_t, AND_OP)
+
+// Add uint8 support for bitwise operations (needed for logical operations on
+// comparison results)
+DEFINE_BINARY_OP(xor, uint8_t, XOR_OP)
+DEFINE_BINARY_OP(or, uint8_t, OR_OP)
+DEFINE_BINARY_OP(and, uint8_t, AND_OP)
+
+DEFINE_BINARY_OP(mul, float, MUL_OP)
+DEFINE_BINARY_OP(fdiv, float, DIV_OP)
+DEFINE_BINARY_OP(max, float, FMAX_OP)
+DEFINE_BINARY_OP(mod, float, FMOD_OP)
+DEFINE_BINARY_OP(pow, float, POW_OP)
+
+// Add float64 (double) binary operations
+DEFINE_BINARY_OP(add_generic, double, ADD_OP)
+static void nx_cblas_add_double(const ndarray_t *x, const ndarray_t *y,
+                                ndarray_t *z) {
+  if (is_c_contiguous(x) && is_c_contiguous(y) && is_c_contiguous(z)) {
+    long total = total_elements(x);
+    double *x_ptr = (double *)x->data + x->offset;
+    double *y_ptr = (double *)y->data + y->offset;
+    double *z_ptr = (double *)z->data + z->offset;
+
+    _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {
+      z_ptr[i] = x_ptr[i] + y_ptr[i];
+    }
+  } else {
+    nx_cblas_add_generic_double(x, y, z);
+  }
+}
+
+DEFINE_BINARY_OP(sub_generic, double, SUB_OP)
+static void nx_cblas_sub_double(const ndarray_t *x, const ndarray_t *y,
+                                ndarray_t *z) {
+  if (is_c_contiguous(x) && is_c_contiguous(y) && is_c_contiguous(z)) {
+    long total = total_elements(x);
+    double *x_ptr = (double *)x->data + x->offset;
+    double *y_ptr = (double *)y->data + y->offset;
+    double *z_ptr = (double *)z->data + z->offset;
+
+    _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {
+      z_ptr[i] = x_ptr[i] - y_ptr[i];
+    }
+  } else {
+    nx_cblas_sub_generic_double(x, y, z);
+  }
+}
+
+DEFINE_BINARY_OP(mul, double, MUL_OP)
+DEFINE_BINARY_OP(fdiv, double, DIV_OP)
+DEFINE_BINARY_OP(max, double, FMAX_OP)
+DEFINE_BINARY_OP(mod, double, FMOD_OP)
+DEFINE_BINARY_OP(pow, double, POW_OP)
+
+// Add complex32 binary operations
+DEFINE_BINARY_OP(add, c32_t, ADD_OP)
+DEFINE_BINARY_OP(sub, c32_t, SUB_OP)
+DEFINE_BINARY_OP(mul, c32_t, MUL_OP)
+DEFINE_BINARY_OP(fdiv, c32_t, DIV_OP)
+
+// Add complex64 binary operations
+DEFINE_BINARY_OP(add, c64_t, ADD_OP)
+DEFINE_BINARY_OP(sub, c64_t, SUB_OP)
+DEFINE_BINARY_OP(mul, c64_t, MUL_OP)
+DEFINE_BINARY_OP(fdiv, c64_t, DIV_OP)
+
+// Comparison operation macro that returns uint8_t results
+#define DEFINE_COMPARE_OP(name, T, OP)                                         \
+  DEFINE_COMPARE_OP_KERNEL(name, T, OP)                                        \
+  static void nx_cblas_##name##_##T(const ndarray_t *x, const ndarray_t *y,    \
+                                    ndarray_t *z) {                            \
+    T *x_data = (T *)x->data;                                                  \
+    T *y_data = (T *)y->data;                                                  \
+    uint8_t *z_data = (uint8_t *)z->data;                                      \
+    long total = total_elements(x);                                            \
+    if (total == 0) return;                                                    \
+    if (is_c_contiguous(x) && is_c_contiguous(y) && is_c_contiguous(z)) {      \
+      T *x_ptr = x_data + x->offset;                                           \
+      T *y_ptr = y_data + y->offset;                                           \
+      uint8_t *z_ptr = z_data + z->offset;                                     \
+      _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {      \
+        z_ptr[i] = OP(x_ptr[i], y_ptr[i]) ? 1 : 0;                             \
+      }                                                                        \
+    } else if (x->ndim > 0) {                                                  \
+      /* Parallelize over the outermost dimension */                           \
+      _Pragma("omp parallel for") for (long i = 0; i < x->shape[0]; i++) {     \
+        iterate_inner_dims(x, y, z, i, nx_cblas_##name##_##T##_kernel, x_data, \
+                           y_data, z_data);                                    \
+      }                                                                        \
+    } else {                                                                   \
+      /* Scalar case */                                                        \
+      z_data[z->offset] = OP(x_data[x->offset], y_data[y->offset]) ? 1 : 0;    \
+    }                                                                          \
+  }
+
+// Define comparison operations for all numeric types
+DEFINE_COMPARE_OP(cmplt, uint8_t, CMPLT_OP)
+DEFINE_COMPARE_OP(cmplt, int32_t, CMPLT_OP)
+DEFINE_COMPARE_OP(cmplt, int64_t, CMPLT_OP)
+DEFINE_COMPARE_OP(cmplt, intnat, CMPLT_OP)
+DEFINE_COMPARE_OP(cmplt, float, CMPLT_OP)
+DEFINE_COMPARE_OP(cmplt, double, CMPLT_OP)
+
+DEFINE_COMPARE_OP(cmpne, uint8_t, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, int32_t, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, int64_t, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, intnat, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, float, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, double, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, c32_t, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, c64_t, CMPNE_OP)
+
+// Reduce operation helpers
+static void compute_reduction_params(const ndarray_t *x, const int *axes,
+                                     int num_axes, int *reduce_shape,
+                                     int *reduce_strides, int *outer_shape,
+                                     int *outer_strides, int *result_shape,
+                                     int *result_strides) {
+  // Initialize all dimensions as kept
+  for (int i = 0; i < x->ndim; i++) {
+    outer_shape[i] = x->shape[i];
+    outer_strides[i] = x->strides[i];
+    result_shape[i] = x->shape[i];
+    result_strides[i] = 0;  // Will be computed based on result layout
+  }
+
+  // Mark axes to reduce
+  for (int i = 0; i < num_axes; i++) {
+    int axis = axes[i];
+    if (axis < 0) axis += x->ndim;  // Handle negative indices
+    reduce_shape[i] = x->shape[axis];
+    reduce_strides[i] = x->strides[axis];
+    outer_shape[axis] = 1;
+    result_shape[axis] = 1;
+  }
+
+  // Compute result strides for C-contiguous layout
+  int stride = 1;
+  for (int i = x->ndim - 1; i >= 0; i--) {
+    result_strides[i] = stride;
+    stride *= result_shape[i];
+  }
+}
+
+// Generic reduce kernel
+#define DEFINE_REDUCE_OP_KERNEL(name, T, INIT, OP)                            \
+  static void nx_cblas_reduce_##name##_##T##_kernel(                          \
+      const ndarray_t *x, ndarray_t *z, const int *axes, int num_axes) {      \
+    T *x_data = (T *)x->data;                                                 \
+    T *z_data = (T *)z->data;                                                 \
+                                                                              \
+    int reduce_shape[16], reduce_strides[16];                                 \
+    int outer_shape[16], outer_strides[16];                                   \
+    int result_shape[16], result_strides[16];                                 \
+                                                                              \
+    compute_reduction_params(x, axes, num_axes, reduce_shape, reduce_strides, \
+                             outer_shape, outer_strides, result_shape,        \
+                             result_strides);                                 \
+                                                                              \
+    /* Initialize output to identity element */                               \
+    long z_total = 1;                                                         \
+    for (int i = 0; i < x->ndim; i++) z_total *= result_shape[i];             \
+    _Pragma("omp parallel for simd") for (long i = 0; i < z_total; i++) {     \
+      z_data[z->offset + i] = INIT;                                           \
+    }                                                                         \
+                                                                              \
+    /* Perform reduction */                                                   \
+    long total_outer = 1;                                                     \
+    for (int i = 0; i < x->ndim; i++) {                                       \
+      if (outer_shape[i] > 1) total_outer *= outer_shape[i];                  \
+    }                                                                         \
+                                                                              \
+    _Pragma("omp parallel for") for (long outer_idx = 0;                      \
+                                     outer_idx < total_outer; outer_idx++) {  \
+      /* Compute position in non-reduced dimensions */                        \
+      long temp = outer_idx;                                                  \
+      long x_outer_offset = x->offset;                                        \
+      long z_offset = z->offset;                                              \
+                                                                              \
+      for (int d = x->ndim - 1; d >= 0; d--) {                                \
+        if (outer_shape[d] > 1) {                                             \
+          long dim_idx = temp % outer_shape[d];                               \
+          x_outer_offset += dim_idx * outer_strides[d];                       \
+          z_offset += dim_idx * result_strides[d];                            \
+          temp /= outer_shape[d];                                             \
+        }                                                                     \
+      }                                                                       \
+                                                                              \
+      /* Iterate over axes to reduce */                                       \
+      if (num_axes == 1) {                                                    \
+        /* Common case: single axis reduction */                              \
+        int axis = axes[0];                                                   \
+        if (axis < 0) axis += x->ndim;                                        \
+        T acc = INIT;                                                         \
+        for (int i = 0; i < x->shape[axis]; i++) {                            \
+          long x_idx = x_outer_offset + i * x->strides[axis];                 \
+          acc = OP(acc, x_data[x_idx]);                                       \
+        }                                                                     \
+        z_data[z_offset] = acc;                                               \
+      } else {                                                                \
+        /* General case: multiple axes */                                     \
+        long reduce_total = 1;                                                \
+        for (int i = 0; i < num_axes; i++) {                                  \
+          reduce_total *= reduce_shape[i];                                    \
+        }                                                                     \
+                                                                              \
+        T acc = INIT;                                                         \
+        for (long i = 0; i < reduce_total; i++) {                             \
+          long reduce_offset = 0;                                             \
+          long temp_i = i;                                                    \
+          for (int j = num_axes - 1; j >= 0; j--) {                           \
+            reduce_offset += (temp_i % reduce_shape[j]) * reduce_strides[j];  \
+            temp_i /= reduce_shape[j];                                        \
+          }                                                                   \
+          acc = OP(acc, x_data[x_outer_offset + reduce_offset]);              \
+        }                                                                     \
+        z_data[z_offset] = acc;                                               \
+      }                                                                       \
+    }                                                                         \
+  }
+
+// Define reduce operations for different types
+#define SUM_OP(a, b) ((a) + (b))
+#define PROD_OP(a, b) ((a) * (b))
+
+DEFINE_REDUCE_OP_KERNEL(sum, uint8_t, 0, SUM_OP)
+DEFINE_REDUCE_OP_KERNEL(sum, int32_t, 0, SUM_OP)
+DEFINE_REDUCE_OP_KERNEL(sum, int64_t, 0, SUM_OP)
+DEFINE_REDUCE_OP_KERNEL(sum, float, 0.0f, SUM_OP)
+DEFINE_REDUCE_OP_KERNEL(sum, double, 0.0, SUM_OP)
+
+DEFINE_REDUCE_OP_KERNEL(max, uint8_t, 0, MAX_OP)
+DEFINE_REDUCE_OP_KERNEL(max, int32_t, INT32_MIN, MAX_OP)
+DEFINE_REDUCE_OP_KERNEL(max, int64_t, INT64_MIN, MAX_OP)
+DEFINE_REDUCE_OP_KERNEL(max, float, -INFINITY, MAX_NAN_OP)
+DEFINE_REDUCE_OP_KERNEL(max, double, -INFINITY, MAX_NAN_OP)
+
+DEFINE_REDUCE_OP_KERNEL(prod, uint8_t, 1, PROD_OP)
+DEFINE_REDUCE_OP_KERNEL(prod, int32_t, 1, PROD_OP)
+DEFINE_REDUCE_OP_KERNEL(prod, int64_t, 1, PROD_OP)
+DEFINE_REDUCE_OP_KERNEL(prod, float, 1.0f, PROD_OP)
+DEFINE_REDUCE_OP_KERNEL(prod, double, 1.0, PROD_OP)
+
+// Helper for where operation with 4 arrays
+static inline void iterate_where_inner_dims(
+    const ndarray_t *cond, const ndarray_t *x, const ndarray_t *y,
+    const ndarray_t *z, long outer_idx,
+    void (*op)(void *, void *, void *, void *, long, long, long, long),
+    void *cond_data, void *x_data, void *y_data, void *z_data);
+
+// Where operation - conditional selection
+#define DEFINE_WHERE_OP_KERNEL(T)                                \
+  static void nx_cblas_where_##T##_kernel(                       \
+      void *cond_data, void *x_data, void *y_data, void *z_data, \
+      long cond_off, long x_off, long y_off, long z_off) {       \
+    uint8_t *cond = (uint8_t *)cond_data;                        \
+    T *x = (T *)x_data;                                          \
+    T *y = (T *)y_data;                                          \
+    T *z = (T *)z_data;                                          \
+    z[z_off] = cond[cond_off] ? x[x_off] : y[y_off];             \
+  }
+
+#define DEFINE_WHERE_OP(T)                                                   \
+  DEFINE_WHERE_OP_KERNEL(T)                                                  \
+  static void nx_cblas_where_##T(const ndarray_t *cond, const ndarray_t *x,  \
+                                 const ndarray_t *y, ndarray_t *z) {         \
+    uint8_t *cond_data = (uint8_t *)cond->data;                              \
+    T *x_data = (T *)x->data;                                                \
+    T *y_data = (T *)y->data;                                                \
+    T *z_data = (T *)z->data;                                                \
+    long total = total_elements(x);                                          \
+    if (total == 0) return;                                                  \
+                                                                             \
+    if (is_c_contiguous(cond) && is_c_contiguous(x) && is_c_contiguous(y) && \
+        is_c_contiguous(z)) {                                                \
+      uint8_t *cond_ptr = cond_data + cond->offset;                          \
+      T *x_ptr = x_data + x->offset;                                         \
+      T *y_ptr = y_data + y->offset;                                         \
+      T *z_ptr = z_data + z->offset;                                         \
+      _Pragma("omp parallel for simd") for (long i = 0; i < total; i++) {    \
+        z_ptr[i] = cond_ptr[i] ? x_ptr[i] : y_ptr[i];                        \
+      }                                                                      \
+    } else if (x->ndim > 0) {                                                \
+      /* Parallelize over the outermost dimension */                         \
+      _Pragma("omp parallel for") for (long i = 0; i < x->shape[0]; i++) {   \
+        /* Need special iterate function for 4 arrays */                     \
+        iterate_where_inner_dims(cond, x, y, z, i,                           \
+                                 nx_cblas_where_##T##_kernel, cond_data,     \
+                                 x_data, y_data, z_data);                    \
+      }                                                                      \
+    } else {                                                                 \
+      /* Scalar case */                                                      \
+      z_data[z->offset] =                                                    \
+          cond_data[cond->offset] ? x_data[x->offset] : y_data[y->offset];   \
+    }                                                                        \
+  }
+
+// Implementation of helper for where operation with 4 arrays
+static inline void iterate_where_inner_dims(
+    const ndarray_t *cond, const ndarray_t *x, const ndarray_t *y,
+    const ndarray_t *z, long outer_idx,
+    void (*op)(void *, void *, void *, void *, long, long, long, long),
+    void *cond_data, void *x_data, void *y_data, void *z_data) {
+  if (x->ndim == 1) {
+    long cond_off = cond->offset + outer_idx * cond->strides[0];
+    long x_off = x->offset + outer_idx * x->strides[0];
+    long y_off = y->offset + outer_idx * y->strides[0];
+    long z_off = z->offset + outer_idx * z->strides[0];
+    op(cond_data, x_data, y_data, z_data, cond_off, x_off, y_off, z_off);
+  } else if (x->ndim == 2) {
+    long cond_base = cond->offset + outer_idx * cond->strides[0];
+    long x_base = x->offset + outer_idx * x->strides[0];
+    long y_base = y->offset + outer_idx * y->strides[0];
+    long z_base = z->offset + outer_idx * z->strides[0];
+
+    for (long j = 0; j < x->shape[1]; j++) {
+      long cond_off = cond_base + j * cond->strides[1];
+      long x_off = x_base + j * x->strides[1];
+      long y_off = y_base + j * y->strides[1];
+      long z_off = z_base + j * z->strides[1];
+      op(cond_data, x_data, y_data, z_data, cond_off, x_off, y_off, z_off);
+    }
+  } else {
+    // General case for higher dimensions
+    long indices[16] = {0};
+    long total_inner = 1;
+    for (int d = 1; d < x->ndim; d++) total_inner *= x->shape[d];
+
+    for (long i = 0; i < total_inner; i++) {
+      long temp = i;
+      long cond_off = cond->offset + outer_idx * cond->strides[0];
+      long x_off = x->offset + outer_idx * x->strides[0];
+      long y_off = y->offset + outer_idx * y->strides[0];
+      long z_off = z->offset + outer_idx * z->strides[0];
+
+      for (int d = x->ndim - 1; d >= 1; d--) {
+        indices[d] = temp % x->shape[d];
+        cond_off += indices[d] * cond->strides[d];
+        x_off += indices[d] * x->strides[d];
+        y_off += indices[d] * y->strides[d];
+        z_off += indices[d] * z->strides[d];
+        temp /= x->shape[d];
+      }
+
+      op(cond_data, x_data, y_data, z_data, cond_off, x_off, y_off, z_off);
+    }
+  }
+}
+
+DEFINE_WHERE_OP(int32_t)
+DEFINE_WHERE_OP(int64_t)
+DEFINE_WHERE_OP(intnat)
+DEFINE_WHERE_OP(float)
+DEFINE_WHERE_OP(double)
+DEFINE_WHERE_OP(c32_t)
+DEFINE_WHERE_OP(c64_t)
+
+// Pad operation - adds padding to array edges
+#define DEFINE_PAD_OP(T)                                                       \
+  static void nx_cblas_pad_##T(const ndarray_t *x, ndarray_t *z,               \
+                               const int *padding, T pad_value) {              \
+    T *x_data = (T *)x->data;                                                  \
+    T *z_data = (T *)z->data;                                                  \
+                                                                               \
+    /* Initialize output with pad value */                                     \
+    long z_total = total_elements(z);                                          \
+    _Pragma("omp parallel for simd") for (long i = 0; i < z_total; i++) {      \
+      z_data[z->offset + i] = pad_value;                                       \
+    }                                                                          \
+                                                                               \
+    /* Copy input data to the padded region */                                 \
+    if (x->ndim == 0) {                                                        \
+      /* Scalar case */                                                        \
+      z_data[z->offset] = x_data[x->offset];                                   \
+    } else if (x->ndim == 1) {                                                 \
+      /* 1D optimized case */                                                  \
+      int pad_left = padding[0];                                               \
+      _Pragma("omp parallel for simd") for (int i = 0; i < x->shape[0]; i++) { \
+        z_data[z->offset + (i + pad_left) * z->strides[0]] =                   \
+            x_data[x->offset + i * x->strides[0]];                             \
+      }                                                                        \
+    } else if (x->ndim == 2) {                                                 \
+      /* 2D optimized case */                                                  \
+      int pad_top = padding[0];                                                \
+      int pad_left = padding[2];                                               \
+      _Pragma("omp parallel for") for (int i = 0; i < x->shape[0]; i++) {      \
+        for (int j = 0; j < x->shape[1]; j++) {                                \
+          z_data[z->offset + (i + pad_top) * z->strides[0] +                   \
+                 (j + pad_left) * z->strides[1]] =                             \
+              x_data[x->offset + i * x->strides[0] + j * x->strides[1]];       \
+        }                                                                      \
+      }                                                                        \
+    } else {                                                                   \
+      /* General N-D case */                                                   \
+      long indices[16] = {0};                                                  \
+      long padded_indices[16];                                                 \
+      long x_total = total_elements(x);                                        \
+                                                                               \
+      for (long idx = 0; idx < x_total; idx++) {                               \
+        /* Calculate indices */                                                \
+        long temp = idx;                                                       \
+        for (int d = x->ndim - 1; d >= 0; d--) {                               \
+          indices[d] = temp % x->shape[d];                                     \
+          padded_indices[d] = indices[d] + padding[d * 2];                     \
+          temp /= x->shape[d];                                                 \
+        }                                                                      \
+                                                                               \
+        /* Calculate offsets */                                                \
+        long x_off = x->offset;                                                \
+        long z_off = z->offset;                                                \
+        for (int d = 0; d < x->ndim; d++) {                                    \
+          x_off += indices[d] * x->strides[d];                                 \
+          z_off += padded_indices[d] * z->strides[d];                          \
+        }                                                                      \
+                                                                               \
+        z_data[z_off] = x_data[x_off];                                         \
+      }                                                                        \
+    }                                                                          \
+  }
+
+DEFINE_PAD_OP(int32_t)
+DEFINE_PAD_OP(int64_t)
+DEFINE_PAD_OP(float)
+DEFINE_PAD_OP(double)
+DEFINE_PAD_OP(c32_t)
+DEFINE_PAD_OP(c64_t)
+DEFINE_PAD_OP(uint8_t)
+
+// Cat (concatenation) operation
+static void nx_cblas_cat_generic(const ndarray_t **inputs, int num_inputs,
+                                 ndarray_t *output, int axis,
+                                 size_t elem_size) {
+  if (num_inputs == 0) return;
+
+  // Normalize axis
+  if (axis < 0) axis += inputs[0]->ndim;
+
+  // For each input tensor, copy it to the appropriate location in output
+  long output_offset_along_axis = 0;
+
+  for (int input_idx = 0; input_idx < num_inputs; input_idx++) {
+    const ndarray_t *input = inputs[input_idx];
+
+    // Calculate total number of elements to copy
+    long total = total_elements(input);
+    if (total == 0) continue;
+
+    // For contiguous tensors along the concatenation axis, use memcpy
+    if (axis == input->ndim - 1 && is_c_contiguous(input)) {
+      // Fast path for last-axis concatenation of contiguous arrays
+      long num_slices = total / input->shape[axis];
+      long slice_size = input->shape[axis] * elem_size;
+
+      _Pragma("omp parallel for") for (long slice = 0; slice < num_slices;
+                                       slice++) {
+        long input_offset = input->offset + slice * input->shape[axis];
+        long output_slice_offset =
+            slice * output->shape[axis] + output_offset_along_axis;
+        long output_offset = output->offset + output_slice_offset;
+
+        memcpy((char *)output->data + output_offset * elem_size,
+               (char *)input->data + input_offset * elem_size, slice_size);
+      }
+    } else {
+      // General case: iterate through all elements
+      long indices[16] = {0};
+
+      for (long idx = 0; idx < total; idx++) {
+        // Calculate multi-dimensional indices
+        long temp = idx;
+        for (int d = input->ndim - 1; d >= 0; d--) {
+          indices[d] = temp % input->shape[d];
+          temp /= input->shape[d];
+        }
+
+        // Calculate input offset
+        long input_offset = input->offset;
+        for (int d = 0; d < input->ndim; d++) {
+          input_offset += indices[d] * input->strides[d];
+        }
+
+        // Calculate output offset (adjust index along concatenation axis)
+        long output_offset = output->offset;
+        for (int d = 0; d < output->ndim; d++) {
+          if (d == axis) {
+            output_offset +=
+                (indices[d] + output_offset_along_axis) * output->strides[d];
+          } else {
+            output_offset += indices[d] * output->strides[d];
+          }
+        }
+
+        // Copy element
+        memcpy((char *)output->data + output_offset * elem_size,
+               (char *)input->data + input_offset * elem_size, elem_size);
+      }
+    }
+
+    output_offset_along_axis += input->shape[axis];
+  }
+}
+
+// OCaml FFI (Foreign Function Interface) Stubs
+// ---------------------------------------------
+
+CAMLprim value caml_nx_assign_bc(value *argv, int argn) {
+  int ndim = Int_val(argv[0]);
+  value vShape = argv[1], vSrc = argv[2], vSrcStrides = argv[3],
+        vSrcOffset = argv[4];
+  value vDst = argv[5], vDstStrides = argv[6], vDstOffset = argv[7];
+
+  // Handle 0-dimensional tensors (scalars)
+  if (ndim == 0) {
+    // Get the element size from the source array's kind.
+    int kind = Caml_ba_array_val(vSrc)->flags & CAML_BA_KIND_MASK;
     size_t elem_size = get_element_size(kind);
-    nx_cblas_copy_generic(&x, &z, elem_size);
+    if (elem_size == 0) caml_failwith("assign: unsupported dtype for copy");
+
+    // For 0-dimensional tensors, just copy the single element
+    void *src_data = Caml_ba_data_val(vSrc);
+    void *dst_data = Caml_ba_data_val(vDst);
+    int src_offset = Int_val(vSrcOffset);
+    int dst_offset = Int_val(vDstOffset);
+
+    memcpy((char *)dst_data + dst_offset * elem_size,
+           (char *)src_data + src_offset * elem_size, elem_size);
+
+    return Val_unit;
   }
 
-  caml_leave_blocking_section();
+  int shape[ndim > 0 ? ndim : 1], src_strides[ndim > 0 ? ndim : 1],
+      dst_strides[ndim > 0 ? ndim : 1];
+  for (int i = 0; i < ndim; ++i) shape[i] = Int_val(Field(vShape, i));
+  for (int i = 0; i < ndim; ++i)
+    src_strides[i] = Int_val(Field(vSrcStrides, i));
+  for (int i = 0; i < ndim; ++i)
+    dst_strides[i] = Int_val(Field(vDstStrides, i));
 
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&z);
+  // Get the element size from the source array's kind.
+  int kind = Caml_ba_array_val(vSrc)->flags & CAML_BA_KIND_MASK;
+  size_t elem_size = get_element_size(kind);
+  if (elem_size == 0) caml_failwith("assign: unsupported dtype for copy");
 
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_copy_bc(value *argv, int argn) {
-  return nx_copy(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6],
-                 argv[7]);
-}
-
-/* =========================== Comparison Operations ===========================
- */
-
-#define DEFINE_CMP_STUB(name)                                              \
-  CAMLprim value nx_##name(value vNdim, value vShape, value vX,            \
-                           value vXStrides, value vXOffset, value vY,      \
-                           value vYStrides, value vYOffset, value vZ,      \
-                           value vZStrides, value vZOffset) {              \
-    CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);                      \
-    CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);                        \
-                                                                           \
-    int ndim = Int_val(vNdim);                                             \
-    strided_array_t x, y, z;                                               \
-                                                                           \
-    init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);         \
-    init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);         \
-    init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);         \
-                                                                           \
-    caml_enter_blocking_section();                                         \
-                                                                           \
-    struct caml_ba_array *ba = Caml_ba_array_val(vX);                      \
-    int kind = ba->flags & CAML_BA_KIND_MASK;                              \
-                                                                           \
-    if (kind == CAML_BA_FLOAT32) {                                         \
-      nx_cblas_##name##_f32(&x, &y, &z);                                   \
-    } else if (kind == CAML_BA_FLOAT64) {                                  \
-      nx_cblas_##name##_f64(&x, &y, &z);                                   \
-    } else {                                                               \
-      caml_leave_blocking_section();                                       \
-      nx_cblas_free_strided_array(&x);                                     \
-      nx_cblas_free_strided_array(&y);                                     \
-      nx_cblas_free_strided_array(&z);                                     \
-      caml_failwith(#name ": unsupported dtype");                          \
-    }                                                                      \
-                                                                           \
-    caml_leave_blocking_section();                                         \
-                                                                           \
-    nx_cblas_free_strided_array(&x);                                       \
-    nx_cblas_free_strided_array(&y);                                       \
-    nx_cblas_free_strided_array(&z);                                       \
-                                                                           \
-    CAMLreturn(Val_unit);                                                  \
-  }                                                                        \
-                                                                           \
-  CAMLprim value nx_##name##_bc(value *argv, int argn) {                   \
-    return nx_##name(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], \
-                     argv[6], argv[7], argv[8], argv[9], argv[10]);        \
-  }
-
-/* Custom implementations for comparison operations that support integers */
-
-CAMLprim value nx_cmplt(value vNdim, value vShape, value vX,
-                       value vXStrides, value vXOffset, value vY,
-                       value vYStrides, value vYOffset, value vZ,
-                       value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
-  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, y, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+  ndarray_t src, dst;
+  src.data = Caml_ba_data_val(vSrc);
+  src.ndim = ndim;
+  src.shape = shape;
+  src.strides = src_strides;
+  src.offset = Int_val(vSrcOffset);
+  dst.data = Caml_ba_data_val(vDst);
+  dst.ndim = ndim;
+  dst.shape = shape;
+  dst.strides = dst_strides;
+  dst.offset = Int_val(vDstOffset);
 
   caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_cmplt_f32(&x, &y, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_cmplt_f64(&x, &y, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_cmplt_i32(&x, &y, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_cmplt_i64(&x, &y, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&y);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("cmplt: unsupported dtype");
-  }
-
+  nx_cblas_generic_copy(&src, &dst, elem_size);
   caml_leave_blocking_section();
 
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&y);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
+  return Val_unit;
 }
+NATIVE_WRAPPER_8(assign)
 
-CAMLprim value nx_cmplt_bc(value *argv, int argn) {
-  return nx_cmplt(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                  argv[6], argv[7], argv[8], argv[9], argv[10]);
+// `copy` is identical to `assign` at the C level.
+CAMLprim value caml_nx_copy_bc(value *argv, int argn) {
+  return caml_nx_assign_bc(argv, argn);
 }
+NATIVE_WRAPPER_8(copy)
 
-CAMLprim value nx_cmpne(value vNdim, value vShape, value vX,
-                       value vXStrides, value vXOffset, value vY,
-                       value vYStrides, value vYOffset, value vZ,
-                       value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
-  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
+// Dispatcher for cast operations
+typedef void (*cast_op_t)(const ndarray_t *, ndarray_t *);
 
-  int ndim = Int_val(vNdim);
-  strided_array_t x, y, z;
+CAMLprim value caml_nx_cast_bc(value *argv, int argn) {
+  int ndim = Int_val(argv[0]);
+  value vShape = argv[1], vSrc = argv[2], vSrcStrides = argv[3],
+        vSrcOffset = argv[4];
+  value vDst = argv[5], vDstStrides = argv[6], vDstOffset = argv[7];
 
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+  // Handle 0-dimensional tensors (scalars)
+  if (ndim == 0) {
+    int src_kind = Caml_ba_array_val(vSrc)->flags & CAML_BA_KIND_MASK;
+    int dst_kind = Caml_ba_array_val(vDst)->flags & CAML_BA_KIND_MASK;
 
-  caml_enter_blocking_section();
+    void *src_data = Caml_ba_data_val(vSrc);
+    void *dst_data = Caml_ba_data_val(vDst);
+    int src_offset = Int_val(vSrcOffset);
+    int dst_offset = Int_val(vDstOffset);
 
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
+    // Simple scalar cast
+    if (src_kind == CAML_BA_UINT8 && dst_kind == CAML_BA_INT32) {
+      uint8_t *src = (uint8_t *)src_data;
+      int32_t *dst = (int32_t *)dst_data;
+      dst[dst_offset] = (int32_t)src[src_offset];
+    } else if (src_kind == CAML_BA_FLOAT32 && dst_kind == CAML_BA_FLOAT64) {
+      float *src = (float *)src_data;
+      double *dst = (double *)dst_data;
+      dst[dst_offset] = (double)src[src_offset];
+    } else if (src_kind == CAML_BA_FLOAT64 && dst_kind == CAML_BA_FLOAT32) {
+      double *src = (double *)src_data;
+      float *dst = (float *)dst_data;
+      dst[dst_offset] = (float)src[src_offset];
+    } else if (src_kind == CAML_BA_INT32 && dst_kind == CAML_BA_FLOAT32) {
+      int32_t *src = (int32_t *)src_data;
+      float *dst = (float *)dst_data;
+      dst[dst_offset] = (float)src[src_offset];
+    } else {
+      caml_failwith("cast: unsupported dtype conversion for 0d tensor");
+    }
 
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_cmpne_f32(&x, &y, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_cmpne_f64(&x, &y, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_cmpne_i32(&x, &y, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_cmpne_i64(&x, &y, &z);
-  } else {
+    return Val_unit;
+  }
+
+  int src_kind = Caml_ba_array_val(vSrc)->flags & CAML_BA_KIND_MASK;
+  int dst_kind = Caml_ba_array_val(vDst)->flags & CAML_BA_KIND_MASK;
+
+  int shape[ndim], src_strides[ndim], dst_strides[ndim];
+  for (int i = 0; i < ndim; ++i) shape[i] = Int_val(Field(vShape, i));
+  for (int i = 0; i < ndim; ++i)
+    src_strides[i] = Int_val(Field(vSrcStrides, i));
+  for (int i = 0; i < ndim; ++i)
+    dst_strides[i] = Int_val(Field(vDstStrides, i));
+
+  ndarray_t src, dst;
+  src.data = Caml_ba_data_val(vSrc);
+  src.ndim = ndim;
+  src.shape = shape;
+  src.strides = src_strides;
+  src.offset = Int_val(vSrcOffset);
+  dst.data = Caml_ba_data_val(vDst);
+  dst.ndim = ndim;
+  dst.shape = shape;
+  dst.strides = dst_strides;
+  dst.offset = Int_val(vDstOffset);
+
+  cast_op_t func = NULL;
+  if (src_kind == CAML_BA_FLOAT32 && dst_kind == CAML_BA_FLOAT64)
+    func = nx_cblas_cast_float_to_double;
+  else if (src_kind == CAML_BA_FLOAT64 && dst_kind == CAML_BA_FLOAT32)
+    func = nx_cblas_cast_double_to_float;
+  else if (src_kind == CAML_BA_INT32 && dst_kind == CAML_BA_FLOAT32)
+    func = nx_cblas_cast_int32_t_to_float;
+  else if (src_kind == CAML_BA_INT64 && dst_kind == CAML_BA_FLOAT32)
+    func = nx_cblas_cast_int64_t_to_float;
+  else if (src_kind == CAML_BA_FLOAT32 && dst_kind == CAML_BA_INT32)
+    func = nx_cblas_cast_float_to_int32_t;
+  else if (src_kind == CAML_BA_FLOAT32 && dst_kind == CAML_BA_INT64)
+    func = nx_cblas_cast_float_to_int64_t;
+  else if (src_kind == CAML_BA_FLOAT64 && dst_kind == CAML_BA_INT32)
+    func = nx_cblas_cast_double_to_int32_t;
+  else if (src_kind == CAML_BA_FLOAT64 && dst_kind == CAML_BA_INT64)
+    func = nx_cblas_cast_double_to_int64_t;
+  else if (src_kind == CAML_BA_INT32 && dst_kind == CAML_BA_FLOAT64)
+    func = nx_cblas_cast_int32_t_to_double;
+  else if (src_kind == CAML_BA_INT64 && dst_kind == CAML_BA_FLOAT64)
+    func = nx_cblas_cast_int64_t_to_double;
+  else if (src_kind == CAML_BA_SINT16 && dst_kind == CAML_BA_FLOAT32)
+    func = nx_cblas_cast_int16_t_to_float;
+  else if (src_kind == CAML_BA_SINT16 && dst_kind == CAML_BA_FLOAT64)
+    func = nx_cblas_cast_int16_t_to_double;
+  else if (src_kind == CAML_BA_SINT16 && dst_kind == CAML_BA_INT32)
+    func = nx_cblas_cast_int16_t_to_int32_t;
+  else if (src_kind == CAML_BA_SINT16 && dst_kind == CAML_BA_INT64)
+    func = nx_cblas_cast_int16_t_to_int64_t;
+  else if (src_kind == CAML_BA_INT32 && dst_kind == CAML_BA_SINT16)
+    func = nx_cblas_cast_int32_t_to_int16_t;
+  else if (src_kind == CAML_BA_INT64 && dst_kind == CAML_BA_SINT16)
+    func = nx_cblas_cast_int64_t_to_int16_t;
+  else if (src_kind == CAML_BA_FLOAT32 && dst_kind == CAML_BA_SINT16)
+    func = nx_cblas_cast_float_to_int16_t;
+  else if (src_kind == CAML_BA_FLOAT64 && dst_kind == CAML_BA_SINT16)
+    func = nx_cblas_cast_double_to_int16_t;
+  else if (src_kind == CAML_BA_UINT8 && dst_kind == CAML_BA_INT32)
+    func = nx_cblas_cast_uint8_t_to_int32_t;
+  else if (src_kind == CAML_BA_UINT8 && dst_kind == CAML_BA_FLOAT32)
+    func = nx_cblas_cast_uint8_t_to_float;
+  else if (src_kind == CAML_BA_UINT8 && dst_kind == CAML_BA_FLOAT64)
+    func = nx_cblas_cast_uint8_t_to_double;
+  else if (src_kind == CAML_BA_INT32 && dst_kind == CAML_BA_UINT8)
+    func = nx_cblas_cast_int32_t_to_uint8_t;
+  else if (src_kind == CAML_BA_FLOAT32 && dst_kind == CAML_BA_UINT8)
+    func = nx_cblas_cast_float_to_uint8_t;
+  else if (src_kind == CAML_BA_FLOAT64 && dst_kind == CAML_BA_UINT8)
+    func = nx_cblas_cast_double_to_uint8_t;
+
+  if (func) {
+    caml_enter_blocking_section();
+    func(&src, &dst);
     caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&y);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("cmpne: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&y);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_cmpne_bc(value *argv, int argn) {
-  return nx_cmpne(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                  argv[6], argv[7], argv[8], argv[9], argv[10]);
-}
-
-/* =========================== Reduction Operations ===========================
- */
-
-CAMLprim value nx_reduce_sum(value vNdim, value vShape, value vX,
-                             value vXStrides, value vXOffset, value vKeepDims,
-                             value vZ) {
-  CAMLparam4(vShape, vX, vXStrides, vZ);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_reduce_sum_f32(&x, Caml_ba_data_val(vZ));
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_reduce_sum_f64(&x, Caml_ba_data_val(vZ));
   } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    caml_failwith("reduce_sum: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_reduce_sum_bc(value *argv, int argn) {
-  return nx_reduce_sum(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                       argv[6]);
-}
-
-CAMLprim value nx_reduce_max(value vNdim, value vShape, value vX,
-                             value vXStrides, value vXOffset, value vKeepDims,
-                             value vZ) {
-  CAMLparam4(vShape, vX, vXStrides, vZ);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_reduce_max_f32(&x, Caml_ba_data_val(vZ));
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_reduce_max_f64(&x, Caml_ba_data_val(vZ));
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    caml_failwith("reduce_max: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_reduce_max_bc(value *argv, int argn) {
-  return nx_reduce_max(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                       argv[6]);
-}
-
-CAMLprim value nx_reduce_min(value vNdim, value vShape, value vX,
-                             value vXStrides, value vXOffset, value vKeepDims,
-                             value vZ) {
-  CAMLparam4(vShape, vX, vXStrides, vZ);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_reduce_min_f32(&x, Caml_ba_data_val(vZ));
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_reduce_min_f64(&x, Caml_ba_data_val(vZ));
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    caml_failwith("reduce_min: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_reduce_min_bc(value *argv, int argn) {
-  return nx_reduce_min(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                       argv[6]);
-}
-
-/* =========================== Product Reduction =========================== */
-
-CAMLprim value nx_reduce_prod(value vNdim, value vShape, value vX,
-                              value vXStrides, value vXOffset, value vKeepDims,
-                              value vZ) {
-  CAMLparam4(vShape, vX, vXStrides, vZ);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_reduce_prod_f32(&x, Caml_ba_data_val(vZ));
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_reduce_prod_f64(&x, Caml_ba_data_val(vZ));
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    caml_failwith("reduce_prod: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_reduce_prod_bc(value *argv, int argn) {
-  return nx_reduce_prod(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                        argv[6]);
-}
-
-/* =========================== Integer Division =========================== */
-
-CAMLprim value nx_idiv(value vNdim, value vShape, value vX, value vXStrides,
-                       value vXOffset, value vY, value vYStrides,
-                       value vYOffset, value vZ, value vZStrides,
-                       value vZOffset) {
-  CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);
-  CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, y, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_INT32) {
-    nx_cblas_idiv_i32(&x, &y, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_idiv_i64(&x, &y, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&y);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("idiv: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&y);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_idiv_bc(value *argv, int argn) {
-  return nx_idiv(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6],
-                 argv[7], argv[8], argv[9], argv[10]);
-}
-
-/* =========================== Bitwise Operations =========================== */
-
-#define DEFINE_BITWISE_STUB(name)                                          \
-  CAMLprim value nx_##name(value vNdim, value vShape, value vX,            \
-                           value vXStrides, value vXOffset, value vY,      \
-                           value vYStrides, value vYOffset, value vZ,      \
-                           value vZStrides, value vZOffset) {              \
-    CAMLparam5(vShape, vX, vXStrides, vY, vYStrides);                      \
-    CAMLxparam4(vYOffset, vZ, vZStrides, vZOffset);                        \
-                                                                           \
-    int ndim = Int_val(vNdim);                                             \
-    strided_array_t x, y, z;                                               \
-                                                                           \
-    init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);         \
-    init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);         \
-    init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);         \
-                                                                           \
-    caml_enter_blocking_section();                                         \
-                                                                           \
-    struct caml_ba_array *ba = Caml_ba_array_val(vX);                      \
-    int kind = ba->flags & CAML_BA_KIND_MASK;                              \
-                                                                           \
-    if (kind == CAML_BA_INT32) {                                           \
-      nx_cblas_##name##_int32(&x, &y, &z);                                 \
-    } else if (kind == CAML_BA_INT64) {                                    \
-      nx_cblas_##name##_int64(&x, &y, &z);                                 \
-    } else if (kind == CAML_BA_UINT8) {                                    \
-      nx_cblas_##name##_uint8(&x, &y, &z);                                 \
-    } else if (kind == CAML_BA_UINT16) {                                   \
-      nx_cblas_##name##_uint16(&x, &y, &z);                                \
-    } else {                                                               \
-      caml_leave_blocking_section();                                       \
-      nx_cblas_free_strided_array(&x);                                     \
-      nx_cblas_free_strided_array(&y);                                     \
-      nx_cblas_free_strided_array(&z);                                     \
-      caml_failwith(#name ": unsupported dtype");                          \
-    }                                                                      \
-                                                                           \
-    caml_leave_blocking_section();                                         \
-                                                                           \
-    nx_cblas_free_strided_array(&x);                                       \
-    nx_cblas_free_strided_array(&y);                                       \
-    nx_cblas_free_strided_array(&z);                                       \
-                                                                           \
-    CAMLreturn(Val_unit);                                                  \
-  }                                                                        \
-                                                                           \
-  CAMLprim value nx_##name##_bc(value *argv, int argn) {                   \
-    return nx_##name(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], \
-                     argv[6], argv[7], argv[8], argv[9], argv[10]);        \
-  }
-
-DEFINE_BITWISE_STUB(xor)
-DEFINE_BITWISE_STUB(or)
-DEFINE_BITWISE_STUB(and)
-
-/* =========================== WHERE Operation =========================== */
-
-CAMLprim value nx_where(value vNdim, value vShape, value vCond,
-                        value vCondStrides, value vCondOffset, value vX,
-                        value vXStrides, value vXOffset, value vY,
-                        value vYStrides, value vYOffset, value vZ,
-                        value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vCond, vCondStrides, vX, vXStrides);
-  CAMLxparam5(vXOffset, vY, vYStrides, vYOffset, vZ);
-  CAMLxparam2(vZStrides, vZOffset);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t cond, x, y, z;
-
-  init_strided_array(&cond, vCond, ndim, vShape, vCondStrides, vCondOffset);
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&y, vY, ndim, vShape, vYStrides, vYOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_where_f32(&cond, &x, &y, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_where_f64(&cond, &x, &y, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_where_i32(&cond, &x, &y, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_where_i64(&cond, &x, &y, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&cond);
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&y);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("where: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&cond);
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&y);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_where_bc(value *argv, int argn) {
-  return nx_where(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6],
-                  argv[7], argv[8], argv[9], argv[10], argv[11], argv[12],
-                  argv[13]);
-}
-
-/* =========================== PAD Operation =========================== */
-
-CAMLprim value nx_pad(value vNdim, value vShape, value vX, value vXStrides,
-                      value vXOffset, value vZ, value vZStrides, value vZOffset,
-                      value vPadConfig, value vFillValue) {
-  CAMLparam5(vShape, vX, vXStrides, vZ, vZStrides);
-  CAMLxparam3(vZOffset, vPadConfig, vFillValue);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-
-  /* Compute output shape from input shape and padding */
-  int *out_shape = (int *)malloc(ndim * sizeof(int));
-  int *pad_config = (int *)malloc(2 * ndim * sizeof(int));
-
-  for (int i = 0; i < ndim; i++) {
-    pad_config[i * 2] = Int_val(Field(Field(vPadConfig, i), 0));
-    pad_config[i * 2 + 1] = Int_val(Field(Field(vPadConfig, i), 1));
-    out_shape[i] = x.shape[i] + pad_config[i * 2] + pad_config[i * 2 + 1];
-  }
-
-  /* Create output array descriptor */
-  value vOutShape = caml_alloc_small(ndim, 0);
-  for (int i = 0; i < ndim; i++) {
-    Field(vOutShape, i) = Val_int(out_shape[i]);
-  }
-
-  init_strided_array(&z, vZ, ndim, vOutShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vX);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    float fill_value = Double_field(vFillValue, 0);
-    nx_cblas_pad_f32(&x, &z, pad_config, fill_value);
-  } else if (kind == CAML_BA_FLOAT64) {
-    double fill_value = Double_field(vFillValue, 0);
-    nx_cblas_pad_f64(&x, &z, pad_config, fill_value);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&z);
-    free(out_shape);
-    free(pad_config);
-    caml_failwith("pad: unsupported dtype");
-  }
-
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&z);
-  free(out_shape);
-  free(pad_config);
-
-  CAMLreturn(Val_unit);
-}
-
-CAMLprim value nx_pad_bc(value *argv, int argn) {
-  return nx_pad(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6],
-                argv[7], argv[8], argv[9]);
-}
-
-/* =========================== CAST Operation =========================== */
-
-CAMLprim value nx_cast(value vNdim, value vShape, value vX, value vXStrides,
-                       value vXOffset, value vZ, value vZStrides,
-                       value vZOffset, value vFromKind, value vToKind) {
-  CAMLparam5(vShape, vX, vXStrides, vZ, vZStrides);
-  CAMLxparam3(vZOffset, vFromKind, vToKind);
-
-  int ndim = Int_val(vNdim);
-  strided_array_t x, z;
-
-  init_strided_array(&x, vX, ndim, vShape, vXStrides, vXOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  int from_kind = Int_val(vFromKind);
-  int to_kind = Int_val(vToKind);
-
-  if (from_kind == CAML_BA_FLOAT32 && to_kind == CAML_BA_FLOAT64) {
-    nx_cblas_cast_f32_to_f64(&x, &z);
-  } else if (from_kind == CAML_BA_FLOAT64 && to_kind == CAML_BA_FLOAT32) {
-    nx_cblas_cast_f64_to_f32(&x, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&x);
-    nx_cblas_free_strided_array(&z);
     caml_failwith("cast: unsupported dtype conversion");
   }
 
-  caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&x);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
+  return Val_unit;
 }
+NATIVE_WRAPPER_8(cast)
 
-CAMLprim value nx_cast_bc(value *argv, int argn) {
-  return nx_cast(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6],
-                 argv[7], argv[8], argv[9]);
-}
+// Table and dispatcher for unary operations
 
-/* =========================== THREEFRY Operation =========================== */
+typedef void (*unary_op_t)(const ndarray_t *, ndarray_t *);
 
-CAMLprim value nx_threefry(value vNdim, value vShape, value vKey,
-                           value vKeyStrides, value vKeyOffset, value vCounter,
-                           value vCounterStrides, value vCounterOffset,
-                           value vZ, value vZStrides, value vZOffset) {
-  CAMLparam5(vShape, vKey, vKeyStrides, vCounter, vCounterStrides);
-  CAMLxparam4(vCounterOffset, vZ, vZStrides, vZOffset);
+typedef struct {
+  unary_op_t f32, f64, i8, i16, i32, i64, inat, c32, c64;
+} unary_op_table;
 
-  int ndim = Int_val(vNdim);
-  strided_array_t key, counter, z;
+static value dispatch_unary(value *argv, const unary_op_table *table,
+                            const char *op_name) {
+  int ndim = Int_val(argv[0]);
+  value vShape = argv[1], vX = argv[2], vXStrides = argv[3], vXOffset = argv[4];
+  value vZ = argv[5], vZStrides = argv[6], vZOffset = argv[7];
 
-  init_strided_array(&key, vKey, ndim, vShape, vKeyStrides, vKeyOffset);
-  init_strided_array(&counter, vCounter, ndim, vShape, vCounterStrides,
-                     vCounterOffset);
-  init_strided_array(&z, vZ, ndim, vShape, vZStrides, vZOffset);
+  // Sanity check ndim to prevent stack overflow
+  if (ndim < 0 || ndim > 32) {
+    caml_failwith("dispatch_unary: ndim must be between 0 and 32");
+  }
 
-  caml_enter_blocking_section();
+  // Handle 0-dimensional tensors (scalars)
+  if (ndim == 0) {
+    struct caml_ba_array *ba = Caml_ba_array_val(vX);
+    int kind = ba->flags & CAML_BA_KIND_MASK;
 
-  nx_cblas_threefry(&key, &counter, &z);
+    void *x_data = Caml_ba_data_val(vX);
+    void *z_data = Caml_ba_data_val(vZ);
+    int x_offset = Int_val(vXOffset);
+    int z_offset = Int_val(vZOffset);
 
-  caml_leave_blocking_section();
+    unary_op_t func = NULL;
+    switch (kind) {
+      case CAML_BA_FLOAT32:
+        func = table->f32;
+        break;
+      case CAML_BA_FLOAT64:
+        func = table->f64;
+        break;
+      case CAML_BA_SINT8:
+        func = table->i8;
+        break;
+      case CAML_BA_SINT16:
+        func = table->i16;
+        break;
+      case CAML_BA_INT32:
+        func = table->i32;
+        break;
+      case CAML_BA_INT64:
+        func = table->i64;
+        break;
+      case CAML_BA_CAML_INT:
+      case CAML_BA_NATIVE_INT:
+        func = table->inat;
+        break;
+      case CAML_BA_COMPLEX32:
+        func = table->c32;
+        break;
+      case CAML_BA_COMPLEX64:
+        func = table->c64;
+        break;
+    }
 
-  nx_cblas_free_strided_array(&key);
-  nx_cblas_free_strided_array(&counter);
-  nx_cblas_free_strided_array(&z);
+    if (func) {
+      ndarray_t x_arr = {x_data, 0, NULL, NULL, x_offset};
+      ndarray_t z_arr = {z_data, 0, NULL, NULL, z_offset};
+      func(&x_arr, &z_arr);
+    } else {
+      static char err_buf[100];
+      snprintf(err_buf, sizeof(err_buf), "%s: unsupported dtype", op_name);
+      caml_failwith(err_buf);
+    }
 
-  CAMLreturn(Val_unit);
-}
+    return Val_unit;
+  }
 
-CAMLprim value nx_threefry_bc(value *argv, int argn) {
-  return nx_threefry(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                     argv[6], argv[7], argv[8], argv[9], argv[10]);
-}
+  int shape[ndim], x_strides[ndim], z_strides[ndim];
+  for (int i = 0; i < ndim; ++i) shape[i] = Int_val(Field(vShape, i));
+  for (int i = 0; i < ndim; ++i) x_strides[i] = Int_val(Field(vXStrides, i));
+  for (int i = 0; i < ndim; ++i) z_strides[i] = Int_val(Field(vZStrides, i));
 
-/* =========================== GATHER Operation =========================== */
-
-CAMLprim value nx_gather(value vDataNdim, value vDataShape, value vData,
-                         value vDataStrides, value vDataOffset,
-                         value vIndicesShape, value vIndices,
-                         value vIndicesStrides, value vIndicesOffset,
-                         value vAxis, value vZ, value vZStrides,
-                         value vZOffset) {
-  CAMLparam5(vDataShape, vData, vDataStrides, vIndicesShape, vIndices);
-  CAMLxparam5(vIndicesStrides, vIndicesOffset, vZ, vZStrides, vZOffset);
-
-  int data_ndim = Int_val(vDataNdim);
-  int axis = Int_val(vAxis);
-  strided_array_t data, indices, z;
-
-  init_strided_array(&data, vData, data_ndim, vDataShape, vDataStrides,
-                     vDataOffset);
-  init_strided_array(&indices, vIndices, data_ndim, vIndicesShape,
-                     vIndicesStrides, vIndicesOffset);
-  init_strided_array(&z, vZ, data_ndim, vIndicesShape, vZStrides, vZOffset);
-
-  caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vData);
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
   int kind = ba->flags & CAML_BA_KIND_MASK;
 
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_gather_f32(&data, &indices, axis, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_gather_f64(&data, &indices, axis, &z);
-  } else {
+  ndarray_t x, z;
+  x.data = ba->data;
+  x.ndim = ndim;
+  x.shape = shape;
+  x.strides = x_strides;
+  x.offset = Int_val(vXOffset);
+  z.data = Caml_ba_data_val(vZ);
+  z.ndim = ndim;
+  z.shape = shape;
+  z.strides = z_strides;
+  z.offset = Int_val(vZOffset);
+
+  unary_op_t func = NULL;
+  switch (kind) {
+    case CAML_BA_FLOAT32:
+      func = table->f32;
+      break;
+    case CAML_BA_FLOAT64:
+      func = table->f64;
+      break;
+    case CAML_BA_SINT8:
+      func = table->i8;
+      break;
+    case CAML_BA_SINT16:
+      func = table->i16;
+      break;
+    case CAML_BA_INT32:
+      func = table->i32;
+      break;
+    case CAML_BA_INT64:
+      func = table->i64;
+      break;
+    case CAML_BA_CAML_INT:
+      func = table->inat;
+      break;
+    case CAML_BA_NATIVE_INT:
+      func = table->inat;
+      break;
+    case CAML_BA_COMPLEX32:
+      func = table->c32;
+      break;
+    case CAML_BA_COMPLEX64:
+      func = table->c64;
+      break;
+  }
+
+  if (func) {
+    caml_enter_blocking_section();
+    func(&x, &z);
     caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&data);
-    nx_cblas_free_strided_array(&indices);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("gather: unsupported dtype");
+  } else {
+    static char err_buf[100];
+    snprintf(err_buf, sizeof(err_buf), "%s: unsupported dtype", op_name);
+    caml_failwith(err_buf);
+  }
+  return Val_unit;
+}
+
+#define UNARY_STUB(name, ...)                                 \
+  CAMLprim value caml_nx_##name##_bc(value *argv, int argn) { \
+    static const unary_op_table table = {__VA_ARGS__};        \
+    return dispatch_unary(argv, &table, #name);               \
+  }
+
+UNARY_STUB(neg, .f32 = nx_cblas_neg_float, .f64 = nx_cblas_neg_double,
+           .i8 = nx_cblas_neg_int8_t, .i16 = nx_cblas_neg_int16_t,
+           .i32 = nx_cblas_neg_int32_t, .i64 = nx_cblas_neg_int64_t,
+           .inat = nx_cblas_neg_intnat, .c32 = nx_cblas_neg_c32_t,
+           .c64 = nx_cblas_neg_c64_t)
+NATIVE_WRAPPER_8(neg)
+
+UNARY_STUB(sqrt, .f32 = nx_cblas_sqrt_float, .f64 = nx_cblas_sqrt_double,
+           .c32 = nx_cblas_sqrt_c32_t, .c64 = nx_cblas_sqrt_c64_t)
+NATIVE_WRAPPER_8(sqrt)
+
+UNARY_STUB(sin, .f32 = nx_cblas_sin_float, .f64 = nx_cblas_sin_double,
+           .c32 = nx_cblas_sin_c32_t, .c64 = nx_cblas_sin_c64_t)
+NATIVE_WRAPPER_8(sin)
+
+UNARY_STUB(exp2, .f32 = nx_cblas_exp2_float, .f64 = nx_cblas_exp2_double,
+           .c32 = nx_cblas_exp2_c32_t, .c64 = nx_cblas_exp2_c64_t)
+NATIVE_WRAPPER_8(exp2)
+
+UNARY_STUB(log2, .f32 = nx_cblas_log2_float, .f64 = nx_cblas_log2_double,
+           .c32 = nx_cblas_log2_c32_t, .c64 = nx_cblas_log2_c64_t)
+NATIVE_WRAPPER_8(log2)
+
+UNARY_STUB(recip, .f32 = nx_cblas_recip_float, .f64 = nx_cblas_recip_double,
+           .c32 = nx_cblas_recip_c32_t, .c64 = nx_cblas_recip_c64_t)
+NATIVE_WRAPPER_8(recip)
+
+// Table and dispatcher for binary operations
+
+typedef void (*binary_op_t)(const ndarray_t *, const ndarray_t *, ndarray_t *);
+typedef struct {
+  binary_op_t i32, i64, f32, f64, c32, c64, u8, inat;
+} binary_op_table;
+
+static value dispatch_binary(value *argv, const binary_op_table *table,
+                             const char *op_name) {
+  int ndim = Int_val(argv[0]);
+  value vShape = argv[1], vX = argv[2], vXStrides = argv[3], vXOffset = argv[4];
+  value vY = argv[5], vYStrides = argv[6], vYOffset = argv[7];
+  value vZ = argv[8], vZStrides = argv[9], vZOffset = argv[10];
+
+  // Sanity check ndim to prevent stack overflow
+  if (ndim < 0 || ndim > 32) {
+    caml_failwith("dispatch_binary: ndim must be between 0 and 32");
+  }
+
+  // Handle 0-dimensional tensors (scalars)
+  if (ndim == 0) {
+    struct caml_ba_array *ba = Caml_ba_array_val(vX);
+    int kind = ba->flags & CAML_BA_KIND_MASK;
+
+    void *x_data = Caml_ba_data_val(vX);
+    void *y_data = Caml_ba_data_val(vY);
+    void *z_data = Caml_ba_data_val(vZ);
+    int x_offset = Int_val(vXOffset);
+    int y_offset = Int_val(vYOffset);
+    int z_offset = Int_val(vZOffset);
+
+    binary_op_t func = NULL;
+    switch (kind) {
+      case CAML_BA_UINT8:
+        func = table->u8;
+        break;
+      case CAML_BA_INT32:
+        func = table->i32;
+        break;
+      case CAML_BA_INT64:
+        func = table->i64;
+        break;
+      case CAML_BA_FLOAT32:
+        func = table->f32;
+        break;
+      case CAML_BA_FLOAT64:
+        func = table->f64;
+        break;
+      case CAML_BA_COMPLEX32:
+        func = table->c32;
+        break;
+      case CAML_BA_COMPLEX64:
+        func = table->c64;
+        break;
+      case CAML_BA_CAML_INT:
+      case CAML_BA_NATIVE_INT:
+        func = table->inat;
+        break;
+    }
+
+    if (func) {
+      ndarray_t x_arr = {x_data, 0, NULL, NULL, x_offset};
+      ndarray_t y_arr = {y_data, 0, NULL, NULL, y_offset};
+      ndarray_t z_arr = {z_data, 0, NULL, NULL, z_offset};
+      func(&x_arr, &y_arr, &z_arr);
+    } else {
+      static char err_buf[100];
+      snprintf(err_buf, sizeof(err_buf), "%s: unsupported dtype", op_name);
+      caml_failwith(err_buf);
+    }
+
+    return Val_unit;
+  }
+
+  int shape[ndim], x_strides[ndim], y_strides[ndim], z_strides[ndim];
+  for (int i = 0; i < ndim; ++i) shape[i] = Int_val(Field(vShape, i));
+  for (int i = 0; i < ndim; ++i) x_strides[i] = Int_val(Field(vXStrides, i));
+  for (int i = 0; i < ndim; ++i) y_strides[i] = Int_val(Field(vYStrides, i));
+  for (int i = 0; i < ndim; ++i) z_strides[i] = Int_val(Field(vZStrides, i));
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  ndarray_t x, y, z;
+  x.data = ba->data;
+  x.ndim = ndim;
+  x.shape = shape;
+  x.strides = x_strides;
+  x.offset = Int_val(vXOffset);
+  y.data = Caml_ba_data_val(vY);
+  y.ndim = ndim;
+  y.shape = shape;
+  y.strides = y_strides;
+  y.offset = Int_val(vYOffset);
+  z.data = Caml_ba_data_val(vZ);
+  z.ndim = ndim;
+  z.shape = shape;
+  z.strides = z_strides;
+  z.offset = Int_val(vZOffset);
+
+  binary_op_t func = NULL;
+  switch (kind) {
+    case CAML_BA_INT32:
+      func = table->i32;
+      break;
+    case CAML_BA_INT64:
+      func = table->i64;
+      break;
+    case CAML_BA_FLOAT32:
+      func = table->f32;
+      break;
+    case CAML_BA_FLOAT64:
+      func = table->f64;
+      break;
+    case CAML_BA_COMPLEX32:
+      func = table->c32;
+      break;
+    case CAML_BA_COMPLEX64:
+      func = table->c64;
+      break;
+    case CAML_BA_UINT8:
+      func = table->u8;
+      break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      func = table->inat;
+      break;
+  }
+
+  if (func) {
+    caml_enter_blocking_section();
+    func(&x, &y, &z);
+    caml_leave_blocking_section();
+  } else {
+    static char err_buf[100];
+    snprintf(err_buf, sizeof(err_buf), "%s: unsupported dtype", op_name);
+    caml_failwith(err_buf);
+  }
+  return Val_unit;
+}
+
+#define BINARY_STUB(name, ...)                                \
+  CAMLprim value caml_nx_##name##_bc(value *argv, int argn) { \
+    static const binary_op_table table = {__VA_ARGS__};       \
+    return dispatch_binary(argv, &table, #name);              \
+  }
+
+// Declarative stub definitions for binary ops
+BINARY_STUB(add, .i32 = nx_cblas_add_int32_t, .i64 = nx_cblas_add_int64_t,
+            .f32 = nx_cblas_add_float, .f64 = nx_cblas_add_double,
+            .c32 = nx_cblas_add_c32_t, .c64 = nx_cblas_add_c64_t)
+NATIVE_WRAPPER_11(add)
+
+BINARY_STUB(sub, .i32 = nx_cblas_sub_int32_t, .i64 = nx_cblas_sub_int64_t,
+            .f32 = nx_cblas_sub_float, .f64 = nx_cblas_sub_double,
+            .c32 = nx_cblas_sub_c32_t, .c64 = nx_cblas_sub_c64_t)
+NATIVE_WRAPPER_11(sub)
+
+BINARY_STUB(mul, .i32 = nx_cblas_mul_int32_t, .i64 = nx_cblas_mul_int64_t,
+            .f32 = nx_cblas_mul_float, .f64 = nx_cblas_mul_double,
+            .c32 = nx_cblas_mul_c32_t, .c64 = nx_cblas_mul_c64_t)
+NATIVE_WRAPPER_11(mul)
+
+BINARY_STUB(fdiv, .f32 = nx_cblas_fdiv_float, .f64 = nx_cblas_fdiv_double,
+            .c32 = nx_cblas_fdiv_c32_t, .c64 = nx_cblas_fdiv_c64_t)
+NATIVE_WRAPPER_11(fdiv)
+
+BINARY_STUB(idiv, .i32 = nx_cblas_idiv_int32_t, .i64 = nx_cblas_idiv_int64_t)
+NATIVE_WRAPPER_11(idiv)
+
+BINARY_STUB(max, .i32 = nx_cblas_max_int32_t, .i64 = nx_cblas_max_int64_t,
+            .f32 = nx_cblas_max_float, .f64 = nx_cblas_max_double)
+NATIVE_WRAPPER_11(max)
+
+BINARY_STUB(mod, .i32 = nx_cblas_mod_int32_t, .i64 = nx_cblas_mod_int64_t,
+            .f32 = nx_cblas_mod_float, .f64 = nx_cblas_mod_double)
+NATIVE_WRAPPER_11(mod)
+
+BINARY_STUB(pow, .f32 = nx_cblas_pow_float, .f64 = nx_cblas_pow_double)
+NATIVE_WRAPPER_11(pow)
+
+BINARY_STUB(xor, .i32 = nx_cblas_xor_int32_t, .i64 = nx_cblas_xor_int64_t,
+            .u8 = nx_cblas_xor_uint8_t)
+NATIVE_WRAPPER_11(xor)
+
+BINARY_STUB(or, .i32 = nx_cblas_or_int32_t, .i64 = nx_cblas_or_int64_t,
+            .u8 = nx_cblas_or_uint8_t)
+NATIVE_WRAPPER_11(or)
+
+BINARY_STUB(and, .i32 = nx_cblas_and_int32_t, .i64 = nx_cblas_and_int64_t,
+            .u8 = nx_cblas_and_uint8_t)
+NATIVE_WRAPPER_11(and)
+
+// Comparison operations
+BINARY_STUB(cmplt, .u8 = nx_cblas_cmplt_uint8_t, .i32 = nx_cblas_cmplt_int32_t,
+            .i64 = nx_cblas_cmplt_int64_t, .inat = nx_cblas_cmplt_intnat,
+            .f32 = nx_cblas_cmplt_float, .f64 = nx_cblas_cmplt_double)
+NATIVE_WRAPPER_11(cmplt)
+
+BINARY_STUB(cmpne, .u8 = nx_cblas_cmpne_uint8_t, .i32 = nx_cblas_cmpne_int32_t,
+            .i64 = nx_cblas_cmpne_int64_t, .inat = nx_cblas_cmpne_intnat,
+            .f32 = nx_cblas_cmpne_float, .f64 = nx_cblas_cmpne_double,
+            .c32 = nx_cblas_cmpne_c32_t, .c64 = nx_cblas_cmpne_c64_t)
+NATIVE_WRAPPER_11(cmpne)
+
+// Reduce operation dispatch
+typedef void (*reduce_op_t)(const ndarray_t *, ndarray_t *, const int *, int);
+
+typedef struct {
+  reduce_op_t u8, i32, i64, f32, f64;
+} reduce_op_table;
+
+static value dispatch_reduce(value *argv, const reduce_op_table *table,
+                             const char *op_name) {
+  int ndim = Int_val(argv[0]);
+  value vShape = argv[1], vX = argv[2], vXStrides = argv[3], vXOffset = argv[4];
+  value vZ = argv[5], vZStrides = argv[6], vZOffset = argv[7];
+  value vAxes = argv[8];
+  int keepdims = Int_val(argv[9]);
+
+  if (ndim < 1) {
+    caml_failwith("dispatch_reduce: ndim must be at least 1");
+  }
+
+  int shape[ndim], x_strides[ndim], z_strides[ndim];
+  for (int i = 0; i < ndim; ++i) shape[i] = Int_val(Field(vShape, i));
+  for (int i = 0; i < ndim; ++i) x_strides[i] = Int_val(Field(vXStrides, i));
+  for (int i = 0; i < ndim; ++i) z_strides[i] = Int_val(Field(vZStrides, i));
+
+  // Extract axes
+  int num_axes = Wosize_val(vAxes);
+  int axes[num_axes];
+  for (int i = 0; i < num_axes; i++) {
+    axes[i] = Int_val(Field(vAxes, i));
+  }
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  ndarray_t x, z;
+  x.data = ba->data;
+  x.ndim = ndim;
+  x.shape = shape;
+  x.strides = x_strides;
+  x.offset = Int_val(vXOffset);
+  z.data = Caml_ba_data_val(vZ);
+  z.ndim = keepdims ? ndim : (ndim - num_axes);
+  z.shape = shape;  // Will be adjusted by the kernel
+  z.strides = z_strides;
+  z.offset = Int_val(vZOffset);
+
+  reduce_op_t func = NULL;
+  switch (kind) {
+    case CAML_BA_UINT8:
+      func = table->u8;
+      break;
+    case CAML_BA_INT32:
+      func = table->i32;
+      break;
+    case CAML_BA_INT64:
+      func = table->i64;
+      break;
+    case CAML_BA_FLOAT32:
+      func = table->f32;
+      break;
+    case CAML_BA_FLOAT64:
+      func = table->f64;
+      break;
+  }
+
+  if (func) {
+    caml_enter_blocking_section();
+    func(&x, &z, axes, num_axes);
+    caml_leave_blocking_section();
+  } else {
+    static char err_buf[100];
+    snprintf(err_buf, sizeof(err_buf), "%s: unsupported dtype", op_name);
+    caml_failwith(err_buf);
+  }
+  return Val_unit;
+}
+
+#define REDUCE_STUB(name, ...)                                       \
+  CAMLprim value caml_nx_reduce_##name##_bc(value *argv, int argn) { \
+    static const reduce_op_table table = {__VA_ARGS__};              \
+    return dispatch_reduce(argv, &table, "reduce_" #name);           \
+  }
+
+REDUCE_STUB(sum, .u8 = nx_cblas_reduce_sum_uint8_t_kernel,
+            .i32 = nx_cblas_reduce_sum_int32_t_kernel,
+            .i64 = nx_cblas_reduce_sum_int64_t_kernel,
+            .f32 = nx_cblas_reduce_sum_float_kernel,
+            .f64 = nx_cblas_reduce_sum_double_kernel)
+REDUCE_NATIVE_WRAPPER_10(sum)
+
+REDUCE_STUB(max, .u8 = nx_cblas_reduce_max_uint8_t_kernel,
+            .i32 = nx_cblas_reduce_max_int32_t_kernel,
+            .i64 = nx_cblas_reduce_max_int64_t_kernel,
+            .f32 = nx_cblas_reduce_max_float_kernel,
+            .f64 = nx_cblas_reduce_max_double_kernel)
+REDUCE_NATIVE_WRAPPER_10(max)
+
+REDUCE_STUB(prod, .u8 = nx_cblas_reduce_prod_uint8_t_kernel,
+            .i32 = nx_cblas_reduce_prod_int32_t_kernel,
+            .i64 = nx_cblas_reduce_prod_int64_t_kernel,
+            .f32 = nx_cblas_reduce_prod_float_kernel,
+            .f64 = nx_cblas_reduce_prod_double_kernel)
+REDUCE_NATIVE_WRAPPER_10(prod)
+
+// Where operation dispatch
+typedef void (*where_op_t)(const ndarray_t *, const ndarray_t *,
+                           const ndarray_t *, ndarray_t *);
+
+typedef struct {
+  where_op_t i32, i64, f32, f64, c32, c64;
+} where_op_table;
+
+CAMLprim value caml_nx_where_bc(value *argv, int argn) {
+  int ndim = Int_val(argv[0]);
+  value vShape = argv[1];
+  value vCond = argv[2], vCondStrides = argv[3], vCondOffset = argv[4];
+  value vX = argv[5], vXStrides = argv[6], vXOffset = argv[7];
+  value vY = argv[8], vYStrides = argv[9], vYOffset = argv[10];
+  value vZ = argv[11], vZStrides = argv[12], vZOffset = argv[13];
+
+  if (ndim < 1) {
+    caml_failwith("where: ndim must be at least 1");
+  }
+
+  int shape[ndim], cond_strides[ndim], x_strides[ndim], y_strides[ndim],
+      z_strides[ndim];
+  for (int i = 0; i < ndim; ++i) shape[i] = Int_val(Field(vShape, i));
+  for (int i = 0; i < ndim; ++i)
+    cond_strides[i] = Int_val(Field(vCondStrides, i));
+  for (int i = 0; i < ndim; ++i) x_strides[i] = Int_val(Field(vXStrides, i));
+  for (int i = 0; i < ndim; ++i) y_strides[i] = Int_val(Field(vYStrides, i));
+  for (int i = 0; i < ndim; ++i) z_strides[i] = Int_val(Field(vZStrides, i));
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  ndarray_t cond, x, y, z;
+  cond.data = Caml_ba_data_val(vCond);
+  cond.ndim = ndim;
+  cond.shape = shape;
+  cond.strides = cond_strides;
+  cond.offset = Int_val(vCondOffset);
+  x.data = ba->data;
+  x.ndim = ndim;
+  x.shape = shape;
+  x.strides = x_strides;
+  x.offset = Int_val(vXOffset);
+  y.data = Caml_ba_data_val(vY);
+  y.ndim = ndim;
+  y.shape = shape;
+  y.strides = y_strides;
+  y.offset = Int_val(vYOffset);
+  z.data = Caml_ba_data_val(vZ);
+  z.ndim = ndim;
+  z.shape = shape;
+  z.strides = z_strides;
+  z.offset = Int_val(vZOffset);
+
+  where_op_t func = NULL;
+  switch (kind) {
+    case CAML_BA_INT32:
+      func = nx_cblas_where_int32_t;
+      break;
+    case CAML_BA_INT64:
+      func = nx_cblas_where_int64_t;
+      break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      func = nx_cblas_where_intnat;
+      break;
+    case CAML_BA_FLOAT32:
+      func = nx_cblas_where_float;
+      break;
+    case CAML_BA_FLOAT64:
+      func = nx_cblas_where_double;
+      break;
+    case CAML_BA_COMPLEX32:
+      func = nx_cblas_where_c32_t;
+      break;
+    case CAML_BA_COMPLEX64:
+      func = nx_cblas_where_c64_t;
+      break;
+  }
+
+  if (func) {
+    caml_enter_blocking_section();
+    func(&cond, &x, &y, &z);
+    caml_leave_blocking_section();
+  } else {
+    caml_failwith("where: unsupported dtype");
+  }
+  return Val_unit;
+}
+
+NATIVE_WRAPPER_14(where)
+
+// Pad operation dispatch
+typedef void (*pad_op_t)(const ndarray_t *, ndarray_t *, const int *, value);
+
+CAMLprim value caml_nx_pad_bc(value *argv, int argn) {
+  int ndim = Int_val(argv[0]);
+  value vInputShape = argv[1], vX = argv[2], vXStrides = argv[3],
+        vXOffset = argv[4];
+  value vOutputShape = argv[5], vZ = argv[6], vZStrides = argv[7],
+        vZOffset = argv[8];
+  value vPadding = argv[9], vPadValue = argv[10];
+
+  if (ndim < 1) {
+    caml_failwith("pad: ndim must be at least 1");
+  }
+
+  int input_shape[ndim], output_shape[ndim], x_strides[ndim], z_strides[ndim];
+  int padding[ndim * 2];
+
+  for (int i = 0; i < ndim; ++i) {
+    input_shape[i] = Int_val(Field(vInputShape, i));
+    output_shape[i] = Int_val(Field(vOutputShape, i));
+    x_strides[i] = Int_val(Field(vXStrides, i));
+    z_strides[i] = Int_val(Field(vZStrides, i));
+  }
+
+  // Extract padding values (pairs of left/right padding for each dimension)
+  for (int i = 0; i < ndim * 2; ++i) {
+    padding[i] = Int_val(Field(vPadding, i));
+  }
+
+  struct caml_ba_array *ba = Caml_ba_array_val(vX);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  ndarray_t x, z;
+  x.data = ba->data;
+  x.ndim = ndim;
+  x.shape = input_shape;
+  x.strides = x_strides;
+  x.offset = Int_val(vXOffset);
+  z.data = Caml_ba_data_val(vZ);
+  z.ndim = ndim;
+  z.shape = output_shape;
+  z.strides = z_strides;
+  z.offset = Int_val(vZOffset);
+
+  caml_enter_blocking_section();
+
+  switch (kind) {
+    case CAML_BA_INT32:
+      nx_cblas_pad_int32_t(&x, &z, padding, Int32_val(vPadValue));
+      break;
+    case CAML_BA_INT64:
+      nx_cblas_pad_int64_t(&x, &z, padding, Int64_val(vPadValue));
+      break;
+    case CAML_BA_FLOAT32:
+      nx_cblas_pad_float(&x, &z, padding, Double_val(vPadValue));
+      break;
+    case CAML_BA_FLOAT64:
+      nx_cblas_pad_double(&x, &z, padding, Double_val(vPadValue));
+      break;
+    case CAML_BA_UINT8:
+      nx_cblas_pad_uint8_t(&x, &z, padding, Int_val(vPadValue));
+      break;
+    default:
+      caml_leave_blocking_section();
+      caml_failwith("pad: unsupported dtype");
   }
 
   caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&data);
-  nx_cblas_free_strided_array(&indices);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
+  return Val_unit;
 }
 
-CAMLprim value nx_gather_bc(value *argv, int argn) {
-  return nx_gather(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                   argv[6], argv[7], argv[8], argv[9], argv[10], argv[11],
-                   argv[12]);
-}
+NATIVE_WRAPPER_11(pad)
 
-/* =========================== SCATTER Operation =========================== */
+// Cat operation dispatch
+CAMLprim value caml_nx_cat_bc(value *argv, int argn) {
+  value vInputs = argv[0];
+  int axis = Int_val(argv[1]);
+  value vOutput = argv[2], vOutputStrides = argv[3], vOutputOffset = argv[4];
+  value vOutputShape = argv[5];
 
-CAMLprim value nx_scatter(value vTemplateNdim, value vTemplateShape,
-                          value vTemplate, value vTemplateStrides,
-                          value vTemplateOffset, value vIndicesShape,
-                          value vIndices, value vIndicesStrides,
-                          value vIndicesOffset, value vUpdates,
-                          value vUpdatesStrides, value vUpdatesOffset,
-                          value vAxis, value vZ, value vZStrides,
-                          value vZOffset) {
-  CAMLparam5(vTemplateShape, vTemplate, vTemplateStrides, vIndicesShape,
-             vIndices);
-  CAMLxparam5(vIndicesStrides, vUpdates, vUpdatesStrides, vUpdatesOffset, vZ);
-  CAMLxparam2(vZStrides, vZOffset);
+  int num_inputs = Wosize_val(vInputs);
+  if (num_inputs == 0) return Val_unit;
 
-  int ndim = Int_val(vTemplateNdim);
-  int axis = Int_val(vAxis);
-  strided_array_t data_template, indices, updates, z;
+  // Get first input to determine ndim and dtype
+  value first_input = Field(vInputs, 0);
+  value vFirstBuffer = Field(first_input, 0);
+  value vFirstView = Field(first_input, 1);
+  value vFirstShape = Field(vFirstView, 0);
+  int ndim = Wosize_val(vFirstShape);
 
-  init_strided_array(&data_template, vTemplate, ndim, vTemplateShape,
-                     vTemplateStrides, vTemplateOffset);
-  init_strided_array(&indices, vIndices, ndim, vIndicesShape, vIndicesStrides,
-                     vIndicesOffset);
-  init_strided_array(&updates, vUpdates, ndim, vIndicesShape, vUpdatesStrides,
-                     vUpdatesOffset);
-  init_strided_array(&z, vZ, ndim, vTemplateShape, vZStrides, vZOffset);
+  struct caml_ba_array *ba = Caml_ba_array_val(vFirstBuffer);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+  size_t elem_size = get_element_size(kind);
+
+  // Allocate array of ndarray_t pointers
+  const ndarray_t **inputs = malloc(num_inputs * sizeof(ndarray_t *));
+  ndarray_t *input_structs = malloc(num_inputs * sizeof(ndarray_t));
+
+  if (!inputs || !input_structs) {
+    free(inputs);
+    free(input_structs);
+    caml_failwith("cat: failed to allocate memory");
+  }
+
+  // Build input ndarray_t structures
+  for (int i = 0; i < num_inputs; i++) {
+    value input = Field(vInputs, i);
+    value vBuffer = Field(input, 0);
+    value vView = Field(input, 1);
+    value vShape = Field(vView, 0);
+    value vStrides = Field(vView, 1);
+    value vOffset = Field(vView, 2);
+
+    input_structs[i].data = Caml_ba_data_val(vBuffer);
+    input_structs[i].ndim = ndim;
+    input_structs[i].shape = malloc(ndim * sizeof(int));
+    input_structs[i].strides = malloc(ndim * sizeof(int));
+
+    if (!input_structs[i].shape || !input_structs[i].strides) {
+      // Clean up all previously allocated memory
+      for (int j = 0; j <= i; j++) {
+        free((void *)input_structs[j].shape);
+        free((void *)input_structs[j].strides);
+      }
+      free(input_structs);
+      free(inputs);
+      caml_failwith("cat: failed to allocate memory for shape/strides");
+    }
+
+    input_structs[i].offset = Int_val(vOffset);
+
+    for (int d = 0; d < ndim; d++) {
+      ((int *)input_structs[i].shape)[d] = Int_val(Field(vShape, d));
+      ((int *)input_structs[i].strides)[d] = Int_val(Field(vStrides, d));
+    }
+
+    inputs[i] = &input_structs[i];
+  }
+
+  // Build output ndarray_t
+  ndarray_t output;
+  output.data = Caml_ba_data_val(vOutput);
+  output.ndim = ndim;
+  output.shape = malloc(ndim * sizeof(int));
+  output.strides = malloc(ndim * sizeof(int));
+
+  if (!output.shape || !output.strides) {
+    // Clean up all previously allocated memory
+    for (int i = 0; i < num_inputs; i++) {
+      free((void *)input_structs[i].shape);
+      free((void *)input_structs[i].strides);
+    }
+    free(input_structs);
+    free(inputs);
+    if (output.shape) free((void *)output.shape);
+    if (output.strides) free((void *)output.strides);
+    caml_failwith("cat: failed to allocate memory for output shape/strides");
+  }
+
+  output.offset = Int_val(vOutputOffset);
+
+  for (int d = 0; d < ndim; d++) {
+    ((int *)output.shape)[d] = Int_val(Field(vOutputShape, d));
+    ((int *)output.strides)[d] = Int_val(Field(vOutputStrides, d));
+  }
 
   caml_enter_blocking_section();
+  nx_cblas_cat_generic(inputs, num_inputs, &output, axis, elem_size);
+  caml_leave_blocking_section();
+
+  // Free allocated memory
+  for (int i = 0; i < num_inputs; i++) {
+    free((void *)input_structs[i].shape);
+    free((void *)input_structs[i].strides);
+  }
+  free(input_structs);
+  free(inputs);
+  free((void *)output.shape);
+  free((void *)output.strides);
+
+  return Val_unit;
+}
+
+CAMLprim value caml_nx_cat(value v1, value v2, value v3, value v4, value v5,
+                           value v6) {
+  value argv[6] = {v1, v2, v3, v4, v5, v6};
+  return caml_nx_cat_bc(argv, 6);
+}
+
+// Threefry random number generator implementation
+static const uint32_t KS_PARITY_32 = 0x1BD11BDA;
+static const int R_2X32[8] = {13, 15, 26, 6, 17, 29, 16, 24};
+
+static inline uint32_t rotl32(uint32_t x, int n) {
+  n &= 31;
+  return (x << n) | (x >> (32 - n));
+}
+
+static void threefry2x32_20(uint32_t c0, uint32_t c1, uint32_t k0, uint32_t k1,
+                            uint32_t *out0, uint32_t *out1) {
+  uint32_t x0 = c0, x1 = c1;
+  uint32_t keys[3] = {k0, k1, KS_PARITY_32 ^ k0 ^ k1};
+
+  for (int r = 0; r < 20; r++) {
+    if (r % 4 == 0) {
+      int s_div_4 = r / 4;
+      x0 += keys[s_div_4 % 3];
+      x1 += keys[(s_div_4 + 1) % 3];
+      x1 += s_div_4;
+    }
+    x0 += x1;
+    x1 = rotl32(x1, R_2X32[r % 8]);
+    x1 ^= x0;
+  }
+
+  int s_div_4_final = 20 / 4;
+  x0 += keys[s_div_4_final % 3];
+  x1 += keys[(s_div_4_final + 1) % 3];
+  x1 += s_div_4_final;
+
+  *out0 = x0;
+  *out1 = x1;
+}
+
+static void nx_cblas_threefry(const ndarray_t *data, const ndarray_t *seed,
+                              const ndarray_t *out) {
+  const uint32_t c1_fixed = 0;
+  const uint32_t k1_fixed = 0xCAFEBABE;
+
+  long total_size = 1;
+  for (int i = 0; i < out->ndim; i++) {
+    total_size *= out->shape[i];
+  }
+
+  if (total_size == 0) return;
+
+  // Check if arrays are contiguous
+  int data_contig = is_c_contiguous(data);
+  int seed_contig = is_c_contiguous(seed);
+  int out_contig = is_c_contiguous(out);
+
+  if (data_contig && seed_contig && out_contig) {
+    // Fast path for contiguous arrays
+    const uint32_t *data_ptr = (const uint32_t *)data->data + data->offset;
+    const uint32_t *seed_ptr = (const uint32_t *)seed->data + seed->offset;
+    uint32_t *out_ptr = (uint32_t *)out->data + out->offset;
+
+#pragma omp parallel for if (total_size > 10000)
+    for (long i = 0; i < total_size; i++) {
+      uint32_t res0, res1;
+      threefry2x32_20(data_ptr[i], c1_fixed, seed_ptr[i], k1_fixed, &res0,
+                      &res1);
+      out_ptr[i] = res0;  // Only use first output
+    }
+  } else {
+    // Non-contiguous path using div/mod calculation
+    const uint32_t *data_ptr = (const uint32_t *)data->data;
+    const uint32_t *seed_ptr = (const uint32_t *)seed->data;
+    uint32_t *out_ptr = (uint32_t *)out->data;
+
+#pragma omp parallel for if (total_size > 10000)
+    for (long i = 0; i < total_size; i++) {
+      // Stack-allocated index arrays
+      int data_idx[out->ndim], seed_idx[out->ndim], out_idx[out->ndim];
+
+      // Unravel linear index to multi-dimensional indices
+      long temp = i;
+      for (int d = out->ndim - 1; d >= 0; d--) {
+        out_idx[d] = temp % out->shape[d];
+        // For threefry, all shapes are the same
+        data_idx[d] = out_idx[d];
+        seed_idx[d] = out_idx[d];
+        temp /= out->shape[d];
+      }
+
+      // Calculate strided offsets
+      long data_offset = data->offset;
+      long seed_offset = seed->offset;
+      long out_offset = out->offset;
+      for (int d = 0; d < out->ndim; d++) {
+        data_offset += data_idx[d] * data->strides[d];
+        seed_offset += seed_idx[d] * seed->strides[d];
+        out_offset += out_idx[d] * out->strides[d];
+      }
+
+      uint32_t res0, res1;
+      threefry2x32_20(data_ptr[data_offset], c1_fixed, seed_ptr[seed_offset],
+                      k1_fixed, &res0, &res1);
+      out_ptr[out_offset] = res0;
+    }
+  }
+}
+
+// Gather operation implementation
+#define DEFINE_GATHER_OP(CTYPE, ITYPE)                                         \
+  static void nx_cblas_gather_##CTYPE(const ndarray_t *data,                   \
+                                      const ndarray_t *indices,                \
+                                      const ndarray_t *out, int axis) {        \
+    long total_size = 1;                                                       \
+    for (int i = 0; i < out->ndim; i++) {                                      \
+      total_size *= out->shape[i];                                             \
+    }                                                                          \
+    if (total_size == 0) return;                                               \
+                                                                               \
+    const CTYPE *data_ptr = (const CTYPE *)data->data;                         \
+    const ITYPE *indices_ptr = (const ITYPE *)indices->data;                   \
+    CTYPE *out_ptr = (CTYPE *)out->data;                                       \
+                                                                               \
+    int data_size_at_axis = data->shape[axis];                                 \
+                                                                               \
+    _Pragma("omp parallel if(total_size > 10000)") {                           \
+      /* Stack allocation for thread-local index arrays */                     \
+      int md_idx[out->ndim];                                                   \
+      int src_idx[out->ndim];                                                  \
+                                                                               \
+      _Pragma("omp for") for (long linear_idx = 0; linear_idx < total_size;    \
+                              linear_idx++) {                                  \
+        /* Unravel linear index to multi-dimensional index */                  \
+        long temp = linear_idx;                                                \
+        for (int d = out->ndim - 1; d >= 0; d--) {                             \
+          md_idx[d] = temp % out->shape[d];                                    \
+          temp /= out->shape[d];                                               \
+        }                                                                      \
+                                                                               \
+        /* Get index value from indices tensor */                              \
+        long indices_offset = indices->offset;                                 \
+        for (int d = 0; d < indices->ndim; d++) {                              \
+          indices_offset += md_idx[d] * indices->strides[d];                   \
+        }                                                                      \
+        int idx_value = (int)indices_ptr[indices_offset];                      \
+                                                                               \
+        /* Handle negative indices and clamp */                                \
+        int normalized_idx =                                                   \
+            idx_value < 0 ? idx_value + data_size_at_axis : idx_value;         \
+        int clamped_idx =                                                      \
+            normalized_idx < 0                                                 \
+                ? 0                                                            \
+                : (normalized_idx >= data_size_at_axis ? data_size_at_axis - 1 \
+                                                       : normalized_idx);      \
+                                                                               \
+        /* Build source index */                                               \
+        for (int d = 0; d < out->ndim; d++) {                                  \
+          src_idx[d] = md_idx[d];                                              \
+        }                                                                      \
+        src_idx[axis] = clamped_idx;                                           \
+                                                                               \
+        /* Calculate data offset and copy value */                             \
+        long data_offset = data->offset;                                       \
+        for (int d = 0; d < data->ndim; d++) {                                 \
+          data_offset += src_idx[d] * data->strides[d];                        \
+        }                                                                      \
+                                                                               \
+        /* Calculate output offset and write */                                \
+        long out_offset = out->offset;                                         \
+        for (int d = 0; d < out->ndim; d++) {                                  \
+          out_offset += md_idx[d] * out->strides[d];                           \
+        }                                                                      \
+                                                                               \
+        out_ptr[out_offset] = data_ptr[data_offset];                           \
+      }                                                                        \
+    }                                                                          \
+  }
+
+DEFINE_GATHER_OP(float, int32_t)
+DEFINE_GATHER_OP(double, int32_t)
+DEFINE_GATHER_OP(uint8_t, int32_t)
+DEFINE_GATHER_OP(int32_t, int32_t)
+DEFINE_GATHER_OP(int64_t, int32_t)
+DEFINE_GATHER_OP(c32_t, int32_t)
+DEFINE_GATHER_OP(c64_t, int32_t)
+
+// Scatter operation implementation
+#define DEFINE_SCATTER_OP(CTYPE, ITYPE)                                  \
+  static void nx_cblas_scatter_##CTYPE(                                  \
+      const ndarray_t *template, const ndarray_t *indices,               \
+      const ndarray_t *updates, const ndarray_t *out, int axis) {        \
+    /* First copy template to output (already done in OCaml) */          \
+    /* Now scatter updates */                                            \
+    long updates_size = 1;                                               \
+    for (int i = 0; i < updates->ndim; i++) {                            \
+      updates_size *= updates->shape[i];                                 \
+    }                                                                    \
+    if (updates_size == 0) return;                                       \
+                                                                         \
+    const ITYPE *indices_ptr = (const ITYPE *)indices->data;             \
+    const CTYPE *updates_ptr = (const CTYPE *)updates->data;             \
+    CTYPE *out_ptr = (CTYPE *)out->data;                                 \
+                                                                         \
+    int template_size_at_axis = template->shape[axis];                   \
+                                                                         \
+    /* Stack allocation for work arrays */                               \
+    int md_idx[updates->ndim];                                           \
+    int dst_idx[template->ndim];                                         \
+                                                                         \
+    /* Process each update sequentially (order matters for scatter) */   \
+    for (long linear_idx = 0; linear_idx < updates_size; linear_idx++) { \
+      /* Unravel linear index */                                         \
+      long temp = linear_idx;                                            \
+      for (int d = updates->ndim - 1; d >= 0; d--) {                     \
+        md_idx[d] = temp % updates->shape[d];                            \
+        temp /= updates->shape[d];                                       \
+      }                                                                  \
+                                                                         \
+      /* Get index value */                                              \
+      long indices_offset = indices->offset;                             \
+      for (int d = 0; d < indices->ndim; d++) {                          \
+        indices_offset += md_idx[d] * indices->strides[d];               \
+      }                                                                  \
+      int idx_value = (int)indices_ptr[indices_offset];                  \
+                                                                         \
+      /* Handle negative indices and clamp */                            \
+      int normalized_idx =                                               \
+          idx_value < 0 ? idx_value + template_size_at_axis : idx_value; \
+      int clamped_idx = normalized_idx < 0                               \
+                            ? 0                                          \
+                            : (normalized_idx >= template_size_at_axis   \
+                                   ? template_size_at_axis - 1           \
+                                   : normalized_idx);                    \
+                                                                         \
+      /* Build destination index */                                      \
+      for (int d = 0; d < template->ndim; d++) {                         \
+        dst_idx[d] = md_idx[d];                                          \
+      }                                                                  \
+      dst_idx[axis] = clamped_idx;                                       \
+                                                                         \
+      /* Get update value */                                             \
+      long updates_offset = updates->offset;                             \
+      for (int d = 0; d < updates->ndim; d++) {                          \
+        updates_offset += md_idx[d] * updates->strides[d];               \
+      }                                                                  \
+                                                                         \
+      /* Calculate output offset and write */                            \
+      long out_offset = out->offset;                                     \
+      for (int d = 0; d < out->ndim; d++) {                              \
+        out_offset += dst_idx[d] * out->strides[d];                      \
+      }                                                                  \
+                                                                         \
+      out_ptr[out_offset] = updates_ptr[updates_offset];                 \
+    }                                                                    \
+  }
+
+DEFINE_SCATTER_OP(float, int32_t)
+DEFINE_SCATTER_OP(double, int32_t)
+DEFINE_SCATTER_OP(uint8_t, int32_t)
+DEFINE_SCATTER_OP(int32_t, int32_t)
+DEFINE_SCATTER_OP(int64_t, int32_t)
+DEFINE_SCATTER_OP(c32_t, int32_t)
+DEFINE_SCATTER_OP(c64_t, int32_t)
+
+// Threefry dispatch
+CAMLprim value caml_nx_threefry_bc(value *argv, int argn) {
+  int ndim = Int_val(argv[0]);
+  value vShape = argv[1];
+  value vX = argv[2], vXStrides = argv[3], vXOffset = argv[4];
+  value vY = argv[5], vYStrides = argv[6], vYOffset = argv[7];
+  value vZ = argv[8], vZStrides = argv[9], vZOffset = argv[10];
+
+  if (ndim < 1) {
+    caml_failwith("threefry: ndim must be at least 1");
+  }
+
+  int shape[ndim], x_strides[ndim], y_strides[ndim], z_strides[ndim];
+  for (int i = 0; i < ndim; ++i) shape[i] = Int_val(Field(vShape, i));
+  for (int i = 0; i < ndim; ++i) x_strides[i] = Int_val(Field(vXStrides, i));
+  for (int i = 0; i < ndim; ++i) y_strides[i] = Int_val(Field(vYStrides, i));
+  for (int i = 0; i < ndim; ++i) z_strides[i] = Int_val(Field(vZStrides, i));
+
+  struct caml_ba_array *ba_x = Caml_ba_array_val(vX);
+  struct caml_ba_array *ba_y = Caml_ba_array_val(vY);
+  struct caml_ba_array *ba_z = Caml_ba_array_val(vZ);
+
+  ndarray_t x, y, z;
+  x.data = ba_x->data;
+  x.ndim = ndim;
+  x.shape = shape;
+  x.strides = x_strides;
+  x.offset = Int_val(vXOffset);
+
+  y.data = ba_y->data;
+  y.ndim = ndim;
+  y.shape = shape;
+  y.strides = y_strides;
+  y.offset = Int_val(vYOffset);
+
+  z.data = ba_z->data;
+  z.ndim = ndim;
+  z.shape = shape;
+  z.strides = z_strides;
+  z.offset = Int_val(vZOffset);
+
+  // Threefry only supports int32
+  int kind = ba_x->flags & CAML_BA_KIND_MASK;
+
+  if (kind != CAML_BA_INT32) {
+    caml_failwith("threefry: only int32 dtype supported");
+  }
+
+  caml_enter_blocking_section();
+  nx_cblas_threefry(&x, &y, &z);
+  caml_leave_blocking_section();
+
+  return Val_unit;
+}
+
+NATIVE_WRAPPER_11(threefry)
+
+// Gather dispatch
+CAMLprim value caml_nx_gather_bc(value *argv, int argn) {
+  int ndim = Int_val(argv[0]);
+  value vDataShape = argv[1];
+  value vData = argv[2], vDataStrides = argv[3], vDataOffset = argv[4];
+  value vIndices = argv[5], vIndicesStrides = argv[6], vIndicesOffset = argv[7];
+  int axis = Int_val(argv[8]);
+  value vZ = argv[9], vZStrides = argv[10], vZOffset = argv[11];
+
+  if (ndim < 1) {
+    caml_failwith("gather: ndim must be at least 1");
+  }
+
+  // Get shapes - data and indices can have different shapes
+  int data_shape[ndim], indices_shape[ndim], data_strides[ndim],
+      indices_strides[ndim], z_strides[ndim];
+  for (int i = 0; i < ndim; ++i) data_shape[i] = Int_val(Field(vDataShape, i));
+
+  // For gather, the output shape is the indices shape, get it from z's bigarray
+  struct caml_ba_array *ba_z = Caml_ba_array_val(vZ);
+  for (int i = 0; i < ndim; ++i) {
+    indices_shape[i] = ba_z->dim[i];
+  }
+
+  for (int i = 0; i < ndim; ++i)
+    data_strides[i] = Int_val(Field(vDataStrides, i));
+  for (int i = 0; i < ndim; ++i)
+    indices_strides[i] = Int_val(Field(vIndicesStrides, i));
+  for (int i = 0; i < ndim; ++i) z_strides[i] = Int_val(Field(vZStrides, i));
+
+  struct caml_ba_array *ba_data = Caml_ba_array_val(vData);
+  struct caml_ba_array *ba_indices = Caml_ba_array_val(vIndices);
+
+  ndarray_t data, indices, z;
+  data.data = ba_data->data;
+  data.ndim = ndim;
+  data.shape = data_shape;
+  data.strides = data_strides;
+  data.offset = Int_val(vDataOffset);
+
+  indices.data = ba_indices->data;
+  indices.ndim = ndim;
+  indices.shape = indices_shape;
+  indices.strides = indices_strides;
+  indices.offset = Int_val(vIndicesOffset);
+
+  z.data = ba_z->data;
+  z.ndim = ndim;
+  z.shape = indices_shape;  // Output has shape of indices
+  z.strides = z_strides;
+  z.offset = Int_val(vZOffset);
+
+  int kind = ba_data->flags & CAML_BA_KIND_MASK;
+
+  caml_enter_blocking_section();
+  switch (kind) {
+    case CAML_BA_FLOAT32:
+      nx_cblas_gather_float(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_FLOAT64:
+      nx_cblas_gather_double(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_UINT8:
+      nx_cblas_gather_uint8_t(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_INT32:
+      nx_cblas_gather_int32_t(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_INT64:
+      nx_cblas_gather_int64_t(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_COMPLEX32:
+      nx_cblas_gather_c32_t(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_COMPLEX64:
+      nx_cblas_gather_c64_t(&data, &indices, &z, axis);
+      break;
+    default:
+      caml_leave_blocking_section();
+      caml_failwith("gather: unsupported dtype");
+  }
+
+  caml_leave_blocking_section();
+  return Val_unit;
+}
+
+CAMLprim value caml_nx_gather(value v1, value v2, value v3, value v4, value v5,
+                              value v6, value v7, value v8, value v9, value v10,
+                              value v11, value v12) {
+  value argv[12] = {v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12};
+  return caml_nx_gather_bc(argv, 12);
+}
+
+// Scatter dispatch
+CAMLprim value caml_nx_scatter_bc(value *argv, int argn) {
+  int ndim = Int_val(argv[0]);
+  value vShape = argv[1];
+  value vTemplate = argv[2], vTemplateStrides = argv[3],
+        vTemplateOffset = argv[4];
+  value vIndices = argv[5], vIndicesStrides = argv[6], vIndicesOffset = argv[7];
+  value vUpdates = argv[8], vUpdatesStrides = argv[9],
+        vUpdatesOffset = argv[10];
+  int axis = Int_val(argv[11]);
+  value vOutput = argv[12], vOutputStrides = argv[13], vOutputOffset = argv[14];
+
+  if (ndim < 1) {
+    caml_failwith("scatter: ndim must be at least 1");
+  }
+
+  // Get shapes for template and updates/indices
+  int template_shape[ndim], updates_shape[ndim];
+  for (int i = 0; i < ndim; ++i) template_shape[i] = Int_val(Field(vShape, i));
+
+  // Updates and indices have same shape
+  struct caml_ba_array *ba_updates = Caml_ba_array_val(vUpdates);
+  for (int i = 0; i < ndim; ++i) {
+    updates_shape[i] = ba_updates->dim[i];
+  }
+
+  int template_strides[ndim], indices_strides[ndim], updates_strides[ndim],
+      output_strides[ndim];
+  for (int i = 0; i < ndim; ++i)
+    template_strides[i] = Int_val(Field(vTemplateStrides, i));
+  for (int i = 0; i < ndim; ++i)
+    indices_strides[i] = Int_val(Field(vIndicesStrides, i));
+  for (int i = 0; i < ndim; ++i)
+    updates_strides[i] = Int_val(Field(vUpdatesStrides, i));
+  for (int i = 0; i < ndim; ++i)
+    output_strides[i] = Int_val(Field(vOutputStrides, i));
+
+  struct caml_ba_array *ba_template = Caml_ba_array_val(vTemplate);
+  struct caml_ba_array *ba_indices = Caml_ba_array_val(vIndices);
+  struct caml_ba_array *ba_output = Caml_ba_array_val(vOutput);
+
+  ndarray_t template_arr, indices_arr, updates_arr, output_arr;
+  template_arr.data = ba_template->data;
+  template_arr.ndim = ndim;
+  template_arr.shape = template_shape;
+  template_arr.strides = template_strides;
+  template_arr.offset = Int_val(vTemplateOffset);
+
+  indices_arr.data = ba_indices->data;
+  indices_arr.ndim = ndim;
+  indices_arr.shape = updates_shape;  // Same shape as updates
+  indices_arr.strides = indices_strides;
+  indices_arr.offset = Int_val(vIndicesOffset);
+
+  updates_arr.data = ba_updates->data;
+  updates_arr.ndim = ndim;
+  updates_arr.shape = updates_shape;
+  updates_arr.strides = updates_strides;
+  updates_arr.offset = Int_val(vUpdatesOffset);
+
+  output_arr.data = ba_output->data;
+  output_arr.ndim = ndim;
+  output_arr.shape = template_shape;  // Output has shape of template
+  output_arr.strides = output_strides;
+  output_arr.offset = Int_val(vOutputOffset);
 
   struct caml_ba_array *ba = Caml_ba_array_val(vTemplate);
   int kind = ba->flags & CAML_BA_KIND_MASK;
 
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_scatter_f32(&data_template, &indices, &updates, axis, &z);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_scatter_f64(&data_template, &indices, &updates, axis, &z);
-  } else if (kind == CAML_BA_INT32) {
-    nx_cblas_scatter_i32(&data_template, &indices, &updates, axis, &z);
-  } else if (kind == CAML_BA_INT64) {
-    nx_cblas_scatter_i64(&data_template, &indices, &updates, axis, &z);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&data_template);
-    nx_cblas_free_strided_array(&indices);
-    nx_cblas_free_strided_array(&updates);
-    nx_cblas_free_strided_array(&z);
-    caml_failwith("scatter: unsupported dtype");
+  caml_enter_blocking_section();
+  switch (kind) {
+    case CAML_BA_FLOAT32:
+      nx_cblas_scatter_float(&template_arr, &indices_arr, &updates_arr,
+                             &output_arr, axis);
+      break;
+    case CAML_BA_FLOAT64:
+      nx_cblas_scatter_double(&template_arr, &indices_arr, &updates_arr,
+                              &output_arr, axis);
+      break;
+    case CAML_BA_UINT8:
+      nx_cblas_scatter_uint8_t(&template_arr, &indices_arr, &updates_arr,
+                               &output_arr, axis);
+      break;
+    case CAML_BA_INT32:
+      nx_cblas_scatter_int32_t(&template_arr, &indices_arr, &updates_arr,
+                               &output_arr, axis);
+      break;
+    case CAML_BA_INT64:
+      nx_cblas_scatter_int64_t(&template_arr, &indices_arr, &updates_arr,
+                               &output_arr, axis);
+      break;
+    case CAML_BA_COMPLEX32:
+      nx_cblas_scatter_c32_t(&template_arr, &indices_arr, &updates_arr,
+                             &output_arr, axis);
+      break;
+    case CAML_BA_COMPLEX64:
+      nx_cblas_scatter_c64_t(&template_arr, &indices_arr, &updates_arr,
+                             &output_arr, axis);
+      break;
+    default:
+      caml_leave_blocking_section();
+      caml_failwith("scatter: unsupported dtype");
   }
 
   caml_leave_blocking_section();
-
-  nx_cblas_free_strided_array(&data_template);
-  nx_cblas_free_strided_array(&indices);
-  nx_cblas_free_strided_array(&updates);
-  nx_cblas_free_strided_array(&z);
-
-  CAMLreturn(Val_unit);
+  return Val_unit;
 }
 
-CAMLprim value nx_scatter_bc(value *argv, int argn) {
-  return nx_scatter(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                    argv[6], argv[7], argv[8], argv[9], argv[10], argv[11],
-                    argv[12], argv[13], argv[14], argv[15]);
+CAMLprim value caml_nx_scatter(value v1, value v2, value v3, value v4, value v5,
+                               value v6, value v7, value v8, value v9,
+                               value v10, value v11, value v12, value v13,
+                               value v14, value v15) {
+  value argv[15] = {v1, v2,  v3,  v4,  v5,  v6,  v7, v8,
+                    v9, v10, v11, v12, v13, v14, v15};
+  return caml_nx_scatter_bc(argv, 15);
 }
 
-/* =========================== MATMUL Operation =========================== */
+// Matrix multiplication implementation
+static void nx_cblas_matmul_float(const ndarray_t *a, const ndarray_t *b,
+                                  ndarray_t *c) {
+  // Dimension checks should be done before entering blocking section
+  assert(a->ndim >= 2 && b->ndim >= 2 && c->ndim >= 2);
 
-extern void nx_cblas_matmul_f32(const strided_array_t *a, const strided_array_t *b, strided_array_t *c);
-extern void nx_cblas_matmul_f64(const strided_array_t *a, const strided_array_t *b, strided_array_t *c);
+  // M, K, N dimensions of the matrices
+  const int M = a->shape[a->ndim - 2];
+  const int K = a->shape[a->ndim - 1];
+  const int N = b->shape[b->ndim - 1];
 
-CAMLprim value nx_matmul(value vNdimA, value vShapeA, value vA, value vStridesA,
-                         value vOffsetA, value vShapeB, value vB, value vStridesB,
-                         value vOffsetB, value vShapeC, value vC, value vStridesC,
-                         value vOffsetC) {
-  CAMLparam5(vShapeA, vA, vStridesA, vShapeB, vB);
-  CAMLxparam5(vStridesB, vShapeC, vC, vStridesC, vOffsetC);
+  // These should be validated before entering blocking section
+  assert(K == b->shape[b->ndim - 2]);
+  assert(a->strides[a->ndim - 1] == 1 && b->strides[b->ndim - 1] == 1 &&
+         c->strides[c->ndim - 1] == 1);
 
-  int ndim_a = Int_val(vNdimA);
-  int ndim_b = Wosize_val(vShapeB);
-  int ndim_c = Wosize_val(vShapeC);
-  strided_array_t a, b, c;
+  // Calculate batch size
+  long batch_size = 1;
+  for (int i = 0; i < a->ndim - 2; i++) {
+    batch_size *= a->shape[i];
+  }
 
-  init_strided_array(&a, vA, ndim_a, vShapeA, vStridesA, vOffsetA);
-  init_strided_array(&b, vB, ndim_b, vShapeB, vStridesB, vOffsetB);
-  init_strided_array(&c, vC, ndim_c, vShapeC, vStridesC, vOffsetC);
+  const long a_matrix_size = M * K;
+  const long b_matrix_size = K * N;
+  const long c_matrix_size = M * N;
+
+  float *a_data = (float *)a->data + a->offset;
+  float *b_data = (float *)b->data + b->offset;
+  float *c_data = (float *)c->data + c->offset;
+
+  // Parallelize over batch dimension
+#pragma omp parallel for if (batch_size > 100)
+  for (long i = 0; i < batch_size; i++) {
+    const float *a_mat = a_data + i * a_matrix_size;
+    // For b, only increment if it has batch dimensions
+    const float *b_mat = (b->ndim > 2) ? (b_data + i * b_matrix_size) : b_data;
+    float *c_mat = c_data + i * c_matrix_size;
+
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K,
+                1.0f,      // alpha
+                a_mat, K,  // A, lda
+                b_mat, N,  // B, ldb
+                0.0f,      // beta
+                c_mat, N   // C, ldc
+    );
+  }
+}
+
+static void nx_cblas_matmul_double(const ndarray_t *a, const ndarray_t *b,
+                                   ndarray_t *c) {
+  // Dimension checks should be done before entering blocking section
+  assert(a->ndim >= 2 && b->ndim >= 2 && c->ndim >= 2);
+
+  const int M = a->shape[a->ndim - 2];
+  const int K = a->shape[a->ndim - 1];
+  const int N = b->shape[b->ndim - 1];
+
+  // These should be validated before entering blocking section
+  assert(K == b->shape[b->ndim - 2]);
+  assert(a->strides[a->ndim - 1] == 1 && b->strides[b->ndim - 1] == 1 &&
+         c->strides[c->ndim - 1] == 1);
+
+  long batch_size = 1;
+  for (int i = 0; i < a->ndim - 2; i++) {
+    batch_size *= a->shape[i];
+  }
+
+  const long a_matrix_size = M * K;
+  const long b_matrix_size = K * N;
+  const long c_matrix_size = M * N;
+
+  double *a_data = (double *)a->data + a->offset;
+  double *b_data = (double *)b->data + b->offset;
+  double *c_data = (double *)c->data + c->offset;
+
+#pragma omp parallel for if (batch_size > 100)
+  for (long i = 0; i < batch_size; i++) {
+    const double *a_mat = a_data + i * a_matrix_size;
+    // For b, only increment if it has batch dimensions
+    const double *b_mat = (b->ndim > 2) ? (b_data + i * b_matrix_size) : b_data;
+    double *c_mat = c_data + i * c_matrix_size;
+
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K,
+                1.0,       // alpha
+                a_mat, K,  // A, lda
+                b_mat, N,  // B, ldb
+                0.0,       // beta
+                c_mat, N   // C, ldc
+    );
+  }
+}
+
+// Matmul dispatch
+CAMLprim value caml_nx_matmul_bc(value *argv, int argn) {
+  value vA = argv[0], vAShape = argv[1], vAStrides = argv[2],
+        vAOffset = argv[3];
+  value vB = argv[4], vBShape = argv[5], vBStrides = argv[6],
+        vBOffset = argv[7];
+  value vC = argv[8], vCShape = argv[9], vCStrides = argv[10],
+        vCOffset = argv[11];
+
+  struct caml_ba_array *ba_a = Caml_ba_array_val(vA);
+  struct caml_ba_array *ba_b = Caml_ba_array_val(vB);
+  struct caml_ba_array *ba_c = Caml_ba_array_val(vC);
+  int kind = ba_a->flags & CAML_BA_KIND_MASK;
+
+  // Get actual dimensions from shape arrays
+  int ndim_a = Wosize_val(vAShape);
+  int ndim_b = Wosize_val(vBShape);
+  int ndim_c = Wosize_val(vCShape);
+
+  // Limit ndim to prevent stack overflow
+  if (ndim_a > 32 || ndim_b > 32 || ndim_c > 32) {
+    caml_failwith("matmul: tensor rank too high (max 32)");
+  }
+
+  // Stack allocate shape and stride arrays
+  int shape_a[ndim_a], strides_a[ndim_a];
+  int shape_b[ndim_b], strides_b[ndim_b];
+  int shape_c[ndim_c], strides_c[ndim_c];
+
+  for (int i = 0; i < ndim_a; i++) {
+    shape_a[i] = Int_val(Field(vAShape, i));
+    strides_a[i] = Int_val(Field(vAStrides, i));
+  }
+  for (int i = 0; i < ndim_b; i++) {
+    shape_b[i] = Int_val(Field(vBShape, i));
+    strides_b[i] = Int_val(Field(vBStrides, i));
+  }
+  for (int i = 0; i < ndim_c; i++) {
+    shape_c[i] = Int_val(Field(vCShape, i));
+    strides_c[i] = Int_val(Field(vCStrides, i));
+  }
+
+  ndarray_t a, b, c;
+  a.data = ba_a->data;
+  a.ndim = ndim_a;
+  a.shape = shape_a;
+  a.strides = strides_a;
+  a.offset = Int_val(vAOffset);
+
+  b.data = ba_b->data;
+  b.ndim = ndim_b;
+  b.shape = shape_b;
+  b.strides = strides_b;
+  b.offset = Int_val(vBOffset);
+
+  c.data = ba_c->data;
+  c.ndim = ndim_c;
+  c.shape = shape_c;
+  c.strides = strides_c;
+  c.offset = Int_val(vCOffset);
+
+  // Validate dimensions before entering blocking section
+  if (ndim_a < 2 || ndim_b < 2 || ndim_c < 2) {
+    caml_failwith("matmul: all inputs must have at least 2 dimensions");
+  }
+
+  // Check inner dimensions match
+  if (shape_a[ndim_a - 1] != shape_b[ndim_b - 2]) {
+    caml_failwith("matmul: inner dimensions must match");
+  }
+
+  // Check innermost dimension is contiguous
+  if (strides_a[ndim_a - 1] != 1 || strides_b[ndim_b - 1] != 1 ||
+      strides_c[ndim_c - 1] != 1) {
+    caml_failwith("matmul: innermost dimension must be contiguous (stride=1)");
+  }
 
   caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vA);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_matmul_f32(&a, &b, &c);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_matmul_f64(&a, &b, &c);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&a);
-    nx_cblas_free_strided_array(&b);
-    nx_cblas_free_strided_array(&c);
-    caml_failwith("matmul: unsupported dtype");
+  switch (kind) {
+    case CAML_BA_FLOAT32:
+      nx_cblas_matmul_float(&a, &b, &c);
+      break;
+    case CAML_BA_FLOAT64:
+      nx_cblas_matmul_double(&a, &b, &c);
+      break;
+    default:
+      caml_leave_blocking_section();
+      caml_failwith("matmul: unsupported dtype");
   }
-
   caml_leave_blocking_section();
 
-  nx_cblas_free_strided_array(&a);
-  nx_cblas_free_strided_array(&b);
-  nx_cblas_free_strided_array(&c);
-
-  CAMLreturn(Val_unit);
+  return Val_unit;
 }
 
-CAMLprim value nx_matmul_bc(value *argv, int argn) {
-  return nx_matmul(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                   argv[6], argv[7], argv[8], argv[9], argv[10], argv[11],
-                   argv[12]);
-}
+NATIVE_WRAPPER_12(matmul)
 
-/* =========================== UNFOLD Operation =========================== */
+// Unfold (im2col) implementation
+#define DEFINE_UNFOLD_OP(T)                                                    \
+  static void nx_cblas_unfold_##T(const ndarray_t *input, ndarray_t *output,   \
+                                  const int *output_spatial_shape,             \
+                                  const int *kernel_shape, const int *strides, \
+                                  const int *padding_lower,                    \
+                                  const int *dilation, int num_spatial_dims) { \
+    T *input_data = (T *)input->data;                                          \
+    T *output_data = (T *)output->data;                                        \
+    /* For unfold, output is always 2D or has batch dims + 2D */               \
+    /* Last two dims are [patch_size, num_patches] */                          \
+    int output_ndim = output->ndim;                                            \
+    long patch_size = output->shape[output_ndim - 2];                          \
+    long num_patches = output->shape[output_ndim - 1];                         \
+    /* Channels is always the dimension right before spatial dims */           \
+    int batch_channel_dims = input->ndim - num_spatial_dims;                   \
+    if (batch_channel_dims <= 0) {                                             \
+      /* This should never happen with proper validation, but check anyway */  \
+      return;                                                                  \
+    }                                                                          \
+    int channels = input->shape[batch_channel_dims - 1];                       \
+    if (channels <= 0) {                                                       \
+      /* Invalid channel count */                                              \
+      return;                                                                  \
+    }                                                                          \
+    long patch_size_per_channel = patch_size / channels;                       \
+                                                                               \
+    _Pragma("omp parallel for if(num_patches > 1000)") for (long patch_idx =   \
+                                                                0;             \
+                                                            patch_idx <        \
+                                                            num_patches;       \
+                                                            ++patch_idx) {     \
+      /* Calculate patch position in input spatial dimensions */               \
+      int patch_pos[num_spatial_dims > 0 ? num_spatial_dims : 1];              \
+      long temp_idx = patch_idx;                                               \
+      /* Unravel patch index using the provided output spatial shape */        \
+      for (int i = num_spatial_dims - 1; i >= 0; i--) {                        \
+        patch_pos[i] = temp_idx % output_spatial_shape[i];                     \
+        temp_idx /= output_spatial_shape[i];                                   \
+      }                                                                        \
+                                                                               \
+      /* Iterate through kernel positions */                                   \
+      for (long k_linear_idx = 0; k_linear_idx < patch_size_per_channel;       \
+           ++k_linear_idx) {                                                   \
+        /* Unravel kernel linear index */                                      \
+        int k_indices[num_spatial_dims > 0 ? num_spatial_dims : 1];            \
+        temp_idx = k_linear_idx;                                               \
+        for (int i = num_spatial_dims - 1; i >= 0; i--) {                      \
+          k_indices[i] = temp_idx % kernel_shape[i];                           \
+          temp_idx /= kernel_shape[i];                                         \
+        }                                                                      \
+                                                                               \
+        /* Process each channel */                                             \
+        for (int c = 0; c < channels; ++c) {                                   \
+          long input_offset = input->offset;                                   \
+          /* Add batch offset if present */                                    \
+          if (batch_channel_dims > 1) {                                        \
+            /* For now just use batch 0 */                                     \
+            input_offset += 0;                                                 \
+          }                                                                    \
+          /* Add channel offset - batch_channel_dims already validated > 0 */  \
+          input_offset += c * input->strides[batch_channel_dims - 1];          \
+          int in_bounds = 1;                                                   \
+                                                                               \
+          /* Calculate input position */                                       \
+          for (int i = 0; i < num_spatial_dims; i++) {                         \
+            int spatial_idx = batch_channel_dims + i;                          \
+            long pos = patch_pos[i] * strides[i] +                             \
+                       k_indices[i] * dilation[i] - padding_lower[i];          \
+            if (pos < 0 || pos >= input->shape[spatial_idx]) {                 \
+              in_bounds = 0;                                                   \
+              break;                                                           \
+            }                                                                  \
+            input_offset += pos * input->strides[spatial_idx];                 \
+          }                                                                    \
+                                                                               \
+          /* Calculate output position for possibly batched output */          \
+          long output_offset = output->offset;                                 \
+          /* Skip batch dimensions if any */                                   \
+          int batch_dims = output_ndim - 2;                                    \
+          for (int b = 0; b < batch_dims; b++) {                               \
+            output_offset += 0; /* Batch index 0 for now */                    \
+          }                                                                    \
+          /* Add patch position */                                             \
+          output_offset += (c * patch_size_per_channel + k_linear_idx) *       \
+                               output->strides[output_ndim - 2] +              \
+                           patch_idx * output->strides[output_ndim - 1];       \
+                                                                               \
+          if (in_bounds) {                                                     \
+            output_data[output_offset] = input_data[input_offset];             \
+          } else {                                                             \
+            output_data[output_offset] = (T)0;                                 \
+          }                                                                    \
+        }                                                                      \
+      }                                                                        \
+    }                                                                          \
+  }
 
-extern void nx_cblas_unfold_f32(const strided_array_t *input, strided_array_t *output,
-                                int n_spatial, const int *kernel_size, const int *stride,
-                                const int *dilation, const int *padding);
-extern void nx_cblas_unfold_f64(const strided_array_t *input, strided_array_t *output,
-                                int n_spatial, const int *kernel_size, const int *stride,
-                                const int *dilation, const int *padding);
+DEFINE_UNFOLD_OP(float)
+DEFINE_UNFOLD_OP(double)
+DEFINE_UNFOLD_OP(uint8_t)
+DEFINE_UNFOLD_OP(int32_t)
+DEFINE_UNFOLD_OP(int64_t)
 
-CAMLprim value nx_unfold(value vInputNdim, value vInputShape, value vInput,
-                         value vInputStrides, value vInputOffset, value vOutputShape,
-                         value vOutput, value vOutputStrides, value vOutputOffset,
-                         value vNSpatial, value vKernelSize, value vStride,
-                         value vDilation, value vPadding) {
-  CAMLparam5(vInputShape, vInput, vInputStrides, vOutputShape, vOutput);
-  CAMLxparam5(vOutputStrides, vKernelSize, vStride, vDilation, vPadding);
+// Fold (col2im) implementation
+#define DEFINE_FOLD_OP(T)                                                      \
+  static void nx_cblas_fold_##T(                                               \
+      const ndarray_t *input_cols, ndarray_t *output,                          \
+      const int *output_spatial_shape, const int *kernel_shape,                \
+      const int *strides, const int *padding_lower, const int *dilation,       \
+      int num_spatial_dims) {                                                  \
+    T *input_data = (T *)input_cols->data;                                     \
+    T *output_data = (T *)output->data;                                        \
+                                                                               \
+    /* Initialize output to zero - must respect strides */                     \
+    if (is_c_contiguous(output)) {                                             \
+      /* Fast path for contiguous arrays */                                    \
+      long output_total = total_elements(output);                              \
+      _Pragma("omp parallel for simd") for (long i = 0; i < output_total;      \
+                                            ++i) {                             \
+        output_data[output->offset + i] = (T)0;                                \
+      }                                                                        \
+    } else {                                                                   \
+      /* Slow path for non-contiguous arrays - iterate properly */             \
+      /* For now, use a simple nested loop for channels + spatial dims */      \
+      for (int c = 0; c < output->shape[0]; ++c) {                             \
+        long c_offset = output->offset + c * output->strides[0];               \
+        if (num_spatial_dims == 1) {                                           \
+          for (int i = 0; i < output->shape[1]; ++i) {                         \
+            output_data[c_offset + i * output->strides[1]] = (T)0;             \
+          }                                                                    \
+        } else if (num_spatial_dims == 2) {                                    \
+          for (int i = 0; i < output->shape[1]; ++i) {                         \
+            for (int j = 0; j < output->shape[2]; ++j) {                       \
+              output_data[c_offset + i * output->strides[1] +                  \
+                          j * output->strides[2]] = (T)0;                      \
+            }                                                                  \
+          }                                                                    \
+        } else if (num_spatial_dims == 3) {                                    \
+          for (int i = 0; i < output->shape[1]; ++i) {                         \
+            for (int j = 0; j < output->shape[2]; ++j) {                       \
+              for (int k = 0; k < output->shape[3]; ++k) {                     \
+                output_data[c_offset + i * output->strides[1] +                \
+                            j * output->strides[2] + k * output->strides[3]] = \
+                    (T)0;                                                      \
+              }                                                                \
+            }                                                                  \
+          }                                                                    \
+        }                                                                      \
+      }                                                                        \
+    }                                                                          \
+    long num_patches = input_cols->shape[0];                                   \
+    if (output->shape[0] <= 0) {                                               \
+      /* Invalid output channels */                                            \
+      return;                                                                  \
+    }                                                                          \
+    long patch_size_per_channel = input_cols->shape[1] / output->shape[0];     \
+                                                                               \
+    /* Note: Cannot parallelize outer loop due to atomic updates */            \
+    for (long patch_idx = 0; patch_idx < num_patches; ++patch_idx) {           \
+      /* Calculate patch position */                                           \
+      int patch_pos[num_spatial_dims > 0 ? num_spatial_dims : 1];              \
+      long temp_idx = patch_idx;                                               \
+      for (int i = num_spatial_dims - 1; i >= 0; i--) {                        \
+        patch_pos[i] = temp_idx % output_spatial_shape[i];                     \
+        temp_idx /= output_spatial_shape[i];                                   \
+      }                                                                        \
+                                                                               \
+      /* Iterate through kernel positions */                                   \
+      for (long k_linear_idx = 0; k_linear_idx < patch_size_per_channel;       \
+           ++k_linear_idx) {                                                   \
+        /* Unravel kernel linear index */                                      \
+        int k_indices[num_spatial_dims > 0 ? num_spatial_dims : 1];            \
+        temp_idx = k_linear_idx;                                               \
+        for (int i = num_spatial_dims - 1; i >= 0; i--) {                      \
+          k_indices[i] = temp_idx % kernel_shape[i];                           \
+          temp_idx /= kernel_shape[i];                                         \
+        }                                                                      \
+                                                                               \
+        /* Process each channel */                                             \
+        for (int c = 0; c < output->shape[0]; ++c) {                           \
+          long output_offset = output->offset + c * output->strides[0];        \
+          int in_bounds = 1;                                                   \
+                                                                               \
+          /* Calculate output position */                                      \
+          for (int i = 0; i < num_spatial_dims; i++) {                         \
+            long pos = patch_pos[i] * strides[i] +                             \
+                       k_indices[i] * dilation[i] - padding_lower[i];          \
+            if (pos < 0 || pos >= output->shape[i + 1]) {                      \
+              in_bounds = 0;                                                   \
+              break;                                                           \
+            }                                                                  \
+            output_offset += pos * output->strides[i + 1];                     \
+          }                                                                    \
+                                                                               \
+          if (in_bounds) {                                                     \
+            long input_offset = input_cols->offset +                           \
+                                patch_idx * input_cols->strides[0] +           \
+                                (c * patch_size_per_channel + k_linear_idx) *  \
+                                    input_cols->strides[1];                    \
+            /* Atomic add for thread safety if parallelized */                 \
+            _Pragma("omp atomic update") output_data[output_offset] +=         \
+                input_data[input_offset];                                      \
+          }                                                                    \
+        }                                                                      \
+      }                                                                        \
+    }                                                                          \
+  }
 
-  int input_ndim = Int_val(vInputNdim);
-  int output_ndim = Wosize_val(vOutputShape);
-  int n_spatial = Int_val(vNSpatial);
-  strided_array_t input, output;
+DEFINE_FOLD_OP(float)
+DEFINE_FOLD_OP(double)
+DEFINE_FOLD_OP(uint8_t)
+DEFINE_FOLD_OP(int32_t)
+DEFINE_FOLD_OP(int64_t)
 
-  init_strided_array(&input, vInput, input_ndim, vInputShape, vInputStrides, vInputOffset);
-  init_strided_array(&output, vOutput, output_ndim, vOutputShape, vOutputStrides, vOutputOffset);
+// Unfold dispatch
+CAMLprim value caml_nx_unfold_bc(value *argv, int argn) {
+  value vNdim = argv[0], vShape = argv[1];
+  value vInput = argv[2], vInputStrides = argv[3], vInputOffset = argv[4];
+  value vOutputNdim = argv[5], vOutputShape = argv[6];
+  value vOutput = argv[7], vOutputStrides = argv[8], vOutputOffset = argv[9];
+  value vOutputSpatialShape = argv[10], vKernelShape = argv[11],
+        vStrides = argv[12], vPaddingLower = argv[13], vDilation = argv[14];
 
-  // Extract kernel_size, stride, dilation, padding arrays
-  int *kernel_size = (int *)malloc(n_spatial * sizeof(int));
-  int *stride = (int *)malloc(n_spatial * sizeof(int));
-  int *dilation = (int *)malloc(n_spatial * sizeof(int));
-  int *padding = (int *)malloc(n_spatial * 2 * sizeof(int));
+  struct caml_ba_array *ba_input = Caml_ba_array_val(vInput);
+  struct caml_ba_array *ba_output = Caml_ba_array_val(vOutput);
+  int kind = ba_input->flags & CAML_BA_KIND_MASK;
+  int ndim = Int_val(vNdim);
 
-  for (int i = 0; i < n_spatial; i++) {
-    kernel_size[i] = Int_val(Field(vKernelSize, i));
-    stride[i] = Int_val(Field(vStride, i));
+  if (ndim < 1) {
+    caml_failwith("unfold: input must have at least 1 dimension");
+  }
+
+  // Get num_spatial_dims from the kernel_shape array length
+  int num_spatial_dims = Wosize_val(vKernelShape);
+
+  // Validate input dimensions
+  if (ndim < num_spatial_dims + 1) {
+    caml_failwith("unfold: input dimensions incompatible with kernel size");
+  }
+
+  // Additional validation: need at least channels + spatial dims
+  if (ndim <= num_spatial_dims) {
+    caml_failwith(
+        "unfold: input must have at least 1 channel dimension before spatial "
+        "dims");
+  }
+
+  // Stack allocate arrays with minimum size of 1 to avoid zero-length VLAs
+  int input_shape[ndim], input_strides[ndim];
+  int output_ndim = Int_val(vOutputNdim);
+  int output_shape[output_ndim], output_strides[output_ndim];
+  int output_spatial_shape[num_spatial_dims > 0 ? num_spatial_dims : 1];
+  int kernel_shape[num_spatial_dims > 0 ? num_spatial_dims : 1],
+      strides[num_spatial_dims > 0 ? num_spatial_dims : 1],
+      padding_lower[num_spatial_dims > 0 ? num_spatial_dims : 1],
+      dilation[num_spatial_dims > 0 ? num_spatial_dims : 1];
+
+  for (int i = 0; i < ndim; i++) {
+    input_shape[i] = Int_val(Field(vShape, i));
+    input_strides[i] = Int_val(Field(vInputStrides, i));
+  }
+  for (int i = 0; i < output_ndim; i++) {
+    output_shape[i] = Int_val(Field(vOutputShape, i));
+    output_strides[i] = Int_val(Field(vOutputStrides, i));
+  }
+  for (int i = 0; i < num_spatial_dims; i++) {
+    output_spatial_shape[i] = Int_val(Field(vOutputSpatialShape, i));
+    kernel_shape[i] = Int_val(Field(vKernelShape, i));
+    strides[i] = Int_val(Field(vStrides, i));
+    padding_lower[i] = Int_val(Field(vPaddingLower, i));
     dilation[i] = Int_val(Field(vDilation, i));
-    value v_pair = Field(vPadding, i);
-    padding[i * 2] = Int_val(Field(v_pair, 0));
-    padding[i * 2 + 1] = Int_val(Field(v_pair, 1));
   }
+
+  ndarray_t input, output;
+  input.data = ba_input->data;
+  input.ndim = ndim;
+  input.shape = input_shape;
+  input.strides = input_strides;
+  input.offset = Int_val(vInputOffset);
+
+  output.data = ba_output->data;
+  output.ndim = output_ndim;
+  output.shape = output_shape;
+  output.strides = output_strides;
+  output.offset = Int_val(vOutputOffset);
 
   caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vInput);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_unfold_f32(&input, &output, n_spatial, kernel_size, stride, dilation, padding);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_unfold_f64(&input, &output, n_spatial, kernel_size, stride, dilation, padding);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&input);
-    nx_cblas_free_strided_array(&output);
-    free(kernel_size);
-    free(stride);
-    free(dilation);
-    free(padding);
-    caml_failwith("unfold: unsupported dtype");
+  switch (kind) {
+    case CAML_BA_FLOAT32:
+      nx_cblas_unfold_float(&input, &output, output_spatial_shape, kernel_shape,
+                            strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_FLOAT64:
+      nx_cblas_unfold_double(&input, &output, output_spatial_shape,
+                             kernel_shape, strides, padding_lower, dilation,
+                             num_spatial_dims);
+      break;
+    case CAML_BA_UINT8:
+      nx_cblas_unfold_uint8_t(&input, &output, output_spatial_shape,
+                              kernel_shape, strides, padding_lower, dilation,
+                              num_spatial_dims);
+      break;
+    case CAML_BA_INT32:
+      nx_cblas_unfold_int32_t(&input, &output, output_spatial_shape,
+                              kernel_shape, strides, padding_lower, dilation,
+                              num_spatial_dims);
+      break;
+    case CAML_BA_INT64:
+      nx_cblas_unfold_int64_t(&input, &output, output_spatial_shape,
+                              kernel_shape, strides, padding_lower, dilation,
+                              num_spatial_dims);
+      break;
+    default:
+      caml_leave_blocking_section();
+      caml_failwith("unfold: unsupported dtype");
   }
-
   caml_leave_blocking_section();
 
-  nx_cblas_free_strided_array(&input);
-  nx_cblas_free_strided_array(&output);
-  free(kernel_size);
-  free(stride);
-  free(dilation);
-  free(padding);
-
-  CAMLreturn(Val_unit);
+  return Val_unit;
 }
 
-CAMLprim value nx_unfold_bc(value *argv, int argn) {
-  return nx_unfold(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                   argv[6], argv[7], argv[8], argv[9], argv[10], argv[11],
-                   argv[12], argv[13]);
-}
+// Need custom wrapper for unfold (13 args)
+#define NATIVE_WRAPPER_13(name)                                               \
+  CAMLprim value caml_nx_##name(                                              \
+      value arg1, value arg2, value arg3, value arg4, value arg5, value arg6, \
+      value arg7, value arg8, value arg9, value arg10, value arg11,           \
+      value arg12, value arg13) {                                             \
+    value argv[13] = {arg1, arg2, arg3,  arg4,  arg5,  arg6, arg7,            \
+                      arg8, arg9, arg10, arg11, arg12, arg13};                \
+    return caml_nx_##name##_bc(argv, 13);                                     \
+  }
 
-/* =========================== FOLD Operation =========================== */
+NATIVE_WRAPPER_15(unfold)
 
-extern void nx_cblas_fold_f32(const strided_array_t *input, strided_array_t *output,
-                              int n_spatial, const int *output_size, const int *kernel_size,
-                              const int *stride, const int *dilation, const int *padding);
-extern void nx_cblas_fold_f64(const strided_array_t *input, strided_array_t *output,
-                              int n_spatial, const int *output_size, const int *kernel_size,
-                              const int *stride, const int *dilation, const int *padding);
+// Fold dispatch
+CAMLprim value caml_nx_fold_bc(value *argv, int argn) {
+  value vNdim = argv[0], vShape = argv[1];
+  value vInputCols = argv[2], vInputColsStrides = argv[3],
+        vInputColsOffset = argv[4];
+  value vOutputNdim = argv[5], vOutputShape = argv[6];
+  value vOutput = argv[7], vOutputStrides = argv[8], vOutputOffset = argv[9];
+  value vOutputSpatialShape = argv[10], vKernelShape = argv[11],
+        vStrides = argv[12], vPaddingLower = argv[13], vDilation = argv[14];
 
-CAMLprim value nx_fold(value vInputNdim, value vInputShape, value vInput,
-                       value vInputStrides, value vInputOffset, value vOutputShape,
-                       value vOutput, value vOutputStrides, value vOutputOffset,
-                       value vNSpatial, value vOutputSize, value vKernelSize,
-                       value vStride, value vDilation, value vPadding) {
-  CAMLparam5(vInputShape, vInput, vInputStrides, vOutputShape, vOutput);
-  CAMLxparam5(vOutputStrides, vOutputSize, vKernelSize, vStride, vDilation);
-  CAMLxparam1(vPadding);
+  struct caml_ba_array *ba_input = Caml_ba_array_val(vInputCols);
+  struct caml_ba_array *ba_output = Caml_ba_array_val(vOutput);
+  int kind = ba_input->flags & CAML_BA_KIND_MASK;
+  int input_ndim = Int_val(vNdim);
+  int output_ndim = Int_val(vOutputNdim);
 
-  int input_ndim = Int_val(vInputNdim);
-  int output_ndim = Wosize_val(vOutputShape);
-  int n_spatial = Int_val(vNSpatial);
-  strided_array_t input, output;
+  if (input_ndim < 1) {
+    caml_failwith("fold: input must have at least 1 dimension");
+  }
+  if (output_ndim < 1) {
+    caml_failwith("fold: output must have at least 1 dimension");
+  }
 
-  init_strided_array(&input, vInput, input_ndim, vInputShape, vInputStrides, vInputOffset);
-  init_strided_array(&output, vOutput, output_ndim, vOutputShape, vOutputStrides, vOutputOffset);
+  // Get num_spatial_dims from the kernel_shape array length
+  int num_spatial_dims = Wosize_val(vKernelShape);
 
-  // Extract output_size, kernel_size, stride, dilation, padding arrays
-  int *output_size = (int *)malloc(n_spatial * sizeof(int));
-  int *kernel_size = (int *)malloc(n_spatial * sizeof(int));
-  int *stride = (int *)malloc(n_spatial * sizeof(int));
-  int *dilation = (int *)malloc(n_spatial * sizeof(int));
-  int *padding = (int *)malloc(n_spatial * 2 * sizeof(int));
+  // Validate dimensions
+  if (output_ndim != num_spatial_dims + 1) {
+    caml_failwith(
+        "fold: output must have exactly channels + spatial dimensions");
+  }
+  if (input_ndim != 2) {
+    caml_failwith("fold: input_cols must be 2D [num_patches, patch_size]");
+  }
 
-  for (int i = 0; i < n_spatial; i++) {
-    output_size[i] = Int_val(Field(vOutputSize, i));
-    kernel_size[i] = Int_val(Field(vKernelSize, i));
-    stride[i] = Int_val(Field(vStride, i));
+  // Stack allocate arrays with minimum size of 1 to avoid zero-length VLAs
+  int input_shape[input_ndim], input_strides[input_ndim];
+  int output_shape[output_ndim], output_strides[output_ndim];
+  int output_spatial_shape[num_spatial_dims > 0 ? num_spatial_dims : 1];
+  int kernel_shape[num_spatial_dims > 0 ? num_spatial_dims : 1],
+      strides[num_spatial_dims > 0 ? num_spatial_dims : 1],
+      padding_lower[num_spatial_dims > 0 ? num_spatial_dims : 1],
+      dilation[num_spatial_dims > 0 ? num_spatial_dims : 1];
+
+  for (int i = 0; i < input_ndim; i++) {
+    input_shape[i] = Int_val(Field(vShape, i));
+    input_strides[i] = Int_val(Field(vInputColsStrides, i));
+  }
+  for (int i = 0; i < output_ndim; i++) {
+    output_shape[i] = Int_val(Field(vOutputShape, i));
+    output_strides[i] = Int_val(Field(vOutputStrides, i));
+  }
+  for (int i = 0; i < num_spatial_dims; i++) {
+    output_spatial_shape[i] = Int_val(Field(vOutputSpatialShape, i));
+    kernel_shape[i] = Int_val(Field(vKernelShape, i));
+    strides[i] = Int_val(Field(vStrides, i));
+    padding_lower[i] = Int_val(Field(vPaddingLower, i));
     dilation[i] = Int_val(Field(vDilation, i));
-    value v_pair = Field(vPadding, i);
-    padding[i * 2] = Int_val(Field(v_pair, 0));
-    padding[i * 2 + 1] = Int_val(Field(v_pair, 1));
   }
+
+  ndarray_t input_cols, output;
+  input_cols.data = ba_input->data;
+  input_cols.ndim = input_ndim;
+  input_cols.shape = input_shape;
+  input_cols.strides = input_strides;
+  input_cols.offset = Int_val(vInputColsOffset);
+
+  output.data = ba_output->data;
+  output.ndim = output_ndim;
+  output.shape = output_shape;
+  output.strides = output_strides;
+  output.offset = Int_val(vOutputOffset);
 
   caml_enter_blocking_section();
-
-  struct caml_ba_array *ba = Caml_ba_array_val(vInput);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
-
-  if (kind == CAML_BA_FLOAT32) {
-    nx_cblas_fold_f32(&input, &output, n_spatial, output_size, kernel_size, stride, dilation, padding);
-  } else if (kind == CAML_BA_FLOAT64) {
-    nx_cblas_fold_f64(&input, &output, n_spatial, output_size, kernel_size, stride, dilation, padding);
-  } else {
-    caml_leave_blocking_section();
-    nx_cblas_free_strided_array(&input);
-    nx_cblas_free_strided_array(&output);
-    free(output_size);
-    free(kernel_size);
-    free(stride);
-    free(dilation);
-    free(padding);
-    caml_failwith("fold: unsupported dtype");
+  switch (kind) {
+    case CAML_BA_FLOAT32:
+      nx_cblas_fold_float(&input_cols, &output, output_spatial_shape,
+                          kernel_shape, strides, padding_lower, dilation,
+                          num_spatial_dims);
+      break;
+    case CAML_BA_FLOAT64:
+      nx_cblas_fold_double(&input_cols, &output, output_spatial_shape,
+                           kernel_shape, strides, padding_lower, dilation,
+                           num_spatial_dims);
+      break;
+    case CAML_BA_UINT8:
+      nx_cblas_fold_uint8_t(&input_cols, &output, output_spatial_shape,
+                            kernel_shape, strides, padding_lower, dilation,
+                            num_spatial_dims);
+      break;
+    case CAML_BA_INT32:
+      nx_cblas_fold_int32_t(&input_cols, &output, output_spatial_shape,
+                            kernel_shape, strides, padding_lower, dilation,
+                            num_spatial_dims);
+      break;
+    case CAML_BA_INT64:
+      nx_cblas_fold_int64_t(&input_cols, &output, output_spatial_shape,
+                            kernel_shape, strides, padding_lower, dilation,
+                            num_spatial_dims);
+      break;
+    default:
+      caml_leave_blocking_section();
+      caml_failwith("fold: unsupported dtype");
   }
-
   caml_leave_blocking_section();
 
-  nx_cblas_free_strided_array(&input);
-  nx_cblas_free_strided_array(&output);
-  free(output_size);
-  free(kernel_size);
-  free(stride);
-  free(dilation);
-  free(padding);
-
-  CAMLreturn(Val_unit);
+  return Val_unit;
 }
 
-CAMLprim value nx_fold_bc(value *argv, int argn) {
-  return nx_fold(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                 argv[6], argv[7], argv[8], argv[9], argv[10], argv[11],
-                 argv[12], argv[13], argv[14]);
-}
+// Duplicate macro definitions removed - see top of file for all definitions
+
+NATIVE_WRAPPER_15(fold)

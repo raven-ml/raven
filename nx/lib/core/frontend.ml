@@ -1204,7 +1204,17 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Shape Manipulation ───── *)
 
-  let pad padding_config fill_value x = B.op_pad x padding_config fill_value
+  let pad padding_config fill_value x =
+    (* Validate padding values are non-negative *)
+    Array.iter
+      (fun (before, after) ->
+        if before < 0 || after < 0 then
+          Error.invalid ~op:"pad" ~what:"padding values"
+            ~reason:"negative values not allowed"
+            ~hint:"use shrink or slice to remove elements" ())
+      padding_config;
+    B.op_pad x padding_config fill_value
+
   let shrink shrink_args x = B.op_shrink x shrink_args
 
   (* collapse dimensions between [start_dim] and [end_dim] *)

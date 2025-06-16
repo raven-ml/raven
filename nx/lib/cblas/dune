@@ -4,7 +4,7 @@
  (libraries nx_core)
  (foreign_stubs
   (language c)
-  (names nx_cblas_stubs nx_cblas_ops_impl)
+  (names nx_cblas_stubs)
   (flags
    (:include c_flags.sexp)))
  (c_library_flags
