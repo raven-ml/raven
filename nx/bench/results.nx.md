@@ -1,46 +1,97 @@
 # Nx Benchmarks
 
-┌───────────────────────────────────┬─────────────────┬──────────────┬────────────┐
-│ Name                              │        Time/Run │      mWd/Run │ vs Fastest │
-├───────────────────────────────────┼─────────────────┼──────────────┼────────────┤
-│ Sqrt on 50x50 float32             │     49_807.04ns │      160.77w │    100.00% │
-│ Sqrt on 50x50 float64             │     50_403.56ns │      160.77w │    101.20% │
-│ Sum on 50x50 float64              │     50_851.41ns │     7098.60w │    102.10% │
-│ Multiplication on 50x50 float64   │     51_725.61ns │      166.53w │    103.85% │
-│ Square on 50x50 float32           │     52_383.83ns │      166.53w │    105.17% │
-│ Addition on 50x50 float32         │     52_482.01ns │      166.53w │    105.37% │
-│ Multiplication on 50x50 float32   │     54_258.46ns │      166.53w │    108.94% │
-│ Addition on 50x50 float64         │     54_882.09ns │      166.53w │    110.19% │
-│ Square on 50x50 float64           │     56_399.55ns │      166.53w │    113.24% │
-│ Sum on 50x50 float32              │     60_956.62ns │     7098.60w │    122.39% │
-│ Sqrt on 100x100 float32           │     61_642.89ns │      162.31w │    123.76% │
-│ Addition on 100x100 float32       │     62_670.43ns │      168.13w │    125.83% │
-│ Multiplication on 100x100 float32 │     64_776.93ns │      168.13w │    130.06% │
-│ Square on 100x100 float32         │     67_215.34ns │      168.13w │    134.95% │
-│ Sum on 100x100 float32            │     72_290.38ns │    36769.29w │    145.14% │
-│ Sum on 100x100 float64            │     74_898.03ns │    36735.27w │    150.38% │
-│ Sqrt on 100x100 float64           │     95_314.87ns │       62.02w │    191.37% │
-│ Addition on 100x100 float64       │     96_739.75ns │        0.00w │    194.23% │
-│ Multiplication on 100x100 float64 │    127_779.22ns │      188.89w │    256.55% │
-│ Exp on 50x50 float64              │    135_551.29ns │    57886.56w │    272.15% │
-│ Square on 100x100 float64         │    139_660.72ns │      192.54w │    280.40% │
-│ Exp on 50x50 float32              │    145_675.63ns │    51446.78w │    292.48% │
-│ Sqrt on 500x500 float32           │    197_951.76ns │        0.00w │    397.44% │
-│ Exp on 100x100 float32            │    232_541.37ns │   273010.79w │    466.88% │
-│ Multiplication on 500x500 float32 │    268_981.57ns │        0.00w │    540.05% │
-│ Addition on 500x500 float32       │    271_827.46ns │        0.00w │    545.76% │
-│ Square on 500x500 float32         │    282_616.84ns │      120.28w │    567.42% │
-│ Addition on 500x500 float64       │    320_271.84ns │      120.42w │    643.03% │
-│ Sqrt on 500x500 float64           │    323_257.14ns │      189.11w │    649.02% │
-│ Square on 500x500 float64         │    378_285.68ns │      177.19w │    759.50% │
-│ Exp on 100x100 float64            │    387_614.77ns │   281174.08w │    778.23% │
-│ Multiplication on 500x500 float64 │    397_289.95ns │      175.38w │    797.66% │
-│ Sum on 500x500 float32            │    491_972.89ns │   976917.69w │    987.76% │
-│ Sum on 500x500 float64            │    492_965.02ns │   976637.06w │    989.75% │
-│ MatMul on 50x50 float32           │  3_436_724.34ns │  5866021.22w │   6900.08% │
-│ MatMul on 50x50 float64           │  3_921_270.37ns │  5683871.89w │   7872.92% │
-│ Exp on 500x500 float64            │  4_340_012.87ns │  6965829.22w │   8713.65% │
-│ Exp on 500x500 float32            │ 11_564_016.34ns │  7361698.22w │            │
-│ MatMul on 100x100 float64         │ 46_678_066.25ns │ 49008947.67w │            │
-│ MatMul on 100x100 float32         │ 52_562_952.04ns │ 48904441.33w │            │
-└───────────────────────────────────┴─────────────────┴──────────────┴────────────┘
+## Native
+
+┌─────────────────────────────────────┬──────────┬──────────┬─────────────┐
+│ Name                                │ Time/Run │  mWd/Run │  vs Fastest │
+├─────────────────────────────────────┼──────────┼──────────┼─────────────┤
+│ Mul 50x50 float32 (Native)          │  50.61μs │  190.08w │     100.00% │
+│ Square 50x50 float32 (Native)       │  50.67μs │  190.08w │     100.13% │
+│ Add 50x50 float32 (Native)          │  53.46μs │  190.08w │     105.63% │
+│ Sum 50x50 float32 (Native)          │  58.09μs │   1.51kw │     114.78% │
+│ Mul 100x100 float32 (Native)        │  63.70μs │  190.08w │     125.87% │
+│ Add 100x100 float32 (Native)        │  64.01μs │  190.08w │     126.48% │
+│ Square 100x100 float32 (Native)     │  64.29μs │  190.08w │     127.03% │
+│ Sum 100x100 float32 (Native)        │  68.82μs │   4.51kw │     135.98% │
+│ MatMul 50x50 float32 (Native)       │  78.16μs │  212.13w │     154.44% │
+│ Sum 200x200 float32 (Native)        │ 112.22μs │  16.51kw │     221.76% │
+│ Add 200x200 float32 (Native)        │ 127.09μs │  183.24w │     251.14% │
+│ Square 200x200 float32 (Native)     │ 136.64μs │  183.24w │     270.00% │
+│ Mul 200x200 float32 (Native)        │ 140.42μs │  183.24w │     277.47% │
+│ MatMul 100x100 float32 (Native)     │ 235.07μs │  228.24w │     464.50% │
+│ Add 500x500 float32 (Native)        │ 258.65μs │  183.37w │     511.09% │
+│ Mul 500x500 float32 (Native)        │ 273.31μs │  183.37w │     540.05% │
+│ Square 500x500 float32 (Native)     │ 275.41μs │  183.37w │     544.20% │
+│ Sum 500x500 float32 (Native)        │ 442.73μs │ 100.51kw │     874.83% │
+│ MatMul 200x200 float32 (Native)     │   1.54ms │  332.62w │    3051.87% │
+│ Conv2D 3x3 50x50 float32 (Native)   │  13.79ms │   1.02Mw │   27243.40% │
+│ Conv2D 5x5 50x50 float32 (Native)   │  33.18ms │   2.58Mw │   65560.04% │
+│ Conv2D 3x3 100x100 float32 (Native) │  55.92ms │   4.23Mw │  110496.58% │
+│ Conv2D 5x5 100x100 float32 (Native) │ 166.29ms │  11.16Mw │  328597.20% │
+│ Conv2D 3x3 200x200 float32 (Native) │ 227.61ms │  17.26Mw │  449748.55% │
+│ Conv2D 5x5 200x200 float32 (Native) │ 554.60ms │  46.43Mw │ 1095878.49% │
+└─────────────────────────────────────┴──────────┴──────────┴─────────────┘
+
+## CBLAS
+
+┌────────────────────────────────────┬──────────┬─────────┬─────────────┐
+│ Name                               │ Time/Run │ mWd/Run │  vs Fastest │
+├────────────────────────────────────┼──────────┼─────────┼─────────────┤
+│ Add 50x50 float32 (CBLAS)          │   1.03μs │  43.76w │     100.00% │
+│ Mul 50x50 float32 (CBLAS)          │   1.04μs │  43.79w │     100.96% │
+│ Square 50x50 float32 (CBLAS)       │   1.10μs │  43.79w │     106.61% │
+│ MatMul 50x50 float32 (CBLAS)       │   2.10μs │  40.81w │     203.97% │
+│ Sum 50x50 float32 (CBLAS)          │   3.74μs │  61.84w │     363.39% │
+│ Square 100x100 float32 (CBLAS)     │   4.46μs │  43.87w │     433.26% │
+│ MatMul 100x100 float32 (CBLAS)     │   7.70μs │  40.90w │     747.93% │
+│ Mul 100x100 float32 (CBLAS)        │   8.84μs │  43.93w │     858.57% │
+│ Add 100x100 float32 (CBLAS)        │   8.85μs │  43.96w │     858.73% │
+│ Sum 100x100 float32 (CBLAS)        │  13.50μs │  61.96w │    1310.40% │
+│ Add 200x200 float32 (CBLAS)        │  44.49μs │  37.13w │    4319.17% │
+│ MatMul 200x200 float32 (CBLAS)     │  49.27μs │  34.13w │    4783.18% │
+│ Sum 200x200 float32 (CBLAS)        │  52.57μs │  62.08w │    5104.09% │
+│ Square 200x200 float32 (CBLAS)     │  80.45μs │  37.18w │    7810.97% │
+│ Mul 200x200 float32 (CBLAS)        │  83.09μs │  37.18w │    8066.83% │
+│ Square 500x500 float32 (CBLAS)     │ 128.38μs │  37.24w │   12463.28% │
+│ Mul 500x500 float32 (CBLAS)        │ 131.97μs │  37.24w │   12812.48% │
+│ Add 500x500 float32 (CBLAS)        │ 138.46μs │  37.24w │   13442.41% │
+│ Sum 500x500 float32 (CBLAS)        │ 325.03μs │  62.30w │   31555.88% │
+│ Conv2D 3x3 50x50 float32 (CBLAS)   │ 340.16μs │ 378.37w │   33024.25% │
+│ Conv2D 5x5 50x50 float32 (CBLAS)   │ 710.88μs │ 378.53w │   69015.92% │
+│ Conv2D 3x3 100x100 float32 (CBLAS) │   1.20ms │ 378.62w │  116016.75% │
+│ Conv2D 5x5 100x100 float32 (CBLAS) │   3.01ms │ 378.85w │  292335.19% │
+│ Conv2D 3x3 200x200 float32 (CBLAS) │   4.67ms │ 378.99w │  453061.48% │
+│ Conv2D 5x5 200x200 float32 (CBLAS) │  12.40ms │ 379.55w │ 1204067.72% │
+└────────────────────────────────────┴──────────┴─────────┴─────────────┘
+
+## Metal
+
+┌────────────────────────────────────┬──────────┬─────────┬────────────┐
+│ Name                               │ Time/Run │ mWd/Run │ vs Fastest │
+├────────────────────────────────────┼──────────┼─────────┼────────────┤
+│ Mul 50x50 float32 (Metal)          │ 305.64μs │ 10.82kw │    100.00% │
+│ Add 50x50 float32 (Metal)          │ 306.35μs │ 10.82kw │    100.23% │
+│ Square 50x50 float32 (Metal)       │ 308.91μs │ 10.82kw │    101.07% │
+│ MatMul 50x50 float32 (Metal)       │ 311.74μs │ 10.80kw │    102.00% │
+│ Square 100x100 float32 (Metal)     │ 320.09μs │ 10.82kw │    104.73% │
+│ Add 100x100 float32 (Metal)        │ 325.36μs │ 10.82kw │    106.45% │
+│ Mul 100x100 float32 (Metal)        │ 332.06μs │ 10.82kw │    108.64% │
+│ MatMul 100x100 float32 (Metal)     │ 334.62μs │ 10.80kw │    109.48% │
+│ Add 200x200 float32 (Metal)        │ 339.95μs │ 10.82kw │    111.23% │
+│ Square 200x200 float32 (Metal)     │ 346.61μs │ 10.82kw │    113.40% │
+│ Mul 200x200 float32 (Metal)        │ 352.60μs │ 10.82kw │    115.36% │
+│ Sum 50x50 float32 (Metal)          │ 360.13μs │ 12.85kw │    117.83% │
+│ MatMul 200x200 float32 (Metal)     │ 373.88μs │ 10.80kw │    122.32% │
+│ Add 500x500 float32 (Metal)        │ 483.83μs │ 10.82kw │    158.30% │
+│ Sum 100x100 float32 (Metal)        │ 487.65μs │ 12.85kw │    159.55% │
+│ Mul 500x500 float32 (Metal)        │ 498.67μs │ 10.82kw │    163.15% │
+│ Square 500x500 float32 (Metal)     │ 541.25μs │ 10.82kw │    177.09% │
+│ Sum 200x200 float32 (Metal)        │ 812.29μs │ 12.85kw │    265.77% │
+│ Conv2D 3x3 50x50 float32 (Metal)   │   1.02ms │ 33.71kw │    335.07% │
+│ Conv2D 5x5 50x50 float32 (Metal)   │   1.15ms │ 33.71kw │    377.20% │
+│ Conv2D 3x3 100x100 float32 (Metal) │   1.52ms │ 33.71kw │    498.15% │
+│ Conv2D 5x5 100x100 float32 (Metal) │   1.73ms │ 33.71kw │    566.65% │
+│ Conv2D 3x3 200x200 float32 (Metal) │   1.90ms │ 33.71kw │    621.44% │
+│ Sum 500x500 float32 (Metal)        │   2.02ms │ 12.85kw │    661.62% │
+│ Conv2D 5x5 200x200 float32 (Metal) │   2.85ms │ 33.71kw │    932.67% │
+└────────────────────────────────────┴──────────┴─────────┴────────────┘
