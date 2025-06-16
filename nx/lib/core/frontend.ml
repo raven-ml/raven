@@ -1163,10 +1163,10 @@ module Make (B : Backend_intf.S) = struct
     let zero_val = Dtype.zero (dtype x) in
     let zero_tensor = full_like x zero_val in
     let bool_tensor = cmpne x zero_tensor in
-    
+
     (* Now use prod on the boolean tensor *)
     let prod_val = prod ?axes ~keepdims bool_tensor in
-    
+
     (* The result is already 0 or 1, just return it *)
     prod_val
 
@@ -1176,10 +1176,10 @@ module Make (B : Backend_intf.S) = struct
     let zero_val = Dtype.zero (dtype x) in
     let zero_tensor = full_like x zero_val in
     let bool_tensor = cmpne x zero_tensor in
-    
+
     (* Now use max on the boolean tensor - any 1 will give 1 *)
     let max_val = max ?axes ~keepdims bool_tensor in
-    
+
     (* The result is already 0 or 1, just return it *)
     max_val
 
