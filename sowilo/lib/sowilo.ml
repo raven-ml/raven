@@ -1,7 +1,5 @@
 (* Safe implementation of Sowilo using only Rune frontend functions *)
 
-module BA = Bigarray
-
 type uint8_t = Rune.uint8_t
 type int16_t = Rune.int16_t
 type float32_t = Rune.float32_t
