@@ -117,3 +117,29 @@ val equal : ('a, 'b) t -> ('c, 'd) t -> bool
 val equal_witness :
   ('a, 'b) t -> ('c, 'd) t -> (('a, 'b) t, ('c, 'd) t) Type.eq option
 (** [equal_witness dtype2 dtype2] returns equality proof if dtypes match. *)
+
+(** {2 Packed Types} *)
+
+type packed =
+  | Pack : ('a, 'b) t -> packed
+      (** Packed dtype that hides type parameters, allowing heterogeneous
+          collections. *)
+
+val pack : ('a, 'b) t -> packed
+(** [pack dtype] wraps a dtype in a packed container. *)
+
+val all_dtypes : packed list
+(** [all_dtypes] is a list of all available dtypes. *)
+
+val of_string : string -> packed option
+(** [of_string s] returns the dtype with string representation [s], if it
+    exists. *)
+
+val equal_packed : packed -> packed -> bool
+(** [equal_packed p1 p2] tests equality of packed dtypes. *)
+
+val pp_packed : Format.formatter -> packed -> unit
+(** [pp_packed fmt packed] pretty-prints a packed dtype. *)
+
+val packed_to_string : packed -> string
+(** [packed_to_string packed] returns string representation of packed dtype. *)

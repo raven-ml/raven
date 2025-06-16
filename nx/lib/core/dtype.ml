@@ -293,3 +293,46 @@ let of_float (type a b) (dtype : (a, b) t) (v_float : float) : a =
   | NativeInt -> Nativeint.of_float v_float
   | Complex32 -> Complex.{ re = v_float; im = 0. }
   | Complex64 -> Complex.{ re = v_float; im = 0. }
+
+(* Packed type that hides the type parameters *)
+type packed = Pack : ('a, 'b) t -> packed
+
+(* Constructor for packing dtypes *)
+let pack (type a b) (dtype : (a, b) t) : packed = Pack dtype
+
+(* List of all available dtypes *)
+let all_dtypes : packed list =
+  [
+    Pack Float16;
+    Pack Float32;
+    Pack Float64;
+    Pack Int8;
+    Pack UInt8;
+    Pack Int16;
+    Pack UInt16;
+    Pack Int32;
+    Pack Int64;
+    Pack Int;
+    Pack NativeInt;
+    Pack Complex32;
+    Pack Complex64;
+  ]
+
+(* Find a dtype by string name *)
+let of_string (s : string) : packed option =
+  let rec find = function
+    | [] -> None
+    | Pack dtype :: rest ->
+        if String.equal (to_string dtype) s then Some (Pack dtype)
+        else find rest
+  in
+  find all_dtypes
+
+(* Equality for packed dtypes *)
+let equal_packed (Pack dt1) (Pack dt2) : bool = equal dt1 dt2
+
+(* Pretty printer for packed dtypes *)
+let pp_packed fmt (Pack dtype) = pp fmt dtype
+
+(* Convert packed dtype to string *)
+let packed_to_string (Pack dtype) = to_string dtype
