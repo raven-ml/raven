@@ -3,8 +3,8 @@ open Rune
 
 let () =
   (* Input matrices *)
-  let a = create cpu float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let b = create cpu float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |] in
+  let a = create native float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let b = create native float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |] in
 
   Printf.printf "Testing matmul gradient computation\n";
   Printf.printf "a = \n";

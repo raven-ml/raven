@@ -23,7 +23,7 @@ let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
   let x, y = if train then (x_train, y_train) else (x_test, y_test) in
 
   (* Convert from uint8 to float *)
-  let dev = Rune.cpu in
+  let dev = Rune.native in
   (* Cast to float32 *)
   let cast_start = Unix.gettimeofday () in
   let x = Nx.cast Nx.float32 x in

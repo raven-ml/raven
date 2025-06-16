@@ -50,7 +50,7 @@ let train () =
   (* Initialize model with dummy input to get params *)
   Printf.printf "Initializing model...\n%!";
   let start = Unix.gettimeofday () in
-  let dummy_input = Rune.zeros Rune.cpu Rune.float32 [| 1; 1; 28; 28 |] in
+  let dummy_input = Rune.zeros Rune.native Rune.float32 [| 1; 1; 28; 28 |] in
   let params = init model ~rngs dummy_input in
   let optimizer = Optimizer.create (Optimizer.adam ~lr:0.001 ()) in
   Printf.printf "Model initialized in %.2fs\n%!" (Unix.gettimeofday () -. start);

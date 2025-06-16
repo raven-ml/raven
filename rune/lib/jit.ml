@@ -637,8 +637,9 @@ let execute_compiled_fn (type kernel_native)
   in
   let input_ba =
     match input with
-    | Cpu_tensor cpu_t -> Nx_native.data cpu_t
+    | Native_tensor cpu_t -> Nx_native.data cpu_t
     | Metal_tensor _ -> failwith "JIT: Metal tensor input not supported yet"
+    | Cblas_tensor cblas_t -> Rune_cblas.data cblas_t
     | Symbolic_tensor _ -> failwith "JIT: Cannot execute with symbolic tensor"
   in
 
@@ -700,60 +701,65 @@ let execute_compiled_fn (type kernel_native)
   | Error e -> failwith (Printf.sprintf "Copy from device failed: %s" e));
 
   match input with
-  | Cpu_tensor _ ->
-      Cpu_tensor (Nx_native.op_const_array (Nx_native.create_context ()) out_ba)
+  | Native_tensor _ ->
+      Native_tensor
+        (Nx_native.op_const_array (Nx_native.create_context ()) out_ba)
   | Metal_tensor _ ->
       Metal_tensor
         (Rune_metal.op_const_array (Rune_metal.create_context ()) out_ba)
+  | Cblas_tensor _ ->
+      Cblas_tensor
+        (Rune_cblas.op_const_array (Rune_cblas.create_context ()) out_ba)
   | Symbolic_tensor _ -> assert false
 
 (* ───── Main JIT Function ───── *)
 
 let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
-  (* TODO: we should get the backend depending on the device, add an optional
-     ~device argument to jit *)
-  let module B = (val metal_backend_module ()) in
-  let backend =
-    (module B : Rune_jit.Backend_intf.S with type callable_kernel_native = _)
-  in
-  (* Cache compiled functions by input shape *)
-  let cache = Hashtbl.create 8 in
+  (* Create separate caches for each backend type *)
+  let metal_cache = Hashtbl.create 8 in
+
   fun (input : ('a, 'b) Nx_rune.t) ->
-    let input_shape = View.shape (view input) in
-    match Hashtbl.find_opt cache input_shape with
-    | Some state -> execute_compiled_fn ~backend state input
-    | None -> (
-        try
-          let _ = B.Device_info.get_default () in
-          (* Get context from the input tensor *)
-          let ctx =
-            match input with
-            | Cpu_tensor _ -> Nx_rune.create_context ~device:Cpu ()
-            | Metal_tensor _ -> Nx_rune.create_context ~device:Metal ()
-            | Symbolic_tensor _ ->
-                Nx_rune.create_context ~device:Cpu
-                  () (* Default to CPU for symbolic *)
-          in
-          let graph, symbolic_result = trace ctx f input in
-          Printf.eprintf "JIT: Compiling graph for shape %s with %d nodes\n"
-            (Array.fold_left
-               (fun acc x -> acc ^ " " ^ string_of_int x)
-               "[" input_shape
-            ^ " ]")
-            (List.length graph.nodes);
-          let executable = compile_graph ~backend graph in
-          let state =
-            {
-              executable;
-              input_vars = graph.input_vars;
-              output_vars = graph.output_vars;
-              output_shape = View.shape (view symbolic_result);
-              output_dtype = nx_dtype_to_ir_any_dtype (dtype symbolic_result);
-            }
-          in
-          Hashtbl.add cache input_shape state;
-          execute_compiled_fn ~backend state input
-        with e ->
-          Printf.eprintf "JIT: Compilation failed (%s), falling back to eager\n"
-            (Printexc.to_string e);
-          f input)
+    match input with
+    | Metal_tensor _ -> (
+        let module B = (val metal_backend_module ()) in
+        let backend =
+          (module B : Rune_jit.Backend_intf.S
+            with type callable_kernel_native = _)
+        in
+        let input_shape = View.shape (view input) in
+        match Hashtbl.find_opt metal_cache input_shape with
+        | Some state -> execute_compiled_fn ~backend state input
+        | None -> (
+            try
+              let _ = B.Device_info.get_default () in
+              let ctx = Nx_rune.create_context ~device:Metal () in
+              let graph, symbolic_result = trace ctx f input in
+              Printf.eprintf "JIT: Compiling graph for shape %s with %d nodes\n"
+                (Array.fold_left
+                   (fun acc x -> acc ^ " " ^ string_of_int x)
+                   "[" input_shape
+                ^ " ]")
+                (List.length graph.nodes);
+              let executable = compile_graph ~backend graph in
+              let state =
+                {
+                  executable;
+                  input_vars = graph.input_vars;
+                  output_vars = graph.output_vars;
+                  output_shape = View.shape (view symbolic_result);
+                  output_dtype =
+                    nx_dtype_to_ir_any_dtype (dtype symbolic_result);
+                }
+              in
+              Hashtbl.add metal_cache input_shape state;
+              execute_compiled_fn ~backend state input
+            with e ->
+              Printf.eprintf
+                "JIT: Compilation failed (%s), falling back to eager\n"
+                (Printexc.to_string e);
+              f input))
+    | Native_tensor _ | Cblas_tensor _ ->
+        (* For CPU backends, we just use eager execution for now *)
+        f input
+    | Symbolic_tensor _ ->
+        failwith "Cannot execute JIT function with symbolic tensor"

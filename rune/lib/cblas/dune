@@ -1,0 +1,10 @@
+(library
+ (name rune_cblas)
+ (public_name rune.cblas)
+ (libraries
+  nx.core
+  (select
+   rune_cblas.ml
+   from
+   (nx.cblas -> rune_cblas.nx_cblas.ml)
+   (-> rune_cblas.missing.ml))))

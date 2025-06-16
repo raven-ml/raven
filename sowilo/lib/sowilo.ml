@@ -427,7 +427,7 @@ type structuring_element_shape = Rect | Cross
 
 let get_structuring_element ~shape ~ksize:(kh, kw) =
   if kh <= 0 || kw <= 0 then invalid_arg "Kernel dimensions must be positive";
-  let device = Rune.cpu in
+  let device = Rune.native in
 
   match shape with
   | Rect -> Rune.ones device Rune.uint8 [| kh; kw |]
@@ -512,10 +512,10 @@ let dilate ~kernel img = morph_op ~op:`Max ~kernel img
 
 (* Sobel kernel definition - kept for reference but not used with manual
    implementation let sobel_kernel dx dy ksize = if ksize <> 3 then failwith
-   "Sobel currently only supports ksize=3"; let device = Rune.cpu in match (dx,
-   dy) with | 1, 0 -> Rune.create device Rune.float32 [| 3; 3 |] [| -1.; 0.; 1.;
-   -2.; 0.; 2.; -1.; 0.; 1. |] | 0, 1 -> Rune.create device Rune.float32 [| 3; 3
-   |] [| -1.; -2.; -1.; 0.; 0.; 0.; 1.; 2.; 1. |] | _ -> failwith "Sobel
+   "Sobel currently only supports ksize=3"; let device = Rune.native in match
+   (dx, dy) with | 1, 0 -> Rune.create device Rune.float32 [| 3; 3 |] [| -1.;
+   0.; 1.; -2.; 0.; 2.; -1.; 0.; 1. |] | 0, 1 -> Rune.create device Rune.float32
+   [| 3; 3 |] [| -1.; -2.; -1.; 0.; 0.; 0.; 1.; 2.; 1. |] | _ -> failwith "Sobel
    requires dx=1, dy=0 or dx=0, dy=1" *)
 
 let sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t =

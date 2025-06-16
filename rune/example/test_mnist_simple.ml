@@ -1,7 +1,7 @@
 open Rune
 
 let () =
-  let ctx = cpu in
+  let ctx = native in
 
   (* Simulate MNIST-like input: batch=2, channels=1, 28x28 *)
   let x = randn ctx Float32 [| 2; 1; 28; 28 |] in

@@ -2,7 +2,7 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.cpu (* Default CPU context *)
+let ctx = T.native (* Default CPU context *)
 let eps = 1e-6
 
 (* Basic JIT compilation tests *)
