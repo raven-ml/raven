@@ -3145,8 +3145,8 @@ static void nx_cblas_zero_generic(ndarray_t *z, size_t elem_size) {
               input_base_offset + c * input->strides[num_batch_dims];          \
           int in_bounds = 1;                                                   \
           for (int i = 0; i < num_spatial_dims; ++i) {                         \
-            long pos = patch_indices[i] * strides[i] +                         \
-                       kernel_indices[i] * dilation[i] - padding_lower[i];     \
+            long pos = (long)patch_indices[i] * strides[i] +                   \
+                       (long)kernel_indices[i] * dilation[i] - padding_lower[i];     \
             if (pos < 0 || pos >= input->shape[num_batch_dims + 1 + i]) {      \
               in_bounds = 0;                                                   \
               break;                                                           \
@@ -3255,8 +3255,8 @@ static void nx_cblas_zero_generic(ndarray_t *z, size_t elem_size) {
               output_base_offset + c * output->strides[num_batch_dims];        \
           int in_bounds = 1;                                                   \
           for (int i = 0; i < num_spatial_dims; ++i) {                         \
-            long pos = patch_indices[i] * strides[i] +                         \
-                       kernel_indices[i] * dilation[i] - padding_lower[i];     \
+            long pos = (long)patch_indices[i] * strides[i] +                   \
+                       (long)kernel_indices[i] * dilation[i] - padding_lower[i];     \
             if (pos < 0 || pos >= output->shape[num_batch_dims + 1 + i]) {     \
               in_bounds = 0;                                                   \
               break;                                                           \
