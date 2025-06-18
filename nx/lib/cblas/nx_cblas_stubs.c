@@ -3072,17 +3072,6 @@ static inline void decode_linear_index(long linear_idx, int ndim,
   }
 }
 
-// Kernel for zeroing an element, for use with iterate_inner_dims
-static void zero_op_kernel(void *x_data, void *y_data, void *z_data, long x_off,
-                           long y_off, long z_off) {
-  (void)x_data;
-  (void)y_data;
-  (void)x_off;
-  (void)y_off;  // Unused
-  // Re-interpreting x_data to pass elem_size without changing op signature
-  size_t elem_size = *((size_t *)x_data);
-  memset((char *)z_data + z_off * elem_size, 0, elem_size);
-}
 
 // Generic, parallel function to zero an ndarray, respecting strides.
 static void nx_cblas_zero_generic(ndarray_t *z, size_t elem_size) {
@@ -3091,16 +3080,23 @@ static void nx_cblas_zero_generic(ndarray_t *z, size_t elem_size) {
 
   if (is_c_contiguous(z)) {
     memset((char *)z->data + z->offset * elem_size, 0, total * elem_size);
-  } else if (z->ndim > 0) {
-    // Parallelize over the outermost dimension
-    _Pragma("omp parallel for") for (long i = 0; i < z->shape[0]; i++) {
-      // Use iterate_inner_dims with a custom kernel to zero elements.
-      // We pass z for x and z arguments, and elem_size via the x_data pointer.
-      iterate_inner_dims(z, NULL, z, i, zero_op_kernel, &elem_size, NULL,
-                         z->data);
-    }
-  } else {  // Scalar case
-    memset((char *)z->data + z->offset * elem_size, 0, elem_size);
+  } else {
+    // Non-contiguous case: Use a dedicated, safe iterator.
+    nd_iterator_t it;
+    // We only iterate over one array, z. Pass it as x and z args.
+    nd_iterator_init(&it, z, NULL, z);
+
+    char *z_data = (char *)z->data;
+
+    // Process all elements sequentially for now.
+    // A parallel version would require dividing the work differently.
+    do {
+      long x_off_unused, z_off;
+      nd_iterator_get_offsets(&it, &x_off_unused, NULL, &z_off);
+      memset(z_data + z_off * elem_size, 0, elem_size);
+    } while (nd_iterator_next(&it));
+
+    nd_iterator_destroy(&it);
   }
 }
 
