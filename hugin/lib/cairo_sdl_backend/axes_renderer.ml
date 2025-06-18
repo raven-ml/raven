@@ -302,6 +302,192 @@ let render_axes_2d cr fig_width fig_height (ax : Axes.t) =
           Cairo.show_text cr ax.title);
         Cairo.restore cr);
 
+      (* Render legend if visible *)
+      if ax.legend_visible then (
+        let labeled_artists = ref [] in
+        List.iter
+          (fun artist ->
+            match artist with
+            | Artist.Line2D l when l.label <> None ->
+                labeled_artists :=
+                  (artist, Option.get l.label) :: !labeled_artists
+            | Artist.Line3D l when l.label <> None ->
+                labeled_artists :=
+                  (artist, Option.get l.label) :: !labeled_artists
+            | Artist.Scatter s when s.label <> None ->
+                labeled_artists :=
+                  (artist, Option.get s.label) :: !labeled_artists
+            | Artist.Bar b when b.label <> None ->
+                labeled_artists :=
+                  (artist, Option.get b.label) :: !labeled_artists
+            | Artist.Step st when st.label <> None ->
+                labeled_artists :=
+                  (artist, Option.get st.label) :: !labeled_artists
+            | Artist.FillBetween fb when fb.label <> None ->
+                labeled_artists :=
+                  (artist, Option.get fb.label) :: !labeled_artists
+            | _ -> ())
+          ax.artists;
+
+        if List.length !labeled_artists > 0 then (
+          Cairo.save cr;
+          (* Calculate legend position based on location *)
+          let legend_padding = 10.0 in
+          let legend_item_height = 20.0 in
+          let legend_item_spacing = 5.0 in
+          let legend_sample_width = 30.0 in
+          let legend_sample_gap = 5.0 in
+
+          (* Measure text for each label *)
+          Cairo.select_font_face cr Layout.Defaults.font_face;
+          Cairo.set_font_size cr (Layout.Defaults.tick_font_size *. 0.9);
+
+          let max_label_width = ref 0.0 in
+          List.iter
+            (fun (_, label) ->
+              let te = Cairo.text_extents cr label in
+              max_label_width := max !max_label_width te.Cairo.width)
+            !labeled_artists;
+
+          let n_items = List.length !labeled_artists in
+          let legend_width =
+            (legend_padding *. 2.0) +. legend_sample_width +. legend_sample_gap
+            +. !max_label_width
+          in
+          let legend_height =
+            (legend_padding *. 2.0)
+            +. (float_of_int n_items *. legend_item_height)
+            +. (float_of_int (n_items - 1) *. legend_item_spacing)
+          in
+
+          (* Calculate legend position *)
+          let legend_x, legend_y =
+            match ax.legend_loc with
+            | Best | UpperRight ->
+                ( plot_bounds.left +. plot_bounds.width -. legend_width -. 10.0,
+                  plot_bounds.top +. 10.0 )
+            | UpperLeft -> (plot_bounds.left +. 10.0, plot_bounds.top +. 10.0)
+            | LowerLeft ->
+                ( plot_bounds.left +. 10.0,
+                  plot_bounds.top +. plot_bounds.height -. legend_height -. 10.0
+                )
+            | LowerRight ->
+                ( plot_bounds.left +. plot_bounds.width -. legend_width -. 10.0,
+                  plot_bounds.top +. plot_bounds.height -. legend_height -. 10.0
+                )
+            | Right ->
+                ( plot_bounds.left +. plot_bounds.width -. legend_width -. 10.0,
+                  plot_bounds.top
+                  +. ((plot_bounds.height -. legend_height) /. 2.0) )
+            | CenterLeft ->
+                ( plot_bounds.left +. 10.0,
+                  plot_bounds.top
+                  +. ((plot_bounds.height -. legend_height) /. 2.0) )
+            | CenterRight ->
+                ( plot_bounds.left +. plot_bounds.width -. legend_width -. 10.0,
+                  plot_bounds.top
+                  +. ((plot_bounds.height -. legend_height) /. 2.0) )
+            | LowerCenter ->
+                ( plot_bounds.left
+                  +. ((plot_bounds.width -. legend_width) /. 2.0),
+                  plot_bounds.top +. plot_bounds.height -. legend_height -. 10.0
+                )
+            | UpperCenter ->
+                ( plot_bounds.left
+                  +. ((plot_bounds.width -. legend_width) /. 2.0),
+                  plot_bounds.top +. 10.0 )
+            | Center ->
+                ( plot_bounds.left
+                  +. ((plot_bounds.width -. legend_width) /. 2.0),
+                  plot_bounds.top
+                  +. ((plot_bounds.height -. legend_height) /. 2.0) )
+          in
+
+          (* Draw legend box *)
+          Cairo.set_source_rgba cr 1.0 1.0 1.0 0.9;
+          (* White with transparency *)
+          Cairo.rectangle cr legend_x legend_y ~w:legend_width ~h:legend_height;
+          Cairo.fill cr;
+
+          Cairo.set_source_rgb cr 0.0 0.0 0.0;
+          Cairo.set_line_width cr 1.0;
+          Cairo.rectangle cr legend_x legend_y ~w:legend_width ~h:legend_height;
+          Cairo.stroke cr;
+
+          (* Draw legend items *)
+          let draw_legend_item idx (artist, label) =
+            let item_y =
+              legend_y +. legend_padding
+              +. float_of_int idx
+                 *. (legend_item_height +. legend_item_spacing)
+              +. (legend_item_height /. 2.0)
+            in
+            let sample_x = legend_x +. legend_padding in
+
+            (* Draw sample of artist *)
+            Cairo.save cr;
+            (match artist with
+            | Artist.Line2D l -> (
+                Render_utils.set_source_color cr l.color;
+                Cairo.set_line_width cr l.linewidth;
+                (match l.linestyle with
+                | Dashed -> Cairo.set_dash cr ~ofs:0.0 [| 6.0; 6.0 |]
+                | Dotted -> Cairo.set_dash cr ~ofs:0.0 [| 1.0; 3.0 |]
+                | DashDot -> Cairo.set_dash cr ~ofs:0.0 [| 6.0; 3.0; 1.0; 3.0 |]
+                | Solid | None -> Cairo.set_dash cr ~ofs:0.0 [||]);
+                Cairo.move_to cr sample_x item_y;
+                Cairo.line_to cr (sample_x +. legend_sample_width) item_y;
+                Cairo.stroke cr;
+                (* Draw marker if present *)
+                match l.marker with
+                | Artist.Circle ->
+                    Cairo.arc cr
+                      (sample_x +. (legend_sample_width /. 2.0))
+                      item_y ~r:3.0 ~a1:0. ~a2:(2. *. Float.pi);
+                    Cairo.fill cr
+                | Artist.Square ->
+                    Cairo.rectangle cr
+                      (sample_x +. (legend_sample_width /. 2.0) -. 3.0)
+                      (item_y -. 3.0) ~w:6.0 ~h:6.0;
+                    Cairo.fill cr
+                | _ -> ())
+            | Artist.Scatter s -> (
+                Render_utils.set_source_color cr s.c;
+                let marker_x = sample_x +. (legend_sample_width /. 2.0) in
+                match s.marker with
+                | Artist.Circle ->
+                    Cairo.arc cr marker_x item_y ~r:4.0 ~a1:0.
+                      ~a2:(2. *. Float.pi);
+                    Cairo.fill cr
+                | Artist.Square ->
+                    Cairo.rectangle cr (marker_x -. 4.0) (item_y -. 4.0) ~w:8.0
+                      ~h:8.0;
+                    Cairo.fill cr
+                | _ -> ())
+            | Artist.Bar b ->
+                Render_utils.set_source_color cr b.color;
+                Cairo.rectangle cr sample_x (item_y -. 5.0)
+                  ~w:legend_sample_width ~h:10.0;
+                Cairo.fill cr
+            | Artist.FillBetween fb ->
+                Render_utils.set_source_color cr fb.color;
+                Cairo.rectangle cr sample_x (item_y -. 5.0)
+                  ~w:legend_sample_width ~h:10.0;
+                Cairo.fill cr
+            | _ -> ());
+            Cairo.restore cr;
+
+            (* Draw label text *)
+            Cairo.set_source_rgb cr 0.0 0.0 0.0;
+            Cairo.move_to cr
+              (sample_x +. legend_sample_width +. legend_sample_gap)
+              (item_y +. 5.0);
+            Cairo.show_text cr label
+          in
+
+          List.iteri draw_legend_item (List.rev !labeled_artists);
+          Cairo.restore cr));
+
       Cairo.restore cr)
 
 let render_axes_3d cr fig_width fig_height (ax : Axes.t) =

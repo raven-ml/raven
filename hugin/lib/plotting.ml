@@ -189,3 +189,11 @@ let matshow ?cmap ?aspect ?extent ?(origin = `upper) ~data ax =
   let _ = Axes.set_yticks yticks ax in
 
   ax
+
+let contour ?colors ?linewidths ?linestyles ~levels ~x ~y ~z ax =
+  let artist = Artist.contour ?colors ?linewidths ?linestyles ~levels x y z in
+  Axes.add_artist artist ax
+
+let contourf ?cmap ?alpha ~levels ~x ~y ~z ax =
+  let artist = Artist.contourf ?cmap ?alpha ~levels x y z in
+  Axes.add_artist artist ax

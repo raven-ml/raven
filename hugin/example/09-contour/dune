@@ -1,0 +1,5 @@
+(executable
+ (public_name contour_demo)
+ (package hugin)
+ (name contour_demo)
+ (libraries hugin nx))

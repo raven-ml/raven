@@ -346,6 +346,72 @@ module Artist : sig
         let img = image ~extent:(0., 10., 0., 5.) img_arr in
         Axes.add_artist img axes
       ]} *)
+
+  val contour :
+    ?colors:color array ->
+    ?linewidths:float array ->
+    ?linestyles:line_style array ->
+    levels:float array ->
+    Nx.float32_t ->
+    Nx.float32_t ->
+    Nx.float32_t ->
+    t
+  (** [contour ?colors ?linewidths ?linestyles ~levels x y z]
+
+      Create contour lines for 2D scalar field z(x,y).
+
+      {2 Parameters}
+      - [?colors]: array of colors for each contour level.
+      - [?linewidths]: array of line widths for each level.
+      - [?linestyles]: array of line styles for each level.
+      - [levels]: array of z values at which to draw contours.
+      - [x]: 1D array of x coordinates.
+      - [y]: 1D array of y coordinates.
+      - [z]: 2D array of z values with shape (len(y), len(x)).
+
+      {2 Returns}
+      - a [t] representing the contour artist.
+
+      {2 Raises}
+      - [Invalid_argument] if dimensions don't match.
+
+      {2 Examples}
+      {[
+        let c = contour ~levels:[| 0.0; 0.5; 1.0 |] x y z in
+        Axes.add_artist c axes
+      ]} *)
+
+  val contourf :
+    ?cmap:cmap ->
+    ?alpha:float ->
+    levels:float array ->
+    Nx.float32_t ->
+    Nx.float32_t ->
+    Nx.float32_t ->
+    t
+  (** [contourf ?cmap ?alpha ~levels x y z]
+
+      Create filled contours for 2D scalar field z(x,y).
+
+      {2 Parameters}
+      - [?cmap]: colormap for filling (default Viridis).
+      - [?alpha]: transparency (0.0 to 1.0, default 1.0).
+      - [levels]: array of z values defining contour boundaries.
+      - [x]: 1D array of x coordinates.
+      - [y]: 1D array of y coordinates.
+      - [z]: 2D array of z values with shape (len(y), len(x)).
+
+      {2 Returns}
+      - a [t] representing the filled contour artist.
+
+      {2 Raises}
+      - [Invalid_argument] if dimensions don't match.
+
+      {2 Examples}
+      {[
+        let cf = contourf ~cmap:Coolwarm ~levels:[| 0.0; 0.5; 1.0 |] x y z in
+        Axes.add_artist cf axes
+      ]} *)
 end
 
 (** Module for axes-level operations (the plotting area). *)
@@ -675,6 +741,40 @@ module Axes : sig
       {2 Examples}
       {[
         let ax = cla ax in
+        ...
+      ]} *)
+
+  (** Legend location options *)
+  type legend_loc =
+    | Best
+    | UpperRight
+    | UpperLeft
+    | LowerLeft
+    | LowerRight
+    | Right
+    | CenterLeft
+    | CenterRight
+    | LowerCenter
+    | UpperCenter
+    | Center
+
+  val legend : ?loc:legend_loc -> ?ncol:int -> bool -> t -> t
+  (** [legend ?loc ?ncol visible axes]
+
+      Show or hide legend for labeled artists.
+
+      {2 Parameters}
+      - [?loc]: legend location (default Best).
+      - [?ncol]: number of columns (default 1).
+      - [visible]: true to show, false to hide.
+      - [axes]: axes instance.
+
+      {2 Returns}
+      - updated axes with legend settings.
+
+      {2 Examples}
+      {[
+        let ax = legend ~loc:UpperRight true ax in
         ...
       ]} *)
 end
@@ -1175,6 +1275,70 @@ module Plotting : sig
       {2 Examples}
       {[
         let ax = text ~x:1. ~y:2. "Label" ax in
+        ...
+      ]} *)
+
+  val contour :
+    ?colors:Artist.color array ->
+    ?linewidths:float array ->
+    ?linestyles:Artist.line_style array ->
+    levels:float array ->
+    x:Nx.float32_t ->
+    y:Nx.float32_t ->
+    z:Nx.float32_t ->
+    Axes.t ->
+    Axes.t
+  (** [contour ?colors ?linewidths ?linestyles ~levels ~x ~y ~z axes]
+
+      Add contour lines to axes.
+
+      {2 Parameters}
+      - [?colors]: colors for each level.
+      - [?linewidths]: line widths for each level.
+      - [?linestyles]: line styles for each level.
+      - [levels]: z values at which to draw contours.
+      - [x]: 1D array of x coordinates.
+      - [y]: 1D array of y coordinates.
+      - [z]: 2D array of z values.
+      - [axes]: target axes.
+
+      {2 Returns}
+      - axes with contour lines added.
+
+      {2 Examples}
+      {[
+        let ax = contour ~levels:[|0.0; 1.0|] ~x ~y ~z ax in
+        ...
+      ]} *)
+
+  val contourf :
+    ?cmap:Artist.cmap ->
+    ?alpha:float ->
+    levels:float array ->
+    x:Nx.float32_t ->
+    y:Nx.float32_t ->
+    z:Nx.float32_t ->
+    Axes.t ->
+    Axes.t
+  (** [contourf ?cmap ?alpha ~levels ~x ~y ~z axes]
+
+      Add filled contours to axes.
+
+      {2 Parameters}
+      - [?cmap]: colormap (default Viridis).
+      - [?alpha]: transparency (0.0 to 1.0, default 1.0).
+      - [levels]: z values defining contour boundaries.
+      - [x]: 1D array of x coordinates.
+      - [y]: 1D array of y coordinates.
+      - [z]: 2D array of z values.
+      - [axes]: target axes.
+
+      {2 Returns}
+      - axes with filled contours added.
+
+      {2 Examples}
+      {[
+        let ax = contourf ~cmap:Coolwarm ~levels:[|0.0; 1.0|] ~x ~y ~z ax in
         ...
       ]} *)
 end

@@ -1,0 +1,5 @@
+(executable
+ (public_name legend_demo)
+ (package hugin)
+ (name legend_demo)
+ (libraries hugin nx))

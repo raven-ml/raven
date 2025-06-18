@@ -221,3 +221,13 @@ let float32_to_cairo_surface ?(cmap = Artist.Colormap.gray)
   in
 
   Cairo.Image.create_for_data8 cairo_data Cairo.Image.ARGB32 ~w ~h ~stride
+
+let eval_colormap cmap norm_value =
+  (* Evaluate colormap at normalized value [0, 1] *)
+  let r, g, b = Artist.Colormap.apply_colormap cmap norm_value in
+  {
+    Artist.r = float_of_int r /. 255.0;
+    g = float_of_int g /. 255.0;
+    b = float_of_int b /. 255.0;
+    a = 1.0;
+  }

@@ -266,6 +266,25 @@ type fill_between = {
   label : string option;
 }
 
+type contour = {
+  x : Nx.float32_t; (* 1D array of x coordinates *)
+  y : Nx.float32_t; (* 1D array of y coordinates *)
+  z : Nx.float32_t; (* 2D array of z values *)
+  levels : float array; (* Contour levels *)
+  colors : color array option; (* Colors for each level *)
+  linewidths : float array option; (* Line widths for each level *)
+  linestyles : line_style array option; (* Line styles for each level *)
+}
+
+type contour_filled = {
+  x : Nx.float32_t; (* 1D array of x coordinates *)
+  y : Nx.float32_t; (* 1D array of y coordinates *)
+  z : Nx.float32_t; (* 2D array of z values *)
+  levels : float array; (* Contour levels *)
+  cmap : cmap option; (* Colormap *)
+  alpha : float; (* Alpha transparency *)
+}
+
 (* The main Artist variant type *)
 type t =
   | Line2D of line2d
@@ -277,6 +296,8 @@ type t =
   | Errorbar of line2d * errorbar_style
   | Step of step
   | FillBetween of fill_between
+  | Contour of contour
+  | ContourFilled of contour_filled
 
 let line2d ?(color = Color.blue) ?(linewidth = 1.5) ?(linestyle = Solid)
     ?(marker = None) ?label x y =
@@ -357,3 +378,39 @@ let fill_between ?(color = Color.blue) ?where ?(interpolate = false) ?label x y1
   | _ -> ());
   FillBetween
     { xdata = x; y1data = y1; y2data = y2; color; where; interpolate; label }
+
+let contour ?colors ?linewidths ?linestyles ~levels x y z =
+  if Nx.ndim x <> 1 || Nx.ndim y <> 1 then
+    invalid_arg "Artist.contour: x and y must be 1D arrays";
+  if Nx.ndim z <> 2 then invalid_arg "Artist.contour: z must be a 2D array";
+  let z_shape = Nx.shape z in
+  if z_shape.(0) <> Nx.size y || z_shape.(1) <> Nx.size x then
+    invalid_arg "Artist.contour: z shape must match (len(y), len(x))";
+
+  (* Validate optional arrays if provided *)
+  (match colors with
+  | Some c when Array.length c <> Array.length levels ->
+      invalid_arg "Artist.contour: colors array must match levels length"
+  | _ -> ());
+  (match linewidths with
+  | Some lw when Array.length lw <> Array.length levels ->
+      invalid_arg "Artist.contour: linewidths array must match levels length"
+  | _ -> ());
+  (match linestyles with
+  | Some ls when Array.length ls <> Array.length levels ->
+      invalid_arg "Artist.contour: linestyles array must match levels length"
+  | _ -> ());
+
+  Contour { x; y; z; levels; colors; linewidths; linestyles }
+
+let contourf ?(cmap = Viridis) ?(alpha = 1.0) ~levels x y z =
+  if Nx.ndim x <> 1 || Nx.ndim y <> 1 then
+    invalid_arg "Artist.contourf: x and y must be 1D arrays";
+  if Nx.ndim z <> 2 then invalid_arg "Artist.contourf: z must be a 2D array";
+  let z_shape = Nx.shape z in
+  if z_shape.(0) <> Nx.size y || z_shape.(1) <> Nx.size x then
+    invalid_arg "Artist.contourf: z shape must match (len(y), len(x))";
+  if alpha < 0.0 || alpha > 1.0 then
+    invalid_arg "Artist.contourf: alpha must be between 0.0 and 1.0";
+
+  ContourFilled { x; y; z; levels; cmap = Some cmap; alpha }

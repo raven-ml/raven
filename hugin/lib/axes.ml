@@ -1,3 +1,16 @@
+type legend_loc =
+  | Best
+  | UpperRight
+  | UpperLeft
+  | LowerLeft
+  | LowerRight
+  | Right
+  | CenterLeft
+  | CenterRight
+  | LowerCenter
+  | UpperCenter
+  | Center
+
 type t = {
   projection : projection;
   left : float;
@@ -22,6 +35,8 @@ type t = {
   mutable grid_axis : [ `x | `y | `both ];
   mutable elev : float;
   mutable azim : float;
+  mutable legend_visible : bool;
+  mutable legend_loc : legend_loc;
 }
 
 and projection = TwoD | ThreeD
@@ -53,6 +68,8 @@ let create ?(projection = TwoD) ?(elev = 30.) ?(azim = -60.) ~left ~bottom
     grid_axis = `both;
     elev = (if projection = ThreeD then elev else 30.);
     azim = (if projection = ThreeD then azim else -60.);
+    legend_visible = false;
+    legend_loc = Best;
   }
 
 let add_artist artist ax =
@@ -249,6 +266,8 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
       | Artist.FillBetween fb ->
           update_bounds_from_arrays fb.xdata fb.y1data;
           update_bounds_from_arrays fb.xdata fb.y2data
+      | Artist.Contour c -> update_bounds_from_arrays c.x c.y
+      | Artist.ContourFilled cf -> update_bounds_from_arrays cf.x cf.y
       | Artist.Text _ -> ())
     ax.artists;
 
@@ -397,3 +416,8 @@ let get_final_z_bounds ?(zpad = 0.05) (ax : t) : float * float =
 
     if final_zmin > final_zmax then (default_zmin, default_zmax)
     else (final_zmin, final_zmax)
+
+let legend ?(loc = Best) ?ncol:_ visible ax =
+  ax.legend_visible <- visible;
+  ax.legend_loc <- loc;
+  ax
