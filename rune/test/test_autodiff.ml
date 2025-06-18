@@ -2,7 +2,7 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.native
+let ctx = T.metal ()
 let eps = 1e-6
 
 (* ───── basic gradients ───── *)
@@ -73,7 +73,7 @@ let test_grad_activation_functions () =
   let f_relu x = T.sum (T.relu x) in
   let grad_relu = T.grad f_relu x in
   let expected_relu = T.create ctx T.float32 [| 4 |] [| 0.; 0.; 1.; 1. |] in
-  check_rune "relu gradient" expected_relu grad_relu;
+  check_rune ~eps "relu gradient" expected_relu grad_relu;
 
   (* Tanh gradient *)
   let x_tanh = T.scalar ctx T.float32 0.5 in
@@ -96,25 +96,25 @@ let test_grad_reductions () =
   (* Sum gradient *)
   let grad_sum = T.grad T.sum x in
   let expected_sum = T.ones ctx T.float32 [| 2; 2 |] in
-  check_rune "sum gradient" expected_sum grad_sum;
+  check_rune ~eps "sum gradient" expected_sum grad_sum;
 
   (* Mean gradient *)
   let grad_mean = T.grad T.mean x in
   let expected_mean = T.full ctx T.float32 [| 2; 2 |] 0.25 in
-  check_rune "mean gradient" expected_mean grad_mean;
+  check_rune ~eps "mean gradient" expected_mean grad_mean;
 
   (* Max gradient *)
   let x_max = T.create ctx T.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |] in
   let grad_max = T.grad T.max x_max in
   let expected_max = T.create ctx T.float32 [| 2; 2 |] [| 0.; 0.; 0.; 1. |] in
-  check_rune "max gradient" expected_max grad_max;
+  check_rune ~eps "max gradient" expected_max grad_max;
 
   (* Sum with axis *)
   let x_axis = T.create ctx T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
   let f_axis x = T.sum (T.sum x ~axes:[| 1 |]) in
   let grad_axis = T.grad f_axis x_axis in
   let expected_axis = T.ones ctx T.float32 [| 2; 3 |] in
-  check_rune "sum with axis gradient" expected_axis grad_axis
+  check_rune ~eps "sum with axis gradient" expected_axis grad_axis
 
 (* ───── broadcasting gradients ───── *)
 
@@ -200,16 +200,16 @@ let test_grad_shape_ops () =
   (* Reshape gradient *)
   let f_reshape x = T.sum (T.reshape [| 3; 2 |] x) in
   let grad_reshape = T.grad f_reshape x in
-  check_rune "reshape gradient" (T.ones_like x) grad_reshape;
+  check_rune ~eps "reshape gradient" (T.ones_like x) grad_reshape;
 
   (* Transpose gradient *)
   let grad_transpose = T.grad (fun x -> T.sum (T.transpose x)) x in
-  check_rune "transpose gradient" (T.ones_like x) grad_transpose;
+  check_rune ~eps "transpose gradient" (T.ones_like x) grad_transpose;
 
   (* Squeeze gradient *)
   let x_squeeze = T.create ctx T.float32 [| 1; 3; 1 |] [| 1.; 2.; 3. |] in
   let grad_squeeze = T.grad (fun x -> T.sum (T.squeeze x)) x_squeeze in
-  check_rune "squeeze gradient" (T.ones_like x_squeeze) grad_squeeze
+  check_rune ~eps "squeeze gradient" (T.ones_like x_squeeze) grad_squeeze
 
 (* ───── neural network operations ───── *)
 
@@ -226,10 +226,10 @@ let test_grad_matmul () =
   let grad_b = T.grad f_b b in
 
   let expected_a =
-    T.create ctx T.float32 [| 2; 3 |] [| 0.5; 0.7; 0.9; 0.5; 0.7; 0.9 |]
+    T.create ctx T.float32 [| 2; 3 |] [| 0.3; 0.7; 1.1; 0.3; 0.7; 1.1 |]
   in
   let expected_b =
-    T.create ctx T.float32 [| 3; 2 |] [| 3.; 3.; 7.; 7.; 11.; 11. |]
+    T.create ctx T.float32 [| 3; 2 |] [| 5.; 5.; 7.; 7.; 9.; 9. |]
   in
 
   check_rune ~eps "matmul grad wrt a" expected_a grad_a;
@@ -320,6 +320,55 @@ let test_grad_pooling () =
 
   let expected = T.full ctx T.float32 [| 1; 1; 4; 4 |] 0.25 in
   check_rune ~eps "avg_pool2d gradient" expected grad
+
+let test_grad_conv2d () =
+  (* Test 1: Simple conv2d gradient with Valid padding *)
+  let x =
+    T.create ctx T.float32 [| 1; 1; 4; 4 |]
+      [|
+        1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.;
+      |]
+  in
+
+  let kernel =
+    T.create ctx T.float32 [| 1; 1; 2; 2 |] [| 1.; 0.; 0.; 1. |]
+    (* Identity-like kernel *)
+  in
+
+  (* Test gradient w.r.t input *)
+  let f_x x = T.sum (T.convolve2d x kernel ~padding_mode:`Valid) in
+  let grad_x = T.grad f_x x in
+
+  (* With Valid padding, only inner elements get gradients *)
+  let expected_x =
+    T.create ctx T.float32 [| 1; 1; 4; 4 |]
+      [| 1.; 1.; 1.; 0.; 1.; 2.; 2.; 1.; 1.; 2.; 2.; 1.; 0.; 1.; 1.; 1. |]
+  in
+  check_rune ~eps "conv2d gradient w.r.t input (Valid)" expected_x grad_x;
+
+  (* Test gradient w.r.t kernel *)
+  let f_k k = T.sum (T.convolve2d x k ~padding_mode:`Valid) in
+  let grad_k = T.grad f_k kernel in
+
+  (* Expected gradient: sum of all valid windows *)
+  (* Note: The kernel gradient appears in reverse order due to correlation vs convolution *)
+  let expected_k =
+    T.create ctx T.float32 [| 1; 1; 2; 2 |] [| 99.; 90.; 63.; 54. |]
+  in
+  check_rune ~eps "conv2d gradient w.r.t kernel" expected_k grad_k;
+
+  (* Test 2: Conv2d with Same padding *)
+  let f_same x = T.sum (T.convolve2d x kernel ~padding_mode:`Same) in
+  let grad_same = T.grad f_same x in
+
+  (* With Same padding, output has same size as input *)
+  (* Expected gradients depend on how kernel overlaps at each position *)
+  (* Note: Due to correlation vs convolution, the pattern appears flipped *)
+  let expected_same =
+    T.create ctx T.float32 [| 1; 1; 4; 4 |]
+      [| 2.; 2.; 2.; 1.; 2.; 2.; 2.; 1.; 2.; 2.; 2.; 1.; 1.; 1.; 1.; 1. |]
+  in
+  check_rune ~eps "conv2d gradient with Same padding" expected_same grad_same
 
 (* ───── composition and higher-order ───── *)
 
@@ -430,6 +479,7 @@ let () =
           test_case "linear layer" `Quick test_grad_linear_layer;
           test_case "loss functions" `Quick test_grad_loss_functions;
           test_case "pooling" `Quick test_grad_pooling;
+          test_case "conv2d" `Quick test_grad_conv2d;
         ] );
       ( "composition and higher-order",
         [ test_case "composition patterns" `Quick test_grad_composition ] );

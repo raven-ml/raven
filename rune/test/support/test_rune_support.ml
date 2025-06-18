@@ -12,11 +12,17 @@ let rune_tensor_exact : (float, Rune.float32_elt) Rune.t testable =
       else
         let eq_tensor = Rune.array_equal a b in
         (* array_equal returns uint8 tensor with 1 for true, 0 for false *)
-        (* Check if all elements are equal by taking min *)
-        let all_equal = Rune.min eq_tensor in
-        (* Get the scalar value - for uint8, this returns an int *)
-        let result = Rune.unsafe_get [] all_equal in
-        equal_int result 1)
+        (* Check if all elements are equal *)
+        let size = Array.fold_left ( * ) 1 (Rune.shape a) in
+        if size = 1 then
+          (* For scalars, just check the value directly *)
+          let result = Rune.unsafe_get [] eq_tensor in
+          equal_int result 1
+        else
+          (* For non-scalars, sum and compare to size *)
+          let sum = Rune.sum eq_tensor in
+          let sum_val = Rune.unsafe_get [] sum in
+          equal_int sum_val size)
 
 (* Rune tensor testable with approximate equality *)
 let rune_tensor_approx ?(eps = 1e-5) () :
