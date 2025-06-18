@@ -2863,7 +2863,7 @@ CAMLprim value caml_nx_scatter(value v1, value v2, value v3, value v4, value v5,
                                value v10, value v11, value v12, value v13,
                                value v14, value v15, value v16, value v17,
                                value v18) {
-  value argv[18] = {v1, v2,  v3,  v4,  v5,  v6,  v7, v8, v9,
+  value argv[18] = {v1,  v2,  v3,  v4,  v5,  v6,  v7,  v8,  v9,
                     v10, v11, v12, v13, v14, v15, v16, v17, v18};
   return caml_nx_scatter_bc(argv, 18);
 }
@@ -2871,23 +2871,13 @@ CAMLprim value caml_nx_scatter(value v1, value v2, value v3, value v4, value v5,
 // Matrix multiplication implementation
 static void nx_cblas_matmul_float(const ndarray_t *a, const ndarray_t *b,
                                   ndarray_t *c) {
-  // Dimension checks should be done before entering blocking section
-  assert(a->ndim >= 2 && b->ndim >= 2 && c->ndim >= 2);
-
-  // M, K, N dimensions of the matrices
-  const int M = a->shape[a->ndim - 2];
+  const int M = c->shape[c->ndim - 2];
+  const int N = c->shape[c->ndim - 1];
   const int K = a->shape[a->ndim - 1];
-  const int N = b->shape[b->ndim - 1];
 
-  // These should be validated before entering blocking section
-  assert(K == b->shape[b->ndim - 2]);
-  assert(a->strides[a->ndim - 1] == 1 && b->strides[b->ndim - 1] == 1 &&
-         c->strides[c->ndim - 1] == 1);
-
-  // Calculate batch size
   long batch_size = 1;
-  for (int i = 0; i < a->ndim - 2; i++) {
-    batch_size *= a->shape[i];
+  for (int i = 0; i < c->ndim - 2; i++) {
+    batch_size *= c->shape[i];
   }
 
   const long a_matrix_size = M * K;
@@ -2898,41 +2888,39 @@ static void nx_cblas_matmul_float(const ndarray_t *a, const ndarray_t *b,
   float *b_data = (float *)b->data + b->offset;
   float *c_data = (float *)c->data + c->offset;
 
-  // Parallelize over batch dimension
-#pragma omp parallel for if (batch_size > 100)
+  // Check if A and B are broadcasted
+  // A is broadcasted if its rank is less than C's, or its batch dims are 1.
+  // A simple check is if its total element count is smaller than C's.
+  long a_total_elems = total_elements(a);
+  long b_total_elems = total_elements(b);
+  long c_total_elems = total_elements(c);
+
+  int a_is_batched = (a->ndim == c->ndim);
+  int b_is_batched = (b->ndim == c->ndim);
+
+  if (a_total_elems < c_total_elems) a_is_batched = 0;
+  if (b_total_elems < c_total_elems) b_is_batched = 0;
+
+#pragma omp parallel for if (batch_size > 1)
   for (long i = 0; i < batch_size; i++) {
-    const float *a_mat = a_data + i * a_matrix_size;
-    // For b, only increment if it has batch dimensions
-    const float *b_mat = (b->ndim > 2) ? (b_data + i * b_matrix_size) : b_data;
+    const float *a_mat = a_data + (a_is_batched ? i * a_matrix_size : 0);
+    const float *b_mat = b_data + (b_is_batched ? i * b_matrix_size : 0);
     float *c_mat = c_data + i * c_matrix_size;
 
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K,
-                1.0f,      // alpha
-                a_mat, K,  // A, lda
-                b_mat, N,  // B, ldb
-                0.0f,      // beta
-                c_mat, N   // C, ldc
-    );
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K, 1.0f, a_mat,
+                K, b_mat, N, 0.0f, c_mat, N);
   }
 }
 
 static void nx_cblas_matmul_double(const ndarray_t *a, const ndarray_t *b,
                                    ndarray_t *c) {
-  // Dimension checks should be done before entering blocking section
-  assert(a->ndim >= 2 && b->ndim >= 2 && c->ndim >= 2);
-
-  const int M = a->shape[a->ndim - 2];
+  const int M = c->shape[c->ndim - 2];
+  const int N = c->shape[c->ndim - 1];
   const int K = a->shape[a->ndim - 1];
-  const int N = b->shape[b->ndim - 1];
-
-  // These should be validated before entering blocking section
-  assert(K == b->shape[b->ndim - 2]);
-  assert(a->strides[a->ndim - 1] == 1 && b->strides[b->ndim - 1] == 1 &&
-         c->strides[c->ndim - 1] == 1);
 
   long batch_size = 1;
-  for (int i = 0; i < a->ndim - 2; i++) {
-    batch_size *= a->shape[i];
+  for (int i = 0; i < c->ndim - 2; i++) {
+    batch_size *= c->shape[i];
   }
 
   const long a_matrix_size = M * K;
@@ -2943,20 +2931,17 @@ static void nx_cblas_matmul_double(const ndarray_t *a, const ndarray_t *b,
   double *b_data = (double *)b->data + b->offset;
   double *c_data = (double *)c->data + c->offset;
 
-#pragma omp parallel for if (batch_size > 100)
+  int a_is_batched = (total_elements(a) == total_elements(c));
+  int b_is_batched = (total_elements(b) == total_elements(c));
+
+#pragma omp parallel for if (batch_size > 1)
   for (long i = 0; i < batch_size; i++) {
-    const double *a_mat = a_data + i * a_matrix_size;
-    // For b, only increment if it has batch dimensions
-    const double *b_mat = (b->ndim > 2) ? (b_data + i * b_matrix_size) : b_data;
+    const double *a_mat = a_data + (a_is_batched ? i * a_matrix_size : 0);
+    const double *b_mat = b_data + (b_is_batched ? i * b_matrix_size : 0);
     double *c_mat = c_data + i * c_matrix_size;
 
-    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K,
-                1.0,       // alpha
-                a_mat, K,  // A, lda
-                b_mat, N,  // B, ldb
-                0.0,       // beta
-                c_mat, N   // C, ldc
-    );
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K, 1.0, a_mat,
+                K, b_mat, N, 0.0, c_mat, N);
   }
 }
 
@@ -3076,7 +3061,6 @@ static inline void decode_linear_index(long linear_idx, int ndim,
   }
 }
 
-
 // Generic, parallel function to zero an ndarray, respecting strides.
 static void nx_cblas_zero_generic(ndarray_t *z, size_t elem_size) {
   long total = total_elements(z);
@@ -3181,7 +3165,8 @@ static void nx_cblas_zero_generic(ndarray_t *z, size_t elem_size) {
           int in_bounds = 1;                                                   \
           for (int i = 0; i < num_spatial_dims; ++i) {                         \
             long pos = (long)patch_indices[i] * strides[i] +                   \
-                       (long)kernel_indices[i] * dilation[i] - padding_lower[i];     \
+                       (long)kernel_indices[i] * dilation[i] -                 \
+                       padding_lower[i];                                       \
             if (pos < 0 || pos >= input->shape[num_batch_dims + 1 + i]) {      \
               in_bounds = 0;                                                   \
               break;                                                           \
@@ -3291,7 +3276,8 @@ static void nx_cblas_zero_generic(ndarray_t *z, size_t elem_size) {
           int in_bounds = 1;                                                   \
           for (int i = 0; i < num_spatial_dims; ++i) {                         \
             long pos = (long)patch_indices[i] * strides[i] +                   \
-                       (long)kernel_indices[i] * dilation[i] - padding_lower[i];     \
+                       (long)kernel_indices[i] * dilation[i] -                 \
+                       padding_lower[i];                                       \
             if (pos < 0 || pos >= output->shape[num_batch_dims + 1 + i]) {     \
               in_bounds = 0;                                                   \
               break;                                                           \

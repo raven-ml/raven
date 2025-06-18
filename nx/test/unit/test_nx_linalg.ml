@@ -59,6 +59,101 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let result = Nx.matmul a b in
     check_shape "matmul broadcast batch shape" [| 5; 3; 2 |] result
 
+  let test_matmul_2d_3d_broadcast ctx () =
+    (*
+     * Test case: A (2D) @ B (3D)
+     * A shape: (2, 3) - to be broadcasted
+     * B shape: (4, 3, 2) - batched tensor
+     * Expected output shape: (4, 2, 2)
+     *)
+
+    (* A is a single 2x3 matrix *)
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+
+    (* B is a batch of four 3x2 matrices *)
+    let b =
+      Nx.create ctx Nx.float32 [| 4; 3; 2 |]
+        [|
+          (* Batch 0 *)
+          1.;
+          2.;
+          3.;
+          4.;
+          5.;
+          6.;
+          (* Batch 1 *)
+          7.;
+          8.;
+          9.;
+          10.;
+          11.;
+          12.;
+          (* Batch 2 *)
+          1.;
+          0.;
+          0.;
+          1.;
+          1.;
+          0.;
+          (* Batch 3 *)
+          0.;
+          1.;
+          1.;
+          0.;
+          0.;
+          1.;
+        |]
+    in
+
+    (* Perform the matmul *)
+    let result = Nx.matmul a b in
+
+    (* Check shape *)
+    check_shape "matmul 2d @ 3d shape" [| 4; 2; 2 |] result;
+
+    (*
+     * Manually calculate the expected result:
+     *
+     * A = [[1, 2, 3],
+     *      [4, 5, 6]]
+     *
+     * B[0] = [[1, 2], [3, 4], [5, 6]]
+     * A @ B[0] = [[22, 28], [49, 64]]
+     *
+     * B[1] = [[7, 8], [9, 10], [11, 12]]
+     * A @ B[1] = [[58, 64], [139, 154]]
+     *
+     * B[2] = [[1, 0], [0, 1], [1, 0]]
+     * A @ B[2] = [[4, 2], [10, 5]]
+     *
+     * B[3] = [[0, 1], [1, 0], [0, 1]]
+     * A @ B[3] = [[2, 4], [5, 10]]
+     *)
+
+    (* Check batch 0 *)
+    check (float 1e-6) "batch 0 [0,0]" 22. (Nx.unsafe_get [ 0; 0; 0 ] result);
+    check (float 1e-6) "batch 0 [0,1]" 28. (Nx.unsafe_get [ 0; 0; 1 ] result);
+    check (float 1e-6) "batch 0 [1,0]" 49. (Nx.unsafe_get [ 0; 1; 0 ] result);
+    check (float 1e-6) "batch 0 [1,1]" 64. (Nx.unsafe_get [ 0; 1; 1 ] result);
+
+    (* Check batch 1 *)
+    check (float 1e-6) "batch 1 [0,0]" 58. (Nx.unsafe_get [ 1; 0; 0 ] result);
+    check (float 1e-6) "batch 1 [0,1]" 64. (Nx.unsafe_get [ 1; 0; 1 ] result);
+    check (float 1e-6) "batch 1 [1,0]" 139. (Nx.unsafe_get [ 1; 1; 0 ] result);
+    check (float 1e-6) "batch 1 [1,1]" 154. (Nx.unsafe_get [ 1; 1; 1 ] result);
+
+    (* Check batch 2 *)
+    check (float 1e-6) "batch 2 [0,0]" 4. (Nx.unsafe_get [ 2; 0; 0 ] result);
+    check (float 1e-6) "batch 2 [0,1]" 2. (Nx.unsafe_get [ 2; 0; 1 ] result);
+    check (float 1e-6) "batch 2 [1,0]" 10. (Nx.unsafe_get [ 2; 1; 0 ] result);
+    check (float 1e-6) "batch 2 [1,1]" 5. (Nx.unsafe_get [ 2; 1; 1 ] result);
+
+    (* Check batch 3 *)
+    check (float 1e-6) "batch 3 [0,0]" 2. (Nx.unsafe_get [ 3; 0; 0 ] result);
+    check (float 1e-6) "batch 3 [0,1]" 4. (Nx.unsafe_get [ 3; 0; 1 ] result);
+    check (float 1e-6) "batch 3 [1,0]" 5. (Nx.unsafe_get [ 3; 1; 0 ] result);
+    check (float 1e-6) "batch 3 [1,1]" 10. (Nx.unsafe_get [ 3; 1; 1 ] result)
+
   let test_matmul_shape_error ctx () =
     let a = Nx.create ctx Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
     let b = Nx.create ctx Nx.float32 [| 5; 6 |] (Array.init 30 float_of_int) in
@@ -607,6 +702,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       ("matmul 2d x 1d", `Quick, test_matmul_2d_1d ctx);
       ("matmul batch", `Quick, test_matmul_batch ctx);
       ("matmul broadcast batch", `Quick, test_matmul_broadcast_batch ctx);
+      ("matmul 2d @ 3d broadcast", `Quick, test_matmul_2d_3d_broadcast ctx);
       ("matmul shape error", `Quick, test_matmul_shape_error ctx);
       ("matmul empty", `Quick, test_matmul_empty ctx);
       ( "matmul transpose optimization",
