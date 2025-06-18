@@ -67,6 +67,17 @@ let op_matmul ctx a b =
   (* Handle empty matrices - if any dimension is 0, return empty output *)
   if m = 0 || n = 0 || k_a = 0 then out
   else
+    (* Ensure inputs are contiguous - Metal kernel doesn't support strided
+       views *)
+    let a =
+      if View.is_c_contiguous a.view then a
+      else Ops_movement.make_contiguous ctx a
+    in
+    let b =
+      if View.is_c_contiguous b.view then b
+      else Ops_movement.make_contiguous ctx b
+    in
+
     (* Get kernel - use tiled version for better performance *)
     let dtype_suffix = Internal.dtype_to_metal_type a.dtype in
     let kernel_name = Printf.sprintf "matmul_tiled_%s" dtype_suffix in

@@ -266,6 +266,14 @@ kernel void cast_float_to_short(device short* out [[buffer(0)]],
     out[gid] = short(in[gid]);
 }
 
+kernel void cast_uchar_to_float(device float* out [[buffer(0)]],
+                               device const uchar* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = float(in[gid]);
+}
+
 // Fill kernel - assigns a constant value
 kernel void fill_float(device float* out [[buffer(0)]],
                       constant float& value [[buffer(1)]],
