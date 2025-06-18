@@ -22,6 +22,13 @@
 #include <cblas.h>
 #endif
 
+// Define INTNAT_MIN based on word size
+#if SIZEOF_PTR == 8
+#define INTNAT_MIN INT64_MIN
+#else
+#define INTNAT_MIN INT32_MIN
+#endif
+
 // Consolidated NATIVE_WRAPPER definitions
 #define NATIVE_WRAPPER_8(name)                                            \
   CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4,   \
@@ -388,6 +395,62 @@ DEFINE_CAST_OP(int32_t, uint8_t, (uint8_t))
 DEFINE_CAST_OP(float, uint8_t, (uint8_t))
 DEFINE_CAST_OP(double, uint8_t, (uint8_t))
 
+// int8_t conversions
+DEFINE_CAST_OP(int8_t, int16_t, (int16_t))
+DEFINE_CAST_OP(int8_t, uint8_t, (uint8_t))
+DEFINE_CAST_OP(int8_t, uint16_t, (uint16_t))
+DEFINE_CAST_OP(int8_t, int32_t, (int32_t))
+DEFINE_CAST_OP(int8_t, int64_t, (int64_t))
+DEFINE_CAST_OP(int8_t, float, (float))
+DEFINE_CAST_OP(int8_t, double, (double))
+DEFINE_CAST_OP(int16_t, int8_t, (int8_t))
+DEFINE_CAST_OP(uint8_t, int8_t, (int8_t))
+DEFINE_CAST_OP(uint16_t, int8_t, (int8_t))
+DEFINE_CAST_OP(int32_t, int8_t, (int8_t))
+DEFINE_CAST_OP(int64_t, int8_t, (int8_t))
+DEFINE_CAST_OP(float, int8_t, (int8_t))
+DEFINE_CAST_OP(double, int8_t, (int8_t))
+
+// uint16_t conversions
+DEFINE_CAST_OP(uint16_t, int16_t, (int16_t))
+DEFINE_CAST_OP(uint16_t, uint8_t, (uint8_t))
+DEFINE_CAST_OP(uint16_t, int32_t, (int32_t))
+DEFINE_CAST_OP(uint16_t, int64_t, (int64_t))
+DEFINE_CAST_OP(uint16_t, float, (float))
+DEFINE_CAST_OP(uint16_t, double, (double))
+DEFINE_CAST_OP(int16_t, uint16_t, (uint16_t))
+DEFINE_CAST_OP(uint8_t, uint16_t, (uint16_t))
+DEFINE_CAST_OP(int32_t, uint16_t, (uint16_t))
+DEFINE_CAST_OP(int64_t, uint16_t, (uint16_t))
+DEFINE_CAST_OP(float, uint16_t, (uint16_t))
+DEFINE_CAST_OP(double, uint16_t, (uint16_t))
+
+// Additional integer conversions
+DEFINE_CAST_OP(int64_t, int32_t, (int32_t))
+DEFINE_CAST_OP(int32_t, int64_t, (int64_t))
+DEFINE_CAST_OP(uint8_t, int16_t, (int16_t))
+DEFINE_CAST_OP(uint8_t, int64_t, (int64_t))
+DEFINE_CAST_OP(int16_t, uint8_t, (uint8_t))
+DEFINE_CAST_OP(int64_t, uint8_t, (uint8_t))
+
+// intnat conversions
+DEFINE_CAST_OP(intnat, int8_t, (int8_t))
+DEFINE_CAST_OP(intnat, uint8_t, (uint8_t))
+DEFINE_CAST_OP(intnat, int16_t, (int16_t))
+DEFINE_CAST_OP(intnat, uint16_t, (uint16_t))
+DEFINE_CAST_OP(intnat, int32_t, (int32_t))
+DEFINE_CAST_OP(intnat, int64_t, (int64_t))
+DEFINE_CAST_OP(intnat, float, (float))
+DEFINE_CAST_OP(intnat, double, (double))
+DEFINE_CAST_OP(int8_t, intnat, (intnat))
+DEFINE_CAST_OP(uint8_t, intnat, (intnat))
+DEFINE_CAST_OP(int16_t, intnat, (intnat))
+DEFINE_CAST_OP(uint16_t, intnat, (intnat))
+DEFINE_CAST_OP(int32_t, intnat, (intnat))
+DEFINE_CAST_OP(int64_t, intnat, (intnat))
+DEFINE_CAST_OP(float, intnat, (intnat))
+DEFINE_CAST_OP(double, intnat, (intnat))
+
 // Unary operation kernel for use with parallel iterator
 #define DEFINE_UNARY_OP_KERNEL(name, T, OP)                              \
   static void nx_cblas_##name##_##T##_kernel(void *x_data, void *y_data, \
@@ -612,6 +675,15 @@ static void nx_cblas_sub_float(const ndarray_t *x, const ndarray_t *y,
 }
 
 // FIX: Use the new operator macros
+// uint8 operations
+DEFINE_BINARY_OP(add, uint8_t, ADD_OP)
+DEFINE_BINARY_OP(sub, uint8_t, SUB_OP)
+DEFINE_BINARY_OP(mul, uint8_t, MUL_OP)
+DEFINE_BINARY_OP(max, uint8_t, MAX_OP)
+DEFINE_BINARY_OP(xor, uint8_t, XOR_OP)
+DEFINE_BINARY_OP(or, uint8_t, OR_OP)
+DEFINE_BINARY_OP(and, uint8_t, AND_OP)
+
 DEFINE_BINARY_OP(add, int32_t, ADD_OP)
 DEFINE_BINARY_OP(sub, int32_t, SUB_OP)
 DEFINE_BINARY_OP(mul, int32_t, MUL_OP)
@@ -631,12 +703,6 @@ DEFINE_BINARY_OP(mod, int64_t, MOD_OP)
 DEFINE_BINARY_OP(xor, int64_t, XOR_OP)
 DEFINE_BINARY_OP(or, int64_t, OR_OP)
 DEFINE_BINARY_OP(and, int64_t, AND_OP)
-
-// Add uint8 support for bitwise operations (needed for logical operations on
-// comparison results)
-DEFINE_BINARY_OP(xor, uint8_t, XOR_OP)
-DEFINE_BINARY_OP(or, uint8_t, OR_OP)
-DEFINE_BINARY_OP(and, uint8_t, AND_OP)
 
 DEFINE_BINARY_OP(mul, float, MUL_OP)
 DEFINE_BINARY_OP(fdiv, float, DIV_OP)
@@ -697,6 +763,45 @@ DEFINE_BINARY_OP(sub, c64_t, SUB_OP)
 DEFINE_BINARY_OP(mul, c64_t, MUL_OP)
 DEFINE_BINARY_OP(fdiv, c64_t, DIV_OP)
 
+// int8_t operations
+DEFINE_BINARY_OP(add, int8_t, ADD_OP)
+DEFINE_BINARY_OP(sub, int8_t, SUB_OP)
+DEFINE_BINARY_OP(mul, int8_t, MUL_OP)
+DEFINE_BINARY_OP(max, int8_t, MAX_OP)
+DEFINE_BINARY_OP(mod, int8_t, MOD_OP)
+DEFINE_BINARY_OP(xor, int8_t, XOR_OP)
+DEFINE_BINARY_OP(or, int8_t, OR_OP)
+DEFINE_BINARY_OP(and, int8_t, AND_OP)
+
+// int16_t operations
+DEFINE_BINARY_OP(add, int16_t, ADD_OP)
+DEFINE_BINARY_OP(sub, int16_t, SUB_OP)
+DEFINE_BINARY_OP(mul, int16_t, MUL_OP)
+DEFINE_BINARY_OP(max, int16_t, MAX_OP)
+DEFINE_BINARY_OP(mod, int16_t, MOD_OP)
+DEFINE_BINARY_OP(xor, int16_t, XOR_OP)
+DEFINE_BINARY_OP(or, int16_t, OR_OP)
+DEFINE_BINARY_OP(and, int16_t, AND_OP)
+
+// uint16_t operations
+DEFINE_BINARY_OP(add, uint16_t, ADD_OP)
+DEFINE_BINARY_OP(sub, uint16_t, SUB_OP)
+DEFINE_BINARY_OP(mul, uint16_t, MUL_OP)
+DEFINE_BINARY_OP(max, uint16_t, MAX_OP)
+DEFINE_BINARY_OP(xor, uint16_t, XOR_OP)
+DEFINE_BINARY_OP(or, uint16_t, OR_OP)
+DEFINE_BINARY_OP(and, uint16_t, AND_OP)
+
+// intnat operations
+DEFINE_BINARY_OP(add, intnat, ADD_OP)
+DEFINE_BINARY_OP(sub, intnat, SUB_OP)
+DEFINE_BINARY_OP(mul, intnat, MUL_OP)
+DEFINE_BINARY_OP(max, intnat, MAX_OP)
+DEFINE_BINARY_OP(mod, intnat, MOD_OP)
+DEFINE_BINARY_OP(xor, intnat, XOR_OP)
+DEFINE_BINARY_OP(or, intnat, OR_OP)
+DEFINE_BINARY_OP(and, intnat, AND_OP)
+
 // Comparison operation macro that returns uint8_t results
 #define DEFINE_COMPARE_OP(name, T, OP)                                         \
   DEFINE_COMPARE_OP_KERNEL(name, T, OP)                                        \
@@ -727,14 +832,20 @@ DEFINE_BINARY_OP(fdiv, c64_t, DIV_OP)
   }
 
 // Define comparison operations for all numeric types
+DEFINE_COMPARE_OP(cmplt, int8_t, CMPLT_OP)
 DEFINE_COMPARE_OP(cmplt, uint8_t, CMPLT_OP)
+DEFINE_COMPARE_OP(cmplt, int16_t, CMPLT_OP)
+DEFINE_COMPARE_OP(cmplt, uint16_t, CMPLT_OP)
 DEFINE_COMPARE_OP(cmplt, int32_t, CMPLT_OP)
 DEFINE_COMPARE_OP(cmplt, int64_t, CMPLT_OP)
 DEFINE_COMPARE_OP(cmplt, intnat, CMPLT_OP)
 DEFINE_COMPARE_OP(cmplt, float, CMPLT_OP)
 DEFINE_COMPARE_OP(cmplt, double, CMPLT_OP)
 
+DEFINE_COMPARE_OP(cmpne, int8_t, CMPNE_OP)
 DEFINE_COMPARE_OP(cmpne, uint8_t, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, int16_t, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, uint16_t, CMPNE_OP)
 DEFINE_COMPARE_OP(cmpne, int32_t, CMPNE_OP)
 DEFINE_COMPARE_OP(cmpne, int64_t, CMPNE_OP)
 DEFINE_COMPARE_OP(cmpne, intnat, CMPNE_OP)
@@ -856,21 +967,36 @@ static void compute_reduction_params(const ndarray_t *x, const int *axes,
 #define SUM_OP(a, b) ((a) + (b))
 #define PROD_OP(a, b) ((a) * (b))
 
+// Sum operations
+DEFINE_REDUCE_OP_KERNEL(sum, int8_t, 0, SUM_OP)
 DEFINE_REDUCE_OP_KERNEL(sum, uint8_t, 0, SUM_OP)
+DEFINE_REDUCE_OP_KERNEL(sum, int16_t, 0, SUM_OP)
+DEFINE_REDUCE_OP_KERNEL(sum, uint16_t, 0, SUM_OP)
 DEFINE_REDUCE_OP_KERNEL(sum, int32_t, 0, SUM_OP)
 DEFINE_REDUCE_OP_KERNEL(sum, int64_t, 0, SUM_OP)
+DEFINE_REDUCE_OP_KERNEL(sum, intnat, 0, SUM_OP)
 DEFINE_REDUCE_OP_KERNEL(sum, float, 0.0f, SUM_OP)
 DEFINE_REDUCE_OP_KERNEL(sum, double, 0.0, SUM_OP)
 
+// Max operations
+DEFINE_REDUCE_OP_KERNEL(max, int8_t, INT8_MIN, MAX_OP)
 DEFINE_REDUCE_OP_KERNEL(max, uint8_t, 0, MAX_OP)
+DEFINE_REDUCE_OP_KERNEL(max, int16_t, INT16_MIN, MAX_OP)
+DEFINE_REDUCE_OP_KERNEL(max, uint16_t, 0, MAX_OP)
 DEFINE_REDUCE_OP_KERNEL(max, int32_t, INT32_MIN, MAX_OP)
 DEFINE_REDUCE_OP_KERNEL(max, int64_t, INT64_MIN, MAX_OP)
+DEFINE_REDUCE_OP_KERNEL(max, intnat, INTNAT_MIN, MAX_OP)
 DEFINE_REDUCE_OP_KERNEL(max, float, -INFINITY, MAX_NAN_OP)
 DEFINE_REDUCE_OP_KERNEL(max, double, -INFINITY, MAX_NAN_OP)
 
+// Prod operations
+DEFINE_REDUCE_OP_KERNEL(prod, int8_t, 1, PROD_OP)
 DEFINE_REDUCE_OP_KERNEL(prod, uint8_t, 1, PROD_OP)
+DEFINE_REDUCE_OP_KERNEL(prod, int16_t, 1, PROD_OP)
+DEFINE_REDUCE_OP_KERNEL(prod, uint16_t, 1, PROD_OP)
 DEFINE_REDUCE_OP_KERNEL(prod, int32_t, 1, PROD_OP)
 DEFINE_REDUCE_OP_KERNEL(prod, int64_t, 1, PROD_OP)
+DEFINE_REDUCE_OP_KERNEL(prod, intnat, 1, PROD_OP)
 DEFINE_REDUCE_OP_KERNEL(prod, float, 1.0f, PROD_OP)
 DEFINE_REDUCE_OP_KERNEL(prod, double, 1.0, PROD_OP)
 
@@ -1332,7 +1458,7 @@ NATIVE_WRAPPER_8(cast)
 typedef void (*unary_op_t)(const ndarray_t *, ndarray_t *);
 
 typedef struct {
-  unary_op_t f32, f64, i8, i16, i32, i64, inat, c32, c64;
+  unary_op_t i8, u8, i16, u16, i32, i64, inat, f32, f64, c32, c64;
 } unary_op_table;
 
 static value dispatch_unary(value *argv, const unary_op_table *table,
@@ -1358,17 +1484,17 @@ static value dispatch_unary(value *argv, const unary_op_table *table,
 
     unary_op_t func = NULL;
     switch (kind) {
-      case CAML_BA_FLOAT32:
-        func = table->f32;
-        break;
-      case CAML_BA_FLOAT64:
-        func = table->f64;
-        break;
       case CAML_BA_SINT8:
         func = table->i8;
         break;
+      case CAML_BA_UINT8:
+        func = table->u8;
+        break;
       case CAML_BA_SINT16:
         func = table->i16;
+        break;
+      case CAML_BA_UINT16:
+        func = table->u16;
         break;
       case CAML_BA_INT32:
         func = table->i32;
@@ -1379,6 +1505,12 @@ static value dispatch_unary(value *argv, const unary_op_table *table,
       case CAML_BA_CAML_INT:
       case CAML_BA_NATIVE_INT:
         func = table->inat;
+        break;
+      case CAML_BA_FLOAT32:
+        func = table->f32;
+        break;
+      case CAML_BA_FLOAT64:
+        func = table->f64;
         break;
       case CAML_BA_COMPLEX32:
         func = table->c32;
@@ -1423,17 +1555,17 @@ static value dispatch_unary(value *argv, const unary_op_table *table,
 
   unary_op_t func = NULL;
   switch (kind) {
-    case CAML_BA_FLOAT32:
-      func = table->f32;
-      break;
-    case CAML_BA_FLOAT64:
-      func = table->f64;
-      break;
     case CAML_BA_SINT8:
       func = table->i8;
       break;
+    case CAML_BA_UINT8:
+      func = table->u8;
+      break;
     case CAML_BA_SINT16:
       func = table->i16;
+      break;
+    case CAML_BA_UINT16:
+      func = table->u16;
       break;
     case CAML_BA_INT32:
       func = table->i32;
@@ -1446,6 +1578,12 @@ static value dispatch_unary(value *argv, const unary_op_table *table,
       break;
     case CAML_BA_NATIVE_INT:
       func = table->inat;
+      break;
+    case CAML_BA_FLOAT32:
+      func = table->f32;
+      break;
+    case CAML_BA_FLOAT64:
+      func = table->f64;
       break;
     case CAML_BA_COMPLEX32:
       func = table->c32;
@@ -1504,7 +1642,7 @@ NATIVE_WRAPPER_8(recip)
 
 typedef void (*binary_op_t)(const ndarray_t *, const ndarray_t *, ndarray_t *);
 typedef struct {
-  binary_op_t i32, i64, f32, f64, c32, c64, u8, inat;
+  binary_op_t i8, u8, i16, u16, i32, i64, inat, f32, f64, c32, c64;
 } binary_op_table;
 
 static value dispatch_binary(value *argv, const binary_op_table *table,
@@ -1533,14 +1671,27 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
 
     binary_op_t func = NULL;
     switch (kind) {
+      case CAML_BA_SINT8:
+        func = table->i8;
+        break;
       case CAML_BA_UINT8:
         func = table->u8;
+        break;
+      case CAML_BA_SINT16:
+        func = table->i16;
+        break;
+      case CAML_BA_UINT16:
+        func = table->u16;
         break;
       case CAML_BA_INT32:
         func = table->i32;
         break;
       case CAML_BA_INT64:
         func = table->i64;
+        break;
+      case CAML_BA_CAML_INT:
+      case CAML_BA_NATIVE_INT:
+        func = table->inat;
         break;
       case CAML_BA_FLOAT32:
         func = table->f32;
@@ -1553,10 +1704,6 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
         break;
       case CAML_BA_COMPLEX64:
         func = table->c64;
-        break;
-      case CAML_BA_CAML_INT:
-      case CAML_BA_NATIVE_INT:
-        func = table->inat;
         break;
     }
 
@@ -1602,11 +1749,27 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
 
   binary_op_t func = NULL;
   switch (kind) {
+    case CAML_BA_SINT8:
+      func = table->i8;
+      break;
+    case CAML_BA_UINT8:
+      func = table->u8;
+      break;
+    case CAML_BA_SINT16:
+      func = table->i16;
+      break;
+    case CAML_BA_UINT16:
+      func = table->u16;
+      break;
     case CAML_BA_INT32:
       func = table->i32;
       break;
     case CAML_BA_INT64:
       func = table->i64;
+      break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      func = table->inat;
       break;
     case CAML_BA_FLOAT32:
       func = table->f32;
@@ -1619,13 +1782,6 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
       break;
     case CAML_BA_COMPLEX64:
       func = table->c64;
-      break;
-    case CAML_BA_UINT8:
-      func = table->u8;
-      break;
-    case CAML_BA_CAML_INT:
-    case CAML_BA_NATIVE_INT:
-      func = table->inat;
       break;
   }
 
@@ -1648,19 +1804,28 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
   }
 
 // Declarative stub definitions for binary ops
-BINARY_STUB(add, .i32 = nx_cblas_add_int32_t, .i64 = nx_cblas_add_int64_t,
-            .f32 = nx_cblas_add_float, .f64 = nx_cblas_add_double,
-            .c32 = nx_cblas_add_c32_t, .c64 = nx_cblas_add_c64_t)
+BINARY_STUB(add, .i8 = nx_cblas_add_int8_t, .u8 = nx_cblas_add_uint8_t,
+            .i16 = nx_cblas_add_int16_t, .u16 = nx_cblas_add_uint16_t,
+            .i32 = nx_cblas_add_int32_t, .i64 = nx_cblas_add_int64_t,
+            .inat = nx_cblas_add_intnat, .f32 = nx_cblas_add_float,
+            .f64 = nx_cblas_add_double, .c32 = nx_cblas_add_c32_t,
+            .c64 = nx_cblas_add_c64_t)
 NATIVE_WRAPPER_11(add)
 
-BINARY_STUB(sub, .i32 = nx_cblas_sub_int32_t, .i64 = nx_cblas_sub_int64_t,
-            .f32 = nx_cblas_sub_float, .f64 = nx_cblas_sub_double,
-            .c32 = nx_cblas_sub_c32_t, .c64 = nx_cblas_sub_c64_t)
+BINARY_STUB(sub, .i8 = nx_cblas_sub_int8_t, .u8 = nx_cblas_sub_uint8_t,
+            .i16 = nx_cblas_sub_int16_t, .u16 = nx_cblas_sub_uint16_t,
+            .i32 = nx_cblas_sub_int32_t, .i64 = nx_cblas_sub_int64_t,
+            .inat = nx_cblas_sub_intnat, .f32 = nx_cblas_sub_float,
+            .f64 = nx_cblas_sub_double, .c32 = nx_cblas_sub_c32_t,
+            .c64 = nx_cblas_sub_c64_t)
 NATIVE_WRAPPER_11(sub)
 
-BINARY_STUB(mul, .i32 = nx_cblas_mul_int32_t, .i64 = nx_cblas_mul_int64_t,
-            .f32 = nx_cblas_mul_float, .f64 = nx_cblas_mul_double,
-            .c32 = nx_cblas_mul_c32_t, .c64 = nx_cblas_mul_c64_t)
+BINARY_STUB(mul, .i8 = nx_cblas_mul_int8_t, .u8 = nx_cblas_mul_uint8_t,
+            .i16 = nx_cblas_mul_int16_t, .u16 = nx_cblas_mul_uint16_t,
+            .i32 = nx_cblas_mul_int32_t, .i64 = nx_cblas_mul_int64_t,
+            .inat = nx_cblas_mul_intnat, .f32 = nx_cblas_mul_float,
+            .f64 = nx_cblas_mul_double, .c32 = nx_cblas_mul_c32_t,
+            .c64 = nx_cblas_mul_c64_t)
 NATIVE_WRAPPER_11(mul)
 
 BINARY_STUB(fdiv, .f32 = nx_cblas_fdiv_float, .f64 = nx_cblas_fdiv_double,
@@ -1670,46 +1835,61 @@ NATIVE_WRAPPER_11(fdiv)
 BINARY_STUB(idiv, .i32 = nx_cblas_idiv_int32_t, .i64 = nx_cblas_idiv_int64_t)
 NATIVE_WRAPPER_11(idiv)
 
-BINARY_STUB(max, .i32 = nx_cblas_max_int32_t, .i64 = nx_cblas_max_int64_t,
-            .f32 = nx_cblas_max_float, .f64 = nx_cblas_max_double)
+BINARY_STUB(max, .i8 = nx_cblas_max_int8_t, .u8 = nx_cblas_max_uint8_t,
+            .i16 = nx_cblas_max_int16_t, .u16 = nx_cblas_max_uint16_t,
+            .i32 = nx_cblas_max_int32_t, .i64 = nx_cblas_max_int64_t,
+            .inat = nx_cblas_max_intnat, .f32 = nx_cblas_max_float,
+            .f64 = nx_cblas_max_double)
 NATIVE_WRAPPER_11(max)
 
-BINARY_STUB(mod, .i32 = nx_cblas_mod_int32_t, .i64 = nx_cblas_mod_int64_t,
-            .f32 = nx_cblas_mod_float, .f64 = nx_cblas_mod_double)
+BINARY_STUB(mod, .i8 = nx_cblas_mod_int8_t, .i16 = nx_cblas_mod_int16_t,
+            .i32 = nx_cblas_mod_int32_t, .i64 = nx_cblas_mod_int64_t,
+            .inat = nx_cblas_mod_intnat, .f32 = nx_cblas_mod_float,
+            .f64 = nx_cblas_mod_double)
 NATIVE_WRAPPER_11(mod)
 
 BINARY_STUB(pow, .f32 = nx_cblas_pow_float, .f64 = nx_cblas_pow_double)
 NATIVE_WRAPPER_11(pow)
 
-BINARY_STUB(xor, .i32 = nx_cblas_xor_int32_t, .i64 = nx_cblas_xor_int64_t,
-            .u8 = nx_cblas_xor_uint8_t)
+BINARY_STUB(xor, .i8 = nx_cblas_xor_int8_t, .u8 = nx_cblas_xor_uint8_t,
+            .i16 = nx_cblas_xor_int16_t, .u16 = nx_cblas_xor_uint16_t,
+            .i32 = nx_cblas_xor_int32_t, .i64 = nx_cblas_xor_int64_t,
+            .inat = nx_cblas_xor_intnat)
 NATIVE_WRAPPER_11(xor)
 
-BINARY_STUB(or, .i32 = nx_cblas_or_int32_t, .i64 = nx_cblas_or_int64_t,
-            .u8 = nx_cblas_or_uint8_t)
+BINARY_STUB(or, .i8 = nx_cblas_or_int8_t, .u8 = nx_cblas_or_uint8_t,
+            .i16 = nx_cblas_or_int16_t, .u16 = nx_cblas_or_uint16_t,
+            .i32 = nx_cblas_or_int32_t, .i64 = nx_cblas_or_int64_t,
+            .inat = nx_cblas_or_intnat)
 NATIVE_WRAPPER_11(or)
 
-BINARY_STUB(and, .i32 = nx_cblas_and_int32_t, .i64 = nx_cblas_and_int64_t,
-            .u8 = nx_cblas_and_uint8_t)
+BINARY_STUB(and, .i8 = nx_cblas_and_int8_t, .u8 = nx_cblas_and_uint8_t,
+            .i16 = nx_cblas_and_int16_t, .u16 = nx_cblas_and_uint16_t,
+            .i32 = nx_cblas_and_int32_t, .i64 = nx_cblas_and_int64_t,
+            .inat = nx_cblas_and_intnat)
 NATIVE_WRAPPER_11(and)
 
 // Comparison operations
-BINARY_STUB(cmplt, .u8 = nx_cblas_cmplt_uint8_t, .i32 = nx_cblas_cmplt_int32_t,
-            .i64 = nx_cblas_cmplt_int64_t, .inat = nx_cblas_cmplt_intnat,
-            .f32 = nx_cblas_cmplt_float, .f64 = nx_cblas_cmplt_double)
+BINARY_STUB(cmplt, .i8 = nx_cblas_cmplt_int8_t, .u8 = nx_cblas_cmplt_uint8_t,
+            .i16 = nx_cblas_cmplt_int16_t, .u16 = nx_cblas_cmplt_uint16_t,
+            .i32 = nx_cblas_cmplt_int32_t, .i64 = nx_cblas_cmplt_int64_t,
+            .inat = nx_cblas_cmplt_intnat, .f32 = nx_cblas_cmplt_float,
+            .f64 = nx_cblas_cmplt_double)
 NATIVE_WRAPPER_11(cmplt)
 
-BINARY_STUB(cmpne, .u8 = nx_cblas_cmpne_uint8_t, .i32 = nx_cblas_cmpne_int32_t,
-            .i64 = nx_cblas_cmpne_int64_t, .inat = nx_cblas_cmpne_intnat,
-            .f32 = nx_cblas_cmpne_float, .f64 = nx_cblas_cmpne_double,
-            .c32 = nx_cblas_cmpne_c32_t, .c64 = nx_cblas_cmpne_c64_t)
+BINARY_STUB(cmpne, .i8 = nx_cblas_cmpne_int8_t, .u8 = nx_cblas_cmpne_uint8_t,
+            .i16 = nx_cblas_cmpne_int16_t, .u16 = nx_cblas_cmpne_uint16_t,
+            .i32 = nx_cblas_cmpne_int32_t, .i64 = nx_cblas_cmpne_int64_t,
+            .inat = nx_cblas_cmpne_intnat, .f32 = nx_cblas_cmpne_float,
+            .f64 = nx_cblas_cmpne_double, .c32 = nx_cblas_cmpne_c32_t,
+            .c64 = nx_cblas_cmpne_c64_t)
 NATIVE_WRAPPER_11(cmpne)
 
 // Reduce operation dispatch
 typedef void (*reduce_op_t)(const ndarray_t *, ndarray_t *, const int *, int);
 
 typedef struct {
-  reduce_op_t u8, i32, i64, f32, f64;
+  reduce_op_t i8, u8, i16, u16, i32, i64, inat, f32, f64, c32, c64;
 } reduce_op_table;
 
 static value dispatch_reduce(value *argv, const reduce_op_table *table,
@@ -1753,8 +1933,17 @@ static value dispatch_reduce(value *argv, const reduce_op_table *table,
 
   reduce_op_t func = NULL;
   switch (kind) {
+    case CAML_BA_SINT8:
+      func = table->i8;
+      break;
     case CAML_BA_UINT8:
       func = table->u8;
+      break;
+    case CAML_BA_SINT16:
+      func = table->i16;
+      break;
+    case CAML_BA_UINT16:
+      func = table->u16;
       break;
     case CAML_BA_INT32:
       func = table->i32;
@@ -1762,11 +1951,21 @@ static value dispatch_reduce(value *argv, const reduce_op_table *table,
     case CAML_BA_INT64:
       func = table->i64;
       break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      func = table->inat;
+      break;
     case CAML_BA_FLOAT32:
       func = table->f32;
       break;
     case CAML_BA_FLOAT64:
       func = table->f64;
+      break;
+    case CAML_BA_COMPLEX32:
+      func = table->c32;
+      break;
+    case CAML_BA_COMPLEX64:
+      func = table->c64;
       break;
   }
 
@@ -1788,23 +1987,35 @@ static value dispatch_reduce(value *argv, const reduce_op_table *table,
     return dispatch_reduce(argv, &table, "reduce_" #name);           \
   }
 
-REDUCE_STUB(sum, .u8 = nx_cblas_reduce_sum_uint8_t_kernel,
+REDUCE_STUB(sum, .i8 = nx_cblas_reduce_sum_int8_t_kernel,
+            .u8 = nx_cblas_reduce_sum_uint8_t_kernel,
+            .i16 = nx_cblas_reduce_sum_int16_t_kernel,
+            .u16 = nx_cblas_reduce_sum_uint16_t_kernel,
             .i32 = nx_cblas_reduce_sum_int32_t_kernel,
             .i64 = nx_cblas_reduce_sum_int64_t_kernel,
+            .inat = nx_cblas_reduce_sum_intnat_kernel,
             .f32 = nx_cblas_reduce_sum_float_kernel,
             .f64 = nx_cblas_reduce_sum_double_kernel)
 REDUCE_NATIVE_WRAPPER_10(sum)
 
-REDUCE_STUB(max, .u8 = nx_cblas_reduce_max_uint8_t_kernel,
+REDUCE_STUB(max, .i8 = nx_cblas_reduce_max_int8_t_kernel,
+            .u8 = nx_cblas_reduce_max_uint8_t_kernel,
+            .i16 = nx_cblas_reduce_max_int16_t_kernel,
+            .u16 = nx_cblas_reduce_max_uint16_t_kernel,
             .i32 = nx_cblas_reduce_max_int32_t_kernel,
             .i64 = nx_cblas_reduce_max_int64_t_kernel,
+            .inat = nx_cblas_reduce_max_intnat_kernel,
             .f32 = nx_cblas_reduce_max_float_kernel,
             .f64 = nx_cblas_reduce_max_double_kernel)
 REDUCE_NATIVE_WRAPPER_10(max)
 
-REDUCE_STUB(prod, .u8 = nx_cblas_reduce_prod_uint8_t_kernel,
+REDUCE_STUB(prod, .i8 = nx_cblas_reduce_prod_int8_t_kernel,
+            .u8 = nx_cblas_reduce_prod_uint8_t_kernel,
+            .i16 = nx_cblas_reduce_prod_int16_t_kernel,
+            .u16 = nx_cblas_reduce_prod_uint16_t_kernel,
             .i32 = nx_cblas_reduce_prod_int32_t_kernel,
             .i64 = nx_cblas_reduce_prod_int64_t_kernel,
+            .inat = nx_cblas_reduce_prod_intnat_kernel,
             .f32 = nx_cblas_reduce_prod_float_kernel,
             .f64 = nx_cblas_reduce_prod_double_kernel)
 REDUCE_NATIVE_WRAPPER_10(prod)
@@ -2806,6 +3017,58 @@ CAMLprim value caml_nx_matmul_bc(value *argv, int argn) {
 
 NATIVE_WRAPPER_12(matmul)
 
+// Helper function to compute strides for decoding a linear index.
+static inline void compute_decoding_strides(int ndim, const int *shape,
+                                            long *decoding_strides) {
+  if (ndim <= 0) return;
+  decoding_strides[ndim - 1] = 1;
+  for (int i = ndim - 2; i >= 0; --i) {
+    decoding_strides[i] = decoding_strides[i + 1] * shape[i + 1];
+  }
+}
+
+// Helper function to decode a linear index into a multi-dimensional index.
+static inline void decode_linear_index(long linear_idx, int ndim,
+                                       const long *decoding_strides,
+                                       int *multi_dim_idx) {
+  for (int i = 0; i < ndim; ++i) {
+    multi_dim_idx[i] = linear_idx / decoding_strides[i];
+    linear_idx %= decoding_strides[i];
+  }
+}
+
+// Kernel for zeroing an element, for use with iterate_inner_dims
+static void zero_op_kernel(void *x_data, void *y_data, void *z_data, long x_off,
+                           long y_off, long z_off) {
+  (void)x_data;
+  (void)y_data;
+  (void)x_off;
+  (void)y_off;  // Unused
+  // Re-interpreting x_data to pass elem_size without changing op signature
+  size_t elem_size = *((size_t *)x_data);
+  memset((char *)z_data + z_off * elem_size, 0, elem_size);
+}
+
+// Generic, parallel function to zero an ndarray, respecting strides.
+static void nx_cblas_zero_generic(ndarray_t *z, size_t elem_size) {
+  long total = total_elements(z);
+  if (total == 0) return;
+
+  if (is_c_contiguous(z)) {
+    memset((char *)z->data + z->offset * elem_size, 0, total * elem_size);
+  } else if (z->ndim > 0) {
+    // Parallelize over the outermost dimension
+    _Pragma("omp parallel for") for (long i = 0; i < z->shape[0]; i++) {
+      // Use iterate_inner_dims with a custom kernel to zero elements.
+      // We pass z for x and z arguments, and elem_size via the x_data pointer.
+      iterate_inner_dims(z, NULL, z, i, zero_op_kernel, &elem_size, NULL,
+                         z->data);
+    }
+  } else {  // Scalar case
+    memset((char *)z->data + z->offset * elem_size, 0, elem_size);
+  }
+}
+
 // Unfold (im2col) implementation
 #define DEFINE_UNFOLD_OP(T)                                                    \
   static void nx_cblas_unfold_##T(const ndarray_t *input, ndarray_t *output,   \
@@ -2815,89 +3078,206 @@ NATIVE_WRAPPER_12(matmul)
                                   const int *dilation, int num_spatial_dims) { \
     T *input_data = (T *)input->data;                                          \
     T *output_data = (T *)output->data;                                        \
-    /* For unfold, output is always 2D or has batch dims + 2D */               \
-    /* Last two dims are [patch_size, num_patches] */                          \
-    int output_ndim = output->ndim;                                            \
-    long patch_size = output->shape[output_ndim - 2];                          \
-    long num_patches = output->shape[output_ndim - 1];                         \
-    /* Channels is always the dimension right before spatial dims */           \
-    int batch_channel_dims = input->ndim - num_spatial_dims;                   \
-    if (batch_channel_dims <= 0) {                                             \
-      /* This should never happen with proper validation, but check anyway */  \
-      return;                                                                  \
-    }                                                                          \
-    int channels = input->shape[batch_channel_dims - 1];                       \
-    if (channels <= 0) {                                                       \
-      /* Invalid channel count */                                              \
-      return;                                                                  \
-    }                                                                          \
-    long patch_size_per_channel = patch_size / channels;                       \
                                                                                \
-    _Pragma("omp parallel for if(num_patches > 1000)") for (long patch_idx =   \
-                                                                0;             \
-                                                            patch_idx <        \
-                                                            num_patches;       \
-                                                            ++patch_idx) {     \
-      /* Calculate patch position in input spatial dimensions */               \
-      int patch_pos[num_spatial_dims > 0 ? num_spatial_dims : 1];              \
-      long temp_idx = patch_idx;                                               \
-      /* Unravel patch index using the provided output spatial shape */        \
-      for (int i = num_spatial_dims - 1; i >= 0; i--) {                        \
-        patch_pos[i] = temp_idx % output_spatial_shape[i];                     \
-        temp_idx /= output_spatial_shape[i];                                   \
+    const int num_batch_dims = input->ndim - num_spatial_dims - 1;             \
+    if (num_batch_dims < 0) return;                                            \
+                                                                               \
+    const int channels = input->shape[num_batch_dims];                         \
+    long patch_size_per_channel = 1;                                           \
+    for (int i = 0; i < num_spatial_dims; ++i) {                               \
+      patch_size_per_channel *= kernel_shape[i];                               \
+    }                                                                          \
+                                                                               \
+    long batch_size = 1;                                                       \
+    for (int i = 0; i < num_batch_dims; ++i) {                                 \
+      batch_size *= input->shape[i];                                           \
+    }                                                                          \
+                                                                               \
+    long num_patches = 1;                                                      \
+    for (int i = 0; i < num_spatial_dims; ++i) {                               \
+      num_patches *= output_spatial_shape[i];                                  \
+    }                                                                          \
+                                                                               \
+    long total_work_items = batch_size * num_patches;                          \
+    if (total_work_items == 0) return;                                         \
+                                                                               \
+    /* Precompute strides for decoding linear indices */                       \
+    long batch_decoding_strides[num_batch_dims > 0 ? num_batch_dims : 1];      \
+    long patch_decoding_strides[num_spatial_dims > 0 ? num_spatial_dims : 1];  \
+    long kernel_decoding_strides[num_spatial_dims > 0 ? num_spatial_dims : 1]; \
+                                                                               \
+    compute_decoding_strides(num_batch_dims, input->shape,                     \
+                             batch_decoding_strides);                          \
+    compute_decoding_strides(num_spatial_dims, output_spatial_shape,           \
+                             patch_decoding_strides);                          \
+    compute_decoding_strides(num_spatial_dims, kernel_shape,                   \
+                             kernel_decoding_strides);                         \
+                                                                               \
+    _Pragma("omp parallel for") for (long work_idx = 0;                        \
+                                     work_idx < total_work_items;              \
+                                     ++work_idx) {                             \
+      long batch_linear_idx = work_idx / num_patches;                          \
+      long patch_linear_idx = work_idx % num_patches;                          \
+                                                                               \
+      int batch_indices[num_batch_dims > 0 ? num_batch_dims : 1];              \
+      int patch_indices[num_spatial_dims > 0 ? num_spatial_dims : 1];          \
+      decode_linear_index(batch_linear_idx, num_batch_dims,                    \
+                          batch_decoding_strides, batch_indices);              \
+      decode_linear_index(patch_linear_idx, num_spatial_dims,                  \
+                          patch_decoding_strides, patch_indices);              \
+                                                                               \
+      long input_base_offset = input->offset;                                  \
+      long output_base_offset = output->offset;                                \
+      for (int i = 0; i < num_batch_dims; ++i) {                               \
+        input_base_offset += batch_indices[i] * input->strides[i];             \
+        output_base_offset += batch_indices[i] * output->strides[i];           \
       }                                                                        \
                                                                                \
-      /* Iterate through kernel positions */                                   \
-      for (long k_linear_idx = 0; k_linear_idx < patch_size_per_channel;       \
-           ++k_linear_idx) {                                                   \
-        /* Unravel kernel linear index */                                      \
-        int k_indices[num_spatial_dims > 0 ? num_spatial_dims : 1];            \
-        temp_idx = k_linear_idx;                                               \
-        for (int i = num_spatial_dims - 1; i >= 0; i--) {                      \
-          k_indices[i] = temp_idx % kernel_shape[i];                           \
-          temp_idx /= kernel_shape[i];                                         \
-        }                                                                      \
+      /* Loop over all elements in a single patch/column */                    \
+      for (int c = 0; c < channels; ++c) {                                     \
+        for (long k_linear_idx = 0; k_linear_idx < patch_size_per_channel;     \
+             ++k_linear_idx) {                                                 \
+          int kernel_indices[num_spatial_dims > 0 ? num_spatial_dims : 1];     \
+          decode_linear_index(k_linear_idx, num_spatial_dims,                  \
+                              kernel_decoding_strides, kernel_indices);        \
                                                                                \
-        /* Process each channel */                                             \
-        for (int c = 0; c < channels; ++c) {                                   \
-          long input_offset = input->offset;                                   \
-          /* Add batch offset if present */                                    \
-          if (batch_channel_dims > 1) {                                        \
-            /* For now just use batch 0 */                                     \
-            input_offset += 0;                                                 \
-          }                                                                    \
-          /* Add channel offset - batch_channel_dims already validated > 0 */  \
-          input_offset += c * input->strides[batch_channel_dims - 1];          \
+          long current_input_offset =                                          \
+              input_base_offset + c * input->strides[num_batch_dims];          \
           int in_bounds = 1;                                                   \
-                                                                               \
-          /* Calculate input position */                                       \
-          for (int i = 0; i < num_spatial_dims; i++) {                         \
-            int spatial_idx = batch_channel_dims + i;                          \
-            long pos = patch_pos[i] * strides[i] +                             \
-                       k_indices[i] * dilation[i] - padding_lower[i];          \
-            if (pos < 0 || pos >= input->shape[spatial_idx]) {                 \
+          for (int i = 0; i < num_spatial_dims; ++i) {                         \
+            long pos = patch_indices[i] * strides[i] +                         \
+                       kernel_indices[i] * dilation[i] - padding_lower[i];     \
+            if (pos < 0 || pos >= input->shape[num_batch_dims + 1 + i]) {      \
               in_bounds = 0;                                                   \
               break;                                                           \
             }                                                                  \
-            input_offset += pos * input->strides[spatial_idx];                 \
+            current_input_offset +=                                            \
+                pos * input->strides[num_batch_dims + 1 + i];                  \
           }                                                                    \
                                                                                \
-          /* Calculate output position for possibly batched output */          \
-          long output_offset = output->offset;                                 \
-          /* Skip batch dimensions if any */                                   \
-          int batch_dims = output_ndim - 2;                                    \
-          for (int b = 0; b < batch_dims; b++) {                               \
-            output_offset += 0; /* Batch index 0 for now */                    \
-          }                                                                    \
-          /* Add patch position */                                             \
-          output_offset += (c * patch_size_per_channel + k_linear_idx) *       \
-                               output->strides[output_ndim - 2] +              \
-                           patch_idx * output->strides[output_ndim - 1];       \
+          long output_row_major_offset =                                       \
+              output_base_offset +                                             \
+              (c * patch_size_per_channel + k_linear_idx) *                    \
+                  output->strides[output->ndim - 2] +                          \
+              patch_linear_idx * output->strides[output->ndim - 1];            \
                                                                                \
           if (in_bounds) {                                                     \
-            output_data[output_offset] = input_data[input_offset];             \
+            output_data[output_row_major_offset] =                             \
+                input_data[current_input_offset];                              \
           } else {                                                             \
-            output_data[output_offset] = (T)0;                                 \
+            output_data[output_row_major_offset] = (T)0;                       \
+          }                                                                    \
+        }                                                                      \
+      }                                                                        \
+    }                                                                          \
+  }
+
+// Fold (col2im) implementation
+#define DEFINE_FOLD_OP(T)                                                      \
+  static void nx_cblas_fold_##T(                                               \
+      const ndarray_t *input_cols, ndarray_t *output,                          \
+      const int *output_spatial_shape, const int *kernel_shape,                \
+      const int *strides, const int *padding_lower, const int *dilation,       \
+      int num_spatial_dims) {                                                  \
+    T *input_data = (T *)input_cols->data;                                     \
+    T *output_data = (T *)output->data;                                        \
+    size_t elem_size = sizeof(T);                                              \
+                                                                               \
+    nx_cblas_zero_generic(output, elem_size);                                  \
+                                                                               \
+    const int num_batch_dims = output->ndim - num_spatial_dims - 1;            \
+    if (num_batch_dims < 0) return;                                            \
+                                                                               \
+    const int channels = output->shape[num_batch_dims];                        \
+    long patch_size_per_channel = 1;                                           \
+    for (int i = 0; i < num_spatial_dims; ++i) {                               \
+      patch_size_per_channel *= kernel_shape[i];                               \
+    }                                                                          \
+                                                                               \
+    long batch_size = 1;                                                       \
+    for (int i = 0; i < num_batch_dims; ++i) {                                 \
+      batch_size *= output->shape[i];                                          \
+    }                                                                          \
+                                                                               \
+    long num_patches = input_cols->shape[input_cols->ndim - 1];                \
+    long total_work_items = batch_size * num_patches;                          \
+    if (total_work_items == 0) return;                                         \
+                                                                               \
+    /* Precompute strides for decoding linear indices */                       \
+    long batch_decoding_strides[num_batch_dims > 0 ? num_batch_dims : 1];      \
+    long patch_decoding_strides[num_spatial_dims > 0 ? num_spatial_dims : 1];  \
+    long kernel_decoding_strides[num_spatial_dims > 0 ? num_spatial_dims : 1]; \
+                                                                               \
+    compute_decoding_strides(num_batch_dims, output->shape,                    \
+                             batch_decoding_strides);                          \
+    compute_decoding_strides(num_spatial_dims, output_spatial_shape,           \
+                             patch_decoding_strides);                          \
+    compute_decoding_strides(num_spatial_dims, kernel_shape,                   \
+                             kernel_decoding_strides);                         \
+                                                                               \
+    /* Optimization: if strides are >= kernel shape, no overlap occurs. */     \
+    int no_overlap = 1;                                                        \
+    for (int i = 0; i < num_spatial_dims; ++i) {                               \
+      if (strides[i] < kernel_shape[i]) {                                      \
+        no_overlap = 0;                                                        \
+        break;                                                                 \
+      }                                                                        \
+    }                                                                          \
+                                                                               \
+    _Pragma("omp parallel for") for (long work_idx = 0;                        \
+                                     work_idx < total_work_items;              \
+                                     ++work_idx) {                             \
+      long batch_linear_idx = work_idx / num_patches;                          \
+      long patch_linear_idx = work_idx % num_patches;                          \
+                                                                               \
+      int batch_indices[num_batch_dims > 0 ? num_batch_dims : 1];              \
+      int patch_indices[num_spatial_dims > 0 ? num_spatial_dims : 1];          \
+      decode_linear_index(batch_linear_idx, num_batch_dims,                    \
+                          batch_decoding_strides, batch_indices);              \
+      decode_linear_index(patch_linear_idx, num_spatial_dims,                  \
+                          patch_decoding_strides, patch_indices);              \
+                                                                               \
+      long input_base_offset = input_cols->offset;                             \
+      long output_base_offset = output->offset;                                \
+      for (int i = 0; i < num_batch_dims; ++i) {                               \
+        input_base_offset += batch_indices[i] * input_cols->strides[i];        \
+        output_base_offset += batch_indices[i] * output->strides[i];           \
+      }                                                                        \
+                                                                               \
+      for (int c = 0; c < channels; ++c) {                                     \
+        for (long k_linear_idx = 0; k_linear_idx < patch_size_per_channel;     \
+             ++k_linear_idx) {                                                 \
+          int kernel_indices[num_spatial_dims > 0 ? num_spatial_dims : 1];     \
+          decode_linear_index(k_linear_idx, num_spatial_dims,                  \
+                              kernel_decoding_strides, kernel_indices);        \
+                                                                               \
+          long current_output_offset =                                         \
+              output_base_offset + c * output->strides[num_batch_dims];        \
+          int in_bounds = 1;                                                   \
+          for (int i = 0; i < num_spatial_dims; ++i) {                         \
+            long pos = patch_indices[i] * strides[i] +                         \
+                       kernel_indices[i] * dilation[i] - padding_lower[i];     \
+            if (pos < 0 || pos >= output->shape[num_batch_dims + 1 + i]) {     \
+              in_bounds = 0;                                                   \
+              break;                                                           \
+            }                                                                  \
+            current_output_offset +=                                           \
+                pos * output->strides[num_batch_dims + 1 + i];                 \
+          }                                                                    \
+                                                                               \
+          if (in_bounds) {                                                     \
+            long input_row_major_offset =                                      \
+                input_base_offset +                                            \
+                patch_linear_idx * input_cols->strides[input_cols->ndim - 1] + \
+                (c * patch_size_per_channel + k_linear_idx) *                  \
+                    input_cols->strides[input_cols->ndim - 2];                 \
+            T val = input_data[input_row_major_offset];                        \
+            if (no_overlap) {                                                  \
+              output_data[current_output_offset] = val;                        \
+            } else {                                                           \
+              _Pragma("omp atomic update")                                     \
+                  output_data[current_output_offset] += val;                   \
+            }                                                                  \
           }                                                                    \
         }                                                                      \
       }                                                                        \
@@ -2909,111 +3289,6 @@ DEFINE_UNFOLD_OP(double)
 DEFINE_UNFOLD_OP(uint8_t)
 DEFINE_UNFOLD_OP(int32_t)
 DEFINE_UNFOLD_OP(int64_t)
-
-// Fold (col2im) implementation
-#define DEFINE_FOLD_OP(T)                                                      \
-  static void nx_cblas_fold_##T(                                               \
-      const ndarray_t *input_cols, ndarray_t *output,                          \
-      const int *output_spatial_shape, const int *kernel_shape,                \
-      const int *strides, const int *padding_lower, const int *dilation,       \
-      int num_spatial_dims) {                                                  \
-    T *input_data = (T *)input_cols->data;                                     \
-    T *output_data = (T *)output->data;                                        \
-                                                                               \
-    /* Initialize output to zero - must respect strides */                     \
-    if (is_c_contiguous(output)) {                                             \
-      /* Fast path for contiguous arrays */                                    \
-      long output_total = total_elements(output);                              \
-      _Pragma("omp parallel for simd") for (long i = 0; i < output_total;      \
-                                            ++i) {                             \
-        output_data[output->offset + i] = (T)0;                                \
-      }                                                                        \
-    } else {                                                                   \
-      /* Slow path for non-contiguous arrays - iterate properly */             \
-      /* For now, use a simple nested loop for channels + spatial dims */      \
-      for (int c = 0; c < output->shape[0]; ++c) {                             \
-        long c_offset = output->offset + c * output->strides[0];               \
-        if (num_spatial_dims == 1) {                                           \
-          for (int i = 0; i < output->shape[1]; ++i) {                         \
-            output_data[c_offset + i * output->strides[1]] = (T)0;             \
-          }                                                                    \
-        } else if (num_spatial_dims == 2) {                                    \
-          for (int i = 0; i < output->shape[1]; ++i) {                         \
-            for (int j = 0; j < output->shape[2]; ++j) {                       \
-              output_data[c_offset + i * output->strides[1] +                  \
-                          j * output->strides[2]] = (T)0;                      \
-            }                                                                  \
-          }                                                                    \
-        } else if (num_spatial_dims == 3) {                                    \
-          for (int i = 0; i < output->shape[1]; ++i) {                         \
-            for (int j = 0; j < output->shape[2]; ++j) {                       \
-              for (int k = 0; k < output->shape[3]; ++k) {                     \
-                output_data[c_offset + i * output->strides[1] +                \
-                            j * output->strides[2] + k * output->strides[3]] = \
-                    (T)0;                                                      \
-              }                                                                \
-            }                                                                  \
-          }                                                                    \
-        }                                                                      \
-      }                                                                        \
-    }                                                                          \
-    long num_patches = input_cols->shape[0];                                   \
-    if (output->shape[0] <= 0) {                                               \
-      /* Invalid output channels */                                            \
-      return;                                                                  \
-    }                                                                          \
-    long patch_size_per_channel = input_cols->shape[1] / output->shape[0];     \
-                                                                               \
-    /* Note: Cannot parallelize outer loop due to atomic updates */            \
-    for (long patch_idx = 0; patch_idx < num_patches; ++patch_idx) {           \
-      /* Calculate patch position */                                           \
-      int patch_pos[num_spatial_dims > 0 ? num_spatial_dims : 1];              \
-      long temp_idx = patch_idx;                                               \
-      for (int i = num_spatial_dims - 1; i >= 0; i--) {                        \
-        patch_pos[i] = temp_idx % output_spatial_shape[i];                     \
-        temp_idx /= output_spatial_shape[i];                                   \
-      }                                                                        \
-                                                                               \
-      /* Iterate through kernel positions */                                   \
-      for (long k_linear_idx = 0; k_linear_idx < patch_size_per_channel;       \
-           ++k_linear_idx) {                                                   \
-        /* Unravel kernel linear index */                                      \
-        int k_indices[num_spatial_dims > 0 ? num_spatial_dims : 1];            \
-        temp_idx = k_linear_idx;                                               \
-        for (int i = num_spatial_dims - 1; i >= 0; i--) {                      \
-          k_indices[i] = temp_idx % kernel_shape[i];                           \
-          temp_idx /= kernel_shape[i];                                         \
-        }                                                                      \
-                                                                               \
-        /* Process each channel */                                             \
-        for (int c = 0; c < output->shape[0]; ++c) {                           \
-          long output_offset = output->offset + c * output->strides[0];        \
-          int in_bounds = 1;                                                   \
-                                                                               \
-          /* Calculate output position */                                      \
-          for (int i = 0; i < num_spatial_dims; i++) {                         \
-            long pos = patch_pos[i] * strides[i] +                             \
-                       k_indices[i] * dilation[i] - padding_lower[i];          \
-            if (pos < 0 || pos >= output->shape[i + 1]) {                      \
-              in_bounds = 0;                                                   \
-              break;                                                           \
-            }                                                                  \
-            output_offset += pos * output->strides[i + 1];                     \
-          }                                                                    \
-                                                                               \
-          if (in_bounds) {                                                     \
-            long input_offset = input_cols->offset +                           \
-                                patch_idx * input_cols->strides[0] +           \
-                                (c * patch_size_per_channel + k_linear_idx) *  \
-                                    input_cols->strides[1];                    \
-            /* Atomic add for thread safety if parallelized */                 \
-            _Pragma("omp atomic update") output_data[output_offset] +=         \
-                input_data[input_offset];                                      \
-          }                                                                    \
-        }                                                                      \
-      }                                                                        \
-    }                                                                          \
-  }
 
 DEFINE_FOLD_OP(float)
 DEFINE_FOLD_OP(double)
@@ -3167,13 +3442,19 @@ CAMLprim value caml_nx_fold_bc(value *argv, int argn) {
   // Get num_spatial_dims from the kernel_shape array length
   int num_spatial_dims = Wosize_val(vKernelShape);
 
+  // Calculate expected dimensions accounting for batch
+  // Input should have shape [...batch, channels*kernel_elements, num_blocks]
+  // Output should have shape [...batch, channels, ...spatial]
+  int batch_dims = input_ndim - 2;  // Everything except last 2 dims
+
   // Validate dimensions
-  if (output_ndim != num_spatial_dims + 1) {
+  if (output_ndim != batch_dims + num_spatial_dims + 1) {
     caml_failwith(
-        "fold: output must have exactly channels + spatial dimensions");
+        "fold: output dimensions don't match expected batch + channels + "
+        "spatial dimensions");
   }
-  if (input_ndim != 2) {
-    caml_failwith("fold: input_cols must be 2D [num_patches, patch_size]");
+  if (input_ndim < 2) {
+    caml_failwith("fold: input must have at least 2 dimensions");
   }
 
   // Stack allocate arrays with minimum size of 1 to avoid zero-length VLAs

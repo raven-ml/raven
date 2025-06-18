@@ -539,41 +539,46 @@ let reduce_op op ~axes ~keepdims x =
   let input_shape = View.shape x.view in
   let ndim = Array.length input_shape in
 
-  (* Normalize axes *)
-  let normalized_axes =
-    Array.map (fun ax -> if ax < 0 then ax + ndim else ax) axes
-  in
+  (* Special case: if input is already a scalar (0-dimensional), just return
+     it *)
+  if ndim = 0 then x
+  else
+    (* Normalize axes *)
+    let normalized_axes =
+      Array.map (fun ax -> if ax < 0 then ax + ndim else ax) axes
+    in
 
-  (* Compute output shape *)
-  let output_shape =
-    if keepdims then
-      Array.mapi
-        (fun i dim -> if Array.mem i normalized_axes then 1 else dim)
-        input_shape
-    else
-      let filtered = ref [] in
-      Array.iteri
-        (fun i dim ->
-          if not (Array.mem i normalized_axes) then filtered := dim :: !filtered)
-        input_shape;
-      Array.of_list (List.rev !filtered)
-  in
+    (* Compute output shape *)
+    let output_shape =
+      if keepdims then
+        Array.mapi
+          (fun i dim -> if Array.mem i normalized_axes then 1 else dim)
+          input_shape
+      else
+        let filtered = ref [] in
+        Array.iteri
+          (fun i dim ->
+            if not (Array.mem i normalized_axes) then
+              filtered := dim :: !filtered)
+          input_shape;
+        Array.of_list (List.rev !filtered)
+    in
 
-  (* Create result tensor *)
-  let result_numel = Array.fold_left ( * ) 1 output_shape in
-  let result =
-    create x.context x.dtype
-      (make_buffer x.dtype result_numel)
-      (View.create output_shape)
-  in
+    (* Create result tensor *)
+    let result_numel = Array.fold_left ( * ) 1 output_shape in
+    let result =
+      create x.context x.dtype
+        (make_buffer x.dtype result_numel)
+        (View.create output_shape)
+    in
 
-  (* Call the C implementation *)
-  op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
-    (View.offset x.view) result.buffer (View.strides result.view)
-    (View.offset result.view) normalized_axes
-    (if keepdims then 1 else 0);
+    (* Call the C implementation *)
+    op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
+      (View.offset x.view) result.buffer (View.strides result.view)
+      (View.offset result.view) normalized_axes
+      (if keepdims then 1 else 0);
 
-  result
+    result
 
 let op_reduce_sum ~axes ~keepdims x = reduce_op reduce_sum ~axes ~keepdims x
 let op_reduce_max ~axes ~keepdims x = reduce_op reduce_max ~axes ~keepdims x
@@ -835,12 +840,15 @@ let op_unfold x ~kernel_size ~stride ~dilation ~padding =
   let x_shape = View.shape x.view in
   let ndim = Array.length x_shape in
   let num_spatial_dims = Array.length kernel_size in
+
+  (* Batch dimensions are all dimensions before channels and spatial dims *)
   let batch_dims = ndim - num_spatial_dims - 1 in
-
   if batch_dims < 0 then
-    failwith "op_unfold: input dimensions incompatible with kernel_size";
+    failwith
+      "op_unfold: input must have at least one channel and one spatial \
+       dimension";
 
-  (* Validate parameters *)
+  (* Validate parameters have correct number of dimensions *)
   if Array.length stride <> num_spatial_dims then
     failwith "op_unfold: stride must match number of spatial dimensions";
   if Array.length dilation <> num_spatial_dims then
@@ -852,9 +860,8 @@ let op_unfold x ~kernel_size ~stride ~dilation ~padding =
   let batch_shape = Array.sub x_shape 0 batch_dims in
   let channels = x_shape.(batch_dims) in
 
-  (* Compute output dimensions *)
+  (* Compute the shape of the grid of patches (output_spatial_shape) *)
   let output_spatial_shape = Array.make num_spatial_dims 0 in
-
   for i = 0 to num_spatial_dims - 1 do
     let pad_before, pad_after = padding.(i) in
     let dilated_kernel_size = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
@@ -862,25 +869,29 @@ let op_unfold x ~kernel_size ~stride ~dilation ~padding =
     let padded_size = input_spatial_dim + pad_before + pad_after in
     output_spatial_shape.(i) <-
       ((padded_size - dilated_kernel_size) / stride.(i)) + 1;
-
     if output_spatial_shape.(i) <= 0 then
-      failwith "op_unfold: output dimension is non-positive"
+      failwith
+        (Printf.sprintf
+           "op_unfold: output spatial dimension %d is non-positive (%d)" i
+           output_spatial_shape.(i))
   done;
 
-  (* Calculate total number of patches and patch size *)
+  (* Calculate total number of patches and the size of each patch column *)
   let num_patches = Array.fold_left ( * ) 1 output_spatial_shape in
   let kernel_elements = Array.fold_left ( * ) 1 kernel_size in
   let patch_size = channels * kernel_elements in
 
-  (* Create output tensor with shape [batch..., patch_size, num_patches] *)
+  (* Create the output tensor with shape [batch..., patch_size, num_patches] *)
   let output_shape =
     Array.concat [ batch_shape; [| patch_size; num_patches |] ]
   in
   let result = make_tensor x output_shape in
 
-  (* Extract padding lower bounds *)
+  (* The C function needs the 'lower' (before) padding values as a simple
+     array *)
   let padding_lower = Array.map fst padding in
 
+  (* Call the C implementation with all required parameters *)
   unfold (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
     (View.offset x.view) (View.ndim result.view) (View.shape result.view)
     result.buffer (View.strides result.view) (View.offset result.view)
@@ -890,21 +901,23 @@ let op_unfold x ~kernel_size ~stride ~dilation ~padding =
 
 let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
   let x_shape = View.shape x.view in
+  let ndim = Array.length x_shape in
 
-  if Array.length x_shape <> 2 then
-    failwith
-      "op_fold: input must have exactly 2 dimensions [num_patches, patch_size]";
+  (* Input has shape [...batch, patch_size, num_patches] *)
+  if ndim < 2 then failwith "op_fold: input must have at least 2 dimensions";
 
-  let num_patches = x_shape.(0) in
-  let patch_size = x_shape.(1) in
-
-  (* Infer dimensions *)
   let num_spatial_dims = Array.length output_size in
-  let kernel_elements = Array.fold_left ( * ) 1 kernel_size in
-  let channels = patch_size / kernel_elements in
+  let batch_dims = ndim - 2 in
+  let batch_shape = Array.sub x_shape 0 batch_dims in
 
-  if channels * kernel_elements <> patch_size then
+  let patch_size = x_shape.(batch_dims) in
+  let num_patches_in = x_shape.(batch_dims + 1) in
+
+  (* Infer channels from patch_size and kernel_size *)
+  let kernel_elements = Array.fold_left ( * ) 1 kernel_size in
+  if patch_size mod kernel_elements <> 0 then
     failwith "op_fold: patch_size must be divisible by product of kernel_size";
+  let channels = patch_size / kernel_elements in
 
   (* Validate parameters *)
   if Array.length kernel_size <> num_spatial_dims then
@@ -916,9 +929,8 @@ let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
   if Array.length padding <> num_spatial_dims then
     failwith "op_fold: padding must match number of spatial dimensions";
 
-  (* Compute output spatial dimensions for patches *)
+  (* Calculate the expected number of patches from the output geometry *)
   let output_spatial_shape = Array.make num_spatial_dims 0 in
-
   for i = 0 to num_spatial_dims - 1 do
     let pad_before, pad_after = padding.(i) in
     let dilated_kernel_size = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
@@ -927,19 +939,23 @@ let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
       ((padded_size - dilated_kernel_size) / stride.(i)) + 1
   done;
 
-  (* Verify num_patches matches *)
-  let expected_patches = Array.fold_left ( * ) 1 output_spatial_shape in
-  if num_patches <> expected_patches then
+  (* Verify that the input number of patches matches the expectation *)
+  let num_patches_expected = Array.fold_left ( * ) 1 output_spatial_shape in
+  if num_patches_in <> num_patches_expected then
     failwith
-      "op_fold: num_patches doesn't match expected value from output_size";
+      (Printf.sprintf
+         "op_fold: input has %d patches but output geometry implies %d"
+         num_patches_in num_patches_expected);
 
-  (* Create output tensor *)
-  let full_output_shape = Array.concat [ [| channels |]; output_size ] in
+  (* Create the output tensor with shape [batch..., channels, ...output_size] *)
+  let full_output_shape =
+    Array.concat [ batch_shape; [| channels |]; output_size ]
+  in
   let result = make_tensor x full_output_shape in
 
-  (* Extract padding lower bounds *)
   let padding_lower = Array.map fst padding in
 
+  (* Call the C implementation *)
   fold (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
     (View.offset x.view) (View.ndim result.view) (View.shape result.view)
     result.buffer (View.strides result.view) (View.offset result.view)
