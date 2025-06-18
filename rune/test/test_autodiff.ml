@@ -494,7 +494,7 @@ let test_grad_gather_with_duplicates () =
   let indices = T.create ctx T.int32 [| 3 |] [| 0l; 2l; 0l |] in
 
   (* The forward pass will be [10., 30., 10.] *)
-  let f x = T.gather x indices ~axis:0 in
+  let f x = T.B.op_gather x indices 0 in
   let grad = T.grad f data in
 
   (*
