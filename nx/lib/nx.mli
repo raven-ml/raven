@@ -292,6 +292,28 @@ val geomspace :
       geomspace float32 1. 1000. 4 = [| 1.; 10.; 100.; 1000. |]
     ]} *)
 
+val meshgrid :
+  ?indexing:[ `xy | `ij ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
+(** [meshgrid ?indexing x y] creates coordinate grids from 1D arrays.
+
+    Returns (X, Y) where X and Y are 2D arrays representing grid coordinates.
+
+    - [`xy] (default): Cartesian indexing - X changes along columns, Y changes
+      along rows
+    - [`ij]: Matrix indexing - X changes along rows, Y changes along columns
+
+    @raise Invalid_argument if x or y are not 1D
+
+    {[
+      let x = linspace float32 0. 2. 3 in  (* [0.; 1.; 2.] *)
+      let y = linspace float32 0. 1. 2 in  (* [0.; 1.] *)
+      let xx, yy = meshgrid x y in
+      (* xx = [[0.; 1.; 2.];
+               [0.; 1.; 2.]] *)
+      (* yy = [[0.; 0.; 0.];
+               [1.; 1.; 1.]] *)
+    ]} *)
+
 val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
 (** [of_bigarray ba] creates tensor from bigarray. Zero-copy if possible. *)
 

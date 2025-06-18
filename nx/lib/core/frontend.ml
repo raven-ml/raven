@@ -2099,6 +2099,37 @@ module Make (B : Backend_intf.S) = struct
       in
       exp log_points_tensor
 
+  let meshgrid ?(indexing = `xy) x y =
+    let x_shape = shape x in
+    let y_shape = shape y in
+
+    (* Check inputs are 1D *)
+    if Array.length x_shape <> 1 then invalid_arg "meshgrid: x must be 1D";
+    if Array.length y_shape <> 1 then invalid_arg "meshgrid: y must be 1D";
+
+    let nx = x_shape.(0) in
+    let ny = y_shape.(0) in
+
+    match indexing with
+    | `xy ->
+        (* Standard Cartesian indexing *)
+        let x_grid = reshape [| 1; nx |] x in
+        let x_grid = broadcast_to [| ny; nx |] x_grid in
+
+        let y_grid = reshape [| ny; 1 |] y in
+        let y_grid = broadcast_to [| ny; nx |] y_grid in
+
+        (x_grid, y_grid)
+    | `ij ->
+        (* Matrix indexing *)
+        let x_grid = reshape [| nx; 1 |] x in
+        let x_grid = broadcast_to [| nx; ny |] x_grid in
+
+        let y_grid = reshape [| 1; ny |] y in
+        let y_grid = broadcast_to [| nx; ny |] y_grid in
+
+        (x_grid, y_grid)
+
   (* ───── Indexing and Slicing ───── *)
 
   (* Helper to normalize negative indices *)
