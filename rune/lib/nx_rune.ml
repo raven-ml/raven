@@ -115,9 +115,7 @@ let is_symbolic = function Symbolic_tensor _ -> true | _ -> false
 let data : type a b. (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t =
   function
   | Native_tensor t -> Nx_native.data t
-  | Metal_tensor _ ->
-      failwith
-        "Cannot extract raw data from Metal tensor. Transfer to CPU first."
+  | Metal_tensor t -> Rune_metal.data t
   | Cblas_tensor t -> Rune_cblas.data t
   | Symbolic_tensor { id; _ } ->
       failwith (Printf.sprintf "Cannot extract data from symbolic tensor %d" id)
