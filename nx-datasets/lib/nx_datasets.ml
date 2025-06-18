@@ -53,3 +53,6 @@ let load_time_series_dataset loader_func =
 
 let load_airline_passengers () =
   load_time_series_dataset Airline_passengers.load
+
+(* Include generators inline *)
+include Generators
