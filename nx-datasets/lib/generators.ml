@@ -1,5 +1,7 @@
 let pi = 4. *. atan 1.
 
+module IntSet = Set.Make (Int)
+
 module Rng = struct
   let init_state seed =
     match seed with
@@ -7,6 +9,7 @@ module Rng = struct
     | Some s -> Random.State.make [| s |]
 
   let normal state ?(mean = 0.) ?(std = 1.) () =
+    (* Box-Muller transform for a single normal variate *)
     let u1 = Random.State.float state 1. in
     let u2 = Random.State.float state 1. in
     let z0 = sqrt (-2. *. log u1) *. cos (2. *. pi *. u2) in
@@ -14,23 +17,40 @@ module Rng = struct
 
   let standard_normal state shape =
     let total = Array.fold_left ( * ) 1 shape in
-    let data = Array.init total (fun _ -> normal state ()) in
-    Nx.reshape shape (Nx.create Float32 [| total |] data)
+    let data = Bigarray.Array1.create Float32 C_layout total in
+    let i = ref 0 in
+    while !i < total do
+      let u1 = Random.State.float state 1. in
+      let u2 = Random.State.float state 1. in
+      let r = sqrt (-2. *. log u1) in
+      let theta = 2. *. pi *. u2 in
+      let z0 = r *. cos theta in
+      let z1 = r *. sin theta in
+      data.{!i} <- z0;
+      incr i;
+      if !i < total then (
+        data.{!i} <- z1;
+        incr i)
+    done;
+    Nx.reshape shape (Nx.of_bigarray (Bigarray.genarray_of_array1 data))
 
   let uniform state ?(low = 0.) ?(high = 1.) shape =
     let total = Array.fold_left ( * ) 1 shape in
     let range = high -. low in
-    let data =
-      Array.init total (fun _ -> low +. Random.State.float state range)
-    in
-    Nx.reshape shape (Nx.create Float32 [| total |] data)
+    let data = Bigarray.Array1.create Float32 C_layout total in
+    for i = 0 to total - 1 do
+      data.{i} <- low +. Random.State.float state range
+    done;
+    Nx.reshape shape (Nx.of_bigarray (Bigarray.genarray_of_array1 data))
 
   let randint state ?(low = 0) high shape =
     let total = Array.fold_left ( * ) 1 shape in
-    let data =
-      Array.init total (fun _ -> low + Random.State.int state (high - low))
-    in
-    Nx.reshape shape (Nx.create Int32 [| total |] (Array.map Int32.of_int data))
+    let range = high - low in
+    let data = Bigarray.Array1.create Int32 C_layout total in
+    for i = 0 to total - 1 do
+      data.{i} <- Int32.of_int (low + Random.State.int state range)
+    done;
+    Nx.reshape shape (Nx.of_bigarray (Bigarray.genarray_of_array1 data))
 
   let shuffle state arr =
     let n = Array.length arr in
@@ -42,59 +62,14 @@ module Rng = struct
     done
 
   let take_indices tensor ~axis indices_array =
-    (* Simple implementation that rebuilds array from scratch *)
-    let arr = Nx.to_array tensor in
-    let shape = Nx.shape tensor in
-    let n_dims = Array.length shape in
-    let n_indices = Array.length indices_array in
-
-    (* Create result shape *)
-    let result_shape = Array.copy shape in
-    result_shape.(axis) <- n_indices;
-
-    (* Calculate strides for original and result *)
-    let orig_strides = Array.make n_dims 1 in
-    let result_strides = Array.make n_dims 1 in
-    for i = n_dims - 2 downto 0 do
-      orig_strides.(i) <- orig_strides.(i + 1) * shape.(i + 1);
-      result_strides.(i) <- result_strides.(i + 1) * result_shape.(i + 1)
-    done;
-
-    (* Calculate result size *)
-    let result_size = Array.fold_left ( * ) 1 result_shape in
-    let result_arr = Array.make result_size arr.(0) in
-
-    (* Copy elements *)
-    let rec copy_recursive idx_in idx_out dim =
-      if dim = n_dims then (
-        (* Convert multi-dimensional indices to flat index *)
-        let flat_in = ref 0 in
-        let flat_out = ref 0 in
-        for d = 0 to n_dims - 1 do
-          flat_in := !flat_in + (idx_in.(d) * orig_strides.(d));
-          flat_out := !flat_out + (idx_out.(d) * result_strides.(d))
-        done;
-        result_arr.(!flat_out) <- arr.(!flat_in))
-      else if dim = axis then
-        (* Iterate through selected indices *)
-        for i = 0 to n_indices - 1 do
-          idx_in.(dim) <- indices_array.(i);
-          idx_out.(dim) <- i;
-          copy_recursive idx_in idx_out (dim + 1)
-        done
-      else
-        (* Iterate through all indices in this dimension *)
-        for i = 0 to shape.(dim) - 1 do
-          idx_in.(dim) <- i;
-          idx_out.(dim) <- i;
-          copy_recursive idx_in idx_out (dim + 1)
-        done
+    let n_dims = Nx.ndim tensor in
+    let spec =
+      Array.to_list
+        (Array.init n_dims (fun i ->
+             if i = axis then Nx.L (Array.to_list indices_array)
+             else Nx.R [ 0; Nx.dim i tensor; 1 ]))
     in
-
-    if n_dims > 0 then
-      copy_recursive (Array.make n_dims 0) (Array.make n_dims 0) 0;
-
-    Nx.create (Nx.dtype tensor) result_shape result_arr
+    Nx.slice spec tensor
 end
 
 let make_blobs ?(n_samples = 100) ?(n_features = 2) ?(centers = `N 3)
@@ -112,31 +87,33 @@ let make_blobs ?(n_samples = 100) ?(n_features = 2) ?(centers = `N 3)
         (shape.(0), arr)
   in
 
-  let samples_per_center = n_samples / n_centers in
-  let extra_samples = n_samples mod n_centers in
+  let samples_per_center =
+    Array.init n_centers (fun i ->
+        let base = n_samples / n_centers in
+        let extra = if i < n_samples mod n_centers then 1 else 0 in
+        base + extra)
+  in
 
-  let x_list = ref [] in
-  let y_list = ref [] in
+  let x_list =
+    List.init n_centers (fun i ->
+        let n = samples_per_center.(i) in
+        if n > 0 then
+          let center = Nx.slice [ I i; R [] ] center_coords in
+          let noise = Rng.standard_normal state [| n; n_features |] in
+          Some (Nx.add (Nx.mul_s noise cluster_std) center)
+        else None)
+    |> List.filter_map Fun.id
+  in
 
-  for i = 0 to n_centers - 1 do
-    let n =
-      if i < extra_samples then samples_per_center + 1 else samples_per_center
-    in
-    let center = Nx.slice [ I i; R [] ] center_coords in
-    let center = Nx.reshape [| n_features |] center in
+  let y_list =
+    List.init n_centers (fun i ->
+        let n = samples_per_center.(i) in
+        if n > 0 then Some (Nx.full Int32 [| n |] (Int32.of_int i)) else None)
+    |> List.filter_map Fun.id
+  in
 
-    let samples = Rng.standard_normal state [| n; n_features |] in
-    let samples = Nx.mul_s samples cluster_std in
-    let samples = Nx.add samples (Nx.broadcast_to [| n; n_features |] center) in
-
-    x_list := samples :: !x_list;
-
-    let labels = Nx.full Int32 [| n |] (Int32.of_int i) in
-    y_list := labels :: !y_list
-  done;
-
-  let x = Nx.concatenate ~axis:0 (List.rev !x_list) in
-  let y = Nx.concatenate ~axis:0 (List.rev !y_list) in
+  let x = Nx.concatenate ~axis:0 x_list in
+  let y = Nx.concatenate ~axis:0 y_list in
 
   if shuffle then (
     let indices = Array.init n_samples (fun i -> i) in
@@ -161,27 +138,15 @@ let make_classification ?(n_samples = 100) ?(n_features = 20)
   let n_useless = n_features - n_informative - n_redundant - n_repeated in
   let n_clusters = n_classes * n_clusters_per_class in
 
-  (* Generate hypercube vertices as cluster centers *)
   let centroids =
-    if hypercube then (
-      let vertices = Nx.zeros Float32 [| n_clusters; n_informative |] in
-      let vertices_arr = Nx.to_array vertices in
-      for i = 0 to n_clusters - 1 do
-        for j = 0 to n_informative - 1 do
+    if hypercube then
+      Nx.init Float32 [| n_clusters; n_informative |] (fun idx ->
+          let i, j = (idx.(0), idx.(1)) in
           let bit = (i lsr j) land 1 in
-          vertices_arr.((i * n_informative) + j) <-
-            (Float.of_int bit *. 2.) -. 1.
-        done
-      done;
-      Nx.create Float32 [| n_clusters; n_informative |] vertices_arr)
+          (Float.of_int bit *. 2.) -. 1.)
     else Rng.standard_normal state [| n_clusters; n_informative |]
   in
-
   let centroids = Nx.mul_s centroids class_sep in
-
-  (* Assign clusters to classes *)
-  let y = Nx.zeros Int32 [| n_samples |] in
-  let y_arr = Nx.to_array y |> Array.map Int32.to_int in
 
   let weights =
     match weights with
@@ -189,60 +154,47 @@ let make_classification ?(n_samples = 100) ?(n_features = 20)
     | Some w -> Array.of_list w
   in
 
-  let samples_per_class =
-    Array.map (fun w -> int_of_float (w *. float n_samples)) weights
-  in
-
-  (* Generate samples *)
-  let x_informative = Nx.zeros Float32 [| n_samples; n_informative |] in
-  let start_idx = ref 0 in
-
+  let y_arr = Array.make n_samples 0 in
+  let cluster_indices_arr = Array.make n_samples 0 in
+  let current_pos = ref 0 in
   for c = 0 to n_classes - 1 do
-    let n_samples_c = samples_per_class.(c) in
+    let n_samples_c = int_of_float (weights.(c) *. float n_samples) in
     let cluster_ids =
       Array.init n_clusters_per_class (fun i -> (c * n_clusters_per_class) + i)
     in
-
     for i = 0 to n_samples_c - 1 do
-      let idx = !start_idx + i in
-      if idx < n_samples then (
-        y_arr.(idx) <- c;
-        let cluster = cluster_ids.(i mod n_clusters_per_class) in
-        let centroid = Nx.slice [ I cluster; R [] ] centroids in
-        let noise = Rng.standard_normal state [| 1; n_informative |] in
-        let point = Nx.add centroid noise in
-        for j = 0 to n_informative - 1 do
-          let v = Nx.get_item [ 0; j ] point in
-          Nx.set_item [ idx; j ] v x_informative
-        done)
+      let sample_idx = !current_pos + i in
+      if sample_idx < n_samples then (
+        y_arr.(sample_idx) <- c;
+        cluster_indices_arr.(sample_idx) <-
+          cluster_ids.(Random.State.int state n_clusters_per_class))
     done;
-    start_idx := !start_idx + n_samples_c
+    current_pos := !current_pos + n_samples_c
   done;
 
-  let y = Nx.create Int32 [| n_samples |] (Array.map Int32.of_int y_arr) in
+  let sample_centroids =
+    Rng.take_indices centroids ~axis:0 cluster_indices_arr
+  in
+  let noise = Rng.standard_normal state [| n_samples; n_informative |] in
+  let x_informative = Nx.add sample_centroids noise in
 
-  (* Add redundant features *)
   let x =
     if n_redundant > 0 then
       let b = Rng.standard_normal state [| n_informative; n_redundant |] in
-      let redundant = Nx.matmul x_informative b in
-      Nx.concatenate ~axis:1 [ x_informative; redundant ]
+      Nx.concatenate ~axis:1 [ x_informative; Nx.matmul x_informative b ]
     else x_informative
   in
 
-  (* Add repeated features *)
   let x =
     if n_repeated > 0 then
       let indices =
-        Rng.randint state (n_informative + n_redundant) [| n_repeated |]
+        Array.init n_repeated (fun _ ->
+            Random.State.int state (n_informative + n_redundant))
       in
-      let indices_arr = Array.map Int32.to_int (Nx.to_array indices) in
-      let repeated = Rng.take_indices x ~axis:1 indices_arr in
-      Nx.concatenate ~axis:1 [ x; repeated ]
+      Nx.concatenate ~axis:1 [ x; Rng.take_indices x ~axis:1 indices ]
     else x
   in
 
-  (* Add useless features *)
   let x =
     if n_useless > 0 then
       let useless = Rng.standard_normal state [| n_samples; n_useless |] in
@@ -250,52 +202,25 @@ let make_classification ?(n_samples = 100) ?(n_features = 20)
     else x
   in
 
-  (* Apply transformations *)
   let x = if shift <> 0.0 then Nx.add_s x shift else x in
   let x = if scale <> 1.0 then Nx.mul_s x scale else x in
 
-  (* Flip labels *)
   if flip_y > 0.0 then (
     let n_flip = int_of_float (flip_y *. float n_samples) in
     let flip_indices = Array.init n_samples (fun i -> i) in
     Rng.shuffle state flip_indices;
-    let y_arr = Nx.to_array y |> Array.map Int32.to_int in
     for i = 0 to n_flip - 1 do
       let idx = flip_indices.(i) in
       y_arr.(idx) <- Random.State.int state n_classes
-    done;
-    let y = Nx.create Int32 [| n_samples |] (Array.map Int32.of_int y_arr) in
+    done);
 
-    if shuffle then (
-      let indices = Array.init n_samples (fun i -> i) in
-      Rng.shuffle state indices;
-      let indices_tensor =
-        Nx.create Int32 [| n_samples |] (Array.map Int32.of_int indices)
-      in
-      let x =
-        Rng.take_indices x ~axis:0
-          (Array.map Int32.to_int (Nx.to_array indices_tensor))
-      in
-      let y =
-        Rng.take_indices y ~axis:0
-          (Array.map Int32.to_int (Nx.to_array indices_tensor))
-      in
-      (x, y))
-    else (x, y))
-  else if shuffle then (
+  let y = Nx.create Int32 [| n_samples |] (Array.map Int32.of_int y_arr) in
+
+  if shuffle then (
     let indices = Array.init n_samples (fun i -> i) in
     Rng.shuffle state indices;
-    let indices_tensor =
-      Nx.create Int32 [| n_samples |] (Array.map Int32.of_int indices)
-    in
-    let x =
-      Rng.take_indices x ~axis:0
-        (Array.map Int32.to_int (Nx.to_array indices_tensor))
-    in
-    let y =
-      Rng.take_indices y ~axis:0
-        (Array.map Int32.to_int (Nx.to_array indices_tensor))
-    in
+    let x = Rng.take_indices x ~axis:0 indices in
+    let y = Rng.take_indices y ~axis:0 indices in
     (x, y))
   else (x, y)
 
@@ -303,38 +228,28 @@ let make_gaussian_quantiles ?mean ?(cov = 1.0) ?(n_samples = 100)
     ?(n_features = 2) ?(n_classes = 3) ?(shuffle = true) ?random_state () =
   let state = Rng.init_state random_state in
 
-  let mean = match mean with None -> Array.make n_features 0. | Some m -> m in
+  let mean_tensor =
+    match mean with
+    | None -> Nx.zeros Float32 [| n_features |]
+    | Some m -> Nx.create Float32 [| n_features |] m
+  in
 
   let x = Rng.standard_normal state [| n_samples; n_features |] in
   let x = Nx.mul_s x (sqrt cov) in
-  let mean_tensor = Nx.create Float32 [| n_features |] mean in
   let x = Nx.add x (Nx.broadcast_to [| n_samples; n_features |] mean_tensor) in
 
-  (* Compute distances from origin *)
-  let distances_arr = Array.make n_samples 0. in
-  let x_arr = Nx.to_array x in
-  for i = 0 to n_samples - 1 do
-    let sum = ref 0. in
-    for j = 0 to n_features - 1 do
-      let v = x_arr.((i * n_features) + j) in
-      sum := !sum +. (v *. v)
-    done;
-    distances_arr.(i) <- sqrt !sum
-  done;
+  let distances_sq = Nx.sum ~axes:[| 1 |] (Nx.square x) in
+  let distances_arr = Nx.to_array (Nx.sqrt distances_sq) in
 
-  (* Sort indices by distance *)
   let indices = Array.init n_samples (fun i -> i) in
   Array.sort (fun i j -> compare distances_arr.(i) distances_arr.(j)) indices;
 
-  (* Assign labels based on quantiles *)
   let y_arr = Array.make n_samples 0 in
   let samples_per_class = n_samples / n_classes in
-
   for i = 0 to n_samples - 1 do
     let class_idx = min (i / samples_per_class) (n_classes - 1) in
     y_arr.(indices.(i)) <- class_idx
   done;
-
   let y = Nx.create Int32 [| n_samples |] (Array.map Int32.of_int y_arr) in
 
   if shuffle then (
@@ -347,23 +262,9 @@ let make_gaussian_quantiles ?mean ?(cov = 1.0) ?(n_samples = 100)
 
 let make_hastie_10_2 ?(n_samples = 12000) ?random_state () =
   let state = Rng.init_state random_state in
-
-  (* Generate 10 random features *)
   let x = Rng.standard_normal state [| n_samples; 10 |] in
-
-  (* Compute y according to Hastie et al. 2009 formula *)
-  let y_arr = Array.make n_samples 0 in
-  let x_arr = Nx.to_array x in
-
-  for i = 0 to n_samples - 1 do
-    let sum = ref 0. in
-    for j = 0 to 9 do
-      sum := !sum +. (x_arr.((i * 10) + j) ** 2.)
-    done;
-    y_arr.(i) <- (if !sum > 9.34 then 1 else 0)
-  done;
-
-  let y = Nx.create Int32 [| n_samples |] (Array.map Int32.of_int y_arr) in
+  let chi2 = Nx.sum ~axes:[| 1 |] (Nx.square x) in
+  let y = Nx.cast Int32 (Nx.cmpgt chi2 (Nx.scalar Float32 9.34)) in
   (x, y)
 
 let make_circles ?(n_samples = 100) ?(shuffle = true) ?(noise = 0.0)
@@ -376,39 +277,34 @@ let make_circles ?(n_samples = 100) ?(shuffle = true) ?(noise = 0.0)
   let n_samples_out = n_samples / 2 in
   let n_samples_in = n_samples - n_samples_out in
 
-  (* Generate outer circle *)
   let linspace start stop n =
-    Array.init n (fun i ->
-        start +. (float i /. float (n - 1) *. (stop -. start)))
+    if n = 0 then [||]
+    else if n = 1 then [| start |]
+    else
+      Array.init n (fun i ->
+          start +. (float i /. float (n - 1) *. (stop -. start)))
   in
 
   let theta_out = linspace 0. (2. *. pi) n_samples_out in
-  let x_out = Array.map cos theta_out in
-  let y_out = Array.map sin theta_out in
-
-  (* Generate inner circle *)
   let theta_in = linspace 0. (2. *. pi) n_samples_in in
-  let x_in = Array.map (fun t -> factor *. cos t) theta_in in
-  let y_in = Array.map (fun t -> factor *. sin t) theta_in in
-
-  (* Combine circles *)
-  let x_data = Array.append x_out x_in in
-  let y_data = Array.append y_out y_in in
-
-  let x = Nx.zeros Float32 [| n_samples; 2 |] in
-  for i = 0 to n_samples - 1 do
-    Nx.set_item [ i; 0 ] x_data.(i) x;
-    Nx.set_item [ i; 1 ] y_data.(i) x
+  let x_flat = Array.make (n_samples * 2) 0. in
+  for i = 0 to n_samples_out - 1 do
+    x_flat.(i * 2) <- cos theta_out.(i);
+    x_flat.((i * 2) + 1) <- sin theta_out.(i)
   done;
+  for i = 0 to n_samples_in - 1 do
+    let idx = n_samples_out + i in
+    x_flat.(idx * 2) <- factor *. cos theta_in.(i);
+    x_flat.((idx * 2) + 1) <- factor *. sin theta_in.(i)
+  done;
+  let x = Nx.create Float32 [| n_samples; 2 |] x_flat in
 
-  (* Add noise *)
   let x =
     if noise > 0.0 then
       Nx.add x (Nx.mul_s (Rng.standard_normal state [| n_samples; 2 |]) noise)
     else x
   in
 
-  (* Create labels *)
   let y_arr =
     Array.init n_samples (fun i -> if i < n_samples_out then 0 else 1)
   in
@@ -425,43 +321,31 @@ let make_circles ?(n_samples = 100) ?(shuffle = true) ?(noise = 0.0)
 let make_moons ?(n_samples = 100) ?(shuffle = true) ?(noise = 0.0) ?random_state
     () =
   let state = Rng.init_state random_state in
-
   let n_samples_out = n_samples / 2 in
   let n_samples_in = n_samples - n_samples_out in
 
-  let linspace start stop n =
-    Array.init n (fun i ->
-        start +. (float i /. float (n - 1) *. (stop -. start)))
+  let outer_theta = Nx.linspace Float32 0. pi n_samples_out in
+  let inner_theta = Nx.linspace Float32 0. pi n_samples_in in
+
+  let x_outer = Nx.cos outer_theta in
+  let y_outer = Nx.sin outer_theta in
+  let x_inner = Nx.sub (Nx.scalar Float32 1.) (Nx.cos inner_theta) in
+  let y_inner = Nx.sub_s (Nx.add_s (Nx.sin inner_theta) 1.) 0.5 in
+
+  let x =
+    Nx.concatenate ~axis:0
+      [
+        Nx.stack ~axis:1 [ x_outer; y_outer ];
+        Nx.stack ~axis:1 [ x_inner; y_inner ];
+      ]
   in
 
-  (* Generate first moon *)
-  let theta_out = linspace 0. pi n_samples_out in
-  let x_out = Array.map cos theta_out in
-  let y_out = Array.map sin theta_out in
-
-  (* Generate second moon *)
-  let theta_in = linspace 0. pi n_samples_in in
-  let x_in = Array.map (fun t -> 1. -. cos t) theta_in in
-  let y_in = Array.map (fun t -> 1. -. sin t -. 0.5) theta_in in
-
-  (* Combine moons *)
-  let x_data = Array.append x_out x_in in
-  let y_data = Array.append y_out y_in in
-
-  let x = Nx.zeros Float32 [| n_samples; 2 |] in
-  for i = 0 to n_samples - 1 do
-    Nx.set_item [ i; 0 ] x_data.(i) x;
-    Nx.set_item [ i; 1 ] y_data.(i) x
-  done;
-
-  (* Add noise *)
   let x =
     if noise > 0.0 then
       Nx.add x (Nx.mul_s (Rng.standard_normal state [| n_samples; 2 |]) noise)
     else x
   in
 
-  (* Create labels *)
   let y_arr =
     Array.init n_samples (fun i -> if i < n_samples_out then 0 else 1)
   in
@@ -480,84 +364,106 @@ let make_multilabel_classification ?(n_samples = 100) ?(n_features = 20)
     ?(sparse = false) ?(return_indicator = false)
     ?(return_distributions = false) ?random_state () =
   let _ = return_distributions in
+  if sparse then
+    failwith "make_multilabel_classification: sparse output not yet implemented";
+
   let state = Rng.init_state random_state in
 
-  (* Generate random class probabilities *)
   let p_c = Rng.uniform state [| n_classes |] in
-  let p_c_sum = Nx.sum p_c in
-  let p_c = Nx.div p_c p_c_sum in
+  let p_c = Nx.div p_c (Nx.sum p_c) in
 
-  (* Generate random feature probabilities for each class *)
   let p_w_c = Rng.uniform state [| n_features; n_classes |] in
-  (* Normalize each column *)
-  let p_w_c =
-    let sums = Nx.sum p_w_c ~axes:[| 0 |] in
-    Nx.div p_w_c (Nx.broadcast_to [| n_features; n_classes |] sums)
-  in
+  let p_w_c = Nx.div p_w_c (Nx.sum p_w_c ~axes:[| 0 |]) in
 
-  let x = Nx.zeros Float32 [| n_samples; n_features |] in
-  let y_float = Nx.zeros Float32 [| n_samples; n_classes |] in
-  let y_int = Nx.zeros Int32 [| n_samples; n_labels |] in
+  let y_indicator = Array.make_matrix n_samples n_classes false in
+  let doc_topics = Array.make n_samples [] in
 
   let p_c_arr = Nx.to_array p_c in
-  let p_w_c_arr = Nx.to_array p_w_c in
+  let cdf = Array.mapi (fun i p -> (i, p)) p_c_arr in
+  let cdf =
+    Array.sort (fun (_, p1) (_, p2) -> compare p2 p1) cdf;
+    let sum = ref 0. in
+    Array.map
+      (fun (i, p) ->
+        sum := !sum +. p;
+        (i, !sum))
+      cdf
+  in
 
   for i = 0 to n_samples - 1 do
-    (* Sample number of labels *)
-    (* Simple Poisson approximation using normal distribution *)
-    let lambda = float n_labels in
-    let n_doc = int_of_float (lambda +. (sqrt lambda *. Rng.normal state ())) in
-    let n_doc = max 0 n_doc in
-    let n_doc = if allow_unlabeled then n_doc else max 1 n_doc in
-    let n_doc = min n_doc n_classes in
-
-    (* Sample labels *)
-    let labels = Array.make n_doc 0 in
-    let cum_prob = ref 0. in
-    let label_idx = ref 0 in
-
-    for _ = 0 to n_doc - 1 do
+    let n_doc_labels =
+      let lambda = float n_labels in
+      let n = int_of_float (lambda +. (sqrt lambda *. Rng.normal state ())) in
+      let n = max 0 n in
+      let n = if allow_unlabeled then n else max 1 n in
+      min n n_classes
+    in
+    let labels_set = ref IntSet.empty in
+    while IntSet.cardinal !labels_set < n_doc_labels do
       let r = Random.State.float state 1. in
-      cum_prob := 0.;
-      for c = 0 to n_classes - 1 do
-        cum_prob := !cum_prob +. p_c_arr.(c);
-        if r < !cum_prob && !label_idx < n_doc then (
-          labels.(!label_idx) <- c;
-          incr label_idx)
-      done
+      let topic =
+        let rec find_topic i =
+          if i >= Array.length cdf then n_classes - 1
+          else
+            let topic, p = cdf.(i) in
+            if r < p then topic else find_topic (i + 1)
+        in
+        find_topic 0
+      in
+      labels_set := IntSet.add topic !labels_set
     done;
-
-    if return_indicator then
-      (* Set binary indicators *)
-      for j = 0 to n_doc - 1 do
-        Nx.set_item [ i; labels.(j) ] 1. y_float
-      done
-    else
-      (* Store first n_labels labels *)
-      for j = 0 to min (n_labels - 1) (n_doc - 1) do
-        Nx.set_item [ i; j ] (Int32.of_int labels.(j)) y_int
-      done;
-
-    (* Generate document *)
-    for _ = 0 to length - 1 do
-      if n_doc > 0 then
-        let label = labels.(Random.State.int state n_doc) in
-        let r = Random.State.float state 1. in
-        let mut_cum_prob = ref 0. in
-
-        for f = 0 to n_features - 1 do
-          mut_cum_prob := !mut_cum_prob +. p_w_c_arr.((f * n_classes) + label);
-          if r < !mut_cum_prob then
-            let current = Nx.get_item [ i; f ] x in
-            Nx.set_item [ i; f ] (current +. 1.) x
-        done
-    done
+    let labels = IntSet.elements !labels_set in
+    doc_topics.(i) <- labels;
+    List.iter (fun lbl -> y_indicator.(i).(lbl) <- true) labels
   done;
 
-  if sparse then
-    failwith "make_multilabel_classification: sparse output not yet implemented"
-  else if return_indicator then (x, `Float y_float)
-  else (x, `Int y_int)
+  let x_data =
+    Bigarray.Array1.create Float32 C_layout (n_samples * n_features)
+  in
+  let p_w_c_arr = Nx.to_array p_w_c in
+  for i = 0 to n_samples - 1 do
+    let topics = doc_topics.(i) in
+    if topics <> [] then
+      let n_topics = List.length topics in
+      for _ = 0 to length - 1 do
+        let topic = List.nth topics (Random.State.int state n_topics) in
+        let r = Random.State.float state 1. in
+        let cum_prob = ref 0. in
+        try
+          for f = 0 to n_features - 1 do
+            cum_prob := !cum_prob +. p_w_c_arr.((f * n_classes) + topic);
+            if r < !cum_prob then (
+              let idx = (i * n_features) + f in
+              x_data.{idx} <- x_data.{idx} +. 1.;
+              raise Exit)
+          done
+        with Exit -> ()
+      done
+  done;
+  let x = Nx.of_bigarray (Bigarray.genarray_of_array1 x_data) in
+  let x = Nx.reshape [| n_samples; n_features |] x in
+
+  let y =
+    if return_indicator then (
+      let data = Array.make (n_samples * n_classes) 0. in
+      for r = 0 to n_samples - 1 do
+        for c = 0 to n_classes - 1 do
+          if y_indicator.(r).(c) then data.((r * n_classes) + c) <- 1.
+        done
+      done;
+      `Float (Nx.create Float32 [| n_samples; n_classes |] data))
+    else
+      let data = Array.make (n_samples * n_labels) 0l in
+      for r = 0 to n_samples - 1 do
+        List.iteri
+          (fun c_idx topic ->
+            if c_idx < n_labels then
+              data.((r * n_labels) + c_idx) <- Int32.of_int topic)
+          doc_topics.(r)
+      done;
+      `Int (Nx.create Int32 [| n_samples; n_labels |] data)
+  in
+  (x, y)
 
 let make_regression ?(n_samples = 100) ?(n_features = 100) ?(n_informative = 10)
     ?(n_targets = 1) ?(bias = 0.0) ?(effective_rank = None)
@@ -565,427 +471,300 @@ let make_regression ?(n_samples = 100) ?(n_features = 100) ?(n_informative = 10)
     ?random_state () =
   let _ = tail_strength in
   let state = Rng.init_state random_state in
-
   let n_informative = min n_features n_informative in
 
-  (* Generate X *)
-  let x = Rng.standard_normal state [| n_samples; n_features |] in
-
-  (* Generate ground truth model *)
-  let ground_truth = Rng.standard_normal state [| n_features; n_targets |] in
-  let ground_truth = Nx.slice [ R [ 0; n_informative ]; R [] ] ground_truth in
-
-  (* Pad with zeros for non-informative features *)
-  let coef_tensor = Nx.zeros Float32 [| n_features; n_targets |] in
-  for i = 0 to n_informative - 1 do
-    for j = 0 to n_targets - 1 do
-      let v = Nx.get_item [ i; j ] ground_truth in
-      Nx.set_item [ i; j ] v coef_tensor
-    done
-  done;
-
-  (* Apply effective rank *)
-  let x_final =
+  let x =
     match effective_rank with
-    | None -> x
+    | None -> Rng.standard_normal state [| n_samples; n_features |]
     | Some rank ->
-        (* Simple low-rank approximation *)
         let u = Rng.standard_normal state [| n_samples; rank |] in
         let v = Rng.standard_normal state [| rank; n_features |] in
         Nx.matmul u v
   in
 
-  (* Generate y *)
-  let y = Nx.matmul x_final coef_tensor in
+  let ground_truth =
+    Rng.uniform state ~low:(-100.) ~high:100. [| n_informative; n_targets |]
+  in
+
+  let coef_tensor =
+    if n_informative = n_features then ground_truth
+    else
+      let zeros =
+        Nx.zeros Float32 [| n_features - n_informative; n_targets |]
+      in
+      Nx.concatenate ~axis:0 [ ground_truth; zeros ]
+  in
+
+  let y = Nx.matmul x coef_tensor in
   let y = Nx.add_s y bias in
 
-  (* Add noise *)
   let y =
     if noise > 0.0 then
-      Nx.add y
-        (Nx.mul_s (Rng.standard_normal state [| n_samples; n_targets |]) noise)
+      let noise_tensor = Rng.standard_normal state [| n_samples; n_targets |] in
+      Nx.add y (Nx.mul_s noise_tensor noise)
     else y
   in
 
-  if shuffle then (
-    let indices = Array.init n_samples (fun i -> i) in
-    Rng.shuffle state indices;
-    let x_final = Rng.take_indices x_final ~axis:0 indices in
-    let y = Rng.take_indices y ~axis:0 indices in
-    if coef then (x_final, y, Some coef_tensor) else (x_final, y, None))
-  else if coef then (x_final, y, Some coef_tensor)
-  else (x_final, y, None)
+  let y = if n_targets = 1 then Nx.reshape [| n_samples |] y else y in
+
+  let x_final, y_final, coef_final =
+    if shuffle then (
+      let indices = Array.init n_samples (fun i -> i) in
+      Rng.shuffle state indices;
+      ( Rng.take_indices x ~axis:0 indices,
+        Rng.take_indices y ~axis:0 indices,
+        Some (Rng.take_indices coef_tensor ~axis:0 indices) ))
+    else (x, y, Some coef_tensor)
+  in
+
+  if coef then (x_final, y_final, coef_final) else (x_final, y_final, None)
 
 let make_sparse_uncorrelated ?(n_samples = 100) ?(n_features = 10) ?random_state
     () =
   let state = Rng.init_state random_state in
-
-  (* Generate random features *)
   let x = Rng.standard_normal state [| n_samples; n_features |] in
 
-  (* Only first 4 features are used *)
-  let y = Nx.zeros Float32 [| n_samples |] in
-  let x_arr = Nx.to_array x in
-  let y_arr = Nx.to_array y in
-
-  for i = 0 to n_samples - 1 do
-    let idx = i * n_features in
-    if n_features >= 4 then
-      y_arr.(i) <-
-        x_arr.(idx)
-        +. (2. *. x_arr.(idx + 1))
-        -. (2. *. x_arr.(idx + 2))
-        -. (1.5 *. x_arr.(idx + 3))
-  done;
-
-  let y = Nx.create Float32 [| n_samples |] y_arr in
+  let y =
+    if n_features < 4 then Nx.zeros Float32 [| n_samples |]
+    else
+      let relevant_x = Nx.slice [ R []; R [ 0; 4; 1 ] ] x in
+      let coeffs = Nx.create Float32 [| 4 |] [| 1.; 2.; -2.; -1.5 |] in
+      Nx.reshape [| n_samples |]
+        (Nx.matmul relevant_x (Nx.reshape [| 4; 1 |] coeffs))
+  in
   (x, y)
 
 let make_friedman1 ?(n_samples = 100) ?(n_features = 10) ?(noise = 0.0)
     ?random_state () =
   let state = Rng.init_state random_state in
-
   if n_features < 5 then
     failwith "make_friedman1: n_features must be at least 5";
 
-  (* Generate uniform random features *)
   let x = Rng.uniform state [| n_samples; n_features |] in
+  let x_slice = Nx.slice [ R []; R [ 0; 5; 1 ] ] x in
+  let x0 = Nx.slice [ R []; I 0 ] x_slice in
+  let x1 = Nx.slice [ R []; I 1 ] x_slice in
+  let x2 = Nx.slice [ R []; I 2 ] x_slice in
+  let x3 = Nx.slice [ R []; I 3 ] x_slice in
+  let x4 = Nx.slice [ R []; I 4 ] x_slice in
 
-  (* Compute y according to Friedman #1 formula *)
-  let y = Nx.zeros Float32 [| n_samples |] in
-  let x_arr = Nx.to_array x in
-  let y_arr = Nx.to_array y in
+  let term1 = Nx.mul_s (Nx.sin (Nx.mul_s (Nx.mul x0 x1) pi)) 10. in
+  let term2 = Nx.mul_s (Nx.square (Nx.sub_s x2 0.5)) 20. in
+  let term3 = Nx.mul_s x3 10. in
+  let term4 = Nx.mul_s x4 5. in
+  let y = Nx.add (Nx.add term1 term2) (Nx.add term3 term4) in
 
-  for i = 0 to n_samples - 1 do
-    let idx = i * n_features in
-    let x0 = x_arr.(idx) in
-    let x1 = x_arr.(idx + 1) in
-    let x2 = x_arr.(idx + 2) in
-    let x3 = x_arr.(idx + 3) in
-    let x4 = x_arr.(idx + 4) in
-
-    y_arr.(i) <-
-      (10. *. sin (pi *. x0 *. x1))
-      +. (20. *. ((x2 -. 0.5) ** 2.))
-      +. (10. *. x3) +. (5. *. x4)
-  done;
-
-  let y = Nx.create Float32 [| n_samples |] y_arr in
-
-  (* Add noise *)
   let y =
     if noise > 0.0 then
       Nx.add y (Nx.mul_s (Rng.standard_normal state [| n_samples |]) noise)
     else y
   in
-
   (x, y)
 
 let make_friedman2 ?(n_samples = 100) ?(noise = 0.0) ?random_state () =
   let state = Rng.init_state random_state in
+  let x0 = Rng.uniform state ~low:0. ~high:100. [| n_samples; 1 |] in
+  let x1 = Rng.uniform state ~low:40. ~high:560. [| n_samples; 1 |] in
+  let x2 = Rng.uniform state ~low:0. ~high:1. [| n_samples; 1 |] in
+  let x3 = Rng.uniform state ~low:1. ~high:11. [| n_samples; 1 |] in
+  let x = Nx.concatenate ~axis:1 [ x0; x1; x2; x3 ] in
 
-  (* Generate features with different ranges *)
-  let x = Nx.zeros Float32 [| n_samples; 4 |] in
+  let term1 = Nx.square x0 in
+  let term2 =
+    Nx.square
+      (Nx.sub (Nx.mul x1 x2) (Nx.div (Nx.scalar Float32 1.) (Nx.mul x1 x3)))
+  in
+  let y = Nx.reshape [| n_samples |] (Nx.sqrt (Nx.add term1 term2)) in
 
-  let x0 = Rng.uniform state ~low:0. ~high:100. [| n_samples |] in
-  let x1 = Rng.uniform state ~low:40. ~high:560. [| n_samples |] in
-  let x2 = Rng.uniform state ~low:0. ~high:1. [| n_samples |] in
-  let x3 = Rng.uniform state ~low:1. ~high:11. [| n_samples |] in
-
-  for i = 0 to n_samples - 1 do
-    Nx.set_item [ i; 0 ] (Nx.get_item [ i ] x0) x;
-    Nx.set_item [ i; 1 ] (Nx.get_item [ i ] x1) x;
-    Nx.set_item [ i; 2 ] (Nx.get_item [ i ] x2) x;
-    Nx.set_item [ i; 3 ] (Nx.get_item [ i ] x3) x
-  done;
-
-  (* Compute y *)
-  let y = Nx.zeros Float32 [| n_samples |] in
-  let x_arr = Nx.to_array x in
-  let y_arr = Nx.to_array y in
-
-  for i = 0 to n_samples - 1 do
-    let x0 = x_arr.(i * 4) in
-    let x1 = x_arr.((i * 4) + 1) in
-    let x2 = x_arr.((i * 4) + 2) in
-    let x3 = x_arr.((i * 4) + 3) in
-
-    let term1 = x0 ** 2. in
-    let term2 = ((x1 *. x2) -. (1. /. (x1 *. x3))) ** 2. in
-    y_arr.(i) <- sqrt (term1 +. term2)
-  done;
-
-  let y = Nx.create Float32 [| n_samples |] y_arr in
-
-  (* Add noise *)
   let y =
     if noise > 0.0 then
       Nx.add y (Nx.mul_s (Rng.standard_normal state [| n_samples |]) noise)
     else y
   in
-
   (x, y)
 
 let make_friedman3 ?(n_samples = 100) ?(noise = 0.0) ?random_state () =
   let state = Rng.init_state random_state in
+  let x0 = Rng.uniform state ~low:0. ~high:100. [| n_samples; 1 |] in
+  let x1 = Rng.uniform state ~low:40. ~high:560. [| n_samples; 1 |] in
+  let x2 = Rng.uniform state ~low:0. ~high:1. [| n_samples; 1 |] in
+  let x3 = Rng.uniform state ~low:1. ~high:11. [| n_samples; 1 |] in
+  let x = Nx.concatenate ~axis:1 [ x0; x1; x2; x3 ] in
 
-  (* Generate features with different ranges *)
-  let x = Nx.zeros Float32 [| n_samples; 4 |] in
+  let numerator =
+    Nx.sub (Nx.mul x1 x2) (Nx.div (Nx.scalar Float32 1.) (Nx.mul x1 x3))
+  in
+  let y = Nx.reshape [| n_samples |] (Nx.atan (Nx.div numerator x0)) in
 
-  let x0 = Rng.uniform state ~low:0. ~high:100. [| n_samples |] in
-  let x1 = Rng.uniform state ~low:40. ~high:560. [| n_samples |] in
-  let x2 = Rng.uniform state ~low:0. ~high:1. [| n_samples |] in
-  let x3 = Rng.uniform state ~low:1. ~high:11. [| n_samples |] in
-
-  for i = 0 to n_samples - 1 do
-    Nx.set_item [ i; 0 ] (Nx.get_item [ i ] x0) x;
-    Nx.set_item [ i; 1 ] (Nx.get_item [ i ] x1) x;
-    Nx.set_item [ i; 2 ] (Nx.get_item [ i ] x2) x;
-    Nx.set_item [ i; 3 ] (Nx.get_item [ i ] x3) x
-  done;
-
-  (* Compute y *)
-  let y = Nx.zeros Float32 [| n_samples |] in
-  let x_arr = Nx.to_array x in
-  let y_arr = Nx.to_array y in
-
-  for i = 0 to n_samples - 1 do
-    let x0 = x_arr.(i * 4) in
-    let x1 = x_arr.((i * 4) + 1) in
-    let x2 = x_arr.((i * 4) + 2) in
-    let x3 = x_arr.((i * 4) + 3) in
-
-    let numerator = (x1 *. x2) -. (1. /. (x1 *. x3)) in
-    y_arr.(i) <- atan (numerator /. x0)
-  done;
-
-  let y = Nx.create Float32 [| n_samples |] y_arr in
-
-  (* Add noise *)
   let y =
     if noise > 0.0 then
       Nx.add y (Nx.mul_s (Rng.standard_normal state [| n_samples |]) noise)
     else y
   in
-
   (x, y)
 
 let make_s_curve ?(n_samples = 100) ?(noise = 0.0) ?random_state () =
   let state = Rng.init_state random_state in
+  let t = Rng.uniform state ~low:(-.pi) ~high:pi [| n_samples; 1 |] in
+  let x_coord = Nx.sin t in
+  let y_coord = Rng.uniform state ~low:(-2.) ~high:2. [| n_samples; 1 |] in
+  let z_coord = Nx.mul (Nx.sign (Nx.cos t)) (Nx.cos t) in
+  let x = Nx.concatenate ~axis:1 [ x_coord; y_coord; z_coord ] in
 
-  let t = Rng.uniform state ~low:0. ~high:(3. *. pi) [| n_samples |] in
-  let t_arr = Nx.to_array t in
-
-  let x = Nx.zeros Float32 [| n_samples; 3 |] in
-
-  for i = 0 to n_samples - 1 do
-    let t_val = t_arr.(i) in
-    Nx.set_item [ i; 0 ] (sin t_val) x;
-    Nx.set_item [ i; 1 ] (2. *. Random.State.float state 1.) x;
-    let cos_val = cos t_val in
-    let sign = if cos_val >= 0. then 1. else -1. in
-    Nx.set_item [ i; 2 ] (sign *. cos_val) x
-  done;
-
-  (* Add noise *)
   let x =
     if noise > 0.0 then
       Nx.add x (Nx.mul_s (Rng.standard_normal state [| n_samples; 3 |]) noise)
     else x
   in
-
-  (x, t)
+  (x, Nx.reshape [| n_samples |] t)
 
 let make_swiss_roll ?(n_samples = 100) ?(noise = 0.0) ?random_state
     ?(hole = false) () =
   let state = Rng.init_state random_state in
+  let n_samples_pre =
+    if hole then int_of_float (float n_samples *. 1.25) else n_samples
+  in
 
-  let t = Rng.uniform state ~low:0. ~high:(1.5 *. pi) [| n_samples |] in
-  let height = Rng.uniform state ~low:0. ~high:21. [| n_samples |] in
+  let t_pre =
+    Rng.uniform state ~low:(1.5 *. pi) ~high:(4.5 *. pi) [| n_samples_pre; 1 |]
+  in
 
-  let t_arr = Nx.to_array t in
-  let height_arr = Nx.to_array height in
+  let t, height =
+    if hole then (
+      let t_flat = Nx.reshape [| n_samples_pre |] t_pre in
+      let mask_lower = Nx.cmpgt t_flat (Nx.scalar Float32 10.5) in
+      let mask_upper = Nx.cmplt t_flat (Nx.scalar Float32 14.0) in
+      let hole_mask = Nx.logical_and mask_lower mask_upper in
+      let keep_mask = Nx.logical_not hole_mask in
 
-  let x = Nx.zeros Float32 [| n_samples; 3 |] in
+      (* Find indices where keep_mask is true *)
+      let keep_array = Nx.to_array (Nx.cast UInt8 keep_mask) in
+      let indices = ref [] in
+      Array.iteri (fun i v -> if v > 0 then indices := i :: !indices) keep_array;
+      let indices_array = Array.of_list (List.rev !indices) in
+      let final_indices =
+        Array.sub indices_array 0 (min n_samples (Array.length indices_array))
+      in
+      let t = Rng.take_indices t_pre ~axis:0 final_indices in
+      let height = Rng.uniform state ~low:0. ~high:21. [| Nx.dim 0 t; 1 |] in
+      (t, height))
+    else
+      let height = Rng.uniform state ~low:0. ~high:21. [| n_samples; 1 |] in
+      (Nx.slice [ R [ 0; n_samples; 1 ]; I 0 ] t_pre, height)
+  in
+  let final_n_samples = Nx.dim 0 t in
 
-  let valid_count = ref 0 in
-  let indices = ref [] in
-
-  for i = 0 to n_samples - 1 do
-    let t_val = t_arr.(i) +. (1.5 *. pi) in
-
-    (* Check for hole *)
-    let in_hole = hole && t_val > 10. && t_val < 14. in
-
-    if not in_hole then (
-      Nx.set_item [ !valid_count; 0 ] (t_val *. cos t_val) x;
-      Nx.set_item [ !valid_count; 1 ] height_arr.(i) x;
-      Nx.set_item [ !valid_count; 2 ] (t_val *. sin t_val) x;
-      indices := i :: !indices;
-      incr valid_count)
-  done;
-
-  let valid_samples = !valid_count in
-  let x = Nx.slice [ R [ 0; valid_samples ]; R [] ] x in
-
-  (* Get corresponding t values *)
-  let t_valid = Nx.zeros Float32 [| valid_samples |] in
-  List.iteri
-    (fun idx i -> Nx.set_item [ valid_samples - 1 - idx ] t_arr.(i) t_valid)
-    !indices;
-
-  (* Add noise *)
+  let x_coord = Nx.mul t (Nx.cos t) in
+  let z_coord = Nx.mul t (Nx.sin t) in
+  let x = Nx.concatenate ~axis:1 [ x_coord; height; z_coord ] in
   let x =
     if noise > 0.0 then
       Nx.add x
-        (Nx.mul_s (Rng.standard_normal state [| valid_samples; 3 |]) noise)
+        (Nx.mul_s (Rng.standard_normal state [| final_n_samples; 3 |]) noise)
     else x
   in
 
-  (x, t_valid)
+  (x, Nx.reshape [| final_n_samples |] t)
 
 let make_low_rank_matrix ?(n_samples = 100) ?(n_features = 100)
     ?(effective_rank = 10) ?(tail_strength = 0.5) ?random_state () =
   let state = Rng.init_state random_state in
+  (* Create low-rank matrix as product of two smaller matrices *)
+  let a = Rng.standard_normal state [| n_samples; effective_rank |] in
+  let b = Rng.standard_normal state [| effective_rank; n_features |] in
+  let low_rank_part = Nx.matmul a b in
 
-  (* Generate singular values *)
-  let singular_values =
-    Array.init n_features (fun i ->
-        let decay = exp (-.float (i - effective_rank) *. tail_strength) in
-        if i < effective_rank then 1. else decay)
+  (* Add some small noise controlled by tail_strength *)
+  let noise =
+    Nx.mul_s
+      (Rng.standard_normal state [| n_samples; n_features |])
+      (tail_strength *. 0.01)
   in
-
-  (* Generate random orthogonal matrices *)
-  let u = Rng.standard_normal state [| n_samples; n_samples |] in
-  let v = Rng.standard_normal state [| n_features; n_features |] in
-
-  (* Create diagonal matrix of singular values *)
-  let s = Nx.zeros Float32 [| n_samples; n_features |] in
-  let min_dim = min n_samples n_features in
-  for i = 0 to min_dim - 1 do
-    Nx.set_item [ i; i ] singular_values.(i) s
-  done;
-
-  (* X = U * S * V^T *)
-  let x = Nx.matmul u s in
-  let x = Nx.matmul x (Nx.transpose v) in
-
-  x
+  Nx.add low_rank_part noise
 
 let make_sparse_coded_signal ~n_samples ~n_components ~n_features
     ~n_nonzero_coefs ?random_state () =
   let state = Rng.init_state random_state in
 
-  (* Generate dictionary *)
   let d = Rng.standard_normal state [| n_features; n_components |] in
+  let d = Nx.div d (Nx.sqrt (Nx.sum ~axes:[| 0 |] (Nx.square d))) in
 
-  (* Normalize dictionary columns *)
-  let d =
-    let d_squared = Nx.mul d d in
-    let norms_squared = Nx.sum d_squared ~axes:[| 0 |] in
-    let norms = Nx.sqrt norms_squared in
-    Nx.div d (Nx.broadcast_to [| n_features; n_components |] norms)
-  in
-
-  (* Generate sparse codes *)
-  let x = Nx.zeros Float32 [| n_components; n_samples |] in
-
+  let x = Nx.init Float32 [| n_components; n_samples |] (fun _ -> 0.) in
+  let indices = Array.init n_components (fun j -> j) in
   for i = 0 to n_samples - 1 do
-    (* Select random components *)
-    let indices = Array.init n_components (fun j -> j) in
     Rng.shuffle state indices;
-
-    (* Set non-zero coefficients *)
     for j = 0 to n_nonzero_coefs - 1 do
       let coef = Rng.normal state () in
       Nx.set_item [ indices.(j); i ] coef x
     done
   done;
 
-  (* Generate signal Y = D * X *)
   let y = Nx.matmul d x in
-
   (y, d, x)
 
 let make_spd_matrix ?(n_dim = 30) ?random_state () =
   let state = Rng.init_state random_state in
-
-  (* Generate random matrix *)
   let a = Rng.standard_normal state [| n_dim; n_dim |] in
-
-  (* Make it symmetric positive definite: A^T * A *)
   let spd = Nx.matmul (Nx.transpose a) a in
-
-  (* Add small diagonal to ensure positive definiteness *)
-  let eye = Nx.eye Float32 n_dim in
-  Nx.add spd (Nx.mul_s eye 0.01)
+  Nx.add spd (Nx.mul_s (Nx.eye Float32 n_dim) 0.01)
 
 let make_sparse_spd_matrix ?(n_dim = 30) ?(alpha = 0.95) ?(norm_diag = false)
     ?(smallest_coef = 0.1) ?(largest_coef = 0.9) ?random_state () =
   let _ = norm_diag in
+  (* norm_diag not implemented for simplicity *)
   let state = Rng.init_state random_state in
 
-  let a = Nx.zeros Float32 [| n_dim; n_dim |] in
-
-  (* Fill upper triangle with sparse coefficients *)
-  for i = 0 to n_dim - 1 do
-    for j = i to n_dim - 1 do
-      if Random.State.float state 1. > alpha then (
-        let coef =
-          smallest_coef
-          +. Random.State.float state (largest_coef -. smallest_coef)
-        in
-        let coef = if Random.State.bool state then coef else -.coef in
-        Nx.set_item [ i; j ] coef a;
-        if i <> j then Nx.set_item [ j; i ] coef a)
-    done
-  done;
-
-  (* Make positive definite *)
-  let spd = Nx.matmul (Nx.transpose a) a in
-
-  (* Return without diagonal normalization for now *)
-  spd
+  let a =
+    Nx.init Float32 [| n_dim; n_dim |] (fun idx ->
+        let i, j = (idx.(0), idx.(1)) in
+        if i > j then 0. (* Work on upper triangle only *)
+        else if Random.State.float state 1. > alpha then
+          let coef =
+            smallest_coef
+            +. Random.State.float state (largest_coef -. smallest_coef)
+          in
+          if Random.State.bool state then coef else -.coef
+        else 0.)
+  in
+  (* Make symmetric by averaging with transpose *)
+  let a_sym = Nx.mul_s (Nx.add a (Nx.transpose ~axes:[| 1; 0 |] a)) 0.5 in
+  (* Make positive definite by A^T * A *)
+  let spd = Nx.matmul (Nx.transpose ~axes:[| 1; 0 |] a_sym) a_sym in
+  (* Add diagonal to ensure positive definiteness *)
+  Nx.add spd (Nx.mul_s (Nx.eye Float32 n_dim) (smallest_coef *. float n_dim))
 
 let make_biclusters ?(shape = (100, 100)) ?(n_clusters = 5) ?(noise = 0.0)
     ?(minval = 10) ?(maxval = 100) ?(shuffle = true) ?random_state () =
   let state = Rng.init_state random_state in
   let n_rows, n_cols = shape in
 
-  (* Initialize data matrix *)
-  let x = Nx.zeros Float32 [| n_rows; n_cols |] in
-
-  (* Generate bicluster assignments *)
   let rows_per_cluster = n_rows / n_clusters in
   let cols_per_cluster = n_cols / n_clusters in
 
-  let row_labels = Nx.zeros Int32 [| n_rows |] in
-  let col_labels = Nx.zeros Int32 [| n_cols |] in
+  let row_labels =
+    Nx.init Int32 [| n_rows |] (fun idx ->
+        Int32.of_int (min (idx.(0) / rows_per_cluster) (n_clusters - 1)))
+  in
+  let col_labels =
+    Nx.init Int32 [| n_cols |] (fun idx ->
+        Int32.of_int (min (idx.(0) / cols_per_cluster) (n_clusters - 1)))
+  in
 
-  (* Assign cluster labels *)
-  for i = 0 to n_rows - 1 do
-    Nx.set_item [ i ] (Int32.of_int (i / rows_per_cluster)) row_labels
-  done;
-
-  for j = 0 to n_cols - 1 do
-    Nx.set_item [ j ] (Int32.of_int (j / cols_per_cluster)) col_labels
-  done;
-
-  (* Fill biclusters with values *)
+  let x = Nx.zeros Float32 [| n_rows; n_cols |] in
   for c = 0 to n_clusters - 1 do
     let value = float (minval + Random.State.int state (maxval - minval)) in
-
-    for i = 0 to n_rows - 1 do
-      for j = 0 to n_cols - 1 do
-        if
-          Nx.get_item [ i ] row_labels = Int32.of_int c
-          && Nx.get_item [ j ] col_labels = Int32.of_int c
-        then Nx.set_item [ i; j ] value x
-      done
-    done
+    let row_mask = Nx.cmpeq row_labels (Nx.scalar Int32 (Int32.of_int c)) in
+    let col_mask = Nx.cmpeq col_labels (Nx.scalar Int32 (Int32.of_int c)) in
+    let bicluster_mask =
+      Nx.logical_and
+        (Nx.broadcast_to [| n_rows; n_cols |]
+           (Nx.reshape [| n_rows; 1 |] row_mask))
+        (Nx.broadcast_to [| n_rows; n_cols |] col_mask)
+    in
+    let to_add = Nx.mul_s (Nx.cast Float32 bicluster_mask) value in
+    ignore (Nx.iadd x to_add)
   done;
 
-  (* Add noise *)
   let x =
     if noise > 0.0 then
       Nx.add x (Nx.mul_s (Rng.standard_normal state [| n_rows; n_cols |]) noise)
@@ -993,18 +772,15 @@ let make_biclusters ?(shape = (100, 100)) ?(n_clusters = 5) ?(noise = 0.0)
   in
 
   if shuffle then (
-    (* Shuffle rows *)
     let row_indices = Array.init n_rows (fun i -> i) in
     Rng.shuffle state row_indices;
     let x = Rng.take_indices x ~axis:0 row_indices in
     let row_labels = Rng.take_indices row_labels ~axis:0 row_indices in
 
-    (* Shuffle columns *)
     let col_indices = Array.init n_cols (fun i -> i) in
     Rng.shuffle state col_indices;
     let x = Rng.take_indices x ~axis:1 col_indices in
     let col_labels = Rng.take_indices col_labels ~axis:0 col_indices in
-
     (x, row_labels, col_labels))
   else (x, row_labels, col_labels)
 
@@ -1015,39 +791,32 @@ let make_checkerboard ?(shape = (100, 100)) ?(n_clusters = (8, 8))
   let n_rows, n_cols = shape in
   let n_clusters_row, n_clusters_col = n_clusters in
 
-  (* Initialize data matrix *)
-  let x = Nx.zeros Float32 [| n_rows; n_cols |] in
-
-  (* Generate cluster assignments *)
   let rows_per_cluster = n_rows / n_clusters_row in
   let cols_per_cluster = n_cols / n_clusters_col in
 
-  let row_labels = Nx.zeros Int32 [| n_rows |] in
-  let col_labels = Nx.zeros Int32 [| n_cols |] in
+  let row_labels =
+    Nx.init Int32 [| n_rows |] (fun idx ->
+        Int32.of_int (min (idx.(0) / rows_per_cluster) (n_clusters_row - 1)))
+  in
+  let col_labels =
+    Nx.init Int32 [| n_cols |] (fun idx ->
+        Int32.of_int (min (idx.(0) / cols_per_cluster) (n_clusters_col - 1)))
+  in
+  let cluster_sum =
+    Nx.add
+      (Nx.broadcast_to [| n_rows; n_cols |]
+         (Nx.reshape [| n_rows; 1 |] row_labels))
+      (Nx.broadcast_to [| n_rows; n_cols |] col_labels)
+  in
+  let is_high_mask =
+    Nx.cmpeq (Nx.mod_s cluster_sum (Int32.of_int 2)) (Nx.scalar Int32 0l)
+  in
+  let x =
+    Nx.where is_high_mask
+      (Nx.full Float32 [||] (float maxval))
+      (Nx.full Float32 [||] (float minval))
+  in
 
-  (* Assign cluster labels *)
-  for i = 0 to n_rows - 1 do
-    Nx.set_item [ i ] (Int32.of_int (i / rows_per_cluster)) row_labels
-  done;
-
-  for j = 0 to n_cols - 1 do
-    Nx.set_item [ j ] (Int32.of_int (j / cols_per_cluster)) col_labels
-  done;
-
-  (* Fill checkerboard pattern *)
-  for i = 0 to n_rows - 1 do
-    for j = 0 to n_cols - 1 do
-      let row_cluster = Int32.to_int (Nx.get_item [ i ] row_labels) in
-      let col_cluster = Int32.to_int (Nx.get_item [ j ] col_labels) in
-
-      (* Checkerboard pattern: alternate high/low values *)
-      let is_high = (row_cluster + col_cluster) mod 2 = 0 in
-      let value = float (if is_high then maxval else minval) in
-      Nx.set_item [ i; j ] value x
-    done
-  done;
-
-  (* Add noise *)
   let x =
     if noise > 0.0 then
       Nx.add x (Nx.mul_s (Rng.standard_normal state [| n_rows; n_cols |]) noise)
@@ -1055,17 +824,14 @@ let make_checkerboard ?(shape = (100, 100)) ?(n_clusters = (8, 8))
   in
 
   if shuffle then (
-    (* Shuffle rows *)
     let row_indices = Array.init n_rows (fun i -> i) in
     Rng.shuffle state row_indices;
     let x = Rng.take_indices x ~axis:0 row_indices in
     let row_labels = Rng.take_indices row_labels ~axis:0 row_indices in
 
-    (* Shuffle columns *)
     let col_indices = Array.init n_cols (fun i -> i) in
     Rng.shuffle state col_indices;
     let x = Rng.take_indices x ~axis:1 col_indices in
     let col_labels = Rng.take_indices col_labels ~axis:0 col_indices in
-
     (x, row_labels, col_labels))
   else (x, row_labels, col_labels)
