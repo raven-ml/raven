@@ -820,11 +820,37 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
             let original_forward_val = continue k result_val in
             let d_loss_d_result = grad_of twg_res in
             (* For C = A @ B: dL/dA = dL/dC @ B^T dL/dB = A^T @ dL/dC *)
-            let grad_contrib_to_a =
-              T.matmul d_loss_d_result (T.transpose b_val)
-            in
-            let grad_contrib_to_b =
-              T.matmul (T.transpose a_val) d_loss_d_result
+            (* Handle broadcasting for matmul gradients *)
+            let a_ndim = Array.length (T.shape a_val) in
+            let b_ndim = Array.length (T.shape b_val) in
+            let grad_contrib_to_a, grad_contrib_to_b =
+              if a_ndim = 2 && b_ndim = 3 then
+                (* Special case: A is 2D, B is 3D - this is a broadcasted matmul *)
+                (* For C = A @ B where A:[m,k] B:[b,k,n] -> C:[b,m,n] *)
+                (* grad_A = sum(grad_C @ B^T, axis=0) *)
+                (* grad_B = A^T @ grad_C *)
+                let b_transposed = T.transpose ~axes:[| 0; 2; 1 |] b_val in
+                let grad_a_3d = T.matmul d_loss_d_result b_transposed in
+                let grad_a = T.sum grad_a_3d ~axes:[| 0 |] in
+                let a_expanded = T.expand_dims [| 0 |] a_val in
+                let a_transposed = T.transpose ~axes:[| 0; 2; 1 |] a_expanded in
+                let grad_b = T.matmul a_transposed d_loss_d_result in
+                (grad_a, grad_b)
+              else if a_ndim = 3 && b_ndim = 2 then
+                (* Special case: A is 3D, B is 2D - this is a broadcasted matmul *)
+                (* For C = A @ B where A:[b,m,k] B:[k,n] -> C:[b,m,n] *)
+                (* grad_A = grad_C @ B^T *)
+                (* grad_B = sum(A^T @ grad_C, axis=0) *)
+                let grad_a = T.matmul d_loss_d_result (T.transpose b_val) in
+                let a_transposed = T.transpose ~axes:[| 0; 2; 1 |] a_val in
+                let grad_b_3d = T.matmul a_transposed d_loss_d_result in
+                let grad_b = T.sum grad_b_3d ~axes:[| 0 |] in
+                (grad_a, grad_b)
+              else
+                (* Standard case - both same dimensionality *)
+                let grad_a = T.matmul d_loss_d_result (T.transpose b_val) in
+                let grad_b = T.matmul (T.transpose a_val) d_loss_d_result in
+                (grad_a, grad_b)
             in
             twg_a.bv <- T.add twg_a.bv grad_contrib_to_a;
             twg_b.bv <- T.add twg_b.bv grad_contrib_to_b;
