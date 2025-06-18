@@ -9,6 +9,7 @@ val mnist :
   (* default: true - scales to [0,1] *)
   ?data_format:[ `NCHW | `NHWC ] ->
   (* default: `NCHW *)
+  device:'dev Kaun.device ->
   unit ->
   ((Bigarray.float32_elt, 'dev) Kaun.tensor
   * (Bigarray.float32_elt, 'dev) Kaun.tensor)

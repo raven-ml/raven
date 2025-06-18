@@ -12,7 +12,7 @@ let load_mnist_cached () =
       data
 
 let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
-    ?(data_format = `NCHW) () =
+    ?(data_format = `NCHW) ~device () =
   (* Load MNIST data from Nx_datasets *)
   let start = Unix.gettimeofday () in
   let (x_train, y_train), (x_test, y_test) = load_mnist_cached () in
@@ -23,7 +23,6 @@ let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
   let x, y = if train then (x_train, y_train) else (x_test, y_test) in
 
   (* Convert from uint8 to float *)
-  let dev = Rune.native in
   (* Cast to float32 *)
   let cast_start = Unix.gettimeofday () in
   let x = Nx.cast Nx.float32 x in
@@ -35,14 +34,16 @@ let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
   let dtype = Rune.float32 in
   (* Convert Nx tensors to Rune tensors via bigarray *)
   let convert_start = Unix.gettimeofday () in
-  let x = Rune.of_bigarray dev (Nx.to_bigarray x) in
-  let y = Rune.of_bigarray dev (Nx.to_bigarray y) in
+  let x = Rune.of_bigarray device (Nx.to_bigarray x) in
+  let y = Rune.of_bigarray device (Nx.to_bigarray y) in
   Printf.printf "[Kaun_datasets.mnist] Converted to Rune tensors in %.3fs\n%!"
     (Unix.gettimeofday () -. convert_start);
 
   (* Normalize to [0, 1] if requested *)
   let norm_start = Unix.gettimeofday () in
-  let x = if normalize then Rune.div x (Rune.scalar dev dtype 255.0) else x in
+  let x =
+    if normalize then Rune.div x (Rune.scalar device dtype 255.0) else x
+  in
   Printf.printf "[Kaun_datasets.mnist] Normalization in %.3fs\n%!"
     (Unix.gettimeofday () -. norm_start);
 
