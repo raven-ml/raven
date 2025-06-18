@@ -146,6 +146,7 @@ let op_pad t padding fill_value =
     | _ -> false
   in
   let dtype_size = Internal.sizeof_dtype t.dtype in
+  (* TODO: why are we converting to float here? *)
   let fill_value_float =
     if is_float_dtype t.dtype then Obj.magic fill_value
     else if dtype_size = 8 then
