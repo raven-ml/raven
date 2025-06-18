@@ -220,8 +220,10 @@ let op_assign dst src = Ops_special.assign dst.context dst src
 let op_gather data indices axis =
   Ops_special.gather data.context data indices axis
 
-let op_scatter data_template indices updates axis =
-  Ops_special.scatter data_template.context data_template indices updates axis
+let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
+    updates axis =
+  Ops_special.scatter ~mode ~unique_indices data_template.context data_template
+    indices updates axis
 
 let op_threefry key counter = Ops_special.threefry key.context key counter
 

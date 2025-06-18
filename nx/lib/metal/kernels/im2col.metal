@@ -48,7 +48,7 @@ kernel void unfold_float(device float* out [[buffer(0)]],
     uint input_coords[16];
     bool in_bounds = true;
     for (uint i = 0; i < n_spatial; i++) {
-        int coord = block_coords[i] * stride[i] + kernel_coords[i] * dilation[i];
+        int coord = int(block_coords[i]) * int(stride[i]) + int(kernel_coords[i]) * int(dilation[i]);
         // Check if coordinate is within the padded input bounds
         if (coord < 0 || coord >= int(in_shape[2+i])) {
             in_bounds = false;
@@ -134,7 +134,7 @@ kernel void fold_float(device float* out [[buffer(0)]],
         uint kernel_multiplier = 1;
         
         for (int i = n_spatial - 1; i >= 0; i--) {
-            int block_start = block_coords[i] * stride[i];
+            int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
             // Check if position is within this block's receptive field
@@ -212,7 +212,7 @@ kernel void unfold_int(device int* out [[buffer(0)]],
     uint input_coords[16];
     bool in_bounds = true;
     for (uint i = 0; i < n_spatial; i++) {
-        int coord = block_coords[i] * stride[i] + kernel_coords[i] * dilation[i];
+        int coord = int(block_coords[i]) * int(stride[i]) + int(kernel_coords[i]) * int(dilation[i]);
         if (coord < 0 || coord >= int(in_shape[2+i])) {
             in_bounds = false;
             break;
@@ -287,7 +287,7 @@ kernel void fold_int(device int* out [[buffer(0)]],
         uint kernel_multiplier = 1;
         
         for (int i = n_spatial - 1; i >= 0; i--) {
-            int block_start = block_coords[i] * stride[i];
+            int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
             if (rel_pos < 0 || rel_pos % dilation[i] != 0) {
@@ -363,7 +363,7 @@ kernel void unfold_double(device double* out [[buffer(0)]],
     uint padded_coords[16];
     bool in_bounds = true;
     for (uint i = 0; i < n_spatial; i++) {
-        int coord = block_coords[i] * stride[i] + kernel_coords[i] * dilation[i];
+        int coord = int(block_coords[i]) * int(stride[i]) + int(kernel_coords[i]) * int(dilation[i]);
         if (coord < int(padding[2*i]) || coord >= int(padding[2*i] + in_shape[2+i])) {
             in_bounds = false;
             break;
@@ -438,7 +438,7 @@ kernel void fold_double(device double* out [[buffer(0)]],
         uint kernel_multiplier = 1;
         
         for (int i = n_spatial - 1; i >= 0; i--) {
-            int block_start = block_coords[i] * stride[i];
+            int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
             if (rel_pos < 0 || rel_pos % dilation[i] != 0) {
@@ -512,7 +512,7 @@ kernel void unfold_long(device long* out [[buffer(0)]],
     uint input_coords[16];
     bool in_bounds = true;
     for (uint i = 0; i < n_spatial; i++) {
-        int coord = block_coords[i] * stride[i] + kernel_coords[i] * dilation[i];
+        int coord = int(block_coords[i]) * int(stride[i]) + int(kernel_coords[i]) * int(dilation[i]);
         if (coord < 0 || coord >= int(in_shape[2+i])) {
             in_bounds = false;
             break;
@@ -587,7 +587,7 @@ kernel void fold_long(device long* out [[buffer(0)]],
         uint kernel_multiplier = 1;
         
         for (int i = n_spatial - 1; i >= 0; i--) {
-            int block_start = block_coords[i] * stride[i];
+            int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
             if (rel_pos < 0 || rel_pos % dilation[i] != 0) {

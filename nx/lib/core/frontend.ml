@@ -2479,7 +2479,10 @@ module Make (B : Backend_intf.S) = struct
       let y_flat = reshape [| 1 |] y in
 
       (* Scatter and reshape back *)
-      let result_flat = B.op_scatter x_flat scatter_indices y_flat 0 in
+      let result_flat =
+        B.op_scatter ~mode:`Set ~unique_indices:false x_flat scatter_indices
+          y_flat 0
+      in
       let result = reshape x_shape result_flat in
       blit result x)
     else
@@ -2592,7 +2595,10 @@ module Make (B : Backend_intf.S) = struct
 
         (* Flatten x, scatter, reshape back *)
         let x_flat = reshape [| Array.fold_left ( * ) 1 x_shape |] x in
-        let result_flat = B.op_scatter x_flat scatter_indices y_flat 0 in
+        let result_flat =
+          B.op_scatter ~mode:`Set ~unique_indices:false x_flat scatter_indices
+            y_flat 0
+        in
         let result = reshape x_shape result_flat in
         blit result x
 

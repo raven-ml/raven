@@ -2484,11 +2484,18 @@ DEFINE_GATHER_OP(int64_t, int32_t)
 DEFINE_GATHER_OP(c32_t, int32_t)
 DEFINE_GATHER_OP(c64_t, int32_t)
 
+// Scatter computation modes
+typedef enum {
+  SCATTER_REPLACE = 0,
+  SCATTER_ADD     = 1
+} scatter_computation_t;
+
 // Scatter operation implementation
 #define DEFINE_SCATTER_OP(CTYPE, ITYPE)                                  \
   static void nx_cblas_scatter_##CTYPE(                                  \
       const ndarray_t *template, const ndarray_t *indices,               \
-      const ndarray_t *updates, const ndarray_t *out, int axis) {        \
+      const ndarray_t *updates, const ndarray_t *out, int axis,          \
+      scatter_computation_t computation) {        \
     /* First copy template to output (already done in OCaml) */          \
     /* Now scatter updates */                                            \
     long updates_size = 1;                                               \
@@ -2496,6 +2503,21 @@ DEFINE_GATHER_OP(c64_t, int32_t)
       updates_size *= updates->shape[i];                                 \
     }                                                                    \
     if (updates_size == 0) return;                                       \
+    /* Debug: Print scatter info */                                      \
+    if (0) { /* Enable for debugging */                                 \
+      printf("Scatter: updates_size=%ld, mode=%d, axis=%d\\n",           \
+             updates_size, computation, axis);                           \
+      printf("  updates shape: ");                                       \
+      for (int i = 0; i < updates->ndim; i++) {                          \
+        printf("%d ", updates->shape[i]);                                \
+      }                                                                  \
+      printf("\\n");                                                      \
+      printf("  indices shape: ");                                       \
+      for (int i = 0; i < indices->ndim; i++) {                          \
+        printf("%d ", indices->shape[i]);                                \
+      }                                                                  \
+      printf("\\n");                                                      \
+    }                                       \
                                                                          \
     const ITYPE *indices_ptr = (const ITYPE *)indices->data;             \
     const CTYPE *updates_ptr = (const CTYPE *)updates->data;             \
@@ -2504,8 +2526,8 @@ DEFINE_GATHER_OP(c64_t, int32_t)
     int template_size_at_axis = template->shape[axis];                   \
                                                                          \
     /* Stack allocation for work arrays */                               \
-    int md_idx[updates->ndim];                                           \
-    int dst_idx[template->ndim];                                         \
+    int md_idx[updates->ndim > 0 ? updates->ndim : 1];                  \
+    int dst_idx[template->ndim > 0 ? template->ndim : 1];                                         \
                                                                          \
     /* Process each update sequentially (order matters for scatter) */   \
     for (long linear_idx = 0; linear_idx < updates_size; linear_idx++) { \
@@ -2523,20 +2545,24 @@ DEFINE_GATHER_OP(c64_t, int32_t)
       }                                                                  \
       int idx_value = (int)indices_ptr[indices_offset];                  \
                                                                          \
-      /* Handle negative indices and clamp */                            \
+      /* Handle negative indices */                                      \
       int normalized_idx =                                               \
           idx_value < 0 ? idx_value + template_size_at_axis : idx_value; \
-      int clamped_idx = normalized_idx < 0                               \
-                            ? 0                                          \
-                            : (normalized_idx >= template_size_at_axis   \
-                                   ? template_size_at_axis - 1           \
-                                   : normalized_idx);                    \
+                                                                         \
+      /* Check bounds - skip this update if out of bounds */            \
+      if (normalized_idx < 0 || normalized_idx >= template_size_at_axis) { \
+        continue;                                                        \
+      }                                                                  \
                                                                          \
       /* Build destination index */                                      \
-      for (int d = 0; d < template->ndim; d++) {                         \
-        dst_idx[d] = md_idx[d];                                          \
-      }                                                                  \
-      dst_idx[axis] = clamped_idx;                                       \
+      int i_updates = 0;                                                 \
+      for (int i_template = 0; i_template < template->ndim; i_template++) { \
+        if (i_template == axis) {                                        \
+          dst_idx[i_template] = normalized_idx;                         \
+        } else {                                                         \
+          dst_idx[i_template] = md_idx[i_updates++];                    \
+        }                                                                \
+      }                                       \
                                                                          \
       /* Get update value */                                             \
       long updates_offset = updates->offset;                             \
@@ -2550,7 +2576,14 @@ DEFINE_GATHER_OP(c64_t, int32_t)
         out_offset += dst_idx[d] * out->strides[d];                      \
       }                                                                  \
                                                                          \
-      out_ptr[out_offset] = updates_ptr[updates_offset];                 \
+      switch (computation) {                                             \
+        case SCATTER_REPLACE:                                            \
+          out_ptr[out_offset] = updates_ptr[updates_offset];            \
+          break;                                                         \
+        case SCATTER_ADD:                                                \
+          out_ptr[out_offset] += updates_ptr[updates_offset];           \
+          break;                                                         \
+      }                 \
     }                                                                    \
   }
 
@@ -2714,66 +2747,67 @@ CAMLprim value caml_nx_gather(value v1, value v2, value v3, value v4, value v5,
 
 // Scatter dispatch
 CAMLprim value caml_nx_scatter_bc(value *argv, int argn) {
-  int ndim = Int_val(argv[0]);
-  value vShape = argv[1];
-  value vTemplate = argv[2], vTemplateStrides = argv[3],
-        vTemplateOffset = argv[4];
-  value vIndices = argv[5], vIndicesStrides = argv[6], vIndicesOffset = argv[7];
-  value vUpdates = argv[8], vUpdatesStrides = argv[9],
-        vUpdatesOffset = argv[10];
-  int axis = Int_val(argv[11]);
-  value vOutput = argv[12], vOutputStrides = argv[13], vOutputOffset = argv[14];
+  int template_ndim = Int_val(argv[0]);
+  value vTemplateShape = argv[1];
+  int indices_ndim = Int_val(argv[2]);
+  value vIndicesShape = argv[3];
+  value vTemplate = argv[4], vTemplateStrides = argv[5],
+        vTemplateOffset = argv[6];
+  value vIndices = argv[7], vIndicesStrides = argv[8], vIndicesOffset = argv[9];
+  value vUpdates = argv[10], vUpdatesStrides = argv[11],
+        vUpdatesOffset = argv[12];
+  int axis = Int_val(argv[13]);
+  value vOutput = argv[14], vOutputStrides = argv[15], vOutputOffset = argv[16];
+  int computation_mode = Int_val(argv[17]);
 
-  if (ndim < 1) {
+  if (template_ndim < 1 || indices_ndim < 1) {
     caml_failwith("scatter: ndim must be at least 1");
   }
 
   // Get shapes for template and updates/indices
-  int template_shape[ndim], updates_shape[ndim];
-  for (int i = 0; i < ndim; ++i) template_shape[i] = Int_val(Field(vShape, i));
+  int template_shape[template_ndim], indices_shape[indices_ndim];
+  for (int i = 0; i < template_ndim; ++i) 
+    template_shape[i] = Int_val(Field(vTemplateShape, i));
+  for (int i = 0; i < indices_ndim; ++i) 
+    indices_shape[i] = Int_val(Field(vIndicesShape, i));
 
-  // Updates and indices have same shape
-  struct caml_ba_array *ba_updates = Caml_ba_array_val(vUpdates);
-  for (int i = 0; i < ndim; ++i) {
-    updates_shape[i] = ba_updates->dim[i];
-  }
-
-  int template_strides[ndim], indices_strides[ndim], updates_strides[ndim],
-      output_strides[ndim];
-  for (int i = 0; i < ndim; ++i)
+  int template_strides[template_ndim], indices_strides[indices_ndim], 
+      updates_strides[indices_ndim], output_strides[template_ndim];
+  for (int i = 0; i < template_ndim; ++i)
     template_strides[i] = Int_val(Field(vTemplateStrides, i));
-  for (int i = 0; i < ndim; ++i)
+  for (int i = 0; i < indices_ndim; ++i)
     indices_strides[i] = Int_val(Field(vIndicesStrides, i));
-  for (int i = 0; i < ndim; ++i)
+  for (int i = 0; i < indices_ndim; ++i)
     updates_strides[i] = Int_val(Field(vUpdatesStrides, i));
-  for (int i = 0; i < ndim; ++i)
+  for (int i = 0; i < template_ndim; ++i)
     output_strides[i] = Int_val(Field(vOutputStrides, i));
 
   struct caml_ba_array *ba_template = Caml_ba_array_val(vTemplate);
   struct caml_ba_array *ba_indices = Caml_ba_array_val(vIndices);
+  struct caml_ba_array *ba_updates = Caml_ba_array_val(vUpdates);
   struct caml_ba_array *ba_output = Caml_ba_array_val(vOutput);
 
   ndarray_t template_arr, indices_arr, updates_arr, output_arr;
   template_arr.data = ba_template->data;
-  template_arr.ndim = ndim;
+  template_arr.ndim = template_ndim;
   template_arr.shape = template_shape;
   template_arr.strides = template_strides;
   template_arr.offset = Int_val(vTemplateOffset);
 
   indices_arr.data = ba_indices->data;
-  indices_arr.ndim = ndim;
-  indices_arr.shape = updates_shape;  // Same shape as updates
+  indices_arr.ndim = indices_ndim;
+  indices_arr.shape = indices_shape;
   indices_arr.strides = indices_strides;
   indices_arr.offset = Int_val(vIndicesOffset);
 
   updates_arr.data = ba_updates->data;
-  updates_arr.ndim = ndim;
-  updates_arr.shape = updates_shape;
+  updates_arr.ndim = indices_ndim;  // Updates have same shape as indices
+  updates_arr.shape = indices_shape;  // Same shape as indices
   updates_arr.strides = updates_strides;
   updates_arr.offset = Int_val(vUpdatesOffset);
 
   output_arr.data = ba_output->data;
-  output_arr.ndim = ndim;
+  output_arr.ndim = template_ndim;
   output_arr.shape = template_shape;  // Output has shape of template
   output_arr.strides = output_strides;
   output_arr.offset = Int_val(vOutputOffset);
@@ -2785,31 +2819,31 @@ CAMLprim value caml_nx_scatter_bc(value *argv, int argn) {
   switch (kind) {
     case CAML_BA_FLOAT32:
       nx_cblas_scatter_float(&template_arr, &indices_arr, &updates_arr,
-                             &output_arr, axis);
+                             &output_arr, axis, (scatter_computation_t)computation_mode);
       break;
     case CAML_BA_FLOAT64:
       nx_cblas_scatter_double(&template_arr, &indices_arr, &updates_arr,
-                              &output_arr, axis);
+                              &output_arr, axis, (scatter_computation_t)computation_mode);
       break;
     case CAML_BA_UINT8:
       nx_cblas_scatter_uint8_t(&template_arr, &indices_arr, &updates_arr,
-                               &output_arr, axis);
+                               &output_arr, axis, (scatter_computation_t)computation_mode);
       break;
     case CAML_BA_INT32:
       nx_cblas_scatter_int32_t(&template_arr, &indices_arr, &updates_arr,
-                               &output_arr, axis);
+                               &output_arr, axis, (scatter_computation_t)computation_mode);
       break;
     case CAML_BA_INT64:
       nx_cblas_scatter_int64_t(&template_arr, &indices_arr, &updates_arr,
-                               &output_arr, axis);
+                               &output_arr, axis, (scatter_computation_t)computation_mode);
       break;
     case CAML_BA_COMPLEX32:
       nx_cblas_scatter_c32_t(&template_arr, &indices_arr, &updates_arr,
-                             &output_arr, axis);
+                             &output_arr, axis, (scatter_computation_t)computation_mode);
       break;
     case CAML_BA_COMPLEX64:
       nx_cblas_scatter_c64_t(&template_arr, &indices_arr, &updates_arr,
-                             &output_arr, axis);
+                             &output_arr, axis, (scatter_computation_t)computation_mode);
       break;
     default:
       caml_leave_blocking_section();
@@ -2823,10 +2857,11 @@ CAMLprim value caml_nx_scatter_bc(value *argv, int argn) {
 CAMLprim value caml_nx_scatter(value v1, value v2, value v3, value v4, value v5,
                                value v6, value v7, value v8, value v9,
                                value v10, value v11, value v12, value v13,
-                               value v14, value v15) {
-  value argv[15] = {v1, v2,  v3,  v4,  v5,  v6,  v7, v8,
-                    v9, v10, v11, v12, v13, v14, v15};
-  return caml_nx_scatter_bc(argv, 15);
+                               value v14, value v15, value v16, value v17,
+                               value v18) {
+  value argv[18] = {v1, v2,  v3,  v4,  v5,  v6,  v7, v8, v9,
+                    v10, v11, v12, v13, v14, v15, v16, v17, v18};
+  return caml_nx_scatter_bc(argv, 18);
 }
 
 // Matrix multiplication implementation

@@ -188,14 +188,19 @@ module type S = sig
       [indices] dims != [axis] must be <= [data] corresponding dims. *)
 
   val op_scatter :
+    ?mode:[ `Set | `Add ] ->
+    ?unique_indices:bool ->
     ('a, 'b) t (* data_template *) ->
     (int32, Dtype.int32_elt) t (* indices *) ->
     ('a, 'b) t (* updates *) ->
     int (* axis *) ->
     ('a, 'b) t
   (** Scatter [updates] into a new tensor shaped like [data_template] along
-      [axis] using [indices]. Returns a new tensor. If multiple updates target
-      the same index, the last one typically wins. *)
+      [axis] using [indices]. Returns a new tensor.
+      - [mode] specifies how to handle duplicate indices:
+      - [`Set] (default): last update wins
+      - [`Add]: accumulate updates at duplicate indices
+      - [unique_indices]: hint that indices are unique (optimization) *)
 
   val op_unfold :
     ('a, 'b) t ->

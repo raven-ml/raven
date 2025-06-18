@@ -436,7 +436,10 @@ let gather ctx data indices axis =
 
   out
 
-let scatter ctx data_template indices updates axis =
+let scatter ?(mode = `Set) ?(unique_indices = false) ctx data_template indices
+    updates axis =
+  let _ = unique_indices in
+  (* TODO: use this hint for optimization *)
   (* Create output initialized with data_template *)
   (* Create output initialized with data_template *)
   let out_size = Internal.numel data_template in
@@ -468,7 +471,11 @@ let scatter ctx data_template indices updates axis =
   let indices_size = Internal.numel indices in
 
   let dtype_suffix = Internal.dtype_to_metal_type data_template.dtype in
-  let kernel_name = Printf.sprintf "scatter_%s" dtype_suffix in
+  let kernel_name =
+    match mode with
+    | `Set -> Printf.sprintf "scatter_%s" dtype_suffix
+    | `Add -> Printf.sprintf "scatter_add_%s" dtype_suffix
+  in
   let func = Kernels.get_special_kernel ctx kernel_name in
   let pipeline = Kernels.create_compute_pipeline ctx.device func in
 

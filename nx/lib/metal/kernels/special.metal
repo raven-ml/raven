@@ -359,7 +359,7 @@ kernel void gather_int(device int* out [[buffer(0)]],
     out[gid] = data[data_idx];
 }
 
-// Scatter operation
+// Scatter operation - set mode
 kernel void scatter_float(device float* out [[buffer(0)]],
                          device const int* indices [[buffer(1)]],
                          device const float* updates [[buffer(2)]],
@@ -377,6 +377,26 @@ kernel void scatter_float(device float* out [[buffer(0)]],
     
     uint out_idx = uint(idx) * inner_size + inner_pos;
     out[out_idx] = updates[gid];
+}
+
+// Scatter operation - add mode
+kernel void scatter_add_float(device float* out [[buffer(0)]],
+                             device const int* indices [[buffer(1)]],
+                             device const float* updates [[buffer(2)]],
+                             constant uint& axis_size [[buffer(3)]],
+                             constant uint& inner_size [[buffer(4)]],
+                             constant uint& indices_size [[buffer(5)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= indices_size * inner_size) return;
+    
+    uint idx_pos = gid / inner_size;
+    uint inner_pos = gid % inner_size;
+    
+    int idx = indices[idx_pos];
+    if (idx < 0) idx += axis_size;
+    
+    uint out_idx = uint(idx) * inner_size + inner_pos;
+    out[out_idx] += updates[gid];
 }
 
 kernel void scatter_int(device int* out [[buffer(0)]],
@@ -398,6 +418,25 @@ kernel void scatter_int(device int* out [[buffer(0)]],
     out[out_idx] = updates[gid];
 }
 
+kernel void scatter_add_int(device int* out [[buffer(0)]],
+                           device const int* indices [[buffer(1)]],
+                           device const int* updates [[buffer(2)]],
+                           constant uint& axis_size [[buffer(3)]],
+                           constant uint& inner_size [[buffer(4)]],
+                           constant uint& indices_size [[buffer(5)]],
+                           uint gid [[thread_position_in_grid]]) {
+    if (gid >= indices_size * inner_size) return;
+    
+    uint idx_pos = gid / inner_size;
+    uint inner_pos = gid % inner_size;
+    
+    int idx = indices[idx_pos];
+    if (idx < 0) idx += axis_size;
+    
+    uint out_idx = uint(idx) * inner_size + inner_pos;
+    out[out_idx] += updates[gid];
+}
+
 kernel void scatter_uchar(device uchar* out [[buffer(0)]],
                          device const int* indices [[buffer(1)]],
                          device const uchar* updates [[buffer(2)]],
@@ -415,6 +454,25 @@ kernel void scatter_uchar(device uchar* out [[buffer(0)]],
     
     uint out_idx = uint(idx) * inner_size + inner_pos;
     out[out_idx] = updates[gid];
+}
+
+kernel void scatter_add_uchar(device uchar* out [[buffer(0)]],
+                             device const int* indices [[buffer(1)]],
+                             device const uchar* updates [[buffer(2)]],
+                             constant uint& axis_size [[buffer(3)]],
+                             constant uint& inner_size [[buffer(4)]],
+                             constant uint& indices_size [[buffer(5)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= indices_size * inner_size) return;
+    
+    uint idx_pos = gid / inner_size;
+    uint inner_pos = gid % inner_size;
+    
+    int idx = indices[idx_pos];
+    if (idx < 0) idx += axis_size;
+    
+    uint out_idx = uint(idx) * inner_size + inner_pos;
+    out[out_idx] += updates[gid];
 }
 
 // Threefry random number generator (simplified version)

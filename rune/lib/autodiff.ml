@@ -656,7 +656,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
 
             let zeros_data = T.zeros_like (value_of twg_data) in
             let scattered_grads =
-              op_scatter zeros_data indices_val d_loss_d_result axis
+              op_scatter ~mode:`Add zeros_data indices_val d_loss_d_result axis
             in
             twg_data.bv <- T.add twg_data.bv scattered_grads;
             original_forward_val)

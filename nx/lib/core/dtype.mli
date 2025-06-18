@@ -143,3 +143,10 @@ val pp_packed : Format.formatter -> packed -> unit
 
 val packed_to_string : packed -> string
 (** [packed_to_string packed] returns string representation of packed dtype. *)
+
+(** {2 Operations} *)
+
+val add : ('a, 'b) t -> 'a -> 'a -> 'a
+val sub : ('a, 'b) t -> 'a -> 'a -> 'a
+val mul : ('a, 'b) t -> 'a -> 'a -> 'a
+val div : ('a, 'b) t -> 'a -> 'a -> 'a

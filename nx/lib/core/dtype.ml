@@ -336,3 +336,69 @@ let pp_packed fmt (Pack dtype) = pp fmt dtype
 
 (* Convert packed dtype to string *)
 let packed_to_string (Pack dtype) = to_string dtype
+
+(* *)
+
+let add (type a b) (dt : (a, b) t) (x : a) (y : a) : a =
+  match dt with
+  | Float16 -> x +. y
+  | Float32 -> x +. y
+  | Float64 -> x +. y
+  | Int8 -> x + y
+  | UInt8 -> x + y
+  | Int16 -> x + y
+  | UInt16 -> x + y
+  | Int32 -> Int32.add x y
+  | Int64 -> Int64.add x y
+  | Int -> x + y
+  | NativeInt -> Nativeint.add x y
+  | Complex32 -> Complex.add x y
+  | Complex64 -> Complex.add x y
+
+let sub (type a b) (dt : (a, b) t) (x : a) (y : a) : a =
+  match dt with
+  | Float16 -> x -. y
+  | Float32 -> x -. y
+  | Float64 -> x -. y
+  | Int8 -> x - y
+  | UInt8 -> x - y
+  | Int16 -> x - y
+  | UInt16 -> x - y
+  | Int32 -> Int32.sub x y
+  | Int64 -> Int64.sub x y
+  | Int -> x - y
+  | NativeInt -> Nativeint.sub x y
+  | Complex32 -> Complex.sub x y
+  | Complex64 -> Complex.sub x y
+
+let mul (type a b) (dt : (a, b) t) (x : a) (y : a) : a =
+  match dt with
+  | Float16 -> x *. y
+  | Float32 -> x *. y
+  | Float64 -> x *. y
+  | Int8 -> x * y
+  | UInt8 -> x * y
+  | Int16 -> x * y
+  | UInt16 -> x * y
+  | Int32 -> Int32.mul x y
+  | Int64 -> Int64.mul x y
+  | Int -> x * y
+  | NativeInt -> Nativeint.mul x y
+  | Complex32 -> Complex.mul x y
+  | Complex64 -> Complex.mul x y
+
+let div (type a b) (dt : (a, b) t) (x : a) (y : a) : a =
+  match dt with
+  | Float16 -> x /. y
+  | Float32 -> x /. y
+  | Float64 -> x /. y
+  | Int8 -> x / y
+  | UInt8 -> x / y
+  | Int16 -> x / y
+  | UInt16 -> x / y
+  | Int32 -> Int32.div x y
+  | Int64 -> Int64.div x y
+  | Int -> x / y
+  | NativeInt -> Nativeint.div x y
+  | Complex32 -> Complex.div x y
+  | Complex64 -> Complex.div x y

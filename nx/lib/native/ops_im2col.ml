@@ -109,9 +109,13 @@ let kernel_unfold_float32 (input : (float, float32_elt) t)
         let valid = ref true in
         for i = 0 to num_spatial_dims - 1 do
           let coord =
-            (out_spatial_coords.(i) * stride.(i))
-            + (kernel_coords.(i) * dilation.(i))
-            - fst padding.(i)
+            Int64.(
+              to_int
+                (sub
+                   (add
+                      (mul (of_int out_spatial_coords.(i)) (of_int stride.(i)))
+                      (mul (of_int kernel_coords.(i)) (of_int dilation.(i))))
+                   (of_int (fst padding.(i)))))
           in
           if coord < 0 || coord >= input_spatial.(i) then valid := false;
           input_coords.(i) <- coord
@@ -218,9 +222,13 @@ let kernel_fold_float32 (input : (float, float32_elt) t)
         let valid = ref true in
         for i = 0 to num_spatial_dims - 1 do
           let coord =
-            (unfolded_coords.(i) * stride.(i))
-            + (kernel_coords.(i) * dilation.(i))
-            - fst padding.(i)
+            Int64.(
+              to_int
+                (sub
+                   (add
+                      (mul (of_int unfolded_coords.(i)) (of_int stride.(i)))
+                      (mul (of_int kernel_coords.(i)) (of_int dilation.(i))))
+                   (of_int (fst padding.(i)))))
           in
           if coord < 0 || coord >= output_spatial.(i) then valid := false;
           output_coords.(i) <- coord

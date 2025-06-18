@@ -622,7 +622,8 @@ let op_gather data indices axis =
     | _ -> assert false)
 
 (* Scatter operation *)
-let op_scatter data_template indices updates axis =
+let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
+    updates axis =
   try Effect.perform (E_scatter { data_template; indices; updates; axis })
   with Effect.Unhandled _ -> (
     (* Ensure all three tensors are on the same device *)
@@ -632,11 +633,11 @@ let op_scatter data_template indices updates axis =
     let upd = to_device ctx updates in
     match (tmpl, idx, upd) with
     | Native_tensor t, Native_tensor i, Native_tensor u ->
-        Native_tensor (Nx_native.op_scatter t i u axis)
+        Native_tensor (Nx_native.op_scatter ~mode ~unique_indices t i u axis)
     | Metal_tensor t, Metal_tensor i, Metal_tensor u ->
-        Metal_tensor (Rune_metal.op_scatter t i u axis)
+        Metal_tensor (Rune_metal.op_scatter ~mode ~unique_indices t i u axis)
     | Cblas_tensor t, Cblas_tensor i, Cblas_tensor u ->
-        Cblas_tensor (Rune_cblas.op_scatter t i u axis)
+        Cblas_tensor (Rune_cblas.op_scatter ~mode ~unique_indices t i u axis)
     | _ -> assert false)
 
 (* Threefry operation *)

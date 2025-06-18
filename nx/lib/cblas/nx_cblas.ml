@@ -391,20 +391,41 @@ external gather :
 
 external scatter :
   int ->
+  (* template_ndim *)
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
-  int array ->
+  (* template_shape *)
   int ->
+  (* indices_ndim *)
+  int array ->
+  (* indices_shape *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* template buffer *)
+  int array ->
+  (* template strides *)
+  int ->
+  (* template offset *)
   (int32, Bigarray.int32_elt, 'c) Bigarray.Array1.t ->
+  (* indices buffer *)
   int array ->
+  (* indices strides *)
   int ->
+  (* indices offset *)
   ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* updates buffer *)
   int array ->
+  (* updates strides *)
   int ->
+  (* updates offset *)
   int ->
+  (* axis *)
   ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* output buffer *)
   int array ->
+  (* output strides *)
   int ->
+  (* output offset *)
+  int ->
+  (* computation mode *)
   unit = "caml_nx_scatter_bc" "caml_nx_scatter"
 
 type ('a, 'b) buffer = ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
@@ -688,7 +709,10 @@ let op_gather data indices axis =
     (View.offset result.view);
   result
 
-let op_scatter data_template indices updates axis =
+let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
+    updates axis =
+  let _ = unique_indices in
+  (* TODO: use this hint for optimization *)
   (* Validate axis *)
   let template_ndim = View.ndim data_template.view in
   let axis = if axis < 0 then axis + template_ndim else axis in
@@ -707,9 +731,19 @@ let op_scatter data_template indices updates axis =
         failwith "op_scatter: updates shape incompatible with template shape")
     updates_shape;
 
+  (* Convert mode to integer *)
+  let computation_mode =
+    match mode with
+    | `Set -> 0 (* SCATTER_REPLACE *)
+    | `Add -> 1 (* SCATTER_ADD *)
+  in
+
   (* Create output as copy of template *)
   let result = op_copy data_template in
-  scatter template_ndim template_shape data_template.buffer
+  let indices_ndim = View.ndim indices.view in
+  let indices_shape = View.shape indices.view in
+  scatter template_ndim template_shape indices_ndim indices_shape
+    data_template.buffer
     (View.strides data_template.view)
     (View.offset data_template.view)
     indices.buffer
@@ -717,7 +751,7 @@ let op_scatter data_template indices updates axis =
     (View.offset indices.view) updates.buffer
     (View.strides updates.view)
     (View.offset updates.view) axis result.buffer (View.strides result.view)
-    (View.offset result.view);
+    (View.offset result.view) computation_mode;
   result
 
 external matmul :

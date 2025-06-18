@@ -630,7 +630,12 @@ let op_gather data_t indices_t axis =
     done;
     output_t
 
-let op_scatter data_template_t indices_t updates_t axis =
+let op_scatter (type a b) ?(mode = `Set) ?(unique_indices = false)
+    (data_template_t : (a, b) Internal.t)
+    (indices_t : (int32, Dtype.int32_elt) Internal.t)
+    (updates_t : (a, b) Internal.t) axis : (a, b) Internal.t =
+  let _ = unique_indices in
+  (* TODO: use this hint for optimization *)
   let template_shape = Internal.shape data_template_t in
   let indices_shape = Internal.shape indices_t in
   let updates_shape = Internal.shape updates_t in
@@ -701,12 +706,14 @@ let op_scatter data_template_t indices_t updates_t axis =
         (* Write update value to output if destination is valid *)
         if View.is_valid output_view dst_idx then
           let updates_offset = View.linear_index updates_view md_idx in
-          let update_value =
-            Bigarray.Array1.unsafe_get updates_buffer updates_offset
-          in
+          let uv = Bigarray.Array1.unsafe_get updates_buffer updates_offset in
           let output_offset = View.linear_index output_view dst_idx in
-          Bigarray.Array1.unsafe_set output_buffer output_offset update_value)
-      (* Out of bounds indices are silently ignored *)
+          match mode with
+          | `Set -> Bigarray.Array1.unsafe_set output_buffer output_offset uv
+          | `Add ->
+              let cv = Bigarray.Array1.unsafe_get output_buffer output_offset in
+              let sum = Dtype.add data_template_t.dtype cv uv in
+              Bigarray.Array1.unsafe_set output_buffer output_offset sum)
     done;
     output_t
 

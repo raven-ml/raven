@@ -2,7 +2,7 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.metal ()
+let ctx = T.cblas
 let eps = 1e-6
 
 (* ───── basic gradients ───── *)
@@ -370,6 +370,46 @@ let test_grad_conv2d () =
   in
   check_rune ~eps "conv2d gradient with Same padding" expected_same grad_same
 
+let test_grad_avg_pool_overlapping () =
+  let eps = 1e-4 in
+  let x =
+    T.create ctx T.float32 [| 1; 1; 4; 4 |]
+      [|
+        1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.;
+      |]
+  in
+
+  (* THE ONLY CHANGE IS THE STRIDE *)
+  let f x = T.sum (T.avg_pool2d x ~kernel_size:(2, 2) ~stride:(1, 1)) in
+  let grad = T.grad f x in
+
+  (* With overlapping windows, the gradients accumulate. Each of the 9 output
+     elements contributes 0.25 to its 4 input pixels. *)
+  let expected =
+    T.create ctx T.float32 [| 1; 1; 4; 4 |]
+      [|
+        0.25;
+        0.5;
+        0.5;
+        0.25;
+        0.5;
+        1.0;
+        1.0;
+        0.5;
+        0.5;
+        1.0;
+        1.0;
+        0.5;
+        0.25;
+        0.5;
+        0.5;
+        0.25;
+      |]
+  in
+
+  (* Your code will produce a result 4x larger than this. *)
+  check_rune ~eps "avg_pool2d gradient with overlap" expected grad
+
 (* ───── composition and higher-order ───── *)
 
 let test_grad_composition () =
@@ -446,6 +486,42 @@ let test_grad_edge_cases () =
   let g = T.grad f x in
   check_scalar ~eps "grad(x²) at x=0" 0.0 (scalar_value g)
 
+let test_grad_gather_with_duplicates () =
+  let eps = 1e-4 in
+
+  let data = T.create ctx T.float32 [| 4 |] [| 10.; 20.; 30.; 40. |] in
+  (* Gather from indices 0, 2, and then 0 again. *)
+  let indices = T.create ctx T.int32 [| 3 |] [| 0l; 2l; 0l |] in
+
+  (* The forward pass will be [10., 30., 10.] *)
+  let f x = T.gather x indices ~axis:0 in
+  let grad = T.grad f data in
+
+  (*
+   * Manual Gradient Calculation:
+   *
+   * The gradient of the loss w.r.t the output is [1., 1., 1.].
+   * The gradient contributions need to be scattered back to the original `data` tensor.
+   * - The first output (10.) came from data[0]. It contributes a grad of 1.0 to data[0].
+   * - The second output (30.) came from data[2]. It contributes a grad of 1.0 to data[2].
+   * - The third output (10.) came from data[0]. It contributes a grad of 1.0 to data[0].
+   *
+   * The final gradients must be SUMMED.
+   * Grad for data[0] = 1.0 + 1.0 = 2.0
+   * Grad for data[1] = 0.0
+   * Grad for data[2] = 1.0
+   * Grad for data[3] = 0.0
+   *)
+  let expected_grad = T.create ctx T.float32 [| 4 |] [| 2.0; 0.0; 1.0; 0.0 |] in
+
+  (*
+   * WHAT YOUR BUGGY CODE WILL PRODUCE:
+   * The "scatter-write" will first write 1.0 to data[0], then it will be
+   * OVERWRITTEN by the second contribution of 1.0.
+   * Buggy result: [| 1.0; 0.0; 1.0; 0.0 |]
+   *)
+  check_rune ~eps "gather gradient with duplicate indices" expected_grad grad
+
 (* Test suite *)
 let () =
   run "Rune Autodiff Tests"
@@ -480,10 +556,16 @@ let () =
           test_case "loss functions" `Quick test_grad_loss_functions;
           test_case "pooling" `Quick test_grad_pooling;
           test_case "conv2d" `Quick test_grad_conv2d;
+          test_case "avg_pool2d overlapping" `Quick
+            test_grad_avg_pool_overlapping;
         ] );
       ( "composition and higher-order",
         [ test_case "composition patterns" `Quick test_grad_composition ] );
       ( "api functions",
         [ test_case "gradient APIs" `Quick test_grad_api_functions ] );
       ("edge cases", [ test_case "edge cases" `Quick test_grad_edge_cases ]);
+      ( "gather/scatter",
+        [
+          test_case "gather duplicates" `Quick test_grad_gather_with_duplicates;
+        ] );
     ]
