@@ -1,5 +1,7 @@
 open Kaun
 
+let device = Rune.cblas
+
 let train_xor () =
   (* Create RNG *)
   let rngs = Rngs.create ~seed:42 () in
@@ -17,12 +19,10 @@ let train_xor () =
 
   (* XOR dataset *)
   let x =
-    Rune.create Rune.native Rune.float32 [| 4; 2 |]
+    Rune.create device Rune.float32 [| 4; 2 |]
       [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |]
   in
-  let y =
-    Rune.create Rune.native Rune.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |]
-  in
+  let y = Rune.create device Rune.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
   (* Initialize model parameters *)
   let params = init model ~rngs x in

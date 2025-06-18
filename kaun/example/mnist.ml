@@ -18,12 +18,13 @@ let model =
     ]
 
 let metrics = Metrics.create [ Metrics.avg "loss"; Metrics.accuracy "accuracy" ]
+let device = Rune.cblas
 
 let train () =
   (* Datasets *)
   Printf.printf "Creating datasets...\n%!";
   let start = Unix.gettimeofday () in
-  let train_data = Kaun_datasets.mnist ~train:true ~flatten:false () in
+  let train_data = Kaun_datasets.mnist ~train:true ~flatten:false ~device () in
   Printf.printf "  MNIST train data loaded in %.2fs\n%!"
     (Unix.gettimeofday () -. start);
 
@@ -42,7 +43,8 @@ let train () =
 
   let start = Unix.gettimeofday () in
   let test_ds =
-    Kaun_datasets.mnist ~train:false ~flatten:false () |> Dataset.batch_xy 100
+    Kaun_datasets.mnist ~train:false ~flatten:false ~device ()
+    |> Dataset.batch_xy 100
   in
   Printf.printf "Test dataset created in %.2fs\n%!"
     (Unix.gettimeofday () -. start);
@@ -50,7 +52,7 @@ let train () =
   (* Initialize model with dummy input to get params *)
   Printf.printf "Initializing model...\n%!";
   let start = Unix.gettimeofday () in
-  let dummy_input = Rune.zeros Rune.native Rune.float32 [| 1; 1; 28; 28 |] in
+  let dummy_input = Rune.zeros device Rune.float32 [| 1; 1; 28; 28 |] in
   let params = init model ~rngs dummy_input in
   let optimizer = Optimizer.create (Optimizer.adam ~lr:0.001 ()) in
   Printf.printf "Model initialized in %.2fs\n%!" (Unix.gettimeofday () -. start);
@@ -102,8 +104,11 @@ let train () =
         (* Print timing for first few batches and every 100th batch *)
         if !batch_count <= 3 || !batch_count mod 100 = 0 then
           Printf.printf
-            "  Batch %d: %.3fs (fwd+bwd: %.3fs, opt: %.3fs, metric: %.3fs)\n%!"
-            !batch_count batch_time fwd_bwd_time opt_time metric_time)
+            "  Batch %d: %.3fs (fwd+bwd: %.3fs, opt: %.3fs, metric: %.3fs) - \
+             Loss: %.4f\n\
+             %!"
+            !batch_count batch_time fwd_bwd_time opt_time metric_time
+            (Rune.unsafe_get [] loss))
       train_ds;
 
     (* Print training metrics *)
