@@ -1,117 +1,49 @@
-open Quill_markdown
-
 type msg =
-  | Focus_inline_by_id of int
-  | Focus_block_by_id of int
-  | Set_document of block list
-  | Replace_block_codeblock of int
-  | Split_block of int * int * int
-  | Update_codeblock of int * string
-  | Code_execution_finished of int * Quill_api.code_execution_result
+  | Execute_command of Quill.Command.t
+  | Code_execution_finished of Quill.Document.block_id * Quill_api.code_execution_result
+  | Set_document_markdown of string
+  | Execute_block of Quill.Document.block_id
+  | Execute_all
 
 let log fmt =
   Printf.ksprintf (fun s -> Brr.Console.(log [ Jstr.v ("[update] " ^ s) ])) fmt
 
-let rec update_codeblock (block : block) (target_id : int) (new_code : string) :
-    block =
-  if block.id = target_id then
-    match block.content with
-    | Codeblock { output; _ } ->
-        { block with content = Codeblock { code = new_code; output } }
-    | _ -> block
-  else
-    match block.content with
-    | Blocks bs ->
-        {
-          block with
-          content =
-            Blocks
-              (List.map (fun b -> update_codeblock b target_id new_code) bs);
-        }
-    | _ -> block
-
-let focus_inline_by_id document inline_id =
-  set_focused_document_by_id (List.map clear_focus_block document) inline_id
-
-let focus_block_by_id document block_id =
-  document |> List.map clear_focus_block
-  |> List.map (fun b ->
-         if b.id = block_id then { b with focused = true } else b)
-
-let update (m : Model.t) (message : msg) : Model.t =
+let update (m : Model.t) (message : msg) : Model.t * Quill.Effect.t list =
   match message with
-  | Focus_inline_by_id inline_id ->
-      let new_document = focus_inline_by_id m.document inline_id in
-      { document = new_document }
-  | Focus_block_by_id block_id ->
-      let new_document = focus_block_by_id m.document block_id in
-      { document = new_document }
-  | Set_document docs -> { document = docs }
-  | Replace_block_codeblock block_id ->
-      let new_document =
-        List.map
-          (fun b ->
-            if b.id = block_id then
-              {
-                id = block_id;
-                content = Codeblock { code = ""; output = None };
-                focused = false;
-              }
-            else b)
-          m.document
-      in
-      { document = new_document }
-  | Update_codeblock (block_id, new_code) ->
-      let new_document =
-        List.map (fun b -> update_codeblock b block_id new_code) m.document
-      in
-      { document = new_document }
+  | Execute_command cmd ->
+      let new_state, effects = Quill.Engine.execute m.engine cmd in
+      ({ engine = new_state }, effects)
   | Code_execution_finished (block_id, result) ->
-      log "Received code execution result for block %d" block_id;
-      let output_text =
-        match (result.error, result.status) with
-        | Some err, `Error ->
-            log "Execution error for block %d: %s" block_id err;
-            "Error: " ^ err
-        | None, `Error ->
-            log "Unknown execution error for block %d" block_id;
-            "Unknown error"
-        | _, `Success ->
-            log "Execution success for block %d" block_id;
-            result.output
+      log "Received code execution result for block %d" (block_id :> int);
+      let execution_result = 
+        {
+          Quill.Execution.output = result.output;
+          error = (match result.status with
+            | `Error -> result.error
+            | `Success -> None);
+          timestamp = Brr.Performance.now_ms Brr.G.performance /. 1000.0;
+        }
       in
-      let output_block = Quill_markdown.block_of_md output_text in
-      let new_document =
-        List.map
-          (fun b -> set_codeblock_output_in_block b block_id output_block)
-          m.document
-      in
-      { document = new_document }
-  | Split_block (block_id, run_id, offset) ->
-      let new_document =
-        List.map
-          (fun b ->
-            if b.id = block_id then (
-              match Quill_markdown.find_inline_in_block b run_id with
-              | None ->
-                  log "No inline content with id %d found in block %d" run_id
-                    block_id;
-                  [ b ] (* No split if no inline content *)
-              | Some inline ->
-                  log "Splitting inline content with id %d in block %d" run_id
-                    block_id;
-                  let before, after =
-                    Quill_markdown.split_inline inline offset
-                  in
-                  let new_block1 =
-                    Quill_markdown.replace_inline_in_block b run_id before
-                  in
-                  let new_block2 =
-                    Quill_markdown.replace_inline_in_block b run_id after
-                  in
-                  [ new_block1; new_block2 ])
-            else [ b ])
-          m.document
-        |> List.flatten
-      in
-      { document = new_document }
+      (match (result.error, result.status) with
+      | Some err, `Error ->
+          log "Execution error for block %d: %s" (block_id :> int) err
+      | None, `Error ->
+          log "Unknown execution error for block %d" (block_id :> int)
+      | _, `Success ->
+          log "Execution success for block %d" (block_id :> int));
+      let cmd = Quill.Command.Set_execution_result (block_id, execution_result) in
+      let new_state, effects = Quill.Engine.execute m.engine cmd in
+      ({ engine = new_state }, effects)
+  | Set_document_markdown markdown ->
+      (* Parse markdown into Quill document *)
+      let new_document = Quill.Markdown.parse markdown in
+      let new_engine = Quill.Engine.make new_document in
+      ({ engine = new_engine }, [])
+  | Execute_block block_id ->
+      let cmd = Quill.Command.Execute_block block_id in
+      let new_state, effects = Quill.Engine.execute m.engine cmd in
+      ({ engine = new_state }, effects)
+  | Execute_all ->
+      let cmd = Quill.Command.Execute_all in
+      let new_state, effects = Quill.Engine.execute m.engine cmd in
+      ({ engine = new_state }, effects)

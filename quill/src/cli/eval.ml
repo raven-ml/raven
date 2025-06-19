@@ -1,4 +1,4 @@
-open Quill_markdown
+open Quill
 
 (* Evaluate code blocks in markdown *)
 let eval_code_block code =
@@ -16,37 +16,40 @@ let unescape_output output =
   let output = Str.global_replace (Str.regexp "\\\\\\]") "]" output in
   output
 
-let rec process_block block =
+let rec process_block (block : Document.block) : Document.block =
   match block.content with
-  | Codeblock { code; _ } -> (
+  | Codeblock { code; language = _; output = _ } -> (
       match eval_code_block code with
       | Ok output ->
           let output = unescape_output output in
           let output = String.trim output in
-          let output_block = Quill_markdown.html_block output in
+          (* Create output blocks - use HTML block to avoid escaping *)
+          let output_blocks = [
+            Document.html_block ~id:(Document.block_id_of_int 0) output
+          ] in
           {
             block with
-            content = Codeblock { code; output = Some output_block };
+            content = Codeblock { code; language = None; output = Some output_blocks };
           }
       | Error err ->
-          let error_block =
-            Quill_markdown.paragraph (Quill_markdown.run ("Error: " ^ err))
-          in
-          { block with content = Codeblock { code; output = Some error_block } }
+          let error_blocks = [
+            Document.html_block ~id:(Document.block_id_of_int 0) ("Error: " ^ err)
+          ] in
+          { block with content = Codeblock { code; language = None; output = Some error_blocks } }
       )
   | Block_quote blocks ->
       { block with content = Block_quote (List.map process_block blocks) }
-  | Blocks blocks ->
-      { block with content = Blocks (List.map process_block blocks) }
   | List (list_type, spacing, items) ->
       let processed_items = List.map (List.map process_block) items in
       { block with content = List (list_type, spacing, processed_items) }
   | _ -> block
 
 let eval_markdown md =
-  let blocks = Quill_markdown.document_of_md md in
+  let document = Markdown.parse md in
+  let blocks = Document.get_blocks document in
   let evaluated_blocks = List.map process_block blocks in
-  Quill_markdown.md_of_document evaluated_blocks
+  let new_doc = { Document.blocks = evaluated_blocks } in
+  Markdown.serialize new_doc
 
 let eval_file path =
   try

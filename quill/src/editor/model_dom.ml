@@ -1,4 +1,3 @@
-open Quill_markdown
 open Brr_ext
 
 let log fmt =
@@ -6,19 +5,19 @@ let log fmt =
     (fun s -> Brr.Console.(log [ Jstr.v ("[model_dom] " ^ s) ]))
     fmt
 
-let parse_dom (root : El.t) : Quill_markdown.block list =
+let parse_dom (root : El.t) : Quill.Document.t =
   match El.find_first_by_selector (Jstr.v "#editor") ~root with
   | None ->
       log "Could not find editor element";
-      []
+      Quill.Document.empty
   | Some editor_div ->
-      Quill_markdown.reset_ids ();
       let content = Jstr.to_string (El.text_content editor_div) in
       log "Parsing content: %s" content;
-      Quill_markdown.document_of_md (String.trim content)
+      (* Parse markdown text into Quill document *)
+      Quill.Markdown.parse (String.trim content)
 
-let rec text_length_inline inline : int =
-  match inline.inline_content with
+let rec text_length_inline (inline : Quill.Document.inline) : int =
+  match inline.content with
   | Run s -> String.length s
   | Code_span s -> 2 + String.length s
   | Emph inner -> 2 + text_length_inline inner
@@ -31,15 +30,14 @@ let rec text_length_inline inline : int =
       1 + text_length_inline text + 3 + String.length href + 1
   | Raw_html html -> String.length html
 
-and text_length_block block : int =
+and text_length_block (block : Quill.Document.block) : int =
   match block.content with
   | Paragraph inline -> text_length_inline inline + 1 (* inline + "\n" *)
   | Heading (level, inline) ->
       level + 1 + text_length_inline inline + 1 (* "# " + inline + "\n" *)
   | Codeblock { code; _ } ->
       4 + String.length code + 4 + 1 (* "```\n" + code + "\n```" + "\n" *)
-  | Blank_line () -> 1 (* "\n" *)
-  | Blocks bs -> List.fold_left (fun acc b -> acc + text_length_block b) 0 bs
+  | Blank_line -> 1 (* "\n" *)
   | Thematic_break -> 4 (* "---\n" *)
   | Block_quote blocks ->
       List.fold_left (fun acc b -> acc + 2 + text_length_block b) 0 blocks
@@ -50,10 +48,8 @@ and text_length_block block : int =
           + List.fold_left (fun acc b -> acc + 2 + text_length_block b) 0 item)
         0 items
   | Html_block html -> String.length html + 1
-  | Link_reference_definition _ ->
-      0 (* These are typically not visible in rendered output *)
 
-let rec find_in_blocks (blocks : block list) (offset : int) :
+let rec find_in_blocks (blocks : Quill.Document.block list) (offset : int) :
     (string * int) option =
   let rec loop blocks cumulative =
     match blocks with
@@ -65,7 +61,7 @@ let rec find_in_blocks (blocks : block list) (offset : int) :
   in
   loop blocks 0
 
-and find_in_block (block : block) (offset : int) : (string * int) option =
+and find_in_block (block : Quill.Document.block) (offset : int) : (string * int) option =
   match block.content with
   | Paragraph inline -> find_in_inline inline offset
   | Heading (level, inline) ->
@@ -78,11 +74,10 @@ and find_in_block (block : block) (offset : int) : (string * int) option =
       (* "```\n" *)
       let code_len = String.length code in
       if offset >= syntax_start_len && offset <= syntax_start_len + code_len
-      then Some ("block", block.id)
+      then Some ("block", (block.id :> int))
       else None
-  | Blank_line () -> if offset = 0 then Some ("block", block.id) else None
-  | Blocks bs -> find_in_blocks bs offset
-  | Thematic_break -> if offset <= 3 then Some ("block", block.id) else None
+  | Blank_line -> if offset = 0 then Some ("block", (block.id :> int)) else None
+  | Thematic_break -> if offset <= 3 then Some ("block", (block.id :> int)) else None
   | Block_quote blocks -> find_in_blocks blocks offset
   | List (_, _, items) ->
       let rec find_in_items items offset =
@@ -98,19 +93,18 @@ and find_in_block (block : block) (offset : int) : (string * int) option =
                 find_in_items rest (offset - item_len))
       in
       find_in_items items offset
-  | Html_block _ -> Some ("block", block.id)
-  | Link_reference_definition _ -> None
+  | Html_block _ -> Some ("block", (block.id :> int))
 
-and find_in_inline (inline : inline) (offset : int) : (string * int) option =
-  match inline.inline_content with
+and find_in_inline (inline : Quill.Document.inline) (offset : int) : (string * int) option =
+  match inline.content with
   | Run s ->
-      if offset <= String.length s then Some ("inline", inline.id) else None
+      if offset <= String.length s then Some ("inline", (inline.id :> int)) else None
   | Code_span s ->
       let syntax_len = 1 in
       (* "`" *)
       let content_len = String.length s in
       if offset >= syntax_len && offset <= syntax_len + content_len then
-        Some ("inline", inline.id)
+        Some ("inline", (inline.id :> int))
       else None
   | Emph inner ->
       let syntax_len = 1 in
@@ -137,8 +131,8 @@ and find_in_inline (inline : inline) (offset : int) : (string * int) option =
             else loop rest (cumulative + len)
       in
       loop items 0
-  | Break _ -> if offset = 0 then Some ("inline", inline.id) else None
+  | Break _ -> if offset = 0 then Some ("inline", (inline.id :> int)) else None
   | Image { alt; _ } -> find_in_inline alt offset
   | Link { text; _ } -> find_in_inline text offset
   | Raw_html html ->
-      if offset <= String.length html then Some ("inline", inline.id) else None
+      if offset <= String.length html then Some ("inline", (inline.id :> int)) else None

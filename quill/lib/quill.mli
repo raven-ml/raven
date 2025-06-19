@@ -78,6 +78,9 @@ module Document : sig
   val heading : id:block_id -> int -> inline -> block
   (** Create heading block *)
 
+  val html_block : id:block_id -> string -> block
+  (** Create HTML block *)
+
   val add_block : t -> block -> t
   (** Add block to document *)
 

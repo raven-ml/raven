@@ -1,3 +1,3 @@
-type t = { document : Quill_markdown.document }
+type t = { engine : Quill.Engine.state }
 
-let init = { document = Quill_markdown.init }
+let init = { engine = Quill.Engine.empty }

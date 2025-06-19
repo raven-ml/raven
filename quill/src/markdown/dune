@@ -1,4 +1,0 @@
-(library
- (name quill_markdown)
- (public_name quill.markdown)
- (libraries cmarkit))

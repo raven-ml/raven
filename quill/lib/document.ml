@@ -61,6 +61,7 @@ let codeblock ?language ?output ~id code =
   make_block ~id (Codeblock { code; language; output })
 
 let heading ~id level inline = make_block ~id (Heading (level, inline))
+let html_block ~id html = make_block ~id (Html_block html)
 let add_block doc block = { blocks = doc.blocks @ [ block ] }
 
 let rec insert_after_aux blocks block_id new_block =

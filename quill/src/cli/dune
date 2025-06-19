@@ -6,8 +6,8 @@
  (libraries
   cmdliner
   cmarkit
+  quill
   quill_server
   quill_top
   quill_top_unix
-  quill_markdown
   str))

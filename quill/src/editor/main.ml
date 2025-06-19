@@ -1,15 +1,21 @@
 open Brr
 open Quill_editor
-open Quill_markdown
 
 let log fmt =
   Printf.ksprintf (fun s -> Console.(log [ Jstr.v ("[main] " ^ s) ])) fmt
 
 let app =
-  Vdom.simple_app ~init:Model.init ~update:Update.update ~view:View.view ()
+  let update model msg =
+    let new_model, _effects = Update.update model msg in
+    (* For now, we ignore effects and handle them separately *)
+    new_model
+  in
+  Vdom.simple_app ~init:Model.init ~update ~view:View.view ()
 
-let code_execution_handler mounted_app block_id code =
-  log "Handler: Executing code for block %d" block_id;
+let code_execution_handler mounted_app (block_id : Quill.Document.block_id) code =
+  log "Handler: Executing code for block %d" (block_id :> int);
+  
+  (* Execute the code via API *)
   let result_fut = Api.execute_code code in
   Fut.await result_fut (fun result ->
       (* Determine the result (Ok or Error) *)
@@ -27,7 +33,7 @@ let code_execution_handler mounted_app block_id code =
       log
         "Handler: Future completed for block %d. Dispatching \
          Code_execution_finished."
-        block_id;
+        (block_id :> int);
       Vdom_blit.process mounted_app
         (Update.Code_execution_finished (block_id, api_result)))
 
@@ -48,8 +54,7 @@ let () =
       let fut = Api.fetch_document path in
       Fut.await fut (function
         | Ok response_text ->
-            let document = document_of_md response_text in
-            Vdom_blit.process mounted_app (Update.Set_document document)
+            Vdom_blit.process mounted_app (Update.Set_document_markdown response_text)
         | Error err ->
             Console.(
               error

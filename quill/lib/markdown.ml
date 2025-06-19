@@ -127,7 +127,11 @@ let parse markdown_text =
         Document.Heading (level, inline)
     | Block.Blank_line _ -> Document.Blank_line
     | Block.Block_quote (bq, _) ->
-        let blocks = process_blocks [ Block.Block_quote.block bq ] in
+        let inner_block = Block.Block_quote.block bq in
+        let blocks = match inner_block with
+          | Block.Blocks (blocks, _) -> process_blocks blocks
+          | single -> process_blocks [ single ]
+        in
         Document.Block_quote blocks
     | Block.Thematic_break _ -> Document.Thematic_break
     | Block.List (list', _) ->
@@ -144,7 +148,11 @@ let parse markdown_text =
         let items =
           List.map
             (fun (item, _) ->
-              let blocks = process_blocks [ Block.List_item.block item ] in
+              let inner_block = Block.List_item.block item in
+              let blocks = match inner_block with
+                | Block.Blocks (blocks, _) -> process_blocks blocks
+                | single -> process_blocks [ single ]
+              in
               blocks)
             (Block.List'.items list')
         in
@@ -314,9 +322,13 @@ let rec cmarkit_of_block_content content =
       let cmarkit_blocks =
         List.map (fun b -> cmarkit_of_block_content b.Document.content) blocks
       in
-      let combined = Block.Blocks (cmarkit_blocks, Meta.none) in
-      let bq = Block.Block_quote.make combined in
-      Block.Block_quote (bq, Meta.none)
+      (* For block quotes, we need to ensure proper nesting *)
+      let block_content = match cmarkit_blocks with
+      | [] -> Block.Blank_line ("", Meta.none)
+      | [single] -> single
+      | multiple -> Block.Blocks (multiple, Meta.none)
+      in
+      Block.Block_quote (Block.Block_quote.make block_content, Meta.none)
   | Document.Thematic_break ->
       Block.Thematic_break (Block.Thematic_break.make (), Meta.none)
   | Document.List (list_type, list_spacing, items) ->
@@ -345,6 +357,7 @@ let rec cmarkit_of_block_content content =
       let list = Block.List'.make type' ~tight cmarkit_items in
       Block.List (list, Meta.none)
   | Document.Html_block html ->
+      (* For HTML blocks, preserve the content as-is without escaping *)
       let lines =
         List.map (fun s -> (s, Meta.none)) (String.split_on_char '\n' html)
       in
