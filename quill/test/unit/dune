@@ -1,0 +1,8 @@
+(tests
+ (names
+  test_document_simple
+  test_markdown_roundtrip
+  test_cursor_movement
+  test_rich_text
+  test_block_commands)
+ (libraries quill alcotest))

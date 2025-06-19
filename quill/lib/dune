@@ -1,0 +1,4 @@
+(library
+ (name quill)
+ (public_name quill)
+ (libraries cmarkit))
