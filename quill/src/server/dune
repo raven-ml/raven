@@ -84,9 +84,9 @@
  (enabled_if
   (= %{profile} dev))
  (deps
-  ../editor/styles.css
-  ../editor/main.bc.wasm.js
-  (source_tree ../editor/main.bc.wasm.assets))
+  ../browser/styles.css
+  ../browser/main.bc.wasm.js
+  (source_tree ../browser/main.bc.wasm.assets))
  ; Generate stub in dev mode
  (action
   (with-stdout-to

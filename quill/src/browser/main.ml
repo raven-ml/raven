@@ -1,5 +1,5 @@
 open Brr
-open Quill_editor
+open Quill_browser
 
 let log fmt =
   Printf.ksprintf (fun s -> Console.(log [ Jstr.v ("[main] " ^ s) ])) fmt
