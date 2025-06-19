@@ -3,4 +3,11 @@
  (name main)
  (modes byte)
  (public_name quill)
- (libraries cmdliner cmarkit quill_server quill_top))
+ (libraries
+  cmdliner
+  cmarkit
+  quill_server
+  quill_top
+  quill_top_unix
+  quill_markdown
+  str))

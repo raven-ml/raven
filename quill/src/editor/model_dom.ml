@@ -1,4 +1,4 @@
-open Model
+open Quill_markdown
 open Brr_ext
 
 let log fmt =
@@ -6,17 +6,16 @@ let log fmt =
     (fun s -> Brr.Console.(log [ Jstr.v ("[model_dom] " ^ s) ]))
     fmt
 
-let parse_dom (root : El.t) : Model.block list =
+let parse_dom (root : El.t) : Quill_markdown.block list =
   match El.find_first_by_selector (Jstr.v "#editor") ~root with
   | None ->
       log "Could not find editor element";
       []
   | Some editor_div ->
-      Model.next_block_id_ref := 0;
-      Model.next_run_id_ref := 0;
+      Quill_markdown.reset_ids ();
       let content = Jstr.to_string (El.text_content editor_div) in
       log "Parsing content: %s" content;
-      Model.document_of_md (String.trim content)
+      Quill_markdown.document_of_md (String.trim content)
 
 let rec text_length_inline inline : int =
   match inline.inline_content with
@@ -41,6 +40,18 @@ and text_length_block block : int =
       4 + String.length code + 4 + 1 (* "```\n" + code + "\n```" + "\n" *)
   | Blank_line () -> 1 (* "\n" *)
   | Blocks bs -> List.fold_left (fun acc b -> acc + text_length_block b) 0 bs
+  | Thematic_break -> 4 (* "---\n" *)
+  | Block_quote blocks ->
+      List.fold_left (fun acc b -> acc + 2 + text_length_block b) 0 blocks
+  | List (_, _, items) ->
+      List.fold_left
+        (fun acc item ->
+          acc
+          + List.fold_left (fun acc b -> acc + 2 + text_length_block b) 0 item)
+        0 items
+  | Html_block html -> String.length html + 1
+  | Link_reference_definition _ ->
+      0 (* These are typically not visible in rendered output *)
 
 let rec find_in_blocks (blocks : block list) (offset : int) :
     (string * int) option =
@@ -71,6 +82,24 @@ and find_in_block (block : block) (offset : int) : (string * int) option =
       else None
   | Blank_line () -> if offset = 0 then Some ("block", block.id) else None
   | Blocks bs -> find_in_blocks bs offset
+  | Thematic_break -> if offset <= 3 then Some ("block", block.id) else None
+  | Block_quote blocks -> find_in_blocks blocks offset
+  | List (_, _, items) ->
+      let rec find_in_items items offset =
+        match items with
+        | [] -> None
+        | item :: rest -> (
+            match find_in_blocks item offset with
+            | Some result -> Some result
+            | None ->
+                let item_len =
+                  List.fold_left (fun acc b -> acc + text_length_block b) 0 item
+                in
+                find_in_items rest (offset - item_len))
+      in
+      find_in_items items offset
+  | Html_block _ -> Some ("block", block.id)
+  | Link_reference_definition _ -> None
 
 and find_in_inline (inline : inline) (offset : int) : (string * int) option =
   match inline.inline_content with

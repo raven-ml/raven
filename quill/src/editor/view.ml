@@ -1,4 +1,4 @@
-open Model
+open Quill_markdown
 open Update
 open Vdom
 
@@ -208,6 +208,42 @@ and blocks block_id blocks =
   let children = List.map (fun b -> block b.id b.content) blocks in
   div ~key:id ~a:[ attr "id" id ] children
 
+and block_quote block_id blocks =
+  let id = Printf.sprintf "block-%d" block_id in
+  let children = List.map (fun b -> block b.id b.content) blocks in
+  elt "blockquote" ~key:id ~a:[ attr "id" id ] children |> with_newline
+
+and thematic_break block_id =
+  let id = Printf.sprintf "block-%d" block_id in
+  elt "hr" ~key:id ~a:[ attr "id" id ] [] |> with_newline
+
+and list block_id list_type _spacing items =
+  let id = Printf.sprintf "block-%d" block_id in
+  let tag = match list_type with Unordered _ -> "ul" | Ordered _ -> "ol" in
+  let list_items =
+    List.mapi
+      (fun i item_blocks ->
+        let item_id = Printf.sprintf "%s-item-%d" id i in
+        let children = List.map (fun b -> block b.id b.content) item_blocks in
+        elt "li" ~key:item_id ~a:[ attr "id" item_id ] children)
+      items
+  in
+  elt tag ~key:id ~a:[ attr "id" id ] list_items |> with_newline
+
+and html_block block_id html =
+  let id = Printf.sprintf "block-%d" block_id in
+  (* For safety, we render HTML blocks as text in the editor *)
+  div ~key:id
+    ~a:[ attr "id" id; attr "class" "html-block" ]
+    [ elt "code" [ text html ] ]
+  |> with_newline
+
+and link_reference_definition block_id _ld =
+  (* Link reference definitions are not typically shown in the rendered
+     output *)
+  let id = Printf.sprintf "block-%d" block_id in
+  div ~key:id ~a:[ attr "id" id; bool_prop "hidden" true ] []
+
 and block block_id block_content =
   match block_content with
   | Paragraph inline -> paragraph block_id inline
@@ -215,8 +251,13 @@ and block block_id block_content =
   | Heading (level, inline) -> heading block_id level inline
   | Blocks bs -> blocks block_id bs
   | Blank_line () -> blank_line block_id
+  | Block_quote bs -> block_quote block_id bs
+  | Thematic_break -> thematic_break block_id
+  | List (list_type, spacing, items) -> list block_id list_type spacing items
+  | Html_block html -> html_block block_id html
+  | Link_reference_definition ld -> link_reference_definition block_id ld
 
-let view (model : model) : msg Vdom.vdom =
+let view (model : Model.t) : msg Vdom.vdom =
   let editor_content =
     match model.document with
     | [] -> p []

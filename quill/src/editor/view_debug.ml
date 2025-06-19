@@ -1,4 +1,4 @@
-open Model
+open Quill_markdown
 open Vdom
 
 let rec inline_to_debug_string (indent : int) (i : inline) : string =
@@ -57,7 +57,13 @@ let rec has_focused_inline (b : block) : bool =
   | Heading (_, inline) -> check_inline inline
   | Codeblock _ -> false
   | Blocks bs -> List.exists has_focused_inline bs
+  | Block_quote bs -> List.exists has_focused_inline bs
+  | List (_, _, items) ->
+      List.exists (fun item -> List.exists has_focused_inline item) items
   | Blank_line () -> false
+  | Thematic_break -> false
+  | Html_block _ -> false
+  | Link_reference_definition _ -> false
 
 let rec block_to_debug_string (indent : int) (b : block) : string =
   let indent_str = String.make (indent * 2) ' ' in
@@ -100,6 +106,43 @@ let rec block_to_debug_string (indent : int) (b : block) : string =
     | Blank_line () ->
         Printf.sprintf "%sBlank_line ()%s" indent_str
           (String.make ((indent + 1) * 2) ' ')
+    | Thematic_break -> Printf.sprintf "%sThematic_break" indent_str
+    | Block_quote blocks ->
+        let blocks_str =
+          List.map (block_to_debug_string (indent + 1)) blocks
+          |> String.concat "\n"
+        in
+        Printf.sprintf "%sBlock_quote [\n%s\n%s]" indent_str blocks_str
+          indent_str
+    | List (list_type, spacing, items) ->
+        let type_str =
+          match list_type with
+          | Unordered c -> Printf.sprintf "Unordered '%c'" c
+          | Ordered (start, c) -> Printf.sprintf "Ordered (%d, '%c')" start c
+        in
+        let spacing_str =
+          match spacing with Tight -> "Tight" | Loose -> "Loose"
+        in
+        let items_str =
+          List.map
+            (fun item ->
+              let item_str =
+                List.map (block_to_debug_string (indent + 2)) item
+                |> String.concat "\n"
+              in
+              Printf.sprintf "%s[\n%s\n%s]"
+                (String.make ((indent + 1) * 2) ' ')
+                item_str
+                (String.make ((indent + 1) * 2) ' '))
+            items
+          |> String.concat "\n"
+        in
+        Printf.sprintf "%sList (%s, %s) [\n%s\n%s]" indent_str type_str
+          spacing_str items_str indent_str
+    | Html_block html ->
+        Printf.sprintf "%sHtml_block \"%s\"" indent_str (String.escaped html)
+    | Link_reference_definition _ ->
+        Printf.sprintf "%sLink_reference_definition" indent_str
   in
   let focus_str =
     if b.focused then " [FOCUSED]"
@@ -108,11 +151,11 @@ let rec block_to_debug_string (indent : int) (b : block) : string =
   in
   Printf.sprintf "%sid=%d %s%s" indent_str b.id content focus_str
 
-let document_to_debug_string model : string =
+let document_to_debug_string (model : Model.t) : string =
   let doc_ast =
     List.map (block_to_debug_string 0) model.document |> String.concat "\n"
   in
-  let doc_str = Model.md_of_model model in
+  let doc_str = Quill_markdown.md_of_document model.document in
   Printf.sprintf "Document [\n%s\n]\n\n---\n\n%s" doc_ast doc_str
 
 let view model =
