@@ -48,10 +48,7 @@ type model =
       -> model
 
 let init (Model m) ~rngs x =
-  (* Remove: Printf.printf "[Model.init] Starting model
-     initialization...\n%!"; *)
   let result = m.init ~rngs x in
-  (* Remove: Printf.printf "[Model.init] Model initialization complete\n%!"; *)
   result
 
 let apply (Model m) params ~training ?rngs x = m.apply params ~training ?rngs x
@@ -214,18 +211,13 @@ end
 module Dataset = struct
   type 'a t = 'a Seq.t
 
-  let of_xy (x, y) =
-    (* Create a single-element sequence that will be expanded by batch_xy *)
-    Seq.return (x, y)
-
+  let of_xy (x, y) = Seq.return (x, y)
   let map f ds = Seq.map f ds
 
   (* Batch function for tensor pairs *)
   let batch_xy batch_size ds =
-    (* Note: Seq.flat_map forces evaluation of the first element *)
     Seq.flat_map
       (fun (x, y) ->
-        (* Processing tensor with shape *)
         (* Check if this is a full tensor dataset *)
         if Array.length (Rune.shape x) > 1 then
           (* This is a full dataset - create batches efficiently *)
@@ -234,53 +226,23 @@ module Dataset = struct
             if start >= n_samples then Seq.empty
             else
               let end_idx = min (start + batch_size) n_samples in
-              let batch_num = (start / batch_size) + 1 in
-              if batch_num <= 3 || batch_num mod 100 = 0 then
-                Printf.printf
-                  "[Dataset.batch_xy] Creating batch %d [%d; %d]...\n%!"
-                  batch_num start end_idx;
-              let start_time = Unix.gettimeofday () in
               let x_batch = Rune.slice [ R [ start; end_idx ] ] x in
               let y_batch = Rune.slice [ R [ start; end_idx ] ] y in
               (* Ensure batches are contiguous for operations like flatten *)
-              let x_contiguous_time = Unix.gettimeofday () in
               let x_batch =
                 if Rune.is_c_contiguous x_batch then x_batch
-                else (
-                  if batch_num <= 3 then
-                    Printf.printf
-                      "[Dataset.batch_xy] x_batch needs contiguous copy\n%!";
-                  let copy_start = Unix.gettimeofday () in
+                else
                   let result = Rune.contiguous x_batch in
-                  let copy_time = Unix.gettimeofday () -. copy_start in
-                  if batch_num <= 3 then
-                    Printf.printf
-                      "[Dataset.batch_xy] Contiguous copy took %.3fs\n%!"
-                      copy_time;
-                  result)
+                  result
               in
               let y_batch =
                 if Rune.is_c_contiguous y_batch then y_batch
-                else (
-                  if batch_num <= 3 then
-                    Printf.printf
-                      "[Dataset.batch_xy] y_batch needs contiguous copy\n%!";
-                  Rune.contiguous y_batch)
+                else Rune.contiguous y_batch
               in
-              let elapsed = Unix.gettimeofday () -. start_time in
-              if batch_num <= 3 || batch_num mod 100 = 0 then
-                Printf.printf
-                  "[Dataset.batch_xy] Batch %d created in %.3fs (contiguous: \
-                   %.3fs)\n\
-                   %!"
-                  batch_num elapsed
-                  (Unix.gettimeofday () -. x_contiguous_time);
               Seq.cons (x_batch, y_batch) (create_batches end_idx)
           in
           create_batches 0
-        else
-          (* Single sample - return as is *)
-          Seq.return (x, y))
+        else Seq.return (x, y))
       ds
 
   (* Generic batch function - for now just returns the dataset unchanged *)
@@ -300,17 +262,18 @@ end
 (* Loss module *)
 module Loss = struct
   let softmax_cross_entropy logits labels =
-    (* Assumes labels are one-hot encoded *)
-    let max_logits = Rune.max logits ~axes:[| -1 |] ~keepdims:true in
-    let exp_logits = Rune.exp (Rune.sub logits max_logits) in
-    let sum_exp = Rune.sum exp_logits ~axes:[| -1 |] ~keepdims:true in
-    let log_softmax =
-      Rune.sub logits (Rune.add max_logits (Rune.log sum_exp))
-    in
-    let loss =
-      Rune.neg (Rune.sum (Rune.mul labels log_softmax) ~axes:[| -1 |])
-    in
-    Rune.mean loss
+    Rune.debug_with_context "softmax_cross_entropy" (fun () ->
+        (* Assumes labels are one-hot encoded *)
+        let max_logits = Rune.max logits ~axes:[| -1 |] ~keepdims:true in
+        let exp_logits = Rune.exp (Rune.sub logits max_logits) in
+        let sum_exp = Rune.sum exp_logits ~axes:[| -1 |] ~keepdims:true in
+        let log_softmax =
+          Rune.sub logits (Rune.add max_logits (Rune.log sum_exp))
+        in
+        let loss =
+          Rune.neg (Rune.sum (Rune.mul labels log_softmax) ~axes:[| -1 |])
+        in
+        Rune.mean loss)
 
   let softmax_cross_entropy_with_indices logits indices =
     (* Convert indices to one-hot encoding *)
@@ -321,36 +284,39 @@ module Loss = struct
     softmax_cross_entropy logits one_hot_float
 
   let binary_cross_entropy logits labels =
-    let dtype = Rune.dtype logits in
-    let dev = Rune.device logits in
-    let one = Rune.scalar dev dtype 1.0 in
-    let log_sig = Rune.log_sigmoid logits in
-    let log_sig_neg = Rune.log_sigmoid (Rune.neg logits) in
-    let term1 = Rune.mul labels log_sig in
-    let term2 = Rune.mul (Rune.sub one labels) log_sig_neg in
-    let loss_per_example = Rune.neg (Rune.add term1 term2) in
-    Rune.mean loss_per_example
+    Rune.debug_with_context "binary_cross_entropy" (fun () ->
+        let dtype = Rune.dtype logits in
+        let dev = Rune.device logits in
+        let one = Rune.scalar dev dtype 1.0 in
+        let log_sig = Rune.log_sigmoid logits in
+        let log_sig_neg = Rune.log_sigmoid (Rune.neg logits) in
+        let term1 = Rune.mul labels log_sig in
+        let term2 = Rune.mul (Rune.sub one labels) log_sig_neg in
+        let loss_per_example = Rune.neg (Rune.add term1 term2) in
+        Rune.mean loss_per_example)
 
   let sigmoid_binary_cross_entropy logits labels =
-    (* This is the same as binary_cross_entropy but returns per-sample loss *)
-    let dtype = Rune.dtype logits in
-    let dev = Rune.device logits in
-    let one = Rune.scalar dev dtype 1.0 in
-    let log_sig = Rune.log_sigmoid logits in
-    let log_sig_neg = Rune.log_sigmoid (Rune.neg logits) in
-    let term1 = Rune.mul labels log_sig in
-    let term2 = Rune.mul (Rune.sub one labels) log_sig_neg in
-    Rune.neg (Rune.add term1 term2)
+    Rune.debug_with_context "sigmoid_binary_cross_entropy" (fun () ->
+        let dtype = Rune.dtype logits in
+        let dev = Rune.device logits in
+        let one = Rune.scalar dev dtype 1.0 in
+        let log_sig = Rune.log_sigmoid logits in
+        let log_sig_neg = Rune.log_sigmoid (Rune.neg logits) in
+        let term1 = Rune.mul labels log_sig in
+        let term2 = Rune.mul (Rune.sub one labels) log_sig_neg in
+        Rune.neg (Rune.add term1 term2))
 
   let mse predictions targets =
-    let diff = Rune.sub predictions targets in
-    let squared = Rune.mul diff diff in
-    Rune.mean squared
+    Rune.debug_with_context "mse" (fun () ->
+        let diff = Rune.sub predictions targets in
+        let squared = Rune.mul diff diff in
+        Rune.mean squared)
 
   let mae predictions targets =
-    let diff = Rune.sub predictions targets in
-    let abs_diff = Rune.abs diff in
-    Rune.mean abs_diff
+    Rune.debug_with_context "mae" (fun () ->
+        let diff = Rune.sub predictions targets in
+        let abs_diff = Rune.abs diff in
+        Rune.mean abs_diff)
 end
 
 (* Initializer module - wrapper around the Initializers module for backward
@@ -499,21 +465,24 @@ module Layer = struct
       {
         init =
           (fun (type l d) ~rngs (x : (l, d) tensor) ->
-            let rng1, _rng2 = Rngs.split rngs in
-            let dev = Rune.device x in
-            let dtype = Rune.dtype x in
-            let fan_in = in_channels * kh * kw in
-            let fan_out = out_channels * kh * kw in
-            let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
-            let weight_shape = [| out_channels; in_channels; kh; kw |] in
-            let w = Rune.rand dev dtype ~seed:rng1 weight_shape in
-            let w =
-              Rune.sub
-                (Rune.mul w (Rune.scalar dev dtype (2.0 *. limit)))
-                (Rune.scalar dev dtype limit)
-            in
-            let b = Rune.zeros dev dtype [| out_channels |] in
-            Record [ ("weight", Tensor w); ("bias", Tensor b) ]);
+            Rune.debug_with_context
+              (Printf.sprintf "conv2d_%dx%d_%dx%d_init" in_channels out_channels
+                 kh kw) (fun () ->
+                let rng1, _rng2 = Rngs.split rngs in
+                let dev = Rune.device x in
+                let dtype = Rune.dtype x in
+                let fan_in = in_channels * kh * kw in
+                let fan_out = out_channels * kh * kw in
+                let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
+                let weight_shape = [| out_channels; in_channels; kh; kw |] in
+                let w = Rune.rand dev dtype ~seed:rng1 weight_shape in
+                let w =
+                  Rune.sub
+                    (Rune.mul w (Rune.scalar dev dtype (2.0 *. limit)))
+                    (Rune.scalar dev dtype limit)
+                in
+                let b = Rune.zeros dev dtype [| out_channels |] in
+                Record [ ("weight", Tensor w); ("bias", Tensor b) ]));
         apply =
           (fun (type l d)
             (params : (l, d) params)
@@ -534,11 +503,16 @@ module Layer = struct
                   | Some (Tensor t) -> t
                   | _ -> failwith "conv2d: missing or invalid bias parameter"
                 in
-                let conv =
-                  Rune.convolve2d x w ~stride:(1, 1) ~padding_mode:`Same
-                in
-                let b_reshaped = Rune.reshape [| 1; out_channels; 1; 1 |] b in
-                Rune.add conv b_reshaped
+                Rune.debug_with_context
+                  (Printf.sprintf "conv2d_%dx%d_%dx%d" in_channels out_channels
+                     kh kw) (fun () ->
+                    let conv =
+                      Rune.convolve2d x w ~stride:(1, 1) ~padding_mode:`Same
+                    in
+                    let b_reshaped =
+                      Rune.reshape [| 1; out_channels; 1; 1 |] b
+                    in
+                    Rune.add conv b_reshaped)
             | _ -> failwith "conv2d: invalid params structure");
       }
 
@@ -558,20 +532,23 @@ module Layer = struct
       {
         init =
           (fun ~rngs x ->
-            (* Use the rngs passed during initialization *)
-            let rng1, rng2 = Rngs.split rngs in
-            let dev = Rune.device x in
-            let dtype = Rune.dtype x in
+            Rune.debug_with_context
+              (Printf.sprintf "linear_%dx%d_init" in_features out_features)
+              (fun () ->
+                (* Use the rngs passed during initialization *)
+                let rng1, rng2 = Rngs.split rngs in
+                let dev = Rune.device x in
+                let dtype = Rune.dtype x in
 
-            let w =
-              Initializer.apply weight_init rng1
-                [| in_features; out_features |]
-                dev dtype
-            in
-            let b =
-              Initializer.apply bias_init rng2 [| out_features |] dev dtype
-            in
-            Record [ ("weight", Tensor w); ("bias", Tensor b) ]);
+                let w =
+                  Initializer.apply weight_init rng1
+                    [| in_features; out_features |]
+                    dev dtype
+                in
+                let b =
+                  Initializer.apply bias_init rng2 [| out_features |] dev dtype
+                in
+                Record [ ("weight", Tensor w); ("bias", Tensor b) ]));
         apply =
           (fun (type l d)
             (params : (l, d) params)
@@ -579,21 +556,26 @@ module Layer = struct
             ?rngs:_
             (x : (l, d) tensor)
           ->
-            match params with
-            | Record fields ->
-                let w =
-                  match List.assoc_opt "weight" fields with
-                  | Some (Tensor t) -> t
-                  | _ -> failwith "linear: missing or invalid weight parameter"
-                in
-                let b =
-                  match List.assoc_opt "bias" fields with
-                  | Some (Tensor t) -> t
-                  | _ -> failwith "linear: missing or invalid bias parameter"
-                in
-                let z = Rune.matmul x w in
-                Rune.add z b
-            | _ -> failwith "linear: invalid params structure");
+            Rune.debug_with_context
+              (Printf.sprintf "linear_%dx%d" in_features out_features)
+              (fun () ->
+                match params with
+                | Record fields ->
+                    let w =
+                      match List.assoc_opt "weight" fields with
+                      | Some (Tensor t) -> t
+                      | _ ->
+                          failwith "linear: missing or invalid weight parameter"
+                    in
+                    let b =
+                      match List.assoc_opt "bias" fields with
+                      | Some (Tensor t) -> t
+                      | _ ->
+                          failwith "linear: missing or invalid bias parameter"
+                    in
+                    let z = Rune.matmul x w in
+                    Rune.add z b
+                | _ -> failwith "linear: invalid params structure"));
       }
 
   let dropout ~rate () =
@@ -628,14 +610,16 @@ module Layer = struct
       {
         init =
           (fun ~rngs x ->
-            let _rng1, _rng2 = Rngs.split rngs in
-            let dev = Rune.device x in
-            let dtype = Rune.dtype x in
-            (* Initialize scale (gamma) to 1 and bias (beta) to 0 *)
-            let scale = Rune.ones dev dtype [| num_features |] in
-            let bias = Rune.zeros dev dtype [| num_features |] in
-            (* We don't track running stats in this simple implementation *)
-            Record [ ("scale", Tensor scale); ("bias", Tensor bias) ]);
+            Rune.debug_with_context
+              (Printf.sprintf "batch_norm_%d_init" num_features) (fun () ->
+                let _rng1, _rng2 = Rngs.split rngs in
+                let dev = Rune.device x in
+                let dtype = Rune.dtype x in
+                (* Initialize scale (gamma) to 1 and bias (beta) to 0 *)
+                let scale = Rune.ones dev dtype [| num_features |] in
+                let bias = Rune.zeros dev dtype [| num_features |] in
+                (* We don't track running stats in this simple implementation *)
+                Record [ ("scale", Tensor scale); ("bias", Tensor bias) ]));
         apply =
           (fun params ~training:_ ?rngs:_ x ->
             match params with
@@ -661,27 +645,32 @@ module Layer = struct
                   | _ -> [| 0 |]
                   (* Default to first axis *)
                 in
-                let mean = Rune.mean x ~axes ~keepdims:true in
-                let variance = Rune.var x ~axes ~keepdims:true in
-                let eps = 1e-5 in
-                let dtype = Rune.dtype x in
-                let dev = Rune.device x in
-                let epsilon = Rune.scalar dev dtype eps in
-                (* Normalize *)
-                let x_normalized =
-                  Rune.div (Rune.sub x mean)
-                    (Rune.sqrt (Rune.add variance epsilon))
-                in
-                (* Scale and shift *)
-                let scale_shape =
-                  match Array.length (Rune.shape x) with
-                  | 2 -> [| 1; num_features |]
-                  | 4 -> [| 1; num_features; 1; 1 |]
-                  | _ -> [| 1; num_features |]
-                in
-                let scale_reshaped = Rune.reshape scale_shape scale in
-                let bias_reshaped = Rune.reshape scale_shape bias in
-                Rune.add (Rune.mul x_normalized scale_reshaped) bias_reshaped
+                Rune.debug_with_context
+                  (Printf.sprintf "batch_norm_%d_apply" num_features) (fun () ->
+                    (* Compute mean and variance *)
+                    let mean = Rune.mean x ~axes ~keepdims:true in
+                    let variance = Rune.var x ~axes ~keepdims:true in
+                    let eps = 1e-5 in
+                    let dtype = Rune.dtype x in
+                    let dev = Rune.device x in
+                    let epsilon = Rune.scalar dev dtype eps in
+                    (* Normalize *)
+                    let x_normalized =
+                      Rune.div (Rune.sub x mean)
+                        (Rune.sqrt (Rune.add variance epsilon))
+                    in
+                    (* Scale and shift *)
+                    let scale_shape =
+                      match Array.length (Rune.shape x) with
+                      | 2 -> [| 1; num_features |]
+                      | 4 -> [| 1; num_features; 1; 1 |]
+                      | _ -> [| 1; num_features |]
+                    in
+                    let scale_reshaped = Rune.reshape scale_shape scale in
+                    let bias_reshaped = Rune.reshape scale_shape bias in
+                    Rune.add
+                      (Rune.mul x_normalized scale_reshaped)
+                      bias_reshaped)
             | _ -> failwith "batch_norm: invalid params structure");
       }
 
@@ -749,13 +738,10 @@ module Layer = struct
       {
         init =
           (fun ~rngs x ->
-            (* Remove: Printf.printf "[Sequential.init] Initializing %d
-               layers\n%!" (List.length models); *)
             let rec init_layers models x acc layer_idx =
               match models with
               | [] -> List (List.rev acc)
               | Model m :: rest ->
-                  (* Remove all printf statements *)
                   let params = m.init ~rngs x in
                   let x' = m.apply params ~training:false x in
                   init_layers rest x' (params :: acc) (layer_idx + 1)
@@ -817,14 +803,7 @@ module Optimizer = struct
       (a, b) params -> (a, b) params -> unit =
    fun params updates ->
     match (params, updates) with
-    | Tensor t, Tensor u ->
-        (* Debug: print update direction *)
-        (if false then
-           let t_val = Rune.unsafe_get [ 0 ] (Rune.flatten t) in
-           let u_val = Rune.unsafe_get [ 0 ] (Rune.flatten u) in
-           Printf.printf "[Update] param %.6f -= %.6f -> %.6f\n" t_val u_val
-             (t_val -. u_val));
-        ignore (Rune.isub t u)
+    | Tensor t, Tensor u -> ignore (Rune.isub t u)
     | List ps, List us -> List.iter2 apply_updates_inplace ps us
     | Record ps, Record us ->
         let sorted_ps =

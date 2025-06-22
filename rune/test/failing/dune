@@ -1,7 +1,3 @@
 (executables
  (names bug_matmul_gradient_values)
  (libraries rune))
-
-(cram
- (deps
-  (glob_files *.exe)))

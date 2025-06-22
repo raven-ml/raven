@@ -80,11 +80,17 @@ let train () =
         (* Forward and backward pass *)
         let fwd_bwd_start = Unix.gettimeofday () in
         let loss, grads =
-          value_and_grad
-            (fun params ->
-              let logits = apply model params ~training:true x_batch in
-              Loss.softmax_cross_entropy_with_indices logits y_batch)
-            params
+          let loss, grads =
+            Rune.debug
+              (fun params ->
+                value_and_grad
+                  (fun params ->
+                    let logits = apply model params ~training:true x_batch in
+                    Loss.softmax_cross_entropy_with_indices logits y_batch)
+                  params)
+              params
+          in
+          (loss, grads)
         in
         let fwd_bwd_time = Unix.gettimeofday () -. fwd_bwd_start in
 
@@ -102,7 +108,7 @@ let train () =
         let batch_time = Unix.gettimeofday () -. batch_start in
 
         (* Print timing for first few batches and every 100th batch *)
-        if !batch_count <= 3 || !batch_count mod 100 = 0 then
+        if !batch_count <= 3 then
           Printf.printf
             "  Batch %d: %.3fs (fwd+bwd: %.3fs, opt: %.3fs, metric: %.3fs) - \
              Loss: %.4f\n\

@@ -46,8 +46,8 @@ let unwrap_twg (type a b) (_dtype : (a, b) Dtype.t) (any : any_t_with_grad) :
 
 (* --- Derivative definitions for UOps --- *)
 
-let deriv_neg x = T.neg (T.ones_like x)
 let ln2 = 0.693147180559945309417
+let deriv_neg x = T.neg (T.ones_like x)
 
 let deriv_log2 (type a b) (x : (a, b) T.t) : (a, b) T.t =
   (* d/dx log2(x) = 1 / (x * ln(2)) where ln(2) ≈ 0.6931 *)
@@ -118,7 +118,7 @@ let deriv_pow_wrt_op1 op1 op2 =
 let log_e_float x =
   let ctx = context x in
   let log2_x = T.log2 x in
-  let log_2 = T.full ctx (dtype x) (T.shape x) 0.693147180559945309417 in
+  let log_2 = T.full ctx (dtype x) (T.shape x) ln2 in
   T.mul log2_x log_2
 
 let deriv_pow_wrt_op2_float result_val op1 =
@@ -141,36 +141,47 @@ let prepare_grad_for_broadcast grad_output input_tensor_val axes op_keepdims
     T.reshape reduced_shape_with_kept_dims grad_output
 
 (* Helper functions to reduce boilerplate *)
-let handle_unary_op ~op ~deriv get_or_init_twg t_in_val k_continue =
+let handle_identity_gradient_op ~op_name ~op get_or_init_twg t_in_val k_continue
+    =
   let result_val = op t_in_val in
-  let twg_in = get_or_init_twg t_in_val in
-  let twg_res = get_or_init_twg result_val in
-  let original_forward_val = Effect.Deep.continue k_continue result_val in
-  let d_loss_d_result = grad_of twg_res in
-  let grad_contrib = T.mul d_loss_d_result (deriv (value_of twg_in)) in
-  twg_in.bv <- T.add twg_in.bv grad_contrib;
-  original_forward_val
+  Debug.with_context ("∇" ^ op_name) (fun () ->
+      let twg_in = get_or_init_twg t_in_val in
+      let twg_res = get_or_init_twg result_val in
+      let d_loss_d_result = grad_of twg_res in
+      twg_in.bv <- T.add twg_in.bv d_loss_d_result);
+  Effect.Deep.continue k_continue result_val
 
-let handle_binary_op ~op ~deriv_wrt_op1 ~deriv_wrt_op2 get_or_init_twg op1_val
-    op2_val k_continue =
+let handle_unary_op ~op_name ~op ~deriv get_or_init_twg t_in_val k_continue =
+  let result_val = op t_in_val in
+  Debug.with_context ("∇" ^ op_name) (fun () ->
+      let twg_in = get_or_init_twg t_in_val in
+      let twg_res = get_or_init_twg result_val in
+      let d_loss_d_result = grad_of twg_res in
+      let grad_contrib = T.mul d_loss_d_result (deriv (value_of twg_in)) in
+      twg_in.bv <- T.add twg_in.bv grad_contrib);
+  Effect.Deep.continue k_continue result_val
+
+let handle_binary_op ~op_name ~op ~deriv_wrt_op1 ~deriv_wrt_op2 get_or_init_twg
+    op1_val op2_val k_continue =
   let result_val = op op1_val op2_val in
-  let twg_op1 = get_or_init_twg op1_val in
-  let twg_op2 = get_or_init_twg op2_val in
-  let twg_res = get_or_init_twg result_val in
-  let original_forward_val = Effect.Deep.continue k_continue result_val in
-  let d_loss_d_result = grad_of twg_res in
+  Debug.with_context ("∇" ^ op_name) (fun () ->
+      let twg_op1 = get_or_init_twg op1_val in
+      let twg_op2 = get_or_init_twg op2_val in
+      let twg_res = get_or_init_twg result_val in
+      let d_loss_d_result = grad_of twg_res in
 
-  let grad_op1 =
-    T.mul d_loss_d_result (deriv_wrt_op1 (value_of twg_op1) (value_of twg_op2))
-  in
-  twg_op1.bv <- T.add twg_op1.bv grad_op1;
+      let grad_op1 =
+        T.mul d_loss_d_result
+          (deriv_wrt_op1 (value_of twg_op1) (value_of twg_op2))
+      in
+      twg_op1.bv <- T.add twg_op1.bv grad_op1;
 
-  let grad_op2 =
-    T.mul d_loss_d_result (deriv_wrt_op2 (value_of twg_op1) (value_of twg_op2))
-  in
-  twg_op2.bv <- T.add twg_op2.bv grad_op2;
-
-  original_forward_val
+      let grad_op2 =
+        T.mul d_loss_d_result
+          (deriv_wrt_op2 (value_of twg_op1) (value_of twg_op2))
+      in
+      twg_op2.bv <- T.add twg_op2.bv grad_op2);
+  Effect.Deep.continue k_continue result_val
 
 (* The main reverse-mode AD effect handler *)
 let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
@@ -195,344 +206,372 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
         Some
           (fun k ->
             let result_val = op_buffer effect_ctx dt size_in_elements in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇buffer" (fun () ->
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_const_scalar { context = effect_ctx; value; dtype = dt } ->
         Some
           (fun k ->
             let result_val = op_const_scalar effect_ctx value dt in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇const_scalar" (fun () ->
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_add { a = op1_val; b = op2_val } ->
         Some
           (fun k ->
-            let result_val = T.add op1_val op2_val in
-            let twg_op1 = get_or_init_twg op1_val in
-            let twg_op2 = get_or_init_twg op2_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            twg_op1.bv <- T.add twg_op1.bv d_loss_d_result;
-            twg_op2.bv <- T.add twg_op2.bv d_loss_d_result;
-            original_forward_val)
+            let result_val = op_add op1_val op2_val in
+            Debug.with_context "∇add" (fun () ->
+                let twg_op1 = get_or_init_twg op1_val in
+                let twg_op2 = get_or_init_twg op2_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                twg_op1.bv <- T.add twg_op1.bv d_loss_d_result;
+                twg_op2.bv <- T.add twg_op2.bv d_loss_d_result);
+            continue k result_val)
     | E_mul { a = op1_val; b = op2_val } ->
         Some
-          (handle_binary_op ~op:op_mul
+          (handle_binary_op ~op_name:"mul" ~op:op_mul
              ~deriv_wrt_op1:(fun _ op2 -> op2)
              ~deriv_wrt_op2:(fun op1 _ -> op1)
              get_or_init_twg op1_val op2_val)
     | E_neg { t_in } ->
-        Some (handle_unary_op ~op:op_neg ~deriv:deriv_neg get_or_init_twg t_in)
+        Some
+          (handle_unary_op ~op_name:"neg" ~op:op_neg ~deriv:deriv_neg
+             get_or_init_twg t_in)
     | E_log2 { t_in } ->
         Some
-          (handle_unary_op ~op:op_log2 ~deriv:deriv_log2 get_or_init_twg t_in)
+          (handle_unary_op ~op_name:"log2" ~op:op_log2 ~deriv:deriv_log2
+             get_or_init_twg t_in)
     | E_exp2 { t_in = t_in_val } ->
         Some
           (fun k ->
             let result_val = op_exp2 t_in_val in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let d_result_d_input = deriv_exp2 result_val (value_of twg_in) in
-            let grad_contrib = T.mul d_loss_d_result d_result_d_input in
-            twg_in.bv <- T.add twg_in.bv grad_contrib;
-            original_forward_val)
+            Debug.with_context "∇exp2" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let d_result_d_input =
+                  deriv_exp2 result_val (value_of twg_in)
+                in
+                let grad_contrib = T.mul d_loss_d_result d_result_d_input in
+                twg_in.bv <- T.add twg_in.bv grad_contrib);
+            continue k result_val)
     | E_sin { t_in } ->
-        Some (handle_unary_op ~op:op_sin ~deriv:deriv_sin get_or_init_twg t_in)
+        Some
+          (handle_unary_op ~op_name:"sin" ~op:op_sin ~deriv:deriv_sin
+             get_or_init_twg t_in)
     | E_sqrt { t_in = t_in_val } ->
         Some
           (fun k ->
             let result_val = T.sqrt t_in_val in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let d_result_d_input = deriv_sqrt result_val (value_of twg_in) in
-            let grad_contrib = T.mul d_loss_d_result d_result_d_input in
-            twg_in.bv <- T.add twg_in.bv grad_contrib;
-            original_forward_val)
+            Debug.with_context "∇sqrt" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let d_result_d_input =
+                  deriv_sqrt result_val (value_of twg_in)
+                in
+                let grad_contrib = T.mul d_loss_d_result d_result_d_input in
+                twg_in.bv <- T.add twg_in.bv grad_contrib);
+            continue k result_val)
     | E_recip { t_in } ->
         Some
-          (handle_unary_op ~op:op_recip ~deriv:deriv_recip get_or_init_twg t_in)
+          (handle_unary_op ~op_name:"recip" ~op:op_recip ~deriv:deriv_recip
+             get_or_init_twg t_in)
     | E_fdiv { a; b } ->
         Some
-          (handle_binary_op ~op:op_fdiv ~deriv_wrt_op1:deriv_fdiv_wrt_op1
-             ~deriv_wrt_op2:deriv_fdiv_wrt_op2 get_or_init_twg a b)
+          (handle_binary_op ~op_name:"fdiv" ~op:op_fdiv
+             ~deriv_wrt_op1:deriv_fdiv_wrt_op1 ~deriv_wrt_op2:deriv_fdiv_wrt_op2
+             get_or_init_twg a b)
     | E_pow { a = op1_val; b = op2_val } ->
         Some
           (fun k ->
             let result_val = op_pow op1_val op2_val in
-            let twg_op1 = get_or_init_twg op1_val in
-            let twg_op2 = get_or_init_twg op2_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
+            Debug.with_context "∇pow" (fun () ->
+                let twg_op1 = get_or_init_twg op1_val in
+                let twg_op2 = get_or_init_twg op2_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
 
-            let d_result_d_op1 =
-              deriv_pow_wrt_op1 (value_of twg_op1) (value_of twg_op2)
-            in
-            let grad_contrib_to_op1 = T.mul d_loss_d_result d_result_d_op1 in
-            twg_op1.bv <- T.add twg_op1.bv grad_contrib_to_op1;
+                let d_result_d_op1 =
+                  deriv_pow_wrt_op1 (value_of twg_op1) (value_of twg_op2)
+                in
+                let grad_contrib_to_op1 =
+                  T.mul d_loss_d_result d_result_d_op1
+                in
+                twg_op1.bv <- T.add twg_op1.bv grad_contrib_to_op1;
 
-            (match dtype (value_of twg_op1) with
-            | Dtype.Float32 | Dtype.Float64 ->
-                let op1_float = T.cast Dtype.float32 (value_of twg_op1) in
-                let result_float = T.cast Dtype.float32 result_val in
-                let d_result_d_op2 =
-                  deriv_pow_wrt_op2_float result_float op1_float
-                in
-                let d_result_d_op2_orig_dtype =
-                  T.cast (dtype (value_of twg_op2)) d_result_d_op2
-                in
-                let grad_contrib_to_op2 =
-                  T.mul d_loss_d_result d_result_d_op2_orig_dtype
-                in
-                twg_op2.bv <- T.add twg_op2.bv grad_contrib_to_op2
-            | _ -> ());
-
-            original_forward_val)
+                match dtype (value_of twg_op1) with
+                | Dtype.Float32 | Dtype.Float64 ->
+                    let op1_float = T.cast Dtype.float32 (value_of twg_op1) in
+                    let result_float = T.cast Dtype.float32 result_val in
+                    let d_result_d_op2 =
+                      deriv_pow_wrt_op2_float result_float op1_float
+                    in
+                    let d_result_d_op2_orig_dtype =
+                      T.cast (dtype (value_of twg_op2)) d_result_d_op2
+                    in
+                    let grad_contrib_to_op2 =
+                      T.mul d_loss_d_result d_result_d_op2_orig_dtype
+                    in
+                    twg_op2.bv <- T.add twg_op2.bv grad_contrib_to_op2
+                | _ -> ());
+            continue k result_val)
     | E_max { a = op1_val; b = op2_val } ->
         Some
           (fun k ->
             let result_val = op_max op1_val op2_val in
-            let twg_op1 = get_or_init_twg op1_val in
-            let twg_op2 = get_or_init_twg op2_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let val_op1 = value_of twg_op1 in
-            let val_op2 = value_of twg_op2 in
-            let d_result_d_op1 =
-              deriv_max_wrt_op1 val_op1 val_op2 (dtype val_op1)
-            in
-            let grad_contrib_to_op1 = T.mul d_loss_d_result d_result_d_op1 in
-            twg_op1.bv <- T.add twg_op1.bv grad_contrib_to_op1;
-            let d_result_d_op2 =
-              deriv_max_wrt_op2 val_op1 val_op2 (dtype val_op2)
-            in
-            let grad_contrib_to_op2 = T.mul d_loss_d_result d_result_d_op2 in
-            twg_op2.bv <- T.add twg_op2.bv grad_contrib_to_op2;
-            original_forward_val)
+            Debug.with_context "∇max" (fun () ->
+                let twg_op1 = get_or_init_twg op1_val in
+                let twg_op2 = get_or_init_twg op2_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let val_op1 = value_of twg_op1 in
+                let val_op2 = value_of twg_op2 in
+                let d_result_d_op1 =
+                  deriv_max_wrt_op1 val_op1 val_op2 (dtype val_op1)
+                in
+                let grad_contrib_to_op1 =
+                  T.mul d_loss_d_result d_result_d_op1
+                in
+                twg_op1.bv <- T.add twg_op1.bv grad_contrib_to_op1;
+                let d_result_d_op2 =
+                  deriv_max_wrt_op2 val_op1 val_op2 (dtype val_op2)
+                in
+                let grad_contrib_to_op2 =
+                  T.mul d_loss_d_result d_result_d_op2
+                in
+                twg_op2.bv <- T.add twg_op2.bv grad_contrib_to_op2);
+            continue k result_val)
     | E_reshape { t_in = t_in_val; new_shape } ->
         Some
           (fun k ->
             let result_val = op_reshape t_in_val new_shape in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let original_shape_in = T.shape (value_of twg_in) in
-            let grad_contrib_in = T.reshape original_shape_in d_loss_d_result in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_in;
-            original_forward_val)
+            Debug.with_context "∇reshape" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let original_shape_in = T.shape (value_of twg_in) in
+                let grad_contrib_in =
+                  T.reshape original_shape_in d_loss_d_result
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_in);
+            continue k result_val)
     | E_expand { t_in = t_in_val; new_target_shape } ->
         Some
           (fun k ->
             let result_val = op_expand t_in_val new_target_shape in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_expanded_result = grad_of twg_res in
+            Debug.with_context "∇expand" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_expanded_result = grad_of twg_res in
 
-            let grad_contrib_to_original_input =
-              let original_input_shape = T.shape (value_of twg_in) in
-              let expanded_output_shape = new_target_shape in
-              if original_input_shape = expanded_output_shape then
-                d_loss_d_expanded_result
-              else
-                let rank_orig_in = Array.length original_input_shape in
-                let rank_expanded_out = Array.length expanded_output_shape in
-                let axes_to_sum_list = ref [] in
+                let grad_contrib_to_original_input =
+                  let original_input_shape = T.shape (value_of twg_in) in
+                  let expanded_output_shape = new_target_shape in
+                  if original_input_shape = expanded_output_shape then
+                    d_loss_d_expanded_result
+                  else
+                    let rank_orig_in = Array.length original_input_shape in
+                    let rank_expanded_out =
+                      Array.length expanded_output_shape
+                    in
+                    let axes_to_sum_list = ref [] in
 
-                if rank_expanded_out > rank_orig_in then
-                  for i = 0 to rank_expanded_out - rank_orig_in - 1 do
-                    axes_to_sum_list := i :: !axes_to_sum_list
-                  done;
+                    if rank_expanded_out > rank_orig_in then
+                      for i = 0 to rank_expanded_out - rank_orig_in - 1 do
+                        axes_to_sum_list := i :: !axes_to_sum_list
+                      done;
 
-                for i = 0 to rank_orig_in - 1 do
-                  let orig_in_dim_size = original_input_shape.(i) in
-                  let expanded_out_dim_idx =
-                    i + (rank_expanded_out - rank_orig_in)
-                  in
-                  let expanded_out_dim_size =
-                    expanded_output_shape.(expanded_out_dim_idx)
-                  in
-                  if orig_in_dim_size = 1 && expanded_out_dim_size > 1 then
-                    axes_to_sum_list :=
-                      expanded_out_dim_idx :: !axes_to_sum_list
-                done;
+                    for i = 0 to rank_orig_in - 1 do
+                      let orig_in_dim_size = original_input_shape.(i) in
+                      let expanded_out_dim_idx =
+                        i + (rank_expanded_out - rank_orig_in)
+                      in
+                      let expanded_out_dim_size =
+                        expanded_output_shape.(expanded_out_dim_idx)
+                      in
+                      if orig_in_dim_size = 1 && expanded_out_dim_size > 1 then
+                        axes_to_sum_list :=
+                          expanded_out_dim_idx :: !axes_to_sum_list
+                    done;
 
-                let summed_grad =
-                  if !axes_to_sum_list <> [] then
-                    T.sum d_loss_d_expanded_result
-                      ~axes:(Array.of_list (List.rev !axes_to_sum_list))
-                      ~keepdims:true
-                  else d_loss_d_expanded_result
+                    let summed_grad =
+                      if !axes_to_sum_list <> [] then
+                        T.sum d_loss_d_expanded_result
+                          ~axes:(Array.of_list (List.rev !axes_to_sum_list))
+                          ~keepdims:true
+                      else d_loss_d_expanded_result
+                    in
+                    if T.shape summed_grad <> original_input_shape then
+                      T.reshape original_input_shape summed_grad
+                    else summed_grad
                 in
-                if T.shape summed_grad <> original_input_shape then
-                  T.reshape original_input_shape summed_grad
-                else summed_grad
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_to_original_input;
-            original_forward_val)
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_original_input);
+            continue k result_val)
     | E_reduce_sum { t_in = t_in_val; axes; keepdims } ->
         Some
           (fun k ->
             let result_val = op_reduce_sum ~axes ~keepdims t_in_val in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let original_input_shape = T.shape (value_of twg_in) in
-            let grad_prepared_for_broadcast =
-              prepare_grad_for_broadcast d_loss_d_result (value_of twg_in) axes
-                keepdims (fun t ~axes ~keepdims -> T.sum t ~axes ~keepdims)
-            in
-            let grad_contrib_to_input =
-              T.broadcast_to original_input_shape grad_prepared_for_broadcast
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_to_input;
-            original_forward_val)
+            Debug.with_context "∇reduce_sum" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let original_input_shape = T.shape (value_of twg_in) in
+                let grad_prepared_for_broadcast =
+                  prepare_grad_for_broadcast d_loss_d_result (value_of twg_in)
+                    axes keepdims (fun t ~axes ~keepdims ->
+                      T.sum t ~axes ~keepdims)
+                in
+                let grad_contrib_to_input =
+                  T.broadcast_to original_input_shape
+                    grad_prepared_for_broadcast
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            continue k result_val)
     | E_reduce_max { t_in = t_in_val; axes; keepdims } ->
         Some
           (fun k ->
             let result_val = op_reduce_max ~axes ~keepdims t_in_val in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let val_in = value_of twg_in in
-            let original_input_shape = T.shape val_in in
+            Debug.with_context "∇reduce_max" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let val_in = value_of twg_in in
+                let original_input_shape = T.shape val_in in
 
-            let grad_prepared_for_broadcast =
-              prepare_grad_for_broadcast d_loss_d_result val_in axes keepdims
-                (fun t ~axes ~keepdims -> T.max t ~axes ~keepdims)
-            in
-            let d_loss_d_result_broadcasted =
-              T.broadcast_to original_input_shape grad_prepared_for_broadcast
-            in
+                let grad_prepared_for_broadcast =
+                  prepare_grad_for_broadcast d_loss_d_result val_in axes
+                    keepdims (fun t ~axes ~keepdims -> T.max t ~axes ~keepdims)
+                in
+                let d_loss_d_result_broadcasted =
+                  T.broadcast_to original_input_shape
+                    grad_prepared_for_broadcast
+                in
 
-            let result_val_prepared_for_broadcast =
-              prepare_grad_for_broadcast result_val val_in axes keepdims
-                (fun t ~axes ~keepdims -> T.max t ~axes ~keepdims)
-            in
-            let result_val_broadcasted_for_compare =
-              T.broadcast_to original_input_shape
-                result_val_prepared_for_broadcast
-            in
+                let result_val_prepared_for_broadcast =
+                  prepare_grad_for_broadcast result_val val_in axes keepdims
+                    (fun t ~axes ~keepdims -> T.max t ~axes ~keepdims)
+                in
+                let result_val_broadcasted_for_compare =
+                  T.broadcast_to original_input_shape
+                    result_val_prepared_for_broadcast
+                in
 
-            let mask = T.equal val_in result_val_broadcasted_for_compare in
-            let d_result_d_input_mask_casted =
-              T.cast (dtype d_loss_d_result) mask
-            in
-            let grad_contrib_to_input =
-              T.mul d_loss_d_result_broadcasted d_result_d_input_mask_casted
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_to_input;
-            original_forward_val)
+                let mask = T.equal val_in result_val_broadcasted_for_compare in
+                let d_result_d_input_mask_casted =
+                  T.cast (dtype d_loss_d_result) mask
+                in
+                let grad_contrib_to_input =
+                  T.mul d_loss_d_result_broadcasted d_result_d_input_mask_casted
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            continue k result_val)
     | E_reduce_prod { t_in = t_in_val; axes; keepdims } ->
         Some
           (fun k ->
             let result_val = op_reduce_prod ~axes ~keepdims t_in_val in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let val_in = value_of twg_in in
-            let original_input_shape = T.shape val_in in
+            Debug.with_context "reduce_prod" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let val_in = value_of twg_in in
+                let original_input_shape = T.shape val_in in
 
-            let grad_prepared_for_broadcast =
-              prepare_grad_for_broadcast d_loss_d_result val_in axes keepdims
-                (fun t ~axes ~keepdims -> T.prod t ~axes ~keepdims)
-            in
-            let d_loss_d_result_broadcasted =
-              T.broadcast_to original_input_shape grad_prepared_for_broadcast
-            in
+                let grad_prepared_for_broadcast =
+                  prepare_grad_for_broadcast d_loss_d_result val_in axes
+                    keepdims (fun t ~axes ~keepdims -> T.prod t ~axes ~keepdims)
+                in
+                let d_loss_d_result_broadcasted =
+                  T.broadcast_to original_input_shape
+                    grad_prepared_for_broadcast
+                in
 
-            let result_val_prepared_for_broadcast =
-              prepare_grad_for_broadcast result_val val_in axes keepdims
-                (fun t ~axes ~keepdims -> T.prod t ~axes ~keepdims)
-            in
-            let result_val_broadcasted =
-              T.broadcast_to original_input_shape
-                result_val_prepared_for_broadcast
-            in
+                let result_val_prepared_for_broadcast =
+                  prepare_grad_for_broadcast result_val val_in axes keepdims
+                    (fun t ~axes ~keepdims -> T.prod t ~axes ~keepdims)
+                in
+                let result_val_broadcasted =
+                  T.broadcast_to original_input_shape
+                    result_val_prepared_for_broadcast
+                in
 
-            let epsilon = T.zeros_like val_in in
-            let t_in_val_safe = T.add val_in epsilon in
-            let d_result_d_input_term =
-              T.div result_val_broadcasted t_in_val_safe
-            in
-            let grad_contrib_to_input =
-              T.mul d_loss_d_result_broadcasted d_result_d_input_term
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_to_input;
-            original_forward_val)
+                let epsilon = T.zeros_like val_in in
+                let t_in_val_safe = T.add val_in epsilon in
+                let d_result_d_input_term =
+                  T.div result_val_broadcasted t_in_val_safe
+                in
+                let grad_contrib_to_input =
+                  T.mul d_loss_d_result_broadcasted d_result_d_input_term
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            continue k result_val)
     | E_permute { t_in = t_in_val; axes = permute_axes } ->
         Some
           (fun k ->
             let result_val = op_permute t_in_val permute_axes in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
+            Debug.with_context "∇permute" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
 
-            let rank = Array.length permute_axes in
-            let un_permute_axes = Array.make rank 0 in
-            Array.iteri
-              (fun i original_pos -> un_permute_axes.(original_pos) <- i)
-              permute_axes;
+                let rank = Array.length permute_axes in
+                let un_permute_axes = Array.make rank 0 in
+                Array.iteri
+                  (fun i original_pos -> un_permute_axes.(original_pos) <- i)
+                  permute_axes;
 
-            let grad_contrib_to_input =
-              T.transpose d_loss_d_result ~axes:un_permute_axes
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_to_input;
-            original_forward_val)
+                let grad_contrib_to_input =
+                  T.transpose d_loss_d_result ~axes:un_permute_axes
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            continue k result_val)
     | E_pad { t_in = t_in_val; padding_config; fill_value } ->
         Some
           (fun k ->
             let result_val = op_pad t_in_val padding_config fill_value in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let original_input_shape = T.shape (value_of twg_in) in
+            Debug.with_context "∇pad" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let original_input_shape = T.shape (value_of twg_in) in
 
-            let shrink_limits =
-              Array.mapi
-                (fun dim_idx (pad_before, _) ->
-                  (pad_before, pad_before + original_input_shape.(dim_idx)))
-                padding_config
-            in
-            let grad_contrib_to_input =
-              T.shrink shrink_limits d_loss_d_result
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_to_input;
-            original_forward_val)
+                let shrink_limits =
+                  Array.mapi
+                    (fun dim_idx (pad_before, _) ->
+                      (pad_before, pad_before + original_input_shape.(dim_idx)))
+                    padding_config
+                in
+                let grad_contrib_to_input =
+                  T.shrink shrink_limits d_loss_d_result
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            continue k result_val)
     | E_shrink { t_in = t_in_val; limits = shrink_limits } ->
         Some
           (fun k ->
             let result_val = op_shrink t_in_val shrink_limits in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let original_input_shape = T.shape (value_of twg_in) in
+            Debug.with_context "∇shrink" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let original_input_shape = T.shape (value_of twg_in) in
 
-            let padding_config =
-              Array.mapi
-                (fun dim_idx (start, stop_exclusive) ->
-                  let original_dim_size = original_input_shape.(dim_idx) in
-                  (start, original_dim_size - stop_exclusive))
-                shrink_limits
-            in
-            let zero_val = Dtype.zero (dtype d_loss_d_result) in
-            let grad_contrib_to_input =
-              T.pad padding_config zero_val d_loss_d_result
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_to_input;
-            original_forward_val)
+                let padding_config =
+                  Array.mapi
+                    (fun dim_idx (start, stop_exclusive) ->
+                      let original_dim_size = original_input_shape.(dim_idx) in
+                      (start, original_dim_size - stop_exclusive))
+                    shrink_limits
+                in
+                let zero_val = Dtype.zero (dtype d_loss_d_result) in
+                let grad_contrib_to_input =
+                  T.pad padding_config zero_val d_loss_d_result
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            continue k result_val)
     | E_flip { t_in = t_in_val; dims_to_flip } ->
         Some
           (fun k ->
@@ -542,229 +581,240 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
               |> List.filter_map Fun.id |> Array.of_list
             in
             let result_val = op_flip t_in_val dims_to_flip in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let grad_contrib_to_input =
-              T.flip d_loss_d_result ~axes:axes_to_flip
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_to_input;
-            original_forward_val)
+            Debug.with_context "∇flip" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let grad_contrib_to_input =
+                  T.flip d_loss_d_result ~axes:axes_to_flip
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            continue k result_val)
     | E_cat { t_list; axis } ->
         Some
           (fun k ->
             let result_val = op_cat t_list axis in
-            let twg_inputs = List.map get_or_init_twg t_list in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let d_loss_result_shape = T.shape d_loss_d_result in
+            Debug.with_context "∇cat" (fun () ->
+                let twg_inputs = List.map get_or_init_twg t_list in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let d_loss_result_shape = T.shape d_loss_d_result in
 
-            let current_offset = ref 0 in
-            List.iter
-              (fun twg_in_current ->
-                let input_val = value_of twg_in_current in
-                let input_shape = T.shape input_val in
-                let size_along_axis = input_shape.(axis) in
-                let shrink_limits =
-                  Array.mapi
-                    (fun i dim_size ->
-                      if i = axis then
-                        (!current_offset, !current_offset + size_along_axis)
-                      else (0, dim_size))
-                    d_loss_result_shape
-                in
-                let grad_slice_for_input =
-                  T.shrink shrink_limits d_loss_d_result
-                in
-                twg_in_current.bv <-
-                  T.add twg_in_current.bv grad_slice_for_input;
-                current_offset := !current_offset + size_along_axis)
-              twg_inputs;
-            original_forward_val)
+                let current_offset = ref 0 in
+                List.iter
+                  (fun twg_in_current ->
+                    let input_val = value_of twg_in_current in
+                    let input_shape = T.shape input_val in
+                    let size_along_axis = input_shape.(axis) in
+                    let shrink_limits =
+                      Array.mapi
+                        (fun i dim_size ->
+                          if i = axis then
+                            (!current_offset, !current_offset + size_along_axis)
+                          else (0, dim_size))
+                        d_loss_result_shape
+                    in
+                    let grad_slice_for_input =
+                      T.shrink shrink_limits d_loss_d_result
+                    in
+                    twg_in_current.bv <-
+                      T.add twg_in_current.bv grad_slice_for_input;
+                    current_offset := !current_offset + size_along_axis)
+                  twg_inputs);
+            continue k result_val)
     | E_cast { t_in = t_in_val; target_dtype } ->
         Some
           (fun k ->
             let result_val = op_cast t_in_val target_dtype in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            let original_dtype = dtype (value_of twg_in) in
-            let grad_contrib_to_input = T.cast original_dtype d_loss_d_result in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_to_input;
-            original_forward_val)
+            Debug.with_context "∇cast" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let original_dtype = dtype (value_of twg_in) in
+                let grad_contrib_to_input =
+                  T.cast original_dtype d_loss_d_result
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            continue k result_val)
     | E_contiguous { t_in = t_in_val } ->
         Some
-          (fun k ->
-            let result_val = op_contiguous t_in_val in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            twg_in.bv <- T.add twg_in.bv d_loss_d_result;
-            original_forward_val)
+          (handle_identity_gradient_op ~op_name:"contiguous" ~op:op_contiguous
+             get_or_init_twg t_in_val)
     | E_copy { t_in = t_in_val } ->
         Some
-          (fun k ->
-            let result_val = op_copy t_in_val in
-            let twg_in = get_or_init_twg t_in_val in
-            let _twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of (get_or_init_twg result_val) in
-            twg_in.bv <- T.add twg_in.bv d_loss_d_result;
-            original_forward_val)
+          (handle_identity_gradient_op ~op_name:"copy" ~op:op_copy
+             get_or_init_twg t_in_val)
     | E_where { condition = cond_val; if_true = true_val; if_false = false_val }
       ->
         Some
           (fun k ->
             let result_val = op_where cond_val true_val false_val in
-            let _twg_cond = get_or_init_twg cond_val in
-            let twg_true = get_or_init_twg true_val in
-            let twg_false = get_or_init_twg false_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
+            Debug.with_context "∇where" (fun () ->
+                let _twg_cond = get_or_init_twg cond_val in
+                let twg_true = get_or_init_twg true_val in
+                let twg_false = get_or_init_twg false_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
 
-            let condition_mask_casted =
-              T.cast (dtype d_loss_d_result) cond_val
-            in
-            let grad_contrib_to_true =
-              T.mul d_loss_d_result condition_mask_casted
-            in
-            twg_true.bv <- T.add twg_true.bv grad_contrib_to_true;
+                let condition_mask_casted =
+                  T.cast (dtype d_loss_d_result) cond_val
+                in
+                let grad_contrib_to_true =
+                  T.mul d_loss_d_result condition_mask_casted
+                in
+                twg_true.bv <- T.add twg_true.bv grad_contrib_to_true;
 
-            let ones_for_mask_dtype = T.ones_like condition_mask_casted in
-            let not_condition_mask_casted =
-              T.sub ones_for_mask_dtype condition_mask_casted
-            in
-            let grad_contrib_to_false =
-              T.mul d_loss_d_result not_condition_mask_casted
-            in
-            twg_false.bv <- T.add twg_false.bv grad_contrib_to_false;
-            original_forward_val)
+                let ones_for_mask_dtype = T.ones_like condition_mask_casted in
+                let not_condition_mask_casted =
+                  T.sub ones_for_mask_dtype condition_mask_casted
+                in
+                let grad_contrib_to_false =
+                  T.mul d_loss_d_result not_condition_mask_casted
+                in
+                twg_false.bv <- T.add twg_false.bv grad_contrib_to_false);
+            continue k result_val)
     | E_gather { data = data_val; indices = indices_val; axis } ->
         Some
           (fun k ->
             let result_val = op_gather data_val indices_val axis in
-            let twg_data = get_or_init_twg data_val in
-            let _twg_indices = get_or_init_twg indices_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
+            Debug.with_context "∇gather" (fun () ->
+                let twg_data = get_or_init_twg data_val in
+                let _twg_indices = get_or_init_twg indices_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
 
-            let zeros_data = T.zeros_like (value_of twg_data) in
-            let scattered_grads =
-              op_scatter ~mode:`Add zeros_data indices_val d_loss_d_result axis
-            in
-            twg_data.bv <- T.add twg_data.bv scattered_grads;
-            original_forward_val)
+                let zeros_data = T.zeros_like (value_of twg_data) in
+                let scattered_grads =
+                  op_scatter ~mode:`Add zeros_data indices_val d_loss_d_result
+                    axis
+                in
+                twg_data.bv <- T.add twg_data.bv scattered_grads);
+            continue k result_val)
     | E_scatter
         { data_template = dt_val; indices = idx_val; updates = upd_val; axis }
       ->
         Some
           (fun k ->
             let result_val = op_scatter dt_val idx_val upd_val axis in
-            let twg_dt = get_or_init_twg dt_val in
-            let _twg_idx = get_or_init_twg idx_val in
-            let twg_upd = get_or_init_twg upd_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
+            Debug.with_context "∇scatter" (fun () ->
+                let twg_dt = get_or_init_twg dt_val in
+                let twg_upd = get_or_init_twg upd_val in
+                let _twg_idx = get_or_init_twg idx_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
 
-            let grad_contrib_to_updates =
-              op_gather d_loss_d_result idx_val axis
-            in
-            twg_upd.bv <- T.add twg_upd.bv grad_contrib_to_updates;
+                let grad_contrib_to_updates =
+                  op_gather d_loss_d_result idx_val axis
+                in
+                twg_upd.bv <- T.add twg_upd.bv grad_contrib_to_updates;
 
-            let mask_for_dt_grad =
-              op_scatter (T.ones_like dt_val) idx_val (T.zeros_like upd_val)
-                axis
-            in
-            let grad_contrib_to_dt = T.mul d_loss_d_result mask_for_dt_grad in
-            twg_dt.bv <- T.add twg_dt.bv grad_contrib_to_dt;
-            original_forward_val)
+                let mask_for_dt_grad =
+                  op_scatter (T.ones_like dt_val) idx_val (T.zeros_like upd_val)
+                    axis
+                in
+                let grad_contrib_to_dt =
+                  T.mul d_loss_d_result mask_for_dt_grad
+                in
+                twg_dt.bv <- T.add twg_dt.bv grad_contrib_to_dt);
+            continue k result_val)
     | E_assign { dst = dst_val; src = src_val } ->
         Some
           (fun k ->
             let old_dst_val = T.copy dst_val in
             op_assign dst_val src_val;
-            let twg_dst = get_or_init_twg dst_val in
-            let twg_src = get_or_init_twg src_val in
-            let _twg_old_dst = get_or_init_twg old_dst_val in
-            let original_forward_val = continue k () in
-            twg_src.bv <- T.add twg_src.bv (grad_of twg_dst);
-            original_forward_val)
+            Debug.with_context "∇assign" (fun () ->
+                let twg_src = get_or_init_twg src_val in
+                let twg_dst = get_or_init_twg dst_val in
+                let _twg_old_dst = get_or_init_twg old_dst_val in
+                twg_src.bv <- T.add twg_src.bv (grad_of twg_dst));
+            continue k ())
     | E_idiv { a; b } ->
         Some
           (fun k ->
             let result_val = op_idiv a b in
-            let _twg_a = get_or_init_twg a in
-            let _twg_b = get_or_init_twg b in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇idiv" (fun () ->
+                let _twg_a = get_or_init_twg a in
+                let _twg_b = get_or_init_twg b in
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_mod { a; b } ->
         Some
           (fun k ->
             let result_val = T.mod_ a b in
-            let _twg_a = get_or_init_twg a in
-            let _twg_b = get_or_init_twg b in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇mod" (fun () ->
+                let _twg_a = get_or_init_twg a in
+                let _twg_b = get_or_init_twg b in
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_cmplt { a; b } ->
         Some
           (fun k ->
             let result_val = op_cmplt a b in
-            let _twg_a = get_or_init_twg a in
-            let _twg_b = get_or_init_twg b in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇cmplt" (fun () ->
+                let _twg_a = get_or_init_twg a in
+                let _twg_b = get_or_init_twg b in
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_cmpne { a; b } ->
         Some
           (fun k ->
             let result_val = op_cmpne a b in
-            let _twg_a = get_or_init_twg a in
-            let _twg_b = get_or_init_twg b in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇cmpne" (fun () ->
+                let _twg_a = get_or_init_twg a in
+                let _twg_b = get_or_init_twg b in
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_xor { a; b } ->
         Some
           (fun k ->
             let result_val = op_xor a b in
-            let _twg_a = get_or_init_twg a in
-            let _twg_b = get_or_init_twg b in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇xor" (fun () ->
+                let _twg_a = get_or_init_twg a in
+                let _twg_b = get_or_init_twg b in
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_or { a; b } ->
         Some
           (fun k ->
             let result_val = op_or a b in
-            let _twg_a = get_or_init_twg a in
-            let _twg_b = get_or_init_twg b in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇or" (fun () ->
+                let _twg_a = get_or_init_twg a in
+                let _twg_b = get_or_init_twg b in
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_and { a; b } ->
         Some
           (fun k ->
             let result_val = op_and a b in
-            let _twg_a = get_or_init_twg a in
-            let _twg_b = get_or_init_twg b in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇and" (fun () ->
+                let _twg_a = get_or_init_twg a in
+                let _twg_b = get_or_init_twg b in
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_const_array { context = effect_ctx; array } ->
         Some
           (fun k ->
             let result_val = op_const_array effect_ctx array in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇const_array" (fun () ->
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_threefry { key = key_val; ctr = ctr_val } ->
         Some
           (fun k ->
             let result_val = op_threefry key_val ctr_val in
-            let _twg_key = get_or_init_twg key_val in
-            let _twg_ctr = get_or_init_twg ctr_val in
-            let _twg_res = get_or_init_twg result_val in
+            Debug.with_context "∇threefry" (fun () ->
+                let _twg_key = get_or_init_twg key_val in
+                let _twg_ctr = get_or_init_twg ctr_val in
+                let _twg_res = get_or_init_twg result_val in
+                ());
             continue k result_val)
     | E_unfold { t_in = t_in_val; kernel_size; stride; dilation; padding } ->
         Some
@@ -772,24 +822,24 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
             let result_val =
               op_unfold t_in_val ~kernel_size ~stride ~dilation ~padding
             in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            (* Gradient of unfold is fold operation *)
-            let input_shape = T.shape (value_of twg_in) in
-            let num_spatial_dims = Array.length kernel_size in
-            let output_size =
-              Array.sub input_shape
-                (Array.length input_shape - num_spatial_dims)
-                num_spatial_dims
-            in
-            let grad_contrib_in =
-              Nx_rune.op_fold d_loss_d_result ~output_size ~kernel_size ~stride
-                ~dilation ~padding
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_in;
-            original_forward_val)
+            Debug.with_context "∇unfold" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                (* Gradient of unfold is fold operation *)
+                let input_shape = T.shape (value_of twg_in) in
+                let num_spatial_dims = Array.length kernel_size in
+                let output_size =
+                  Array.sub input_shape
+                    (Array.length input_shape - num_spatial_dims)
+                    num_spatial_dims
+                in
+                let grad_contrib_in =
+                  Nx_rune.op_fold d_loss_d_result ~output_size ~kernel_size
+                    ~stride ~dilation ~padding
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_in);
+            continue k result_val)
     | E_fold
         { t_in = t_in_val; output_size; kernel_size; stride; dilation; padding }
       ->
@@ -799,70 +849,73 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
               op_fold t_in_val ~output_size ~kernel_size ~stride ~dilation
                 ~padding
             in
-            let twg_in = get_or_init_twg t_in_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            (* Gradient of fold is unfold operation *)
-            let grad_contrib_in =
-              Nx_rune.op_unfold d_loss_d_result ~kernel_size ~stride ~dilation
-                ~padding
-            in
-            twg_in.bv <- T.add twg_in.bv grad_contrib_in;
-            original_forward_val)
+            Debug.with_context "∇fold" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                (* Gradient of fold is unfold operation *)
+                let grad_contrib_in =
+                  Nx_rune.op_unfold d_loss_d_result ~kernel_size ~stride
+                    ~dilation ~padding
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_in);
+            continue k result_val)
     | E_matmul { a = a_val; b = b_val } ->
         Some
           (fun k ->
             let result_val = op_matmul a_val b_val in
-            let twg_a = get_or_init_twg a_val in
-            let twg_b = get_or_init_twg b_val in
-            let twg_res = get_or_init_twg result_val in
-            let original_forward_val = continue k result_val in
-            let d_loss_d_result = grad_of twg_res in
-            (* For C = A @ B: dL/dA = dL/dC @ B^T dL/dB = A^T @ dL/dC *)
-            (* Handle broadcasting for matmul gradients *)
-            let a_ndim = Array.length (T.shape a_val) in
-            let b_ndim = Array.length (T.shape b_val) in
-            let grad_contrib_to_a, grad_contrib_to_b =
-              if a_ndim = 2 && b_ndim = 3 then
-                (* Special case: A is 2D, B is 3D - this is a broadcasted matmul *)
-                (* For C = A @ B where A:[m,k] B:[b,k,n] -> C:[b,m,n] *)
-                (* grad_A = sum(grad_C @ B^T, axis=0) *)
-                (* grad_B = A^T @ grad_C *)
-                let b_transposed = T.transpose ~axes:[| 0; 2; 1 |] b_val in
-                let grad_a_3d = T.matmul d_loss_d_result b_transposed in
-                let grad_a = T.sum grad_a_3d ~axes:[| 0 |] in
-                let a_expanded = T.expand_dims [| 0 |] a_val in
-                let a_transposed = T.transpose ~axes:[| 0; 2; 1 |] a_expanded in
-                let grad_b = T.matmul a_transposed d_loss_d_result in
-                (grad_a, grad_b)
-              else if a_ndim = 3 && b_ndim = 2 then
-                (* Special case: A is 3D, B is 2D - this is a broadcasted matmul *)
-                (* For C = A @ B where A:[b,m,k] B:[k,n] -> C:[b,m,n] *)
-                (* grad_A = grad_C @ B^T *)
-                (* grad_B = sum(A^T @ grad_C, axis=0) *)
-                let grad_a = T.matmul d_loss_d_result (T.transpose b_val) in
-                let a_transposed = T.transpose ~axes:[| 0; 2; 1 |] a_val in
-                let grad_b_3d = T.matmul a_transposed d_loss_d_result in
-                let grad_b = T.sum grad_b_3d ~axes:[| 0 |] in
-                (grad_a, grad_b)
-              else
-                (* Standard case - both same dimensionality *)
-                let grad_a = T.matmul d_loss_d_result (T.transpose b_val) in
-                let grad_b = T.matmul (T.transpose a_val) d_loss_d_result in
-                (grad_a, grad_b)
-            in
-            twg_a.bv <- T.add twg_a.bv grad_contrib_to_a;
-            twg_b.bv <- T.add twg_b.bv grad_contrib_to_b;
-            original_forward_val)
+            Debug.with_context "∇matmul" (fun () ->
+                let twg_a = get_or_init_twg a_val in
+                let twg_b = get_or_init_twg b_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                (* For C = A @ B: dL/dA = dL/dC @ B^T dL/dB = A^T @ dL/dC *)
+                (* Handle broadcasting for matmul gradients *)
+                let a_ndim = Array.length (T.shape a_val) in
+                let b_ndim = Array.length (T.shape b_val) in
+                let grad_contrib_to_a, grad_contrib_to_b =
+                  if a_ndim = 2 && b_ndim = 3 then
+                    (* Special case: A is 2D, B is 3D - this is a broadcasted matmul *)
+                    (* For C = A @ B where A:[m,k] B:[b,k,n] -> C:[b,m,n] *)
+                    (* grad_A = sum(grad_C @ B^T, axis=0) *)
+                    (* grad_B = A^T @ grad_C *)
+                    let b_transposed = T.transpose ~axes:[| 0; 2; 1 |] b_val in
+                    let grad_a_3d = T.matmul d_loss_d_result b_transposed in
+                    let grad_a = T.sum grad_a_3d ~axes:[| 0 |] in
+                    let a_expanded = T.expand_dims [| 0 |] a_val in
+                    let a_transposed =
+                      T.transpose ~axes:[| 0; 2; 1 |] a_expanded
+                    in
+                    let grad_b = T.matmul a_transposed d_loss_d_result in
+                    (grad_a, grad_b)
+                  else if a_ndim = 3 && b_ndim = 2 then
+                    (* Special case: A is 3D, B is 2D - this is a broadcasted matmul *)
+                    (* For C = A @ B where A:[b,m,k] B:[k,n] -> C:[b,m,n] *)
+                    (* grad_A = grad_C @ B^T *)
+                    (* grad_B = sum(A^T @ grad_C, axis=0) *)
+                    let grad_a = T.matmul d_loss_d_result (T.transpose b_val) in
+                    let a_transposed = T.transpose ~axes:[| 0; 2; 1 |] a_val in
+                    let grad_b_3d = T.matmul a_transposed d_loss_d_result in
+                    let grad_b = T.sum grad_b_3d ~axes:[| 0 |] in
+                    (grad_a, grad_b)
+                  else
+                    (* Standard case - both same dimensionality *)
+                    let grad_a = T.matmul d_loss_d_result (T.transpose b_val) in
+                    let grad_b = T.matmul (T.transpose a_val) d_loss_d_result in
+                    (grad_a, grad_b)
+                in
+                twg_a.bv <- T.add twg_a.bv grad_contrib_to_a;
+                twg_b.bv <- T.add twg_b.bv grad_contrib_to_b);
+            continue k result_val)
     | _ -> None
   in
 
   {
     retc =
       (fun final_result_val ->
-        let twg_final_result = get_or_init_twg final_result_val in
-        twg_final_result.bv <- T.ones_like final_result_val;
+        Debug.with_context "∇grad_init" (fun () ->
+            let twg_final_result = get_or_init_twg final_result_val in
+            twg_final_result.bv <- T.ones_like final_result_val);
         final_result_val);
     exnc = raise;
     effc;
