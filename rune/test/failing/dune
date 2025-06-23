@@ -1,3 +1,3 @@
 (executables
- (names bug_matmul_gradient_values)
+ (names bug_matmul_gradient_values bug_pooling_nan)
  (libraries rune))

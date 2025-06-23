@@ -475,6 +475,8 @@ let op_copy x =
   copy (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
     (View.offset x.view) result.buffer (View.strides result.view)
     (View.offset result.view);
+  let _ = x.view in
+  (* FIX: Keep input tensor alive during C call. *)
   result
 
 (* op_contiguous is a smart copy. It returns the original tensor if it's already
@@ -489,7 +491,10 @@ let op_assign dst src =
 
   assign (View.ndim src.view) (View.shape src.view) src.buffer
     (View.strides src.view) (View.offset src.view) dst.buffer
-    (View.strides dst.view) (View.offset dst.view)
+    (View.strides dst.view) (View.offset dst.view);
+  let _ = (dst.view, src.view) in
+  (* FIX: Keep input tensors alive during C call. *)
+  ()
 
 (* op_cast creates a new tensor of a different dtype and copies the data,
    converting type. *)
@@ -506,6 +511,8 @@ let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
       cast (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
         (View.offset x.view) result.buffer (View.strides result.view)
         (View.offset result.view);
+      let _ = x.view in
+      (* FIX: Keep input tensor alive during C call. *)
       result
 
 let unop op x =
@@ -513,6 +520,8 @@ let unop op x =
   op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
     (View.offset x.view) result.buffer (View.strides result.view)
     (View.offset result.view);
+  let _ = x.view in
+  (* FIX: Keep input tensor alive during C call. *)
   result
 
 let binop op x y =
@@ -520,6 +529,8 @@ let binop op x y =
   op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
     (View.offset x.view) y.buffer (View.strides y.view) (View.offset y.view)
     result.buffer (View.strides result.view) (View.offset result.view);
+  let _ = (x.view, y.view) in
+  (* FIX: Keep input tensors alive during C call. *)
   result
 
 let op_neg x = unop neg x
@@ -551,6 +562,8 @@ let binop_cmp op x y =
   op (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
     (View.offset x.view) y.buffer (View.strides y.view) (View.offset y.view)
     result.buffer (View.strides result.view) (View.offset result.view);
+  let _ = (x.view, y.view) in
+  (* FIX: Keep input tensors alive during C call. *)
   result
 
 let op_cmplt a b = binop_cmp cmplt a b
@@ -562,7 +575,7 @@ let reduce_op op ~axes ~keepdims x =
 
   (* Special case: if input is already a scalar (0-dimensional), just return
      it *)
-  if ndim = 0 then x
+  if ndim = 0 then op_copy x (* FIX: Return a copy to maintain semantics. *)
   else
     (* Normalize axes *)
     let normalized_axes =
@@ -598,7 +611,8 @@ let reduce_op op ~axes ~keepdims x =
       (View.offset x.view) result.buffer (View.strides result.view)
       (View.offset result.view) normalized_axes
       (if keepdims then 1 else 0);
-
+    let _ = x.view in
+    (* FIX: Keep input tensor alive during C call. *)
     result
 
 let op_reduce_sum ~axes ~keepdims x = reduce_op reduce_sum ~axes ~keepdims x
@@ -623,6 +637,8 @@ let op_where cond x y =
     (View.strides x.view) (View.offset x.view) y.buffer (View.strides y.view)
     (View.offset y.view) result.buffer (View.strides result.view)
     (View.offset result.view);
+  let _ = (cond.view, x.view, y.view) in
+  (* FIX: Keep input tensors alive during C call. *)
   result
 
 let op_cat inputs axis =
@@ -666,6 +682,9 @@ let op_cat inputs axis =
   cat input_pairs axis result.buffer (View.strides result.view)
     (View.offset result.view) output_shape;
 
+  (* FIX: Keep all input tensors alive during C call. *)
+  let _ = List.map (fun t -> t.view) inputs in
+
   result
 
 let op_threefry data seed =
@@ -678,6 +697,8 @@ let op_threefry data seed =
     (View.strides data.view) (View.offset data.view) seed.buffer
     (View.strides seed.view) (View.offset seed.view) result.buffer
     (View.strides result.view) (View.offset result.view);
+  let _ = (data.view, seed.view) in
+  (* FIX: Keep input tensors alive during C call. *)
   result
 
 let op_gather data indices axis =
@@ -707,6 +728,8 @@ let op_gather data indices axis =
     (View.strides indices.view)
     (View.offset indices.view) axis result.buffer (View.strides result.view)
     (View.offset result.view);
+  let _ = (data.view, indices.view) in
+  (* FIX: Keep input tensors alive during C call. *)
   result
 
 let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
@@ -752,6 +775,8 @@ let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
     (View.strides updates.view)
     (View.offset updates.view) axis result.buffer (View.strides result.view)
     (View.offset result.view) computation_mode;
+  let _ = (data_template.view, indices.view, updates.view) in
+  (* FIX: Keep input tensors alive during C call. *)
   result
 
 external matmul :
@@ -868,6 +893,8 @@ let op_matmul a b =
     result.buffer (View.shape result.view) (View.strides result.view)
     (View.offset result.view);
 
+  let _ = (a_contig.view, b_contig.view) in
+  (* FIX: Keep input tensors alive during C call. *)
   result
 
 let op_unfold x ~kernel_size ~stride ~dilation ~padding =
@@ -930,7 +957,8 @@ let op_unfold x ~kernel_size ~stride ~dilation ~padding =
     (View.offset x.view) (View.ndim result.view) (View.shape result.view)
     result.buffer (View.strides result.view) (View.offset result.view)
     output_spatial_shape kernel_size stride padding_lower dilation;
-
+  let _ = x.view in
+  (* FIX: Keep input tensor alive during C call. *)
   result
 
 let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
@@ -994,7 +1022,8 @@ let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
     (View.offset x.view) (View.ndim result.view) (View.shape result.view)
     result.buffer (View.strides result.view) (View.offset result.view)
     output_spatial_shape kernel_size stride padding_lower dilation;
-
+  let _ = x.view in
+  (* FIX: Keep input tensor alive during C call. *)
   result
 
 let op_pad x padding value =
@@ -1032,5 +1061,6 @@ let op_pad x padding value =
   pad ndim input_shape x.buffer (View.strides x.view) (View.offset x.view)
     output_shape result.buffer (View.strides result.view)
     (View.offset result.view) padding_array value;
-
+  let _ = x.view in
+  (* FIX: Keep input tensor alive during C call. *)
   result

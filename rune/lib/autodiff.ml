@@ -144,26 +144,29 @@ let prepare_grad_for_broadcast grad_output input_tensor_val axes op_keepdims
 let handle_identity_gradient_op ~op_name ~op get_or_init_twg t_in_val k_continue
     =
   let result_val = op t_in_val in
+  let forward_val = Effect.Deep.continue k_continue result_val in
   Debug.with_context ("∇" ^ op_name) (fun () ->
       let twg_in = get_or_init_twg t_in_val in
       let twg_res = get_or_init_twg result_val in
       let d_loss_d_result = grad_of twg_res in
       twg_in.bv <- T.add twg_in.bv d_loss_d_result);
-  Effect.Deep.continue k_continue result_val
+  forward_val
 
 let handle_unary_op ~op_name ~op ~deriv get_or_init_twg t_in_val k_continue =
   let result_val = op t_in_val in
+  let forward_val = Effect.Deep.continue k_continue result_val in
   Debug.with_context ("∇" ^ op_name) (fun () ->
       let twg_in = get_or_init_twg t_in_val in
       let twg_res = get_or_init_twg result_val in
       let d_loss_d_result = grad_of twg_res in
       let grad_contrib = T.mul d_loss_d_result (deriv (value_of twg_in)) in
       twg_in.bv <- T.add twg_in.bv grad_contrib);
-  Effect.Deep.continue k_continue result_val
+  forward_val
 
 let handle_binary_op ~op_name ~op ~deriv_wrt_op1 ~deriv_wrt_op2 get_or_init_twg
     op1_val op2_val k_continue =
   let result_val = op op1_val op2_val in
+  let forward_val = Effect.Deep.continue k_continue result_val in
   Debug.with_context ("∇" ^ op_name) (fun () ->
       let twg_op1 = get_or_init_twg op1_val in
       let twg_op2 = get_or_init_twg op2_val in
@@ -181,7 +184,7 @@ let handle_binary_op ~op_name ~op ~deriv_wrt_op1 ~deriv_wrt_op2 get_or_init_twg
           (deriv_wrt_op2 (value_of twg_op1) (value_of twg_op2))
       in
       twg_op2.bv <- T.add twg_op2.bv grad_op2);
-  Effect.Deep.continue k_continue result_val
+  forward_val
 
 (* The main reverse-mode AD effect handler *)
 let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
@@ -206,22 +209,25 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
         Some
           (fun k ->
             let result_val = op_buffer effect_ctx dt size_in_elements in
+            let forward_val = continue k result_val in
             Debug.with_context "∇buffer" (fun () ->
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_const_scalar { context = effect_ctx; value; dtype = dt } ->
         Some
           (fun k ->
             let result_val = op_const_scalar effect_ctx value dt in
+            let forward_val = continue k result_val in
             Debug.with_context "∇const_scalar" (fun () ->
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_add { a = op1_val; b = op2_val } ->
         Some
           (fun k ->
             let result_val = op_add op1_val op2_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇add" (fun () ->
                 let twg_op1 = get_or_init_twg op1_val in
                 let twg_op2 = get_or_init_twg op2_val in
@@ -229,7 +235,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 let d_loss_d_result = grad_of twg_res in
                 twg_op1.bv <- T.add twg_op1.bv d_loss_d_result;
                 twg_op2.bv <- T.add twg_op2.bv d_loss_d_result);
-            continue k result_val)
+            forward_val)
     | E_mul { a = op1_val; b = op2_val } ->
         Some
           (handle_binary_op ~op_name:"mul" ~op:op_mul
@@ -248,6 +254,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
         Some
           (fun k ->
             let result_val = op_exp2 t_in_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇exp2" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -257,7 +264,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 in
                 let grad_contrib = T.mul d_loss_d_result d_result_d_input in
                 twg_in.bv <- T.add twg_in.bv grad_contrib);
-            continue k result_val)
+            forward_val)
     | E_sin { t_in } ->
         Some
           (handle_unary_op ~op_name:"sin" ~op:op_sin ~deriv:deriv_sin
@@ -266,6 +273,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
         Some
           (fun k ->
             let result_val = T.sqrt t_in_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇sqrt" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -275,7 +283,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 in
                 let grad_contrib = T.mul d_loss_d_result d_result_d_input in
                 twg_in.bv <- T.add twg_in.bv grad_contrib);
-            continue k result_val)
+            forward_val)
     | E_recip { t_in } ->
         Some
           (handle_unary_op ~op_name:"recip" ~op:op_recip ~deriv:deriv_recip
@@ -289,6 +297,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
         Some
           (fun k ->
             let result_val = op_pow op1_val op2_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇pow" (fun () ->
                 let twg_op1 = get_or_init_twg op1_val in
                 let twg_op2 = get_or_init_twg op2_val in
@@ -318,11 +327,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     in
                     twg_op2.bv <- T.add twg_op2.bv grad_contrib_to_op2
                 | _ -> ());
-            continue k result_val)
+            forward_val)
     | E_max { a = op1_val; b = op2_val } ->
         Some
           (fun k ->
             let result_val = op_max op1_val op2_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇max" (fun () ->
                 let twg_op1 = get_or_init_twg op1_val in
                 let twg_op2 = get_or_init_twg op2_val in
@@ -344,11 +354,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.mul d_loss_d_result d_result_d_op2
                 in
                 twg_op2.bv <- T.add twg_op2.bv grad_contrib_to_op2);
-            continue k result_val)
+            forward_val)
     | E_reshape { t_in = t_in_val; new_shape } ->
         Some
           (fun k ->
             let result_val = op_reshape t_in_val new_shape in
+            let forward_val = continue k result_val in
             Debug.with_context "∇reshape" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -358,11 +369,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.reshape original_shape_in d_loss_d_result
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_in);
-            continue k result_val)
+            forward_val)
     | E_expand { t_in = t_in_val; new_target_shape } ->
         Some
           (fun k ->
             let result_val = op_expand t_in_val new_target_shape in
+            let forward_val = continue k result_val in
             Debug.with_context "∇expand" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -410,11 +422,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     else summed_grad
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_original_input);
-            continue k result_val)
+            forward_val)
     | E_reduce_sum { t_in = t_in_val; axes; keepdims } ->
         Some
           (fun k ->
             let result_val = op_reduce_sum ~axes ~keepdims t_in_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇reduce_sum" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -430,11 +443,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     grad_prepared_for_broadcast
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-            continue k result_val)
+            forward_val)
     | E_reduce_max { t_in = t_in_val; axes; keepdims } ->
         Some
           (fun k ->
             let result_val = op_reduce_max ~axes ~keepdims t_in_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇reduce_max" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -468,11 +482,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.mul d_loss_d_result_broadcasted d_result_d_input_mask_casted
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-            continue k result_val)
+            forward_val)
     | E_reduce_prod { t_in = t_in_val; axes; keepdims } ->
         Some
           (fun k ->
             let result_val = op_reduce_prod ~axes ~keepdims t_in_val in
+            let forward_val = continue k result_val in
             Debug.with_context "reduce_prod" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -507,11 +522,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.mul d_loss_d_result_broadcasted d_result_d_input_term
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-            continue k result_val)
+            forward_val)
     | E_permute { t_in = t_in_val; axes = permute_axes } ->
         Some
           (fun k ->
             let result_val = op_permute t_in_val permute_axes in
+            let forward_val = continue k result_val in
             Debug.with_context "∇permute" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -527,11 +543,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.transpose d_loss_d_result ~axes:un_permute_axes
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-            continue k result_val)
+            forward_val)
     | E_pad { t_in = t_in_val; padding_config; fill_value } ->
         Some
           (fun k ->
             let result_val = op_pad t_in_val padding_config fill_value in
+            let forward_val = continue k result_val in
             Debug.with_context "∇pad" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -548,11 +565,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.shrink shrink_limits d_loss_d_result
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-            continue k result_val)
+            forward_val)
     | E_shrink { t_in = t_in_val; limits = shrink_limits } ->
         Some
           (fun k ->
             let result_val = op_shrink t_in_val shrink_limits in
+            let forward_val = continue k result_val in
             Debug.with_context "∇shrink" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -571,7 +589,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.pad padding_config zero_val d_loss_d_result
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-            continue k result_val)
+            forward_val)
     | E_flip { t_in = t_in_val; dims_to_flip } ->
         Some
           (fun k ->
@@ -581,6 +599,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
               |> List.filter_map Fun.id |> Array.of_list
             in
             let result_val = op_flip t_in_val dims_to_flip in
+            let forward_val = continue k result_val in
             Debug.with_context "∇flip" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -589,11 +608,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.flip d_loss_d_result ~axes:axes_to_flip
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-            continue k result_val)
+            forward_val)
     | E_cat { t_list; axis } ->
         Some
           (fun k ->
             let result_val = op_cat t_list axis in
+            let forward_val = continue k result_val in
             Debug.with_context "∇cat" (fun () ->
                 let twg_inputs = List.map get_or_init_twg t_list in
                 let twg_res = get_or_init_twg result_val in
@@ -621,11 +641,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                       T.add twg_in_current.bv grad_slice_for_input;
                     current_offset := !current_offset + size_along_axis)
                   twg_inputs);
-            continue k result_val)
+            forward_val)
     | E_cast { t_in = t_in_val; target_dtype } ->
         Some
           (fun k ->
             let result_val = op_cast t_in_val target_dtype in
+            let forward_val = continue k result_val in
             Debug.with_context "∇cast" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -635,7 +656,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.cast original_dtype d_loss_d_result
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-            continue k result_val)
+            forward_val)
     | E_contiguous { t_in = t_in_val } ->
         Some
           (handle_identity_gradient_op ~op_name:"contiguous" ~op:op_contiguous
@@ -649,6 +670,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
         Some
           (fun k ->
             let result_val = op_where cond_val true_val false_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇where" (fun () ->
                 let _twg_cond = get_or_init_twg cond_val in
                 let twg_true = get_or_init_twg true_val in
@@ -672,11 +694,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.mul d_loss_d_result not_condition_mask_casted
                 in
                 twg_false.bv <- T.add twg_false.bv grad_contrib_to_false);
-            continue k result_val)
+            forward_val)
     | E_gather { data = data_val; indices = indices_val; axis } ->
         Some
           (fun k ->
             let result_val = op_gather data_val indices_val axis in
+            let forward_val = continue k result_val in
             Debug.with_context "∇gather" (fun () ->
                 let twg_data = get_or_init_twg data_val in
                 let _twg_indices = get_or_init_twg indices_val in
@@ -689,13 +712,14 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     axis
                 in
                 twg_data.bv <- T.add twg_data.bv scattered_grads);
-            continue k result_val)
+            forward_val)
     | E_scatter
         { data_template = dt_val; indices = idx_val; updates = upd_val; axis }
       ->
         Some
           (fun k ->
             let result_val = op_scatter dt_val idx_val upd_val axis in
+            let forward_val = continue k result_val in
             Debug.with_context "∇scatter" (fun () ->
                 let twg_dt = get_or_init_twg dt_val in
                 let twg_upd = get_or_init_twg upd_val in
@@ -716,112 +740,123 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.mul d_loss_d_result mask_for_dt_grad
                 in
                 twg_dt.bv <- T.add twg_dt.bv grad_contrib_to_dt);
-            continue k result_val)
+            forward_val)
     | E_assign { dst = dst_val; src = src_val } ->
         Some
           (fun k ->
             let old_dst_val = T.copy dst_val in
             op_assign dst_val src_val;
+            let forward_val = continue k () in
             Debug.with_context "∇assign" (fun () ->
                 let twg_src = get_or_init_twg src_val in
                 let twg_dst = get_or_init_twg dst_val in
                 let _twg_old_dst = get_or_init_twg old_dst_val in
                 twg_src.bv <- T.add twg_src.bv (grad_of twg_dst));
-            continue k ())
+            forward_val)
     | E_idiv { a; b } ->
         Some
           (fun k ->
             let result_val = op_idiv a b in
+            let forward_val = continue k result_val in
             Debug.with_context "∇idiv" (fun () ->
                 let _twg_a = get_or_init_twg a in
                 let _twg_b = get_or_init_twg b in
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_mod { a; b } ->
         Some
           (fun k ->
             let result_val = T.mod_ a b in
+            let forward_val = continue k result_val in
             Debug.with_context "∇mod" (fun () ->
                 let _twg_a = get_or_init_twg a in
                 let _twg_b = get_or_init_twg b in
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_cmplt { a; b } ->
         Some
           (fun k ->
             let result_val = op_cmplt a b in
+            let forward_val = continue k result_val in
             Debug.with_context "∇cmplt" (fun () ->
                 let _twg_a = get_or_init_twg a in
                 let _twg_b = get_or_init_twg b in
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_cmpne { a; b } ->
         Some
           (fun k ->
             let result_val = op_cmpne a b in
+            let forward_val = continue k result_val in
             Debug.with_context "∇cmpne" (fun () ->
                 let _twg_a = get_or_init_twg a in
                 let _twg_b = get_or_init_twg b in
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_xor { a; b } ->
         Some
           (fun k ->
             let result_val = op_xor a b in
+            let forward_val = continue k result_val in
             Debug.with_context "∇xor" (fun () ->
                 let _twg_a = get_or_init_twg a in
                 let _twg_b = get_or_init_twg b in
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_or { a; b } ->
         Some
           (fun k ->
             let result_val = op_or a b in
+            let forward_val = continue k result_val in
             Debug.with_context "∇or" (fun () ->
                 let _twg_a = get_or_init_twg a in
                 let _twg_b = get_or_init_twg b in
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_and { a; b } ->
         Some
           (fun k ->
             let result_val = op_and a b in
+            let forward_val = continue k result_val in
             Debug.with_context "∇and" (fun () ->
                 let _twg_a = get_or_init_twg a in
                 let _twg_b = get_or_init_twg b in
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_const_array { context = effect_ctx; array } ->
         Some
           (fun k ->
             let result_val = op_const_array effect_ctx array in
+            let forward_val = continue k result_val in
             Debug.with_context "∇const_array" (fun () ->
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_threefry { key = key_val; ctr = ctr_val } ->
         Some
           (fun k ->
             let result_val = op_threefry key_val ctr_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇threefry" (fun () ->
                 let _twg_key = get_or_init_twg key_val in
                 let _twg_ctr = get_or_init_twg ctr_val in
                 let _twg_res = get_or_init_twg result_val in
                 ());
-            continue k result_val)
+            forward_val)
     | E_unfold { t_in = t_in_val; kernel_size; stride; dilation; padding } ->
         Some
           (fun k ->
             let result_val =
               op_unfold t_in_val ~kernel_size ~stride ~dilation ~padding
             in
+            let forward_val = continue k result_val in
             Debug.with_context "∇unfold" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -839,7 +874,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     ~stride ~dilation ~padding
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_in);
-            continue k result_val)
+            forward_val)
     | E_fold
         { t_in = t_in_val; output_size; kernel_size; stride; dilation; padding }
       ->
@@ -849,6 +884,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
               op_fold t_in_val ~output_size ~kernel_size ~stride ~dilation
                 ~padding
             in
+            let forward_val = continue k result_val in
             Debug.with_context "∇fold" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
@@ -859,11 +895,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     ~dilation ~padding
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_in);
-            continue k result_val)
+            forward_val)
     | E_matmul { a = a_val; b = b_val } ->
         Some
           (fun k ->
             let result_val = op_matmul a_val b_val in
+            let forward_val = continue k result_val in
             Debug.with_context "∇matmul" (fun () ->
                 let twg_a = get_or_init_twg a_val in
                 let twg_b = get_or_init_twg b_val in
@@ -906,7 +943,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 in
                 twg_a.bv <- T.add twg_a.bv grad_contrib_to_a;
                 twg_b.bv <- T.add twg_b.bv grad_contrib_to_b);
-            continue k result_val)
+            forward_val)
     | _ -> None
   in
 

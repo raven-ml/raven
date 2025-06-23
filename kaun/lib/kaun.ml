@@ -738,15 +738,16 @@ module Layer = struct
       {
         init =
           (fun ~rngs x ->
-            let rec init_layers models x acc layer_idx =
+            let rec init_layers models x acc rngs_current layer_idx =
               match models with
               | [] -> List (List.rev acc)
               | Model m :: rest ->
-                  let params = m.init ~rngs x in
+                  let rngs_layer, rngs_rest = Rngs.split rngs_current in
+                  let params = m.init ~rngs:rngs_layer x in
                   let x' = m.apply params ~training:false x in
-                  init_layers rest x' (params :: acc) (layer_idx + 1)
+                  init_layers rest x' (params :: acc) rngs_rest (layer_idx + 1)
             in
-            init_layers models x [] 1);
+            init_layers models x [] rngs 1);
         apply =
           (fun params ~training ?rngs:_ x ->
             match params with

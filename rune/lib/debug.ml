@@ -85,6 +85,11 @@ let format_input_shapes input_tensors =
 let log_operation context_stack op_name input_tensors output_tensor =
   let indent = get_debug_indent context_stack in
 
+  (* Check if we're in a gradient context *)
+  let in_grad_context = List.exists (fun ctx -> 
+    String.length ctx > 0 && String.starts_with ~prefix:"\xE2\x88\x87" ctx
+  ) context_stack in
+
   (* Format input part with arrow *)
   let input_part =
     let input_str = format_input_shapes input_tensors in
@@ -129,8 +134,42 @@ let log_operation context_stack op_name input_tensors output_tensor =
         stats.nan_count
   in
 
-  Printf.printf "%s%s %s%s%s\n%!" indent op_name input_part
-    output_shape_with_dtype stats_str
+  (* Add memory usage *)
+  let memory_str =
+    match output_tensor with
+    | Tensor_ref t ->
+        let shape = T.shape t in
+        let num_elements = Array.fold_left ( * ) 1 shape in
+        let bytes_per_element = 
+          match T.dtype t with
+          | Float32 | Int32 | Complex32 -> 4
+          | Float64 | Int64 | Complex64 -> 8
+          | Float16 | Int16 | UInt16 -> 2
+          | UInt8 | Int8 -> 1
+          | Int | NativeInt -> Sys.word_size / 8
+        in
+        let bytes = num_elements * bytes_per_element in
+        let memory_mb = float bytes /. (1024. *. 1024.) in
+        if memory_mb < 0.01 then
+          Printf.sprintf " %.3fMB" memory_mb
+        else
+          Printf.sprintf " %.1fMB" memory_mb
+  in
+
+  (* Add NaN warning *)
+  let nan_warning = if stats.nan_count > 0 then " ⚠ NaN detected!" else "" in
+
+  (* Check for exploding gradients in gradient operations *)
+  let grad_warning =
+    if in_grad_context then
+      (* This is a gradient operation *)
+      let max_abs = max (abs_float stats.max_val) (abs_float stats.min_val) in
+      if max_abs > 100. then " ⚠ Exploding gradients!" else ""
+    else ""
+  in
+
+  Printf.printf "%s%s %s%s%s%s%s%s\n%!" indent op_name input_part
+    output_shape_with_dtype stats_str memory_str nan_warning grad_warning
 
 let debug_handler () =
   let context_stack = ref [] in

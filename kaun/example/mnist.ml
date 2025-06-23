@@ -53,7 +53,7 @@ let train () =
   Printf.printf "Initializing model...\n%!";
   let start = Unix.gettimeofday () in
   let dummy_input = Rune.zeros device Rune.float32 [| 1; 1; 28; 28 |] in
-  let params = init model ~rngs dummy_input in
+  let params = init ~rngs model dummy_input in
   let optimizer = Optimizer.create (Optimizer.adam ~lr:0.001 ()) in
   Printf.printf "Model initialized in %.2fs\n%!" (Unix.gettimeofday () -. start);
 
@@ -81,13 +81,10 @@ let train () =
         let fwd_bwd_start = Unix.gettimeofday () in
         let loss, grads =
           let loss, grads =
-            Rune.debug
+            value_and_grad
               (fun params ->
-                value_and_grad
-                  (fun params ->
-                    let logits = apply model params ~training:true x_batch in
-                    Loss.softmax_cross_entropy_with_indices logits y_batch)
-                  params)
+                let logits = apply model params ~training:true x_batch in
+                Loss.softmax_cross_entropy_with_indices logits y_batch)
               params
           in
           (loss, grads)
@@ -107,14 +104,12 @@ let train () =
 
         let batch_time = Unix.gettimeofday () -. batch_start in
 
-        (* Print timing for first few batches and every 100th batch *)
-        if !batch_count <= 3 then
-          Printf.printf
-            "  Batch %d: %.3fs (fwd+bwd: %.3fs, opt: %.3fs, metric: %.3fs) - \
-             Loss: %.4f\n\
-             %!"
-            !batch_count batch_time fwd_bwd_time opt_time metric_time
-            (Rune.unsafe_get [] loss))
+        Printf.printf
+          "  Batch %d: %.3fs (fwd+bwd: %.3fs, opt: %.3fs, metric: %.3fs) - \
+           Loss: %.4f\n\
+           %!"
+          !batch_count batch_time fwd_bwd_time opt_time metric_time
+          (Rune.unsafe_get [] loss))
       train_ds;
 
     (* Print training metrics *)
