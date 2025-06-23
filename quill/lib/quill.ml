@@ -9,6 +9,8 @@ module Diff = Diff
 module Event = Event
 module Markdown = Markdown
 module Cursor = Cursor
+module Text_length = Text_length
+module Selection = Selection
 
 let empty_document = Document.empty
 let parse_markdown = Markdown.parse

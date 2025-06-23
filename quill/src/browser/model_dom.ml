@@ -16,38 +16,9 @@ let parse_dom (root : El.t) : Quill.Document.t =
       (* Parse markdown text into Quill document *)
       Quill.Markdown.parse (String.trim content)
 
-let rec text_length_inline (inline : Quill.Document.inline) : int =
-  match inline.content with
-  | Run s -> String.length s
-  | Code_span s -> 2 + String.length s
-  | Emph inner -> 2 + text_length_inline inner
-  | Strong inner -> 4 + text_length_inline inner
-  | Seq items ->
-      List.fold_left (fun acc i -> acc + text_length_inline i) 0 items
-  | Break _ -> 1
-  | Image { alt; src } -> 2 + text_length_inline alt + 3 + String.length src + 1
-  | Link { text; href } ->
-      1 + text_length_inline text + 3 + String.length href + 1
-  | Raw_html html -> String.length html
-
-and text_length_block (block : Quill.Document.block) : int =
-  match block.content with
-  | Paragraph inline -> text_length_inline inline + 1 (* inline + "\n" *)
-  | Heading (level, inline) ->
-      level + 1 + text_length_inline inline + 1 (* "# " + inline + "\n" *)
-  | Codeblock { code; _ } ->
-      4 + String.length code + 4 + 1 (* "```\n" + code + "\n```" + "\n" *)
-  | Blank_line -> 1 (* "\n" *)
-  | Thematic_break -> 4 (* "---\n" *)
-  | Block_quote blocks ->
-      List.fold_left (fun acc b -> acc + 2 + text_length_block b) 0 blocks
-  | List (_, _, items) ->
-      List.fold_left
-        (fun acc item ->
-          acc
-          + List.fold_left (fun acc b -> acc + 2 + text_length_block b) 0 item)
-        0 items
-  | Html_block html -> String.length html + 1
+(* Use text length functions from core library *)
+let text_length_inline = Quill.Text_length.inline
+let text_length_block = Quill.Text_length.block
 
 let rec find_in_blocks (blocks : Quill.Document.block list) (offset : int) :
     (string * int) option =

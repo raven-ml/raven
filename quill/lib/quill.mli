@@ -199,6 +199,12 @@ module Text : sig
 
   val split_at : string -> int -> string * string
   (** Split text at position *)
+
+  val is_word_char : char -> bool
+  (** Check if character is part of a word *)
+
+  val find_word_boundaries : string -> int -> int * int
+  (** Find word boundaries around position *)
 end
 
 (** {1 Execution Context} *)
@@ -425,6 +431,97 @@ module Cursor : sig
 
   val find_word_boundaries : string -> int -> int * int
   (** Find word boundaries around position *)
+end
+
+(** {1 Text Length Calculations} *)
+module Text_length : sig
+  (** Calculate markdown representation lengths of document elements *)
+
+  val inline : Document.inline -> int
+  (** Calculate length of inline element's markdown representation *)
+
+  val block : Document.block -> int
+  (** Calculate length of block element's markdown representation *)
+
+  val document : Document.t -> int
+  (** Calculate total length of document *)
+
+  val up_to_block : Document.t -> Document.block_id -> int
+  (** Calculate length up to a specific block (exclusive) *)
+
+  val in_block_up_to_offset : Document.block -> int -> int
+  (** Calculate length of text within a block up to an offset *)
+
+  val find_position : Document.t -> int -> (Document.block_id * int) option
+  (** Get the block and local offset at a document position *)
+end
+
+(** {1 Selection Utilities} *)
+module Selection : sig
+  (** Advanced selection and range operations *)
+
+  type position = View.position = {
+    block_id : Document.block_id;
+    offset : int;
+  }
+  (** Position in document *)
+
+  type t = View.selection = {
+    anchor : position;
+    focus : position;
+  }
+  (** Selection range *)
+
+  val make_position : Document.block_id -> int -> position
+  (** Create a position *)
+
+  val make : position -> position -> t
+  (** Create a selection *)
+
+  val collapsed : position -> t
+  (** Create a collapsed selection at position *)
+
+  val is_collapsed : t -> bool
+  (** Check if selection is collapsed *)
+
+  val compare_positions : Document.t -> position -> position -> int
+  (** Compare positions in document order *)
+
+  val normalize : Document.t -> t -> t
+  (** Normalize selection so anchor comes before focus *)
+
+  val start : Document.t -> t -> position
+  (** Get start position of selection *)
+
+  val end_ : Document.t -> t -> position
+  (** Get end position of selection *)
+
+  val contains_position : Document.t -> t -> position -> bool
+  (** Check if position is within selection *)
+
+  val intersects : Document.t -> t -> t -> bool
+  (** Check if two selections intersect *)
+
+  val intersection : Document.t -> t -> t -> t option
+  (** Get intersection of two selections *)
+
+  val union : Document.t -> t -> t -> t
+  (** Get union of two selections *)
+
+  val expand_to_word : Document.t -> t -> t option
+  (** Expand selection to word boundaries *)
+
+  val expand_to_line : Document.t -> t -> t option
+  (** Expand selection to line boundaries *)
+
+  val expand_to_block : Document.t -> t -> t option
+  (** Expand selection to entire block *)
+
+  val merge_overlapping : Document.t -> t list -> t list
+  (** Merge overlapping selections for multi-cursor support *)
+
+  val get_text : Document.t -> t -> string
+  (** Get text content of selection *)
 end
 
 (** {1 Convenience Functions} *)

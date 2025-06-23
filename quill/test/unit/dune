@@ -4,5 +4,7 @@
   test_markdown_roundtrip
   test_cursor_movement
   test_rich_text
-  test_block_commands)
+  test_block_commands
+  test_text_length
+  test_selection)
  (libraries quill alcotest))
