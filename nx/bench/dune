@@ -2,3 +2,8 @@
  (name bench_nx)
  (modules bench_nx)
  (libraries nx_core nx_native nx_metal nx_cblas ubench str))
+
+(executable
+ (name bench_nx_native_add)
+ (modules bench_nx_native_add)
+ (libraries nx_core nx_native ubench))
