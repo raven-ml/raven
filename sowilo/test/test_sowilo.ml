@@ -8,9 +8,6 @@ open Sowilo
 let create_test_image_gray h w value =
   Rune.full Rune.cblas Rune.uint8 [| h; w |] value
 
-let _create_test_image_color h w c value =
-  Rune.full Rune.cblas Rune.uint8 [| h; w; c |] value
-
 let create_checkerboard h w =
   let data =
     Array.init (h * w) (fun i ->

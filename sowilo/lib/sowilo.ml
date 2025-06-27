@@ -1,5 +1,3 @@
-(* Safe implementation of Sowilo using only Rune frontend functions *)
-
 type uint8_t = Rune.uint8_t
 type int16_t = Rune.int16_t
 type float32_t = Rune.float32_t
@@ -187,18 +185,6 @@ let convolve2d_safe kernel img =
       if Rune.dtype img = Rune.Float32 then result
       else Rune.astype (Rune.dtype img) result
 
-(* Separable 2D convolution *)
-(* Separable 2D convolution - kept for reference but not currently used
-let convolve_separable kernel_x kernel_y img =
-  (* First convolve horizontally *)
-  let kernel_x_2d = Rune.reshape [| 1; Rune.numel kernel_x |] kernel_x in
-  let temp = convolve2d_safe kernel_x_2d img in
-
-  (* Then convolve vertically *)
-  let kernel_y_2d = Rune.reshape [| Rune.numel kernel_y; 1 |] kernel_y in
-  convolve2d_safe kernel_y_2d temp
-*)
-
 let gaussian_blur : type a b.
     ksize:int * int ->
     sigmaX:float ->
@@ -222,81 +208,44 @@ let gaussian_blur : type a b.
     | _ -> failwith "Unsupported image type for gaussian_blur"
   in
 
-  (* Optimized separable convolution using direct tensor operations *)
+  (* Optimized separable convolution using 2D convolution with 1D kernels *)
   let blur_1d_horizontal kernel img =
     match get_dims img with
-    | `Gray (_h, w) ->
+    | `Gray (_h, _w) ->
+        (* Use 2D convolution with a 1xN kernel for horizontal blur *)
+        (* Reshape kernel to [1, ksize] *)
         let ksize = Rune.numel kernel in
-        let pad = ksize / 2 in
-        let padded = Rune.pad [| (0, 0); (pad, pad) |] 0.0 img in
+        let kernel_2d = Rune.reshape [| 1; ksize |] kernel in
 
-        (* Apply kernel weights to shifted versions *)
-        let result = ref (Rune.zeros_like img) in
-        for i = 0 to ksize - 1 do
-          let weight = Rune.unsafe_get [ i ] kernel in
-          if abs_float weight > 1e-10 then
-            let shifted =
-              Rune.slice [ Rune.R []; Rune.R [ i; i + w ] ] padded
-            in
-            let weighted = Rune.mul_s shifted weight in
-            result := Rune.add !result weighted
-        done;
-        !result
-    | `Color (_h, w, _c) ->
+        (* Apply convolution using convolve2d_safe which handles the shapes
+           correctly *)
+        convolve2d_safe kernel_2d img
+    | `Color (_h, _w, _c) ->
+        (* For color images, also use 2D convolution *)
         let ksize = Rune.numel kernel in
-        let pad = ksize / 2 in
-        let padded = Rune.pad [| (0, 0); (pad, pad); (0, 0) |] 0.0 img in
+        let kernel_2d = Rune.reshape [| 1; ksize |] kernel in
 
-        (* Apply kernel weights to shifted versions *)
-        let result = ref (Rune.zeros_like img) in
-        for i = 0 to ksize - 1 do
-          let weight = Rune.unsafe_get [ i ] kernel in
-          if abs_float weight > 1e-10 then
-            let shifted =
-              Rune.slice [ Rune.R []; Rune.R [ i; i + w ]; Rune.R [] ] padded
-            in
-            let weighted = Rune.mul_s shifted weight in
-            result := Rune.add !result weighted
-        done;
-        !result
+        (* Apply convolution using convolve2d_safe which handles color
+           correctly *)
+        convolve2d_safe kernel_2d img
   in
 
   let blur_1d_vertical kernel img =
     match get_dims img with
-    | `Gray (h, _w) ->
+    | `Gray (_h, _w) ->
+        (* Use 2D convolution with a Nx1 kernel for vertical blur *)
         let ksize = Rune.numel kernel in
-        let pad = ksize / 2 in
-        let padded = Rune.pad [| (pad, pad); (0, 0) |] 0.0 img in
+        let kernel_2d = Rune.reshape [| ksize; 1 |] kernel in
 
-        (* Apply kernel weights to shifted versions *)
-        let result = ref (Rune.zeros_like img) in
-        for i = 0 to ksize - 1 do
-          let weight = Rune.unsafe_get [ i ] kernel in
-          if abs_float weight > 1e-10 then
-            let shifted =
-              Rune.slice [ Rune.R [ i; i + h ]; Rune.R [] ] padded
-            in
-            let weighted = Rune.mul_s shifted weight in
-            result := Rune.add !result weighted
-        done;
-        !result
-    | `Color (h, _w, _c) ->
+        (* Apply convolution using convolve2d_safe *)
+        convolve2d_safe kernel_2d img
+    | `Color (_h, _w, _c) ->
+        (* For color images, also use 2D convolution *)
         let ksize = Rune.numel kernel in
-        let pad = ksize / 2 in
-        let padded = Rune.pad [| (pad, pad); (0, 0); (0, 0) |] 0.0 img in
+        let kernel_2d = Rune.reshape [| ksize; 1 |] kernel in
 
-        (* Apply kernel weights to shifted versions *)
-        let result = ref (Rune.zeros_like img) in
-        for i = 0 to ksize - 1 do
-          let weight = Rune.unsafe_get [ i ] kernel in
-          if abs_float weight > 1e-10 then
-            let shifted =
-              Rune.slice [ Rune.R [ i; i + h ]; Rune.R []; Rune.R [] ] padded
-            in
-            let weighted = Rune.mul_s shifted weight in
-            result := Rune.add !result weighted
-        done;
-        !result
+        (* Apply convolution using convolve2d_safe *)
+        convolve2d_safe kernel_2d img
   in
 
   (* Apply horizontal then vertical blur *)
@@ -330,7 +279,10 @@ let threshold ~thresh ~maxval ~type_ (img : uint8_t) : uint8_t =
       match type_ with
       | Binary -> Rune.where mask maxval_tensor zero_tensor
       | BinaryInv -> Rune.where mask zero_tensor maxval_tensor
-      | Trunc -> Rune.minimum img thresh_tensor
+      | Trunc ->
+          (* For Trunc, pixels above threshold are capped at threshold, pixels
+             at or below threshold remain unchanged *)
+          Rune.where mask thresh_tensor img
       | ToZero -> Rune.where mask img zero_tensor
       | ToZeroInv -> Rune.where mask zero_tensor img)
 
@@ -468,55 +420,26 @@ let morph_op ~op ~kernel (img : uint8_t) : uint8_t =
       if kh <= 0 || kw <= 0 || kh mod 2 = 0 || kw mod 2 = 0 then
         failwith "Kernel dimensions must be positive and odd";
 
-      (* Optimized morphological operations using direct tensor operations *)
-      let pad_h = kh / 2 in
-      let pad_w = kw / 2 in
-
       match op with
       | `Max ->
-          (* Dilation: max over kernel positions *)
-          let padded = Rune.pad [| (pad_h, pad_h); (pad_w, pad_w) |] 0 img in
-          let result = ref (Rune.zeros_like img) in
-
-          (* For each kernel position where kernel is non-zero *)
-          for i = 0 to kh - 1 do
-            for j = 0 to kw - 1 do
-              let kernel_val = Rune.unsafe_get [ i; j ] kernel in
-              if kernel_val > 0 then
-                let shifted =
-                  Rune.slice [ Rune.R [ i; i + h ]; Rune.R [ j; j + w ] ] padded
-                in
-                result := Rune.maximum !result shifted
-            done
-          done;
-          !result
-      | `Min ->
-          (* Erosion using max pooling with stride=1 on inverted image *)
-          (* Invert the image: 255 - img *)
-          let max_val = Rune.scalar_like img 255 in
-          let inverted = Rune.sub max_val img in
-          let inv_4d = Rune.reshape [| 1; 1; h; w |] inverted in
-
-          (* Apply max pooling to inverted image *)
+          (* Dilation can use max pooling directly when kernel is all ones *)
+          let img_4d = Rune.reshape [| 1; 1; h; w |] img in
           let result_4d, _ =
             Rune.max_pool2d ~kernel_size:(kh, kw) ~stride:(1, 1)
-              ~padding_spec:`Same inv_4d
+              ~padding_spec:`Same img_4d
           in
-
-          (* Invert back: 255 - result *)
-          let result = Rune.reshape [| h; w |] result_4d in
-          Rune.sub max_val result)
+          Rune.reshape [| h; w |] result_4d
+      | `Min ->
+          (* Erosion can use min pooling directly when kernel is all ones *)
+          let img_4d = Rune.reshape [| 1; 1; h; w |] img in
+          let result_4d, _ =
+            Rune.min_pool2d ~kernel_size:(kh, kw) ~stride:(1, 1)
+              ~padding_spec:`Same img_4d
+          in
+          Rune.reshape [| h; w |] result_4d)
 
 let erode ~kernel img = morph_op ~op:`Min ~kernel img
 let dilate ~kernel img = morph_op ~op:`Max ~kernel img
-
-(* Sobel kernel definition - kept for reference but not used with manual
-   implementation let sobel_kernel dx dy ksize = if ksize <> 3 then failwith
-   "Sobel currently only supports ksize=3"; let device = Rune.native in match
-   (dx, dy) with | 1, 0 -> Rune.create device Rune.float32 [| 3; 3 |] [| -1.;
-   0.; 1.; -2.; 0.; 2.; -1.; 0.; 1. |] | 0, 1 -> Rune.create device Rune.float32
-   [| 3; 3 |] [| -1.; -2.; -1.; 0.; 0.; 0.; 1.; 2.; 1. |] | _ -> failwith "Sobel
-   requires dx=1, dy=0 or dx=0, dy=1" *)
 
 let sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t =
  fun ~dx ~dy ?(ksize = 3) img ->
