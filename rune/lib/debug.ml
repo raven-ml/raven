@@ -86,9 +86,12 @@ let log_operation context_stack op_name input_tensors output_tensor =
   let indent = get_debug_indent context_stack in
 
   (* Check if we're in a gradient context *)
-  let in_grad_context = List.exists (fun ctx -> 
-    String.length ctx > 0 && String.starts_with ~prefix:"\xE2\x88\x87" ctx
-  ) context_stack in
+  let in_grad_context =
+    List.exists
+      (fun ctx ->
+        String.length ctx > 0 && String.starts_with ~prefix:"\xE2\x88\x87" ctx)
+      context_stack
+  in
 
   (* Format input part with arrow *)
   let input_part =
@@ -140,7 +143,7 @@ let log_operation context_stack op_name input_tensors output_tensor =
     | Tensor_ref t ->
         let shape = T.shape t in
         let num_elements = Array.fold_left ( * ) 1 shape in
-        let bytes_per_element = 
+        let bytes_per_element =
           match T.dtype t with
           | Float32 | Int32 | Complex32 -> 4
           | Float64 | Int64 | Complex64 -> 8
@@ -150,10 +153,8 @@ let log_operation context_stack op_name input_tensors output_tensor =
         in
         let bytes = num_elements * bytes_per_element in
         let memory_mb = float bytes /. (1024. *. 1024.) in
-        if memory_mb < 0.01 then
-          Printf.sprintf " %.3fMB" memory_mb
-        else
-          Printf.sprintf " %.1fMB" memory_mb
+        if memory_mb < 0.01 then Printf.sprintf " %.3fMB" memory_mb
+        else Printf.sprintf " %.1fMB" memory_mb
   in
 
   (* Add NaN warning *)

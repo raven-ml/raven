@@ -237,8 +237,8 @@ let reshape view new_shape =
       create ~offset:view.offset new_shape
       (* Special case: all strides are 0 (broadcast from scalar) *)
     else if Array.for_all (( = ) 0) view.strides then
-      (* When all strides are 0, we have a broadcast view. 
-         We can only reshape if all dimensions remain broadcast (stride 0) *)
+      (* When all strides are 0, we have a broadcast view. We can only reshape
+         if all dimensions remain broadcast (stride 0) *)
       let new_strides = Array.make (Array.length new_shape) 0 in
       create ~offset:view.offset ~strides:new_strides new_shape
     (* Special case: only expanding/squeezing size-1 dimensions *)

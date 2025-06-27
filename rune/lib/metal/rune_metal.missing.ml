@@ -59,7 +59,9 @@ let op_copy _t = not_available ()
 let op_assign _t = not_available ()
 let op_threefry _t = not_available ()
 let op_gather _t = not_available ()
-let op_scatter _t = not_available ()
+
+let op_scatter ?mode:_ ?unique_indices:_ _ctx _src _index _src_data =
+  not_available ()
 
 (* Stub JIT backend when Metal is not available *)
 module Jit_backend : Rune_jit.Backend_intf.S = struct
