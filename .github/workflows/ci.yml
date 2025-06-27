@@ -9,31 +9,95 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
-        runs-on: [ ubuntu-latest, macos-latest ]
-    runs-on: ${{ matrix.runs-on }}
-    timeout-minutes: 30
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout tree
         uses: actions/checkout@v4
-      
+
+      - name: Set-up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5
+
       - name: Install system dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libev-dev libcurl4-gnutls-dev libcairo2-dev pkg-config libsdl2-dev
-      
+
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install libev curl cairo pkg-config sdl2
-      
-      - name: Use dune
-        uses: ocaml-dune/setup-dune@v0
-      
-      - name: Build
-        run: dune build
-      
-      - name: Run tests
-        run: dune runtest
+
+      - name: Install system dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # TBD
+
+      - name: Install OCaml dependencies
+        run: opam install . --deps-only --with-test
+
+      # Build and test nx
+      - name: Build nx
+        run: opam exec -- dune build nx
+
+      - name: Test nx
+        run: opam exec -- dune build @nx/runtest
+
+      # Build and test nx-datasets
+      - name: Build nx-datasets
+        run: opam exec -- dune build nx-datasets
+
+      - name: Test nx-datasets
+        run: opam exec -- dune build @nx-datasets/runtest
+
+      # Build and test nx-text
+      - name: Build nx-text
+        run: opam exec -- dune build nx-text
+
+      - name: Test nx-text
+        run: opam exec -- dune build @nx-text/runtest
+
+      # Build and test rune
+      - name: Build rune
+        run: opam exec -- dune build rune
+
+      - name: Test rune
+        run: opam exec -- dune build @rune/runtest
+
+      # Build and test kaun
+      - name: Build kaun
+        run: opam exec -- dune build kaun
+
+      - name: Test kaun
+        run: opam exec -- dune build @kaun/runtest
+
+      # Build and test sowilo
+      - name: Build sowilo
+        run: opam exec -- dune build sowilo
+
+      - name: Test sowilo
+        run: opam exec -- dune build @sowilo/runtest
+
+      # Build and test hugin
+      - name: Build hugin
+        run: opam exec -- dune build hugin
+
+      - name: Test hugin
+        run: opam exec -- dune build @hugin/runtest
+
+      # Build and test quill
+      - name: Build quill
+        run: opam exec -- dune build quill
+
+      - name: Test quill
+        run: opam exec -- dune build @quill/runtest
