@@ -29,27 +29,33 @@ let () =
       in
 
       (* Discover OpenMP support and platform-specific flags *)
-      let c_flags =
-        let base_flags =
-          match C.ocaml_config_var c "system" with
-          | Some "macosx" ->
-              (* Use new BLAS interface on macOS to avoid deprecation
-                 warnings *)
-              [ "-DACCELERATE_NEW_LAPACK"; "-O3"; "-march=native" ]
-          | _ -> [ "-O3"; "-march=native" ]
-        in
-        let test_openmp flags =
-          C.c_test c ~c_flags:flags
-            "#include <omp.h>\nint main() { return omp_get_num_threads(); }"
-        in
-        if test_openmp [ "-fopenmp" ] then "-fopenmp" :: base_flags
-        else if test_openmp [ "-Xpreprocessor"; "-fopenmp" ] then
+      let base_flags =
+        match C.ocaml_config_var c "system" with
+        | Some "macosx" ->
+            (* Use new BLAS interface on macOS to avoid deprecation
+               warnings *)
+            [ "-DACCELERATE_NEW_LAPACK"; "-O3"; "-march=native" ]
+        | _ -> [ "-O3"; "-march=native" ]
+      in
+      let test_openmp c_flags link_flags =
+        C.c_test c ~c_flags:(c_flags @ base_flags) ~link_flags
+          "#include <omp.h>\nint main() { return omp_get_num_threads(); }"
+      in
+      let omp_c_flags, omp_libs =
+        if test_openmp ["-fopenmp"] ["-lgomp"] then
+          (["-fopenmp"], ["-lgomp"])
+        else if test_openmp ["-fopenmp"] [] then
+          (["-fopenmp"], [])
+        else if test_openmp ["-Xpreprocessor"; "-fopenmp"] ["-lomp"] then
           (* macOS with Homebrew libomp *)
-          "-Xpreprocessor" :: "-fopenmp" :: base_flags
+          (["-Xpreprocessor"; "-fopenmp"], ["-lomp"])
         else
           (* No OpenMP support, just optimization flags *)
-          base_flags
+          ([], [])
       in
 
-      C.Flags.write_sexp "c_library_flags.sexp" blas_libs;
-      C.Flags.write_sexp "c_flags.sexp" c_flags)
+      let final_c_flags = omp_c_flags @ base_flags in
+      let final_libs = blas_libs @ omp_libs in
+
+      C.Flags.write_sexp "c_library_flags.sexp" final_libs;
+      C.Flags.write_sexp "c_flags.sexp" final_c_flags)
