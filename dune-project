@@ -21,6 +21,8 @@
 
 (implicit_transitive_deps false)
 
+(generate_opam_files true)
+
 (pin
  (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
  (package
@@ -71,6 +73,24 @@
   (datasets machine-learning data-science image-classification regression)))
 
 (package
+ (name nx-text)
+ (synopsis "Text processing and NLP extensions for Nx")
+ (description
+  "Text processing library that extends Nx with natural language processing capabilities. Provides tokenization, encoding, and text manipulation functionality compatible with the Nx tensor library.")
+ (depends
+  (ocaml
+   (>= 5.0.0))
+  dune
+  (nx
+   (= :version))
+  re
+  uutf
+  uucp
+  (alcotest :with-test))
+ (tags
+  (text-processing nlp natural-language-processing tokenization)))
+
+(package
  (name rune)
  (synopsis "")
  (description "")
@@ -85,8 +105,9 @@
 
 (package
  (name kaun)
- (synopsis "???")
- (description "???")
+ (synopsis "Flax-inspired neural network library for OCaml")
+ (description
+  "Kaun brings modern deep learning to OCaml with a flexible, type-safe API for building and training neural networks. It leverages Rune for automatic differentiation and computation graph optimization while maintaining OCaml's functional programming advantages.")
  (depends
   (ocaml
    (>= 5.0.0))
