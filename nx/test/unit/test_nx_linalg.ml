@@ -573,17 +573,16 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
   let test_max_pool2d_padding ctx () =
     let input =
       Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
-        [| 1.; 2.; 3.; 4.; 
-           5.; 6.; 7.; 8.;
-           9.; 10.; 11.; 12.;
-           13.; 14.; 15.; 16. |]
+        [|
+          1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.;
+        |]
     in
-    (* Test with Same padding - output size should be ceil(input_size / stride) *)
+    (* Test with Same padding - output size should be ceil(input_size /
+       stride) *)
     let output, _ =
       Nx.max_pool2d ~kernel_size:(3, 3) ~stride:(2, 2) ~padding_spec:`Same input
     in
-    check_t "max_pool2d padding" [| 1; 1; 2; 2 |]
-      [| 11.; 12.; 15.; 16. |]
+    check_t "max_pool2d padding" [| 1; 1; 2; 2 |] [| 11.; 12.; 15.; 16. |]
       output
 
   let test_min_pool1d_basic ctx () =

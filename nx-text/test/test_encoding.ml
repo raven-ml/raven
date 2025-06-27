@@ -176,9 +176,7 @@ let test_advanced_tokenizer_regex () =
 (* ───── Edge Cases ───── *)
 
 let test_encode_batch_long_sequences () =
-  let long_text =
-    String.concat " " (List.init 99 (fun i -> string_of_int i))
-  in
+  let long_text = String.concat " " (List.init 99 (fun i -> string_of_int i)) in
   let batch = encode_batch ~max_len:100 [ long_text ] in
   check_shape "fits within max_len" [| 1; 100 |] batch
 

@@ -775,8 +775,8 @@ let kernel_fold_float64 (input : (float, float64_elt) t)
         let valid = ref true in
         for i = 0 to num_spatial_dims - 1 do
           let coord =
-            block_coords.(i) * stride.(i)
-            + kernel_coords.(i) * dilation.(i)
+            (block_coords.(i) * stride.(i))
+            + (kernel_coords.(i) * dilation.(i))
             - fst padding.(i)
           in
           if coord < 0 || coord >= output_spatial.(i) then valid := false;
@@ -806,15 +806,15 @@ let kernel_fold_float64 (input : (float, float64_elt) t)
               Array1.unsafe_get input_buf (offset input + input_idx)
             in
             Array1.unsafe_set out_buf output_idx (current_val +. input_val)
-        done
+          done
       done
     done
   done
 
 (* Specialized fold (col2im) for uint8 - worker function *)
 let kernel_fold_uint8 (input : (int, int8_unsigned_elt) t)
-    (out : (int, int8_unsigned_elt) t) ~output_size ~kernel_size ~stride ~dilation
-    ~padding start_block end_block =
+    (out : (int, int8_unsigned_elt) t) ~output_size ~kernel_size ~stride
+    ~dilation ~padding start_block end_block =
   let input_buf, out_buf = (buffer input, buffer out) in
   let out_shape = shape out in
 
@@ -883,8 +883,8 @@ let kernel_fold_uint8 (input : (int, int8_unsigned_elt) t)
         let valid = ref true in
         for i = 0 to num_spatial_dims - 1 do
           let coord =
-            block_coords.(i) * stride.(i)
-            + kernel_coords.(i) * dilation.(i)
+            (block_coords.(i) * stride.(i))
+            + (kernel_coords.(i) * dilation.(i))
             - fst padding.(i)
           in
           if coord < 0 || coord >= output_spatial.(i) then valid := false;
@@ -916,7 +916,7 @@ let kernel_fold_uint8 (input : (int, int8_unsigned_elt) t)
             let sum = current_val + input_val in
             let result = if sum > 255 then 255 else sum in
             Array1.unsafe_set out_buf output_idx result
-        done
+          done
       done
     done
   done
@@ -993,8 +993,8 @@ let kernel_fold_int32 (input : (int32, int32_elt) t)
         let valid = ref true in
         for i = 0 to num_spatial_dims - 1 do
           let coord =
-            block_coords.(i) * stride.(i)
-            + kernel_coords.(i) * dilation.(i)
+            (block_coords.(i) * stride.(i))
+            + (kernel_coords.(i) * dilation.(i))
             - fst padding.(i)
           in
           if coord < 0 || coord >= output_spatial.(i) then valid := false;
@@ -1023,8 +1023,9 @@ let kernel_fold_int32 (input : (int32, int32_elt) t)
             let input_val =
               Array1.unsafe_get input_buf (offset input + input_idx)
             in
-            Array1.unsafe_set out_buf output_idx (Int32.add current_val input_val)
-        done
+            Array1.unsafe_set out_buf output_idx
+              (Int32.add current_val input_val)
+          done
       done
     done
   done
@@ -1101,8 +1102,8 @@ let kernel_fold_int64 (input : (int64, int64_elt) t)
         let valid = ref true in
         for i = 0 to num_spatial_dims - 1 do
           let coord =
-            block_coords.(i) * stride.(i)
-            + kernel_coords.(i) * dilation.(i)
+            (block_coords.(i) * stride.(i))
+            + (kernel_coords.(i) * dilation.(i))
             - fst padding.(i)
           in
           if coord < 0 || coord >= output_spatial.(i) then valid := false;
@@ -1131,8 +1132,9 @@ let kernel_fold_int64 (input : (int64, int64_elt) t)
             let input_val =
               Array1.unsafe_get input_buf (offset input + input_idx)
             in
-            Array1.unsafe_set out_buf output_idx (Int64.add current_val input_val)
-        done
+            Array1.unsafe_set out_buf output_idx
+              (Int64.add current_val input_val)
+          done
       done
     done
   done
@@ -1177,14 +1179,14 @@ let kernel_unfold (type a b) (context : context) (input : (a, b) t)
         kernel_unfold_float64 input out ~kernel_size ~stride ~dilation ~padding
           0 num_blocks
     | Int8_unsigned ->
-        kernel_unfold_uint8 input out ~kernel_size ~stride ~dilation ~padding
-          0 num_blocks
+        kernel_unfold_uint8 input out ~kernel_size ~stride ~dilation ~padding 0
+          num_blocks
     | Int32 ->
-        kernel_unfold_int32 input out ~kernel_size ~stride ~dilation ~padding
-          0 num_blocks
+        kernel_unfold_int32 input out ~kernel_size ~stride ~dilation ~padding 0
+          num_blocks
     | Int64 ->
-        kernel_unfold_int64 input out ~kernel_size ~stride ~dilation ~padding
-          0 num_blocks
+        kernel_unfold_int64 input out ~kernel_size ~stride ~dilation ~padding 0
+          num_blocks
     | _ -> failwith "Unfold not yet implemented for this dtype"
 
 (* Generic unfold (im2col) operation dispatcher *)
@@ -1238,14 +1240,14 @@ let kernel_fold (type a b) (context : context) (input : (a, b) t)
         kernel_fold_float64 input out ~output_size ~kernel_size ~stride
           ~dilation ~padding 0 num_blocks
     | Int8_unsigned ->
-        kernel_fold_uint8 input out ~output_size ~kernel_size ~stride
-          ~dilation ~padding 0 num_blocks
+        kernel_fold_uint8 input out ~output_size ~kernel_size ~stride ~dilation
+          ~padding 0 num_blocks
     | Int32 ->
-        kernel_fold_int32 input out ~output_size ~kernel_size ~stride
-          ~dilation ~padding 0 num_blocks
+        kernel_fold_int32 input out ~output_size ~kernel_size ~stride ~dilation
+          ~padding 0 num_blocks
     | Int64 ->
-        kernel_fold_int64 input out ~output_size ~kernel_size ~stride
-          ~dilation ~padding 0 num_blocks
+        kernel_fold_int64 input out ~output_size ~kernel_size ~stride ~dilation
+          ~padding 0 num_blocks
     | _ -> failwith "Fold not yet implemented for this dtype"
 
 (* Generic fold (col2im) operation dispatcher *)

@@ -3963,122 +3963,129 @@ module Make (B : Backend_intf.S) = struct
     if Array.exists (fun d -> d = 0) input_spatial_shape then
       (* Return empty output with proper shape *)
       let empty_output = empty (B.context x) (dtype x) (shape x) in
-      if return_indices then 
+      if return_indices then
         let empty_indices = empty (B.context x) Dtype.int32 (shape x) in
         (empty_output, Some empty_indices)
       else (empty_output, None)
     else
-
-    (* Use pool_setup helper *)
-    let _input_spatial_shape, s_s, d_s, _current_pads_pairs, _, full_pad_config
-        =
-      pool_setup ~num_spatial_dims ~kernel_size ?stride ?dilation ~padding_spec
-        ~ceil_mode x
-    in
-
-    (* Use unfold for pooling *)
-    let padding_pairs =
-      Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
-    in
-    let x_unfolded =
-      B.op_unfold x ~kernel_size ~stride:s_s ~dilation:d_s
-        ~padding:padding_pairs
-    in
-    (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
-
-    (* Calculate the output shape *)
-    let prefix_shape = Array.sub (shape x) 0 (x_ndim - num_spatial_dims) in
-    let padded_spatial =
-      Array.init num_spatial_dims (fun i ->
-          (shape x).(x_ndim - num_spatial_dims + i)
-          + fst padding_pairs.(i)
-          + snd padding_pairs.(i))
-    in
-    let output_spatial =
-      Array.init num_spatial_dims (fun i ->
-          let effective_kernel = ((kernel_size.(i) - 1) * d_s.(i)) + 1 in
-          ((padded_spatial.(i) - effective_kernel) / s_s.(i)) + 1)
-    in
-
-    let channels =
-      if x_ndim - num_spatial_dims >= 1 then (
-        let ch_prod = ref 1 in
-        for i = 1 to x_ndim - num_spatial_dims - 1 do
-          ch_prod := !ch_prod * (shape x).(i)
-        done;
-        !ch_prod)
-      else 1
-    in
-
-    let kernel_elements = array_prod kernel_size in
-
-    (* Reshape to separate channels and kernel elements *)
-    let num_blocks = (shape x_unfolded).(Array.length (shape x_unfolded) - 1) in
-    (* For max/avg pooling, we need to handle the unfolded tensor correctly.
-       x_unfolded has shape [batch, channels * kernel_elements, num_blocks] We
-       want to reshape to [batch, channels, kernel_elements, num_blocks] *)
-    let batch_size =
-      if Array.length prefix_shape >= 1 then prefix_shape.(0) else 1
-    in
-    let x_reshaped =
-      reshape [| batch_size; channels; kernel_elements; num_blocks |] x_unfolded
-    in
-
-    (* Compute max over kernel elements *)
-    let max_pooled =
-      B.op_reduce_max x_reshaped
-        ~axes:[| Array.length (shape x_reshaped) - 2 |]
-        ~keepdims:false
-    in
-
-    (* Reshape back to original layout *)
-    let result_shape = Array.concat [ prefix_shape; output_spatial ] in
-    let max_values = reshape result_shape max_pooled in
-
-    if not return_indices then (max_values, None)
-    else
-      (* For indices, we need to track which element in the kernel was the max *)
-      (* Create indices for each kernel position *)
-      let kernel_indices =
-        arange (B.context x) Dtype.int32 0 kernel_elements 1
-      in
-      let kernel_indices_reshaped =
-        reshape [| 1; 1; kernel_elements; 1 |] kernel_indices
-      in
-      let kernel_indices_broadcast =
-        broadcast_to (shape x_reshaped) kernel_indices_reshaped
+      (* Use pool_setup helper *)
+      let ( _input_spatial_shape,
+            s_s,
+            d_s,
+            _current_pads_pairs,
+            _,
+            full_pad_config ) =
+        pool_setup ~num_spatial_dims ~kernel_size ?stride ?dilation
+          ~padding_spec ~ceil_mode x
       in
 
-      (* Find which kernel position has the max value *)
-      let max_expanded =
-        unsqueeze ~axes:[| Array.length (shape x_reshaped) - 2 |] max_pooled
+      (* Use unfold for pooling *)
+      let padding_pairs =
+        Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
       in
-      let max_broadcast = broadcast_to (shape x_reshaped) max_expanded in
-      let is_max = equal x_reshaped max_broadcast in
+      let x_unfolded =
+        B.op_unfold x ~kernel_size ~stride:s_s ~dilation:d_s
+          ~padding:padding_pairs
+      in
+      (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
 
-      (* Use where to select indices, with a large value for non-max
-         positions *)
-      let large_val =
-        scalar (B.context x) Dtype.int32 (Int32.of_int kernel_elements)
+      (* Calculate the output shape *)
+      let prefix_shape = Array.sub (shape x) 0 (x_ndim - num_spatial_dims) in
+      let padded_spatial =
+        Array.init num_spatial_dims (fun i ->
+            (shape x).(x_ndim - num_spatial_dims + i)
+            + fst padding_pairs.(i)
+            + snd padding_pairs.(i))
       in
-      let masked_indices =
-        where is_max kernel_indices_broadcast
-          (broadcast_to (shape kernel_indices_broadcast) large_val)
+      let output_spatial =
+        Array.init num_spatial_dims (fun i ->
+            let effective_kernel = ((kernel_size.(i) - 1) * d_s.(i)) + 1 in
+            ((padded_spatial.(i) - effective_kernel) / s_s.(i)) + 1)
       in
 
-      (* Get the minimum index (first occurrence of max) *)
-      let kernel_idx =
-        min masked_indices
-          ~axes:[| Array.length (shape masked_indices) - 2 |]
+      let channels =
+        if x_ndim - num_spatial_dims >= 1 then (
+          let ch_prod = ref 1 in
+          for i = 1 to x_ndim - num_spatial_dims - 1 do
+            ch_prod := !ch_prod * (shape x).(i)
+          done;
+          !ch_prod)
+        else 1
+      in
+
+      let kernel_elements = array_prod kernel_size in
+
+      (* Reshape to separate channels and kernel elements *)
+      let num_blocks =
+        (shape x_unfolded).(Array.length (shape x_unfolded) - 1)
+      in
+      (* For max/avg pooling, we need to handle the unfolded tensor correctly.
+         x_unfolded has shape [batch, channels * kernel_elements, num_blocks] We
+         want to reshape to [batch, channels, kernel_elements, num_blocks] *)
+      let batch_size =
+        if Array.length prefix_shape >= 1 then prefix_shape.(0) else 1
+      in
+      let x_reshaped =
+        reshape
+          [| batch_size; channels; kernel_elements; num_blocks |]
+          x_unfolded
+      in
+
+      (* Compute max over kernel elements *)
+      let max_pooled =
+        B.op_reduce_max x_reshaped
+          ~axes:[| Array.length (shape x_reshaped) - 2 |]
           ~keepdims:false
       in
 
-      (* Convert kernel index to spatial index *)
-      (* For now, return the kernel indices directly - converting to spatial indices would require 
-         more complex index arithmetic based on the spatial layout *)
-      let final_indices = reshape result_shape kernel_idx in
+      (* Reshape back to original layout *)
+      let result_shape = Array.concat [ prefix_shape; output_spatial ] in
+      let max_values = reshape result_shape max_pooled in
 
-      (max_values, Some final_indices)
+      if not return_indices then (max_values, None)
+      else
+        (* For indices, we need to track which element in the kernel was the max *)
+        (* Create indices for each kernel position *)
+        let kernel_indices =
+          arange (B.context x) Dtype.int32 0 kernel_elements 1
+        in
+        let kernel_indices_reshaped =
+          reshape [| 1; 1; kernel_elements; 1 |] kernel_indices
+        in
+        let kernel_indices_broadcast =
+          broadcast_to (shape x_reshaped) kernel_indices_reshaped
+        in
+
+        (* Find which kernel position has the max value *)
+        let max_expanded =
+          unsqueeze ~axes:[| Array.length (shape x_reshaped) - 2 |] max_pooled
+        in
+        let max_broadcast = broadcast_to (shape x_reshaped) max_expanded in
+        let is_max = equal x_reshaped max_broadcast in
+
+        (* Use where to select indices, with a large value for non-max
+           positions *)
+        let large_val =
+          scalar (B.context x) Dtype.int32 (Int32.of_int kernel_elements)
+        in
+        let masked_indices =
+          where is_max kernel_indices_broadcast
+            (broadcast_to (shape kernel_indices_broadcast) large_val)
+        in
+
+        (* Get the minimum index (first occurrence of max) *)
+        let kernel_idx =
+          min masked_indices
+            ~axes:[| Array.length (shape masked_indices) - 2 |]
+            ~keepdims:false
+        in
+
+        (* Convert kernel index to spatial index *)
+        (* For now, return the kernel indices directly - converting to spatial indices would require 
+         more complex index arithmetic based on the spatial layout *)
+        let final_indices = reshape result_shape kernel_idx in
+
+        (max_values, Some final_indices)
 
   let avg_pool1d ~kernel_size ?stride ?dilation ?(padding_spec = `Valid)
       ?(ceil_mode = false) ?(count_include_pad = true) x =
@@ -4122,83 +4129,95 @@ module Make (B : Backend_intf.S) = struct
     if Array.exists (fun d -> d = 0) input_spatial_shape then
       (* Return empty output with proper shape *)
       let empty_output = empty (B.context x) (dtype x) (shape x) in
-      if return_indices then 
+      if return_indices then
         let empty_indices = empty (B.context x) Dtype.int32 (shape x) in
         (empty_output, Some empty_indices)
       else (empty_output, None)
     else
+      (* Use pool_setup helper *)
+      let ( _input_spatial_shape,
+            s_s,
+            d_s,
+            _current_pads_pairs,
+            _,
+            full_pad_config ) =
+        pool_setup ~num_spatial_dims ~kernel_size ?stride ?dilation
+          ~padding_spec ~ceil_mode x
+      in
 
-    (* Use pool_setup helper *)
-    let _input_spatial_shape, s_s, d_s, _current_pads_pairs, _, full_pad_config
-        =
-      pool_setup ~num_spatial_dims ~kernel_size ?stride ?dilation ~padding_spec
-        ~ceil_mode x
-    in
+      (* Use unfold for pooling *)
+      let padding_pairs =
+        Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
+      in
+      let x_unfolded =
+        B.op_unfold x ~kernel_size ~stride:s_s ~dilation:d_s
+          ~padding:padding_pairs
+      in
+      (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
 
-    (* Use unfold for pooling *)
-    let padding_pairs =
-      Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
-    in
-    let x_unfolded =
-      B.op_unfold x ~kernel_size ~stride:s_s ~dilation:d_s
-        ~padding:padding_pairs
-    in
-    (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
+      (* Calculate the output shape *)
+      let prefix_shape = Array.sub (shape x) 0 (x_ndim - num_spatial_dims) in
+      let padded_spatial =
+        Array.init num_spatial_dims (fun i ->
+            (shape x).(x_ndim - num_spatial_dims + i)
+            + fst padding_pairs.(i)
+            + snd padding_pairs.(i))
+      in
+      let output_spatial =
+        Array.init num_spatial_dims (fun i ->
+            let effective_kernel = ((kernel_size.(i) - 1) * d_s.(i)) + 1 in
+            ((padded_spatial.(i) - effective_kernel) / s_s.(i)) + 1)
+      in
 
-    (* Calculate the output shape *)
-    let prefix_shape = Array.sub (shape x) 0 (x_ndim - num_spatial_dims) in
-    let padded_spatial =
-      Array.init num_spatial_dims (fun i ->
-          (shape x).(x_ndim - num_spatial_dims + i)
-          + fst padding_pairs.(i)
-          + snd padding_pairs.(i))
-    in
-    let output_spatial =
-      Array.init num_spatial_dims (fun i ->
-          let effective_kernel = ((kernel_size.(i) - 1) * d_s.(i)) + 1 in
-          ((padded_spatial.(i) - effective_kernel) / s_s.(i)) + 1)
-    in
+      let channels =
+        if x_ndim - num_spatial_dims >= 1 then (
+          let ch_prod = ref 1 in
+          for i = 1 to x_ndim - num_spatial_dims - 1 do
+            ch_prod := !ch_prod * (shape x).(i)
+          done;
+          !ch_prod)
+        else 1
+      in
 
-    let channels =
-      if x_ndim - num_spatial_dims >= 1 then (
-        let ch_prod = ref 1 in
-        for i = 1 to x_ndim - num_spatial_dims - 1 do
-          ch_prod := !ch_prod * (shape x).(i)
-        done;
-        !ch_prod)
-      else 1
-    in
+      let kernel_elements = array_prod kernel_size in
 
-    let kernel_elements = array_prod kernel_size in
+      (* Reshape to separate channels and kernel elements *)
+      let num_blocks =
+        (shape x_unfolded).(Array.length (shape x_unfolded) - 1)
+      in
+      let batch_size =
+        if Array.length prefix_shape >= 1 then prefix_shape.(0) else 1
+      in
+      let x_reshaped =
+        reshape
+          [| batch_size; channels; kernel_elements; num_blocks |]
+          x_unfolded
+      in
 
-    (* Reshape to separate channels and kernel elements *)
-    let num_blocks = (shape x_unfolded).(Array.length (shape x_unfolded) - 1) in
-    let batch_size =
-      if Array.length prefix_shape >= 1 then prefix_shape.(0) else 1
-    in
-    let x_reshaped =
-      reshape [| batch_size; channels; kernel_elements; num_blocks |] x_unfolded
-    in
+      (* Compute min over kernel elements using reduction approach *)
+      (* Since we don't have op_reduce_min, we'll use a loop with minimum *)
+      let min_pooled = ref None in
+      for k = 0 to kernel_elements - 1 do
+        let slice =
+          B.op_shrink x_reshaped
+            [| (0, batch_size); (0, channels); (k, k + 1); (0, num_blocks) |]
+        in
+        let slice_squeezed =
+          reshape [| batch_size; channels; num_blocks |] slice
+        in
+        match !min_pooled with
+        | None -> min_pooled := Some slice_squeezed
+        | Some current -> min_pooled := Some (minimum current slice_squeezed)
+      done;
 
-    (* Compute min over kernel elements using reduction approach *)
-    (* Since we don't have op_reduce_min, we'll use a loop with minimum *)
-    let min_pooled = ref None in
-    for k = 0 to kernel_elements - 1 do
-      let slice = B.op_shrink x_reshaped [| (0, batch_size); (0, channels); (k, k + 1); (0, num_blocks) |] in
-      let slice_squeezed = reshape [| batch_size; channels; num_blocks |] slice in
-      match !min_pooled with
-      | None -> min_pooled := Some slice_squeezed
-      | Some current -> min_pooled := Some (minimum current slice_squeezed)
-    done;
-    
-    let min_values_3d = Option.get !min_pooled in
+      let min_values_3d = Option.get !min_pooled in
 
-    (* Reshape back to original layout *)
-    let result_shape = Array.concat [ prefix_shape; output_spatial ] in
-    let min_values = reshape result_shape min_values_3d in
+      (* Reshape back to original layout *)
+      let result_shape = Array.concat [ prefix_shape; output_spatial ] in
+      let min_values = reshape result_shape min_values_3d in
 
-    if not return_indices then (min_values, None)
-    else (min_values, None) (* Index tracking not implemented for min pool *)
+      if not return_indices then (min_values, None) else (min_values, None)
+  (* Index tracking not implemented for min pool *)
 
   let min_pool1d ~kernel_size ?stride ?dilation ?(padding_spec = `Valid)
       ?(ceil_mode = false) ?(return_indices = false) x =

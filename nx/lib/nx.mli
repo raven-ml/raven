@@ -2338,7 +2338,8 @@ val min_pool1d :
 (** [min_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
      ?return_indices x] applies 1D min pooling.
 
-    - [return_indices]: if true, also returns indices of min values (currently returns None)
+    - [return_indices]: if true, also returns indices of min values (currently
+      returns None)
     - Other parameters same as {!avg_pool1d}
 
     Returns (pooled_values, None). Index tracking not yet implemented.
