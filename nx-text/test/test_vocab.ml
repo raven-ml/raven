@@ -105,7 +105,7 @@ let test_vocab_save_load () =
 
 let test_vocab_load_nonexistent () =
   check_raises "load nonexistent file"
-    (Sys_error "/nonexistent/file.txt: No such file or directory") (fun () ->
+    (Invalid_argument "vocab_load: load vocab from '/nonexistent/file.txt' (file not found)") (fun () ->
       ignore (vocab_load "/nonexistent/file.txt"))
 
 (* Edge Cases *)
