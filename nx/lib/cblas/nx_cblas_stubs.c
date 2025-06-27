@@ -1106,6 +1106,10 @@ static inline void iterate_where_inner_dims(
   }
 }
 
+DEFINE_WHERE_OP(int8_t)
+DEFINE_WHERE_OP(uint8_t)
+DEFINE_WHERE_OP(int16_t)
+DEFINE_WHERE_OP(uint16_t)
 DEFINE_WHERE_OP(int32_t)
 DEFINE_WHERE_OP(int64_t)
 DEFINE_WHERE_OP(intnat)
@@ -2076,6 +2080,18 @@ CAMLprim value caml_nx_where_bc(value *argv, int argn) {
 
   where_op_t func = NULL;
   switch (kind) {
+    case CAML_BA_SINT8:
+      func = nx_cblas_where_int8_t;
+      break;
+    case CAML_BA_UINT8:
+      func = nx_cblas_where_uint8_t;
+      break;
+    case CAML_BA_SINT16:
+      func = nx_cblas_where_int16_t;
+      break;
+    case CAML_BA_UINT16:
+      func = nx_cblas_where_uint16_t;
+      break;
     case CAML_BA_INT32:
       func = nx_cblas_where_int32_t;
       break;
