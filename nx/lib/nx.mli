@@ -2059,10 +2059,10 @@ val softmax : ?axes:int array -> (float, 'a) t -> (float, 'a) t
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
-        softmax x |> to_array |> Array.map Float.round;;
+        softmax x |> to_array |> Array.map Float.round
       - : float array = [|0.; 0.; 1.|]
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
-        sum (softmax x) |> get_item [];;
+        sum (softmax x) |> get_item []
       - : float = 1.
     ]} *)
 
@@ -2086,10 +2086,8 @@ val softsign : (float, 'a) t -> (float, 'a) t
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| -10.; 0.; 10. |] in
-        softsign x  |> Array.map (Float.round)
-      Line 2, characters 3-13:
-      Error: This expression has type (float, float32_elt) t
-             but an expression was expected of type float array
+        softsign x
+      - : (float, float32_elt) t = [-0.909091, 0, 0.909091]
     ]} *)
 
 val mish : (float, 'a) t -> (float, 'a) t
@@ -2403,8 +2401,8 @@ val max_unpool1d :
     {@ocaml[
       # let x = create float32 [| 1; 1; 4 |] [| 1.; 3.; 2.; 4. |] in
         let pooled, _ = max_pool1d ~kernel_size:2 x in
-        shape pooled;;
-      - : int array = [|1; 1; 2|]
+        pooled
+      - : (float, float32_elt) t = [[[3, 4]]]
     ]} *)
 
 val max_unpool2d :
@@ -2431,8 +2429,9 @@ val max_unpool2d :
           [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.;
              9.; 10.; 11.; 12.; 13.; 14.; 15.; 16. |] in
         let pooled, _ = max_pool2d ~kernel_size:(2,2) x in
-        shape pooled;;
-      - : int array = [|1; 1; 2; 2|]
+        pooled
+      - : (float, float32_elt) t = [[[[6, 8],
+                                      [14, 16]]]]
     ]} *)
 
 val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
