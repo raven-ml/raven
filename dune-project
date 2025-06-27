@@ -17,6 +17,8 @@
 
 (using ctypes 0.3)
 
+(using mdx 0.4)
+
 (version 0.1.0)
 
 (implicit_transitive_deps false)
@@ -46,7 +48,8 @@
   camlzip
   ; nx.cblas (uses dune-configurator to find BLAS)
   (dune-configurator :build)
-  (alcotest :with-test))
+  (alcotest :with-test)
+  (mdx :with-test))
  (tags
   (numerical-computation tensor-library machine-learning)))
 

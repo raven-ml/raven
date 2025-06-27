@@ -16,6 +16,7 @@ depends: [
   "camlzip"
   "dune-configurator" {build}
   "alcotest" {with-test}
+  "mdx" {with-test}
   "odoc" {with-doc}
 ]
 build: [
