@@ -194,3 +194,29 @@
   (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
+
+(package
+ (name raven)
+ (allow_empty)
+ (synopsis "Meta package for the Raven ML ecosystem")
+ (description
+  "Raven is a comprehensive machine learning ecosystem for OCaml. This meta package installs all Raven components including Nx (tensors), Hugin (plotting), Quill (notebooks), Rune (autodiff), Kaun (neural networks), and Sowilo (computer vision).")
+ (depends
+  (nx
+   (= :version))
+  (nx-datasets
+   (= :version))
+  (nx-text
+   (= :version))
+  (rune
+   (= :version))
+  (kaun
+   (= :version))
+  (sowilo
+   (= :version))
+  (quill
+   (= :version))
+  (hugin
+   (= :version)))
+ (tags
+  (machine-learning data-science numerical-computation)))
