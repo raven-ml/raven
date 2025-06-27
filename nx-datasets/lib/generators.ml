@@ -513,7 +513,7 @@ let make_regression ?(n_samples = 100) ?(n_features = 100) ?(n_informative = 10)
       Rng.shuffle state indices;
       ( Rng.take_indices x ~axis:0 indices,
         Rng.take_indices y ~axis:0 indices,
-        Some (Rng.take_indices coef_tensor ~axis:0 indices) ))
+        Some coef_tensor ))
     else (x, y, Some coef_tensor)
   in
 
@@ -656,6 +656,8 @@ let make_swiss_roll ?(n_samples = 100) ?(noise = 0.0) ?random_state
 
   let x_coord = Nx.mul t (Nx.cos t) in
   let z_coord = Nx.mul t (Nx.sin t) in
+  let x_coord = Nx.reshape [| final_n_samples; 1 |] x_coord in
+  let z_coord = Nx.reshape [| final_n_samples; 1 |] z_coord in
   let x = Nx.concatenate ~axis:1 [ x_coord; height; z_coord ] in
   let x =
     if noise > 0.0 then

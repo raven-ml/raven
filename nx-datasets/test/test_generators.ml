@@ -37,7 +37,7 @@ let test_make_regression () =
     make_regression ~n_samples:100 ~n_features:10 ~coef:true ()
   in
   check_shape "X shape" [| 100; 10 |] x;
-  check_shape "y shape" [| 100; 1 |] y;
+  check_shape "y shape" [| 100 |] y;
   match coef with
   | Some c -> check_shape "coef shape" [| 10; 1 |] c
   | None -> fail "Expected coefficients"
