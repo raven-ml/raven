@@ -7,7 +7,7 @@ description:
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
-tags: ["machine-learning" "meta-package" "ecosystem"]
+tags: ["machine-learning" "data-science" "numerical-computation"]
 homepage: "https://github.com/raven-ml/raven"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
