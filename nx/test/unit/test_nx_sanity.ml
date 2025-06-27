@@ -989,6 +989,36 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           in
           let y, _ = Nx.max_pool2d ~kernel_size:(2, 2) x in
           check_t "max_pool2d values" [| 1; 1; 2; 2 |] [| 7.; 8.; 15.; 16. |] y);
+      test_case "min_pool1d" `Quick (fun () ->
+          let x =
+            Nx.create ctx Nx.float32 [| 1; 1; 6 |] [| 4.; 2.; 3.; 1.; 6.; 5. |]
+          in
+          let y, _ = Nx.min_pool1d ~kernel_size:2 x in
+          check_t "min_pool1d values" [| 1; 1; 3 |] [| 2.; 1.; 5. |] y);
+      test_case "min_pool2d" `Quick (fun () ->
+          let x =
+            Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
+              [|
+                1.;
+                3.;
+                2.;
+                4.;
+                5.;
+                7.;
+                6.;
+                8.;
+                9.;
+                11.;
+                10.;
+                12.;
+                13.;
+                15.;
+                14.;
+                16.;
+              |]
+          in
+          let y, _ = Nx.min_pool2d ~kernel_size:(2, 2) x in
+          check_t "min_pool2d values" [| 1; 1; 2; 2 |] [| 1.; 2.; 9.; 10. |] y);
     ]
 
   let random_tests ctx =

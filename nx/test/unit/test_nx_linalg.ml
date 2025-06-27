@@ -536,6 +536,162 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       [| 9.; 9.; 9.; 9.; 9.; 9.; 9.; 9.; 9. |]
       y
 
+  (* ───── Pooling Tests ───── *)
+
+  let test_max_pool1d_basic ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 6 |] [| 1.; 3.; 2.; 6.; 4.; 5. |]
+    in
+    let output, _ = Nx.max_pool1d ~kernel_size:2 input in
+    check_t "max_pool1d basic" [| 1; 1; 3 |] [| 3.; 6.; 5. |] output
+
+  let test_max_pool1d_stride ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 8 |]
+        [| 1.; 3.; 2.; 6.; 4.; 5.; 7.; 8. |]
+    in
+    let output, _ = Nx.max_pool1d ~kernel_size:3 ~stride:2 input in
+    check_t "max_pool1d stride" [| 1; 1; 3 |] [| 3.; 6.; 7. |] output
+
+  let test_max_pool2d_basic ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
+        [|
+          1.; 3.; 2.; 4.; 5.; 7.; 6.; 8.; 9.; 11.; 10.; 12.; 13.; 15.; 14.; 16.;
+        |]
+    in
+    let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) input in
+    check_t "max_pool2d basic" [| 1; 1; 2; 2 |] [| 7.; 8.; 15.; 16. |] output
+
+  let test_max_pool2d_stride ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int)
+    in
+    let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
+    check_t "max_pool2d stride" [| 1; 1; 2; 2 |] [| 5.; 7.; 13.; 15. |] output
+
+  let test_max_pool2d_padding ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
+        [| 1.; 2.; 3.; 4.; 
+           5.; 6.; 7.; 8.;
+           9.; 10.; 11.; 12.;
+           13.; 14.; 15.; 16. |]
+    in
+    (* Test with Same padding - output size should be ceil(input_size / stride) *)
+    let output, _ =
+      Nx.max_pool2d ~kernel_size:(3, 3) ~stride:(2, 2) ~padding_spec:`Same input
+    in
+    check_t "max_pool2d padding" [| 1; 1; 2; 2 |]
+      [| 11.; 12.; 15.; 16. |]
+      output
+
+  let test_min_pool1d_basic ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 6 |] [| 4.; 2.; 3.; 1.; 6.; 5. |]
+    in
+    let output, _ = Nx.min_pool1d ~kernel_size:2 input in
+    check_t "min_pool1d basic" [| 1; 1; 3 |] [| 2.; 1.; 5. |] output
+
+  let test_min_pool1d_stride ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 8 |]
+        [| 4.; 2.; 3.; 1.; 6.; 5.; 7.; 8. |]
+    in
+    let output, _ = Nx.min_pool1d ~kernel_size:3 ~stride:2 input in
+    check_t "min_pool1d stride" [| 1; 1; 3 |] [| 2.; 1.; 5. |] output
+
+  let test_min_pool2d_basic ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
+        [|
+          1.; 3.; 2.; 4.; 5.; 7.; 6.; 8.; 9.; 11.; 10.; 12.; 13.; 15.; 14.; 16.;
+        |]
+    in
+    let output, _ = Nx.min_pool2d ~kernel_size:(2, 2) input in
+    check_t "min_pool2d basic" [| 1; 1; 2; 2 |] [| 1.; 2.; 9.; 10. |] output
+
+  let test_min_pool2d_stride ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
+        [|
+          1.; 2.; 5.; 6.; 3.; 4.; 7.; 8.; 9.; 10.; 13.; 14.; 11.; 12.; 15.; 16.;
+        |]
+    in
+    let output, _ = Nx.min_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
+    check_t "min_pool2d stride" [| 1; 1; 2; 2 |] [| 1.; 5.; 9.; 13. |] output
+
+  let test_min_pool2d_padding ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+    in
+    let output, _ =
+      Nx.min_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) ~padding_spec:`Same input
+    in
+    (* With zero padding, the minimums at edges will be 0 *)
+    check_t "min_pool2d padding" [| 1; 1; 3; 3 |]
+      [| 0.; 0.; 0.; 0.; 1.; 2.; 0.; 4.; 5. |]
+      output
+
+  let test_min_pool2d_uint8 ctx () =
+    (* Test that min_pool works correctly with uint8 dtype *)
+    let input =
+      Nx.create ctx Nx.uint8 [| 1; 1; 4; 4 |]
+        [|
+          255; 200; 150; 100; 180; 160; 140; 120; 90; 80; 70; 60; 50; 40; 30; 20;
+        |]
+    in
+    let output, _ = Nx.min_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
+    check_t "min_pool2d uint8" [| 1; 1; 2; 2 |] [| 160; 100; 40; 20 |] output
+
+  let test_avg_pool1d_basic ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+    in
+    let output = Nx.avg_pool1d ~kernel_size:2 input in
+    check_t "avg_pool1d basic" [| 1; 1; 3 |] [| 1.5; 3.5; 5.5 |] output
+
+  let test_avg_pool2d_basic ctx () =
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int)
+    in
+    let output = Nx.avg_pool2d ~kernel_size:(2, 2) input in
+    check_t "avg_pool2d basic" [| 1; 1; 2; 2 |] [| 2.5; 4.5; 10.5; 12.5 |]
+      output
+
+  let test_pool_batch ctx () =
+    (* Test pooling with batch dimension *)
+    let input =
+      Nx.create ctx Nx.float32 [| 2; 1; 4; 4 |] (Array.init 32 float_of_int)
+    in
+    let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
+    check_shape "pool batch shape" [| 2; 1; 2; 2 |] output;
+    (* Check first batch *)
+    check (float 1e-6) "batch 0 [0,0]" 5. (Nx.unsafe_get [ 0; 0; 0; 0 ] output);
+    (* Check second batch *)
+    check (float 1e-6) "batch 1 [0,0]" 21. (Nx.unsafe_get [ 1; 0; 0; 0 ] output)
+
+  let test_pool_multichannel ctx () =
+    (* Test pooling with multiple channels *)
+    let input =
+      Nx.create ctx Nx.float32 [| 1; 3; 4; 4 |] (Array.init 48 float_of_int)
+    in
+    let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
+    check_shape "pool multichannel shape" [| 1; 3; 2; 2 |] output
+
+  let test_pool_edge_cases ctx () =
+    (* Test edge cases *)
+    (* Single element *)
+    let single = Nx.create ctx Nx.float32 [| 1; 1; 1; 1 |] [| 42. |] in
+    let out_single, _ = Nx.max_pool2d ~kernel_size:(1, 1) single in
+    check_t "pool single element" [| 1; 1; 1; 1 |] [| 42. |] out_single;
+
+    (* Empty spatial dimensions *)
+    let empty = Nx.create ctx Nx.float32 [| 1; 1; 0; 4 |] [||] in
+    let out_empty, _ = Nx.max_pool2d ~kernel_size:(1, 1) empty in
+    check_shape "pool empty spatial" [| 1; 1; 0; 4 |] out_empty
+
   (*  ─────  Solve Inverse Tests  ─────  *)
   (* Note: These functions are not exposed in nx.ml, so tests are commented out *)
 
@@ -798,11 +954,32 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       (* ("diag create", `Quick, test_diag_create ctx); *)
       (* ("tril triu", `Quick, test_tril_triu ctx); *) ]
 
+  let pooling_tests ctx =
+    [
+      ("max_pool1d basic", `Quick, test_max_pool1d_basic ctx);
+      ("max_pool1d stride", `Quick, test_max_pool1d_stride ctx);
+      ("max_pool2d basic", `Quick, test_max_pool2d_basic ctx);
+      ("max_pool2d stride", `Quick, test_max_pool2d_stride ctx);
+      ("max_pool2d padding", `Quick, test_max_pool2d_padding ctx);
+      ("min_pool1d basic", `Quick, test_min_pool1d_basic ctx);
+      ("min_pool1d stride", `Quick, test_min_pool1d_stride ctx);
+      ("min_pool2d basic", `Quick, test_min_pool2d_basic ctx);
+      ("min_pool2d stride", `Quick, test_min_pool2d_stride ctx);
+      ("min_pool2d padding", `Quick, test_min_pool2d_padding ctx);
+      ("min_pool2d uint8", `Quick, test_min_pool2d_uint8 ctx);
+      ("avg_pool1d basic", `Quick, test_avg_pool1d_basic ctx);
+      ("avg_pool2d basic", `Quick, test_avg_pool2d_basic ctx);
+      ("pool batch", `Quick, test_pool_batch ctx);
+      ("pool multichannel", `Quick, test_pool_multichannel ctx);
+      ("pool edge cases", `Quick, test_pool_edge_cases ctx);
+    ]
+
   let suite backend_name ctx =
     [
       ("Linalg :: " ^ backend_name ^ " Matrix Multiply", matmul_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Dot Product", dot_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Convolution", convolution_tests ctx);
+      ("Linalg :: " ^ backend_name ^ " Pooling", pooling_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Solve/Inverse", solve_inverse_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Decompositions", decomposition_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Norms", norm_tests ctx);
