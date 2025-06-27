@@ -9,7 +9,7 @@
   %{lib:nx.io:nx_io.cmi}
   %{lib-private:nx_io:nx_io.cma}
   ; %{lib:bigarray:bigarray.cma}
-  %{project_root}/_build/_private/default/.pkg/camlzip/target/lib/zip/zip.cma
+  %{lib:zip:zip.cma}
   %{lib-private:npy:npy.cma}
   %{lib-private:stb_image:stb_image.cma}
   %{lib-private:stb_image_write:stb_image_write.cma}
@@ -17,11 +17,8 @@
   %{lib:nx-datasets:nx_datasets.cmi}
   %{lib-private:nx_datasets:nx_datasets.cma}
   %{lib:unix:unix.cma}
-  ; %{project_root}/_build/_private/default/.pkg/camlzip/target/lib/zip/zip.cma
-  %{project_root}/_build/_private/default/.pkg/ocurl/target/lib/curl/curl.cma
-  %{project_root}/_build/_private/default/.pkg/ocurl/target/lib/curl/curl.cma
-  %{project_root}/_build/_private/default/.pkg/csv/target/lib/csv/csv.cma
-  %{project_root}/_build/_private/default/.pkg/csv/target/lib/csv/csv.cma
+  %{lib:curl:curl.cma}
+  %{lib:csv:csv.cma}
   ; sowilo
   %{lib:sowilo:sowilo.cmi}
   %{lib-private:sowilo:sowilo.cma}
@@ -30,7 +27,7 @@
   %{lib:base64:base64.cma}
   %{lib:hugin:hugin.cmi}
   %{lib-private:hugin:hugin.cma}
-  %{project_root}/_build/_private/default/.pkg/cairo2/target/lib/cairo2/cairo.cma
+  %{lib:cairo2:cairo.cma}
   %{lib-private:usdl:usdl.cma}
   ; rune
   %{lib-private:rune:rune.cma}
@@ -80,24 +77,16 @@
    (copy %{lib:nx-datasets:nx_datasets.cmi} nx_datasets.cmi)
    (copy %{lib-private:nx_datasets:nx_datasets.cma} nx_datasets.cma)
    (copy %{lib:unix:unix.cma} unix.cma)
-   (copy
-    %{project_root}/_build/_private/default/.pkg/camlzip/target/lib/zip/zip.cma
-    zip.cma)
-   (copy
-    %{project_root}/_build/_private/default/.pkg/ocurl/target/lib/curl/curl.cma
-    curl.cma)
-   (copy
-    %{project_root}/_build/_private/default/.pkg/csv/target/lib/csv/csv.cma
-    csv.cma)
+   (copy %{lib:zip:zip.cma} zip.cma)
+   (copy %{lib:curl:curl.cma} curl.cma)
+   (copy %{lib:csv:csv.cma} csv.cma)
    (copy %{lib:sowilo:sowilo.cmi} sowilo.cmi)
    (copy %{lib-private:sowilo:sowilo.cma} sowilo.cma)
    (copy %{lib:base64:base64.cmi} base64.cmi)
    (copy %{lib:base64:base64.cma} base64.cma)
    (copy %{lib:hugin:hugin.cmi} hugin.cmi)
    (copy %{lib-private:hugin:hugin.cma} hugin.cma)
-   (copy
-    %{project_root}/_build/_private/default/.pkg/cairo2/target/lib/cairo2/cairo.cma
-    cairo.cma)
+   (copy %{lib:cairo2:cairo.cma} cairo.cma)
    (copy %{lib-private:usdl:usdl.cma} usdl.cma)
    (copy %{lib-private:rune:rune.cma} rune.cma)
    (copy %{lib:rune:rune.cmi} rune.cmi))))
