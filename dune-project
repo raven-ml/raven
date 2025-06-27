@@ -165,11 +165,15 @@
    (= :version))
   (nx-datasets
    (= :version))
-  (hugin
+  (nx-text
    (= :version))
   (rune
    (= :version))
+  (kaun
+   (= :version))
   (sowilo
+   (= :version))
+  (hugin
    (= :version))
   (alcotest :with-test))
  (tags

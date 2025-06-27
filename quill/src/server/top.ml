@@ -20,44 +20,59 @@ module My_sites = struct
       plugins_locations
 
   let cmas =
-    [
-      lookup_file "nx_core.cma";
-      lookup_file "nx_native.cma";
-      lookup_file "nx.cma";
-      lookup_file "nx_metal.cma";
-      lookup_file "bigarray.cma";
-      lookup_file "zip.cma";
-      lookup_file "npy.cma";
-      lookup_file "stb_image.cma";
-      lookup_file "stb_image_write.cma";
-      lookup_file "nx_io.cma";
-      lookup_file "unix.cma";
-      lookup_file "curl.cma";
-      lookup_file "csv.cma";
-      lookup_file "nx_datasets.cma";
-      lookup_file "cairo.cma";
-      lookup_file "usdl.cma";
-      lookup_file "sowilo.cma";
-      lookup_file "hugin.cma";
-      lookup_file "base64.cma";
-      lookup_file "rune.cma";
-    ]
-    |> List.filter_map Fun.id
+    let all_cmas =
+      [
+        ("nx_core.cma", lookup_file "nx_core.cma");
+        ("nx_native.cma", lookup_file "nx_native.cma");
+        ("nx.cma", lookup_file "nx.cma");
+        ("nx_metal.cma", lookup_file "nx_metal.cma");
+        ("nx_cblas.cma", lookup_file "nx_cblas.cma");
+        ("bigarray.cma", lookup_file "bigarray.cma");
+        ("zip.cma", lookup_file "zip.cma");
+        ("npy.cma", lookup_file "npy.cma");
+        ("stb_image.cma", lookup_file "stb_image.cma");
+        ("stb_image_write.cma", lookup_file "stb_image_write.cma");
+        ("nx_io.cma", lookup_file "nx_io.cma");
+        ("unix.cma", lookup_file "unix.cma");
+        ("curl.cma", lookup_file "curl.cma");
+        ("csv.cma", lookup_file "csv.cma");
+        ("nx_datasets.cma", lookup_file "nx_datasets.cma");
+        ("nx_text.cma", lookup_file "nx_text.cma");
+        ("cairo.cma", lookup_file "cairo.cma");
+        ("usdl.cma", lookup_file "usdl.cma");
+        ("sowilo.cma", lookup_file "sowilo.cma");
+        ("hugin.cma", lookup_file "hugin.cma");
+        ("base64.cma", lookup_file "base64.cma");
+        ("rune.cma", lookup_file "rune.cma");
+        ("kaun.cma", lookup_file "kaun.cma");
+      ]
+    in
+    List.filter_map snd all_cmas
 end
 
 let execute_directive directive =
-  let lexbuf = Lexing.from_string directive in
-  let phrases = !Toploop.parse_use_file lexbuf in
-  List.iter
-    (fun phrase ->
-      ignore (Toploop.execute_phrase true Format.err_formatter phrase))
-    phrases
+  try
+    let lexbuf = Lexing.from_string directive in
+    let phrases = !Toploop.parse_use_file lexbuf in
+    List.iter
+      (fun phrase ->
+        let result = Toploop.execute_phrase true Format.err_formatter phrase in
+        if not result then
+          Printf.eprintf "[DEBUG] Failed to execute directive: %s\n%!" directive)
+      phrases
+  with ex ->
+    Printf.eprintf "[DEBUG] Exception executing directive '%s': %s\n%!"
+      directive (Printexc.to_string ex);
+    raise ex
 
 let initialize_toplevel_unsafe () : bool =
   if !global_directives_run then true
   else
     try
+      Printf.eprintf "[DEBUG] Starting toplevel initialization...\n%!";
       let site_dirs = Quill_sites.Sites.toplevel_libs in
+      Printf.eprintf "[DEBUG] Site directories: %s\n%!"
+        (String.concat ", " site_dirs);
 
       if site_dirs = [] then (
         Printf.eprintf
@@ -66,23 +81,48 @@ let initialize_toplevel_unsafe () : bool =
            %!";
         false)
       else (
-        List.iter (fun dir -> Topdirs.dir_directory dir) site_dirs;
-
+        Printf.eprintf "[DEBUG] Adding site directories to search path...\n%!";
         List.iter
-          (fun cma -> execute_directive (Printf.sprintf "#load %S;;" cma))
+          (fun dir ->
+            Printf.eprintf "[DEBUG] Adding directory: %s\n%!" dir;
+            Topdirs.dir_directory dir)
+          site_dirs;
+
+        Printf.eprintf "[DEBUG] Available plugins: %s\n%!"
+          (String.concat ", " (My_sites.find_available_plugins ()));
+
+        Printf.eprintf "[DEBUG] Loading CMA files...\n%!";
+        List.iter
+          (fun cma ->
+            Printf.eprintf "[DEBUG] Loading %s\n%!" cma;
+            execute_directive (Printf.sprintf "#load %S;;" cma))
           My_sites.cmas;
 
+        Printf.eprintf "[DEBUG] Setting up Nx printer...\n%!";
         execute_directive
           {|
 let pp_nx fmt arr =
   Format.fprintf fmt "```ocaml@\n";
   Format.pp_open_vbox fmt 0;
-  Nx.pp fmt arr;
+  Nx.pp_data fmt arr;
   Format.pp_close_box fmt ();
   Format.fprintf fmt "@\n```";;
 |};
         execute_directive "#install_printer pp_nx;;";
 
+        Printf.eprintf "[DEBUG] Setting up Rune printer...\n%!";
+        execute_directive
+          {|
+let pp_rune fmt arr =
+  Format.fprintf fmt "```ocaml@\n";
+  Format.pp_open_vbox fmt 0;
+  Rune.pp_data fmt arr;
+  Format.pp_close_box fmt ();
+  Format.fprintf fmt "@\n```";;
+|};
+        execute_directive "#install_printer pp_nx;;";
+
+        Printf.eprintf "[DEBUG] Setting up Hugin printer...\n%!";
         execute_directive
           {|
 let pp_hugin_figure fmt figure =
@@ -92,39 +132,55 @@ let pp_hugin_figure fmt figure =
 |};
         execute_directive "#install_printer pp_hugin_figure;;";
 
+        Printf.eprintf "[DEBUG] Toplevel initialization complete!\n%!";
         global_directives_run := true;
         true)
     with ex ->
       Printf.eprintf "Error during toplevel initialization: %s\n%!"
         (Printexc.to_string ex);
+      Printf.eprintf "Backtrace:\n%s\n%!" (Printexc.get_backtrace ());
       false
 
 let get_or_create_env_unsafe id =
   match Hashtbl.find_opt toplevel_envs id with
   | Some env -> env
-  | None ->
+  | None -> (
+      Printf.eprintf "[DEBUG] Creating new toplevel environment for '%s'\n%!" id;
+      Printexc.record_backtrace true;
+
       let current_env = !Toploop.toplevel_env in
       let current_input_name = !Toploop.input_name in
       let current_interactive = !Sys.interactive in
 
-      Toploop.initialize_toplevel_env ();
-      Toploop.input_name := Printf.sprintf "//toplevel-init-%s//" id;
-      Sys.interactive := true;
+      try
+        Printf.eprintf "[DEBUG] Initializing toplevel environment...\n%!";
+        Toploop.initialize_toplevel_env ();
+        Toploop.input_name := Printf.sprintf "//toplevel-init-%s//" id;
+        Sys.interactive := true;
 
-      let init_ok = initialize_toplevel_unsafe () in
-      if not init_ok then
-        Printf.eprintf
-          "Warning: Toplevel initialization failed for new env '%s'.\n%!" id;
+        let init_ok = initialize_toplevel_unsafe () in
+        if not init_ok then
+          Printf.eprintf
+            "Warning: Toplevel initialization failed for new env '%s'.\n%!" id;
 
-      let new_env_after_init = !Toploop.toplevel_env in
+        let new_env_after_init = !Toploop.toplevel_env in
 
-      Hashtbl.add toplevel_envs id new_env_after_init;
+        Hashtbl.add toplevel_envs id new_env_after_init;
 
-      Toploop.toplevel_env := current_env;
-      Toploop.input_name := current_input_name;
-      Sys.interactive := current_interactive;
+        Toploop.toplevel_env := current_env;
+        Toploop.input_name := current_input_name;
+        Sys.interactive := current_interactive;
 
-      new_env_after_init
+        new_env_after_init
+      with ex ->
+        Printf.eprintf "[DEBUG] Exception in get_or_create_env_unsafe: %s\n%!"
+          (Printexc.to_string ex);
+        Printf.eprintf "Backtrace:\n%s\n%!" (Printexc.get_backtrace ());
+        (* Restore state and re-raise *)
+        Toploop.toplevel_env := current_env;
+        Toploop.input_name := current_input_name;
+        Sys.interactive := current_interactive;
+        raise ex)
 
 let eval ~id code : Quill_api.code_execution_result =
   Mutex.lock toplevel_mutex;

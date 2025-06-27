@@ -28,21 +28,30 @@ depends: [
   "base64"
   "nx" {= version}
   "nx-datasets" {= version}
-  "hugin" {= version}
+  "nx-text" {= version}
   "rune" {= version}
+  "kaun" {= version}
   "sowilo" {= version}
+  "hugin" {= version}
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]
+dev-repo: "git+https://github.com/raven-ml/raven.git"
 build: [
   ["dune" "subst"] {dev}
   [
     "dune"
     "build"
-    "-p"
+    "--root"
+    "."
+    "--only-packages"
     name
+    "--no-config"
+    "--profile"
+    "release"
     "-j"
     jobs
+    "--auto-promote"
     "--promote-install-files=false"
     "@install"
     "@runtest" {with-test}
@@ -50,4 +59,3 @@ build: [
   ]
   ["dune" "install" "-p" name "--create-install-files" name]
 ]
-dev-repo: "git+https://github.com/raven-ml/raven.git"

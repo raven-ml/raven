@@ -2,36 +2,43 @@
  (deps
   ; nx
   %{lib:nx:nx.cmi}
-  %{lib-private:nx:nx.cma}
-  %{lib-private:nx_core:nx_core.cma}
-  %{lib-private:nx_native:nx_native.cma}
+  %{lib:nx:nx.cma}
+  %{lib:nx.core:nx_core.cma}
+  %{lib:nx.native:nx_native.cma}
   ; nx-io
   %{lib:nx.io:nx_io.cmi}
-  %{lib-private:nx_io:nx_io.cma}
-  ; %{lib:bigarray:bigarray.cma}
+  %{lib:nx.io:nx_io.cma}
   %{lib:zip:zip.cma}
-  %{lib-private:npy:npy.cma}
-  %{lib-private:stb_image:stb_image.cma}
-  %{lib-private:stb_image_write:stb_image_write.cma}
+  %{lib:nx.io.npy:npy.cma}
+  %{lib:nx.io.stb_image:stb_image.cma}
+  %{lib:nx.io.stb_image_write:stb_image_write.cma}
   ; nx-datasets
   %{lib:nx-datasets:nx_datasets.cmi}
-  %{lib-private:nx_datasets:nx_datasets.cma}
+  %{lib:nx-datasets:nx_datasets.cma}
   %{lib:unix:unix.cma}
   %{lib:curl:curl.cma}
   %{lib:csv:csv.cma}
   ; sowilo
   %{lib:sowilo:sowilo.cmi}
-  %{lib-private:sowilo:sowilo.cma}
+  %{lib:sowilo:sowilo.cma}
   ; hugin
   %{lib:base64:base64.cmi}
   %{lib:base64:base64.cma}
   %{lib:hugin:hugin.cmi}
-  %{lib-private:hugin:hugin.cma}
+  %{lib:hugin:hugin.cma}
   %{lib:cairo2:cairo.cma}
-  %{lib-private:usdl:usdl.cma}
+  %{lib:hugin.usdl:usdl.cma}
   ; rune
-  %{lib-private:rune:rune.cma}
-  %{lib:rune:rune.cmi})
+  %{lib:rune:rune.cma}
+  %{lib:rune:rune.cmi}
+  ; kaun
+  %{lib:kaun:kaun.cmi}
+  %{lib:kaun:kaun.cma}
+  ; nx-text
+  %{lib:nx-text:nx_text.cmi}
+  %{lib:nx-text:nx_text.cma}
+  ; nx cblas
+  %{lib:nx.cblas:nx_cblas.cma})
  (targets
   nx.cmi
   nx.cma
@@ -58,38 +65,57 @@
   cairo.cma
   usdl.cma
   rune.cma
-  rune.cmi)
+  rune.cmi
+  kaun.cmi
+  kaun.cma
+  nx_text.cmi
+  nx_text.cma
+  nx_cblas.cma)
  (mode promote)
  (action
   (progn
    (copy %{lib:nx:nx.cmi} nx.cmi)
-   (copy %{lib-private:nx:nx.cma} nx.cma)
-   (copy %{lib-private:nx_core:nx_core.cma} nx_core.cma)
-   (copy %{lib-private:nx_native:nx_native.cma} nx_native.cma)
+   (copy %{lib:nx:nx.cma} nx.cma)
+   (copy %{lib:nx.core:nx_core.cma} nx_core.cma)
+   (copy %{lib:nx.native:nx_native.cma} nx_native.cma)
    (copy %{lib:nx.io:nx_io.cmi} nx_io.cmi)
-   (copy %{lib-private:nx_io:nx_io.cma} nx_io.cma)
-   ;  (copy %{lib:bigarray:bigarray.cma} bigarray.cma)
-   (copy %{lib-private:npy:npy.cma} npy.cma)
-   (copy %{lib-private:stb_image:stb_image.cma} stb_image.cma)
+   (copy %{lib:nx.io:nx_io.cma} nx_io.cma)
+   (copy %{lib:nx.io.npy:npy.cma} npy.cma)
+   (copy %{lib:nx.io.stb_image:stb_image.cma} stb_image.cma)
    (copy
-    %{lib-private:stb_image_write:stb_image_write.cma}
+    %{lib:nx.io.stb_image_write:stb_image_write.cma}
     stb_image_write.cma)
    (copy %{lib:nx-datasets:nx_datasets.cmi} nx_datasets.cmi)
-   (copy %{lib-private:nx_datasets:nx_datasets.cma} nx_datasets.cma)
+   (copy %{lib:nx-datasets:nx_datasets.cma} nx_datasets.cma)
    (copy %{lib:unix:unix.cma} unix.cma)
    (copy %{lib:zip:zip.cma} zip.cma)
    (copy %{lib:curl:curl.cma} curl.cma)
    (copy %{lib:csv:csv.cma} csv.cma)
    (copy %{lib:sowilo:sowilo.cmi} sowilo.cmi)
-   (copy %{lib-private:sowilo:sowilo.cma} sowilo.cma)
+   (copy %{lib:sowilo:sowilo.cma} sowilo.cma)
    (copy %{lib:base64:base64.cmi} base64.cmi)
    (copy %{lib:base64:base64.cma} base64.cma)
    (copy %{lib:hugin:hugin.cmi} hugin.cmi)
-   (copy %{lib-private:hugin:hugin.cma} hugin.cma)
+   (copy %{lib:hugin:hugin.cma} hugin.cma)
    (copy %{lib:cairo2:cairo.cma} cairo.cma)
-   (copy %{lib-private:usdl:usdl.cma} usdl.cma)
-   (copy %{lib-private:rune:rune.cma} rune.cma)
-   (copy %{lib:rune:rune.cmi} rune.cmi))))
+   (copy %{lib:hugin.usdl:usdl.cma} usdl.cma)
+   (copy %{lib:rune:rune.cma} rune.cma)
+   (copy %{lib:rune:rune.cmi} rune.cmi)
+   (copy %{lib:kaun:kaun.cmi} kaun.cmi)
+   (copy %{lib:kaun:kaun.cma} kaun.cma)
+   (copy %{lib:nx-text:nx_text.cmi} nx_text.cmi)
+   (copy %{lib:nx-text:nx_text.cma} nx_text.cma)
+   (copy %{lib:nx.cblas:nx_cblas.cma} nx_cblas.cma))))
+
+(rule
+ (targets nx_metal.cma)
+ (mode promote)
+ (enabled_if
+  (= %{system} macosx))
+ (deps
+  (:src %{lib:nx.metal:nx_metal.cma}))
+ (action
+  (copy %{src} %{targets})))
 
 (install
  (section
@@ -97,29 +123,5 @@
    (quill toplevel_libs)))
  (package quill)
  (files
-  nx.cmi
-  nx.cma
-  nx_core.cma
-  nx_native.cma
-  nx_io.cmi
-  nx_io.cma
-  ; bigarray.cma
-  npy.cma
-  stb_image.cma
-  stb_image_write.cma
-  nx_datasets.cmi
-  nx_datasets.cma
-  unix.cma
-  zip.cma
-  curl.cma
-  csv.cma
-  sowilo.cmi
-  sowilo.cma
-  base64.cmi
-  base64.cma
-  hugin.cmi
-  hugin.cma
-  cairo.cma
-  usdl.cma
-  rune.cma
-  rune.cmi))
+  (glob_files "*.cmi")
+  (glob_files "*.cma")))
