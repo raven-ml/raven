@@ -68,6 +68,3 @@ let () =
 
       C.Flags.write_sexp "c_library_flags.sexp" blas_libs;
       C.Flags.write_sexp "c_flags.sexp" c_flags)
-
-      C.Flags.write_sexp "c_library_flags.sexp" final_libs;
-      C.Flags.write_sexp "c_flags.sexp" final_c_flags)
