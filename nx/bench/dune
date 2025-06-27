@@ -1,4 +1,11 @@
 (executable
  (name bench_nx)
  (modules bench_nx)
- (libraries nx_core nx_native nx_metal nx_cblas ubench str))
+ (libraries nx_core nx_native nx_cblas ubench str))
+
+(executable
+ (name bench_nx_metal)
+ (modules bench_nx_metal)
+ (enabled_if
+  (= %{system} "macosx"))
+ (libraries nx_core nx_metal ubench str))

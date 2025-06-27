@@ -1,4 +1,4 @@
-(* bench_nx.ml - Simple Nx benchmarking *)
+(* bench_metal.ml - Simple Nx Metal backend benchmarking *)
 
 open Ubench
 
@@ -132,26 +132,16 @@ let string_contains s1 s2 =
     true
   with Not_found -> false
 
-(* Run benchmarks for all backends *)
-let run_all_backends () =
-  Printf.printf "Nx Benchmarking Suite\n";
+(* Run benchmarks for Metal backend *)
+let run_metal_backend () =
+  Printf.printf "Nx Metal Benchmarking\n";
   Printf.printf "=====================\n\n";
 
-  (* Native backend *)
-  Printf.printf "Running Native backend...\n";
-  let module Native_bench = Make_benchmarks (Nx_native) in
-  let native_ctx = Nx_native.create_context () in
-  let native_benchmarks = Native_bench.create_benchmarks native_ctx "Native" in
-  let native_results = run ~config native_benchmarks in
-
-  (* CBLAS backend *)
-  Printf.printf "\nRunning CBLAS backend...\n";
-  let module CBLAS_bench = Make_benchmarks (Nx_cblas) in
-  let cblas_ctx = Nx_cblas.create_context () in
-  let cblas_benchmarks = CBLAS_bench.create_benchmarks cblas_ctx "CBLAS" in
-  let cblas_results = run ~config cblas_benchmarks in
-
-  let all_results = native_results @ cblas_results in
+  Printf.printf "\nRunning Metal backend...\n";
+  let module Metal_bench = Make_benchmarks (Nx_metal) in
+  let metal_ctx = Nx_metal.create_context () in
+  let metal_benchmarks = Metal_bench.create_benchmarks metal_ctx "Metal" in
+  let metal_results = run ~config metal_benchmarks in
 
   (* Simple analysis *)
   Printf.printf "\n=== Performance Summary ===\n";
@@ -162,7 +152,7 @@ let run_all_backends () =
     (fun op ->
       Printf.printf "\n%s Performance:\n" op;
       let op_results =
-        List.filter (fun r -> string_contains r.name op) all_results
+        List.filter (fun r -> string_contains r.name op) metal_results
       in
       let sorted =
         List.sort
@@ -178,4 +168,4 @@ let run_all_backends () =
     operations
 
 (* Just run everything *)
-let () = run_all_backends ()
+let () = run_metal_backend ()

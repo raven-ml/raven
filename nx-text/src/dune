@@ -1,3 +1,4 @@
 (library
  (name nx_text)
+ (public_name nx-text)
  (libraries nx nx_core re uutf uucp))

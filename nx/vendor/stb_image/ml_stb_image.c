@@ -160,7 +160,7 @@ CAMLprim value ml_stbi_image_free(value ba)
 CAMLprim value ml_stbi_mipmap(value img_in, value img_out)
 {
   CAMLparam2(img_in, img_out);
-  unsigned char *pin, *pout,
+  unsigned char *pin = NULL, *pout = NULL,
     *pin0 = Caml_ba_data_val(Field(img_in, 5)),
     *pout0 = Caml_ba_data_val(Field(img_out, 5));
   assert (pin0 && pout0);
@@ -195,7 +195,7 @@ CAMLprim value ml_stbi_mipmap(value img_in, value img_out)
 CAMLprim value ml_stbi_mipmapf(value img_in, value img_out)
 {
   CAMLparam2(img_in, img_out);
-  float *pin, *pout,
+  float *pin = NULL, *pout = NULL,
     *pin0 = Caml_ba_data_val(Field(img_in, 5)),
     *pout0 = Caml_ba_data_val(Field(img_out, 5));
   assert (pin0 && pout0);
@@ -431,7 +431,7 @@ static void expblur1(unsigned char* ptr, int w, int h, int stride, int alpha)
 
 static void expblur(unsigned char* ptr, int w, int h, int channels, int stride, float radius)
 {
-	int i, alpha;
+	int alpha;
 	float sigma;
 
   if (radius < 0.01) return;

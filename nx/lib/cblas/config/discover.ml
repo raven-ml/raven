@@ -4,7 +4,7 @@ module C = Configurator.V1
 let () =
   C.main ~name:"nx_cblas" (fun c ->
       (* Discover BLAS library *)
-      let blas_libs =
+      let blas_libs_base =
         match C.ocaml_config_var c "system" with
         | Some "macosx" ->
             (* On macOS, use Accelerate framework *)
@@ -29,7 +29,7 @@ let () =
       in
 
       (* Discover OpenMP support and platform-specific flags *)
-      let c_flags =
+      let c_flags, has_openmp =
         let base_flags =
           match C.ocaml_config_var c "system" with
           | Some "macosx" ->
@@ -42,14 +42,32 @@ let () =
           C.c_test c ~c_flags:flags
             "#include <omp.h>\nint main() { return omp_get_num_threads(); }"
         in
-        if test_openmp [ "-fopenmp" ] then "-fopenmp" :: base_flags
+        if test_openmp [ "-fopenmp" ] then ("-fopenmp" :: base_flags, true)
         else if test_openmp [ "-Xpreprocessor"; "-fopenmp" ] then
           (* macOS with Homebrew libomp *)
-          "-Xpreprocessor" :: "-fopenmp" :: base_flags
+          ("-Xpreprocessor" :: "-fopenmp" :: base_flags, true)
         else
           (* No OpenMP support, just optimization flags *)
-          base_flags
+          (base_flags, false)
+      in
+
+      (* Add OpenMP library to link flags if OpenMP is available *)
+      let blas_libs =
+        if has_openmp then
+          match C.ocaml_config_var c "system" with
+          | Some "macosx" ->
+              (* On macOS with Homebrew, we need to link libomp explicitly *)
+              if C.c_test c ~link_flags:[ "-lomp" ] "int main() { return 0; }"
+              then "-lomp" :: blas_libs_base
+              else blas_libs_base
+          | _ ->
+              (* On Linux, link with gomp (GNU OpenMP) *)
+              "-lgomp" :: blas_libs_base
+        else blas_libs_base
       in
 
       C.Flags.write_sexp "c_library_flags.sexp" blas_libs;
       C.Flags.write_sexp "c_flags.sexp" c_flags)
+
+      C.Flags.write_sexp "c_library_flags.sexp" final_libs;
+      C.Flags.write_sexp "c_flags.sexp" final_c_flags)
