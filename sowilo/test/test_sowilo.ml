@@ -6,10 +6,10 @@ open Sowilo
 (* Helper functions *)
 
 let create_test_image_gray h w value =
-  Rune.full Rune.native Rune.uint8 [| h; w |] value
+  Rune.full Rune.cblas Rune.uint8 [| h; w |] value
 
 let _create_test_image_color h w c value =
-  Rune.full Rune.native Rune.uint8 [| h; w; c |] value
+  Rune.full Rune.cblas Rune.uint8 [| h; w; c |] value
 
 let create_checkerboard h w =
   let data =
@@ -18,7 +18,7 @@ let create_checkerboard h w =
         let col = i mod w in
         if (row + col) mod 2 = 0 then 255 else 0)
   in
-  Rune.create Rune.native Rune.uint8 [| h; w |] data
+  Rune.create Rune.cblas Rune.uint8 [| h; w |] data
 
 let create_centered_square h w square_size =
   let data =
@@ -35,7 +35,7 @@ let create_centered_square h w square_size =
         then 255
         else 0)
   in
-  Rune.create Rune.native Rune.uint8 [| h; w |] data
+  Rune.create Rune.cblas Rune.uint8 [| h; w |] data
 
 let check_tensor msg expected actual =
   if Rune.shape expected <> Rune.shape actual then
@@ -110,7 +110,7 @@ let test_crop () =
 let test_to_grayscale () =
   (* Test RGB to grayscale *)
   let rgb =
-    Rune.create Rune.native Rune.uint8 [| 2; 2; 3 |]
+    Rune.create Rune.cblas Rune.uint8 [| 2; 2; 3 |]
       [|
         255;
         0;
@@ -152,7 +152,7 @@ let test_to_grayscale () =
   check_pixel "grayscale passthrough value" 128 gray_result [ 2; 2 ]
 
 let test_rgb_bgr_conversion () =
-  let rgb = Rune.create Rune.native Rune.uint8 [| 1; 1; 3 |] [| 10; 20; 30 |] in
+  let rgb = Rune.create Rune.cblas Rune.uint8 [| 1; 1; 3 |] [| 10; 20; 30 |] in
   let bgr = rgb_to_bgr rgb in
 
   check_pixel "R becomes B" 30 bgr [ 0; 0; 0 ];
@@ -180,7 +180,7 @@ let test_float_conversions () =
 
   (* Test clipping *)
   let out_of_range =
-    Rune.create Rune.native Rune.float32 [| 2; 2 |] [| -0.5; 0.5; 1.5; 0.75 |]
+    Rune.create Rune.cblas Rune.float32 [| 2; 2 |] [| -0.5; 0.5; 1.5; 0.75 |]
   in
   let clipped = to_uint8 out_of_range in
   check_pixel "clipped negative" 0 clipped [ 0; 0 ];
@@ -209,7 +209,7 @@ let test_gaussian_blur () =
 let test_box_filter () =
   (* Create simple test pattern *)
   let img =
-    Rune.create Rune.native Rune.uint8 [| 3; 3 |]
+    Rune.create Rune.cblas Rune.uint8 [| 3; 3 |]
       [| 0; 0; 0; 0; 255; 0; 0; 0; 0 |]
   in
   let filtered = box_filter ~ksize:(3, 3) img in
@@ -230,7 +230,7 @@ let test_median_blur () =
 
 let test_threshold () =
   let img =
-    Rune.create Rune.native Rune.uint8 [| 2; 3 |]
+    Rune.create Rune.cblas Rune.uint8 [| 2; 3 |]
       [| 50; 100; 150; 200; 250; 25 |]
   in
 
@@ -311,7 +311,7 @@ let test_sobel () =
         let j = idx mod 5 in
         if j >= 2 then 255 else 0)
   in
-  let img = Rune.create Rune.native Rune.uint8 [| 5; 5 |] img_data in
+  let img = Rune.create Rune.cblas Rune.uint8 [| 5; 5 |] img_data in
 
   (* Sobel X should detect vertical edges *)
   let sobel_x = sobel ~dx:1 ~dy:0 img in
@@ -329,7 +329,7 @@ let test_sobel () =
         let i = idx / 5 in
         if i >= 2 then 255 else 0)
   in
-  let img_h = Rune.create Rune.native Rune.uint8 [| 5; 5 |] img_h_data in
+  let img_h = Rune.create Rune.cblas Rune.uint8 [| 5; 5 |] img_h_data in
 
   let sobel_y = sobel ~dx:0 ~dy:1 img_h in
   let edge_response_y = abs (Rune.unsafe_get [ 2; 2 ] sobel_y) in
