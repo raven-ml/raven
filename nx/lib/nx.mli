@@ -2328,6 +2328,54 @@ val max_pool2d :
                                       [12, 16]]]]
     ]} *)
 
+val min_pool1d :
+  kernel_size:int ->
+  ?stride:int ->
+  ?dilation:int ->
+  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
+  ?ceil_mode:bool ->
+  ?return_indices:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t * (int32, int32_elt) t option
+(** [min_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+     ?return_indices x] applies 1D min pooling.
+
+    - [return_indices]: if true, also returns indices of min values (currently returns None)
+    - Other parameters same as {!avg_pool1d}
+
+    Returns (pooled_values, None). Index tracking not yet implemented.
+
+    {@ocaml[
+      # let x = create float32 [| 1; 1; 4 |] [| 4.; 2.; 3.; 1. |] in
+        let vals, _ = min_pool1d ~kernel_size:2 x in
+        vals
+      - : (float, float32_elt) t = [[[2, 1]]]
+    ]} *)
+
+val min_pool2d :
+  kernel_size:int * int ->
+  ?stride:int * int ->
+  ?dilation:int * int ->
+  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
+  ?ceil_mode:bool ->
+  ?return_indices:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t * (int32, int32_elt) t option
+(** [min_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+     ?return_indices x] applies 2D min pooling.
+
+    Parameters same as {!min_pool1d} but for 2D. Commonly used for morphological
+    erosion operations in image processing.
+
+    {@ocaml[
+      # let x = create float32 [| 1; 1; 4; 4 |]
+          [| 1.; 2.; 5.; 6.; 3.; 4.; 7.; 8.; 9.; 10.; 13.; 14.; 11.; 12.; 15.; 16. |] in
+        let vals, _ = min_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) x in
+        vals
+      - : (float, float32_elt) t = [[[[1, 5],
+                                      [9, 13]]]]
+    ]} *)
+
 val max_unpool1d :
   (int, uint8_elt) t ->
   ('a, 'b) t ->

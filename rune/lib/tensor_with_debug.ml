@@ -425,6 +425,18 @@ let max_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
       T.max_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
         ?return_indices x)
 
+let min_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+    ?return_indices x =
+  Debug.with_context "min_pool1d" (fun () ->
+      T.min_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+        ?return_indices x)
+
+let min_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+    ?return_indices x =
+  Debug.with_context "min_pool2d" (fun () ->
+      T.min_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+        ?return_indices x)
+
 let max_unpool1d x indices ~kernel_size =
   Debug.with_context "max_unpool1d" (fun () ->
       T.max_unpool1d x indices ~kernel_size)
