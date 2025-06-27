@@ -4,17 +4,15 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
-- fix convolution being _extremely_ slow in nx/rune
-  - implement lazy view + realization (implicit? explicit?), that should be equivalent to the VIEW uop. think of the interaction with jit. need a shape tracker in core.
+- improve mlis (go through each function, apply docs guidelines, check the implementation, check if there's invariant to document, check if useful to add examples)
+- generate docs with odoc3 + dream-style html rewriting to integrate in www/
+- website examples generated with quill
 
 ## alpha release
 
-nx
-- fix intermittent Command got signal ABRT in convolution tests (dev/conv2d)
-- fix intermittent Command got signal SEGV. at randint
-
 hugin
 - fix plot3d
+- fix contour
 
 quill
 - editor bugs:
@@ -33,8 +31,6 @@ quill
 
 docs/website
 - examples
-- improve mlis (go through each function, apply docs guidelines, check the implementation, check if there's invariant to document, check if useful to add examples)
-- generate docs with odoc3 + dream-style html rewriting to integrate in www/
 - more user documentation
 - favicon
 - end-to-end example with quill+rune+hugin
@@ -51,15 +47,22 @@ roadmap
 - memory planner during lowering (scheduling)
 - pmap support in rune
 
-refactorings
-- (?) allocate buffers outside of the backend?
-- (?) not sure we need non-polymorphic functions for perf of where, we should benchmark
+feature requests:
+- add bf16, fp8, bool data types
+- complete linear algebra suite
+- forward mode ad (jvps)
+- cuda backend
+- fft for soundml
 
 notes
+- use upstream metal library when insulated from camlkit
+- (?) not sure we need non-polymorphic functions for perf of where, we should benchmark
 - add no_grad and detach
 - we can make jit composable by re raising all the effects (but what does it mean to write grad(jit(f)))?? What are the semantics in jax?
+- can we use
+- think of using effects for prngs, does it simplify ux?
+- bad smell: dummy input for init in kaun
+- bad smell: the fix for gc collection of tensors during blas operations is hacky, best would be to pass the tensor to the c code, so it can mark it as being used.
 
 new libs
 - dataframe library
-- nx cuda backend
-- (?) nx blas backend
