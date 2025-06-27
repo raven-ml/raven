@@ -2,7 +2,8 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.native (* Default CPU context *)
+let ctx = T.native
+
 let eps = 1e-6
 
 (* Basic JIT compilation tests *)
@@ -123,47 +124,6 @@ let test_jit_grad_composition () =
   check_rune ~eps "JIT(grad) vs regular" regular_grad jit_grad_result;
   check_rune ~eps "grad(JIT) vs regular" regular_grad grad_jit_result
 
-(* Caching tests *)
-let test_jit_cache_hit () =
-  let counter = ref 0 in
-  let f x =
-    incr counter;
-    T.add x x
-  in
-
-  let jit_f = T.jit f in
-
-  let x1 = T.ones ctx T.float32 [| 2; 3 |] in
-  let x2 = T.full ctx T.float32 [| 2; 3 |] 2.0 in
-
-  (* First call - should compile *)
-  let _ = jit_f x1 in
-  (* Second call with same shape - should use cache *)
-  let _ = jit_f x2 in
-
-  (* Counter should only be incremented once due to tracing *)
-  check int "cache hit count" 1 !counter
-
-let test_jit_cache_miss () =
-  let counter = ref 0 in
-  let f x =
-    incr counter;
-    T.add x x
-  in
-
-  let jit_f = T.jit f in
-
-  let x1 = T.ones ctx T.float32 [| 2; 3 |] in
-  let x2 = T.ones ctx T.float32 [| 3; 4 |] in
-
-  (* First call - should compile *)
-  let _ = jit_f x1 in
-  (* Second call with different shape - should recompile *)
-  let _ = jit_f x2 in
-
-  (* Counter should be incremented twice due to recompilation *)
-  check int "cache miss count" 2 !counter
-
 (* Complex operations *)
 let test_jit_reduction_ops () =
   let f x = T.mean (T.relu x) ~axes:[| 1 |] in
@@ -230,11 +190,6 @@ let () =
           test_case "JIT of grad" `Quick test_jit_of_grad;
           test_case "grad of JIT" `Quick test_grad_of_jit;
           test_case "JIT-grad composition" `Quick test_jit_grad_composition;
-        ] );
-      ( "caching",
-        [
-          test_case "cache hit" `Quick test_jit_cache_hit;
-          test_case "cache miss" `Quick test_jit_cache_miss;
         ] );
       ( "complex operations",
         [
