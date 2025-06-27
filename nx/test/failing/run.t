@@ -8,16 +8,13 @@
   Result: [1 2 1 2 1 ]
   Expected: [1 2 1 2 3]
 
-  $ ./bug_conv_memory_simple.exe
-  Simple convolution memory corruption test...
-  30913 Abort trap: 6           ./bug_conv_memory_simple.exe
-  [134]
-
   $ ./bug_gather_index_shape.exe
   Testing gather operation index shape bug
   Data shape: [2; 3; 4]
-  FAIL: Gather raised exception: op_gather: data rank (3) and indices rank (1) must match
-  This is the bug - gather creates multi-dimensional index tensor instead of 1D
+  Result shape: 2 3 4 
+  Expected shape: [2; 2; 4]
+  FAIL: Gather produced incorrect shape
+  Got: [2 3 4 ]
 
   $ ./bug_logspace_division_by_zero.exe
   Testing logspace division by zero bug
@@ -41,29 +38,15 @@
     Data: [10, 26, 42]
   
   FAIL: Index 0: expected 18.0, got 10.0
-  Fatal error: exception Invalid_argument("index out of bounds")
-  [2]
-
-  $ ./bug_metal_unsafe_get.exe
-  Testing Metal unsafe_get operation...
-  Created matrix:
-  Nx Info:
-    Shape: [2x2]
-    Dtype: float32
-    Strides: [2; 1]
-    Offset: 0
-    Size: 4
-    Data: [[1, 2],
-           [3, 4]]
+  FAIL: Index 1: expected 22.0, got 26.0
+  FAIL: Index 2: expected 26.0, got 42.0
   
-  
-  Trying to get element at [0, 1]...
-  FAIL: Invalid_argument("index out of bounds")
-  Metal backend missing implementation for get/unsafe_get
+  FAIL: Reduce operation produces incorrect results on non-contiguous views
+  This is a Metal-specific bug - reduce kernels don't handle strides/offsets
 
   $ ./bug_slice_batch_process_bounds.exe
   Testing slice batch processing bounds bug
   Input shape: [3; 4; 5]
-  Unexpected exception: Invalid_argument("op_gather: data rank (3) and indices rank (1) must match")
-  Fatal error: exception Invalid_argument("op_gather: data rank (3) and indices rank (1) must match")
+  Unexpected exception: Invalid_argument("op_shrink: shrink: invalid bounds array (length 1 != ndim 3)")
+  Fatal error: exception Invalid_argument("op_shrink: shrink: invalid bounds array (length 1 != ndim 3)")
   [2]
