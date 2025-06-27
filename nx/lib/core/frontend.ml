@@ -534,10 +534,9 @@ module Make (B : Backend_intf.S) = struct
 
   let minimum a b =
     let a', b' = broadcasted a b in
-    let a_neg = B.op_neg a' in
-    let b_neg = B.op_neg b' in
-    let max_neg = B.op_max a_neg b_neg in
-    B.op_neg max_neg
+    (* Use comparison and where to implement minimum without negation *)
+    let mask = B.op_cmplt a' b' in
+    B.op_where mask a' b'
 
   let minimum_s tensor_a scalar_b_val =
     scalar_binop minimum tensor_a scalar_b_val
