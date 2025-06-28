@@ -27,10 +27,10 @@ module My_sites = struct
         ("nx.cma", lookup_file "nx.cma");
         ("nx_cblas.cma", lookup_file "nx_cblas.cma");
         ("integers.cma", lookup_file "integers.cma");
+        ("bigarray.cma", lookup_file "bigarray.cma");
         ("ctypes.cma", lookup_file "ctypes.cma");
         ("metal.cma", lookup_file "metal.cma");
         ("nx_metal.cma", lookup_file "nx_metal.cma");
-        ("bigarray.cma", lookup_file "bigarray.cma");
         ("zip.cma", lookup_file "zip.cma");
         ("npy.cma", lookup_file "npy.cma");
         ("stb_image.cma", lookup_file "stb_image.cma");

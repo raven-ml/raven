@@ -46,7 +46,7 @@ jobs:
           /cygdrive/d/cygwin/setup-x86_64.exe \
             --quiet-mode \
             --packages \
-            libcurl-devel,libcairo-devel,libcairo2,pkg-config,libSDL2-devel,\
+            git,libcurl-devel,libcairo-devel,libcairo2,pkg-config,libSDL2-devel,\
             libfreetype-devel,libpng-devel,libev-devel,\
             liblapack-devel,libopenblas,\
             mingw64-x86_64-curl,mingw64-x86_64-cairo,mingw64-x86_64-pkg-config,\
