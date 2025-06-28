@@ -1,4 +1,4 @@
-type ('layout, 'dev) tensor = (float, 'layout) Rune.t
+type ('layout, 'dev) tensor = (float, 'layout, 'dev) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 type 'dev device = 'dev Rune.device
 
@@ -185,9 +185,9 @@ module Initializer : sig
     t ->
     int ->
     int array ->
-    Rune.context ->
+    'dev Rune.device ->
     (float, 'layout) Rune.dtype ->
-    (float, 'layout) Rune.t
+    (float, 'layout, 'dev) Rune.t
 end
 
 module Layer : sig

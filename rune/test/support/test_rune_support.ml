@@ -2,35 +2,29 @@
 
 open Alcotest
 
-(* Rune tensor testable with exact equality *)
-let rune_tensor_exact : (float, Rune.float32_elt) Rune.t testable =
-  let equal_int a b =
-    match (a, b) with 1, 1 -> true | 0, 0 -> true | _ -> false
-  in
-  Alcotest.testable Rune.pp (fun a b ->
-      if Rune.shape a <> Rune.shape b then false
-      else
-        let eq_tensor = Rune.array_equal a b in
-        (* array_equal returns a scalar uint8 tensor with 1 for true, 0 for false *)
-        let result = Rune.unsafe_get [] eq_tensor in
-        equal_int result 1)
-
-(* Rune tensor testable with approximate equality *)
-let rune_tensor_approx ?(eps = 1e-5) () :
-    (float, Rune.float32_elt) Rune.t testable =
-  Alcotest.testable Rune.pp (fun a b ->
-      let diff = Rune.sub a b in
-      let abs_diff = Rune.abs diff in
-      let max_diff = Rune.max abs_diff in
-      let max_diff_val = Rune.unsafe_get [] max_diff in
-      Float.compare max_diff_val eps < 0)
-
 (* Check Rune tensors for approximate equality *)
 let check_rune ?eps msg expected actual =
   let testable =
     match eps with
-    | None -> rune_tensor_exact
-    | Some e -> rune_tensor_approx ~eps:e ()
+    | None ->
+        let equal_int a b =
+          match (a, b) with 1, 1 -> true | 0, 0 -> true | _ -> false
+        in
+        Alcotest.testable Rune.pp (fun a b ->
+            if Rune.shape a <> Rune.shape b then false
+            else
+              let eq_tensor = Rune.array_equal a b in
+              (* array_equal returns a scalar uint8 tensor with 1 for true, 0
+                 for false *)
+              let result = Rune.unsafe_get [] eq_tensor in
+              equal_int result 1)
+    | Some eps ->
+        Alcotest.testable Rune.pp (fun a b ->
+            let diff = Rune.sub a b in
+            let abs_diff = Rune.abs diff in
+            let max_diff = Rune.max abs_diff in
+            let max_diff_val = Rune.unsafe_get [] max_diff in
+            Float.compare max_diff_val eps < 0)
   in
   check testable msg expected actual
 

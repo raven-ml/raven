@@ -15,14 +15,14 @@ let load_image_rune path =
   Rune.of_bigarray Rune.native (Nx.to_bigarray nx_img)
 
 (* Helper to convert Rune tensor to Nx tensor for plotting *)
-let rune_to_nx (rune_tensor : ('a, 'b) Rune.t) : ('a, 'b) Nx.t =
+let rune_to_nx (rune_tensor : ('a, 'b, 'dev) Rune.t) : ('a, 'b) Nx.t =
   let data = Rune.unsafe_to_bigarray rune_tensor in
   let nx_tensor = Nx.of_bigarray data in
   let shape = Rune.shape rune_tensor in
   Nx.reshape shape nx_tensor
 
 (* Helper to visualize Sobel output (int16) as uint8 *)
-let visualize_sobel (sobel_img : int16_t) : uint8_t =
+let visualize_sobel (sobel_img : 'dev int16_t) : 'dev uint8_t =
   (* Calculate absolute values *)
   let abs_sobel = Rune.abs sobel_img in
 

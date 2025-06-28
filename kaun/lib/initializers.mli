@@ -9,7 +9,7 @@ type ('layout, 'dev) t =
   int array ->
   'dev Rune.device ->
   (float, 'layout) Rune.dtype ->
-  (float, 'layout) Rune.t
+  (float, 'layout, 'dev) Rune.t
 (** Type for initializer functions *)
 
 (** {1 Basic Initializers} *)

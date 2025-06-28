@@ -4,18 +4,18 @@
     conversion, resizing, filtering, morphological operations, thresholding, and
     edge detection using [Rune] buffers. *)
 
-type uint8_t = Rune.uint8_t
+type 'dev uint8_t = 'dev Rune.uint8_t
 (** [uint8_t]
 
     3-D ([H; W; C]) or 4-D ([N; H; W; C]) unsigned 8-bit image tensor type. *)
 
-type float32_t = Rune.float32_t
+type 'dev float32_t = 'dev Rune.float32_t
 (** [float32_t]
 
     3-D or 4-D single-precision float image tensor type, with values typically
     normalized to [0.0, 1.0]. *)
 
-type int16_t = Rune.int16_t
+type 'dev int16_t = 'dev Rune.int16_t
 (** [int16_t]
 
     3-D or 4-D signed 16-bit integer tensor type, commonly used for derivative
@@ -23,7 +23,7 @@ type int16_t = Rune.int16_t
 
 (** {1 Basic Image Manipulations} *)
 
-val flip_vertical : uint8_t -> uint8_t
+val flip_vertical : 'dev uint8_t -> 'dev uint8_t
 (** [flip_vertical img]
 
     Flip the image vertically (top to bottom).
@@ -43,7 +43,7 @@ val flip_vertical : uint8_t -> uint8_t
       (* flipped.{0;0;*} = img.{0;H-1;*} *)
     ]} *)
 
-val flip_horizontal : uint8_t -> uint8_t
+val flip_horizontal : 'dev uint8_t -> 'dev uint8_t
 (** [flip_horizontal img]
 
     Flip the image horizontally (left to right).
@@ -63,7 +63,8 @@ val flip_horizontal : uint8_t -> uint8_t
       (* flipped.{0;*;0} = img.{0;*;W-1} *)
     ]} *)
 
-val crop : y:int -> x:int -> height:int -> width:int -> uint8_t -> uint8_t
+val crop :
+  y:int -> x:int -> height:int -> width:int -> 'dev uint8_t -> 'dev uint8_t
 (** [crop ~y ~x ~height ~width img]
 
     Extract a rectangular region of interest from the image.
@@ -89,7 +90,7 @@ val crop : y:int -> x:int -> height:int -> width:int -> uint8_t -> uint8_t
 
 (** {1 Color Space Conversion} *)
 
-val to_grayscale : uint8_t -> uint8_t
+val to_grayscale : 'dev uint8_t -> 'dev uint8_t
 (** [to_grayscale img]
 
     Convert a color image to grayscale using standard luminance weights.
@@ -110,7 +111,7 @@ val to_grayscale : uint8_t -> uint8_t
       (* gray.{0;i;j;0} = 0.299*R + 0.587*G + 0.114*B *)
     ]} *)
 
-val rgb_to_bgr : uint8_t -> uint8_t
+val rgb_to_bgr : 'dev uint8_t -> 'dev uint8_t
 (** [rgb_to_bgr img]
 
     Swap red and blue channels in an RGB image to produce BGR.
@@ -127,7 +128,7 @@ val rgb_to_bgr : uint8_t -> uint8_t
       (* bgr.{i;j;0} = img.{i;j;2} *)
     ]} *)
 
-val bgr_to_rgb : uint8_t -> uint8_t
+val bgr_to_rgb : 'dev uint8_t -> 'dev uint8_t
 (** [bgr_to_rgb img]
 
     Swap blue and red channels in a BGR image to produce RGB.
@@ -146,7 +147,7 @@ val bgr_to_rgb : uint8_t -> uint8_t
 
 (** {1 Data Type Conversion} *)
 
-val to_float : uint8_t -> float32_t
+val to_float : 'dev uint8_t -> 'dev float32_t
 (** [to_float img]
 
     Convert uint8 image values [0,255] to float32 [0.0,1.0].
@@ -163,7 +164,7 @@ val to_float : uint8_t -> float32_t
       (* f.{i;j;k} = float img.{i;j;k} /. 255.0 *)
     ]} *)
 
-val to_uint8 : float32_t -> uint8_t
+val to_uint8 : 'dev float32_t -> 'dev uint8_t
 (** [to_uint8 img]
 
     Convert float32 image values [0.0,1.0] to uint8 [0,255], with clipping.
@@ -189,7 +190,11 @@ type interpolation =
   | Linear  (** bilinear interpolation (default). *)
 
 val resize :
-  ?interpolation:interpolation -> height:int -> width:int -> uint8_t -> uint8_t
+  ?interpolation:interpolation ->
+  height:int ->
+  width:int ->
+  'dev uint8_t ->
+  'dev uint8_t
 (** [resize ?interpolation ~height ~width img]
 
     Resize the image to the specified dimensions.
@@ -215,8 +220,8 @@ val gaussian_blur :
   ksize:int * int ->
   sigmaX:float ->
   ?sigmaY:float ->
-  ('a, 'b) Rune.t ->
-  ('a, 'b) Rune.t
+  ('a, 'b, 'dev) Rune.t ->
+  ('a, 'b, 'dev) Rune.t
 (** [gaussian_blur ~ksize ~sigmaX ?sigmaY img]
 
     Apply a Gaussian blur to the image.
@@ -240,7 +245,8 @@ val gaussian_blur :
       ...
     ]} *)
 
-val box_filter : ksize:int * int -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+val box_filter :
+  ksize:int * int -> ('a, 'b, 'dev) Rune.t -> ('a, 'b, 'dev) Rune.t
 (** [box_filter ~ksize img]
 
     Apply a normalized box (average) filter to the image.
@@ -258,7 +264,7 @@ val box_filter : ksize:int * int -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
       ...
     ]} *)
 
-val blur : ksize:int * int -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+val blur : ksize:int * int -> ('a, 'b, 'dev) Rune.t -> ('a, 'b, 'dev) Rune.t
 (** [blur ~ksize img]
 
     Alias for [box_filter ~ksize img], applying an average filter.
@@ -276,7 +282,7 @@ val blur : ksize:int * int -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
       ...
     ]} *)
 
-val median_blur : ksize:int -> uint8_t -> uint8_t
+val median_blur : ksize:int -> 'dev uint8_t -> 'dev uint8_t
 (** [median_blur ~ksize img]
 
     Apply a median filter to a grayscale uint8 image to remove noise.
@@ -305,7 +311,10 @@ type structuring_element_shape =
   | Cross  (** cross-shaped element. *)
 
 val get_structuring_element :
-  shape:structuring_element_shape -> ksize:int * int -> uint8_t
+  shape:structuring_element_shape ->
+  ksize:int * int ->
+  device:'dev Rune.device ->
+  'dev uint8_t
 (** [get_structuring_element ~shape ~ksize]
 
     Create a structuring element for morphological operations.
@@ -326,7 +335,7 @@ val get_structuring_element :
       ...
     ]} *)
 
-val erode : kernel:uint8_t -> uint8_t -> uint8_t
+val erode : kernel:'dev uint8_t -> 'dev uint8_t -> 'dev uint8_t
 (** [erode ~kernel img]
 
     Perform morphological erosion on a grayscale uint8 image.
@@ -344,7 +353,7 @@ val erode : kernel:uint8_t -> uint8_t -> uint8_t
       ...
     ]} *)
 
-val dilate : kernel:uint8_t -> uint8_t -> uint8_t
+val dilate : kernel:'dev uint8_t -> 'dev uint8_t -> 'dev uint8_t
 (** [dilate ~kernel img]
 
     Perform morphological dilation on a grayscale uint8 image.
@@ -373,7 +382,11 @@ type threshold_type =
   | ToZeroInv  (** dst = 0 if src > thresh else src. *)
 
 val threshold :
-  thresh:int -> maxval:int -> type_:threshold_type -> uint8_t -> uint8_t
+  thresh:int ->
+  maxval:int ->
+  type_:threshold_type ->
+  'dev uint8_t ->
+  'dev uint8_t
 (** [threshold ~thresh ~maxval ~type_ img]
 
     Apply fixed-level thresholding to a grayscale uint8 image.
@@ -398,7 +411,7 @@ val threshold :
 
 (** {1 Edge Detection} *)
 
-val sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t
+val sobel : dx:int -> dy:int -> ?ksize:int -> 'dev uint8_t -> 'dev int16_t
 (** [sobel ~dx ~dy ?ksize img]
 
     Compute the Sobel derivative of a grayscale uint8 image.
@@ -422,7 +435,11 @@ val sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t
     ]} *)
 
 val canny :
-  threshold1:float -> threshold2:float -> ?ksize:int -> uint8_t -> uint8_t
+  threshold1:float ->
+  threshold2:float ->
+  ?ksize:int ->
+  'dev uint8_t ->
+  'dev uint8_t
 (** [canny ~threshold1 ~threshold2 ?ksize img]
 
     Apply the Canny edge detector to a grayscale uint8 image.

@@ -36,4 +36,4 @@
 (executable
  (name morphology)
  (modules morphology)
- (libraries common nx.io sowilo hugin))
+ (libraries common nx.io sowilo rune hugin))

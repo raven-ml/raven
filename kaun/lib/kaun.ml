@@ -1,5 +1,5 @@
 (* Core types *)
-type ('layout, 'dev) tensor = (float, 'layout) Rune.t
+type ('layout, 'dev) tensor = (float, 'layout, 'dev) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 type 'dev device = 'dev Rune.device
 

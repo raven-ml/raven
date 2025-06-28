@@ -255,12 +255,16 @@ let test_threshold () =
 
 let test_structuring_elements () =
   (* Rectangle *)
-  let rect = get_structuring_element ~shape:Rect ~ksize:(3, 5) in
+  let rect =
+    get_structuring_element ~shape:Rect ~ksize:(3, 5) ~device:Rune.cblas
+  in
   check_shape "rect shape" [| 3; 5 |] rect;
   check_pixel "rect filled" 1 rect [ 1; 2 ];
 
   (* Cross *)
-  let cross = get_structuring_element ~shape:Cross ~ksize:(5, 5) in
+  let cross =
+    get_structuring_element ~shape:Cross ~ksize:(5, 5) ~device:Rune.cblas
+  in
   check_shape "cross shape" [| 5; 5 |] cross;
   check_pixel "cross center" 1 cross [ 2; 2 ];
   check_pixel "cross arm" 1 cross [ 2; 0 ];
@@ -269,7 +273,9 @@ let test_structuring_elements () =
 let test_erosion () =
   (* Create 4x4 white square in 10x10 image *)
   let img = create_centered_square 10 10 4 in
-  let kernel = get_structuring_element ~shape:Rect ~ksize:(3, 3) in
+  let kernel =
+    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device:Rune.cblas
+  in
   let eroded = erode ~kernel img in
 
   (* Count white pixels - should be 2x2 = 4 *)
@@ -287,7 +293,9 @@ let test_erosion () =
 let test_dilation () =
   (* Create 4x4 white square in 10x10 image *)
   let img = create_centered_square 10 10 4 in
-  let kernel = get_structuring_element ~shape:Rect ~ksize:(3, 3) in
+  let kernel =
+    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device:Rune.cblas
+  in
   let dilated = dilate ~kernel img in
 
   (* Count white pixels - should be 6x6 = 36 *)
@@ -365,7 +373,9 @@ let test_pipeline () =
   let binary = threshold ~thresh:128 ~maxval:255 ~type_:Binary blurred in
 
   (* Morphological operations *)
-  let kernel = get_structuring_element ~shape:Rect ~ksize:(3, 3) in
+  let kernel =
+    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device:Rune.cblas
+  in
   let cleaned = erode ~kernel binary in
   let final = dilate ~kernel cleaned in
 

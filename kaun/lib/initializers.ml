@@ -10,7 +10,7 @@ type ('layout, 'dev) t =
   int array ->
   'dev Rune.device ->
   (float, 'layout) Rune.dtype ->
-  (float, 'layout) Rune.t
+  (float, 'layout, 'dev) Rune.t
 
 (* Helper function to compute fan-in and fan-out *)
 let compute_fans shape in_axis out_axis =

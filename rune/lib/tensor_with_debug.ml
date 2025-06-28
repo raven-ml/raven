@@ -303,8 +303,8 @@ let roll ?axis shift x =
 
 let tile x reps = Debug.with_context "tile" (fun () -> T.tile x reps)
 
-let repeat x repeats ~axis =
-  Debug.with_context "repeat" (fun () -> T.repeat x repeats ~axis)
+let repeat ?axis x repeats =
+  Debug.with_context "repeat" (fun () -> T.repeat ?axis x repeats)
 
 (* Already defined: concatenate, stack *)
 let vstack ts = Debug.with_context "vstack" (fun () -> T.vstack ts)
@@ -338,7 +338,7 @@ let linspace ctx dtype ?endpoint start stop count =
   Debug.with_context "linspace" (fun () ->
       T.linspace ctx dtype ?endpoint start stop count)
 
-let logspace ctx dtype ?base ?endpoint start stop count =
+let logspace ctx dtype ?endpoint ?base start stop count =
   Debug.with_context "logspace" (fun () ->
       T.logspace ctx dtype ?base ?endpoint start stop count)
 
@@ -351,12 +351,13 @@ let meshgrid ?indexing xs =
 
 (* Indexing operations *)
 
-let slice_ranges t ranges =
-  Debug.with_context "slice_ranges" (fun () -> T.slice_ranges t ranges)
+let slice_ranges ?steps starts stops t =
+  Debug.with_context "slice_ranges" (fun () ->
+      T.slice_ranges ?steps starts stops t)
 
-let set_slice_ranges t ranges src =
+let set_slice_ranges ?steps starts stops t value =
   Debug.with_context "set_slice_ranges" (fun () ->
-      T.set_slice_ranges t ranges src)
+      T.set_slice_ranges ?steps starts stops t value)
 
 let unsafe_get indices t = T.unsafe_get indices t
 let unsafe_set indices t value = T.unsafe_set indices t value
@@ -366,12 +367,12 @@ let one_hot ~num_classes indices =
 
 (* Splitting operations *)
 
-let array_split t indices_or_sections ~axis =
+let array_split ~axis t indices_or_sections =
   Debug.with_context "array_split" (fun () ->
-      T.array_split t indices_or_sections ~axis)
+      T.array_split ~axis t indices_or_sections)
 
-let split t indices_or_sections ~axis =
-  Debug.with_context "split" (fun () -> T.split t indices_or_sections ~axis)
+let split ~axis t indices_or_sections =
+  Debug.with_context "split" (fun () -> T.split ~axis t indices_or_sections)
 
 let randint ctx dtype ?seed ?high shape low =
   Debug.with_context "randint" (fun () ->
@@ -405,13 +406,17 @@ let convolve2d ?groups ?stride ?padding_mode ?dilation ?fillvalue ?bias x w =
 
 let pool_setup = T.pool_setup
 
-let avg_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode x =
+let avg_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+    ?count_include_pad x =
   Debug.with_context "avg_pool1d" (fun () ->
-      T.avg_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode x)
+      T.avg_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+        ?count_include_pad x)
 
-let avg_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode x =
+let avg_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+    ?count_include_pad x =
   Debug.with_context "avg_pool2d" (fun () ->
-      T.avg_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode x)
+      T.avg_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
+        ?count_include_pad x)
 
 let max_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
     ?return_indices x =
