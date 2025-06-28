@@ -58,8 +58,8 @@ module My_sites = struct
         ("rune_metal.cma", lookup_file "rune_metal.cma");
         ("rune.cma", lookup_file "rune.cma");
         ("sowilo.cma", lookup_file "sowilo.cma");
-        ("kaun_datasets.cma", lookup_file "kaun_datasets.cma");
         ("kaun.cma", lookup_file "kaun.cma");
+        ("kaun_datasets.cma", lookup_file "kaun_datasets.cma");
       ]
     in
     List.filter_map snd all_cmas
