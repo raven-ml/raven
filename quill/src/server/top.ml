@@ -26,9 +26,13 @@ module My_sites = struct
         ("nx_native.cma", lookup_file "nx_native.cma");
         ("nx.cma", lookup_file "nx.cma");
         ("nx_cblas.cma", lookup_file "nx_cblas.cma");
-        ("integers.cma", lookup_file "integers.cma");
         ("bigarray.cma", lookup_file "bigarray.cma");
+        ("bigarray_compat.cma", lookup_file "bigarray_compat.cma");
+        ("integers.cma", lookup_file "integers.cma");
         ("ctypes.cma", lookup_file "ctypes.cma");
+        ("ctypes_foreign.cma", lookup_file "ctypes_foreign.cma");
+        ("objc_c.cma", lookup_file "objc_c.cma");
+        ("objc.cma", lookup_file "objc.cma");
         ("metal.cma", lookup_file "metal.cma");
         ("nx_metal.cma", lookup_file "nx_metal.cma");
         ("zip.cma", lookup_file "zip.cma");
@@ -40,13 +44,21 @@ module My_sites = struct
         ("curl.cma", lookup_file "curl.cma");
         ("csv.cma", lookup_file "csv.cma");
         ("nx_datasets.cma", lookup_file "nx_datasets.cma");
+        ("re.cma", lookup_file "re.cma");
+        ("uutf.cma", lookup_file "uutf.cma");
+        ("uucp.cma", lookup_file "uucp.cma");
         ("nx_text.cma", lookup_file "nx_text.cma");
         ("cairo.cma", lookup_file "cairo.cma");
         ("usdl.cma", lookup_file "usdl.cma");
-        ("sowilo.cma", lookup_file "sowilo.cma");
-        ("hugin.cma", lookup_file "hugin.cma");
         ("base64.cma", lookup_file "base64.cma");
+        ("hugin.cma", lookup_file "hugin.cma");
+        ("rune_jit.cma", lookup_file "rune_jit.cma");
+        ("rune_cblas.cma", lookup_file "rune_cblas.cma");
+        ("rune_jit_metal.cma", lookup_file "rune_jit_metal.cma");
+        ("rune_metal.cma", lookup_file "rune_metal.cma");
         ("rune.cma", lookup_file "rune.cma");
+        ("sowilo.cma", lookup_file "sowilo.cma");
+        ("kaun_datasets.cma", lookup_file "kaun_datasets.cma");
         ("kaun.cma", lookup_file "kaun.cma");
       ]
     in
@@ -63,10 +75,25 @@ let execute_directive directive =
         if not result then
           Printf.eprintf "[DEBUG] Failed to execute directive: %s\n%!" directive)
       phrases
-  with ex ->
-    Printf.eprintf "[DEBUG] Exception executing directive '%s': %s\n%!"
-      directive (Printexc.to_string ex);
-    raise ex
+  with
+  | Symtable.Error error as ex ->
+      Printf.eprintf "[DEBUG] Symtable.Error executing directive '%s'\n%!"
+        directive;
+      Printf.eprintf "[DEBUG] Error details: %s\n%!"
+        (match error with
+        | Symtable.Undefined_global g ->
+            Printf.sprintf "Undefined_global: %s" (Symtable.Global.name g)
+        | Symtable.Unavailable_primitive s ->
+            Printf.sprintf "Unavailable_primitive: %s" s
+        | Symtable.Wrong_vm s -> Printf.sprintf "Wrong_vm: %s" s
+        | Symtable.Uninitialized_global _ -> "Uninitialized_global");
+      Printf.eprintf "[DEBUG] Backtrace:\n%s\n%!" (Printexc.get_backtrace ());
+      raise ex
+  | ex ->
+      Printf.eprintf "[DEBUG] Exception executing directive '%s': %s\n%!"
+        directive (Printexc.to_string ex);
+      Printf.eprintf "[DEBUG] Backtrace:\n%s\n%!" (Printexc.get_backtrace ());
+      raise ex
 
 let initialize_toplevel_unsafe () : bool =
   if !global_directives_run then true
@@ -95,9 +122,12 @@ let initialize_toplevel_unsafe () : bool =
           (String.concat ", " (My_sites.find_available_plugins ()));
 
         Printf.eprintf "[DEBUG] Loading CMA files...\n%!";
+        Printf.eprintf "[DEBUG] Module loading state check\n%!";
+
         List.iter
           (fun cma ->
-            Printf.eprintf "[DEBUG] Loading %s\n%!" cma;
+            Printf.eprintf "[DEBUG] About to load %s\n%!" cma;
+            (* Special handling for ctypes to get more info *)
             execute_directive (Printf.sprintf "#load %S;;" cma))
           My_sites.cmas;
 
