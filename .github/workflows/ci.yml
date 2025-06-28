@@ -31,7 +31,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libev-dev libcurl4-gnutls-dev libcairo2-dev pkg-config libsdl2-dev
+          sudo apt-get install -y libev-dev libcurl4-gnutls-dev libcairo2-dev pkg-config libsdl2-dev libblas-dev liblapack-dev
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
@@ -40,64 +40,86 @@ jobs:
 
       - name: Install system dependencies (Windows)
         if: runner.os == 'Windows'
+        shell: bash
         run: |
-          # TBD
+          # Install additional Cygwin packages needed for the dependencies
+          /cygdrive/d/cygwin/setup-x86_64.exe \
+            --quiet-mode \
+            --packages \
+            libcurl-devel,libcairo-devel,libcairo2,pkg-config,libSDL2-devel,\
+            libfreetype-devel,libpng-devel,libev-devel,\
+            liblapack-devel,libopenblas,\
+            mingw64-x86_64-curl,mingw64-x86_64-cairo,mingw64-x86_64-pkg-config,\
+            mingw64-x86_64-freetype2,mingw64-x86_64-SDL2,cmake \
+            --root=D:/cygwin \
+            --site=https://mirrors.kernel.org/sourceware/cygwin/ \
+            --local-package-dir=D:/cygwin/tmp
+          
+          # Set up environment variables for pkg-config to find MinGW libraries
+          echo "PKG_CONFIG_PATH=/usr/x86_64-w64-mingw32/sys-root/mingw/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          
+          # Ensure MinGW compilers are used
+          echo "CC=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
+          echo "CXX=x86_64-w64-mingw32-g++" >> $GITHUB_ENV
+          
+          # Add Cygwin MinGW cross-compiler paths
+          echo "PATH=/usr/x86_64-w64-mingw32/sys-root/mingw/bin:$PATH" >> $GITHUB_ENV
 
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test
 
-      # Build and test nx
-      - name: Build nx
-        run: opam exec -- dune build nx
+      - name: Build and test nx
+        run: |
+          echo "::group::nx"
+          opam exec -- dune build nx
+          opam exec -- dune build @nx/runtest
+          echo "::endgroup::"
 
-      - name: Test nx
-        run: opam exec -- dune build @nx/runtest
+      - name: Build and test nx-datasets
+        run: |
+          echo "::group::nx-datasets"
+          opam exec -- dune build nx-datasets
+          opam exec -- dune build @nx-datasets/runtest
+          echo "::endgroup::"
 
-      # Build and test nx-datasets
-      - name: Build nx-datasets
-        run: opam exec -- dune build nx-datasets
+      - name: Build and test nx-text
+        run: |
+          echo "::group::nx-text"
+          opam exec -- dune build nx-text
+          opam exec -- dune build @nx-text/runtest
+          echo "::endgroup::"
 
-      - name: Test nx-datasets
-        run: opam exec -- dune build @nx-datasets/runtest
+      - name: Build and test rune
+        run: |
+          echo "::group::rune"
+          opam exec -- dune build rune
+          opam exec -- dune build @rune/runtest
+          echo "::endgroup::"
 
-      # Build and test nx-text
-      - name: Build nx-text
-        run: opam exec -- dune build nx-text
+      - name: Build and test kaun
+        run: |
+          echo "::group::kaun"
+          opam exec -- dune build kaun
+          opam exec -- dune build @kaun/runtest
+          echo "::endgroup::"
 
-      - name: Test nx-text
-        run: opam exec -- dune build @nx-text/runtest
+      - name: Build and test sowilo
+        run: |
+          echo "::group::sowilo"
+          opam exec -- dune build sowilo
+          opam exec -- dune build @sowilo/runtest
+          echo "::endgroup::"
 
-      # Build and test rune
-      - name: Build rune
-        run: opam exec -- dune build rune
+      - name: Build and test hugin
+        run: |
+          echo "::group::hugin"
+          opam exec -- dune build hugin
+          opam exec -- dune build @hugin/runtest
+          echo "::endgroup::"
 
-      - name: Test rune
-        run: opam exec -- dune build @rune/runtest
-
-      # Build and test kaun
-      - name: Build kaun
-        run: opam exec -- dune build kaun
-
-      - name: Test kaun
-        run: opam exec -- dune build @kaun/runtest
-
-      # Build and test sowilo
-      - name: Build sowilo
-        run: opam exec -- dune build sowilo
-
-      - name: Test sowilo
-        run: opam exec -- dune build @sowilo/runtest
-
-      # Build and test hugin
-      - name: Build hugin
-        run: opam exec -- dune build hugin
-
-      - name: Test hugin
-        run: opam exec -- dune build @hugin/runtest
-
-      # Build and test quill
-      - name: Build quill
-        run: opam exec -- dune build quill
-
-      - name: Test quill
-        run: opam exec -- dune build @quill/runtest
+      - name: Build and test quill
+        run: |
+          echo "::group::quill"
+          opam exec -- dune build quill
+          opam exec -- dune build @quill/runtest
+          echo "::endgroup::"
