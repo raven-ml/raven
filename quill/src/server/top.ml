@@ -25,8 +25,11 @@ module My_sites = struct
         ("nx_core.cma", lookup_file "nx_core.cma");
         ("nx_native.cma", lookup_file "nx_native.cma");
         ("nx.cma", lookup_file "nx.cma");
-        ("nx_metal.cma", lookup_file "nx_metal.cma");
         ("nx_cblas.cma", lookup_file "nx_cblas.cma");
+        ("integers.cma", lookup_file "integers.cma");
+        ("ctypes.cma", lookup_file "ctypes.cma");
+        ("metal.cma", lookup_file "metal.cma");
+        ("nx_metal.cma", lookup_file "nx_metal.cma");
         ("bigarray.cma", lookup_file "bigarray.cma");
         ("zip.cma", lookup_file "zip.cma");
         ("npy.cma", lookup_file "npy.cma");

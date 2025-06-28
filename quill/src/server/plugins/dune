@@ -108,14 +108,21 @@
    (copy %{lib:nx.cblas:nx_cblas.cma} nx_cblas.cma))))
 
 (rule
- (targets nx_metal.cma)
+ (targets nx_metal.cma ctypes.cma integers.cma)
  (mode promote)
  (enabled_if
   (= %{system} macosx))
  (deps
-  (:src %{lib:nx.metal:nx_metal.cma}))
+  %{lib:nx.metal:nx_metal.cma}
+  %{lib:nx.metal.bindings:metal.cma}
+  %{lib:ctypes:ctypes.cma}
+  %{lib:integers:integers.cma})
  (action
-  (copy %{src} %{targets})))
+  (progn
+   (copy %{lib:nx.metal:nx_metal.cma} nx_metal.cma)
+   (copy %{lib:nx.metal.bindings:metal.cma} metal.cma)
+   (copy %{lib:ctypes:ctypes.cma} ctypes.cma)
+   (copy %{lib:integers:integers.cma} integers.cma))))
 
 (install
  (section
