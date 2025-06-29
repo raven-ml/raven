@@ -114,11 +114,9 @@
   dune
   (nx
    (= :version))
-  ; rune.jit.metal
   (ctypes
-   (and
-    (>= 0.21.0)
-    (= :os macos)))
+   (>= 0.21.0))
+  ; rune.jit.metal
   (ctypes-foreign
    (and
     (>= 0.21.0)
