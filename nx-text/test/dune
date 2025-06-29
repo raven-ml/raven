@@ -1,3 +1,4 @@
 (tests
  (names test_tokenization test_vocab test_encoding test_unicode test_errors)
+ (package nx-text)
  (libraries nx_text nx alcotest))

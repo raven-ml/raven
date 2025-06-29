@@ -3,4 +3,5 @@
  (libraries rune))
 
 (cram
+ (package rune)
  (deps ./basic_debug.exe ./debug_with_grad.exe))

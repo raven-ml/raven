@@ -1,9 +1,6 @@
 (executables
- (names
-  bug_blit_overlapping
-  bug_gather_index_shape
-  bug_logspace_division_by_zero
-  bug_slice_batch_process_bounds)
+ (names bug_blit_overlapping bug_gather_index_shape
+  bug_logspace_division_by_zero bug_slice_batch_process_bounds)
  (libraries nx nx_cblas nx_core))
 
 (executables
@@ -13,5 +10,6 @@
  (libraries nx_core nx_metal))
 
 (cram
+ (package nx)
  (deps
   (glob_files *.exe)))

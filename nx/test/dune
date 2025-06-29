@@ -1,16 +1,19 @@
 (test
  (name test_backend_native)
+ (package nx)
  (modules test_backend_native)
  (libraries nx_native alcotest test_nx_unit))
 
 (test
  (name test_backend_cblas)
+ (package nx)
  (modules test_backend_cblas)
  (build_if %{lib-available:nx.cblas})
  (libraries nx_cblas alcotest test_nx_unit))
 
 (test
  (name test_backend_metal)
+ (package nx)
  (modules test_backend_metal)
  (libraries nx_metal alcotest test_nx_unit)
  (build_if

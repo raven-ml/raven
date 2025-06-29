@@ -1,2 +1,3 @@
 (cram
+ (package quill)
  (deps %{bin:quill}))
