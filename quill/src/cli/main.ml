@@ -43,7 +43,7 @@ let eval_cmd =
 
 let quill_cmd =
   let doc = "Serve or execute Quill documents." in
-  let info = Cmd.info "quill" ~version:"0.1.0" ~doc in
+  let info = Cmd.info "quill" ~version:"1.0.0" ~doc in
   Cmd.group info [ serve_cmd; eval_cmd ]
 
 let () = exit (Cmd.eval quill_cmd)

@@ -72,7 +72,7 @@ let download_file url dest_path =
   h#set_timeout 300;
   (* 5 minutes *)
   (* Provide a user agent *)
-  h#set_useragent "ocaml-nx-datasets/0.1.0";
+  h#set_useragent "ocaml-nx-datasets/1.0.0";
 
   let oc = open_out_bin dest_path in
   let result =
