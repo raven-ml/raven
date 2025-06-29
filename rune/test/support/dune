@@ -1,4 +1,3 @@
 (library
  (name test_rune_support)
- (package rune)
  (libraries rune alcotest))

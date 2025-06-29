@@ -1,6 +1,5 @@
 (library
  (name test_rune_jit_support)
- (package rune)
  (modules support)
  (wrapped false)
  (libraries rune_jit alcotest))
