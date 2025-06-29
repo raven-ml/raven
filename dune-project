@@ -43,6 +43,18 @@
   camlzip
   ; nx.cblas (uses dune-configurator to find BLAS)
   (dune-configurator :build)
+  ; nx.metal - only on macOS
+  (ctypes
+   (and
+    (>= 0.21.0)
+    (= :os macos)))
+  (ctypes-foreign
+   (and
+    (>= 0.21.0)
+    (= :os macos)))
+  (integers
+   (= :os macos))
+  ; tests
   (conf-blas :with-test)
   (alcotest :with-test)
   (mdx :with-test))
@@ -102,7 +114,15 @@
   dune
   (nx
    (= :version))
-  ctypes
+  ; rune.jit.metal
+  (ctypes
+   (and
+    (>= 0.21.0)
+    (= :os macos)))
+  (ctypes-foreign
+   (and
+    (>= 0.21.0)
+    (= :os macos)))
   (alcotest :with-test)))
 
 (package
@@ -188,13 +208,9 @@
    (>= 5.2.0))
   dune
   conf-sdl2
+  cairo2
   (nx
    (= :version))
-  cairo2
-  (ctypes
-   (>= 0.21.0))
-  (ctypes-foreign
-   (>= 0.21.0))
   (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
