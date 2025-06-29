@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.0~alpha0] - 2025-06-28
+## [1.0.0~alpha0] - 2025-06-29
 
 ### Initial Alpha Release
 
@@ -76,4 +76,4 @@ And to our early sponsors:
 @gabyfle
 @sabine
 
-[0.1.0~alpha0]: https://github.com/raven-ocaml/raven/releases/tag/v0.1.0~alpha0
+[1.0.0~alpha0]: https://github.com/raven-ocaml/raven/releases/tag/v1.0.0~alpha0
