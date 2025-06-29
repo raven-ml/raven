@@ -71,7 +71,8 @@
    (< 0.10.0))
   csv
   (nx
-   (= :version)))
+   (= :version))
+  (alcotest :with-test))
  (tags
   (datasets machine-learning data-science image-classification regression)))
 

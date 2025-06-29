@@ -23,6 +23,7 @@ depends: [
   "ocurl" {< "0.10.0"}
   "csv"
   "nx" {= version}
+  "alcotest" {with-test}
   "odoc" {with-doc}
 ]
 build: [
