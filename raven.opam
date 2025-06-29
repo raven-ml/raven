@@ -20,6 +20,11 @@ depends: [
   "sowilo" {= version}
   "quill" {= version}
   "hugin" {= version}
+  "odoc" {with-dev-setup}
+  "odoc-driver" {with-dev-setup}
+  "soupault" {with-dev-setup}
+  "landmarks" {with-dev-setup}
+  "landmarks-ppx" {with-dev-setup}
   "odoc" {with-doc}
 ]
 build: [

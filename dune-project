@@ -31,11 +31,6 @@
   (name soupault)))
 
 (package
- (name dev)
- (allow_empty)
- (depends odoc odoc-driver soupault landmarks landmarks-ppx))
-
-(package
  (name nx)
  (synopsis "High-performance N-dimensional array library for OCaml")
  (description
@@ -222,6 +217,11 @@
   (quill
    (= :version))
   (hugin
-   (= :version)))
+   (= :version))
+  (odoc :with-dev-setup)
+  (odoc-driver :with-dev-setup)
+  (soupault :with-dev-setup)
+  (landmarks :with-dev-setup)
+  (landmarks-ppx :with-dev-setup))
  (tags
   (machine-learning data-science numerical-computation)))
