@@ -13,8 +13,8 @@ tags: [
 homepage: "https://github.com/raven-ml/raven"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
-  "ocaml" {>= "4.14.0"}
-  "dune" {>= "3.17"}
+  "ocaml" {>= "5.2.0"}
+  "dune" {>= "3.19"}
   "dune-site"
   "cmdliner"
   "wasm_of_ocaml-compiler"
@@ -37,6 +37,7 @@ depends: [
   "odoc" {with-doc}
 ]
 dev-repo: "git+https://github.com/raven-ml/raven.git"
+x-maintenance-intent: ["(latest)"]
 build: [
   ["dune" "subst"] {dev}
   [

@@ -1,6 +1,7 @@
 (library
  (name nx_cblas)
  (public_name nx.cblas)
+ (optional)
  (libraries nx_core)
  (foreign_stubs
   (language c)

@@ -1,4 +1,4 @@
-(lang dune 3.17)
+(lang dune 3.19)
 
 (name raven)
 
@@ -37,14 +37,16 @@
   "Nx is the core component of the Raven ecosystem providing efficient numerical computation with multi-device support. It offers NumPy-like functionality with the benefits of OCaml's type system.")
  (depends
   (ocaml
-   (>= 5.0.0))
+   (>= 5.2.0))
   dune
   ; nx.io
   camlzip
   ; nx.cblas (uses dune-configurator to find BLAS)
   (dune-configurator :build)
+  (conf-blas :with-test)
   (alcotest :with-test)
   (mdx :with-test))
+ (depopts conf-blas)
  (tags
   (numerical-computation tensor-library machine-learning)))
 
@@ -55,7 +57,7 @@
   "A collection of common datasets for machine learning tasks, including image classification, regression, and more. This package provides easy access to popular datasets in a format compatible with Nx.")
  (depends
   (ocaml
-   (>= 5.0.0))
+   (>= 5.2.0))
   dune
   camlzip
   ; Currently fails with dune pkg - update when fixed:
@@ -78,7 +80,7 @@
   "Text processing library that extends Nx with natural language processing capabilities. Provides tokenization, encoding, and text manipulation functionality compatible with the Nx tensor library.")
  (depends
   (ocaml
-   (>= 5.0.0))
+   (>= 5.2.0))
   dune
   (nx
    (= :version))
@@ -91,11 +93,12 @@
 
 (package
  (name rune)
- (synopsis "")
- (description "")
+ (synopsis "Automatic differentiation and JIT compilation for OCaml")
+ (description
+  "Rune provides automatic differentiation capabilities and experimental JIT compilation for the Raven ecosystem. It enables gradient-based optimization and supports functional transformations like grad, value_and_grad, and vmap, making it the foundation for deep learning in OCaml.")
  (depends
   (ocaml
-   (>= 5.0.0))
+   (>= 5.2.0))
   dune
   (nx
    (= :version))
@@ -109,7 +112,7 @@
   "Kaun brings modern deep learning to OCaml with a flexible, type-safe API for building and training neural networks. It leverages Rune for automatic differentiation and computation graph optimization while maintaining OCaml's functional programming advantages.")
  (depends
   (ocaml
-   (>= 5.0.0))
+   (>= 5.2.0))
   dune
   (rune
    (= :version))
@@ -126,7 +129,7 @@
   "Computer vision operations and algorithms built on top of the Rune library. Provides image processing, feature extraction, and other vision-related functionality.")
  (depends
   (ocaml
-   (>= 4.14.0))
+   (>= 5.2.0))
   dune
   (rune
    (= :version))
@@ -144,7 +147,7 @@
   (lib toplevel_libs))
  (depends
   (ocaml
-   (>= 4.14.0))
+   (>= 5.2.0))
   dune
   dune-site
   cmdliner
@@ -182,8 +185,9 @@
   "Hugin is a powerful visualization library for OCaml that produces publication-quality plots and charts. It integrates with the Raven ecosystem to provide visualization of Nx data.")
  (depends
   (ocaml
-   (>= 4.14.0))
+   (>= 5.2.0))
   dune
+  conf-sdl2
   (nx
    (= :version))
   cairo2

@@ -5,8 +5,10 @@ open Sowilo
 
 (* Helper functions *)
 
+let device = Rune.cblas ()
+
 let create_test_image_gray h w value =
-  Rune.full Rune.cblas Rune.uint8 [| h; w |] value
+  Rune.full device Rune.uint8 [| h; w |] value
 
 let create_checkerboard h w =
   let data =
@@ -15,7 +17,7 @@ let create_checkerboard h w =
         let col = i mod w in
         if (row + col) mod 2 = 0 then 255 else 0)
   in
-  Rune.create Rune.cblas Rune.uint8 [| h; w |] data
+  Rune.create device Rune.uint8 [| h; w |] data
 
 let create_centered_square h w square_size =
   let data =
@@ -32,7 +34,7 @@ let create_centered_square h w square_size =
         then 255
         else 0)
   in
-  Rune.create Rune.cblas Rune.uint8 [| h; w |] data
+  Rune.create device Rune.uint8 [| h; w |] data
 
 let check_tensor msg expected actual =
   if Rune.shape expected <> Rune.shape actual then
@@ -107,7 +109,7 @@ let test_crop () =
 let test_to_grayscale () =
   (* Test RGB to grayscale *)
   let rgb =
-    Rune.create Rune.cblas Rune.uint8 [| 2; 2; 3 |]
+    Rune.create device Rune.uint8 [| 2; 2; 3 |]
       [|
         255;
         0;
@@ -149,7 +151,7 @@ let test_to_grayscale () =
   check_pixel "grayscale passthrough value" 128 gray_result [ 2; 2 ]
 
 let test_rgb_bgr_conversion () =
-  let rgb = Rune.create Rune.cblas Rune.uint8 [| 1; 1; 3 |] [| 10; 20; 30 |] in
+  let rgb = Rune.create device Rune.uint8 [| 1; 1; 3 |] [| 10; 20; 30 |] in
   let bgr = rgb_to_bgr rgb in
 
   check_pixel "R becomes B" 30 bgr [ 0; 0; 0 ];
@@ -177,7 +179,7 @@ let test_float_conversions () =
 
   (* Test clipping *)
   let out_of_range =
-    Rune.create Rune.cblas Rune.float32 [| 2; 2 |] [| -0.5; 0.5; 1.5; 0.75 |]
+    Rune.create device Rune.float32 [| 2; 2 |] [| -0.5; 0.5; 1.5; 0.75 |]
   in
   let clipped = to_uint8 out_of_range in
   check_pixel "clipped negative" 0 clipped [ 0; 0 ];
@@ -206,7 +208,7 @@ let test_gaussian_blur () =
 let test_box_filter () =
   (* Create simple test pattern *)
   let img =
-    Rune.create Rune.cblas Rune.uint8 [| 3; 3 |]
+    Rune.create device Rune.uint8 [| 3; 3 |]
       [| 0; 0; 0; 0; 255; 0; 0; 0; 0 |]
   in
   let filtered = box_filter ~ksize:(3, 3) img in
@@ -227,7 +229,7 @@ let test_median_blur () =
 
 let test_threshold () =
   let img =
-    Rune.create Rune.cblas Rune.uint8 [| 2; 3 |]
+    Rune.create device Rune.uint8 [| 2; 3 |]
       [| 50; 100; 150; 200; 250; 25 |]
   in
 
@@ -253,17 +255,19 @@ let test_threshold () =
 
 (* ───── Morphological Operations Tests ───── *)
 
+let device = Rune.cblas ()
+
 let test_structuring_elements () =
   (* Rectangle *)
   let rect =
-    get_structuring_element ~shape:Rect ~ksize:(3, 5) ~device:Rune.cblas
+    get_structuring_element ~shape:Rect ~ksize:(3, 5) ~device
   in
   check_shape "rect shape" [| 3; 5 |] rect;
   check_pixel "rect filled" 1 rect [ 1; 2 ];
 
   (* Cross *)
   let cross =
-    get_structuring_element ~shape:Cross ~ksize:(5, 5) ~device:Rune.cblas
+    get_structuring_element ~shape:Cross ~ksize:(5, 5) ~device
   in
   check_shape "cross shape" [| 5; 5 |] cross;
   check_pixel "cross center" 1 cross [ 2; 2 ];
@@ -274,7 +278,7 @@ let test_erosion () =
   (* Create 4x4 white square in 10x10 image *)
   let img = create_centered_square 10 10 4 in
   let kernel =
-    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device:Rune.cblas
+    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device
   in
   let eroded = erode ~kernel img in
 
@@ -294,7 +298,7 @@ let test_dilation () =
   (* Create 4x4 white square in 10x10 image *)
   let img = create_centered_square 10 10 4 in
   let kernel =
-    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device:Rune.cblas
+    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device
   in
   let dilated = dilate ~kernel img in
 
@@ -316,7 +320,7 @@ let test_sobel () =
         let j = idx mod 5 in
         if j >= 2 then 255 else 0)
   in
-  let img = Rune.create Rune.cblas Rune.uint8 [| 5; 5 |] img_data in
+  let img = Rune.create device Rune.uint8 [| 5; 5 |] img_data in
 
   (* Sobel X should detect vertical edges *)
   let sobel_x = sobel ~dx:1 ~dy:0 img in
@@ -334,7 +338,7 @@ let test_sobel () =
         let i = idx / 5 in
         if i >= 2 then 255 else 0)
   in
-  let img_h = Rune.create Rune.cblas Rune.uint8 [| 5; 5 |] img_h_data in
+  let img_h = Rune.create device Rune.uint8 [| 5; 5 |] img_h_data in
 
   let sobel_y = sobel ~dx:0 ~dy:1 img_h in
   let edge_response_y = abs (Rune.unsafe_get [ 2; 2 ] sobel_y) in
@@ -374,7 +378,7 @@ let test_pipeline () =
 
   (* Morphological operations *)
   let kernel =
-    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device:Rune.cblas
+    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device
   in
   let cleaned = erode ~kernel binary in
   let final = dilate ~kernel cleaned in

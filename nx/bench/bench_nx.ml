@@ -1,4 +1,4 @@
-(* bench_nx.ml - Simple Nx benchmarking *)
+(* bench_nx_unit.ml - Nx benchmarking framework *)
 
 open Ubench
 
@@ -25,7 +25,7 @@ let make_name op_name size dtype backend_name =
     backend_name
 
 (* Generate benchmarks for a specific backend *)
-module Make_benchmarks (Backend : Nx_core.Backend_intf.S) = struct
+module Make (Backend : Nx_core.Backend_intf.S) = struct
   module Nx = Nx_core.Make_frontend (Backend)
 
   let create_benchmarks ctx backend_name =
@@ -54,11 +54,12 @@ module Make_benchmarks (Backend : Nx_core.Backend_intf.S) = struct
                   ignore (Nx.mul a b))
             in
 
-            (* Square *)
-            let square_bench =
+            (* MatMul *)
+            let matmul_bench =
               let a = Nx.rand ctx dtype shape in
-              create (make_name "Square" size dtype backend_name) (fun () ->
-                  ignore (Nx.square a))
+              let b = Nx.rand ctx dtype shape in
+              create (make_name "MatMul" size dtype backend_name) (fun () ->
+                  ignore (Nx.matmul a b))
             in
 
             (* Sum *)
@@ -68,101 +69,48 @@ module Make_benchmarks (Backend : Nx_core.Backend_intf.S) = struct
                   ignore (Nx.sum a))
             in
 
+            (* Conv2D for size >= 100 *)
+            let conv_bench =
+              if size >= 100 then
+                let input = Nx.rand ctx dtype [| 1; 3; size; size |] in
+                let kernel = Nx.rand ctx dtype [| 8; 3; 3; 3 |] in
+                Some
+                  (create (make_name "Conv2D" size dtype backend_name) (fun () ->
+                       ignore (Nx.convolve2d input kernel ~padding_mode:`Same)))
+              else None
+            in
+
             benchmarks :=
-              [ add_bench; mul_bench; square_bench; sum_bench ] @ !benchmarks)
+              add_bench :: mul_bench :: matmul_bench :: sum_bench
+              :: List.filter_map (fun x -> x) [ conv_bench ]
+              @ !benchmarks)
           dtypes)
       sizes;
 
-    (* Convolution benchmarks *)
-    let conv_sizes = List.filter (fun s -> s <= 200) sizes in
-    List.iter
-      (fun size ->
-        List.iter
-          (fun (Nx_core.Dtype.Pack dtype) ->
-            (* Conv2D benchmark *)
-            let conv2d_bench =
-              let input_shape = [| 1; 3; size; size |] in
-              (* NCHW format *)
-              let kernel_shape = [| 16; 3; 3; 3 |] in
-              (* Out_channels x In_channels x H x W *)
-              let input = Nx.rand ctx dtype input_shape in
-              let kernel = Nx.rand ctx dtype kernel_shape in
-              create (make_name "Conv2D 3x3" size dtype backend_name) (fun () ->
-                  ignore (Nx.convolve2d input kernel))
-            in
+    List.rev !benchmarks
 
-            (* Conv2D with larger kernel *)
-            let conv2d_5x5_bench =
-              let input_shape = [| 1; 3; size; size |] in
-              let kernel_shape = [| 16; 3; 5; 5 |] in
-              let input = Nx.rand ctx dtype input_shape in
-              let kernel = Nx.rand ctx dtype kernel_shape in
-              create (make_name "Conv2D 5x5" size dtype backend_name) (fun () ->
-                  ignore (Nx.convolve2d input kernel))
-            in
-
-            benchmarks := [ conv2d_bench; conv2d_5x5_bench ] @ !benchmarks)
-          dtypes)
-      conv_sizes;
-
-    (* Matrix multiplication (smaller sizes only) *)
-    let matmul_sizes = List.filter (fun s -> s <= 200) sizes in
-    List.iter
-      (fun size ->
-        List.iter
-          (fun (Nx_core.Dtype.Pack dtype) ->
-            let shape = [| size; size |] in
-            let matmul_bench =
-              let a = Nx.rand ctx dtype shape in
-              let b = Nx.rand ctx dtype shape in
-              create (make_name "MatMul" size dtype backend_name) (fun () ->
-                  ignore (Nx.matmul a b))
-            in
-            benchmarks := matmul_bench :: !benchmarks)
-          dtypes)
-      matmul_sizes;
-
-    !benchmarks
+  let run ~backend_name ctx =
+    Printf.printf "Running %s backend benchmarks...\n" backend_name;
+    let benchmarks = create_benchmarks ctx backend_name in
+    let results = run ~config benchmarks in
+    (backend_name, results)
 end
 
-let string_contains s1 s2 =
-  let re = Str.regexp_string s2 in
-  try
-    ignore (Str.search_forward re s1 0);
-    true
-  with Not_found -> false
-
-(* Run benchmarks for all backends *)
-let run_all_backends () =
-  Printf.printf "Nx Benchmarking Suite\n";
-  Printf.printf "=====================\n\n";
-
-  (* Native backend *)
-  Printf.printf "Running Native backend...\n";
-  let module Native_bench = Make_benchmarks (Nx_native) in
-  let native_ctx = Nx_native.create_context () in
-  let native_benchmarks = Native_bench.create_benchmarks native_ctx "Native" in
-  let native_results = run ~config native_benchmarks in
-
-  (* CBLAS backend *)
-  Printf.printf "\nRunning CBLAS backend...\n";
-  let module CBLAS_bench = Make_benchmarks (Nx_cblas) in
-  let cblas_ctx = Nx_cblas.create_context () in
-  let cblas_benchmarks = CBLAS_bench.create_benchmarks cblas_ctx "CBLAS" in
-  let cblas_results = run ~config cblas_benchmarks in
-
-  let all_results = native_results @ cblas_results in
-
-  (* Simple analysis *)
+(* Helper to summarize results *)
+let summarize_results all_results =
   Printf.printf "\n=== Performance Summary ===\n";
 
   (* Find fastest backend for each operation *)
   let operations = [ "Add"; "MatMul"; "Sum"; "Conv2D" ] in
+  
   List.iter
     (fun op ->
       Printf.printf "\n%s Performance:\n" op;
       let op_results =
-        List.filter (fun r -> string_contains r.name op) all_results
+        List.concat_map snd all_results
+        |> List.filter (fun r -> 
+            try ignore (Str.search_forward (Str.regexp op) r.name 0); true
+            with Not_found -> false)
       in
       let sorted =
         List.sort
@@ -176,6 +124,3 @@ let run_all_backends () =
               result.time_stats.avg)
         sorted)
     operations
-
-(* Just run everything *)
-let () = run_all_backends ()

@@ -34,6 +34,11 @@ type ('a, 'b) t =
     }
       -> ('a, 'b) t
 
+let is_device_available = function
+  | Native -> true
+  | Metal -> Rune_metal.is_available
+  | Cblas -> Rune_cblas.is_available
+
 (* Context creation *)
 let create_context ?(device = Native) () : context =
   match device with

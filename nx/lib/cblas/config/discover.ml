@@ -31,12 +31,29 @@ let () =
       (* Discover OpenMP support and platform-specific flags *)
       let c_flags, has_openmp =
         let base_flags =
+          let opt_flags = 
+            match C.ocaml_config_var c "architecture" with
+            | Some "amd64" | Some "x86_64" | Some "i386" | Some "i686" ->
+                [ "-O3"; "-march=native"; "-fPIC" ]
+            | Some "power" | Some "ppc" | Some "ppc64" | Some "ppc64le" ->
+                [ "-O3"; "-mcpu=native"; "-fPIC" ]
+            | Some "arm64" | Some "aarch64" ->
+                [ "-O3"; "-mcpu=native"; "-fPIC" ]
+            | Some "riscv" | Some "riscv64" ->
+                [ "-O3"; "-march=native"; "-fPIC" ]
+            | Some "s390x" ->
+                [ "-O3"; "-march=native"; "-fPIC" ]
+            | _ ->
+                (* For unknown architectures, use safe optimization flags *)
+                [ "-O3"; "-fPIC" ]
+          in
           match C.ocaml_config_var c "system" with
           | Some "macosx" ->
-              (* Use new BLAS interface on macOS to avoid deprecation
-                 warnings *)
-              [ "-DACCELERATE_NEW_LAPACK"; "-O3"; "-march=native" ]
-          | _ -> [ "-O3"; "-march=native" ]
+              (* Use new BLAS interface on macOS to avoid deprecation warnings *)
+              (* macOS doesn't need -fPIC as it's implied *)
+              let flags_without_fpic = List.filter ((<>) "-fPIC") opt_flags in
+              "-DACCELERATE_NEW_LAPACK" :: flags_without_fpic
+          | _ -> opt_flags
         in
         let test_openmp flags =
           C.c_test c ~c_flags:flags

@@ -109,8 +109,8 @@ val metal : unit -> [ `metal ] device
     Requires Metal backend support. Use for GPU-accelerated computations on
     Apple devices. *)
 
-val cblas : [ `cblas ] device
-(** [cblas] represents CBLAS device for tensors stored in CBLAS memory.
+val cblas : unit -> [ `cblas ] device
+(** [cblas ()] represents CBLAS device for tensors stored in CBLAS memory.
 
     Used for interoperability with CBLAS libraries. *)
 
@@ -119,6 +119,11 @@ val device : ('a, 'b, 'dev) t -> 'dev device
 
     Returns [native] for CPU tensors, [metal] for Metal tensors, and [cblas] for
     CBLAS tensors. *)
+
+val is_device_available : [< `cblas | `metal | `native ] -> bool
+(** [is_device_available dev] checks if the specified device is available.
+
+    Returns true if the device can be used for tensor operations. *)
 
 (** {2 Array Properties}
 

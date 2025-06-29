@@ -32,9 +32,6 @@
   %{lib:rune:rune.cma}
   %{lib:rune:rune.cmi}
   %{lib:rune.jit:rune_jit.cma}
-  %{lib:rune.cblas:rune_cblas.cma}
-  %{lib:rune.jit.metal:rune_jit_metal.cma}
-  %{lib:rune.metal:rune_metal.cma}
   ; kaun
   %{lib:kaun:kaun.cmi}
   %{lib:kaun:kaun.cma}
@@ -44,9 +41,7 @@
   %{lib:nx-text:nx_text.cma}
   %{lib:re:re.cma}
   %{lib:uutf:uutf.cma}
-  %{lib:uucp:uucp.cma}
-  ; nx cblas
-  %{lib:nx.cblas:nx_cblas.cma})
+  %{lib:uucp:uucp.cma})
  (mode promote)
  (action
   (progn
@@ -78,9 +73,6 @@
    (copy %{lib:rune:rune.cma} rune.cma)
    (copy %{lib:rune:rune.cmi} rune.cmi)
    (copy %{lib:rune.jit:rune_jit.cma} rune_jit.cma)
-   (copy %{lib:rune.cblas:rune_cblas.cma} rune_cblas.cma)
-   (copy %{lib:rune.jit.metal:rune_jit_metal.cma} rune_jit_metal.cma)
-   (copy %{lib:rune.metal:rune_metal.cma} rune_metal.cma)
    (copy %{lib:kaun:kaun.cmi} kaun.cmi)
    (copy %{lib:kaun:kaun.cma} kaun.cma)
    (copy %{lib:kaun.datasets:kaun_datasets.cma} kaun_datasets.cma)
@@ -88,17 +80,30 @@
    (copy %{lib:nx-text:nx_text.cma} nx_text.cma)
    (copy %{lib:re:re.cma} re.cma)
    (copy %{lib:uutf:uutf.cma} uutf.cma)
-   (copy %{lib:uucp:uucp.cma} uucp.cma)
-   (copy %{lib:nx.cblas:nx_cblas.cma} nx_cblas.cma))))
+   (copy %{lib:uucp:uucp.cma} uucp.cma))))
+
+(rule
+ (targets nx_cblas.cma rune_cblas.cma)
+ (mode promote)
+ (enabled_if %{lib-available:nx.cblas})
+ (deps %{lib:nx.cblas:nx_cblas.cma} %{lib:rune.cblas:rune_cblas.cma})
+ (action
+  (progn
+   (copy %{lib:nx.cblas:nx_cblas.cma} nx_cblas.cma)
+   (copy %{lib:rune.cblas:rune_cblas.cma} rune_cblas.cma))))
 
 (rule
  (targets
   nx_metal.cma
+  metal.cma
+  bigarray_compat.cma
   ctypes.cma
   integers.cma
   ctypes_foreign.cma
   objc.cma
-  objc_c.cma)
+  objc_c.cma
+  rune_jit_metal.cma
+  rune_metal.cma)
  (mode promote)
  (enabled_if
   (= %{system} "macosx"))
@@ -110,7 +115,9 @@
   %{lib:ctypes-foreign:ctypes_foreign.cma}
   %{lib:integers:integers.cma}
   %{lib:nx.metal.bindings.objc:objc.cma}
-  %{lib:nx.metal.bindings.objc.c:objc_c.cma})
+  %{lib:nx.metal.bindings.objc.c:objc_c.cma}
+  %{lib:rune.jit.metal:rune_jit_metal.cma}
+  %{lib:rune.metal:rune_metal.cma})
  (action
   (progn
    (copy %{lib:nx.metal:nx_metal.cma} nx_metal.cma)
@@ -120,7 +127,9 @@
    (copy %{lib:ctypes-foreign:ctypes_foreign.cma} ctypes_foreign.cma)
    (copy %{lib:integers:integers.cma} integers.cma)
    (copy %{lib:nx.metal.bindings.objc:objc.cma} objc.cma)
-   (copy %{lib:nx.metal.bindings.objc.c:objc_c.cma} objc_c.cma))))
+   (copy %{lib:nx.metal.bindings.objc.c:objc_c.cma} objc_c.cma)
+   (copy %{lib:rune.jit.metal:rune_jit_metal.cma} rune_jit_metal.cma)
+   (copy %{lib:rune.metal:rune_metal.cma} rune_metal.cma))))
 
 (install
  (section

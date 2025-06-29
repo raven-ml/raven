@@ -6,6 +6,7 @@
 (test
  (name test_backend_cblas)
  (modules test_backend_cblas)
+ (build_if %{lib-available:nx.cblas})
  (libraries nx_cblas alcotest test_nx_unit))
 
 (test

@@ -11,8 +11,8 @@ tags: ["text-processing" "nlp" "natural-language-processing" "tokenization"]
 homepage: "https://github.com/raven-ml/raven"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
-  "ocaml" {>= "5.0.0"}
-  "dune" {>= "3.17"}
+  "ocaml" {>= "5.2.0"}
+  "dune" {>= "3.19"}
   "nx" {= version}
   "re"
   "uutf"
@@ -37,3 +37,4 @@ build: [
   ["dune" "install" "-p" name "--create-install-files" name]
 ]
 dev-repo: "git+https://github.com/raven-ml/raven.git"
+x-maintenance-intent: ["(latest)"]
