@@ -41,7 +41,7 @@ RUN opam init --disable-sandboxing --compiler=5.2.0
 WORKDIR /app
 
 # Copy only opam files first
-COPY hugin.opam kaun.opam nx-datasets.opam nx-text.opam nx.opam quill.opam rune.opam sowilo.opam ./
+COPY *.opam ./
 
 # Install dependencies
 RUN eval $(opam env) && \
@@ -52,7 +52,7 @@ COPY . .
 
 # Build the project (dune will handle what can be built)
 RUN eval $(opam env) && \
-    dune build
+    opam install .
 
 # Default command
 CMD ["bash", "-c", "eval $(opam env) && bash"]
