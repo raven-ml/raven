@@ -265,7 +265,17 @@ kernel void pow_float(device float* out [[buffer(0)]],
     uint a_idx = compute_index_from_linear(out_idx, out_shape, a_strides, ndim) + a_offset;
     uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
     
-    out[out_idx] = pow(a[a_idx], b[b_idx]);
+    float base = a[a_idx];
+    float exp = b[b_idx];
+    
+    // Handle special cases to match NumPy behavior
+    if (base == 0.0f && exp == 0.0f) {
+        out[out_idx] = 1.0f;  // 0^0 = 1
+    } else if (base < 0.0f && exp != floor(exp)) {
+        out[out_idx] = NAN;  // Negative base with fractional exponent
+    } else {
+        out[out_idx] = pow(base, exp);
+    }
 }
 
 // Comparison operations - output is uint8 (0 or 1)
