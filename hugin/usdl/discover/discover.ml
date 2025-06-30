@@ -16,7 +16,7 @@ let () =
                Debian/Ubuntu, sdl2-devel on Fedora, sdl2 via brew on macOS)."
         | Some info -> info
       in
-      let cflags = sdl2_info.C.Pkg_config.cflags in
+      let cflags = "-fPIC" :: sdl2_info.C.Pkg_config.cflags in
       let clibs = sdl2_info.C.Pkg_config.libs in
       C.Flags.write_sexp "cflags.sexp" cflags;
       C.Flags.write_sexp "clibs.sexp" clibs)

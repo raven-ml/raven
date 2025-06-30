@@ -5,6 +5,7 @@
  (libraries nx_core nx_native))
 
 (mdx
+ (package nx)
  (files nx.mli)
  (preludes prelude.ml)
  (libraries nx))
