@@ -20,7 +20,7 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.19"}
   "camlzip"
-  "ocurl" {< "0.10.0"}
+  "ocurl"
   "csv"
   "nx" {= version}
   "alcotest" {with-test}

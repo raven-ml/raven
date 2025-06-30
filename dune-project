@@ -69,12 +69,7 @@
    (>= 5.2.0))
   dune
   camlzip
-  ; Currently fails with dune pkg - update when fixed:
-  ; This rule defines a directory target "default/.pkg/ocurl/target" that
-  ; matches the requested path "default/.pkg/ocurl/target/lib/curl/curl.cma" but
-  ; the rule's action didn't produce it
-  (ocurl
-   (< 0.10.0))
+  ocurl
   csv
   (nx
    (= :version))
