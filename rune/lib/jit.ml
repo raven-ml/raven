@@ -637,9 +637,9 @@ let execute_compiled_fn (type kernel_native)
   in
   let input_ba =
     match input with
-    | Native_tensor cpu_t -> Nx_native.data cpu_t
+    | Ocaml_tensor cpu_t -> Nx_native.data cpu_t
+    | C_tensor c_t -> Nx_c.data c_t
     | Metal_tensor _ -> failwith "JIT: Metal tensor input not supported yet"
-    | Cblas_tensor cblas_t -> Rune_cblas.data cblas_t
     | Symbolic_tensor _ -> failwith "JIT: Cannot execute with symbolic tensor"
   in
 
@@ -701,15 +701,14 @@ let execute_compiled_fn (type kernel_native)
   | Error e -> failwith (Printf.sprintf "Copy from device failed: %s" e));
 
   match input with
-  | Native_tensor _ ->
-      Native_tensor
+  | Ocaml_tensor _ ->
+      Ocaml_tensor
         (Nx_native.op_const_array (Nx_native.create_context ()) out_ba)
+  | C_tensor _ ->
+      C_tensor (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
   | Metal_tensor _ ->
       Metal_tensor
         (Rune_metal.op_const_array (Rune_metal.create_context ()) out_ba)
-  | Cblas_tensor _ ->
-      Cblas_tensor
-        (Rune_cblas.op_const_array (Rune_cblas.create_context ()) out_ba)
   | Symbolic_tensor _ -> assert false
 
 (* ───── Main JIT Function ───── *)
@@ -758,7 +757,7 @@ let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
                 "JIT: Compilation failed (%s), falling back to eager\n"
                 (Printexc.to_string e);
               f input))
-    | Native_tensor _ | Cblas_tensor _ ->
+    | Ocaml_tensor _ | C_tensor _ ->
         (* For CPU backends, we just use eager execution for now *)
         f input
     | Symbolic_tensor _ ->

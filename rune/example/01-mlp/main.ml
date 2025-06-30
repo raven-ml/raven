@@ -7,7 +7,7 @@ let forward params inputs =
       (* Input layer to hidden layer *)
       let z1 = add (matmul inputs w1) b1 in
       (* Hidden layer activation *)
-      let a1 = maximum (scalar native Float32 0.0) z1 in
+      let a1 = maximum (scalar ocaml Float32 0.0) z1 in
       (* Hidden layer to output layer *)
       let z2 = add (matmul a1 w2) b2 in
       (* Output layer *)
@@ -29,10 +29,10 @@ let train_mlp inputs y_true learning_rate epochs =
   (* Hidden layer size *)
   let c = dim 1 y_true in
   (* Number of outputs *)
-  let w1 = rand native Float32 [| d; h |] in
-  let b1 = zeros native Float32 [| h |] in
-  let w2 = rand native Float32 [| h; c |] in
-  let b2 = zeros native Float32 [| c |] in
+  let w1 = rand ocaml Float32 [| d; h |] in
+  let b1 = zeros ocaml Float32 [| h |] in
+  let w2 = rand ocaml Float32 [| h; c |] in
+  let b2 = zeros ocaml Float32 [| c |] in
   let params = [ w1; b1; w2; b2 ] in
 
   (* Define the loss as a function of parameters *)
@@ -50,7 +50,7 @@ let train_mlp inputs y_true learning_rate epochs =
 
     List.combine params grad_params
     |> List.iter (fun (param, grad) ->
-           isub param (mul (scalar native Float32 learning_rate) grad) |> ignore)
+           isub param (mul (scalar ocaml Float32 learning_rate) grad) |> ignore)
   done;
   params
 
@@ -58,11 +58,10 @@ let train_mlp inputs y_true learning_rate epochs =
 let () =
   (* Dummy input data: 4 samples with 2 features *)
   let inputs =
-    create native Float32 [| 4; 2 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0 |]
+    create ocaml Float32 [| 4; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0 |]
   in
   (* Dummy target data: 4 samples with 1 output *)
-  let y_true = create native Float32 [| 4; 1 |] [| 1.0; 2.0; 3.0; 4.0 |] in
+  let y_true = create ocaml Float32 [| 4; 1 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let learning_rate = 0.01 in
   let epochs = 100 in
 

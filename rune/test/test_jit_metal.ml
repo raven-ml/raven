@@ -2,7 +2,7 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.native
+let ctx = T.ocaml
 let eps = 1e-6
 
 (* Basic JIT compilation tests *)

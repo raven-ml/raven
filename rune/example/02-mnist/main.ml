@@ -123,7 +123,7 @@ let accuracy predictions labels =
 (* Training function *)
 let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
     y_test_labels batch_size learning_rate epochs =
-  let ctx = native in
+  let ctx = ocaml in
 
   (* Initialize parameters *)
   let params = init_lenet_params ctx in
@@ -200,7 +200,7 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
 let () =
   (* Load MNIST dataset *)
   let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_mnist () in
-  let ctx = native in
+  let ctx = ocaml in
 
   (* Convert to Rune tensors and preprocess *)
   let x_train = of_bigarray ctx (Nx.to_bigarray x_train) in

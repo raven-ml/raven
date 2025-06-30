@@ -5,7 +5,7 @@ open Sowilo
 
 (* Helper functions *)
 
-let device = Rune.cblas ()
+let device = Rune.c
 
 let create_test_image_gray h w value =
   Rune.full device Rune.uint8 [| h; w |] value
@@ -208,8 +208,7 @@ let test_gaussian_blur () =
 let test_box_filter () =
   (* Create simple test pattern *)
   let img =
-    Rune.create device Rune.uint8 [| 3; 3 |]
-      [| 0; 0; 0; 0; 255; 0; 0; 0; 0 |]
+    Rune.create device Rune.uint8 [| 3; 3 |] [| 0; 0; 0; 0; 255; 0; 0; 0; 0 |]
   in
   let filtered = box_filter ~ksize:(3, 3) img in
 
@@ -229,8 +228,7 @@ let test_median_blur () =
 
 let test_threshold () =
   let img =
-    Rune.create device Rune.uint8 [| 2; 3 |]
-      [| 50; 100; 150; 200; 250; 25 |]
+    Rune.create device Rune.uint8 [| 2; 3 |] [| 50; 100; 150; 200; 250; 25 |]
   in
 
   (* Binary threshold *)
@@ -255,20 +253,16 @@ let test_threshold () =
 
 (* ───── Morphological Operations Tests ───── *)
 
-let device = Rune.cblas ()
+let device = Rune.c
 
 let test_structuring_elements () =
   (* Rectangle *)
-  let rect =
-    get_structuring_element ~shape:Rect ~ksize:(3, 5) ~device
-  in
+  let rect = get_structuring_element ~shape:Rect ~ksize:(3, 5) ~device in
   check_shape "rect shape" [| 3; 5 |] rect;
   check_pixel "rect filled" 1 rect [ 1; 2 ];
 
   (* Cross *)
-  let cross =
-    get_structuring_element ~shape:Cross ~ksize:(5, 5) ~device
-  in
+  let cross = get_structuring_element ~shape:Cross ~ksize:(5, 5) ~device in
   check_shape "cross shape" [| 5; 5 |] cross;
   check_pixel "cross center" 1 cross [ 2; 2 ];
   check_pixel "cross arm" 1 cross [ 2; 0 ];
@@ -277,9 +271,7 @@ let test_structuring_elements () =
 let test_erosion () =
   (* Create 4x4 white square in 10x10 image *)
   let img = create_centered_square 10 10 4 in
-  let kernel =
-    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device
-  in
+  let kernel = get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device in
   let eroded = erode ~kernel img in
 
   (* Count white pixels - should be 2x2 = 4 *)
@@ -297,9 +289,7 @@ let test_erosion () =
 let test_dilation () =
   (* Create 4x4 white square in 10x10 image *)
   let img = create_centered_square 10 10 4 in
-  let kernel =
-    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device
-  in
+  let kernel = get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device in
   let dilated = dilate ~kernel img in
 
   (* Count white pixels - should be 6x6 = 36 *)
@@ -377,9 +367,7 @@ let test_pipeline () =
   let binary = threshold ~thresh:128 ~maxval:255 ~type_:Binary blurred in
 
   (* Morphological operations *)
-  let kernel =
-    get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device
-  in
+  let kernel = get_structuring_element ~shape:Rect ~ksize:(3, 3) ~device in
   let cleaned = erode ~kernel binary in
   let final = dilate ~kernel cleaned in
 

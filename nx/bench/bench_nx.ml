@@ -75,7 +75,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
                 let input = Nx.rand ctx dtype [| 1; 3; size; size |] in
                 let kernel = Nx.rand ctx dtype [| 8; 3; 3; 3 |] in
                 Some
-                  (create (make_name "Conv2D" size dtype backend_name) (fun () ->
+                  (create (make_name "Conv2D" size dtype backend_name)
+                     (fun () ->
                        ignore (Nx.convolve2d input kernel ~padding_mode:`Same)))
               else None
             in
@@ -102,15 +103,17 @@ let summarize_results all_results =
 
   (* Find fastest backend for each operation *)
   let operations = [ "Add"; "MatMul"; "Sum"; "Conv2D" ] in
-  
+
   List.iter
     (fun op ->
       Printf.printf "\n%s Performance:\n" op;
       let op_results =
         List.concat_map snd all_results
-        |> List.filter (fun r -> 
-            try ignore (Str.search_forward (Str.regexp op) r.name 0); true
-            with Not_found -> false)
+        |> List.filter (fun r ->
+               try
+                 ignore (Str.search_forward (Str.regexp op) r.name 0);
+                 true
+               with Not_found -> false)
       in
       let sorted =
         List.sort

@@ -1,12 +1,12 @@
 open Rune
 
 let () =
-  let x = randn native Float32 [| 2; 3 |] in
+  let x = randn ocaml Float32 [| 2; 3 |] in
   let y =
     debug
       (fun () ->
         let a = add x x in
-        let b = mul a (full native Float32 [| 2; 3 |] 2.0) in
+        let b = mul a (full ocaml Float32 [| 2; 3 |] 2.0) in
         b)
       ()
   in

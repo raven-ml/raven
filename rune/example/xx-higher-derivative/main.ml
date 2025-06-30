@@ -3,7 +3,7 @@ open Rune
 (* Example *)
 let () =
   let f x = mul x (mul x (mul x x)) in
-  let x = create native Float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let x = create ocaml Float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let result = f x in
   Printf.printf "Result: %s\n" (to_string result);
 

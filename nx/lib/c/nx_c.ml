@@ -878,22 +878,14 @@ let op_matmul a b =
       result_shape
   in
 
-  (* For now, require inputs to be contiguous for BLAS *)
-  let a_contig = op_contiguous a in
-  let b_contig = op_contiguous b in
-
   let result = make_tensor a output_shape in
 
-  matmul a_contig.buffer (View.shape a_contig.view)
-    (View.strides a_contig.view)
-    (View.offset a_contig.view)
-    b_contig.buffer (View.shape b_contig.view)
-    (View.strides b_contig.view)
-    (View.offset b_contig.view)
+  matmul a.buffer (View.shape a.view) (View.strides a.view) (View.offset a.view)
+    b.buffer (View.shape b.view) (View.strides b.view) (View.offset b.view)
     result.buffer (View.shape result.view) (View.strides result.view)
     (View.offset result.view);
 
-  let _ = (a_contig.view, b_contig.view) in
+  let _ = (a.view, b.view) in
   (* FIX: Keep input tensors alive during C call. *)
   result
 

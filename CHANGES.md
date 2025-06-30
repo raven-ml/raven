@@ -16,7 +16,7 @@ We're excited to release the zeroth alpha of Raven, an OCaml machine learning ec
   - Multi-dimensional tensors with support for several data types.
   - Zero-copy operations: slicing, reshaping, broadcasting
   - Element-wise and linear algebra operations
-  - Swappable backends: Native OCaml, CBLAS, Metal
+  - Swappable backends: Native OCaml, C, Metal
   - I/O support for images (PNG, JPEG) and NumPy files (.npy, .npz)
 
 - **Hugin** - Publication-quality plotting library

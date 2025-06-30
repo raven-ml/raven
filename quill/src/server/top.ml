@@ -25,7 +25,7 @@ module My_sites = struct
         ("nx_core.cma", lookup_file "nx_core.cma");
         ("nx_native.cma", lookup_file "nx_native.cma");
         ("nx.cma", lookup_file "nx.cma");
-        ("nx_cblas.cma", lookup_file "nx_cblas.cma");
+        ("nx_c.cma", lookup_file "nx_c.cma");
         ("bigarray.cma", lookup_file "bigarray.cma");
         ("bigarray_compat.cma", lookup_file "bigarray_compat.cma");
         ("integers.cma", lookup_file "integers.cma");
@@ -53,7 +53,6 @@ module My_sites = struct
         ("base64.cma", lookup_file "base64.cma");
         ("hugin.cma", lookup_file "hugin.cma");
         ("rune_jit.cma", lookup_file "rune_jit.cma");
-        ("rune_cblas.cma", lookup_file "rune_cblas.cma");
         ("rune_jit_metal.cma", lookup_file "rune_jit_metal.cma");
         ("rune_metal.cma", lookup_file "rune_metal.cma");
         ("rune.cma", lookup_file "rune.cma");

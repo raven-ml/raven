@@ -159,12 +159,12 @@ module ResourceOptions : sig
        MTLStorageModeMemoryless}. *)
 
   (* CPU Cache Modes (MTLCPUCacheMode) *)
-  val cpu_cache_mode_default_cache : t
+  val cache_mode_default_cache : t
   (** Default CPU cache mode. See
       {{:https://developer.apple.com/documentation/metal/mtlcpucachemode/defaultcache}
        MTLCPUCacheModeDefaultCache}. *)
 
-  val cpu_cache_mode_write_combined : t
+  val cache_mode_write_combined : t
   (** Write-combined CPU cache mode. See
       {{:https://developer.apple.com/documentation/metal/mtlcpucachemode/writecombined}
        MTLCPUCacheModeWriteCombined}. *)
@@ -189,7 +189,7 @@ module ResourceOptions : sig
   (** Combines resource options using bitwise OR. *)
 
   val make :
-    ?storage_mode:t -> ?cpu_cache_mode:t -> ?hazard_tracking_mode:t -> unit -> t
+    ?storage_mode:t -> ?cache_mode:t -> ?hazard_tracking_mode:t -> unit -> t
   (** Creates a combined resource option value. Defaults to shared, default
       cache, default hazard tracking. *)
 end
@@ -350,7 +350,7 @@ module Resource : sig
     val from_ulong : Unsigned.ulong -> t
   end
 
-  val get_cpu_cache_mode : t -> CPUCacheMode.t
+  val get_cache_mode : t -> CPUCacheMode.t
 
   (** Resource storage modes. See
       {{:https://developer.apple.com/documentation/metal/mtlstoragemode}

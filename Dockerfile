@@ -26,8 +26,6 @@ RUN apt-get update && apt-get install -y \
     libgmp-dev \
     libffi-dev \
     libssl-dev \
-    libblas-dev \
-    libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install OPAM binary directly

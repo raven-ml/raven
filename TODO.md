@@ -11,7 +11,7 @@ goalpost: mnist notebook in quill with rune + hugin
 ## alpha release
 
 nx
-- intermittent abort at test slice different steps.[1] cblas backend
+- ? intermittent abort at test slice different steps.[1] c backend (can't reproduce)
 - slow test zeros max size native backend
 - intermittent segfault at unsafe_fold native backend
 

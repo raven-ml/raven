@@ -18,7 +18,7 @@ let model =
     ]
 
 let metrics = Metrics.create [ Metrics.avg "loss"; Metrics.accuracy "accuracy" ]
-let device = Rune.cblas ()
+let device = Rune.c
 
 let train () =
   (* Datasets *)

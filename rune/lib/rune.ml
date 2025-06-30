@@ -20,15 +20,15 @@ type 'dev complex64_t = (Complex.t, complex64_elt, 'dev) t
 
 type 'a device = Nx_rune.context
 
-let native : [ `native ] device = Nx_rune.create_context ~device:Native ()
+let ocaml : [ `ocaml ] device = Nx_rune.create_context ~device:Ocaml ()
+let c : [ `c ] device = Nx_rune.create_context ~device:C ()
 let metal () : [ `metal ] device = Nx_rune.create_context ~device:Metal ()
-let cblas () : [ `cblas ] device = Nx_rune.create_context ~device:Cblas ()
 let device t = Nx_rune.context t
 
 let is_device_available = function
-  | `native -> Nx_rune.is_device_available Native
+  | `ocaml -> Nx_rune.is_device_available Ocaml
+  | `c -> Nx_rune.is_device_available C
   | `metal -> Nx_rune.is_device_available Metal
-  | `cblas -> Nx_rune.is_device_available Cblas
 
 (* Debug *)
 let debug = Debug.debug

@@ -5,6 +5,7 @@
   %{lib:nx:nx.cma}
   %{lib:nx.core:nx_core.cma}
   %{lib:nx.native:nx_native.cma}
+  %{lib:nx.c:nx_c.cma}
   ; nx-io
   %{lib:nx.io:nx_io.cmi}
   %{lib:nx.io:nx_io.cma}
@@ -49,6 +50,7 @@
    (copy %{lib:nx:nx.cma} nx.cma)
    (copy %{lib:nx.core:nx_core.cma} nx_core.cma)
    (copy %{lib:nx.native:nx_native.cma} nx_native.cma)
+   (copy %{lib:nx.c:nx_c.cma} nx_c.cma)
    (copy %{lib:nx.io:nx_io.cmi} nx_io.cmi)
    (copy %{lib:nx.io:nx_io.cma} nx_io.cma)
    (copy %{lib:nx.io.npy:npy.cma} npy.cma)
@@ -81,16 +83,6 @@
    (copy %{lib:re:re.cma} re.cma)
    (copy %{lib:uutf:uutf.cma} uutf.cma)
    (copy %{lib:uucp:uucp.cma} uucp.cma))))
-
-(rule
- (targets nx_cblas.cma rune_cblas.cma)
- (mode promote)
- (enabled_if %{lib-available:nx.cblas})
- (deps %{lib:nx.cblas:nx_cblas.cma} %{lib:rune.cblas:rune_cblas.cma})
- (action
-  (progn
-   (copy %{lib:nx.cblas:nx_cblas.cma} nx_cblas.cma)
-   (copy %{lib:rune.cblas:rune_cblas.cma} rune_cblas.cma))))
 
 (rule
  (targets

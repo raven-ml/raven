@@ -99,9 +99,12 @@ type index =
 
 type 'a device
 
-val native : [ `cpu ] device
-(** [native] represents CPU device. Used for tensors stored in native OCaml
-    memory. *)
+val ocaml : [ `ocaml ] device
+(** [ocaml] represents CPU device with pure OCaml implementation with no FFI
+    dependency. *)
+
+val c : [ `c ] device
+(** [c] represents CPU device with C FFI for performance. *)
 
 val metal : unit -> [ `metal ] device
 (** [metal ()] returns Metal device for GPU tensors.
@@ -109,18 +112,13 @@ val metal : unit -> [ `metal ] device
     Requires Metal backend support. Use for GPU-accelerated computations on
     Apple devices. *)
 
-val cblas : unit -> [ `cblas ] device
-(** [cblas ()] represents CBLAS device for tensors stored in CBLAS memory.
-
-    Used for interoperability with CBLAS libraries. *)
-
 val device : ('a, 'b, 'dev) t -> 'dev device
 (** [device t] returns device where tensor [t] is stored.
 
-    Returns [native] for CPU tensors, [metal] for Metal tensors, and [cblas] for
-    CBLAS tensors. *)
+    Returns [native] for CPU tensors, [metal] for Metal tensors, and [nctive_c]
+    for CPU tensors with C FFI. *)
 
-val is_device_available : [< `cblas | `metal | `native ] -> bool
+val is_device_available : [< `ocaml | `c | `metal ] -> bool
 (** [is_device_available dev] checks if the specified device is available.
 
     Returns true if the device can be used for tensor operations. *)

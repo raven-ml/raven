@@ -9,10 +9,10 @@
  (libraries nx_native bench_nx ubench))
 
 (executable
- (name bench_nx_cblas)
- (modules bench_nx_cblas)
+ (name bench_nx_c)
+ (modules bench_nx_c)
  (optional)
- (libraries nx_cblas bench_nx ubench))
+ (libraries nx_c bench_nx ubench))
 
 (executable
  (name bench_nx_metal)

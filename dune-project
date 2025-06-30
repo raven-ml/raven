@@ -41,7 +41,6 @@
   dune
   ; nx.io
   camlzip
-  ; nx.cblas (uses dune-configurator to find BLAS)
   (dune-configurator :build)
   ; nx.metal - only on macOS
   (ctypes
@@ -55,10 +54,8 @@
   (integers
    (= :os macos))
   ; tests
-  (conf-blas :with-test)
   (alcotest :with-test)
   (mdx :with-test))
- (depopts conf-blas)
  (tags
   (numerical-computation tensor-library machine-learning)))
 

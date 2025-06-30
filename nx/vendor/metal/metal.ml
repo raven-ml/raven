@@ -458,8 +458,8 @@ module ResourceOptions = struct
   let storage_mode_memoryless = Unsigned.ULong.of_int 48 (* 3 << 4 *)
 
   (* CPU Cache Modes (MTLCPUCacheMode) *)
-  let cpu_cache_mode_default_cache = Unsigned.ULong.of_int 0
-  let cpu_cache_mode_write_combined = Unsigned.ULong.of_int 1
+  let cache_mode_default_cache = Unsigned.ULong.of_int 0
+  let cache_mode_write_combined = Unsigned.ULong.of_int 1
 
   (* Hazard Tracking Modes (MTLHazardTrackingMode) *)
   let hazard_tracking_mode_default = Unsigned.ULong.of_int 0 (* 0 << 8 *)
@@ -471,9 +471,9 @@ module ResourceOptions = struct
 
   (* Helper function to create options *)
   let make ?(storage_mode = storage_mode_shared)
-      ?(cpu_cache_mode = cpu_cache_mode_default_cache)
+      ?(cache_mode = cache_mode_default_cache)
       ?(hazard_tracking_mode = hazard_tracking_mode_default) () =
-    storage_mode + cpu_cache_mode + hazard_tracking_mode
+    storage_mode + cache_mode + hazard_tracking_mode
 end
 
 module PipelineOption = struct
@@ -731,7 +731,7 @@ module Resource = struct
       | Tracked -> Unsigned.ULong.of_int 2
   end
 
-  let get_cpu_cache_mode (self : t) : CPUCacheMode.t =
+  let get_cache_mode (self : t) : CPUCacheMode.t =
     let mode_val =
       msg_send ~self ~select:"cpuCacheMode" ~typ:(returning ulong)
     in

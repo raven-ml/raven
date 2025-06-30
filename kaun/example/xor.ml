@@ -1,6 +1,6 @@
 open Kaun
 
-let device = Rune.cblas ()
+let device = Rune.c
 
 let train_xor () =
   (* Create RNG *)

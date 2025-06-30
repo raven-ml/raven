@@ -32,7 +32,7 @@ val ones_init : unit -> ('layout, 'dev) t
 (** {1 Random Initializers} *)
 
 val uniform : ?scale:float -> unit -> ('layout, 'dev) t
-(** Uniform random initializer in range [0, scale) *)
+(** Uniform random initializer in range [\[0, scale)] *)
 
 val normal : ?stddev:float -> unit -> ('layout, 'dev) t
 (** Normal (Gaussian) random initializer *)

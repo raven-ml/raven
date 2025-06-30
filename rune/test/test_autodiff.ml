@@ -2,7 +2,7 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.cblas ()
+let ctx = T.c
 let eps = 1e-6
 
 (* ───── basic gradients ───── *)

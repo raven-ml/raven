@@ -1,7 +1,7 @@
 open Rune
 
 let () =
-  let ctx = native in
+  let ctx = ocaml in
 
   (* Simple test case *)
   let x = randn ctx Float32 [| 2; 1; 5; 5 |] in
