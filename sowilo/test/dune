@@ -1,4 +1,4 @@
 (test
  (name test_sowilo)
- (package rune)
+ (package sowilo)
  (libraries sowilo rune alcotest))
