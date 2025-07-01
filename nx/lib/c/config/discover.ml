@@ -13,7 +13,8 @@ let () =
         | "arm64" | "aarch64" -> [ "-O3"; "-mcpu=native"; "-fPIC" ]
         | "power" | "ppc" | "ppc64" | "ppc64le" ->
             [ "-O3"; "-mcpu=native"; "-fPIC" ]
-        | "riscv" | "riscv64" -> [ "-O3"; "-march=native"; "-fPIC" ]
+        | "riscv" | "riscv32" -> [ "-O3"; "-march=rv32gc"; "-fPIC" ]
+        | "riscv64" -> [ "-O3"; "-march=rv64gc"; "-fPIC" ]
         | "s390x" -> [ "-O3"; "-march=native"; "-fPIC" ]
         | _ -> [ "-O3"; "-fPIC" ]
       in
