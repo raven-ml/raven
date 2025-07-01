@@ -36,4 +36,4 @@ apt install libcairo2-dev libsdl2-dev
 
 - [Getting Started](/docs/hugin/getting-started/) - Installation and first plots
 - [Matplotlib Comparison](/docs/hugin/matplotlib-comparison/) - Coming from Python
-- [API Reference](https://ocaml.org/p/hugin/latest/doc/Hugin/index.html) - Complete API docs (when released)
+- [API Reference](https://ocaml.org/p/hugin/latest/doc/Hugin/index.html) - Complete API docs (coming soon)

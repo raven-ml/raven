@@ -1,0 +1,3 @@
+(executable
+ (name generate_gallery)
+ (libraries hugin nx))

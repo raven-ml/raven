@@ -14,7 +14,7 @@ brew install cairo sdl2
 apt install libcairo2-dev libsdl2-dev
 ```
 
-Then install hugin (when released):
+Then install hugin:
 
 ```bash
 opam install hugin
@@ -25,7 +25,7 @@ For now, build from source:
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
-dune build hugin
+dune pkg lock && dune build hugin
 ```
 
 ## Your First Plot

@@ -15,7 +15,7 @@ For now, build from source:
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
-dune build sowilo
+dune pkg lock && dune build sowilo
 ```
 
 ## Your First Image Processing Pipeline

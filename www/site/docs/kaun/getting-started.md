@@ -15,7 +15,7 @@ For now, build from source:
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
-dune build dev/kaun
+dune pkg lock && dune build kaun
 ```
 
 ## Your First Neural Network

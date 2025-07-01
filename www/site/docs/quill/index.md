@@ -1,35 +1,99 @@
-# quill Documentation
+# Quill
 
-Quill reimagines notebooks for scientific computing in OCaml.
+Interactive notebooks for OCaml with a markdown-first philosophy.
 
-## What quill Does
+## Overview
 
-Quill is our take on Jupyter, but different. Instead of JSON files with cells, quill uses markdown files where code and prose flow together naturally. Write your analysis in markdown, mark code blocks as OCaml, and quill executes them. Simple.
+Quill reimagines the notebook experience. Instead of complex JSON formats and cell-based interfaces, Quill notebooks are just markdown files with executable code blocks. This means:
 
-This design means notebooks are plain text, diff beautifully in git, and work with any editor. No more merge conflicts from notebook metadata.
+- **Version control friendly**: Plain text files work perfectly with git
+- **Editor agnostic**: Write in your favorite editor, execute anywhere
+- **Writing-first**: Code flows naturally within your narrative
+- **Zero lock-in**: Your notebooks remain readable markdown forever
 
-## Current Status
+## Key Features
 
-Quill is in active development for the alpha release.
+### Markdown as Notebooks
 
-What works today:
-- Markdown notebook format
-- OCaml code execution
-- Basic web interface
-- Plot display from hugin
+Your notebooks are `.md` files where OCaml code blocks become executable cells:
 
-What's coming:
-- Rich output (tables, images, LaTeX)
-- Export to HTML/PDF
-- Notebook templates
+    # My Analysis
+
+    Let's analyze some data:
+
+    ```ocaml
+    open Nx
+    let data = zeros float32 [|3; 3|]
+    ```
+
+    The output appears below the code block.
+
+### Integrated with Raven
+
+All Raven libraries are pre-loaded and ready to use:
+
+- Create tensors with Nx
+- Plot with Hugin  
+- Build models with Rune
+- Process images with Sowilo
+
+### Multiple Execution Modes
+
+**CLI Mode**: Execute notebooks from the command line
+```bash
+quill eval notebook.md
+```
+
+**Server Mode**: Interactive web interface for editing and execution
+```bash
+quill serve notebook.md
+```
+
+**Watch Mode**: Auto-execute on file changes
+```bash
+quill eval --watch notebook.md
+```
+
+### Rich Output Display
+
+- Tensors display as formatted arrays
+- Plots render inline as images
+- Errors are captured and displayed clearly
+- Support for both value printing and stdout
 
 ## Philosophy
 
-Quill embraces simplicity. A notebook is just a markdown file with an OCaml toplevel running through it. Each code block builds on the previous one's context. No magic, no hidden state, just OCaml code executing in sequence.
+Traditional notebooks force an awkward separation between narrative and code. You write text in markdown cells, then interrupt the flow to add code cells. The result feels more like a REPL transcript than a document.
 
-The web interface feels more like Typora than Jupyter, seamless switching between writing and viewing, with code execution as a natural part of the flow.
+Quill takes a different approach. Your notebook is a markdown document first, with code that enhances the narrative rather than interrupting it. This makes notebooks that are:
+
+1. **Natural to write**: Focus on explaining your work, not managing cells
+2. **Pleasant to read**: Even on GitHub or in a text editor
+3. **Simple to maintain**: No hidden state or complex metadata
+
+## Getting Started
+
+1. Create a notebook: Any `.md` file with OCaml code blocks
+2. Run it: `quill eval my_notebook.md`
+3. Share it: Commit to git, share on GitHub, publish anywhere
+
+For interactive development:
+```bash
+quill serve my_notebook.md
+```
+
+Then open http://localhost:8080 in your browser.
+
+## Comparison with Jupyter
+
+| Feature         | Quill              | Jupyter               |
+| --------------- | ------------------ | --------------------- |
+| File format     | Plain markdown     | JSON                  |
+| Version control | Native git support | Requires nbdiff tools |
+| Editor support  | Any text editor    | Specialized tools     |
+| Cell structure  | Natural flow       | Rigid cells           |
+| Language        | OCaml-native       | Multi-language        |
 
 ## Learn More
 
-- Getting Started - (coming soon)
-- Notebook Format - (coming soon)
+- [Getting Started](getting-started.md) - Create your first notebook

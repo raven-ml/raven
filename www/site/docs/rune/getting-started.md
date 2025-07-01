@@ -15,7 +15,7 @@ For now, build from source:
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
-dune build rune
+dune pkg lock && dune build rune
 ```
 
 ## Your First Gradient

@@ -24,4 +24,4 @@ What's missing: advanced linear algebra (decompositions, solvers), sparse arrays
 
 - [Getting Started](/docs/nx/getting-started/) - Installation and first steps
 - [NumPy Comparison](/docs/nx/numpy-comparison/) - Coming from Python
-- [API Reference](https://ocaml.org/p/nx/latest/doc/Nx/index.html) - Complete API docs (when released)
+- [API Reference](https://ocaml.org/p/nx/latest/doc/Nx/index.html) - Complete API docs (coming soon)
