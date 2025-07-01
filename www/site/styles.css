@@ -169,14 +169,14 @@ a.color-green {
 .landing-logo {
   width: 110px;
   height: 110px;
-  margin: 0 auto 16px auto; /* Reduced from 30px to 16px */
+  margin: 0 auto 8px auto; /* Reduced to bring title closer to logo */
   display: block;
   filter: invert(1);
   opacity: 0.9;
 }
 
 .landing-tagline {
-  margin: 24px 0 40px 0; /* 24px from wordmark, 40px to links */
+  margin: 8px 0 56px 0; /* Less gap from title, more gap to links */
   font-size: 20px;
   color: var(--color-text);
   text-transform: capitalize;
@@ -196,6 +196,8 @@ a.color-green {
 .landing .links a {
   text-decoration: none;
   transition: opacity 0.2s ease, filter 0.2s ease;
+  position: relative;
+  display: inline-block;
 }
 
 .landing .links a:hover {
@@ -472,3 +474,55 @@ a.color-green {
 .quill-nav a:hover {
   color: var(--color-quill);
 }
+
+/* Custom tooltips for project links */
+.landing .links a[data-tooltip] {
+  position: relative;
+}
+
+.landing .links a[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 150%;
+  left: 50%;
+  transform: translateX(-50%) scale(0.9);
+  background: var(--color-bg-dark);
+  color: var(--color-text);
+  padding: 6px 12px;
+  border: 1px solid var(--color-border-light);
+  font-size: 14px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.15s ease;
+  z-index: 1000;
+}
+
+.landing .links a[data-tooltip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+/* Arrow for tooltip */
+.landing .links a[data-tooltip]::before {
+  content: '';
+  position: absolute;
+  bottom: 140%;
+  left: 50%;
+  transform: translateX(-50%) scale(0.9);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid var(--color-border-light);
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.15s ease;
+  z-index: 999;
+}
+
+.landing .links a[data-tooltip]:hover::before {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
