@@ -74,6 +74,7 @@ let capture_separated f =
         { Quill_top.output = ""; error = Some combined_error; status = `Error }
 
 let initialized = ref false
+let initialization_mutex = Mutex.create ()
 
 let execute_directive directive =
   try
@@ -165,11 +166,12 @@ let load_plugins () =
     in
 
     if plugins_locations = [] then (
-      Printf.eprintf
-        "ERROR: No site directories found for 'quill.toplevel_libs'. Check \
-         installation.\n\
-         %!";
-      false)
+      let error_msg =
+        "No site directories found for 'quill.toplevel_libs'. Check \
+         installation."
+      in
+      Printf.eprintf "ERROR: %s\n%!" error_msg;
+      failwith error_msg)
     else (
       Printf.eprintf "Plugin locations: %s\n%!"
         (String.concat ", " plugins_locations);
@@ -237,32 +239,47 @@ Logs.set_reporter (setup_logs ());;
 |}
         with _ -> Printf.eprintf "Warning: Could not set up Logs reporter\n%!"
       in
-
-      true)
+      ())
   with
-  | Env.Error e ->
+  | Env.Error e as ex ->
       Printf.eprintf "Environment error during plugin loading:\n%!";
       Env.report_error Format.err_formatter e;
       Format.pp_print_flush Format.err_formatter ();
-      false
-  | Typecore.Error (loc, env, err) ->
+      raise ex
+  | Typecore.Error (loc, env, err) as ex ->
       Printf.eprintf "Type error during plugin loading:\n%!";
       let report = Typecore.report_error ~loc env err in
       Location.print_report Format.err_formatter report;
       Format.pp_print_flush Format.err_formatter ();
-      false
+      raise ex
   | ex ->
       Printf.eprintf "Error during plugin loading: %s\n%!"
         (Printexc.to_string ex);
-      false
+      raise ex
 
 let initialize_if_needed () =
-  if not !initialized then (
-    Quill_top.initialize_toplevel ();
-    let _ = load_plugins () in
-    initialized := true)
+  Mutex.lock initialization_mutex;
+  Fun.protect
+    ~finally:(fun () -> Mutex.unlock initialization_mutex)
+    (fun () ->
+      if not !initialized then (
+        (* Perform initialization steps *)
+        Quill_top.initialize_toplevel ();
+        (* Load plugins - this will raise an exception on failure *)
+        load_plugins ();
+        (* Only set initialized to true if we get here without exceptions *)
+        initialized := true))
 
 let eval ?(print_all = true) code : Quill_top.execution_result =
-  initialize_if_needed ();
-  capture_separated (fun ppf_out ppf_err ->
-      Quill_top.execute print_all ppf_out ppf_err code)
+  try
+    initialize_if_needed ();
+    capture_separated (fun ppf_out ppf_err ->
+        Quill_top.execute print_all ppf_out ppf_err code)
+  with ex ->
+    (* Initialization failed - return error result *)
+    let error_msg =
+      Printf.sprintf "Toplevel initialization failed: %s\nBacktrace:\n%s"
+        (Printexc.to_string ex)
+        (Printexc.get_backtrace ())
+    in
+    { Quill_top.output = ""; error = Some error_msg; status = `Error }
