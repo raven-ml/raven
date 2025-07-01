@@ -76,6 +76,14 @@ let capture_separated f =
 let initialized = ref false
 let initialization_mutex = Mutex.create ()
 
+let format_error_to_string prefix formatter_fn =
+  let buf = Buffer.create 512 in
+  let fmt = Format.formatter_of_buffer buf in
+  Format.fprintf fmt "%s@.@." prefix;
+  formatter_fn fmt;
+  Format.pp_print_flush fmt ();
+  Buffer.contents buf
+
 let execute_directive directive =
   try
     let lexbuf = Lexing.from_string directive in
@@ -241,17 +249,18 @@ Logs.set_reporter (setup_logs ());;
       in
       ())
   with
-  | Env.Error e as ex ->
-      Printf.eprintf "Environment error during plugin loading:\n%!";
-      Env.report_error Format.err_formatter e;
-      Format.pp_print_flush Format.err_formatter ();
-      raise ex
-  | Typecore.Error (loc, env, err) as ex ->
-      Printf.eprintf "Type error during plugin loading:\n%!";
-      let report = Typecore.report_error ~loc env err in
-      Location.print_report Format.err_formatter report;
-      Format.pp_print_flush Format.err_formatter ();
-      raise ex
+  | Env.Error e ->
+      (* Create a more descriptive error message *)
+      failwith
+        (format_error_to_string "Plugin loading failed with environment error:"
+           (fun fmt -> Env.report_error fmt e))
+  | Typecore.Error (loc, env, err) ->
+      (* Create a more descriptive error message *)
+      failwith
+        (format_error_to_string "Plugin loading failed with type error:"
+           (fun fmt ->
+             let report = Typecore.report_error ~loc env err in
+             Location.print_report fmt report))
   | ex ->
       Printf.eprintf "Error during plugin loading: %s\n%!"
         (Printexc.to_string ex);
@@ -275,11 +284,32 @@ let eval ?(print_all = true) code : Quill_top.execution_result =
     initialize_if_needed ();
     capture_separated (fun ppf_out ppf_err ->
         Quill_top.execute print_all ppf_out ppf_err code)
-  with ex ->
-    (* Initialization failed - return error result *)
-    let error_msg =
-      Printf.sprintf "Toplevel initialization failed: %s\nBacktrace:\n%s"
-        (Printexc.to_string ex)
-        (Printexc.get_backtrace ())
-    in
-    { Quill_top.output = ""; error = Some error_msg; status = `Error }
+  with
+  | Failure msg when String.starts_with ~prefix:"Plugin loading failed" msg ->
+      (* Plugin loading error with formatted message *)
+      { Quill_top.output = ""; error = Some msg; status = `Error }
+  | Env.Error e ->
+      (* Format the environment error properly *)
+      let error_msg =
+        format_error_to_string
+          "Toplevel initialization failed: Environment error" (fun fmt ->
+            Env.report_error fmt e)
+      in
+      { Quill_top.output = ""; error = Some error_msg; status = `Error }
+  | Typecore.Error (loc, env, err) ->
+      (* Format the type error properly *)
+      let error_msg =
+        format_error_to_string "Toplevel initialization failed: Type error"
+          (fun fmt ->
+            let report = Typecore.report_error ~loc env err in
+            Location.print_report fmt report)
+      in
+      { Quill_top.output = ""; error = Some error_msg; status = `Error }
+  | ex ->
+      (* Generic error with backtrace *)
+      let error_msg =
+        Printf.sprintf "Toplevel initialization failed: %s\nBacktrace:\n%s"
+          (Printexc.to_string ex)
+          (Printexc.get_backtrace ())
+      in
+      { Quill_top.output = ""; error = Some error_msg; status = `Error }
