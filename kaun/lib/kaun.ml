@@ -19,12 +19,15 @@ module Rngs = struct
   let split t =
     (* MurmurHash-inspired integer hash for better distribution *)
     let hash x =
-      let x = x lxor (x lsr 16) in
-      let x = x * 0x85ebca6b land 0x7FFFFFFF in
-      let x = x lxor (x lsr 13) in
-      let x = x * 0xc2b2ae35 land 0x7FFFFFFF in
-      let x = x lxor (x lsr 16) in
-      x land 0x7FFFFFFF (* Ensure positive *)
+      (* Use Int32 operations to handle large constants on 32-bit systems *)
+      let open Int32 in
+      let x = of_int x in
+      let x = logxor x (shift_right_logical x 16) in
+      let x = mul x 0x85ebca6bl in
+      let x = logxor x (shift_right_logical x 13) in
+      let x = mul x 0xc2b2ae35l in
+      let x = logxor x (shift_right_logical x 16) in
+      to_int (logand x 0x7FFFFFFFl) (* Ensure positive 31-bit int *)
     in
     let new_seed1 = hash ((t * 2) + 1) in
     let new_seed2 = hash ((t * 2) + 2) in
