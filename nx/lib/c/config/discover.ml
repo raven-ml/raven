@@ -5,6 +5,7 @@ let () =
   C.main ~name:"nx_c" (fun c ->
       let system = C.ocaml_config_var_exn c "system" in
       let architecture = C.ocaml_config_var_exn c "architecture" in
+      let word_size = C.ocaml_config_var_exn c "word_size" in
 
       (* Base optimization flags based on architecture *)
       let base_flags =
@@ -13,8 +14,12 @@ let () =
         | "arm64" | "aarch64" -> [ "-O3"; "-mcpu=native"; "-fPIC" ]
         | "power" | "ppc" | "ppc64" | "ppc64le" ->
             [ "-O3"; "-mcpu=native"; "-fPIC" ]
-        | "riscv" | "riscv32" -> [ "-O3"; "-march=rv32gc"; "-fPIC" ]
+        | "riscv32" -> [ "-O3"; "-march=rv32gc"; "-fPIC" ]
         | "riscv64" -> [ "-O3"; "-march=rv64gc"; "-fPIC" ]
+        | "riscv" ->
+            (* For generic riscv, check word size to determine 32 vs 64 bit *)
+            if word_size = "64" then [ "-O3"; "-march=rv64gc"; "-fPIC" ]
+            else [ "-O3"; "-march=rv32gc"; "-fPIC" ]
         | "s390x" -> [ "-O3"; "-march=native"; "-fPIC" ]
         | _ -> [ "-O3"; "-fPIC" ]
       in
