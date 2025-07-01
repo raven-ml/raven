@@ -16,7 +16,11 @@ type inline_content =
 
 and inline = { id : int; inline_content : inline_content; focused : bool }
 
-type codeblock_content = { code : string; output : block option }
+type codeblock_content = {
+  code : string;
+  output : block option;
+  info : string option;
+}
 (** Codeblock content with optional output *)
 
 (** Block content types *)
@@ -54,7 +58,10 @@ val block : ?focused:bool -> block_content -> block
 (** Create block content *)
 
 val paragraph : ?focused:bool -> inline -> block
-val codeblock : ?output:block -> ?focused:bool -> string -> block
+
+val codeblock :
+  ?output:block -> ?info:string -> ?focused:bool -> string -> block
+
 val heading : ?focused:bool -> int -> inline -> block
 val blank_line : ?focused:bool -> unit -> block
 val blocks : ?focused:bool -> block list -> block

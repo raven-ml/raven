@@ -22,6 +22,7 @@ depends: [
   "camlzip"
   "ocurl"
   "csv"
+  "logs"
   "nx" {= version}
   "alcotest" {with-test}
   "odoc" {with-doc}

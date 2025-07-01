@@ -16,8 +16,8 @@ let rec update_codeblock (block : block) (target_id : int) (new_code : string) :
     block =
   if block.id = target_id then
     match block.content with
-    | Codeblock { output; _ } ->
-        { block with content = Codeblock { code = new_code; output } }
+    | Codeblock { output; info; _ } ->
+        { block with content = Codeblock { code = new_code; output; info } }
     | _ -> block
   else
     match block.content with
@@ -54,7 +54,7 @@ let update (m : Model.t) (message : msg) : Model.t =
             if b.id = block_id then
               {
                 id = block_id;
-                content = Codeblock { code = ""; output = None };
+                content = Codeblock { code = ""; output = None; info = None };
                 focused = false;
               }
             else b)

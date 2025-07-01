@@ -148,6 +148,7 @@ let new_model = of_ptree new_params
 
 ## Next Steps
 
-Kaun is under active development. More layers, losses, and utilities are coming.
+- [MNIST Tutorial](/docs/kaun/mnist-tutorial/) - Train a real CNN on image data
+- Check out the examples in `kaun/example/` for more complete training loops
 
-For now, check out the XOR example in `dev/kaun/example/` to see a complete training loop in action.
+Kaun is under active development. More layers, losses, and utilities are coming.

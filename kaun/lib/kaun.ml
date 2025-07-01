@@ -257,6 +257,16 @@ module Dataset = struct
 
   let iter f ds = Seq.iter f ds
   let length ds = Seq.length ds
+
+  let take n ds =
+    let rec take_aux n acc seq =
+      if n <= 0 then List.rev acc
+      else
+        match seq () with
+        | Seq.Nil -> List.rev acc
+        | Seq.Cons (x, rest) -> take_aux (n - 1) (x :: acc) rest
+    in
+    take_aux n [] ds
 end
 
 (* Loss module *)

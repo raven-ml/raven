@@ -704,8 +704,7 @@ let execute_compiled_fn (type kernel_native)
   | Ocaml_tensor _ ->
       Ocaml_tensor
         (Nx_native.op_const_array (Nx_native.create_context ()) out_ba)
-  | C_tensor _ ->
-      C_tensor (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
+  | C_tensor _ -> C_tensor (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
   | Metal_tensor _ ->
       Metal_tensor
         (Rune_metal.op_const_array (Rune_metal.create_context ()) out_ba)

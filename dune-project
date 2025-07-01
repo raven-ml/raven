@@ -71,6 +71,7 @@
   camlzip
   ocurl
   csv
+  logs
   (nx
    (= :version))
   (alcotest :with-test))
@@ -124,6 +125,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  logs
   (rune
    (= :version))
   (nx-datasets
@@ -159,7 +161,8 @@
   (ocaml
    (>= 5.2.0))
   dune
-  dune-site
+  (dune-site
+   (>= 3.19.0))
   cmdliner
   wasm_of_ocaml-compiler
   js_of_ocaml-toplevel

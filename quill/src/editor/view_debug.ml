@@ -73,7 +73,7 @@ let rec block_to_debug_string (indent : int) (b : block) : string =
         Printf.sprintf "%sParagraph (\n%s\n%s)" indent_str
           (inline_to_debug_string (indent + 1) inline)
           indent_str
-    | Codeblock { code; output } ->
+    | Codeblock { code; output; info = _ } ->
         let inner_parts =
           [
             Printf.sprintf "%sCode: %s"

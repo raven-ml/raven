@@ -27,4 +27,5 @@ Kaun aims for PyTorch's flexibility, not Keras's high-level abstractions. You ge
 ## Learn More
 
 - [Getting Started](/docs/kaun/getting-started/) - Build your first neural network
+- [MNIST Tutorial](/docs/kaun/mnist-tutorial/) - Train a CNN on handwritten digits
 - Examples - (coming soon)

@@ -14,10 +14,6 @@
  (preprocess
   (pps lwt_ppx)))
 
-(generate_sites_module
- (module quill_sites)
- (sites quill))
-
 (rule
  (target mode.txt)
  (enabled_if

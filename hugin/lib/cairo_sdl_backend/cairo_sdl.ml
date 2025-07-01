@@ -47,10 +47,6 @@ let create ~width ~height ~title =
                   Usdl.quit ();
                   exit 1
               | Ok (actual_width, actual_height) -> (
-                  Printf.printf
-                    "Window Size: %d x %d, Drawable Size: %d x %d\n%!" width
-                    height actual_width actual_height;
-
                   let fmt = Pixel.format_argb8888 in
                   match
                     Usdl.create_rgb_surface_with_format ~w:actual_width

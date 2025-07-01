@@ -13,7 +13,11 @@ type inline_content =
 
 and inline = { id : int; inline_content : inline_content; focused : bool }
 
-type codeblock_content = { code : string; output : block option }
+type codeblock_content = {
+  code : string;
+  output : block option;
+  info : string option;
+}
 
 and block_content =
   | Paragraph of inline
@@ -62,8 +66,8 @@ let block ?(focused = false) content =
 
 let paragraph ?focused inline = block ?focused (Paragraph inline)
 
-let codeblock ?output ?focused code =
-  block ?focused (Codeblock { code; output })
+let codeblock ?output ?info ?focused code =
+  block ?focused (Codeblock { code; output; info })
 
 let heading ?focused level inline = block ?focused (Heading (level, inline))
 let blank_line ?focused () = block ?focused (Blank_line ())
@@ -159,7 +163,12 @@ let rec block_content_of_cmarkit label_defs cb =
       let code =
         List.map Block_line.to_string codelines |> String.concat "\n"
       in
-      Codeblock { code; output = None }
+      let info =
+        match Block.Code_block.info_string codeblock with
+        | Some (info_str, _) -> Some (String.trim info_str)
+        | None -> None
+      in
+      Codeblock { code; output = None; info }
   | Block.Heading (h, _) ->
       let level = Block.Heading.level h in
       let inline = Inline.normalize (Block.Heading.inline h) in
@@ -215,6 +224,11 @@ and process_blocks label_defs (cmarkit_blocks : Block.t list) : document =
         List.map Block_line.to_string (Block.Code_block.code codeblock)
         |> String.concat "\n"
       in
+      let info =
+        match Block.Code_block.info_string codeblock with
+        | Some (info_str, _) -> Some (String.trim info_str)
+        | None -> None
+      in
       match rest with
       | Block.Html_block (html, _) :: rest' when is_output_start html ->
           let output_blocks, remaining = collect_output_blocks rest' in
@@ -227,7 +241,7 @@ and process_blocks label_defs (cmarkit_blocks : Block.t list) : document =
           let codeblock =
             {
               id = next_block_id ();
-              content = Codeblock { code; output };
+              content = Codeblock { code; output; info };
               focused = false;
             }
           in
@@ -236,7 +250,7 @@ and process_blocks label_defs (cmarkit_blocks : Block.t list) : document =
           let codeblock =
             {
               id = next_block_id ();
-              content = Codeblock { code; output = None };
+              content = Codeblock { code; output = None; info };
               focused = false;
             }
           in
@@ -325,10 +339,14 @@ let rec cmarkit_of_block_content (bc : block_content) : Block.t =
   | Paragraph inline ->
       Block.Paragraph
         (Block.Paragraph.make (cmarkit_of_inline inline), Meta.none)
-  | Codeblock { code; output } ->
+  | Codeblock { code; output; info } ->
+      let info_string =
+        match info with Some i -> Some (i, Meta.none) | None -> None
+      in
       let code_block =
         Block.Code_block
-          (Block.Code_block.make (Block_line.list_of_string code), Meta.none)
+          ( Block.Code_block.make ?info_string (Block_line.list_of_string code),
+            Meta.none )
       in
       let output_blocks =
         match output with
@@ -567,8 +585,8 @@ let set_focused_document_by_id (doc : document) (target_id : int) : document =
 let rec set_codeblock_output_in_block (block : block) (target_id : int)
     (output : block) : block =
   match block.content with
-  | Codeblock { code; output = _ } when block.id = target_id ->
-      { block with content = Codeblock { code; output = Some output } }
+  | Codeblock { code; output = _; info } when block.id = target_id ->
+      { block with content = Codeblock { code; output = Some output; info } }
   | Blocks bs ->
       {
         block with

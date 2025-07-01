@@ -102,6 +102,9 @@ module Dataset : sig
   (* Iteration *)
   val iter : ('a -> unit) -> 'a t -> unit
   val length : 'a t -> int
+
+  (* Take first n elements *)
+  val take : int -> 'a t -> 'a list
 end
 
 module Loss : sig

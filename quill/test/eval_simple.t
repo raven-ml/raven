@@ -1,11 +1,13 @@
 Test evaluating simple OCaml code from stdin:
 
   $ printf '```ocaml\n1 + 1\n```' | quill eval 2>/dev/null
-  ```
+  ```ocaml
   1 + 1
   ```
   <!-- quill=output_start -->
+  ```
   - : int = 2
+  ```
   <!-- quill=output_end -->
 
 Test evaluating from a file:
@@ -20,12 +22,14 @@ Test evaluating from a file:
   $ quill eval test.md 2>/dev/null
   # Test File
   
-  ```
+  ```ocaml
   Printf.printf "Hello from file!\n"
   ```
   <!-- quill=output_start -->
+  ```
   - : unit = ()
   Hello from file!
+  ```
   <!-- quill=output_end -->
   $ rm test.md
 

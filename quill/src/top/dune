@@ -7,8 +7,12 @@
 (library
  (name quill_top_unix)
  (public_name quill.top-unix)
- (modules quill_top_unix)
- (libraries quill_top unix))
+ (modules quill_top_unix quill_sites)
+ (libraries quill_top unix compiler-libs.toplevel dune-site))
+
+(generate_sites_module
+ (module quill_sites)
+ (sites quill))
 
 (library
  (name quill_top_js)

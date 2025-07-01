@@ -1,9 +1,9 @@
 open Quill_markdown
 
 (* Evaluate code blocks in markdown *)
-let eval_code_block code =
+let eval_code_block ?(print_all = false) code =
   try
-    let result = Quill_top_unix.eval code in
+    let result = Quill_top_unix.eval ~print_all code in
     match result.Quill_top.error with
     | Some err -> Error err
     | None -> Ok result.Quill_top.output
@@ -18,22 +18,31 @@ let unescape_output output =
 
 let rec process_block block =
   match block.content with
-  | Codeblock { code; _ } -> (
-      match eval_code_block code with
+  | Codeblock { code; info; _ } -> (
+      (* Check if we should print all values based on info string *)
+      let print_all =
+        match info with
+        | Some info_str ->
+            String.contains info_str 'v' || String.contains info_str 'V'
+        | None -> false
+      in
+      match eval_code_block ~print_all code with
       | Ok output ->
           let output = unescape_output output in
-          let output = String.trim output in
-          let output_block = Quill_markdown.html_block output in
+          let formatted_output = Quill_top.format_output output in
+          let output_block = Quill_markdown.html_block formatted_output in
           {
             block with
-            content = Codeblock { code; output = Some output_block };
+            content = Codeblock { code; output = Some output_block; info };
           }
       | Error err ->
           let error_block =
-            Quill_markdown.paragraph (Quill_markdown.run ("Error: " ^ err))
+            Quill_markdown.html_block ("```\n" ^ err ^ "\n```")
           in
-          { block with content = Codeblock { code; output = Some error_block } }
-      )
+          {
+            block with
+            content = Codeblock { code; output = Some error_block; info };
+          })
   | Block_quote blocks ->
       { block with content = Block_quote (List.map process_block blocks) }
   | Blocks blocks ->

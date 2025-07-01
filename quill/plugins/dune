@@ -36,13 +36,17 @@
   ; kaun
   %{lib:kaun:kaun.cmi}
   %{lib:kaun:kaun.cma}
+  %{lib:kaun.datasets:kaun_datasets.cmi}
   %{lib:kaun.datasets:kaun_datasets.cma}
   ; nx-text
   %{lib:nx-text:nx_text.cmi}
   %{lib:nx-text:nx_text.cma}
   %{lib:re:re.cma}
   %{lib:uutf:uutf.cma}
-  %{lib:uucp:uucp.cma})
+  %{lib:uucp:uucp.cma}
+  ; logs
+  %{lib:logs:logs.cma}
+  %{lib:logs:logs.cmi})
  (mode promote)
  (action
   (progn
@@ -77,12 +81,15 @@
    (copy %{lib:rune.jit:rune_jit.cma} rune_jit.cma)
    (copy %{lib:kaun:kaun.cmi} kaun.cmi)
    (copy %{lib:kaun:kaun.cma} kaun.cma)
+   (copy %{lib:kaun.datasets:kaun_datasets.cmi} kaun_datasets.cmi)
    (copy %{lib:kaun.datasets:kaun_datasets.cma} kaun_datasets.cma)
    (copy %{lib:nx-text:nx_text.cmi} nx_text.cmi)
    (copy %{lib:nx-text:nx_text.cma} nx_text.cma)
    (copy %{lib:re:re.cma} re.cma)
    (copy %{lib:uutf:uutf.cma} uutf.cma)
-   (copy %{lib:uucp:uucp.cma} uucp.cma))))
+   (copy %{lib:uucp:uucp.cma} uucp.cma)
+   (copy %{lib:logs:logs.cma} logs.cma)
+   (copy %{lib:logs:logs.cmi} logs.cmi))))
 
 (rule
  (targets

@@ -1,5 +1,10 @@
 (* dataset_utils.ml *)
 
+(* Set up logging *)
+let src = Logs.Src.create "nx.datasets" ~doc:"Nx datasets module"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 let () = Curl.global_init Curl.CURLINIT_GLOBALALL
 
 let mkdir_p path perm =
@@ -62,8 +67,8 @@ let mkdir_p dir =
 let download_file url dest_path =
   let dest_dir = Filename.dirname dest_path in
   mkdir_p dest_dir;
-  Printf.printf "Attempting to download %s to %s\n%!" (Filename.basename url)
-    dest_path;
+  Log.info (fun m ->
+      m "Attempting to download %s to %s" (Filename.basename url) dest_path);
   let h = new Curl.handle in
   h#set_url url;
   (* Follow redirects *)
@@ -94,8 +99,8 @@ let download_file url dest_path =
   h#cleanup;
   match result with
   | Ok () ->
-      Printf.printf "Downloaded %s successfully.\n%!"
-        (Filename.basename dest_path)
+      Log.info (fun m ->
+          m "Downloaded %s successfully" (Filename.basename dest_path))
   | Error msg ->
       (* Clean up potentially incomplete file *)
       (try Sys.remove dest_path with Sys_error _ -> ());
@@ -103,16 +108,16 @@ let download_file url dest_path =
 
 let ensure_file url dest_path =
   if not (Sys.file_exists dest_path) then download_file url dest_path
-  else Printf.printf "Found file %s.\n%!" dest_path
+  else Log.debug (fun m -> m "Found file %s" dest_path)
 
 let ensure_extracted_archive ~url ~archive_path ~extract_dir ~check_file =
   let check_file_full_path = Filename.concat extract_dir check_file in
   if not (Sys.file_exists check_file_full_path) then (
-    Printf.printf "Extracted file %s not found.\n%!" check_file_full_path;
+    Log.debug (fun m -> m "Extracted file %s not found" check_file_full_path);
     ensure_file url archive_path;
 
     mkdir_p extract_dir;
-    Printf.printf "Extracting %s to %s ...\n%!" archive_path extract_dir;
+    Log.info (fun m -> m "Extracting %s to %s..." archive_path extract_dir);
     (* Basic support for tar.gz *)
     if Filename.check_suffix archive_path ".tar.gz" then (
       let command =
@@ -120,12 +125,12 @@ let ensure_extracted_archive ~url ~archive_path ~extract_dir ~check_file =
           (Filename.quote archive_path)
           (Filename.quote extract_dir)
       in
-      Printf.printf "Executing: %s\n%!" command;
+      Log.debug (fun m -> m "Executing: %s" command);
       let exit_code = Unix.system command in
       if exit_code <> Unix.WEXITED 0 then
         failwith
           (Printf.sprintf "Archive extraction command failed: '%s'" command)
-      else Printf.printf "Extracted archive successfully.\n%!"
+      else Log.info (fun m -> m "Extracted archive successfully")
       (* Verify extraction *))
     else
       failwith
@@ -136,14 +141,14 @@ let ensure_extracted_archive ~url ~archive_path ~extract_dir ~check_file =
       failwith
         (Printf.sprintf "Extraction failed, %s not found after extraction."
            check_file_full_path))
-  else Printf.printf "Found extracted file %s.\n%!" check_file_full_path
+  else Log.debug (fun m -> m "Found extracted file %s" check_file_full_path)
 
 let ensure_decompressed_gz ~gz_path ~target_path =
   if Sys.file_exists target_path then (
-    Printf.printf "Found decompressed file %s.\n%!" target_path;
+    Log.debug (fun m -> m "Found decompressed file %s" target_path);
     true)
   else if Sys.file_exists gz_path then (
-    Printf.printf "Decompressing %s ...\n%!" gz_path;
+    Log.info (fun m -> m "Decompressing %s..." gz_path);
     try
       let ic = Gzip.open_in gz_path in
       let oc = open_out_bin target_path in
@@ -157,12 +162,12 @@ let ensure_decompressed_gz ~gz_path ~target_path =
       loop ();
       Gzip.close_in ic;
       close_out oc;
-      Printf.printf "Decompressed to %s.\n%!" target_path;
+      Log.info (fun m -> m "Decompressed to %s" target_path);
       true
     with Gzip.Error msg ->
       failwith (Printf.sprintf "Gzip error for %s: %s" gz_path msg))
   else (
-    Printf.printf "Compressed file %s not found.\n%!" gz_path;
+    Log.warn (fun m -> m "Compressed file %s not found" gz_path);
     false)
 
 let parse_float_cell ~context s =

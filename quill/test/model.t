@@ -15,14 +15,15 @@ Test basic markdown parsing and evaluation:
   
   This is a paragraph with **bold** and *italic* text.
   
-  ```
+  ```ocaml
   let x = 42;;
   Printf.printf "The answer is %d\n" x;;
   ```
   <!-- quill=output_start -->
-  val x : int = 42
+  ```
   - : unit = ()
   The answer is 42
+  ```
   <!-- quill=output_end -->
   $ rm basic.md
 
@@ -77,19 +78,23 @@ Test code evaluation in lists:
   > EOF
   $ quill eval list-code.md 2>/dev/null
   1. Define a function:
-     ```
+     ```ocaml
      let square x = x * x
      ```
      <!-- quill=output_start -->
+     ```
      val square : int -> int = <fun>
+     ```
      <!-- quill=output_end -->
      
   2. Use it:
-     ```
+     ```ocaml
      square 5
      ```
      <!-- quill=output_start -->
+     ```
      - : int = 25
+     ```
      <!-- quill=output_end -->
   $ rm list-code.md
 
@@ -142,11 +147,13 @@ Test nested block quotes with code:
   > EOF
   $ quill eval nested.md 2>/dev/null | sed 's/^/  /'
     > Nested quote with code:
-    > ```
+    > ```ocaml
     > List.length [1; 2; 3];;
     > ```
     > <!-- quill=output_start -->
+    > ```
     > - : int = 3
+    > ```
     > <!-- quill=output_end -->
   $ rm nested.md
 
@@ -183,22 +190,26 @@ Test complete example:
   
   The factorial function:
   
-  ```
+  ```ocaml
   let rec factorial n =
     if n <= 1 then 1
     else n * factorial (n - 1)
   ```
   <!-- quill=output_start -->
+  ```
   val factorial : int -> int = <fun>
+  ```
   <!-- quill=output_end -->
   
   Testing it:
   
-  ```
+  ```ocaml
   List.map factorial [1; 2; 3; 4; 5]
   ```
   <!-- quill=output_start -->
+  ```
   - : int list = [1; 2; 6; 24; 120]
+  ```
   <!-- quill=output_end -->
   
   > **Note**: This is a recursive implementation.

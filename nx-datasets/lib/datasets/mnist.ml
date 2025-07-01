@@ -2,6 +2,11 @@
 open Bigarray
 open Dataset_utils
 
+(* Set up logging *)
+let src = Logs.Src.create "nx.datasets.mnist" ~doc:"MNIST dataset loader"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 (* Config remains the same *)
 module Config = struct
   type t = {
@@ -79,19 +84,19 @@ let ensure_dataset config =
       let path = dataset_dir ^ base_filename in
 
       if not (Sys.file_exists path) then (
-        Printf.printf "File %s not found for %s dataset.\n%!" base_filename
-          config.name;
+        Log.debug (fun m ->
+            m "File %s not found for %s dataset" base_filename config.name);
         (* Ensure the .gz file is downloaded *)
         ensure_file url gz_path;
         (* Ensure it's decompressed *)
         if not (ensure_decompressed_gz ~gz_path ~target_path:path) then
           failwith (Printf.sprintf "Failed to obtain decompressed file %s" path))
-      else Printf.printf "Found decompressed file %s.\n%!" path)
+      else Log.debug (fun m -> m "Found decompressed file %s" path))
     files_to_process
 
 let read_idx_file ~read_header ~create_array ~populate_array ~expected_magic
     config filename =
-  Printf.printf "Reading %s file: %s\n%!" config.Config.name filename;
+  Log.debug (fun m -> m "Reading %s file: %s" config.Config.name filename);
   let ic = open_in_bin filename in
   let s =
     try really_input_string ic (in_channel_length ic)
@@ -182,10 +187,10 @@ let load ~fashion_mnist =
   let test_images_path = dataset_dir ^ "t10k-images-idx3-ubyte" in
   let test_labels_path = dataset_dir ^ "t10k-labels-idx1-ubyte" in
 
-  Printf.printf "Loading %s datasets...\n%!" config.name;
+  Log.info (fun m -> m "Loading %s datasets..." config.name);
   let train_images = read_images config train_images_path in
   let train_labels = read_labels config train_labels_path in
   let test_images = read_images config test_images_path in
   let test_labels = read_labels config test_labels_path in
-  Printf.printf "%s loading complete.\n%!" config.name;
+  Log.info (fun m -> m "%s loading complete" config.name);
   ((train_images, train_labels), (test_images, test_labels))
