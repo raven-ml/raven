@@ -27,7 +27,8 @@ module Rngs = struct
       let x = logxor x (shift_right_logical x 13) in
       let x = mul x 0xc2b2ae35l in
       let x = logxor x (shift_right_logical x 16) in
-      to_int (logand x 0x7FFFFFFFl) (* Ensure positive 31-bit int *)
+      to_int (logand x 0x7FFFFFFFl)
+      (* Ensure positive 31-bit int *)
     in
     let new_seed1 = hash ((t * 2) + 1) in
     let new_seed2 = hash ((t * 2) + 2) in
