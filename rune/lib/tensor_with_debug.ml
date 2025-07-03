@@ -449,3 +449,11 @@ let max_unpool1d x indices ~kernel_size =
 let max_unpool2d x indices ~kernel_size =
   Debug.with_context "max_unpool2d" (fun () ->
       T.max_unpool2d x indices ~kernel_size)
+
+let im2col ~kernel_size ~stride ~dilation ~padding x =
+  Debug.with_context "im2col" (fun () ->
+      T.im2col ~kernel_size ~stride ~dilation ~padding x)
+
+let col2im ~output_size ~kernel_size ~stride ~dilation ~padding x =
+  Debug.with_context "col2im" (fun () ->
+      T.col2im ~output_size ~kernel_size ~stride ~dilation ~padding x)

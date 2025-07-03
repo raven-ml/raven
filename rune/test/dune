@@ -1,5 +1,5 @@
 (tests
- (names test_autodiff)
+ (names test_autodiff test_xla)
  (package rune)
  (libraries rune alcotest test_rune_support))
 

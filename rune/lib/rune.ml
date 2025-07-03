@@ -30,17 +30,21 @@ let is_device_available = function
   | `c -> Nx_rune.is_device_available C
   | `metal -> Nx_rune.is_device_available Metal
 
-(* Debug *)
-let debug = Debug.debug
-let debug_with_context = Debug.with_context
-let debug_push_context = Debug.push_context
-let debug_pop_context = Debug.pop_context
+(* ───── JIT ───── *)
+
 let jit = Jit.jit
+let xla = Jit_xla.jit
+
+(* ───── Autodiff ───── *)
+
 let grad = Autodiff.grad
 let grads = Autodiff.grads
 let value_and_grad = Autodiff.value_and_grad
 let value_and_grads = Autodiff.value_and_grads
 
-(* Export modules for testing *)
-module Nx_rune = Nx_rune
-module Jit = Jit
+(* ───── Debugging ───── *)
+
+let debug = Debug.debug
+let debug_with_context = Debug.with_context
+let debug_push_context = Debug.push_context
+let debug_pop_context = Debug.pop_context

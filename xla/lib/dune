@@ -1,0 +1,5 @@
+(library
+ (public_name xla)
+ (name xla)
+ (modules element_type xla)
+ (libraries xla.c ctypes ctypes.foreign integers))

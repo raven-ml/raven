@@ -1,0 +1,33 @@
+(rule
+ (target xla_extension.tar.gz)
+ (action
+  (run
+   curl
+   -L
+   -o
+   %{target}
+   https://github.com/elixir-nx/xla/releases/download/v0.9.1/xla_extension-0.9.1-aarch64-darwin-cpu.tar.gz)))
+
+(rule
+ (targets
+  libxla_extension.so
+  (dir include))
+ (deps xla_extension.tar.gz)
+ (action
+  (progn
+   (run tar -xzf %{deps})
+   (run cp xla_extension/lib/libxla_extension.so .)
+   (run cp -r xla_extension/include .)
+   (run rm -rf xla_extension))))
+
+; Install the shared library
+; (install
+;  (section stublibs)
+;  (package xla)
+;  (files (libxla_extension.so as dllxla_extension.so)))
+
+; Install the headers
+; (install
+;  (section lib)
+;  (package xla)
+;  (dirs (include as xla/include)))

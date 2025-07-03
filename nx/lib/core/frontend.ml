@@ -3469,6 +3469,12 @@ module Make (B : Backend_intf.S) = struct
     let y = tanh arg in
     mul x y
 
+  let im2col ~kernel_size ~stride ~dilation ~padding x =
+    B.op_unfold x ~kernel_size ~stride ~dilation ~padding
+
+  let col2im ~output_size ~kernel_size ~stride ~dilation ~padding x =
+    B.op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding
+
   let calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
       ~(mode : [< `Full | `Valid | `Same ])
       ~(op_type : [ `Convolution | `Correlation ]) =

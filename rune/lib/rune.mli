@@ -2343,6 +2343,66 @@ val convolve2d :
       - : int array = [|1; 1; 3; 3|]
     ]} *)
 
+val im2col :
+  kernel_size:int array ->
+  stride:int array ->
+  dilation:int array ->
+  padding:(int * int) array ->
+  ('a, 'b, 'dev) t ->
+  ('a, 'b, 'dev) t
+(** [unfold ~kernel_size ~stride ~dilation ~padding t] extracts sliding local
+    blocks from tensor.
+
+    Extracts patches of size kernel_size from the input tensor at the specified
+    stride and dilation.
+
+    - [kernel_size]: size of sliding blocks to extract
+    - [stride]: step between consecutive blocks
+    - [dilation]: spacing between kernel elements
+    - [padding]: (before, after) padding for each spatial dimension
+
+    For a 4D input [batch; channels; height; width], produces output shape
+    [batch; channels * kh * kw; num_patches_h; num_patches_w] where kh, kw are
+    kernel dimensions and num_patches depends on stride and padding.
+
+    {@ocaml[
+      # let x = arange float32 0. 16. 1. |> reshape [| 1; 1; 4; 4 |] in
+        unfold ~kernel_size:[|2; 2|] ~stride:[|1; 1|]
+               ~dilation:[|1; 1|] ~padding:[|(0, 0); (0, 0)|] x |> shape
+      - : int array = [|1; 4; 3; 3|]
+    ]} *)
+
+val col2im :
+  output_size:int array ->
+  kernel_size:int array ->
+  stride:int array ->
+  dilation:int array ->
+  padding:(int * int) array ->
+  ('a, 'b, 'dev) t ->
+  ('a, 'b, 'dev) t
+(** [fold_im2col ~output_size ~kernel_size ~stride ~dilation ~padding t]
+    combines sliding local blocks into tensor.
+
+    This is the inverse of {!im2col}. Accumulates values from the unfolded
+    representation back into spatial dimensions. Overlapping regions are summed.
+
+    - [output_size]: target spatial dimensions [height; width]
+    - [kernel_size]: size of sliding blocks
+    - [stride]: step between consecutive blocks
+    - [dilation]: spacing between kernel elements
+    - [padding]: (before, after) padding for each spatial dimension
+
+    For input shape [batch; channels * kh * kw; num_patches_h; num_patches_w],
+    produces output [batch; channels; height; width].
+
+    {@ocaml[
+      # let unfolded = create float32 [| 1; 4; 3; 3 |] (Array.init 36 Float.of_int) in
+        fold_im2col ~output_size:[|4; 4|] ~kernel_size:[|2; 2|]
+                    ~stride:[|1; 1|] ~dilation:[|1; 1|]
+                    ~padding:[|(0, 0); (0, 0)|] unfolded |> shape
+      - : int array = [|1; 1; 4; 4|]
+    ]} *)
+
 val avg_pool1d :
   kernel_size:int ->
   ?stride:int ->
@@ -2748,4 +2808,24 @@ val jit :
         let compiled_f = jit f x in
         compiled_f x |> unsafe_get []
       - : float = 6.
+    ]} *)
+
+val xla :
+  (('a, 'b, 'dev) t -> ('c, 'd, 'dev) t) -> ('a, 'b, 'dev) t -> ('c, 'd, 'dev) t
+(** [xla f t] compiles and executes the function [f] using the XLA (Accelerated
+    Linear Algebra) compiler.
+
+    This is an alternative to the standard (work-in-progress) [jit] function
+    that uses XLA's optimizing compiler. XLA can provide better performance for
+    certain workloads, especially those involving many linear algebra
+    operations.
+
+    Currently only single-input, single-output functions are supported. The
+    compiled function will execute on CPU by default.
+
+    {@ocaml[
+      # let x = create float32 [| 100 |] in
+        let f t = sin (mul t t) in
+        xla f x
+      - : (float, float32_elt, 'dev) t = <tensor>
     ]} *)

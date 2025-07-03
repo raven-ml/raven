@@ -30,9 +30,10 @@
  (package
   (name soupault)))
 
-; (package
-;  (name dev)
-;  (depends odoc odoc-driver soupault landmarks landmarks-ppx))
+(package
+ (name dev)
+ (allow_empty)
+ (depends odoc odoc-driver soupault landmarks landmarks-ppx))
 
 (package
  (name nx)
@@ -212,6 +213,22 @@
   (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
+
+(package
+ (name xla)
+ (synopsis "OCaml bindings to XLA (Accelerated Linear Algebra)")
+ (description
+  "OCaml bindings to Google's XLA compiler for machine learning computations. XLA optimizes linear algebra computations for various hardware accelerators including GPUs and TPUs.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  ctypes
+  ctypes-foreign
+  (dune-configurator :build)
+  (alcotest :with-test))
+ (tags
+  (xla compiler machine-learning accelerated-computing)))
 
 (package
  (name raven)
