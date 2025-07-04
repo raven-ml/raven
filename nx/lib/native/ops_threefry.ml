@@ -132,4 +132,4 @@ let threefry (context : context) (data_t : (int32, int32_elt) t)
   if size = 0 then ()
   else
     Parallel.parallel_for context.pool 0 (size - 1) (fun start_idx end_idx ->
-        kernel_threefry_int32 data_t seed_t out_t start_idx (end_idx + 1))
+        kernel_threefry_int32 data_t seed_t out_t start_idx end_idx)
