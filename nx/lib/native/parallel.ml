@@ -29,7 +29,11 @@ let setup_pool () =
       let task = Option.get pool.task_assignments.(id) in
       pool.task_assignments.(id) <- None;
       Mutex.unlock pool.mutex;
-      task.compute task.start_idx task.end_idx;
+      (try task.compute task.start_idx task.end_idx
+       with exn ->
+         Printf.eprintf "Worker %d: Exception in task: %s\n" id
+           (Printexc.to_string exn);
+         flush stderr);
       Atomic.incr pool.completed
     done
   in
