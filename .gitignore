@@ -18,3 +18,6 @@ dev-tools.locks/
 
 # Environment variable files
 .env
+
+# Development packages
+dev.opam
