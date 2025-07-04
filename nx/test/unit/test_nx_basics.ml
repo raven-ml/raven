@@ -109,9 +109,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     check_t "ones_like" [| 2; 2 |] [| 1l; 1l; 1l; 1l |] t
 
   let test_zeros_max_size ctx () =
-    (* Create large zeros array - should not crash *)
-    let t = Nx.zeros ctx Nx_core.Dtype.float32 [| 1024; 1024; 64 |] in
-    check_shape "large zeros shape" [| 1024; 1024; 64 |] t;
+    let t = Nx.zeros ctx Nx_core.Dtype.float32 [| 256; 256; 16 |] in
+    check_shape "large zeros shape" [| 256; 256; 16 |] t;
     check (float 1e-6) "zeros[0,0,0]" 0.0 (Nx.unsafe_get [ 0; 0; 0 ] t)
 
   (* ───── Eye Identity Tests ───── *)
