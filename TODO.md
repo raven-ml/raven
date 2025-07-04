@@ -4,16 +4,17 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
-- improve mlis (go through each function, apply docs guidelines, check the implementation, check if there's invariant to document, check if useful to add examples)
 - generate docs with odoc3 + dream-style html rewriting to integrate in www/
 - website examples generated with quill
+- review website+docs examples systematically.
 
 ## alpha release
 
 nx
-- ? intermittent abort at test slice different steps.[1] c backend (can't reproduce)
 - slow test zeros max size native backend
 - intermittent segfault at unsafe_fold native backend
+- near-zero formatting issues on some platform (opam-ci)
+- hang/deadlock during opam-ci (need to test commited fix with opam-ci)
 
 hugin
 - fix plot3d
