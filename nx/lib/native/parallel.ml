@@ -5,6 +5,7 @@ type pool = {
   num_workers : int;
   task_assignments : task option array;
   completed : int Atomic.t;
+  generation : int Atomic.t;
   mutex : Mutex.t;
   work_available : Condition.t;
 }
@@ -15,26 +16,36 @@ let setup_pool () =
   let num_workers = Domain.recommended_domain_count () - 1 in
   let task_assignments = Array.make num_workers None in
   let completed = Atomic.make 0 in
+  let generation = Atomic.make 0 in
   let mutex = Mutex.create () in
   let work_available = Condition.create () in
   let pool =
-    { num_workers; task_assignments; completed; mutex; work_available }
+    { num_workers; task_assignments; completed; generation; mutex; work_available }
   in
   let worker id =
+    let last_gen = ref (-1) in
     while true do
       Mutex.lock pool.mutex;
-      while pool.task_assignments.(id) = None do
+      let current_gen = Atomic.get pool.generation in
+      while pool.task_assignments.(id) = None && !last_gen = current_gen do
         Condition.wait pool.work_available pool.mutex
       done;
-      let task = Option.get pool.task_assignments.(id) in
-      pool.task_assignments.(id) <- None;
-      Mutex.unlock pool.mutex;
-      (try task.compute task.start_idx task.end_idx
-       with exn ->
-         Printf.eprintf "Worker %d: Exception in task: %s\n" id
-           (Printexc.to_string exn);
-         flush stderr);
-      Atomic.incr pool.completed
+      let current_gen = Atomic.get pool.generation in
+      if pool.task_assignments.(id) <> None then (
+        let task = Option.get pool.task_assignments.(id) in
+        pool.task_assignments.(id) <- None;
+        last_gen := current_gen;
+        Mutex.unlock pool.mutex;
+        (try task.compute task.start_idx task.end_idx
+         with exn ->
+           Printf.eprintf "Worker %d: Exception in task: %s\n" id
+             (Printexc.to_string exn);
+           flush stderr);
+        Atomic.incr pool.completed)
+      else (
+        (* New generation without task for us, loop back *)
+        last_gen := current_gen;
+        Mutex.unlock pool.mutex)
     done
   in
   for i = 0 to num_workers - 1 do
@@ -81,6 +92,7 @@ let parallel_execute pool tasks =
           "parallel_execute: number of tasks must equal num_workers + 1";
       Atomic.set pool.completed 0;
       Mutex.lock pool.mutex;
+      Atomic.incr pool.generation;
       for i = 0 to pool.num_workers - 1 do
         pool.task_assignments.(i) <- Some tasks.(i)
       done;
