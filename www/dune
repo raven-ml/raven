@@ -1,15 +1,15 @@
-(subdir
- site
- (rule
-  (mode promote)
-  (action
-   (progn
-    (copy ../odoc/odoc.css odoc.css)
-    (copy ../odoc/highlight.pack.js highlight.pack.js)
-    (copy ../odoc/katex.min.css katex.min.css)
-    (copy ../odoc/katex.min.js katex.min.js)
-    (copy ../odoc/odoc_search.js odoc_search.js)
-    (copy ../odoc/sherlodoc.js sherlodoc.js)))))
+; (subdir
+;  site
+;  (rule
+;   (mode promote)
+;   (action
+;    (progn
+;     (copy ../odoc/odoc.css odoc.css)
+;     (copy ../odoc/highlight.pack.js highlight.pack.js)
+;     (copy ../odoc/katex.min.css katex.min.css)
+;     (copy ../odoc/katex.min.js katex.min.js)
+;     (copy ../odoc/odoc_search.js odoc_search.js)
+;     (copy ../odoc/sherlodoc.js sherlodoc.js)))))
 
 (rule
  (targets
@@ -31,29 +31,27 @@
  (action
   (run soupault)))
 
-(subdir
- site/docs/nx/api
- (rule
-  (mode promote)
-  (deps
-   (:index ../../../../process/index.exe)
-   (:source ../../../../odoc/nx/nx/Nx/index.html)
-   (:db ../../../../odoc/nx/sherlodoc_db.js))
-  (targets Nx.html sherlodoc_db.js)
-  (action
-   (progn
-    (run %{index} %{source} nx Nx.html)
-    (copy %{db} sherlodoc_db.js)))))
+; (subdir
+;  site/docs/nx/api
+;  (rule
+;   (mode promote)
+;   (deps
+;    (:index ../../../../process/index.exe)
+;    (:source ../../../../odoc/nx/nx/Nx/index.html)
+;    (:db ../../../../odoc/nx/sherlodoc_db.js))
+;   (targets Nx.html sherlodoc_db.js)
+;   (action
+;    (progn
+;     (run %{index} %{source} nx Nx.html)
+;     (copy %{db} sherlodoc_db.js)))))
 
-(subdir
- site/docs/nx
- (rule
-  (mode promote)
-  (deps
-   (:sidebar ../../../process/sidebar.exe)
-   (:sidebar_json ../../../odoc/nx/sidebar.json))
-  (targets api_nav.html)
-  (action
-   (run %{sidebar} nx %{sidebar_json} api_nav.html))))
-
-(include nx_api_rules.inc)
+; (subdir
+;  site/docs/nx
+;  (rule
+;   (mode promote)
+;   (deps
+;    (:sidebar ../../../process/sidebar.exe)
+;    (:sidebar_json ../../../odoc/nx/sidebar.json))
+;   (targets api_nav.html)
+;   (action
+;    (run %{sidebar} nx %{sidebar_json} api_nav.html))))
