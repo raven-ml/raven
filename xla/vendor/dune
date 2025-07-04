@@ -1,4 +1,5 @@
 (rule
+ (enabled_if false)
  (target xla_extension.tar.gz)
  (action
   (run
@@ -9,6 +10,7 @@
    https://github.com/elixir-nx/xla/releases/download/v0.9.1/xla_extension-0.9.1-aarch64-darwin-cpu.tar.gz)))
 
 (rule
+ (enabled_if false)
  (targets
   libxla_extension.so
   (dir include))

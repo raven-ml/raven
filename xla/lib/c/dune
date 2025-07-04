@@ -1,4 +1,5 @@
 (rule
+ (enabled_if false)
  (targets c_flags.sexp c_library_flags.sexp)
  (deps
   (:discover ../../config/discover.exe)
@@ -8,8 +9,9 @@
   (run %{discover})))
 
 (library
+ (enabled_if false)
  (name xla_c)
- (public_name xla.c)
+ (public_name rune.xla.c)
  (libraries ctypes ctypes.foreign integers)
  (ctypes
   (external_library_name xla_stubs)

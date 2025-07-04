@@ -1,4 +1,15 @@
 (library
  (name rune)
  (public_name rune)
- (libraries ctypes rune_jit nx_native nx_c rune_metal nx_core xla))
+ (libraries
+  ctypes
+  rune_jit
+  nx_native
+  nx_c
+  rune_metal
+  nx_core
+  (select
+   jit_xla.ml
+   from
+   (xla -> jit_xla.xla.ml)
+   (-> jit_xla.missing.ml))))

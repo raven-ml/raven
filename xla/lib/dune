@@ -1,5 +1,6 @@
 (library
- (public_name xla)
+ (enabled_if false)
+ (public_name rune.xla)
  (name xla)
  (modules element_type xla)
  (libraries xla.c ctypes ctypes.foreign integers))

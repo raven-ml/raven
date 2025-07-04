@@ -1,6 +1,13 @@
 (tests
- (names test_autodiff test_xla)
+ (names test_autodiff)
  (package rune)
+ (libraries rune alcotest test_rune_support))
+
+(test
+ (name test_xla)
+ (package rune)
+ (modules test_xla)
+ (build_if %{lib-available:xla})
  (libraries rune alcotest test_rune_support))
 
 (test
