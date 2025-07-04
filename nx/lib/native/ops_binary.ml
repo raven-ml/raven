@@ -72,28 +72,34 @@ let kernel_add_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Float.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.add a_val b_val);
       incr i
     done)
   else
@@ -116,28 +122,34 @@ let kernel_add_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Float.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.add a_val b_val);
       incr i
     done)
   else
@@ -160,28 +172,34 @@ let kernel_add_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Float.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.add a_val b_val);
       incr i
     done)
   else
@@ -204,28 +222,34 @@ let kernel_add_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Int.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.add a_val b_val);
       incr i
     done)
   else
@@ -248,28 +272,34 @@ let kernel_add_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Int.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.add a_val b_val);
       incr i
     done)
   else
@@ -292,28 +322,34 @@ let kernel_add_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Int.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.add a_val b_val);
       incr i
     done)
   else
@@ -336,28 +372,34 @@ let kernel_add_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Int.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.add a_val b_val);
       incr i
     done)
   else
@@ -380,28 +422,34 @@ let kernel_add_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.add a_val b_val);
       incr i
     done)
   else
@@ -424,28 +472,34 @@ let kernel_add_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.add a_val b_val);
       incr i
     done)
   else
@@ -468,28 +522,34 @@ let kernel_add_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Int.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.add a_val b_val);
       incr i
     done)
   else
@@ -513,28 +573,34 @@ let kernel_add_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.add a_val b_val);
       incr i
     done)
   else
@@ -558,28 +624,34 @@ let kernel_add_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.add a_val b_val);
       incr i
     done)
   else
@@ -603,28 +675,34 @@ let kernel_add_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.add a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.add a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.add a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.add a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.add a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.add a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.add a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.add a_val3 b_val3);
+
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.add a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.add a_val b_val);
       incr i
     done)
   else
@@ -647,28 +725,32 @@ let kernel_sub_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.sub a_val b_val);
       incr i
     done)
   else
@@ -691,28 +773,32 @@ let kernel_sub_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.sub a_val b_val);
       incr i
     done)
   else
@@ -735,28 +821,32 @@ let kernel_sub_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.sub a_val b_val);
       incr i
     done)
   else
@@ -779,28 +869,32 @@ let kernel_sub_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.sub a_val b_val);
       incr i
     done)
   else
@@ -823,28 +917,32 @@ let kernel_sub_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.sub a_val b_val);
       incr i
     done)
   else
@@ -867,28 +965,32 @@ let kernel_sub_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.sub a_val b_val);
       incr i
     done)
   else
@@ -911,28 +1013,32 @@ let kernel_sub_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.sub a_val b_val);
       incr i
     done)
   else
@@ -955,28 +1061,32 @@ let kernel_sub_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.sub a_val b_val);
       incr i
     done)
   else
@@ -999,28 +1109,32 @@ let kernel_sub_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.sub a_val b_val);
       incr i
     done)
   else
@@ -1043,28 +1157,32 @@ let kernel_sub_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.sub a_val b_val);
       incr i
     done)
   else
@@ -1088,28 +1206,32 @@ let kernel_sub_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.sub a_val b_val);
       incr i
     done)
   else
@@ -1133,28 +1255,32 @@ let kernel_sub_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.sub a_val b_val);
       incr i
     done)
   else
@@ -1178,28 +1304,32 @@ let kernel_sub_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.sub a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.sub a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.sub a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.sub a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.sub a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.sub a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.sub a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.sub a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.sub a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.sub a_val b_val);
       incr i
     done)
   else
@@ -1222,28 +1352,32 @@ let kernel_mul_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.mul a_val b_val);
       incr i
     done)
   else
@@ -1266,28 +1400,32 @@ let kernel_mul_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.mul a_val b_val);
       incr i
     done)
   else
@@ -1310,28 +1448,32 @@ let kernel_mul_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.mul a_val b_val);
       incr i
     done)
   else
@@ -1354,28 +1496,32 @@ let kernel_mul_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.mul a_val b_val);
       incr i
     done)
   else
@@ -1398,28 +1544,32 @@ let kernel_mul_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.mul a_val b_val);
       incr i
     done)
   else
@@ -1442,28 +1592,32 @@ let kernel_mul_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.mul a_val b_val);
       incr i
     done)
   else
@@ -1486,28 +1640,32 @@ let kernel_mul_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.mul a_val b_val);
       incr i
     done)
   else
@@ -1530,28 +1688,32 @@ let kernel_mul_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.mul a_val b_val);
       incr i
     done)
   else
@@ -1574,28 +1736,32 @@ let kernel_mul_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.mul a_val b_val);
       incr i
     done)
   else
@@ -1618,28 +1784,32 @@ let kernel_mul_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.mul a_val b_val);
       incr i
     done)
   else
@@ -1663,28 +1833,32 @@ let kernel_mul_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.mul a_val b_val);
       incr i
     done)
   else
@@ -1708,28 +1882,32 @@ let kernel_mul_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.mul a_val b_val);
       incr i
     done)
   else
@@ -1753,28 +1931,32 @@ let kernel_mul_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.mul a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.mul a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.mul a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.mul a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.mul a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.mul a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.mul a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.mul a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.mul a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.mul a_val b_val);
       incr i
     done)
   else
@@ -1798,28 +1980,32 @@ let kernel_fdiv_float16 (a : (float, float16_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.div a_val b_val);
       incr i
     done)
   else
@@ -1843,28 +2029,32 @@ let kernel_fdiv_float32 (a : (float, float32_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.div a_val b_val);
       incr i
     done)
   else
@@ -1888,28 +2078,32 @@ let kernel_fdiv_float64 (a : (float, float64_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.div a_val b_val);
       incr i
     done)
   else
@@ -1932,28 +2126,32 @@ let kernel_fdiv_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -1976,28 +2174,32 @@ let kernel_fdiv_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -2020,28 +2222,32 @@ let kernel_fdiv_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -2064,28 +2270,32 @@ let kernel_fdiv_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -2108,28 +2318,32 @@ let kernel_fdiv_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.div a_val b_val);
       incr i
     done)
   else
@@ -2152,28 +2366,32 @@ let kernel_fdiv_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.div a_val b_val);
       incr i
     done)
   else
@@ -2196,28 +2414,32 @@ let kernel_fdiv_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -2241,28 +2463,32 @@ let kernel_fdiv_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.div a_val b_val);
       incr i
     done)
   else
@@ -2286,28 +2512,32 @@ let kernel_fdiv_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.div a_val b_val);
       incr i
     done)
   else
@@ -2331,28 +2561,32 @@ let kernel_fdiv_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.div a_val b_val);
       incr i
     done)
   else
@@ -2376,28 +2610,37 @@ let kernel_idiv_float16 (a : (float, float16_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.trunc (Float.div a_val0 b_val0));
-      Array1.unsafe_set out_buf i1 (Float.trunc (Float.div a_val1 b_val1));
-      Array1.unsafe_set out_buf i2 (Float.trunc (Float.div a_val2 b_val2));
-      Array1.unsafe_set out_buf i3 (Float.trunc (Float.div a_val3 b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (Float.trunc (Float.div a_val0 b_val0));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (Float.trunc (Float.div a_val1 b_val1));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (Float.trunc (Float.div a_val2 b_val2));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (Float.trunc (Float.div a_val3 b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.trunc (Float.div a_val b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (Float.trunc (Float.div a_val b_val));
       incr i
     done)
   else
@@ -2423,28 +2666,37 @@ let kernel_idiv_float32 (a : (float, float32_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.trunc (Float.div a_val0 b_val0));
-      Array1.unsafe_set out_buf i1 (Float.trunc (Float.div a_val1 b_val1));
-      Array1.unsafe_set out_buf i2 (Float.trunc (Float.div a_val2 b_val2));
-      Array1.unsafe_set out_buf i3 (Float.trunc (Float.div a_val3 b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (Float.trunc (Float.div a_val0 b_val0));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (Float.trunc (Float.div a_val1 b_val1));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (Float.trunc (Float.div a_val2 b_val2));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (Float.trunc (Float.div a_val3 b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.trunc (Float.div a_val b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (Float.trunc (Float.div a_val b_val));
       incr i
     done)
   else
@@ -2470,28 +2722,37 @@ let kernel_idiv_float64 (a : (float, float64_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.trunc (Float.div a_val0 b_val0));
-      Array1.unsafe_set out_buf i1 (Float.trunc (Float.div a_val1 b_val1));
-      Array1.unsafe_set out_buf i2 (Float.trunc (Float.div a_val2 b_val2));
-      Array1.unsafe_set out_buf i3 (Float.trunc (Float.div a_val3 b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (Float.trunc (Float.div a_val0 b_val0));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (Float.trunc (Float.div a_val1 b_val1));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (Float.trunc (Float.div a_val2 b_val2));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (Float.trunc (Float.div a_val3 b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.trunc (Float.div a_val b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (Float.trunc (Float.div a_val b_val));
       incr i
     done)
   else
@@ -2516,28 +2777,32 @@ let kernel_idiv_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -2560,28 +2825,32 @@ let kernel_idiv_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -2604,28 +2873,32 @@ let kernel_idiv_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -2648,28 +2921,32 @@ let kernel_idiv_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -2692,28 +2969,32 @@ let kernel_idiv_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.div a_val b_val);
       incr i
     done)
   else
@@ -2736,28 +3017,32 @@ let kernel_idiv_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.div a_val b_val);
       incr i
     done)
   else
@@ -2780,28 +3065,32 @@ let kernel_idiv_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.div a_val b_val);
       incr i
     done)
   else
@@ -2825,28 +3114,32 @@ let kernel_idiv_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.div a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.div a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.div a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.div a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.div a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.div a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.div a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.div a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.div a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.div a_val b_val);
       incr i
     done)
   else
@@ -2870,28 +3163,32 @@ let kernel_idiv_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (complex_idiv a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (complex_idiv a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (complex_idiv a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (complex_idiv a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (complex_idiv a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (complex_idiv a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (complex_idiv a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (complex_idiv a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (complex_idiv a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (complex_idiv a_val b_val);
       incr i
     done)
   else
@@ -2915,28 +3212,32 @@ let kernel_idiv_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (complex_idiv a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (complex_idiv a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (complex_idiv a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (complex_idiv a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (complex_idiv a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (complex_idiv a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (complex_idiv a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (complex_idiv a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (complex_idiv a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (complex_idiv a_val b_val);
       incr i
     done)
   else
@@ -2959,28 +3260,32 @@ let kernel_pow_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.pow a_val b_val);
       incr i
     done)
   else
@@ -3003,28 +3308,32 @@ let kernel_pow_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.pow a_val b_val);
       incr i
     done)
   else
@@ -3047,28 +3356,32 @@ let kernel_pow_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.pow a_val b_val);
       incr i
     done)
   else
@@ -3091,28 +3404,32 @@ let kernel_pow_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (int_pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (int_pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (int_pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (int_pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (int_pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (int_pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (int_pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (int_pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (int_pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (int_pow a_val b_val);
       incr i
     done)
   else
@@ -3135,28 +3452,32 @@ let kernel_pow_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (int_pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (int_pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (int_pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (int_pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (int_pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (int_pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (int_pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (int_pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (int_pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (int_pow a_val b_val);
       incr i
     done)
   else
@@ -3179,28 +3500,32 @@ let kernel_pow_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (int_pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (int_pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (int_pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (int_pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (int_pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (int_pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (int_pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (int_pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (int_pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (int_pow a_val b_val);
       incr i
     done)
   else
@@ -3223,28 +3548,32 @@ let kernel_pow_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (int_pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (int_pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (int_pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (int_pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (int_pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (int_pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (int_pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (int_pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (int_pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (int_pow a_val b_val);
       incr i
     done)
   else
@@ -3267,28 +3596,32 @@ let kernel_pow_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (int32_pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (int32_pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (int32_pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (int32_pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (int32_pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (int32_pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (int32_pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (int32_pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (int32_pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (int32_pow a_val b_val);
       incr i
     done)
   else
@@ -3311,28 +3644,32 @@ let kernel_pow_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (int64_pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (int64_pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (int64_pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (int64_pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (int64_pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (int64_pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (int64_pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (int64_pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (int64_pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (int64_pow a_val b_val);
       incr i
     done)
   else
@@ -3355,28 +3692,32 @@ let kernel_pow_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (int_pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (int_pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (int_pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (int_pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (int_pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (int_pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (int_pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (int_pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (int_pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (int_pow a_val b_val);
       incr i
     done)
   else
@@ -3400,28 +3741,32 @@ let kernel_pow_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (nativeint_pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (nativeint_pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (nativeint_pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (nativeint_pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (nativeint_pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (nativeint_pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (nativeint_pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (nativeint_pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (nativeint_pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (nativeint_pow a_val b_val);
       incr i
     done)
   else
@@ -3445,28 +3790,32 @@ let kernel_pow_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.pow a_val b_val);
       incr i
     done)
   else
@@ -3490,28 +3839,32 @@ let kernel_pow_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Complex.pow a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Complex.pow a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Complex.pow a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Complex.pow a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.pow a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.pow a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.pow a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.pow a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Complex.pow a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.pow a_val b_val);
       incr i
     done)
   else
@@ -3534,28 +3887,37 @@ let kernel_equal_float16 (a : (float, float16_elt) t)
     (b : (float, float16_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (Float.equal a_val0 b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (Float.equal a_val1 b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (Float.equal a_val2 b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (Float.equal a_val3 b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (Float.equal a_val0 b_val0));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (Float.equal a_val1 b_val1));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (Float.equal a_val2 b_val2));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (Float.equal a_val3 b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (Float.equal a_val b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (Float.equal a_val b_val));
       incr i
     done)
   else
@@ -3581,28 +3943,32 @@ let kernel_modulo_float16 (a : (float, float16_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.rem a_val b_val);
       incr i
     done)
   else
@@ -3626,28 +3992,32 @@ let kernel_modulo_float32 (a : (float, float32_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.rem a_val b_val);
       incr i
     done)
   else
@@ -3671,28 +4041,32 @@ let kernel_modulo_float64 (a : (float, float64_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.rem a_val b_val);
       incr i
     done)
   else
@@ -3715,28 +4089,32 @@ let kernel_modulo_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.rem a_val b_val);
       incr i
     done)
   else
@@ -3759,28 +4137,32 @@ let kernel_modulo_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.rem a_val b_val);
       incr i
     done)
   else
@@ -3803,28 +4185,32 @@ let kernel_modulo_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.rem a_val b_val);
       incr i
     done)
   else
@@ -3847,28 +4233,32 @@ let kernel_modulo_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.rem a_val b_val);
       incr i
     done)
   else
@@ -3891,28 +4281,32 @@ let kernel_modulo_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.rem a_val b_val);
       incr i
     done)
   else
@@ -3935,28 +4329,32 @@ let kernel_modulo_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.rem a_val b_val);
       incr i
     done)
   else
@@ -3979,28 +4377,32 @@ let kernel_modulo_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.rem a_val b_val);
       incr i
     done)
   else
@@ -4024,28 +4426,32 @@ let kernel_modulo_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.rem a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.rem a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.rem a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.rem a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.rem a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.rem a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.rem a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.rem a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.rem a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.rem a_val b_val);
       incr i
     done)
   else
@@ -4069,28 +4475,32 @@ let kernel_modulo_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (complex_modulo a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (complex_modulo a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (complex_modulo a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (complex_modulo a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (complex_modulo a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (complex_modulo a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (complex_modulo a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (complex_modulo a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (complex_modulo a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (complex_modulo a_val b_val);
       incr i
     done)
   else
@@ -4114,28 +4524,32 @@ let kernel_modulo_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (complex_modulo a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (complex_modulo a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (complex_modulo a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (complex_modulo a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (complex_modulo a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (complex_modulo a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (complex_modulo a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (complex_modulo a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (complex_modulo a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (complex_modulo a_val b_val);
       incr i
     done)
   else
@@ -4158,28 +4572,32 @@ let kernel_max_float16 (a : (float, float16_elt) t) (b : (float, float16_elt) t)
     (out : (float, float16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.max a_val b_val);
       incr i
     done)
   else
@@ -4202,28 +4620,32 @@ let kernel_max_float32 (a : (float, float32_elt) t) (b : (float, float32_elt) t)
     (out : (float, float32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.max a_val b_val);
       incr i
     done)
   else
@@ -4246,28 +4668,32 @@ let kernel_max_float64 (a : (float, float64_elt) t) (b : (float, float64_elt) t)
     (out : (float, float64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Float.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Float.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Float.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Float.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Float.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Float.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Float.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Float.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Float.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Float.max a_val b_val);
       incr i
     done)
   else
@@ -4290,28 +4716,32 @@ let kernel_max_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.max a_val b_val);
       incr i
     done)
   else
@@ -4334,28 +4764,32 @@ let kernel_max_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.max a_val b_val);
       incr i
     done)
   else
@@ -4378,28 +4812,32 @@ let kernel_max_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.max a_val b_val);
       incr i
     done)
   else
@@ -4422,28 +4860,32 @@ let kernel_max_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.max a_val b_val);
       incr i
     done)
   else
@@ -4466,28 +4908,32 @@ let kernel_max_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.max a_val b_val);
       incr i
     done)
   else
@@ -4510,28 +4956,32 @@ let kernel_max_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.max a_val b_val);
       incr i
     done)
   else
@@ -4554,28 +5004,32 @@ let kernel_max_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.max a_val b_val);
       incr i
     done)
   else
@@ -4599,28 +5053,32 @@ let kernel_max_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.max a_val b_val);
       incr i
     done)
   else
@@ -4644,28 +5102,32 @@ let kernel_max_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (complex_max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (complex_max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (complex_max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (complex_max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (complex_max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (complex_max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (complex_max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (complex_max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (complex_max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (complex_max a_val b_val);
       incr i
     done)
   else
@@ -4689,28 +5151,32 @@ let kernel_max_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (complex_max a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (complex_max a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (complex_max a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (complex_max a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (complex_max a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (complex_max a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (complex_max a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (complex_max a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (complex_max a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (complex_max a_val b_val);
       incr i
     done)
   else
@@ -4733,28 +5199,32 @@ let kernel_cmplt_float16 (a : (float, float16_elt) t)
     (b : (float, float16_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -4777,28 +5247,32 @@ let kernel_cmplt_float32 (a : (float, float32_elt) t)
     (b : (float, float32_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -4821,28 +5295,32 @@ let kernel_cmplt_float64 (a : (float, float64_elt) t)
     (b : (float, float64_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -4865,28 +5343,32 @@ let kernel_cmplt_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -4909,28 +5391,32 @@ let kernel_cmplt_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -4953,28 +5439,32 @@ let kernel_cmplt_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -4997,28 +5487,32 @@ let kernel_cmplt_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -5041,28 +5535,32 @@ let kernel_cmplt_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -5085,28 +5583,32 @@ let kernel_cmplt_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -5129,28 +5631,32 @@ let kernel_cmplt_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -5174,28 +5680,32 @@ let kernel_cmplt_nativeint (a : (nativeint, nativeint_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0 < b_val0));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1 < b_val1));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2 < b_val2));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3 < b_val3));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val < b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
       incr i
     done)
   else
@@ -5219,28 +5729,37 @@ let kernel_cmplt_complex32 (a : (Complex.t, complex32_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0.re < b_val0.re));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1.re < b_val1.re));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2.re < b_val2.re));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3.re < b_val3.re));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (a_val0.re < b_val0.re));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (a_val1.re < b_val1.re));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (a_val2.re < b_val2.re));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (a_val3.re < b_val3.re));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val.re < b_val.re));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (a_val.re < b_val.re));
       incr i
     done)
   else
@@ -5266,28 +5785,37 @@ let kernel_cmplt_complex64 (a : (Complex.t, complex64_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (a_val0.re < b_val0.re));
-      Array1.unsafe_set out_buf i1 (bool_to_int (a_val1.re < b_val1.re));
-      Array1.unsafe_set out_buf i2 (bool_to_int (a_val2.re < b_val2.re));
-      Array1.unsafe_set out_buf i3 (bool_to_int (a_val3.re < b_val3.re));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (a_val0.re < b_val0.re));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (a_val1.re < b_val1.re));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (a_val2.re < b_val2.re));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (a_val3.re < b_val3.re));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val.re < b_val.re));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (a_val.re < b_val.re));
       incr i
     done)
   else
@@ -5310,28 +5838,37 @@ let kernel_cmpne_float16 (a : (float, float16_elt) t)
     (b : (float, float16_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5356,28 +5893,37 @@ let kernel_cmpne_float32 (a : (float, float32_elt) t)
     (b : (float, float32_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5402,28 +5948,37 @@ let kernel_cmpne_float64 (a : (float, float64_elt) t)
     (b : (float, float64_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5448,28 +6003,37 @@ let kernel_cmpne_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5494,28 +6058,37 @@ let kernel_cmpne_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5540,28 +6113,37 @@ let kernel_cmpne_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5586,28 +6168,37 @@ let kernel_cmpne_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5632,28 +6223,37 @@ let kernel_cmpne_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5678,28 +6278,37 @@ let kernel_cmpne_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5724,28 +6333,37 @@ let kernel_cmpne_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5771,28 +6389,37 @@ let kernel_cmpne_nativeint (a : (nativeint, nativeint_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5818,28 +6445,36 @@ let kernel_cmpne_complex32 (a : (Complex.t, complex32_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (a_val = b_val));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val = b_val));
       incr i
     done)
   else
@@ -5865,28 +6500,37 @@ let kernel_cmpne_complex64 (a : (Complex.t, complex64_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (bool_to_int (not (a_val0 = b_val0)));
-      Array1.unsafe_set out_buf i1 (bool_to_int (not (a_val1 = b_val1)));
-      Array1.unsafe_set out_buf i2 (bool_to_int (not (a_val2 = b_val2)));
-      Array1.unsafe_set out_buf i3 (bool_to_int (not (a_val3 = b_val3)));
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (bool_to_int (not (a_val = b_val)));
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
       incr i
     done)
   else
@@ -5912,28 +6556,32 @@ let kernel_bit_and_float16 (a : (float, float16_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logand_float a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logand_float a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logand_float a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logand_float a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logand_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logand_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logand_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logand_float a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logand_float a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logand_float a_val b_val);
       incr i
     done)
   else
@@ -5957,28 +6605,32 @@ let kernel_bit_and_float32 (a : (float, float32_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logand_float a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logand_float a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logand_float a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logand_float a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logand_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logand_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logand_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logand_float a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logand_float a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logand_float a_val b_val);
       incr i
     done)
   else
@@ -6002,28 +6654,32 @@ let kernel_bit_and_float64 (a : (float, float64_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logand_float a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logand_float a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logand_float a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logand_float a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logand_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logand_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logand_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logand_float a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logand_float a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logand_float a_val b_val);
       incr i
     done)
   else
@@ -6046,28 +6702,32 @@ let kernel_bit_and_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logand a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logand a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logand a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logand a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logand a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logand a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logand a_val b_val);
       incr i
     done)
   else
@@ -6090,28 +6750,32 @@ let kernel_bit_and_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logand a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logand a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logand a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logand a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logand a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logand a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logand a_val b_val);
       incr i
     done)
   else
@@ -6134,28 +6798,32 @@ let kernel_bit_and_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logand a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logand a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logand a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logand a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logand a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logand a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logand a_val b_val);
       incr i
     done)
   else
@@ -6178,28 +6846,32 @@ let kernel_bit_and_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logand a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logand a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logand a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logand a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logand a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logand a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logand a_val b_val);
       incr i
     done)
   else
@@ -6222,28 +6894,32 @@ let kernel_bit_and_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.logand a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.logand a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.logand a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.logand a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.logand a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.logand a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.logand a_val b_val);
       incr i
     done)
   else
@@ -6266,28 +6942,32 @@ let kernel_bit_and_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.logand a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.logand a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.logand a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.logand a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.logand a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.logand a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.logand a_val b_val);
       incr i
     done)
   else
@@ -6310,28 +6990,32 @@ let kernel_bit_and_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logand a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logand a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logand a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logand a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logand a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logand a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logand a_val b_val);
       incr i
     done)
   else
@@ -6355,28 +7039,32 @@ let kernel_bit_and_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.logand a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.logand a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.logand a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.logand a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.logand a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.logand a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.logand a_val b_val);
       incr i
     done)
   else
@@ -6400,28 +7088,32 @@ let kernel_bit_and_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logand_complex a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logand_complex a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logand_complex a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logand_complex a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logand_complex a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logand_complex a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logand_complex a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logand_complex a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logand_complex a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logand_complex a_val b_val);
       incr i
     done)
   else
@@ -6445,28 +7137,32 @@ let kernel_bit_and_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logand_complex a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logand_complex a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logand_complex a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logand_complex a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logand_complex a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logand_complex a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logand_complex a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logand_complex a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logand_complex a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logand_complex a_val b_val);
       incr i
     done)
   else
@@ -6490,28 +7186,32 @@ let kernel_bit_or_float16 (a : (float, float16_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logor_float a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logor_float a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logor_float a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logor_float a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logor_float a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logor_float a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logor_float a_val b_val);
       incr i
     done)
   else
@@ -6535,28 +7235,32 @@ let kernel_bit_or_float32 (a : (float, float32_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logor_float a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logor_float a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logor_float a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logor_float a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logor_float a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logor_float a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logor_float a_val b_val);
       incr i
     done)
   else
@@ -6580,28 +7284,32 @@ let kernel_bit_or_float64 (a : (float, float64_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logor_float a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logor_float a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logor_float a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logor_float a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logor_float a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logor_float a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logor_float a_val b_val);
       incr i
     done)
   else
@@ -6624,28 +7332,32 @@ let kernel_bit_or_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logor a_val b_val);
       incr i
     done)
   else
@@ -6668,28 +7380,32 @@ let kernel_bit_or_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logor a_val b_val);
       incr i
     done)
   else
@@ -6712,28 +7428,32 @@ let kernel_bit_or_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logor a_val b_val);
       incr i
     done)
   else
@@ -6756,28 +7476,32 @@ let kernel_bit_or_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logor a_val b_val);
       incr i
     done)
   else
@@ -6800,28 +7524,32 @@ let kernel_bit_or_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.logor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.logor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.logor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.logor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.logor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.logor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.logor a_val b_val);
       incr i
     done)
   else
@@ -6844,28 +7572,32 @@ let kernel_bit_or_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.logor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.logor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.logor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.logor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.logor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.logor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.logor a_val b_val);
       incr i
     done)
   else
@@ -6888,28 +7620,32 @@ let kernel_bit_or_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logor a_val b_val);
       incr i
     done)
   else
@@ -6933,28 +7669,32 @@ let kernel_bit_or_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.logor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.logor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.logor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.logor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.logor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.logor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.logor a_val b_val);
       incr i
     done)
   else
@@ -6978,28 +7718,32 @@ let kernel_bit_or_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logor_complex a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logor_complex a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logor_complex a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logor_complex a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logor_complex a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logor_complex a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logor_complex a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logor_complex a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logor_complex a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logor_complex a_val b_val);
       incr i
     done)
   else
@@ -7023,28 +7767,32 @@ let kernel_bit_or_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logor_complex a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logor_complex a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logor_complex a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logor_complex a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logor_complex a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logor_complex a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logor_complex a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logor_complex a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logor_complex a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logor_complex a_val b_val);
       incr i
     done)
   else
@@ -7068,28 +7816,32 @@ let kernel_bit_xor_float16 (a : (float, float16_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logxor_float a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logxor_float a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logxor_float a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logxor_float a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logxor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logxor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logxor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logxor_float a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logxor_float a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logxor_float a_val b_val);
       incr i
     done)
   else
@@ -7113,28 +7865,32 @@ let kernel_bit_xor_float32 (a : (float, float32_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logxor_float a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logxor_float a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logxor_float a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logxor_float a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logxor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logxor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logxor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logxor_float a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logxor_float a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logxor_float a_val b_val);
       incr i
     done)
   else
@@ -7158,28 +7914,32 @@ let kernel_bit_xor_float64 (a : (float, float64_elt) t)
     end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logxor_float a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logxor_float a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logxor_float a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logxor_float a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logxor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logxor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logxor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logxor_float a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logxor_float a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logxor_float a_val b_val);
       incr i
     done)
   else
@@ -7202,28 +7962,32 @@ let kernel_bit_xor_int8 (a : (int, int8_elt) t) (b : (int, int8_elt) t)
     (out : (int, int8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logxor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logxor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logxor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logxor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logxor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logxor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logxor a_val b_val);
       incr i
     done)
   else
@@ -7246,28 +8010,32 @@ let kernel_bit_xor_uint8 (a : (int, uint8_elt) t) (b : (int, uint8_elt) t)
     (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logxor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logxor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logxor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logxor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logxor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logxor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logxor a_val b_val);
       incr i
     done)
   else
@@ -7290,28 +8058,32 @@ let kernel_bit_xor_int16 (a : (int, int16_elt) t) (b : (int, int16_elt) t)
     (out : (int, int16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logxor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logxor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logxor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logxor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logxor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logxor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logxor a_val b_val);
       incr i
     done)
   else
@@ -7334,28 +8106,32 @@ let kernel_bit_xor_uint16 (a : (int, uint16_elt) t) (b : (int, uint16_elt) t)
     (out : (int, uint16_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logxor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logxor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logxor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logxor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logxor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logxor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logxor a_val b_val);
       incr i
     done)
   else
@@ -7378,28 +8154,32 @@ let kernel_bit_xor_int32 (a : (int32, int32_elt) t) (b : (int32, int32_elt) t)
     (out : (int32, int32_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int32.logxor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int32.logxor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int32.logxor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int32.logxor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int32.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int32.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int32.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int32.logxor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int32.logxor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int32.logxor a_val b_val);
       incr i
     done)
   else
@@ -7422,28 +8202,32 @@ let kernel_bit_xor_int64 (a : (int64, int64_elt) t) (b : (int64, int64_elt) t)
     (out : (int64, int64_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int64.logxor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int64.logxor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int64.logxor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int64.logxor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int64.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int64.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int64.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int64.logxor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int64.logxor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int64.logxor a_val b_val);
       incr i
     done)
   else
@@ -7466,28 +8250,32 @@ let kernel_bit_xor_int (a : (int, int_elt) t) (b : (int, int_elt) t)
     (out : (int, int_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Int.logxor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Int.logxor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Int.logxor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Int.logxor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logxor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Int.logxor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logxor a_val b_val);
       incr i
     done)
   else
@@ -7511,28 +8299,32 @@ let kernel_bit_xor_nativeint (a : (nativeint, nativeint_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (Nativeint.logxor a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (Nativeint.logxor a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (Nativeint.logxor a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (Nativeint.logxor a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Nativeint.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Nativeint.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Nativeint.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Nativeint.logxor a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (Nativeint.logxor a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Nativeint.logxor a_val b_val);
       incr i
     done)
   else
@@ -7556,28 +8348,32 @@ let kernel_bit_xor_complex32 (a : (Complex.t, complex32_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logxor_complex a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logxor_complex a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logxor_complex a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logxor_complex a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logxor_complex a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logxor_complex a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logxor_complex a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logxor_complex a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logxor_complex a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logxor_complex a_val b_val);
       incr i
     done)
   else
@@ -7601,28 +8397,32 @@ let kernel_bit_xor_complex64 (a : (Complex.t, complex64_elt) t)
     start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let a_val0 = Array1.unsafe_get a_buf (offset a + i0) in
-      let b_val0 = Array1.unsafe_get b_buf (offset b + i0) in
-      let a_val1 = Array1.unsafe_get a_buf (offset a + i1) in
-      let b_val1 = Array1.unsafe_get b_buf (offset b + i1) in
-      let a_val2 = Array1.unsafe_get a_buf (offset a + i2) in
-      let b_val2 = Array1.unsafe_get b_buf (offset b + i2) in
-      let a_val3 = Array1.unsafe_get a_buf (offset a + i3) in
-      let b_val3 = Array1.unsafe_get b_buf (offset b + i3) in
-      Array1.unsafe_set out_buf i0 (logxor_complex a_val0 b_val0);
-      Array1.unsafe_set out_buf i1 (logxor_complex a_val1 b_val1);
-      Array1.unsafe_set out_buf i2 (logxor_complex a_val2 b_val2);
-      Array1.unsafe_set out_buf i3 (logxor_complex a_val3 b_val3);
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logxor_complex a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logxor_complex a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logxor_complex a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logxor_complex a_val3 b_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let a_val = Array1.unsafe_get a_buf (offset a + idx) in
-      let b_val = Array1.unsafe_get b_buf (offset b + idx) in
-      Array1.unsafe_set out_buf idx (logxor_complex a_val b_val);
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logxor_complex a_val b_val);
       incr i
     done)
   else

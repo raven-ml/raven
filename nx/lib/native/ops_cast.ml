@@ -7,23 +7,26 @@ let cast_f16_to_f32 (src : (float, float16_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -40,23 +43,26 @@ let cast_f16_to_f64 (src : (float, float16_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -73,23 +79,26 @@ let cast_f16_to_i8 (src : (float, float16_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -106,23 +115,26 @@ let cast_f16_to_u8 (src : (float, float16_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -139,23 +151,26 @@ let cast_f16_to_i16 (src : (float, float16_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -172,23 +187,26 @@ let cast_f16_to_u16 (src : (float, float16_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -205,23 +223,26 @@ let cast_f16_to_i32 (src : (float, float16_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.of_float src_val);
       incr i
     done)
   else
@@ -238,23 +259,26 @@ let cast_f16_to_i64 (src : (float, float16_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_float src_val);
       incr i
     done)
   else
@@ -271,23 +295,31 @@ let cast_f16_to_c32 (src : (float, float16_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 { Complex.re = src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1 { Complex.re = src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2 { Complex.re = src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3 { Complex.re = src_val3; im = 0.0 };
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        { Complex.re = src_val0; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        { Complex.re = src_val1; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        { Complex.re = src_val2; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        { Complex.re = src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx { Complex.re = src_val; im = 0.0 };
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        { Complex.re = src_val; im = 0.0 };
       incr i
     done)
   else
@@ -306,23 +338,31 @@ let cast_f16_to_c64 (src : (float, float16_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 { Complex.re = src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1 { Complex.re = src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2 { Complex.re = src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3 { Complex.re = src_val3; im = 0.0 };
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        { Complex.re = src_val0; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        { Complex.re = src_val1; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        { Complex.re = src_val2; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        { Complex.re = src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx { Complex.re = src_val; im = 0.0 };
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        { Complex.re = src_val; im = 0.0 };
       incr i
     done)
   else
@@ -341,23 +381,26 @@ let cast_f16_to_int (src : (float, float16_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -374,23 +417,26 @@ let cast_f16_to_nativeint (src : (float, float16_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.of_float src_val);
       incr i
     done)
   else
@@ -407,23 +453,26 @@ let cast_f32_to_f16 (src : (float, float32_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -440,23 +489,26 @@ let cast_f32_to_f64 (src : (float, float32_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -473,23 +525,26 @@ let cast_f32_to_i8 (src : (float, float32_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -506,23 +561,26 @@ let cast_f32_to_u8 (src : (float, float32_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -539,23 +597,26 @@ let cast_f32_to_i16 (src : (float, float32_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -572,23 +633,26 @@ let cast_f32_to_u16 (src : (float, float32_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -605,23 +669,26 @@ let cast_f32_to_i32 (src : (float, float32_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.of_float src_val);
       incr i
     done)
   else
@@ -638,23 +705,26 @@ let cast_f32_to_i64 (src : (float, float32_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_float src_val);
       incr i
     done)
   else
@@ -671,23 +741,31 @@ let cast_f32_to_c32 (src : (float, float32_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 { Complex.re = src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1 { Complex.re = src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2 { Complex.re = src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3 { Complex.re = src_val3; im = 0.0 };
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        { Complex.re = src_val0; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        { Complex.re = src_val1; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        { Complex.re = src_val2; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        { Complex.re = src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx { Complex.re = src_val; im = 0.0 };
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        { Complex.re = src_val; im = 0.0 };
       incr i
     done)
   else
@@ -706,23 +784,31 @@ let cast_f32_to_c64 (src : (float, float32_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 { Complex.re = src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1 { Complex.re = src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2 { Complex.re = src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3 { Complex.re = src_val3; im = 0.0 };
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        { Complex.re = src_val0; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        { Complex.re = src_val1; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        { Complex.re = src_val2; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        { Complex.re = src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx { Complex.re = src_val; im = 0.0 };
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        { Complex.re = src_val; im = 0.0 };
       incr i
     done)
   else
@@ -741,23 +827,26 @@ let cast_f32_to_int (src : (float, float32_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -774,23 +863,26 @@ let cast_f32_to_nativeint (src : (float, float32_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.of_float src_val);
       incr i
     done)
   else
@@ -807,23 +899,26 @@ let cast_f64_to_f16 (src : (float, float64_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -840,23 +935,26 @@ let cast_f64_to_f32 (src : (float, float64_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -873,23 +971,26 @@ let cast_f64_to_i8 (src : (float, float64_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -906,23 +1007,26 @@ let cast_f64_to_u8 (src : (float, float64_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -939,23 +1043,26 @@ let cast_f64_to_i16 (src : (float, float64_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -972,23 +1079,26 @@ let cast_f64_to_u16 (src : (float, float64_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -1005,23 +1115,26 @@ let cast_f64_to_i32 (src : (float, float64_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.of_float src_val);
       incr i
     done)
   else
@@ -1038,23 +1151,26 @@ let cast_f64_to_i64 (src : (float, float64_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_float src_val);
       incr i
     done)
   else
@@ -1071,23 +1187,31 @@ let cast_f64_to_c32 (src : (float, float64_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 { Complex.re = src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1 { Complex.re = src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2 { Complex.re = src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3 { Complex.re = src_val3; im = 0.0 };
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        { Complex.re = src_val0; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        { Complex.re = src_val1; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        { Complex.re = src_val2; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        { Complex.re = src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx { Complex.re = src_val; im = 0.0 };
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        { Complex.re = src_val; im = 0.0 };
       incr i
     done)
   else
@@ -1106,23 +1230,31 @@ let cast_f64_to_c64 (src : (float, float64_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 { Complex.re = src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1 { Complex.re = src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2 { Complex.re = src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3 { Complex.re = src_val3; im = 0.0 };
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        { Complex.re = src_val0; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        { Complex.re = src_val1; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        { Complex.re = src_val2; im = 0.0 };
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        { Complex.re = src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx { Complex.re = src_val; im = 0.0 };
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        { Complex.re = src_val; im = 0.0 };
       incr i
     done)
   else
@@ -1141,23 +1273,26 @@ let cast_f64_to_int (src : (float, float64_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (int_of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (int_of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (int_of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (int_of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (int_of_float src_val);
       incr i
     done)
   else
@@ -1174,23 +1309,26 @@ let cast_f64_to_nativeint (src : (float, float64_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.of_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.of_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.of_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.of_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.of_float src_val);
       incr i
     done)
   else
@@ -1207,23 +1345,26 @@ let cast_i8_to_f16 (src : (int, int8_signed_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -1240,23 +1381,26 @@ let cast_i8_to_f32 (src : (int, int8_signed_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -1273,23 +1417,26 @@ let cast_i8_to_f64 (src : (int, int8_signed_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -1306,23 +1453,26 @@ let cast_i8_to_u8 (src : (int, int8_signed_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -1339,23 +1489,26 @@ let cast_i8_to_i16 (src : (int, int8_signed_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -1372,23 +1525,26 @@ let cast_i8_to_u16 (src : (int, int8_signed_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -1405,23 +1561,26 @@ let cast_i8_to_i32 (src : (int, int8_signed_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.of_int src_val);
       incr i
     done)
   else
@@ -1438,23 +1597,26 @@ let cast_i8_to_i64 (src : (int, int8_signed_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_int src_val);
       incr i
     done)
   else
@@ -1471,27 +1633,30 @@ let cast_i8_to_c32 (src : (int, int8_signed_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -1511,27 +1676,30 @@ let cast_i8_to_c64 (src : (int, int8_signed_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -1551,23 +1719,26 @@ let cast_i8_to_int (src : (int, int8_signed_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -1584,23 +1755,26 @@ let cast_i8_to_nativeint (src : (int, int8_signed_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.of_int src_val);
       incr i
     done)
   else
@@ -1617,23 +1791,26 @@ let cast_u8_to_f16 (src : (int, int8_unsigned_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -1650,23 +1827,26 @@ let cast_u8_to_f32 (src : (int, int8_unsigned_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -1683,23 +1863,26 @@ let cast_u8_to_f64 (src : (int, int8_unsigned_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -1716,23 +1899,26 @@ let cast_u8_to_i8 (src : (int, int8_unsigned_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -1749,23 +1935,26 @@ let cast_u8_to_i16 (src : (int, int8_unsigned_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -1782,23 +1971,26 @@ let cast_u8_to_u16 (src : (int, int8_unsigned_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -1815,23 +2007,26 @@ let cast_u8_to_i32 (src : (int, int8_unsigned_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.of_int src_val);
       incr i
     done)
   else
@@ -1848,23 +2043,26 @@ let cast_u8_to_i64 (src : (int, int8_unsigned_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_int src_val);
       incr i
     done)
   else
@@ -1881,27 +2079,30 @@ let cast_u8_to_c32 (src : (int, int8_unsigned_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -1921,27 +2122,30 @@ let cast_u8_to_c64 (src : (int, int8_unsigned_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -1961,23 +2165,26 @@ let cast_u8_to_int (src : (int, int8_unsigned_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -1994,23 +2201,26 @@ let cast_u8_to_nativeint (src : (int, int8_unsigned_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.of_int src_val);
       incr i
     done)
   else
@@ -2027,23 +2237,26 @@ let cast_i16_to_f16 (src : (int, int16_signed_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -2060,23 +2273,26 @@ let cast_i16_to_f32 (src : (int, int16_signed_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -2093,23 +2309,26 @@ let cast_i16_to_f64 (src : (int, int16_signed_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -2126,23 +2345,26 @@ let cast_i16_to_i8 (src : (int, int16_signed_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -2159,23 +2381,26 @@ let cast_i16_to_u8 (src : (int, int16_signed_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -2192,23 +2417,26 @@ let cast_i16_to_u16 (src : (int, int16_signed_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -2225,23 +2453,26 @@ let cast_i16_to_i32 (src : (int, int16_signed_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.of_int src_val);
       incr i
     done)
   else
@@ -2258,23 +2489,26 @@ let cast_i16_to_i64 (src : (int, int16_signed_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_int src_val);
       incr i
     done)
   else
@@ -2291,27 +2525,30 @@ let cast_i16_to_c32 (src : (int, int16_signed_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -2331,27 +2568,30 @@ let cast_i16_to_c64 (src : (int, int16_signed_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -2371,23 +2611,26 @@ let cast_i16_to_int (src : (int, int16_signed_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -2404,23 +2647,26 @@ let cast_i16_to_nativeint (src : (int, int16_signed_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.of_int src_val);
       incr i
     done)
   else
@@ -2437,23 +2683,26 @@ let cast_u16_to_f16 (src : (int, int16_unsigned_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -2470,23 +2719,26 @@ let cast_u16_to_f32 (src : (int, int16_unsigned_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -2503,23 +2755,26 @@ let cast_u16_to_f64 (src : (int, int16_unsigned_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -2536,23 +2791,26 @@ let cast_u16_to_i8 (src : (int, int16_unsigned_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -2569,23 +2827,26 @@ let cast_u16_to_u8 (src : (int, int16_unsigned_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -2602,23 +2863,26 @@ let cast_u16_to_i16 (src : (int, int16_unsigned_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -2635,23 +2899,26 @@ let cast_u16_to_i32 (src : (int, int16_unsigned_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.of_int src_val);
       incr i
     done)
   else
@@ -2668,23 +2935,26 @@ let cast_u16_to_i64 (src : (int, int16_unsigned_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_int src_val);
       incr i
     done)
   else
@@ -2701,27 +2971,30 @@ let cast_u16_to_c32 (src : (int, int16_unsigned_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -2741,27 +3014,30 @@ let cast_u16_to_c64 (src : (int, int16_unsigned_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -2781,23 +3057,26 @@ let cast_u16_to_int (src : (int, int16_unsigned_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -2814,23 +3093,26 @@ let cast_u16_to_nativeint (src : (int, int16_unsigned_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.of_int src_val);
       incr i
     done)
   else
@@ -2847,23 +3129,26 @@ let cast_i32_to_f16 (src : (int32, int32_elt) t) (dst : (float, float16_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.to_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.to_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.to_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.to_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.to_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.to_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.to_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.to_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.to_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.to_float src_val);
       incr i
     done)
   else
@@ -2880,23 +3165,26 @@ let cast_i32_to_f32 (src : (int32, int32_elt) t) (dst : (float, float32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.to_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.to_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.to_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.to_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.to_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.to_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.to_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.to_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.to_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.to_float src_val);
       incr i
     done)
   else
@@ -2913,23 +3201,26 @@ let cast_i32_to_f64 (src : (int32, int32_elt) t) (dst : (float, float64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.to_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.to_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.to_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.to_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.to_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.to_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.to_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.to_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.to_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.to_float src_val);
       incr i
     done)
   else
@@ -2946,23 +3237,26 @@ let cast_i32_to_i8 (src : (int32, int32_elt) t) (dst : (int, int8_signed_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.to_int src_val);
       incr i
     done)
   else
@@ -2979,23 +3273,26 @@ let cast_i32_to_u8 (src : (int32, int32_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.to_int src_val);
       incr i
     done)
   else
@@ -3012,23 +3309,26 @@ let cast_i32_to_i16 (src : (int32, int32_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.to_int src_val);
       incr i
     done)
   else
@@ -3045,23 +3345,26 @@ let cast_i32_to_u16 (src : (int32, int32_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.to_int src_val);
       incr i
     done)
   else
@@ -3078,23 +3381,26 @@ let cast_i32_to_i64 (src : (int32, int32_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_int32 src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_int32 src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_int32 src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_int32 src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_int32 src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_int32 src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_int32 src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_int32 src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_int32 src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_int32 src_val);
       incr i
     done)
   else
@@ -3111,27 +3417,30 @@ let cast_i32_to_c32 (src : (int32, int32_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = Int32.to_float src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = Int32.to_float src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = Int32.to_float src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = Int32.to_float src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = Int32.to_float src_val; im = 0.0 };
       incr i
     done)
@@ -3151,27 +3460,30 @@ let cast_i32_to_c64 (src : (int32, int32_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = Int32.to_float src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = Int32.to_float src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = Int32.to_float src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = Int32.to_float src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = Int32.to_float src_val; im = 0.0 };
       incr i
     done)
@@ -3191,23 +3503,26 @@ let cast_i32_to_int (src : (int32, int32_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.to_int src_val);
       incr i
     done)
   else
@@ -3224,23 +3539,26 @@ let cast_i32_to_nativeint (src : (int32, int32_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_int32 src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_int32 src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_int32 src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_int32 src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.of_int32 src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.of_int32 src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.of_int32 src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.of_int32 src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_int32 src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.of_int32 src_val);
       incr i
     done)
   else
@@ -3257,23 +3575,26 @@ let cast_i64_to_f16 (src : (int64, int64_elt) t) (dst : (float, float16_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_float src_val);
       incr i
     done)
   else
@@ -3290,23 +3611,26 @@ let cast_i64_to_f32 (src : (int64, int64_elt) t) (dst : (float, float32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_float src_val);
       incr i
     done)
   else
@@ -3323,23 +3647,26 @@ let cast_i64_to_f64 (src : (int64, int64_elt) t) (dst : (float, float64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_float src_val);
       incr i
     done)
   else
@@ -3356,23 +3683,26 @@ let cast_i64_to_i8 (src : (int64, int64_elt) t) (dst : (int, int8_signed_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_int src_val);
       incr i
     done)
   else
@@ -3389,23 +3719,26 @@ let cast_i64_to_u8 (src : (int64, int64_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_int src_val);
       incr i
     done)
   else
@@ -3422,23 +3755,26 @@ let cast_i64_to_i16 (src : (int64, int64_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_int src_val);
       incr i
     done)
   else
@@ -3455,23 +3791,26 @@ let cast_i64_to_u16 (src : (int64, int64_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_int src_val);
       incr i
     done)
   else
@@ -3488,23 +3827,26 @@ let cast_i64_to_i32 (src : (int64, int64_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_int32 src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_int32 src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_int32 src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_int32 src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_int32 src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_int32 src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_int32 src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_int32 src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_int32 src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_int32 src_val);
       incr i
     done)
   else
@@ -3521,27 +3863,30 @@ let cast_i64_to_c32 (src : (int64, int64_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = Int64.to_float src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = Int64.to_float src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = Int64.to_float src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = Int64.to_float src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = Int64.to_float src_val; im = 0.0 };
       incr i
     done)
@@ -3561,27 +3906,30 @@ let cast_i64_to_c64 (src : (int64, int64_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = Int64.to_float src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = Int64.to_float src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = Int64.to_float src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = Int64.to_float src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = Int64.to_float src_val; im = 0.0 };
       incr i
     done)
@@ -3601,23 +3949,26 @@ let cast_i64_to_int (src : (int64, int64_elt) t) (dst : (int, int_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_int src_val);
       incr i
     done)
   else
@@ -3634,23 +3985,26 @@ let cast_i64_to_nativeint (src : (int64, int64_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.to_nativeint src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.to_nativeint src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.to_nativeint src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.to_nativeint src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.to_nativeint src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.to_nativeint src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.to_nativeint src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.to_nativeint src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.to_nativeint src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.to_nativeint src_val);
       incr i
     done)
   else
@@ -3667,23 +4021,26 @@ let cast_c32_to_f16 (src : (Complex.t, complex32_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0.Complex.re;
-      Array1.unsafe_set dst_buf i1 src_val1.Complex.re;
-      Array1.unsafe_set dst_buf i2 src_val2.Complex.re;
-      Array1.unsafe_set dst_buf i3 src_val3.Complex.re;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3.Complex.re;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val.Complex.re;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val.Complex.re;
       incr i
     done)
   else
@@ -3700,23 +4057,26 @@ let cast_c32_to_f32 (src : (Complex.t, complex32_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0.Complex.re;
-      Array1.unsafe_set dst_buf i1 src_val1.Complex.re;
-      Array1.unsafe_set dst_buf i2 src_val2.Complex.re;
-      Array1.unsafe_set dst_buf i3 src_val3.Complex.re;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3.Complex.re;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val.Complex.re;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val.Complex.re;
       incr i
     done)
   else
@@ -3733,23 +4093,26 @@ let cast_c32_to_f64 (src : (Complex.t, complex32_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0.Complex.re;
-      Array1.unsafe_set dst_buf i1 src_val1.Complex.re;
-      Array1.unsafe_set dst_buf i2 src_val2.Complex.re;
-      Array1.unsafe_set dst_buf i3 src_val3.Complex.re;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3.Complex.re;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val.Complex.re;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val.Complex.re;
       incr i
     done)
   else
@@ -3766,23 +4129,31 @@ let cast_c32_to_i8 (src : (Complex.t, complex32_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -3801,23 +4172,31 @@ let cast_c32_to_u8 (src : (Complex.t, complex32_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -3836,23 +4215,31 @@ let cast_c32_to_i16 (src : (Complex.t, complex32_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -3871,23 +4258,31 @@ let cast_c32_to_u16 (src : (Complex.t, complex32_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -3906,23 +4301,31 @@ let cast_c32_to_i32 (src : (Complex.t, complex32_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (Int32.of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (Int32.of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (Int32.of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (Int32.of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (Int32.of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (Int32.of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (Int32.of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (Int32.of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -3941,23 +4344,31 @@ let cast_c32_to_i64 (src : (Complex.t, complex32_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (Int64.of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (Int64.of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (Int64.of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (Int64.of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (Int64.of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (Int64.of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (Int64.of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (Int64.of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -3976,23 +4387,26 @@ let cast_c32_to_c64 (src : (Complex.t, complex32_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -4009,23 +4423,31 @@ let cast_c32_to_int (src : (Complex.t, complex32_elt) t)
     (dst : (int, int_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4044,23 +4466,31 @@ let cast_c32_to_nativeint (src : (Complex.t, complex32_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (Nativeint.of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (Nativeint.of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (Nativeint.of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (Nativeint.of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (Nativeint.of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4079,23 +4509,26 @@ let cast_c64_to_f16 (src : (Complex.t, complex64_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0.Complex.re;
-      Array1.unsafe_set dst_buf i1 src_val1.Complex.re;
-      Array1.unsafe_set dst_buf i2 src_val2.Complex.re;
-      Array1.unsafe_set dst_buf i3 src_val3.Complex.re;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3.Complex.re;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val.Complex.re;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val.Complex.re;
       incr i
     done)
   else
@@ -4112,23 +4545,26 @@ let cast_c64_to_f32 (src : (Complex.t, complex64_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0.Complex.re;
-      Array1.unsafe_set dst_buf i1 src_val1.Complex.re;
-      Array1.unsafe_set dst_buf i2 src_val2.Complex.re;
-      Array1.unsafe_set dst_buf i3 src_val3.Complex.re;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3.Complex.re;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val.Complex.re;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val.Complex.re;
       incr i
     done)
   else
@@ -4145,23 +4581,26 @@ let cast_c64_to_f64 (src : (Complex.t, complex64_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0.Complex.re;
-      Array1.unsafe_set dst_buf i1 src_val1.Complex.re;
-      Array1.unsafe_set dst_buf i2 src_val2.Complex.re;
-      Array1.unsafe_set dst_buf i3 src_val3.Complex.re;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2.Complex.re;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3.Complex.re;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val.Complex.re;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val.Complex.re;
       incr i
     done)
   else
@@ -4178,23 +4617,31 @@ let cast_c64_to_i8 (src : (Complex.t, complex64_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4213,23 +4660,31 @@ let cast_c64_to_u8 (src : (Complex.t, complex64_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4248,23 +4703,31 @@ let cast_c64_to_i16 (src : (Complex.t, complex64_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4283,23 +4746,31 @@ let cast_c64_to_u16 (src : (Complex.t, complex64_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4318,23 +4789,31 @@ let cast_c64_to_i32 (src : (Complex.t, complex64_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (Int32.of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (Int32.of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (Int32.of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (Int32.of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (Int32.of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (Int32.of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (Int32.of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (Int32.of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4353,23 +4832,31 @@ let cast_c64_to_i64 (src : (Complex.t, complex64_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (Int64.of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (Int64.of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (Int64.of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (Int64.of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (Int64.of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (Int64.of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (Int64.of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (Int64.of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4388,23 +4875,26 @@ let cast_c64_to_c32 (src : (Complex.t, complex64_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -4421,23 +4911,31 @@ let cast_c64_to_int (src : (Complex.t, complex64_elt) t)
     (dst : (int, int_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (int_of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (int_of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (int_of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (int_of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (int_of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (int_of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (int_of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (int_of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (int_of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (int_of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4456,23 +4954,31 @@ let cast_c64_to_nativeint (src : (Complex.t, complex64_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_float src_val0.Complex.re);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_float src_val1.Complex.re);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_float src_val2.Complex.re);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_float src_val3.Complex.re);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
+        (Nativeint.of_float src_val0.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i1)
+        (Nativeint.of_float src_val1.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i2)
+        (Nativeint.of_float src_val2.Complex.re);
+      Array1.unsafe_set dst_buf (dst_base + i3)
+        (Nativeint.of_float src_val3.Complex.re);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_float src_val.Complex.re);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
+        (Nativeint.of_float src_val.Complex.re);
       incr i
     done)
   else
@@ -4491,23 +4997,26 @@ let cast_int_to_f16 (src : (int, int_elt) t) (dst : (float, float16_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -4524,23 +5033,26 @@ let cast_int_to_f32 (src : (int, int_elt) t) (dst : (float, float32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -4557,23 +5069,26 @@ let cast_int_to_f64 (src : (int, int_elt) t) (dst : (float, float64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (float_of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (float_of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (float_of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (float_of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (float_of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (float_of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (float_of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (float_of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (float_of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (float_of_int src_val);
       incr i
     done)
   else
@@ -4590,23 +5105,26 @@ let cast_int_to_i8 (src : (int, int_elt) t) (dst : (int, int8_signed_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -4623,23 +5141,26 @@ let cast_int_to_u8 (src : (int, int_elt) t) (dst : (int, int8_unsigned_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -4656,23 +5177,26 @@ let cast_int_to_i16 (src : (int, int_elt) t) (dst : (int, int16_signed_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -4689,23 +5213,26 @@ let cast_int_to_u16 (src : (int, int_elt) t) (dst : (int, int16_unsigned_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 src_val0;
-      Array1.unsafe_set dst_buf i1 src_val1;
-      Array1.unsafe_set dst_buf i2 src_val2;
-      Array1.unsafe_set dst_buf i3 src_val3;
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) src_val0;
+      Array1.unsafe_set dst_buf (dst_base + i1) src_val1;
+      Array1.unsafe_set dst_buf (dst_base + i2) src_val2;
+      Array1.unsafe_set dst_buf (dst_base + i3) src_val3;
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx src_val;
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) src_val;
       incr i
     done)
   else
@@ -4722,23 +5249,26 @@ let cast_int_to_i32 (src : (int, int_elt) t) (dst : (int32, int32_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int32.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int32.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int32.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int32.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int32.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int32.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int32.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int32.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int32.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int32.of_int src_val);
       incr i
     done)
   else
@@ -4755,23 +5285,26 @@ let cast_int_to_i64 (src : (int, int_elt) t) (dst : (int64, int64_elt) t)
     start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_int src_val);
       incr i
     done)
   else
@@ -4788,27 +5321,30 @@ let cast_int_to_c32 (src : (int, int_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -4828,27 +5364,30 @@ let cast_int_to_c64 (src : (int, int_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = float_of_int src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = float_of_int src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = float_of_int src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = float_of_int src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = float_of_int src_val; im = 0.0 };
       incr i
     done)
@@ -4868,23 +5407,26 @@ let cast_int_to_nativeint (src : (int, int_elt) t)
     (dst : (nativeint, nativeint_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.of_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.of_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.of_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.of_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.of_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.of_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.of_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.of_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.of_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.of_int src_val);
       incr i
     done)
   else
@@ -4901,23 +5443,26 @@ let cast_nativeint_to_f16 (src : (nativeint, nativeint_elt) t)
     (dst : (float, float16_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.to_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.to_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.to_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.to_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.to_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.to_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.to_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.to_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.to_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.to_float src_val);
       incr i
     done)
   else
@@ -4934,23 +5479,26 @@ let cast_nativeint_to_f32 (src : (nativeint, nativeint_elt) t)
     (dst : (float, float32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.to_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.to_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.to_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.to_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.to_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.to_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.to_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.to_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.to_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.to_float src_val);
       incr i
     done)
   else
@@ -4967,23 +5515,26 @@ let cast_nativeint_to_f64 (src : (nativeint, nativeint_elt) t)
     (dst : (float, float64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.to_float src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.to_float src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.to_float src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.to_float src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.to_float src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.to_float src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.to_float src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.to_float src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.to_float src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.to_float src_val);
       incr i
     done)
   else
@@ -5000,23 +5551,26 @@ let cast_nativeint_to_i8 (src : (nativeint, nativeint_elt) t)
     (dst : (int, int8_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.to_int src_val);
       incr i
     done)
   else
@@ -5033,23 +5587,26 @@ let cast_nativeint_to_u8 (src : (nativeint, nativeint_elt) t)
     (dst : (int, int8_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.to_int src_val);
       incr i
     done)
   else
@@ -5066,23 +5623,26 @@ let cast_nativeint_to_i16 (src : (nativeint, nativeint_elt) t)
     (dst : (int, int16_signed_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.to_int src_val);
       incr i
     done)
   else
@@ -5099,23 +5659,26 @@ let cast_nativeint_to_u16 (src : (nativeint, nativeint_elt) t)
     (dst : (int, int16_unsigned_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.to_int src_val);
       incr i
     done)
   else
@@ -5132,23 +5695,26 @@ let cast_nativeint_to_i32 (src : (nativeint, nativeint_elt) t)
     (dst : (int32, int32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.to_int32 src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.to_int32 src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.to_int32 src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.to_int32 src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.to_int32 src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.to_int32 src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.to_int32 src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.to_int32 src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.to_int32 src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.to_int32 src_val);
       incr i
     done)
   else
@@ -5165,23 +5731,26 @@ let cast_nativeint_to_i64 (src : (nativeint, nativeint_elt) t)
     (dst : (int64, int64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Int64.of_nativeint src_val0);
-      Array1.unsafe_set dst_buf i1 (Int64.of_nativeint src_val1);
-      Array1.unsafe_set dst_buf i2 (Int64.of_nativeint src_val2);
-      Array1.unsafe_set dst_buf i3 (Int64.of_nativeint src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Int64.of_nativeint src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Int64.of_nativeint src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Int64.of_nativeint src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Int64.of_nativeint src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Int64.of_nativeint src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Int64.of_nativeint src_val);
       incr i
     done)
   else
@@ -5198,27 +5767,30 @@ let cast_nativeint_to_c32 (src : (nativeint, nativeint_elt) t)
     (dst : (Complex.t, complex32_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = Nativeint.to_float src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = Nativeint.to_float src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = Nativeint.to_float src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = Nativeint.to_float src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = Nativeint.to_float src_val; im = 0.0 };
       incr i
     done)
@@ -5238,27 +5810,30 @@ let cast_nativeint_to_c64 (src : (nativeint, nativeint_elt) t)
     (dst : (Complex.t, complex64_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0)
         { Complex.re = Nativeint.to_float src_val0; im = 0.0 };
-      Array1.unsafe_set dst_buf i1
+      Array1.unsafe_set dst_buf (dst_base + i1)
         { Complex.re = Nativeint.to_float src_val1; im = 0.0 };
-      Array1.unsafe_set dst_buf i2
+      Array1.unsafe_set dst_buf (dst_base + i2)
         { Complex.re = Nativeint.to_float src_val2; im = 0.0 };
-      Array1.unsafe_set dst_buf i3
+      Array1.unsafe_set dst_buf (dst_base + i3)
         { Complex.re = Nativeint.to_float src_val3; im = 0.0 };
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx)
         { Complex.re = Nativeint.to_float src_val; im = 0.0 };
       incr i
     done)
@@ -5278,23 +5853,26 @@ let cast_nativeint_to_int (src : (nativeint, nativeint_elt) t)
     (dst : (int, int_elt) t) start_idx end_idx =
   let src_buf, dst_buf = (buffer src, buffer dst) in
   if is_c_contiguous src then (
-    let i = ref start_idx in
-    while !i + 3 < end_idx do
+    let src_base = offset src + start_idx in
+    let dst_base = offset dst + start_idx in
+    let n = end_idx - start_idx in
+    let i = ref 0 in
+    while !i + 3 < n do
       let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let src_val0 = Array1.unsafe_get src_buf (offset src + i0) in
-      let src_val1 = Array1.unsafe_get src_buf (offset src + i1) in
-      let src_val2 = Array1.unsafe_get src_buf (offset src + i2) in
-      let src_val3 = Array1.unsafe_get src_buf (offset src + i3) in
-      Array1.unsafe_set dst_buf i0 (Nativeint.to_int src_val0);
-      Array1.unsafe_set dst_buf i1 (Nativeint.to_int src_val1);
-      Array1.unsafe_set dst_buf i2 (Nativeint.to_int src_val2);
-      Array1.unsafe_set dst_buf i3 (Nativeint.to_int src_val3);
+      let src_val0 = Array1.unsafe_get src_buf (src_base + i0) in
+      let src_val1 = Array1.unsafe_get src_buf (src_base + i1) in
+      let src_val2 = Array1.unsafe_get src_buf (src_base + i2) in
+      let src_val3 = Array1.unsafe_get src_buf (src_base + i3) in
+      Array1.unsafe_set dst_buf (dst_base + i0) (Nativeint.to_int src_val0);
+      Array1.unsafe_set dst_buf (dst_base + i1) (Nativeint.to_int src_val1);
+      Array1.unsafe_set dst_buf (dst_base + i2) (Nativeint.to_int src_val2);
+      Array1.unsafe_set dst_buf (dst_base + i3) (Nativeint.to_int src_val3);
       i := !i + 4
     done;
-    while !i < end_idx do
+    while !i < n do
       let idx = !i in
-      let src_val = Array1.unsafe_get src_buf (offset src + idx) in
-      Array1.unsafe_set dst_buf idx (Nativeint.to_int src_val);
+      let src_val = Array1.unsafe_get src_buf (src_base + idx) in
+      Array1.unsafe_set dst_buf (dst_base + idx) (Nativeint.to_int src_val);
       incr i
     done)
   else
