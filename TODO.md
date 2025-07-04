@@ -4,17 +4,36 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
-- generate docs with odoc3 + dream-style html rewriting to integrate in www/
-- website examples generated with quill
+docs
+- website examples tested with mdx
 - review website+docs examples systematically.
 
-## alpha release
+## alpha1
 
-nx
-- slow test zeros max size native backend
-- intermittent segfault at unsafe_fold native backend
+- jit with xla
+
+feature requests:
+- complete linear algebra suite (cholesky, einsum, qr, svd)
+- forward mode ad (jvp)
+- vmap (that compose with jvp!)
+- nx cuda backend
+- add bf16, fp8, bool data types
+- fft for soundml
+
+fix:
 - near-zero formatting issues on some platform (opam-ci)
 - hang/deadlock during opam-ci (need to test commited fix with opam-ci)
+- rune debug handler causing malloc in opam-ci
+
+docs
+- generate docs with odoc3 + dream-style html rewriting to integrate in www/
+
+notes
+- think of using effects for prngs, does it simplify ux?
+- bad smell: dummy input for init in kaun
+- bad smell: the fix for gc collection of tensors during blas operations is hacky, best would be to pass the tensor to the c code, so it can mark it as being used.
+
+## post-alpha1
 
 hugin
 - fix plot3d
@@ -35,12 +54,6 @@ quill
 - run button
 - run all
 
-docs/website
-- examples
-- more user documentation
-- favicon
-- end-to-end example with quill+rune+hugin
-
 ## next
 
 roadmap
@@ -53,22 +66,15 @@ roadmap
 - memory planner during lowering (scheduling)
 - pmap support in rune
 
-feature requests:
-- add bf16, fp8, bool data types
-- complete linear algebra suite
-- forward mode ad (jvps)
-- cuda backend
-- fft for soundml
+docs/website
+- favicon
+- more tutorials
 
 notes
 - use upstream metal library when insulated from camlkit
 - (?) not sure we need non-polymorphic functions for perf of where, we should benchmark
 - add no_grad and detach
 - we can make jit composable by re raising all the effects (but what does it mean to write grad(jit(f)))?? What are the semantics in jax?
-- can we use
-- think of using effects for prngs, does it simplify ux?
-- bad smell: dummy input for init in kaun
-- bad smell: the fix for gc collection of tensors during blas operations is hacky, best would be to pass the tensor to the c code, so it can mark it as being used.
 
 new libs
 - dataframe library
