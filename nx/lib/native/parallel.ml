@@ -20,7 +20,14 @@ let setup_pool () =
   let mutex = Mutex.create () in
   let work_available = Condition.create () in
   let pool =
-    { num_workers; task_assignments; completed; generation; mutex; work_available }
+    {
+      num_workers;
+      task_assignments;
+      completed;
+      generation;
+      mutex;
+      work_available;
+    }
   in
   let worker id =
     let last_gen = ref (-1) in
