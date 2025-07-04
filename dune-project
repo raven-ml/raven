@@ -33,7 +33,7 @@
 (package
  (name dev)
  (allow_empty)
- (depends odoc odoc-driver soupault landmarks landmarks-ppx))
+ (depends odoc odoc-driver soupault lambdasoup landmarks landmarks-ppx))
 
 (package
  (name nx)
