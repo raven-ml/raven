@@ -2110,7 +2110,7 @@ val im2col :
   padding:(int * int) array ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [unfold ~kernel_size ~stride ~dilation ~padding t] extracts sliding local
+(** [im2col ~kernel_size ~stride ~dilation ~padding t] extracts sliding local
     blocks from tensor.
 
     Extracts patches of size kernel_size from the input tensor at the specified
@@ -2126,10 +2126,10 @@ val im2col :
     kernel dimensions and num_patches depends on stride and padding.
 
     {@ocaml[
-      # let x = arange float32 0. 16. 1. |> reshape [| 1; 1; 4; 4 |] in
-        unfold ~kernel_size:[|2; 2|] ~stride:[|1; 1|]
+      # let x = arange_f float32 0. 16. 1. |> reshape [| 1; 1; 4; 4 |] in
+        im2col ~kernel_size:[|2; 2|] ~stride:[|1; 1|]
                ~dilation:[|1; 1|] ~padding:[|(0, 0); (0, 0)|] x |> shape
-      - : int array = [|1; 4; 3; 3|]
+      - : int array = [|1; 4; 9|]
     ]} *)
 
 val col2im :
@@ -2140,8 +2140,8 @@ val col2im :
   padding:(int * int) array ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [fold_im2col ~output_size ~kernel_size ~stride ~dilation ~padding t]
-    combines sliding local blocks into tensor.
+(** [col2im ~output_size ~kernel_size ~stride ~dilation ~padding t] combines
+    sliding local blocks into tensor.
 
     This is the inverse of {!im2col}. Accumulates values from the unfolded
     representation back into spatial dimensions. Overlapping regions are summed.
@@ -2157,10 +2157,10 @@ val col2im :
 
     {@ocaml[
       # let unfolded = create float32 [| 1; 4; 3; 3 |] (Array.init 36 Float.of_int) in
-        fold_im2col ~output_size:[|4; 4|] ~kernel_size:[|2; 2|]
+        col2im ~output_size:[|4; 4|] ~kernel_size:[|2; 2|]
                     ~stride:[|1; 1|] ~dilation:[|1; 1|]
                     ~padding:[|(0, 0); (0, 0)|] unfolded |> shape
-      - : int array = [|1; 1; 4; 4|]
+      - : int array = [|1; 4; 0; 4; 4|]
     ]} *)
 
 val correlate1d :
