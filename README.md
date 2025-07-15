@@ -36,7 +36,7 @@ Raven is built from modular projects that form a cohesive ecosystem:
 
 ## Documentation
 
-**[📖 Read the Introduction](docs/book/01-introduction.md)** - Learn about our vision, philosophy, and approach
+**[📖 Read the Introduction](https://raven-ml.dev/docs/)** - Learn about our vision, philosophy, and approach
 
 _More comprehensive documentation and examples are coming soon as we are heading towards the release._
 
