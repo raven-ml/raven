@@ -7,6 +7,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
   module Ops_tests = Test_nx_ops.Make (Backend)
   module Sanity_tests = Test_nx_sanity.Make (Backend)
   module Sorting_tests = Test_nx_sorting.Make (Backend)
+  module Fft_tests = Test_nx_fft.Make (Backend)
 
   let run backend_name ctx =
     Printexc.record_backtrace true;
@@ -23,5 +24,6 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
            Ops_tests.suite backend_name ctx;
            Sanity_tests.suite backend_name ctx;
            Sorting_tests.suite backend_name ctx;
+           Fft_tests.tests ctx;
          ])
 end

@@ -233,4 +233,37 @@ module type S = sig
       multiplication on the last two dimensions, broadcasting batch dimensions
       as needed. The last dimension of the first tensor must match the
       second-to-last dimension of the second tensor. *)
+
+  (* Fourier transforms *)
+
+  val op_fft :
+    (Complex.t, 'b) t ->
+    axes:int array ->
+    s:int array option ->
+    (Complex.t, 'b) t
+  (** Compute the discrete Fourier transform (DFT) of the input tensor. *)
+
+  val op_ifft :
+    (Complex.t, 'b) t ->
+    axes:int array ->
+    s:int array option ->
+    (Complex.t, 'b) t
+  (** Compute the inverse discrete Fourier transform (IDFT) of the input tensor.
+  *)
+
+  val op_rfft :
+    (float, 'b) t ->
+    axes:int array ->
+    s:int array option ->
+    (Complex.t, Dtype.complex64_elt) t
+  (** Compute the real-valued discrete Fourier transform (RDFT) of the input
+      tensor. *)
+
+  val op_irfft :
+    (Complex.t, 'b) t ->
+    axes:int array ->
+    s:int array option ->
+    (float, Dtype.float64_elt) t
+  (** Compute the inverse real-valued discrete Fourier transform (IRDFT) of the
+      input tensor. *)
 end

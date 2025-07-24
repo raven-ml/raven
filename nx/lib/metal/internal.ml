@@ -55,8 +55,9 @@ let get_dtype_info : type a b. (a, b) Dtype.t -> dtype_info = function
       if Sys.word_size = 64 then { metal_name = "long"; size_bytes = 8 }
       else { metal_name = "int"; size_bytes = 4 }
   | Dtype.NativeInt -> { metal_name = "long"; size_bytes = Sys.word_size / 8 }
-  | Dtype.Complex32 -> failwith "get_dtype_info: complex types not supported"
-  | Dtype.Complex64 -> failwith "get_dtype_info: complex types not supported"
+  | Dtype.Complex32 -> { metal_name = "float2"; size_bytes = 8 }
+  | Dtype.Complex64 -> { metal_name = "float2"; size_bytes = 16 }
+(* Keep OCaml size for compatibility *)
 
 (* Convenience functions for backward compatibility *)
 let dtype_to_metal_type dtype = (get_dtype_info dtype).metal_name
@@ -73,13 +74,30 @@ let copy_from_bigarray : type a b.
   let contents = Metal.Buffer.contents metal_buf in
   let size = Bigarray.Array1.dim ba in
   let kind = Bigarray.Array1.kind ba in
-  (* Create a bigarray view of the Metal buffer memory *)
-  (* TODO: Remove Obj.magic once Metal bindings are fixed to return properly typed pointers *)
-  let metal_ba =
-    Ctypes.bigarray_of_ptr Ctypes.array1 size kind (Obj.magic contents)
-  in
-  (* Copy data from source to Metal buffer *)
-  Bigarray.Array1.blit ba metal_ba
+
+  (* Special handling for Complex64 - convert from double to float *)
+  match kind with
+  | Bigarray.Complex64 ->
+      (* Convert Complex64 (double precision) to float2 for Metal *)
+      let float_array = Ctypes.(from_voidp float contents) in
+      for i = 0 to size - 1 do
+        let c = Bigarray.Array1.get ba i in
+        (* Write as float precision to Metal buffer *)
+        let re_val = c.Complex.re in
+        let im_val = c.Complex.im in
+        let re_ptr = Ctypes.(float_array +@ (i * 2)) in
+        let im_ptr = Ctypes.(float_array +@ ((i * 2) + 1)) in
+
+        Ctypes.(re_ptr <-@ re_val);
+        Ctypes.(im_ptr <-@ im_val)
+      done
+  | _ ->
+      (* For other types, direct copy *)
+      let metal_ba =
+        Ctypes.bigarray_of_ptr Ctypes.array1 size kind (Obj.magic contents)
+      in
+      (* Copy data from source to Metal buffer *)
+      Bigarray.Array1.blit ba metal_ba
 
 let copy_to_bigarray : type a b.
     (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t -> unit =
@@ -88,78 +106,127 @@ let copy_to_bigarray : type a b.
   let view = t.view in
   let contents = Metal.Buffer.contents t.buffer.buffer in
   let kind = Bigarray.Array1.kind ba in
-  let elem_size = sizeof_dtype t.dtype in
 
-  (* Create a bigarray view of the entire Metal buffer *)
-  let buffer_size = t.buffer.size_bytes / elem_size in
-  let metal_ba =
-    Ctypes.bigarray_of_ptr Ctypes.array1 buffer_size kind (Obj.magic contents)
-  in
+  (* Special handling for Complex64 *)
+  match kind with
+  | Bigarray.Complex64 ->
+      (* Convert from float2 (Metal) to Complex64 (OCaml) *)
+      let float_ptr = Ctypes.(from_voidp float contents) in
+      let view_size = View.numel view in
+      let offset = View.offset view in
 
-  (* Check if the view is contiguous AND the buffer has enough elements *)
-  let view_size = View.numel view in
-  let required_size = View.offset view + view_size in
-
-  if View.is_c_contiguous view && required_size <= buffer_size then (
-    (* For contiguous views with sufficient buffer size, we can do a direct
-       copy *)
-    let offset = View.offset view in
-    if view_size > 0 then
-      (* Create sub-arrays and blit *)
-      let src = Bigarray.Array1.sub metal_ba offset view_size in
-      Bigarray.Array1.blit src ba)
-  else
-    (* For non-contiguous views, we need to copy element by element *)
-    (* NOTE: For better performance, callers should use Ops_movement.make_contiguous
-       before calling copy_to_bigarray on non-contiguous views *)
-    let shape = View.shape view in
-    let strides = View.strides view in
-    let offset = View.offset view in
-    let ndim = Array.length shape in
-
-    (* Helper to convert multi-dimensional index to linear index *)
-    let rec copy_elements indices pos =
-      if pos = ndim then (
-        (* Calculate the source index using strides *)
-        let src_idx = ref offset in
-        for i = 0 to ndim - 1 do
-          (* Only add to index if stride is non-zero (handles broadcast
-             dimensions) *)
-          if strides.(i) <> 0 then
-            src_idx := !src_idx + (indices.(i) * strides.(i))
-        done;
-
-        (* Calculate the linear index in the destination *)
-        let dst_idx = ref 0 in
-        let dst_stride = ref 1 in
-        for i = ndim - 1 downto 0 do
-          dst_idx := !dst_idx + (indices.(i) * !dst_stride);
-          dst_stride := !dst_stride * shape.(i)
-        done;
-
-        (* Copy the element *)
-        if !src_idx >= buffer_size then
-          failwith
-            (Printf.sprintf "Source index %d out of bounds (buffer size: %d)"
-               !src_idx buffer_size)
-        else if !dst_idx >= Bigarray.Array1.dim ba then
-          failwith
-            (Printf.sprintf "Destination index %d out of bounds (ba size: %d)"
-               !dst_idx (Bigarray.Array1.dim ba))
-        else
-          Bigarray.Array1.set ba !dst_idx
-            (Bigarray.Array1.get metal_ba !src_idx))
-      else
-        for
-          (* Iterate through this dimension *)
-          i = 0 to shape.(pos) - 1
-        do
-          indices.(pos) <- i;
-          copy_elements indices (pos + 1)
+      if View.is_c_contiguous view then
+        (* For contiguous views, convert directly *)
+        for i = 0 to view_size - 1 do
+          let idx = offset + i in
+          let re_ptr = Ctypes.(float_ptr +@ (idx * 2)) in
+          let im_ptr = Ctypes.(float_ptr +@ ((idx * 2) + 1)) in
+          let re = Ctypes.( !@ ) re_ptr in
+          let im = Ctypes.( !@ ) im_ptr in
+          Bigarray.Array1.set ba i Complex.{ re; im }
         done
-    in
+      else
+        (* For non-contiguous views, handle strides *)
+        let shape = View.shape view in
+        let strides = View.strides view in
+        let ndim = Array.length shape in
+        let rec copy_elements indices pos dst_idx =
+          if pos = ndim then (
+            let src_idx = ref offset in
+            for d = 0 to ndim - 1 do
+              src_idx := !src_idx + (indices.(d) * strides.(d))
+            done;
+            let re_ptr = Ctypes.(float_ptr +@ (!src_idx * 2)) in
+            let im_ptr = Ctypes.(float_ptr +@ ((!src_idx * 2) + 1)) in
+            let re = Ctypes.( !@ ) re_ptr in
+            let im = Ctypes.( !@ ) im_ptr in
+            Bigarray.Array1.set ba dst_idx Complex.{ re; im })
+          else
+            for i = 0 to shape.(pos) - 1 do
+              indices.(pos) <- i;
+              copy_elements indices (pos + 1)
+                (dst_idx
+                + i
+                  * Array.fold_left ( * ) 1
+                      (Array.sub shape (pos + 1) (ndim - pos - 1)))
+            done
+        in
+        copy_elements (Array.make ndim 0) 0 0
+  | _ ->
+      let elem_size = sizeof_dtype t.dtype in
+      (* Create a bigarray view of the entire Metal buffer *)
+      let buffer_size = t.buffer.size_bytes / elem_size in
+      let metal_ba =
+        Ctypes.bigarray_of_ptr Ctypes.array1 buffer_size kind
+          (Obj.magic contents)
+      in
 
-    if View.numel view > 0 then copy_elements (Array.make ndim 0) 0
+      (* Check if the view is contiguous AND the buffer has enough elements *)
+      let view_size = View.numel view in
+      let required_size = View.offset view + view_size in
+
+      if View.is_c_contiguous view && required_size <= buffer_size then (
+        (* For contiguous views with sufficient buffer size, we can do a direct
+           copy *)
+        let offset = View.offset view in
+        if view_size > 0 then
+          (* Create sub-arrays and blit *)
+          let src = Bigarray.Array1.sub metal_ba offset view_size in
+          Bigarray.Array1.blit src ba)
+      else
+        (* For non-contiguous views, we need to copy element by element *)
+        (* NOTE: For better performance, callers should use Ops_movement.make_contiguous
+       before calling copy_to_bigarray on non-contiguous views *)
+        let shape = View.shape view in
+        let strides = View.strides view in
+        let offset = View.offset view in
+        let ndim = Array.length shape in
+
+        (* Helper to convert multi-dimensional index to linear index *)
+        let rec copy_elements indices pos =
+          if pos = ndim then (
+            (* Calculate the source index using strides *)
+            let src_idx = ref offset in
+            for i = 0 to ndim - 1 do
+              (* Only add to index if stride is non-zero (handles broadcast
+                 dimensions) *)
+              if strides.(i) <> 0 then
+                src_idx := !src_idx + (indices.(i) * strides.(i))
+            done;
+
+            (* Calculate the linear index in the destination *)
+            let dst_idx = ref 0 in
+            let dst_stride = ref 1 in
+            for i = ndim - 1 downto 0 do
+              dst_idx := !dst_idx + (indices.(i) * !dst_stride);
+              dst_stride := !dst_stride * shape.(i)
+            done;
+
+            (* Copy the element *)
+            if !src_idx >= buffer_size then
+              failwith
+                (Printf.sprintf
+                   "Source index %d out of bounds (buffer size: %d)" !src_idx
+                   buffer_size)
+            else if !dst_idx >= Bigarray.Array1.dim ba then
+              failwith
+                (Printf.sprintf
+                   "Destination index %d out of bounds (ba size: %d)" !dst_idx
+                   (Bigarray.Array1.dim ba))
+            else
+              Bigarray.Array1.set ba !dst_idx
+                (Bigarray.Array1.get metal_ba !src_idx))
+          else
+            for
+              (* Iterate through this dimension *)
+              i = 0 to shape.(pos) - 1
+            do
+              indices.(pos) <- i;
+              copy_elements indices (pos + 1)
+            done
+        in
+
+        if View.numel view > 0 then copy_elements (Array.make ndim 0) 0
 
 let with_command_buffer ctx f =
   let buffer = Metal.CommandBuffer.on_queue ctx.queue in

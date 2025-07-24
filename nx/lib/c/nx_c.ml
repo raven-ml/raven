@@ -1056,3 +1056,269 @@ let op_pad x padding value =
   let _ = x.view in
   (* FIX: Keep input tensor alive during C call. *)
   result
+
+(* FFT operations *)
+external fft_complex64 :
+  int ->
+  int array ->
+  (Complex.t, Bigarray.complex64_elt, 'c) Bigarray.Array1.t ->
+  int array ->
+  int ->
+  (Complex.t, Bigarray.complex64_elt, 'c) Bigarray.Array1.t ->
+  int array ->
+  int ->
+  int array ->
+  int ->
+  bool ->
+  unit = "caml_nx_fft_complex64_bc" "caml_nx_fft_complex64"
+
+external fft_complex32 :
+  int ->
+  int array ->
+  (Complex.t, Bigarray.complex32_elt, 'c) Bigarray.Array1.t ->
+  int array ->
+  int ->
+  (Complex.t, Bigarray.complex32_elt, 'c) Bigarray.Array1.t ->
+  int array ->
+  int ->
+  int array ->
+  int ->
+  bool ->
+  unit = "caml_nx_fft_complex32_bc" "caml_nx_fft_complex32"
+
+external rfft_float64 :
+  int ->
+  int array ->
+  (float, Bigarray.float64_elt, 'c) Bigarray.Array1.t ->
+  int array ->
+  int ->
+  (Complex.t, Bigarray.complex64_elt, 'c) Bigarray.Array1.t ->
+  int array ->
+  int ->
+  int array ->
+  int ->
+  unit = "caml_nx_rfft_float64_bc" "caml_nx_rfft_float64"
+
+external irfft_complex64 :
+  int ->
+  int array ->
+  (Complex.t, Bigarray.complex64_elt, 'c) Bigarray.Array1.t ->
+  int array ->
+  int ->
+  (float, Bigarray.float64_elt, 'c) Bigarray.Array1.t ->
+  int array ->
+  int ->
+  int array ->
+  int ->
+  int ->
+  unit = "caml_nx_irfft_complex64_bc" "caml_nx_irfft_complex64"
+
+let op_fft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
+  let input_shape = View.shape x.view in
+  let ndim = Array.length input_shape in
+
+  (* Compute output shape *)
+  let output_shape =
+    match s with
+    | None -> Array.copy input_shape
+    | Some sizes ->
+        let out_shape = Array.copy input_shape in
+        Array.iteri
+          (fun i axis ->
+            let axis = if axis < 0 then ndim + axis else axis in
+            out_shape.(axis) <- sizes.(i))
+          axes;
+        out_shape
+  in
+
+  let result = make_tensor x output_shape in
+
+  (* Copy input to output first *)
+  copy (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
+    (View.offset x.view) result.buffer (View.strides result.view)
+    (View.offset result.view);
+
+  (* Call appropriate FFT function based on dtype *)
+  (match x.dtype with
+  | Dtype.Complex64 ->
+      fft_complex64 ndim output_shape result.buffer (View.strides result.view)
+        (View.offset result.view) result.buffer (View.strides result.view)
+        (View.offset result.view) axes (Array.length axes) false
+  | Dtype.Complex32 ->
+      fft_complex32 ndim output_shape result.buffer (View.strides result.view)
+        (View.offset result.view) result.buffer (View.strides result.view)
+        (View.offset result.view) axes (Array.length axes) false
+  | _ -> failwith "op_fft: input must be complex");
+
+  let _ = x.view in
+  result
+
+let op_ifft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
+  let input_shape = View.shape x.view in
+  let ndim = Array.length input_shape in
+
+  (* Compute output shape *)
+  let output_shape =
+    match s with
+    | None -> Array.copy input_shape
+    | Some sizes ->
+        let out_shape = Array.copy input_shape in
+        Array.iteri
+          (fun i axis ->
+            let axis = if axis < 0 then ndim + axis else axis in
+            out_shape.(axis) <- sizes.(i))
+          axes;
+        out_shape
+  in
+
+  let result = make_tensor x output_shape in
+
+  (* Copy input to output first *)
+  copy (View.ndim x.view) (View.shape x.view) x.buffer (View.strides x.view)
+    (View.offset x.view) result.buffer (View.strides result.view)
+    (View.offset result.view);
+
+  (* Call appropriate IFFT function based on dtype *)
+  (match x.dtype with
+  | Dtype.Complex64 ->
+      fft_complex64 ndim output_shape result.buffer (View.strides result.view)
+        (View.offset result.view) result.buffer (View.strides result.view)
+        (View.offset result.view) axes (Array.length axes) true
+  | Dtype.Complex32 ->
+      fft_complex32 ndim output_shape result.buffer (View.strides result.view)
+        (View.offset result.view) result.buffer (View.strides result.view)
+        (View.offset result.view) axes (Array.length axes) true
+  | _ -> failwith "op_ifft: input must be complex");
+
+  let _ = x.view in
+  result
+
+let op_rfft (type a b) (x : (a, b) t) ~axes ~s :
+    (Complex.t, Dtype.complex64_elt) t =
+  let input_shape = View.shape x.view in
+  let ndim = Array.length input_shape in
+
+  (* For rfft, the last axis in the transform is halved + 1 *)
+  let output_shape =
+    let shape =
+      match s with
+      | None -> Array.copy input_shape
+      | Some sizes ->
+          let out_shape = Array.copy input_shape in
+          Array.iteri
+            (fun i axis ->
+              let axis = if axis < 0 then ndim + axis else axis in
+              out_shape.(axis) <- sizes.(i))
+            axes;
+          out_shape
+    in
+    (* Adjust last axis for rfft *)
+    let last_axis_idx = Array.length axes - 1 in
+    let last_axis = axes.(last_axis_idx) in
+    let last_axis = if last_axis < 0 then ndim + last_axis else last_axis in
+    shape.(last_axis) <- (shape.(last_axis) / 2) + 1;
+    shape
+  in
+
+  (* Create complex output tensor *)
+  let result =
+    create x.context Dtype.Complex64
+      (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 output_shape))
+      (View.create output_shape)
+  in
+
+  (* We need to handle different float types separately due to OCaml's type system *)
+  (* For simplicity, always work with float64 internally *)
+  let float64_x : (float, Dtype.float64_elt) t =
+    match Dtype.equal_witness x.dtype Dtype.Float64 with
+    | Some Equal -> x
+    | None -> (
+        (* Cast to float64 *)
+        match x.dtype with
+        | Dtype.Float32 | Dtype.Float16 ->
+            let result =
+              create x.context Dtype.Float64
+                (make_buffer Dtype.Float64 (View.numel x.view))
+                x.view
+            in
+            cast (View.ndim x.view) (View.shape x.view) x.buffer
+              (View.strides x.view) (View.offset x.view) result.buffer
+              (View.strides result.view) (View.offset result.view);
+            result
+        | _ -> failwith "op_rfft: input must be real")
+  in
+
+  rfft_float64 ndim
+    (View.shape float64_x.view)
+    float64_x.buffer
+    (View.strides float64_x.view)
+    (View.offset float64_x.view)
+    result.buffer (View.strides result.view) (View.offset result.view) axes
+    (Array.length axes);
+
+  let _ = x.view in
+  result
+
+let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
+  let input_shape = View.shape x.view in
+  let ndim = Array.length input_shape in
+
+  (* For irfft, restore full size for last axis *)
+  let last_axis_idx = Array.length axes - 1 in
+  let last_axis = axes.(last_axis_idx) in
+  let last_axis = if last_axis < 0 then ndim + last_axis else last_axis in
+
+  let output_shape =
+    let shape = Array.copy input_shape in
+    (* Restore full size for last axis *)
+    shape.(last_axis) <-
+      (match s with
+      | None -> (shape.(last_axis) - 1) * 2
+      | Some sizes -> sizes.(Array.length sizes - 1));
+
+    match s with
+    | None -> shape
+    | Some sizes ->
+        Array.iteri
+          (fun i axis ->
+            let axis = if axis < 0 then ndim + axis else axis in
+            shape.(axis) <- sizes.(i))
+          axes;
+        shape
+  in
+
+  (* Create real output tensor *)
+  let result =
+    create x.context Dtype.Float64
+      (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 output_shape))
+      (View.create output_shape)
+  in
+
+  (* For simplicity, always work with complex64 internally *)
+  let complex64_x : (Complex.t, Dtype.complex64_elt) t =
+    match Dtype.equal_witness x.dtype Dtype.Complex64 with
+    | Some Equal -> x
+    | None -> (
+        (* Cast to complex64 *)
+        match x.dtype with
+        | Dtype.Complex32 ->
+            let result =
+              create x.context Dtype.Complex64
+                (make_buffer Dtype.Complex64 (View.numel x.view))
+                x.view
+            in
+            cast (View.ndim x.view) (View.shape x.view) x.buffer
+              (View.strides x.view) (View.offset x.view) result.buffer
+              (View.strides result.view) (View.offset result.view);
+            result
+        | _ -> failwith "op_irfft: input must be complex")
+  in
+
+  irfft_complex64 ndim input_shape complex64_x.buffer
+    (View.strides complex64_x.view)
+    (View.offset complex64_x.view)
+    result.buffer (View.strides result.view) (View.offset result.view) axes
+    (Array.length axes) output_shape.(last_axis);
+
+  let _ = x.view in
+  result

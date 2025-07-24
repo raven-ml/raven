@@ -30,11 +30,13 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     | Nx_core.Dtype.Complex32 ->
         Alcotest.testable
           (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
-          (fun a b -> a.re = b.re && a.im = b.im)
+          (fun a b ->
+            Float.abs (a.re -. b.re) < eps && Float.abs (a.im -. b.im) < eps)
     | Nx_core.Dtype.Complex64 ->
         Alcotest.testable
           (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
-          (fun a b -> a.re = b.re && a.im = b.im)
+          (fun a b ->
+            Float.abs (a.re -. b.re) < eps && Float.abs (a.im -. b.im) < eps)
 
   (* Check function to test a tensor against an array *)
   let check_data (type a b) ?eps msg (expected : a array) (actual : (a, b) Nx.t)
