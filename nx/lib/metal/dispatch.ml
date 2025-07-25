@@ -491,3 +491,289 @@ let dispatch_reduce_op (ctx : Internal.context) (op_name : string)
       ComputeCommandEncoder.end_encoding encoder);
 
   out
+
+(* Linear algebra operation dispatchers *)
+let run_cholesky (ctx : Internal.context) ~upper (t : ('a, 'b) Internal.t)
+    (out : ('a, 'b) Internal.t) : unit =
+  let shape = Internal.shape t in
+  let ndim = Array.length shape in
+  let n = shape.(ndim - 1) in
+  let batch_size = Array.fold_left ( * ) 1 (Array.sub shape 0 (ndim - 2)) in
+
+  (* Get kernel and create pipeline *)
+  let dtype_suffix = Internal.dtype_to_metal_type t.dtype in
+  let kernel_name = "cholesky_" ^ dtype_suffix in
+  let func = Kernels.get_function ctx.library kernel_name in
+  let pipeline = Kernels.create_compute_pipeline ctx.device func in
+
+  (* Dispatch kernel *)
+  Internal.with_command_buffer ctx (fun cmd_buffer ->
+      let encoder = ComputeCommandEncoder.on_buffer cmd_buffer in
+      ComputeCommandEncoder.set_compute_pipeline_state encoder pipeline;
+
+      (* Set buffers *)
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:0
+        t.buffer.buffer;
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:1
+        out.buffer.buffer;
+
+      (* Set parameters: batch_size, n, upper, 0 *)
+      let params = Ctypes.(allocate_n uint32_t ~count:4) in
+      Ctypes.(params +@ 0 <-@ Unsigned.UInt32.of_int batch_size);
+      Ctypes.(params +@ 1 <-@ Unsigned.UInt32.of_int n);
+      Ctypes.(params +@ 2 <-@ Unsigned.UInt32.of_int (if upper then 1 else 0));
+      Ctypes.(params +@ 3 <-@ Unsigned.UInt32.of_int 0);
+
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp params)
+        ~length:16 ~index:2;
+
+      (* Dispatch threads *)
+      let threadgroup_size = min 64 (n * n) in
+      let threadgroup =
+        { Metal.Size.width = threadgroup_size; height = 1; depth = 1 }
+      in
+      let threadgroups =
+        { Metal.Size.width = batch_size; height = 1; depth = 1 }
+      in
+
+      ComputeCommandEncoder.dispatch_threadgroups encoder
+        ~threadgroups_per_grid:threadgroups ~threads_per_threadgroup:threadgroup;
+
+      ComputeCommandEncoder.end_encoding encoder)
+
+let run_qr (ctx : Internal.context) ~reduced (t : ('a, 'b) Internal.t)
+    (q : ('a, 'b) Internal.t) (r : ('a, 'b) Internal.t) : unit =
+  let shape = Internal.shape t in
+  let ndim = Array.length shape in
+  let m = shape.(ndim - 2) in
+  let n = shape.(ndim - 1) in
+  let batch_size = Array.fold_left ( * ) 1 (Array.sub shape 0 (ndim - 2)) in
+
+  (* Get kernel and create pipeline *)
+  let dtype_suffix = Internal.dtype_to_metal_type t.dtype in
+  let kernel_name = "qr_" ^ dtype_suffix in
+  let func = Kernels.get_function ctx.library kernel_name in
+  let pipeline = Kernels.create_compute_pipeline ctx.device func in
+
+  (* Dispatch kernel *)
+  Internal.with_command_buffer ctx (fun cmd_buffer ->
+      let encoder = ComputeCommandEncoder.on_buffer cmd_buffer in
+      ComputeCommandEncoder.set_compute_pipeline_state encoder pipeline;
+
+      (* Set buffers *)
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:0
+        t.buffer.buffer;
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:1
+        q.buffer.buffer;
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:2
+        r.buffer.buffer;
+
+      (* Set parameters: batch_size, m, n, reduced *)
+      let params = Ctypes.(allocate_n uint32_t ~count:4) in
+      Ctypes.(params +@ 0 <-@ Unsigned.UInt32.of_int batch_size);
+      Ctypes.(params +@ 1 <-@ Unsigned.UInt32.of_int m);
+      Ctypes.(params +@ 2 <-@ Unsigned.UInt32.of_int n);
+      Ctypes.(params +@ 3 <-@ Unsigned.UInt32.of_int (if reduced then 1 else 0));
+
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp params)
+        ~length:16 ~index:3;
+
+      (* Dispatch threads *)
+      let threadgroup_size = min 128 (m * n) in
+      let threadgroup =
+        { Metal.Size.width = threadgroup_size; height = 1; depth = 1 }
+      in
+      let threadgroups =
+        { Metal.Size.width = batch_size; height = 1; depth = 1 }
+      in
+
+      ComputeCommandEncoder.dispatch_threadgroups encoder
+        ~threadgroups_per_grid:threadgroups ~threads_per_threadgroup:threadgroup;
+
+      ComputeCommandEncoder.end_encoding encoder)
+
+let run_svd (ctx : Internal.context) ~full_matrices (t : ('a, 'b) Internal.t)
+    (u : ('a, 'b) Internal.t) (s : ('c, 'd) Internal.t)
+    (vh : ('a, 'b) Internal.t) : unit =
+  let shape = Internal.shape t in
+  let ndim = Array.length shape in
+  let m = shape.(ndim - 2) in
+  let n = shape.(ndim - 1) in
+  let batch_size = Array.fold_left ( * ) 1 (Array.sub shape 0 (ndim - 2)) in
+
+  (* Get kernel and create pipeline *)
+  let dtype_suffix = Internal.dtype_to_metal_type t.dtype in
+  let kernel_name = "svd_" ^ dtype_suffix in
+  let func = Kernels.get_function ctx.library kernel_name in
+  let pipeline = Kernels.create_compute_pipeline ctx.device func in
+
+  (* Dispatch kernel *)
+  Internal.with_command_buffer ctx (fun cmd_buffer ->
+      let encoder = ComputeCommandEncoder.on_buffer cmd_buffer in
+      ComputeCommandEncoder.set_compute_pipeline_state encoder pipeline;
+
+      (* Set buffers *)
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:0
+        t.buffer.buffer;
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:1
+        u.buffer.buffer;
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:2
+        s.buffer.buffer;
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:3
+        vh.buffer.buffer;
+
+      (* Set parameters: batch_size, m, n, full_matrices *)
+      let params = Ctypes.(allocate_n uint32_t ~count:4) in
+      Ctypes.(params +@ 0 <-@ Unsigned.UInt32.of_int batch_size);
+      Ctypes.(params +@ 1 <-@ Unsigned.UInt32.of_int m);
+      Ctypes.(params +@ 2 <-@ Unsigned.UInt32.of_int n);
+      Ctypes.(
+        params +@ 3 <-@ Unsigned.UInt32.of_int (if full_matrices then 1 else 0));
+
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp params)
+        ~length:16 ~index:4;
+
+      (* Dispatch threads *)
+      let threadgroup_size = min 64 (m * n) in
+      let threadgroup =
+        { Metal.Size.width = threadgroup_size; height = 1; depth = 1 }
+      in
+      let threadgroups =
+        { Metal.Size.width = batch_size; height = 1; depth = 1 }
+      in
+
+      ComputeCommandEncoder.dispatch_threadgroups encoder
+        ~threadgroups_per_grid:threadgroups ~threads_per_threadgroup:threadgroup;
+
+      ComputeCommandEncoder.end_encoding encoder)
+
+let run_eig (ctx : Internal.context) ~symmetric ~vectors
+    (t : ('a, 'b) Internal.t) (eigenvalues : ('c, 'd) Internal.t)
+    (eigenvectors : ('a, 'b) Internal.t option) : unit =
+  let shape = Internal.shape t in
+  let ndim = Array.length shape in
+  let n = shape.(ndim - 1) in
+  let batch_size = Array.fold_left ( * ) 1 (Array.sub shape 0 (ndim - 2)) in
+
+  (* Get kernel and create pipeline *)
+  let dtype_suffix = Internal.dtype_to_metal_type t.dtype in
+  let kernel_name =
+    if symmetric then "eig_symmetric_" ^ dtype_suffix else "eig_" ^ dtype_suffix
+  in
+  let func = Kernels.get_function ctx.library kernel_name in
+  let pipeline = Kernels.create_compute_pipeline ctx.device func in
+
+  (* Dispatch kernel *)
+  Internal.with_command_buffer ctx (fun cmd_buffer ->
+      let encoder = ComputeCommandEncoder.on_buffer cmd_buffer in
+      ComputeCommandEncoder.set_compute_pipeline_state encoder pipeline;
+
+      (* Set buffers *)
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:0
+        t.buffer.buffer;
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:1
+        eigenvalues.buffer.buffer;
+
+      let eigenvectors_buffer =
+        match eigenvectors with
+        | Some v -> v.buffer.buffer
+        | None ->
+            (* Create dummy buffer if eigenvectors not needed *)
+            let dummy_size =
+              batch_size * n * n * Internal.sizeof_dtype t.dtype
+            in
+            let dummy = Buffer_pool.allocate ctx.pool dummy_size in
+            dummy
+      in
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:2
+        eigenvectors_buffer;
+
+      (* Set parameters: batch_size, n, compute_vectors, max_iterations *)
+      let params = Ctypes.(allocate_n uint32_t ~count:4) in
+      Ctypes.(params +@ 0 <-@ Unsigned.UInt32.of_int batch_size);
+      Ctypes.(params +@ 1 <-@ Unsigned.UInt32.of_int n);
+      Ctypes.(params +@ 2 <-@ Unsigned.UInt32.of_int (if vectors then 1 else 0));
+      Ctypes.(params +@ 3 <-@ Unsigned.UInt32.of_int 100);
+
+      (* max iterations *)
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp params)
+        ~length:16 ~index:3;
+
+      (* Dispatch threads *)
+      let threadgroup_size = min 64 (n * n) in
+      let threadgroup =
+        { Metal.Size.width = threadgroup_size; height = 1; depth = 1 }
+      in
+      let threadgroups =
+        { Metal.Size.width = batch_size; height = 1; depth = 1 }
+      in
+
+      ComputeCommandEncoder.dispatch_threadgroups encoder
+        ~threadgroups_per_grid:threadgroups ~threads_per_threadgroup:threadgroup;
+
+      ComputeCommandEncoder.end_encoding encoder)
+
+let run_triangular_solve (ctx : Internal.context) ~upper ~transpose ~unit_diag
+    (a : ('a, 'b) Internal.t) (b : ('a, 'b) Internal.t)
+    (x : ('a, 'b) Internal.t) : unit =
+  let a_shape = Internal.shape a in
+  let b_shape = Internal.shape b in
+  let a_ndim = Array.length a_shape in
+  let b_ndim = Array.length b_shape in
+  let n = a_shape.(a_ndim - 1) in
+  let b_cols = if b_ndim > 1 then b_shape.(b_ndim - 1) else 1 in
+  let batch_size = Array.fold_left ( * ) 1 (Array.sub a_shape 0 (a_ndim - 2)) in
+
+  (* Get kernel and create pipeline *)
+  let dtype_suffix = Internal.dtype_to_metal_type a.dtype in
+  let kernel_name = "triangular_solve_" ^ dtype_suffix in
+  let func = Kernels.get_function ctx.library kernel_name in
+  let pipeline = Kernels.create_compute_pipeline ctx.device func in
+
+  (* Dispatch kernel *)
+  Internal.with_command_buffer ctx (fun cmd_buffer ->
+      let encoder = ComputeCommandEncoder.on_buffer cmd_buffer in
+      ComputeCommandEncoder.set_compute_pipeline_state encoder pipeline;
+
+      (* Set buffers *)
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:0
+        a.buffer.buffer;
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:1
+        b.buffer.buffer;
+      ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:2
+        x.buffer.buffer;
+
+      (* Set parameters: batch_size, n, flags, b_cols *)
+      let flags =
+        (if upper then 1 else 0)
+        lor (if transpose then 2 else 0)
+        lor if unit_diag then 4 else 0
+      in
+
+      let params = Ctypes.(allocate_n uint32_t ~count:4) in
+      Ctypes.(params +@ 0 <-@ Unsigned.UInt32.of_int batch_size);
+      Ctypes.(params +@ 1 <-@ Unsigned.UInt32.of_int n);
+      Ctypes.(params +@ 2 <-@ Unsigned.UInt32.of_int flags);
+      Ctypes.(params +@ 3 <-@ Unsigned.UInt32.of_int b_cols);
+
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp params)
+        ~length:16 ~index:3;
+
+      (* Dispatch threads *)
+      let threadgroup_size = min 64 (n * b_cols) in
+      let threadgroup =
+        { Metal.Size.width = threadgroup_size; height = 1; depth = 1 }
+      in
+      let threadgroups =
+        { Metal.Size.width = batch_size; height = 1; depth = 1 }
+      in
+
+      ComputeCommandEncoder.dispatch_threadgroups encoder
+        ~threadgroups_per_grid:threadgroups ~threads_per_threadgroup:threadgroup;
+
+      ComputeCommandEncoder.end_encoding encoder)

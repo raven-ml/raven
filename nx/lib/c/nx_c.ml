@@ -1322,3 +1322,349 @@ let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
 
   let _ = x.view in
   result
+
+(* Linear algebra operations *)
+
+external cholesky :
+  int ->
+  (* upper *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* input buffer *)
+  int array ->
+  (* input shape *)
+  int array ->
+  (* input strides *)
+  int ->
+  (* input offset *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* output buffer *)
+  int array ->
+  (* output strides *)
+  int ->
+  (* output offset *)
+  unit = "caml_nx_cholesky_bc" "caml_nx_cholesky"
+
+external triangular_solve :
+  int ->
+  (* upper *)
+  int ->
+  (* transpose *)
+  int ->
+  (* unit_diag *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* A buffer *)
+  int array ->
+  (* A shape *)
+  int array ->
+  (* A strides *)
+  int ->
+  (* A offset *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* B buffer *)
+  int array ->
+  (* B shape *)
+  int array ->
+  (* B strides *)
+  int ->
+  (* B offset *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* output buffer *)
+  int array ->
+  (* output strides *)
+  int ->
+  (* output offset *)
+  unit = "caml_nx_triangular_solve_bc" "caml_nx_triangular_solve"
+
+let op_cholesky ~upper x =
+  let result = make_tensor x (View.shape x.view) in
+  cholesky
+    (if upper then 1 else 0)
+    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
+    result.buffer (View.strides result.view) (View.offset result.view);
+  let _ = x.view in
+  (* Keep input tensor alive during C call *)
+  result
+
+let op_triangular_solve ~upper ~transpose ~unit_diag a b =
+  let result = make_tensor b (View.shape b.view) in
+  triangular_solve
+    (if upper then 1 else 0)
+    (if transpose then 1 else 0)
+    (if unit_diag then 1 else 0)
+    a.buffer (View.shape a.view) (View.strides a.view) (View.offset a.view)
+    b.buffer (View.shape b.view) (View.strides b.view) (View.offset b.view)
+    result.buffer (View.strides result.view) (View.offset result.view);
+  let _ = (a.view, b.view) in
+  (* Keep input tensors alive during C call *)
+  result
+
+external qr :
+  int ->
+  (* reduced *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* input buffer *)
+  int array ->
+  (* input shape *)
+  int array ->
+  (* input strides *)
+  int ->
+  (* input offset *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* Q buffer *)
+  int array ->
+  (* Q shape *)
+  int array ->
+  (* Q strides *)
+  int ->
+  (* Q offset *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* R buffer *)
+  int array ->
+  (* R shape *)
+  int array ->
+  (* R strides *)
+  int ->
+  (* R offset *)
+  unit = "caml_nx_qr_bc" "caml_nx_qr"
+
+let op_qr ~reduced x =
+  let shape_x = View.shape x.view in
+  let ndim = Array.length shape_x in
+  if ndim < 2 then failwith "op_qr: input must have at least 2 dimensions";
+
+  let m = shape_x.(ndim - 2) in
+  let n = shape_x.(ndim - 1) in
+
+  (* Determine output shapes *)
+  let shape_q =
+    let s = Array.copy shape_x in
+    s.(ndim - 1) <- (if reduced then min m n else m);
+    s
+  in
+  let shape_r =
+    let s = Array.copy shape_x in
+    s.(ndim - 2) <- (if reduced then min m n else m);
+    s
+  in
+
+  let q = make_tensor x shape_q in
+  let r = make_tensor x shape_r in
+
+  qr
+    (if reduced then 1 else 0)
+    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
+    q.buffer (View.shape q.view) (View.strides q.view) (View.offset q.view)
+    r.buffer (View.shape r.view) (View.strides r.view) (View.offset r.view);
+
+  let _ = x.view in
+  (q, r)
+
+external svd :
+  int ->
+  (* full_matrices *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* input buffer *)
+  int array ->
+  (* input shape *)
+  int array ->
+  (* input strides *)
+  int ->
+  (* input offset *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* U buffer *)
+  int array ->
+  (* U shape *)
+  int array ->
+  (* U strides *)
+  int ->
+  (* U offset *)
+  ('d, 'e, 'c) Bigarray.Array1.t ->
+  (* S buffer *)
+  int array ->
+  (* S shape *)
+  int array ->
+  (* S strides *)
+  int ->
+  (* S offset *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* VT buffer *)
+  int array ->
+  (* VT shape *)
+  int array ->
+  (* VT strides *)
+  int ->
+  (* VT offset *)
+  unit = "caml_nx_svd_bc" "caml_nx_svd"
+
+let op_svd (type a b) ~(full_matrices : bool) (x : (a, b) t) :
+    (a, b) t * (float, Dtype.float64_elt) t * (a, b) t =
+  let shape_x = View.shape x.view in
+  let ndim = Array.length shape_x in
+  if ndim < 2 then failwith "op_svd: input must have at least 2 dimensions";
+
+  let m = shape_x.(ndim - 2) in
+  let n = shape_x.(ndim - 1) in
+  let min_mn = min m n in
+
+  (* Determine output shapes *)
+  let shape_u =
+    let s = Array.copy shape_x in
+    s.(ndim - 1) <- (if full_matrices then m else min_mn);
+    s
+  in
+  let shape_s =
+    let s = Array.sub shape_x 0 (ndim - 1) in
+    s.(ndim - 2) <- min_mn;
+    s
+  in
+  let shape_vt =
+    let s = Array.copy shape_x in
+    s.(ndim - 2) <- (if full_matrices then n else min_mn);
+    s
+  in
+
+  let u = make_tensor x shape_u in
+  let vt = make_tensor x shape_vt in
+
+  (* S is always float64 *)
+  let s =
+    create x.context Dtype.Float64
+      (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 shape_s))
+      (View.create shape_s)
+  in
+
+  svd
+    (if full_matrices then 1 else 0)
+    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
+    u.buffer (View.shape u.view) (View.strides u.view) (View.offset u.view)
+    s.buffer (View.shape s.view) (View.strides s.view) (View.offset s.view)
+    vt.buffer (View.shape vt.view) (View.strides vt.view) (View.offset vt.view);
+  let _ = x.view in
+  (u, s, vt)
+
+external eig :
+  int ->
+  (* symmetric *)
+  int ->
+  (* compute_vectors *)
+  ('a, 'b, 'c) Bigarray.Array1.t ->
+  (* input buffer *)
+  int array ->
+  (* input shape *)
+  int array ->
+  (* input strides *)
+  int ->
+  (* input offset *)
+  ('d, 'e, 'c) Bigarray.Array1.t ->
+  (* eigenvalues buffer *)
+  int array ->
+  (* eigenvalues shape *)
+  int array ->
+  (* eigenvalues strides *)
+  int ->
+  (* eigenvalues offset *)
+  ('f, 'g, 'c) Bigarray.Array1.t ->
+  (* eigenvectors buffer *)
+  int array ->
+  (* eigenvectors shape *)
+  int array ->
+  (* eigenvectors strides *)
+  int ->
+  (* eigenvectors offset *)
+  unit = "caml_nx_eig_bc" "caml_nx_eig"
+
+let op_eig (type a b) ~vectors (x : (a, b) t) :
+    (Complex.t, Dtype.complex64_elt) t
+    * (Complex.t, Dtype.complex64_elt) t option =
+  let shape_x = View.shape x.view in
+  let ndim = Array.length shape_x in
+  if ndim < 2 then failwith "op_eig: input must have at least 2 dimensions";
+
+  let n = shape_x.(ndim - 1) in
+  let m = shape_x.(ndim - 2) in
+  if n != m then failwith "op_eig: input must be square matrix";
+
+  let shape_vals =
+    let s = Array.sub shape_x 0 (ndim - 1) in
+    s.(ndim - 2) <- n;
+    s
+  in
+
+  (* Always output complex64 *)
+  let vals =
+    create x.context Dtype.Complex64
+      (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 shape_vals))
+      (View.create shape_vals)
+  in
+
+  let vecs_opt =
+    if vectors then
+      Some
+        (create x.context Dtype.Complex64
+           (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 shape_x))
+           (View.create shape_x))
+    else None
+  in
+
+  let dummy =
+    if vectors then None
+    else
+      Some
+        (create x.context Dtype.Complex64
+           (make_buffer Dtype.Complex64 1)
+           (View.create [| 1 |]))
+  in
+
+  eig 0
+    (if vectors then 1 else 0)
+    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
+    vals.buffer (View.shape vals.view) (View.strides vals.view)
+    (View.offset vals.view)
+    (match vecs_opt with
+    | Some v -> v.buffer
+    | None -> (Option.get dummy).buffer)
+    (match vecs_opt with Some v -> View.shape v.view | None -> [| 1 |])
+    (match vecs_opt with Some v -> View.strides v.view | None -> [| 1 |])
+    (match vecs_opt with Some v -> View.offset v.view | None -> 0);
+  let _ = x.view in
+  (vals, vecs_opt)
+
+let op_eigh (type a b) ~vectors (x : (a, b) t) :
+    (float, Dtype.float64_elt) t * (a, b) t option =
+  let shape_x = View.shape x.view in
+  let ndim = Array.length shape_x in
+  if ndim < 2 then failwith "op_eigh: input must have at least 2 dimensions";
+
+  let n = shape_x.(ndim - 1) in
+  let m = shape_x.(ndim - 2) in
+  if n != m then failwith "op_eigh: input must be square matrix";
+
+  let shape_vals =
+    let s = Array.sub shape_x 0 (ndim - 1) in
+    s.(ndim - 2) <- n;
+    s
+  in
+
+  (* Eigenvalues are always float64 *)
+  let vals =
+    create x.context Dtype.Float64
+      (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 shape_vals))
+      (View.create shape_vals)
+  in
+
+  let vecs_opt = if vectors then Some (make_tensor x shape_x) else None in
+  let dummy = if vectors then None else Some (make_tensor x [| 1 |]) in
+
+  eig 1
+    (if vectors then 1 else 0)
+    x.buffer (View.shape x.view) (View.strides x.view) (View.offset x.view)
+    vals.buffer (View.shape vals.view) (View.strides vals.view)
+    (View.offset vals.view)
+    (match vecs_opt with
+    | Some v -> v.buffer
+    | None -> (Option.get dummy).buffer)
+    (match vecs_opt with Some v -> View.shape v.view | None -> [| 1 |])
+    (match vecs_opt with Some v -> View.strides v.view | None -> [| 1 |])
+    (match vecs_opt with Some v -> View.offset v.view | None -> 0);
+  let _ = x.view in
+  (vals, vecs_opt)

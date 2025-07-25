@@ -266,4 +266,63 @@ module type S = sig
     (float, Dtype.float64_elt) t
   (** Compute the inverse real-valued discrete Fourier transform (IRDFT) of the
       input tensor. *)
+
+  (* Linear algebra operations *)
+
+  val op_cholesky : upper:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** Cholesky decomposition of a positive-definite matrix.
+      - [upper]: If true, returns upper triangular factor; else lower (default).
+      - Input: Square matrix A (batched).
+      - Output: Triangular factor L or U such that A = L*L^T or A = U^T*U.
+      - Raises if input is not positive-definite. *)
+
+  val op_qr : reduced:bool -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
+  (** QR decomposition.
+      - [reduced]: If true (default), returns economy/reduced QR; else full QR.
+      - Input: m x n matrix A (batched).
+      - Output: (Q, R) where A = Q*R, Q orthogonal, R upper triangular. *)
+
+  val op_svd :
+    full_matrices:bool ->
+    ('a, 'b) t ->
+    ('a, 'b) t * (float, Dtype.float64_elt) t * ('a, 'b) t
+  (** Singular value decomposition.
+      - [full_matrices]: If false (default), returns thin SVD; else full.
+      - Input: m x n matrix A (batched).
+      - Output: (U, S, V^H) where A = U*S*V^H.
+      - S is 1D vector of singular values in descending order, always float64.
+  *)
+
+  val op_eig :
+    vectors:bool ->
+    ('a, 'b) t ->
+    (Complex.t, Dtype.complex64_elt) t
+    * (Complex.t, Dtype.complex64_elt) t option
+  (** General eigenvalue decomposition.
+      - [vectors]: If true (default), computes eigenvectors.
+      - Input: Square matrix A (batched).
+      - Output: (eigenvalues, optional eigenvectors) always as complex64. *)
+
+  val op_eigh :
+    vectors:bool ->
+    ('a, 'b) t ->
+    (float, Dtype.float64_elt) t * ('a, 'b) t option
+  (** Symmetric/Hermitian eigenvalue decomposition.
+      - [vectors]: If true (default), computes eigenvectors.
+      - Input: Symmetric (real) or Hermitian (complex) matrix A (batched).
+      - Output: (eigenvalues as float64, eigenvectors same type as input). *)
+
+  val op_triangular_solve :
+    upper:bool ->
+    transpose:bool ->
+    unit_diag:bool ->
+    ('a, 'b) t ->
+    ('a, 'b) t ->
+    ('a, 'b) t
+  (** Solve triangular system A*x = b or A^T*x = b.
+      - [upper]: If true, A is upper triangular; else lower.
+      - [transpose]: If true, solve A^T*x = b; else A*x = b.
+      - [unit_diag]: If true, assume diagonal of A is all 1s.
+      - Input: Triangular matrix A, right-hand side b (batched).
+      - Output: Solution x. *)
 end

@@ -216,636 +216,616 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     check_shape "dot scalar shape" [||] result;
     check (float 1e-6) "dot scalar value" 32.0 (Nx.unsafe_get [] result)
 
-  (* ───── Convolution Tests ───── *)
+  (* ───── Solve Inverse Tests ───── *)
 
-  let test_convolve1d_basic ctx () =
-    (* Basic 1D convolution - proper tensor format: (batch, channels, width) *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 5 |] [| 1.; 2.; 3.; 4.; 5. |]
-    in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3 |] [| 1.; 0.; -1. |] in
-    let result = Nx.convolve1d input kernel in
-    (* NumPy convolve flips kernel, so result is [2., 2., 2.] *)
-    check_t "convolve1d basic" [| 1; 1; 3 |] [| 2.; 2.; 2. |] result
+  let test_solve_identity ctx () =
+    let identity = Nx.eye ctx Nx.float32 3 in
+    let b = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+    let x = Nx.solve identity b in
+    check_t "solve identity" [| 3 |] [| 1.; 2.; 3. |] x
 
-  let test_convolve1d_padding_modes ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 5 |] [| 1.; 2.; 3.; 4.; 5. |]
-    in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3 |] [| 1.; 1.; 1. |] in
+  let test_solve_simple ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 3.; 1.; 1.; 2. |] in
+    let b = Nx.create ctx Nx.float32 [| 2 |] [| 9.; 8. |] in
+    let x = Nx.solve a b in
+    let result = Nx.dot a x in
+    check_nx "solve simple" b result
 
-    (* Valid padding (default) - output size = input - kernel + 1 *)
-    let valid = Nx.convolve1d ~padding_mode:`Valid input kernel in
-    check_t "convolve1d valid padding" [| 1; 1; 3 |] [| 6.; 9.; 12. |] valid;
-
-    (* Same padding - output size = input size *)
-    let same = Nx.convolve1d ~padding_mode:`Same input kernel in
-    check_t "convolve1d same padding" [| 1; 1; 5 |] [| 3.; 6.; 9.; 12.; 9. |]
-      same;
-
-    (* Full padding - output size = input + kernel - 1 *)
-    let full = Nx.convolve1d ~padding_mode:`Full input kernel in
-    check_t "convolve1d full padding" [| 1; 1; 7 |]
-      [| 1.; 3.; 6.; 9.; 12.; 9.; 5. |]
-      full
-
-  let test_convolve1d_stride ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 8 |]
-        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
-    in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3 |] [| 1.; 1.; 1. |] in
-
-    (* Stride 2 *)
-    let result = Nx.convolve1d ~stride:2 input kernel in
-    check_t "convolve1d stride 2" [| 1; 1; 3 |] [| 6.; 12.; 18. |] result
-
-  let test_convolve1d_dilation ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 7 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7. |]
-    in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3 |] [| 1.; 0.; 1. |] in
-
-    (* Dilation 2 - kernel elements are 2 positions apart *)
-    (* With dilation=2, effective kernel size = 2*(3-1)+1 = 5 *)
-    (* Output size = 7 - 5 + 1 = 3 *)
-    let result = Nx.convolve1d ~dilation:2 input kernel in
-    check_t "convolve1d dilation 2" [| 1; 1; 3 |] [| 6.; 8.; 10. |] result
-
-  let test_convolve1d_groups ctx () =
-    (* Groups=2: split 4 channels into 2 groups of 2 channels each *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 4; 4 |] (Array.init 16 float_of_int)
-    in
-    let kernel =
-      Nx.create ctx Nx.float32 [| 2; 2; 2 |]
-        [| 1.; 1.; 1.; 1.; 1.; 1.; 1.; 1. |]
-    in
-
-    let result = Nx.convolve1d ~groups:2 input kernel in
-    check_shape "convolve1d groups shape" [| 1; 2; 3 |] result
-
-  let test_convolve1d_bias ctx () =
-    let input = Nx.create ctx Nx.float32 [| 1; 1; 3 |] [| 1.; 2.; 3. |] in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 2 |] [| 1.; 1. |] in
-    let bias = Nx.create ctx Nx.float32 [| 1 |] [| 10. |] in
-
-    let result = Nx.convolve1d ~bias input kernel in
-    check_t "convolve1d with bias" [| 1; 1; 2 |] [| 13.; 15. |] result
-
-  let test_correlate1d_basic ctx () =
-    (* Basic 1D correlation - kernel is not flipped *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 5 |] [| 1.; 2.; 3.; 4.; 5. |]
-    in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3 |] [| 1.; 0.; -1. |] in
-    let result = Nx.correlate1d input kernel in
-    check_t "correlate1d basic" [| 1; 1; 3 |] [| -2.; -2.; -2. |] result
-
-  let test_convolve2d_basic ctx () =
-    (* Basic 2D convolution *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int)
-    in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
-    let result = Nx.convolve2d input kernel in
-    check_t "convolve2d basic" [| 1; 1; 2; 2 |] [| 45.; 54.; 81.; 90. |] result
-
-  let test_convolve2d_padding_modes ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |]
-        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
-    in
-    let kernel =
-      Nx.create ctx Nx.float32 [| 1; 1; 2; 2 |] [| 1.; 1.; 1.; 1. |]
-    in
-
-    (* Valid padding *)
-    let valid = Nx.convolve2d ~padding_mode:`Valid input kernel in
-    check_t "convolve2d valid padding" [| 1; 1; 2; 2 |] [| 12.; 16.; 24.; 28. |]
-      valid;
-
-    (* Same padding *)
-    let same = Nx.convolve2d ~padding_mode:`Same input kernel in
-    check_t "convolve2d same padding" [| 1; 1; 3; 3 |]
-      [| 1.; 3.; 5.; 5.; 12.; 16.; 11.; 24.; 28. |]
-      (* Now uses proper convolution padding *)
-      same;
-
-    (* Full padding *)
-    let full = Nx.convolve2d ~padding_mode:`Full input kernel in
-    check_shape "convolve2d full padding shape" [| 1; 1; 4; 4 |] full
-
-  let test_convolve2d_stride ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 5; 5 |] (Array.init 25 float_of_int)
-    in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
-
-    (* Stride (2,2) *)
-    let result = Nx.convolve2d ~stride:(2, 2) input kernel in
-    check_shape "convolve2d stride shape" [| 1; 1; 2; 2 |] result;
-    check_t "convolve2d stride values" [| 1; 1; 2; 2 |]
-      [| 54.; 72.; 144.; 162. |] result
-
-  let test_convolve2d_dilation ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 5; 5 |] (Array.init 25 float_of_int)
-    in
-    let kernel =
-      Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |]
-        [| 1.; 0.; 0.; 0.; 0.; 0.; 0.; 0.; 1. |]
-    in
-    (* Only corners *)
-
-    (* Dilation 2 - effective kernel size becomes 5x5 *)
-    let result = Nx.convolve2d ~dilation:(2, 2) input kernel in
-    check_shape "convolve2d dilation shape" [| 1; 1; 1; 1 |] result;
-    check_t "convolve2d dilation value" [| 1; 1; 1; 1 |] [| 24. |] result
-
-  let test_convolve2d_multi_channel ctx () =
-    (* Multi-channel convolution: 3 input channels, 2 output channels *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 3; 4; 4 |] (Array.init 48 float_of_int)
-    in
-    let kernel =
-      Nx.create ctx Nx.float32 [| 2; 3; 3; 3 |] (Array.make 54 1.0)
-    in
-
-    let result = Nx.convolve2d input kernel in
-    check_shape "convolve2d multi-channel shape" [| 1; 2; 2; 2 |] result
-
-  let test_convolve2d_winograd_eligible ctx () =
-    (* Test a convolution that should trigger Winograd optimization: - 3x3
-       kernel - stride 1 - groups 1 This specific test case helps catch reshape
-       issues in Winograd path *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 8; 8 |] (Array.init 64 float_of_int)
-    in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
-
-    (* This should use Winograd optimization *)
-    let result = Nx.convolve2d ~stride:(1, 1) input kernel in
-    check_shape "convolve2d Winograd shape" [| 1; 1; 6; 6 |] result;
-
-    (* Verify the computation is correct *)
-    (* Each 3x3 window sums to 9 times the sum of its elements *)
-    let expected_00 = 0. +. 1. +. 2. +. 8. +. 9. +. 10. +. 16. +. 17. +. 18. in
-    check (float 1e-5) "convolve2d Winograd [0,0,0,0]" expected_00
-      (Nx.unsafe_get [ 0; 0; 0; 0 ] result)
-
-  let test_convolve2d_groups_winograd ctx () =
-    (* Test grouped convolution with parameters that might trigger Winograd but
-       should be handled correctly *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 2; 8; 8 |] (Array.init 128 float_of_int)
-    in
-    let kernel =
-      Nx.create ctx Nx.float32 [| 2; 1; 3; 3 |] (Array.make 18 1.0)
-    in
-
-    (* Groups=2 should disable Winograd optimization *)
-    let result = Nx.convolve2d ~groups:2 ~stride:(1, 1) input kernel in
-    check_shape "convolve2d groups Winograd shape" [| 1; 2; 6; 6 |] result
-
-  let test_convolve2d_non_contiguous_input ctx () =
-    (* Test convolution with non-contiguous input (e.g., from transpose) *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 4; 4; 1 |] (Array.init 16 float_of_int)
-    in
-    let input_transposed = Nx.transpose ~axes:[| 0; 3; 1; 2 |] input in
-    (* Now [1; 1; 4; 4] but non-contiguous *)
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
-
-    let result = Nx.convolve2d input_transposed kernel in
-    check_shape "convolve2d non-contiguous shape" [| 1; 1; 2; 2 |] result;
-    check_t "convolve2d non-contiguous values" [| 1; 1; 2; 2 |]
-      [| 45.; 54.; 81.; 90. |] result
-
-  let test_correlate2d_basic ctx () =
-    (* Basic 2D correlation *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int)
-    in
-    let kernel =
-      Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |]
-        [| 1.; 0.; -1.; 0.; 0.; 0.; -1.; 0.; 1. |]
-    in
-    let result = Nx.correlate2d input kernel in
-    check_shape "correlate2d shape" [| 1; 1; 2; 2 |] result
-
-  let test_convolve_invalid_shapes ctx () =
-    (* Test various invalid shape combinations *)
-    let input_1d =
-      Nx.create ctx Nx.float32 [| 1; 2; 5 |] (Array.init 10 float_of_int)
-    in
-    let kernel_1d =
-      Nx.create ctx Nx.float32 [| 1; 3; 3 |] (Array.init 9 float_of_int)
-    in
-
-    check_invalid_arg "convolve1d channel mismatch"
-      "correlate_nd: invalid channel configuration (2 \226\137\160 1\195\1513)\n\
-       hint: expected 3 channels for 1 groups with 3 channels each" (fun () ->
-        ignore (Nx.convolve1d input_1d kernel_1d))
-
-  let test_convolve_empty_input ctx () =
-    (* Empty input handling - empty on spatial dimension *)
-    let input = Nx.create ctx Nx.float32 [| 1; 1; 0 |] [||] in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 3 |] [| 1.; 1.; 1. |] in
-    let result = Nx.convolve1d input kernel in
-    check_shape "convolve1d empty input" [| 1; 1; 0 |] result
-
-  let test_convolve_single_element_kernel ctx () =
-    (* Single element kernel acts as scaling *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 5 |] [| 1.; 2.; 3.; 4.; 5. |]
-    in
-    let kernel = Nx.create ctx Nx.float32 [| 1; 1; 1 |] [| 2.0 |] in
-    let result = Nx.convolve1d input kernel in
-    check_t "convolve1d single kernel" [| 1; 1; 5 |] [| 2.; 4.; 6.; 8.; 10. |]
-      result
-
-  let test_convolve2d_pool_reshape_edge_case ctx () =
-    (* Test case that might trigger the reshape error seen in sanity tests This
-       tests the pool operation's reshape from [6; 6; 1; 1; 2; 2] to [6; 6;
-       4] *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 6; 6 |] (Array.init 36 float_of_int)
-    in
-    let kernel =
-      Nx.create ctx Nx.float32 [| 1; 1; 2; 2 |] [| 1.; 1.; 1.; 1. |]
-    in
-
-    (* Use stride 1 to get output shape [1; 1; 5; 5] *)
-    let result = Nx.convolve2d ~stride:(1, 1) input kernel in
-    check_shape "convolve2d pool edge case shape" [| 1; 1; 5; 5 |] result;
-
-    (* Verify first output value: sum of top-left 2x2 window *)
-    let expected_00 = 0. +. 1. +. 6. +. 7. in
-    check (float 1e-5) "convolve2d pool edge case [0,0,0,0]" expected_00
-      (Nx.unsafe_get [ 0; 0; 0; 0 ] result)
-
-  let test_convolve2d_groups_reshape_issue ctx () =
-    (* Test grouped convolution that might cause reshape issues in pooling This
-       specifically tests the optimized path for groups > 1 *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 4; 6; 6 |] (Array.init 144 float_of_int)
-    in
-    let kernel =
-      Nx.create ctx Nx.float32 [| 4; 2; 2; 2 |] (Array.make 32 1.0)
-    in
-
-    (* Groups=2: each group has 2 input channels and 2 output channels *)
-    let result = Nx.convolve2d ~groups:2 ~stride:(1, 1) input kernel in
-    check_shape "convolve2d groups reshape shape" [| 1; 4; 5; 5 |] result
-
-  let test_convolve2d_dilated_non_contiguous ctx () =
-    (* Test dilated convolution with non-contiguous tensor This can trigger
-       complex reshapes in pool_dilated_path *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 5; 5; 1 |] (Array.init 25 float_of_int)
-    in
-    let input_perm = Nx.transpose ~axes:[| 0; 3; 1; 2 |] input in
-    (* Now [1; 1; 5; 5] non-contiguous *)
-    let kernel =
-      Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |]
-        [| 1.; 0.; 0.; 0.; 0.; 0.; 0.; 0.; 1. |]
-    in
-    (* Only corners *)
-
-    (* Dilation 2 tests the dilated pooling path *)
-    let result = Nx.convolve2d ~dilation:(2, 2) input_perm kernel in
-    check_shape "convolve2d dilated non-contig shape" [| 1; 1; 1; 1 |] result;
-    (* With input 0-24 and corner kernel with dilation 2, we pick elements 0 and
-       24 *)
-    check_t "convolve2d dilated non-contig value" [| 1; 1; 1; 1 |] [| 24. |]
-      result
-
-  let test_correlate2d_winograd_sanity_case ctx () =
-    (* Test the exact scenario from sanity tests that triggers the reshape bug *)
-    (* This matches the failing sanity test exactly: correlate2d with 1x1x5x5 input, 1x1x3x3 kernel, all ones *)
-    let x = Nx.ones ctx Nx.float32 [| 1; 1; 5; 5 |] in
-    let w = Nx.ones ctx Nx.float32 [| 1; 1; 3; 3 |] in
-
-    (* This correlation should work and produce 3x3 output with all 9s *)
-    (* Note: correlate2d can also trigger Winograd when kernel is 3x3, stride 1, groups 1 *)
-    let y = Nx.correlate2d x w in
-
-    (* The expected result is a 3x3 output where each element is 9.0 *)
-    check_t ~eps:1e-6 "correlate2d values" [| 1; 1; 3; 3 |]
-      [| 9.; 9.; 9.; 9.; 9.; 9.; 9.; 9.; 9. |]
-      y
-
-  (* ───── Pooling Tests ───── *)
-
-  let test_max_pool1d_basic ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 6 |] [| 1.; 3.; 2.; 6.; 4.; 5. |]
-    in
-    let output, _ = Nx.max_pool1d ~kernel_size:2 input in
-    check_t "max_pool1d basic" [| 1; 1; 3 |] [| 3.; 6.; 5. |] output
-
-  let test_max_pool1d_stride ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 8 |]
-        [| 1.; 3.; 2.; 6.; 4.; 5.; 7.; 8. |]
-    in
-    let output, _ = Nx.max_pool1d ~kernel_size:3 ~stride:2 input in
-    check_t "max_pool1d stride" [| 1; 1; 3 |] [| 3.; 6.; 7. |] output
-
-  let test_max_pool2d_basic ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
+  let test_solve_batch ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 2; 3; 3 |]
         [|
-          1.; 3.; 2.; 4.; 5.; 7.; 6.; 8.; 9.; 11.; 10.; 12.; 13.; 15.; 14.; 16.;
+          1.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 1.; 2.; 0.; 0.; 0.; 2.; 0.; 0.; 0.; 2.;
         |]
     in
-    let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) input in
-    check_t "max_pool2d basic" [| 1; 1; 2; 2 |] [| 7.; 8.; 15.; 16. |] output
+    let b = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 2.; 4.; 6. |] in
+    let x = Nx.solve a b in
+    check_shape "solve batch shape" [| 2; 3 |] x
 
-  let test_max_pool2d_stride ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int)
+  let test_solve_singular ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
+    let b = Nx.create ctx Nx.float32 [| 2 |] [| 1.; 2. |] in
+    check_invalid_arg "solve singular" "solve: matrix is singular" (fun () ->
+        ignore (Nx.solve a b))
+
+  let test_solve_non_square ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let b = Nx.create ctx Nx.float32 [| 2 |] [| 1.; 2. |] in
+    check_invalid_arg "solve non-square"
+      "solve: coefficient matrix must be square" (fun () ->
+        ignore (Nx.solve a b))
+
+  let test_inv_identity ctx () =
+    let identity = Nx.eye ctx Nx.float32 3 in
+    let inv = Nx.inv identity in
+    check_nx "inv identity" identity inv
+
+  let test_inv_inverse ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
+    let inv_a = Nx.inv a in
+    let inv_inv_a = Nx.inv inv_a in
+    check_nx "inv inverse" a inv_inv_a
+
+  let test_inv_singular ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
+    check_invalid_arg "inv singular" "inv: matrix is singular" (fun () ->
+        ignore (Nx.inv a))
+
+  (* ───── Decomposition Tests ───── *)
+
+  let test_qr_shape ctx () =
+    let a = Nx.create ctx Nx.float32 [| 4; 3 |] (Array.init 12 float_of_int) in
+    let q, r = Nx.qr a in
+    check_shape "qr q shape" [| 4; 4 |] q;
+    check_shape "qr r shape" [| 4; 3 |] r
+
+  let test_qr_property ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |]
     in
-    let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
-    check_t "max_pool2d stride" [| 1; 1; 2; 2 |] [| 5.; 7.; 13.; 15. |] output
+    let q, r = Nx.qr a in
+    let reconstructed = Nx.matmul q r in
+    check_nx "qr property" a reconstructed
 
-  let test_max_pool2d_padding ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
-        [|
-          1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.;
-        |]
+  let test_qr_orthogonal ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |]
     in
-    (* Test with Same padding - output size should be ceil(input_size /
-       stride) *)
-    let output, _ =
-      Nx.max_pool2d ~kernel_size:(3, 3) ~stride:(2, 2) ~padding_spec:`Same input
+    let q, _ = Nx.qr a in
+    let qt_q = Nx.matmul (Nx.transpose q) q in
+    let identity = Nx.eye ctx Nx.float32 3 in
+    check_nx "qr orthogonal" identity qt_q
+
+  let test_svd_shape ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
+    let u, s, v = Nx.svd a in
+    check_shape "svd u shape" [| 3; 3 |] u;
+    check_shape "svd s shape" [| 3 |] s;
+    check_shape "svd v shape" [| 4; 4 |] v
+
+  let test_svd_property ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |]
     in
-    check_t "max_pool2d padding" [| 1; 1; 2; 2 |] [| 11.; 12.; 15.; 16. |]
-      output
+    let u, s, v = Nx.svd a in
+    let s_diag = Nx.zeros ctx Nx.float32 [| 3; 3 |] in
+    let s_float32 = Nx.cast Nx.float32 s in
+    for i = 0 to 2 do
+      let s_val = Nx.unsafe_get [ i ] s_float32 in
+      Nx.unsafe_set [ i; i ] s_val s_diag
+    done;
+    let reconstructed = Nx.matmul u (Nx.matmul s_diag (Nx.transpose v)) in
+    check_nx "svd property" a reconstructed
 
-  let test_min_pool1d_basic ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 6 |] [| 4.; 2.; 3.; 1.; 6.; 5. |]
+  let test_cholesky_posdef ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 0.; 0.; 1.; 1.; 0.; 1.; 1.; 1. |]
     in
-    let output, _ = Nx.min_pool1d ~kernel_size:2 input in
-    check_t "min_pool1d basic" [| 1; 1; 3 |] [| 2.; 1.; 5. |] output
+    let posdef = Nx.matmul (Nx.transpose a) a in
+    let l = Nx.cholesky posdef in
+    check_shape "cholesky shape" [| 3; 3 |] l
 
-  let test_min_pool1d_stride ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 8 |]
-        [| 4.; 2.; 3.; 1.; 6.; 5.; 7.; 8. |]
+  let test_cholesky_property ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 0.; 1.; 1. |] in
+    let posdef = Nx.matmul (Nx.transpose a) a in
+    let l = Nx.cholesky posdef in
+    let reconstructed = Nx.matmul l (Nx.transpose l) in
+    check_nx "cholesky property" posdef reconstructed
+
+  let test_eig_shape ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |]
     in
-    let output, _ = Nx.min_pool1d ~kernel_size:3 ~stride:2 input in
-    check_t "min_pool1d stride" [| 1; 1; 3 |] [| 2.; 1.; 5. |] output
+    let eigenvalues, eigenvectors = Nx.eig a in
+    check_shape "eig eigenvalues shape" [| 3 |] eigenvalues;
+    check_shape "eig eigenvectors shape" [| 3; 3 |] eigenvectors
 
-  let test_min_pool2d_basic ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
-        [|
-          1.; 3.; 2.; 4.; 5.; 7.; 6.; 8.; 9.; 11.; 10.; 12.; 13.; 15.; 14.; 16.;
-        |]
-    in
-    let output, _ = Nx.min_pool2d ~kernel_size:(2, 2) input in
-    check_t "min_pool2d basic" [| 1; 1; 2; 2 |] [| 1.; 2.; 9.; 10. |] output
-
-  let test_min_pool2d_stride ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |]
-        [|
-          1.; 2.; 5.; 6.; 3.; 4.; 7.; 8.; 9.; 10.; 13.; 14.; 11.; 12.; 15.; 16.;
-        |]
-    in
-    let output, _ = Nx.min_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
-    check_t "min_pool2d stride" [| 1; 1; 2; 2 |] [| 1.; 5.; 9.; 13. |] output
-
-  let test_min_pool2d_padding ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 3; 3 |]
-        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
-    in
-    let output, _ =
-      Nx.min_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) ~padding_spec:`Same input
-    in
-    (* With zero padding, the minimums at edges will be 0 *)
-    check_t "min_pool2d padding" [| 1; 1; 3; 3 |]
-      [| 0.; 0.; 0.; 0.; 1.; 2.; 0.; 4.; 5. |]
-      output
-
-  let test_min_pool2d_uint8 ctx () =
-    (* Test that min_pool works correctly with uint8 dtype *)
-    let input =
-      Nx.create ctx Nx.uint8 [| 1; 1; 4; 4 |]
-        [|
-          255; 200; 150; 100; 180; 160; 140; 120; 90; 80; 70; 60; 50; 40; 30; 20;
-        |]
-    in
-    let output, _ = Nx.min_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
-    check_t "min_pool2d uint8" [| 1; 1; 2; 2 |] [| 160; 100; 40; 20 |] output
-
-  let test_avg_pool1d_basic ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-    in
-    let output = Nx.avg_pool1d ~kernel_size:2 input in
-    check_t "avg_pool1d basic" [| 1; 1; 3 |] [| 1.5; 3.5; 5.5 |] output
-
-  let test_avg_pool2d_basic ctx () =
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int)
-    in
-    let output = Nx.avg_pool2d ~kernel_size:(2, 2) input in
-    check_t "avg_pool2d basic" [| 1; 1; 2; 2 |] [| 2.5; 4.5; 10.5; 12.5 |]
-      output
-
-  let test_pool_batch ctx () =
-    (* Test pooling with batch dimension *)
-    let input =
-      Nx.create ctx Nx.float32 [| 2; 1; 4; 4 |] (Array.init 32 float_of_int)
-    in
-    let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
-    check_shape "pool batch shape" [| 2; 1; 2; 2 |] output;
-    (* Check first batch *)
-    check (float 1e-6) "batch 0 [0,0]" 5. (Nx.unsafe_get [ 0; 0; 0; 0 ] output);
-    (* Check second batch *)
-    check (float 1e-6) "batch 1 [0,0]" 21. (Nx.unsafe_get [ 1; 0; 0; 0 ] output)
-
-  let test_pool_multichannel ctx () =
-    (* Test pooling with multiple channels *)
-    let input =
-      Nx.create ctx Nx.float32 [| 1; 3; 4; 4 |] (Array.init 48 float_of_int)
-    in
-    let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
-    check_shape "pool multichannel shape" [| 1; 3; 2; 2 |] output
-
-  let test_pool_edge_cases ctx () =
-    (* Test edge cases *)
-    (* Single element *)
-    let single = Nx.create ctx Nx.float32 [| 1; 1; 1; 1 |] [| 42. |] in
-    let out_single, _ = Nx.max_pool2d ~kernel_size:(1, 1) single in
-    check_t "pool single element" [| 1; 1; 1; 1 |] [| 42. |] out_single;
-
-    (* Empty spatial dimensions *)
-    let empty = Nx.create ctx Nx.float32 [| 1; 1; 0; 4 |] [||] in
-    let out_empty, _ = Nx.max_pool2d ~kernel_size:(1, 1) empty in
-    check_shape "pool empty spatial" [| 1; 1; 0; 4 |] out_empty
-
-  (*  ─────  Solve Inverse Tests  ─────  *)
-  (* Note: These functions are not exposed in nx.ml, so tests are commented out *)
-
-  (* let test_solve_identity ctx () = (* solve(I, b) = b *) let identity =
-     Nx.eye Nx.float32 3 in let b = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.;
-     3. |] in let x = Nx.solve identity b in check_t "solve identity" [| 3 |] [|
-     1.; 2.; 3. |] x
-
-     let test_solve_simple ctx () = (* Simple 2x2 system *) let a = Nx.create
-     ctx Nx.float32 [| 2; 2 |] [| 3.; 1.; 1.; 2. |] in let b = Nx.create ctx
-     Nx.float32 [| 2 |] [| 9.; 8. |] in let x = Nx.solve a b in (* Verify A @ x
-     = b *) let result = Nx.dot a x in check_approx_equal "solve simple" b
-     result
-
-     let test_solve_batch ctx () = (* Multiple systems *) let a = Nx.create ctx
-     Nx.float32 [| 2; 3; 3 |] [| (* First system *) 1.; 0.; 0.; 0.; 1.; 0.; 0.;
-     0.; 1.; (* Second system *) 2.; 0.; 0.; 0.; 2.; 0.; 0.; 0.; 2. |] in let b
-     = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 2.; 4.; 6. |] in let x
-     = Nx.solve a b in check_shape "solve batch shape" [| 2; 3 |] x
-
-     let test_solve_singular ctx () = (* Singular matrix *) let a = Nx.create
-     ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in let b = Nx.create ctx
-     Nx.float32 [| 2 |] [| 1.; 2. |] in check_invalid_arg "solve singular"
-     "solve: matrix is singular" (fun () -> ignore (Nx.solve a b))
-
-     let test_solve_non_square ctx () = (* Non-square matrix *) let a =
-     Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in let b =
-     Nx.create ctx Nx.float32 [| 2 |] [| 1.; 2. |] in check_invalid_arg "solve
-     non-square" "solve: coefficient matrix must be square" (fun () -> ignore
-     (Nx.solve a b))
-
-     let test_inv_identity ctx () = (* inv(I) = I *) let identity = Nx.eye
-     Nx.float32 3 in let inv = Nx.inv identity in check_approx_equal "inv
-     identity" identity inv
-
-     let test_inv_inverse ctx () = (* inv(inv(A)) = A *) let a = Nx.create ctx
-     Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in let inv_a = Nx.inv a in let
-     inv_inv_a = Nx.inv inv_a in check_approx_equal "inv inverse" a inv_inv_a
-
-     let test_inv_singular ctx () = (* Singular matrix *) let a = Nx.create ctx
-     Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in check_invalid_arg "inv
-     singular" "inv: matrix is singular" (fun () -> ignore (Nx.inv a)) *)
-
-  (*  ─────  Decomposition Tests  ─────  *)
-  (* Note: These functions are not exposed in nx.ml, so tests are commented out *)
-
-  (* let test_qr_shape ctx () = let a = Nx.create ctx Nx.float32 [| 4; 3 |]
-     (Array.init 12 float_of_int) in let q, r = Nx.qr a in check_shape "qr q
-     shape" [| 4; 4 |] q; check_shape "qr r shape" [| 4; 3 |] r
-
-     let test_qr_property ctx () = (* Q @ R = A *) let a = Nx.create ctx
-     Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |] in let q, r
-     = Nx.qr a in let reconstructed = Nx.matmul q r in check_approx_equal "qr
-     property" a reconstructed
-
-     let test_qr_orthogonal ctx () = (* Q.T @ Q = I *) let a = Nx.create ctx
-     Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |] in let q, _
-     = Nx.qr a in let qt_q = Nx.matmul (Nx.transpose q) q in let identity =
-     Nx.eye Nx.float32 3 in check_approx_equal "qr orthogonal" identity qt_q
-
-     let test_svd_shape ctx () = let a = Nx.create ctx Nx.float32 [| 3; 4 |]
-     (Array.init 12 float_of_int) in let u, s, v = Nx.svd a in check_shape "svd
-     u shape" [| 3; 3 |] u; check_shape "svd s shape" [| 3 |] s; check_shape
-     "svd v shape" [| 4; 4 |] v
-
-     let test_svd_property ctx () = (* U @ S @ V.T = A *) let a = Nx.create ctx
-     Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |] in let u,
-     s, v = Nx.svd a in (* Create diagonal matrix from s *) let s_diag =
-     Nx.zeros Nx.float32 [| 3; 3 |] in for i = 0 to 2 do Nx.set_item [i; i]
-     s_diag (Nx.unsafe_get [i] s) done; let reconstructed = Nx.matmul u
-     (Nx.matmul s_diag (Nx.transpose v)) in check_approx_equal "svd property" a
-     reconstructed
-
-     let test_cholesky_posdef ctx () = (* Create positive definite matrix: A.T @
-     A *) let a = Nx.create ctx Nx.float32 [| 3; 3 |] [| 1.; 0.; 0.; 1.; 1.; 0.;
-     1.; 1.; 1. |] in let posdef = Nx.matmul (Nx.transpose a) a in let l =
-     Nx.cholesky posdef in check_shape "cholesky shape" [| 3; 3 |] l
-
-     let test_cholesky_property ctx () = (* L @ L.T = A *) let a = Nx.create ctx
-     Nx.float32 [| 2; 2 |] [| 1.; 0.; 1.; 1. |] in let posdef = Nx.matmul
-     (Nx.transpose a) a in let l = Nx.cholesky posdef in let reconstructed =
-     Nx.matmul l (Nx.transpose l) in check_approx_equal "cholesky property"
-     posdef reconstructed
-
-     let test_eig_shape ctx () = let a = Nx.create ctx Nx.float32 [| 3; 3 |] [|
-     1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |] in let eigenvalues, eigenvectors =
-     Nx.eig a in check_shape "eig eigenvalues shape" [| 3 |] eigenvalues;
-     check_shape "eig eigenvectors shape" [| 3; 3 |] eigenvectors
-
-     let test_eig_property ctx () = (* A @ v = lambda * v *) let a = Nx.create
-     ctx Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in let eigenvalues,
-     eigenvectors = Nx.eig a in (* Check first eigenvector *) let v1 = Nx.get
-     (Nx.LR [Nx.All; [0; 1]]) eigenvectors in let lambda1 = Nx.unsafe_get [0]
-     eigenvalues in let av1 = Nx.dot a v1 in let lambda_v1 = Nx.mul_s v1 lambda1
-     in check_approx_equal "eig property" av1 lambda_v1 *)
+  let test_eig_property ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
+    let eigenvalues, eigenvectors = Nx.eig a in
+    (* Cast to float32 to match a's type *)
+    let eigenvalues_f32 = Nx.cast Nx.float32 eigenvalues in
+    let eigenvectors_f32 = Nx.cast Nx.float32 eigenvectors in
+    let v1 = Nx.slice [ R [ 0; 2 ]; I 0 ] eigenvectors_f32 in
+    let lambda1 = Nx.unsafe_get [ 0 ] eigenvalues_f32 in
+    let av1 = Nx.dot a v1 in
+    let lambda1_scalar = Nx.scalar ctx Nx.float32 lambda1 in
+    let lambda_v1 = Nx.mul lambda1_scalar v1 in
+    check_nx "eig property" av1 lambda_v1
 
   (* ───── Norm Tests ───── *)
 
-  (* let test_norm_vector_1 ctx () = let v = Nx.create ctx Nx.float32 [| 4 |] [|
-     -1.; 2.; -3.; 4. |] in let result = Nx.norm ~ord:(`L 1.) v in check_t "norm
-     L1" [||] [| 10.0 |] result *)
+  let test_norm_vector_1 ctx () =
+    let v = Nx.create ctx Nx.float32 [| 4 |] [| -1.; 2.; -3.; 4. |] in
+    let result = Nx.norm ~ord:(`P 1.) v in
+    check_t "norm L1" [||] [| 10.0 |] result
 
-  (* let test_norm_vector_2 ctx () = let v = Nx.create ctx Nx.float32 [| 3 |] [|
-     3.; 4.; 0. |] in let result = Nx.norm v in (* Default is L2 *) check_t
-     "norm L2" [||] [| 5.0 |] result *)
+  let test_norm_vector_2 ctx () =
+    let v = Nx.create ctx Nx.float32 [| 3 |] [| 3.; 4.; 0. |] in
+    let result = Nx.norm v in
+    check_t "norm L2" [||] [| 5.0 |] result
 
-  (* let test_norm_vector_inf ctx () = let v = Nx.create ctx Nx.float32 [| 4 |]
-     [| -1.; 2.; -5.; 4. |] in let result = Nx.norm ~ord:`Inf v in check_t "norm
-     Linf" [||] [| 5.0 |] result *)
+  let test_norm_vector_inf ctx () =
+    let v = Nx.create ctx Nx.float32 [| 4 |] [| -1.; 2.; -5.; 4. |] in
+    let result = Nx.norm ~ord:`Inf v in
+    check_t "norm Linf" [||] [| 5.0 |] result
 
-  (* let test_norm_matrix_fro ctx () = let m = Nx.create ctx Nx.float32 [| 2; 2
-     |] [| 1.; 2.; 3.; 4. |] in let result = Nx.norm ~ord:`Fro m in check_t
-     ~eps:1e-5 "norm Frobenius" [||] [| 5.477226 |] result *)
+  let test_norm_matrix_fro ctx () =
+    let m = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+    let result = Nx.norm ~ord:`Fro m in
+    check_t ~eps:1e-5 "norm Frobenius" [||] [| 5.477226 |] result
 
-  (* let test_norm_matrix_1 ctx () = let m = Nx.create ctx Nx.float32 [| 2; 2 |]
-     [| 1.; -2.; 3.; 4. |] in let result = Nx.norm ~ord:(`L 1.) m in check_t
-     "norm matrix L1" [||] [| 6.0 |] result *)
+  let test_norm_matrix_1 ctx () =
+    let m = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; -2.; 3.; 4. |] in
+    let result = Nx.norm ~ord:(`P 1.) m in
+    check_t "norm matrix L1" [||] [| 6.0 |] result
 
-  (* let test_norm_axis ctx () = let m = Nx.create ctx Nx.float32 [| 2; 3 |] [|
-     1.; 2.; 3.; 4.; 5.; 6. |] in let result = Nx.norm ~axis:[1] m in check_t
-     ~eps:1e-5 "norm along axis" [| 2 |] [| 3.741657; 8.774964 |] result *)
+  let test_norm_axis ctx () =
+    let m = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let result = Nx.norm ~axes:[| 1 |] m in
+    check_t ~eps:1e-5 "norm along axis" [| 2 |] [| 3.741657; 8.774964 |] result
 
-  (* let test_norm_empty ctx () = let v = Nx.create ctx Nx.float32 [| 0 |] [||]
-     in let result = Nx.norm v in check_t "norm empty" [||] [| 0.0 |] result *)
+  let test_norm_empty ctx () =
+    let v = Nx.create ctx Nx.float32 [| 0 |] [||] in
+    let result = Nx.norm v in
+    check_t "norm empty" [||] [| 0.0 |] result
 
   (* ───── Linear Algebra Utilities ───── *)
 
-  (* let test_det_2x2 ctx () = let a = Nx.create ctx Nx.float32 [| 2; 2 |] [|
-     3.; 8.; 4.; 6. |] in let det = Nx.det a in check_t "det 2x2" [||] [| -14.0
-     |] det
+  let test_det_2x2 ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 3.; 8.; 4.; 6. |] in
+    let det = Nx.det a in
+    check_t "det 2x2" [||] [| -14.0 |] det
 
-     let test_det_singular ctx () = let a = Nx.create ctx Nx.float32 [| 2; 2 |]
-     [| 1.; 2.; 2.; 4. |] in let det = Nx.det a in check_t ~eps:1e-6 "det
-     singular" [||] [| 0.0 |] det *)
+  let test_det_singular ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
+    let det = Nx.det a in
+    check_t ~eps:1e-6 "det singular" [||] [| 0.0 |] det
 
-  (* let test_trace ctx () = let a = Nx.create ctx Nx.float32 [| 3; 3 |] [| 1.;
-     2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in let tr = Nx.trace a in check_t "trace"
-     [||] [| 15.0 |] tr *)
+  let test_trace ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+    in
+    let tr = Nx.trace a in
+    check_t "trace" [||] [| 15.0 |] tr
 
-  (* let test_diag_extract ctx () = let a = Nx.create ctx Nx.float32 [| 3; 3 |]
-     [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in let diag = Nx.diag a in check_t
-     "diag extract" [| 3 |] [| 1.; 5.; 9. |] diag *)
+  let test_diag_extract ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+    in
+    let diag = Nx.diagonal a in
+    check_t "diag extract" [| 3 |] [| 1.; 5.; 9. |] diag
 
-  (* let test_diag_create ctx () = let v = Nx.create ctx Nx.float32 [| 3 |] [|
-     1.; 2.; 3. |] in let result = Nx.diag v in check_t "diag create" [| 3; 3 |]
-     [| 1.; 0.; 0.; 0.; 2.; 0.; 0.; 0.; 3. |] result *)
+  (* ───── Additional Utility Tests ───── *)
 
-  (* let test_tril_triu ctx () = let a = Nx.create ctx Nx.float32 [| 3; 3 |] [|
-     1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
+  let test_diagonal ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int) in
+    let d = Nx.diagonal a in
+    check_t "diagonal main" [| 3 |] [| 0.; 4.; 8. |] d;
+    let d_offset = Nx.diagonal ~offset:1 a in
+    check_t "diagonal offset 1" [| 2 |] [| 1.; 5. |] d_offset;
+    let a_higher =
+      Nx.create ctx Nx.float32 [| 2; 3; 3 |] (Array.init 18 float_of_int)
+    in
+    let d_higher = Nx.diagonal a_higher in
+    check_shape "diagonal higher dim" [| 2; 3 |] d_higher
 
-     let lower = Nx.tril a in check_t "tril" [| 3; 3 |] [| 1.; 0.; 0.; 4.; 5.;
-     0.; 7.; 8.; 9. |] lower;
+  let test_diagonal_edge ctx () =
+    let a_empty = Nx.create ctx Nx.float32 [| 0; 0 |] [||] in
+    let d_empty = Nx.diagonal a_empty in
+    check_shape "diagonal empty" [| 0 |] d_empty;
+    check_raises "diagonal invalid axes"
+      (Invalid_argument "diagonal: axis1 = axis2") (fun () ->
+        ignore (Nx.diagonal ~axis1:0 ~axis2:0 a_empty))
 
-     let upper = Nx.triu a in check_t "triu" [| 3; 3 |] [| 1.; 2.; 3.; 0.; 5.;
-     6.; 0.; 0.; 9. |] upper *)
+  let test_matrix_transpose ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let t = Nx.matrix_transpose a in
+    check_shape "matrix transpose shape" [| 3; 2 |] t;
+    check_t "matrix transpose values" [| 3; 2 |] [| 1.; 4.; 2.; 5.; 3.; 6. |] t;
+    let a1d = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+    let t1d = Nx.matrix_transpose a1d in
+    check_t "matrix transpose 1d unchanged" [| 3 |] [| 1.; 2.; 3. |] t1d
+
+  let test_trace_offset ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+    in
+    let tr_offset = Nx.trace ~offset:1 a in
+    check_t "trace offset 1" [||] [| 11. |] tr_offset
+
+  let test_det_batch ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 2; 2; 2 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+    in
+    let d = Nx.det a in
+    check_shape "det batch" [| 2 |] d;
+    check_t "det batch values" [| 2 |] [| -2.; -2. |] d
+
+  let test_slogdet ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 3.; 8.; 4.; 6. |] in
+    let sign, logdet = Nx.slogdet a in
+    check_t "slogdet sign" [||] [| -1. |] sign;
+    check (float 1e-5) "slogdet logdet" (log 14.) (Nx.unsafe_get [] logdet)
+
+  let test_slogdet_singular ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
+    let sign, logdet = Nx.slogdet a in
+    check_t "slogdet singular sign" [||] [| 0. |] sign;
+    check (float 1e-5) "slogdet singular logdet" neg_infinity
+      (Nx.unsafe_get [] logdet)
+
+  let test_matrix_rank ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int) in
+    let r = Nx.matrix_rank a in
+    check int "matrix rank full" 3 r;
+    let a_low =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 2.; 4.; 6.; 3.; 6.; 9. |]
+    in
+    let r_low = Nx.matrix_rank a_low in
+    check int "matrix_rank low" 1 r_low
+
+  let test_matrix_rank_tol ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; 1e-10 |] in
+    let r = Nx.matrix_rank ~tol:1e-8 a in
+    check int "matrix_rank with tol" 1 r
+
+  (* ───── Product Ops Tests ───── *)
+
+  let test_vdot ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+    let b = Nx.create ctx Nx.float32 [| 3 |] [| 4.; 5.; 6. |] in
+    let res = Nx.vdot a b in
+    check_t "vdot 1d" [||] [| 32. |] res;
+    let a2 = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let res2 = Nx.vdot a2 b in
+    check_t "vdot flatten" [||] [| 4. +. 10. +. 18. +. 16. +. 25. +. 36. |] res2
+
+  let test_vdot_mismatch ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+    let b = Nx.create ctx Nx.float32 [| 4 |] [| 4.; 5.; 6.; 7. |] in
+    check_raises "vdot mismatch"
+      (Invalid_argument "vdot: different number of elements") (fun () ->
+        ignore (Nx.vdot a b))
+
+  let test_vecdot ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let b =
+      Nx.create ctx Nx.float32 [| 2; 3 |] [| 7.; 8.; 9.; 10.; 11.; 12. |]
+    in
+    let res = Nx.vecdot a b in
+    check_t "vecdot default axis" [| 2 |] [| 50.; 149. |] res;
+    let res_axis0 = Nx.vecdot ~axis:0 a b in
+    check_t "vecdot axis 0" [| 3 |] [| 41.; 58.; 75. |] res_axis0
+
+  let test_inner ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+    let b = Nx.create ctx Nx.float32 [| 3 |] [| 4.; 5.; 6. |] in
+    let res = Nx.inner a b in
+    check_t "inner 1d" [||] [| 32. |] res;
+    let a2 = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let res2 = Nx.inner a2 a in
+    check_t "inner higher" [| 2 |] [| 14.; 32. |] res2
+
+  let test_inner_mismatch ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+    let b = Nx.create ctx Nx.float32 [| 4 |] [| 4.; 5.; 6.; 7. |] in
+    check_raises "inner mismatch"
+      (Invalid_argument "inner: last dimensions differ") (fun () ->
+        ignore (Nx.inner a b))
+
+  let test_outer ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2 |] [| 1.; 2. |] in
+    let b = Nx.create ctx Nx.float32 [| 3 |] [| 3.; 4.; 5. |] in
+    let res = Nx.outer a b in
+    check_t "outer" [| 2; 3 |] [| 3.; 4.; 5.; 6.; 8.; 10. |] res;
+    let a_scalar = Nx.create ctx Nx.float32 [||] [| 2. |] in
+    let res_scalar = Nx.outer a_scalar b in
+    check_t "outer scalar" [| 3 |] [| 6.; 8.; 10. |] res_scalar
+
+  let test_tensordot ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let b =
+      Nx.create ctx Nx.float32 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |]
+    in
+    let res = Nx.tensordot a b in
+    check_t "tensordot default" [| 2; 2 |] [| 58.; 64.; 139.; 154. |] res;
+    let res_axes = Nx.tensordot ~axes:([ 0 ], [ 1 ]) a b in
+    check_shape "tensordot custom axes" [| 3; 3 |] res_axes
+
+  let test_tensordot_mismatch ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let b = Nx.create ctx Nx.float32 [| 4; 2 |] (Array.init 8 float_of_int) in
+    check_raises "tensordot mismatch"
+      (Invalid_argument "tensordot: axes have different sizes") (fun () ->
+        ignore (Nx.tensordot ~axes:([ 1 ], [ 0 ]) a b))
+
+  let test_einsum ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let b =
+      Nx.create ctx Nx.float32 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |]
+    in
+    let res_matmul = Nx.einsum "ij,jk->ik" [| a; b |] in
+    check_t "einsum matmul" [| 2; 2 |] [| 58.; 64.; 139.; 154. |] res_matmul;
+    let res_diag = Nx.einsum "ii->i" [| a |] in
+    check_t "einsum diag" [| 2 |] [| 1.; 5. |] res_diag;
+    let res_trans = Nx.einsum "ij->ji" [| a |] in
+    check_t "einsum transpose" [| 3; 2 |] [| 1.; 4.; 2.; 5.; 3.; 6. |] res_trans
+
+  let test_kron ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+    let b = Nx.create ctx Nx.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+    let res = Nx.kron a b in
+    check_t "kron" [| 4; 4 |]
+      [|
+        5.;
+        6.;
+        10.;
+        12.;
+        7.;
+        8.;
+        14.;
+        16.;
+        15.;
+        18.;
+        20.;
+        24.;
+        21.;
+        24.;
+        28.;
+        32.;
+      |]
+      res
+
+  let test_multi_dot ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let b = Nx.create ctx Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
+    let c =
+      Nx.create ctx Nx.float32 [| 4; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+    in
+    let res = Nx.multi_dot [| a; b; c |] in
+    let manual = Nx.matmul a (Nx.matmul b c) in
+    check_nx "multi_dot" manual res
+
+  let test_multi_dot_empty _ctx () =
+    check_raises "multi_dot empty" (Invalid_argument "multi_dot: empty array")
+      (fun () -> ignore (Nx.multi_dot [||]))
+
+  let test_matrix_power ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 1.; 1.; 0. |] in
+    let pow3 = Nx.matrix_power a 3 in
+    check_t "matrix_power positive" [| 2; 2 |] [| 3.; 2.; 2.; 1. |] pow3;
+    let pow0 = Nx.matrix_power a 0 in
+    let id = Nx.eye ctx Nx.float32 2 in
+    check_nx "matrix_power zero" id pow0;
+    let pow_neg2 = Nx.matrix_power a (-2) in
+    let inv = Nx.inv a in
+    let inv2 = Nx.matmul inv inv in
+    check_nx "matrix_power negative" inv2 pow_neg2
+
+  let test_matrix_power_singular ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
+    check_raises "matrix_power singular negative"
+      (Invalid_argument "matrix_power: singular for negative exponent")
+      (fun () -> ignore (Nx.matrix_power a (-1)))
+
+  let test_cross ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+    let b = Nx.create ctx Nx.float32 [| 3 |] [| 4.; 5.; 6. |] in
+    let res = Nx.cross a b in
+    check_t "cross 3d" [| 3 |] [| -3.; 6.; -3. |] res;
+    let a_batch =
+      Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+    in
+    let b_batch =
+      Nx.create ctx Nx.float32 [| 2; 3 |] [| 7.; 8.; 9.; 10.; 11.; 12. |]
+    in
+    let res_batch = Nx.cross ~axis:1 a_batch b_batch in
+    check_shape "cross batch" [| 2; 3 |] res_batch
+
+  let test_cross_invalid ctx () =
+    let a = Nx.create ctx Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+    let b = Nx.create ctx Nx.float32 [| 4 |] [| 5.; 6.; 7.; 8. |] in
+    check_raises "cross invalid dim" (Invalid_argument "cross: axis dim not 3")
+      (fun () -> ignore (Nx.cross a b))
+
+  (* ───── Advanced Decomposition Tests ───── *)
+
+  let test_cholesky_upper ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
+    let u = Nx.cholesky ~upper:true a in
+    let recon = Nx.matmul (Nx.transpose u) u in
+    check_nx "cholesky upper" a recon
+
+  let test_cholesky_non_posdef ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+    check_raises "cholesky non posdef"
+      (Invalid_argument "cholesky: not positive-definite") (fun () ->
+        ignore (Nx.cholesky a))
+
+  let test_qr_mode ctx () =
+    let a = Nx.create ctx Nx.float32 [| 4; 3 |] (Array.init 12 float_of_int) in
+    let q_red, r_red = Nx.qr ~mode:`Reduced a in
+    check_shape "qr reduced q" [| 4; 3 |] q_red;
+    check_shape "qr reduced r" [| 3; 3 |] r_red;
+    let q_comp, r_comp = Nx.qr ~mode:`Complete a in
+    check_shape "qr complete q" [| 4; 4 |] q_comp;
+    check_shape "qr complete r" [| 4; 3 |] r_comp
+
+  let test_svd_full_matrices ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
+    let u, s, vh = Nx.svd ~full_matrices:true a in
+    check_shape "svd full u" [| 3; 3 |] u;
+    check_shape "svd full vh" [| 4; 4 |] vh;
+    let u_econ, s_econ, vh_econ = Nx.svd ~full_matrices:false a in
+    check_shape "svd econ u" [| 3; 3 |] u_econ;
+    check_shape "svd econ vh" [| 3; 4 |] vh_econ;
+    check_nx "svd s equal" s s_econ
+
+  let test_svdvals ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |]
+    in
+    let s = Nx.svdvals a in
+    check_shape "svdvals shape" [| 3 |] s;
+    let _, s_full, _ = Nx.svd a in
+    check_nx "svdvals match svd" s s_full
+
+  (* ───── Eigen Tests ───── *)
+
+  let test_eigh ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
+    let vals, vecs = Nx.eigh a in
+    check_t ~eps:1e-5 "eigh vals" [| 2 |] [| 1.; 3. |] vals;
+    let diag_vals =
+      let zeros = Nx.zeros ctx Nx.float32 [| 2; 2 |] in
+      let z_with_diag = Nx.copy zeros in
+      Nx.unsafe_set [ 0; 0 ] (Nx.unsafe_get [ 0 ] vals) z_with_diag;
+      Nx.unsafe_set [ 1; 1 ] (Nx.unsafe_get [ 1 ] vals) z_with_diag;
+      z_with_diag
+    in
+    let recon = Nx.matmul vecs (Nx.matmul diag_vals (Nx.transpose vecs)) in
+    check_nx "eigh recon" a recon
+
+  let test_eigh_uplo ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 2.; 4.; 5.; 3.; 5.; 6. |]
+    in
+    let vals_l = Nx.eigh ~uplo:`L a |> fst in
+    let vals_u = Nx.eigh ~uplo:`U a |> fst in
+    check_nx "eigh uplo L=U" vals_l vals_u
+
+  let test_eigvals ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
+    let vals = Nx.eigvals a in
+    let vals_full, _ = Nx.eig a in
+    check_nx "eigvals match eig" vals vals_full
+
+  let test_eigvalsh ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
+    let vals = Nx.eigvalsh a in
+    let vals_full, _ = Nx.eigh a in
+    check_nx "eigvalsh match eigh" vals vals_full
+
+  (* ───── Advanced Norm Tests ───── *)
+
+  let test_norm_ord ctx () =
+    let m = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |] in
+    let n_nuc = Nx.norm ~ord:`Nuc m in
+    check (float 1e-5) "norm nuclear" 5.477 (Nx.unsafe_get [] n_nuc);
+    let n_two = Nx.norm ~ord:`Two m in
+    check (float 1e-5) "norm two" 5.477 (Nx.unsafe_get [] n_two);
+    let n_neg_two = Nx.norm ~ord:`NegTwo m in
+    check (float 1e-5) "norm neg two" 0.366 (Nx.unsafe_get [] n_neg_two)
+
+  let test_norm_keepdims ctx () =
+    let v = Nx.create ctx Nx.float32 [| 3 |] [| 3.; 4.; 0. |] in
+    let n = Nx.norm ~keepdims:true v in
+    check_shape "norm keepdims" [| 1 |] n;
+    check_t "norm keepdims value" [| 1 |] [| 5. |] n
+
+  let test_cond ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; 1. |] in
+    let c = Nx.cond a in
+    check_t "cond default" [||] [| 1. |] c;
+    let c_inf = Nx.cond ~p:`Inf a in
+    check_t "cond inf" [||] [| 1. |] c_inf
+
+  (* ───── Advanced Solve Tests ───── *)
+
+  let test_lstsq ctx () =
+    let a = Nx.create ctx Nx.float32 [| 3; 2 |] [| 1.; 1.; 1.; 2.; 1.; 3. |] in
+    let b = Nx.create ctx Nx.float32 [| 3 |] [| 3.; 6.; 9. |] in
+    let x, _res, rank, _s = Nx.lstsq a b in
+    check_shape "lstsq x" [| 2 |] x;
+    check int "lstsq rank" 2 rank;
+    let approx_b = Nx.matmul a x in
+    check_nx "lstsq approx" b approx_b
+
+  let test_lstsq_rcond ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; 1e-10 |] in
+    let b = Nx.create ctx Nx.float32 [| 2 |] [| 1.; 0. |] in
+    let _, _, rank, _ = Nx.lstsq ~rcond:1e-8 a b in
+    check int "lstsq rcond rank" 1 rank
+
+  let test_pinv ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let pinv = Nx.pinv a in
+    check_shape "pinv shape" [| 3; 2 |] pinv;
+    let recon = Nx.matmul a (Nx.matmul pinv a) in
+    check_nx "pinv recon" a recon
+
+  let test_pinv_singular ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
+    let pinv = Nx.pinv a in
+    let recon = Nx.matmul a (Nx.matmul pinv a) in
+    check_nx "pinv singular recon" a recon
+
+  let test_tensorsolve ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 2; 2; 2; 2 |] (Array.init 16 float_of_int)
+    in
+    let b = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+    let x = Nx.tensorsolve a b in
+    check_shape "tensorsolve shape" [| 2; 2 |] x;
+    let recon = Nx.tensordot a x ~axes:([ 2; 3 ], [ 0; 1 ]) in
+    check_nx "tensorsolve recon" b recon
+
+  let test_tensorsolve_axes ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 3; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+    in
+    let b = Nx.create ctx Nx.float32 [| 3 |] [| 14.; 32.; 50. |] in
+    let x = Nx.tensorsolve ~axes:[ 0 ] a b in
+    check_t "tensorsolve axes" [| 3 |] [| 1.; 2.; 3. |] x
+
+  let test_tensorinv ctx () =
+    let a =
+      Nx.create ctx Nx.float32 [| 2; 2; 2; 2 |] (Array.init 16 float_of_int)
+    in
+    let inv = Nx.tensorinv ~ind:2 a in
+    check_shape "tensorinv shape" [| 2; 2; 2; 2 |] inv;
+    let recon = Nx.tensordot a inv ~axes:([ 2; 3 ], [ 0; 1 ]) in
+    let id = Nx.eye ctx Nx.float32 4 |> Nx.reshape [| 2; 2; 2; 2 |] in
+    check_nx "tensorinv recon" id recon
+
+  let test_tensorinv_ind ctx () =
+    let a = Nx.create ctx Nx.float32 [| 4; 4 |] (Array.init 16 float_of_int) in
+    let inv = Nx.tensorinv ~ind:1 a in
+    check_shape "tensorinv ind shape" [| 4; 4 |] inv
 
   (* Test Suite Organization *)
 
@@ -874,114 +854,134 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       ("dot scalar result", `Quick, test_dot_scalar_result ctx);
     ]
 
-  let convolution_tests ctx =
+  let solve_inverse_tests ctx =
     [
-      ("convolve1d basic", `Quick, test_convolve1d_basic ctx);
-      ("convolve1d padding modes", `Quick, test_convolve1d_padding_modes ctx);
-      ("convolve1d stride", `Quick, test_convolve1d_stride ctx);
-      ("convolve1d dilation", `Quick, test_convolve1d_dilation ctx);
-      ("convolve1d groups", `Quick, test_convolve1d_groups ctx);
-      ("convolve1d bias", `Quick, test_convolve1d_bias ctx);
-      ("correlate1d basic", `Quick, test_correlate1d_basic ctx);
-      ("convolve2d basic", `Quick, test_convolve2d_basic ctx);
-      ("convolve2d padding modes", `Quick, test_convolve2d_padding_modes ctx);
-      ("convolve2d stride", `Quick, test_convolve2d_stride ctx);
-      ("convolve2d dilation", `Quick, test_convolve2d_dilation ctx);
-      ("convolve2d multi-channel", `Quick, test_convolve2d_multi_channel ctx);
-      ( "convolve2d winograd eligible",
-        `Quick,
-        test_convolve2d_winograd_eligible ctx );
-      ("convolve2d groups winograd", `Quick, test_convolve2d_groups_winograd ctx);
-      ( "convolve2d non-contiguous input",
-        `Quick,
-        test_convolve2d_non_contiguous_input ctx );
-      ( "convolve2d pool reshape edge case",
-        `Quick,
-        test_convolve2d_pool_reshape_edge_case ctx );
-      ( "convolve2d groups reshape issue",
-        `Quick,
-        test_convolve2d_groups_reshape_issue ctx );
-      ( "convolve2d dilated non-contiguous",
-        `Quick,
-        test_convolve2d_dilated_non_contiguous ctx );
-      ("convolve invalid shapes", `Quick, test_convolve_invalid_shapes ctx);
-      ("convolve empty input", `Quick, test_convolve_empty_input ctx);
-      ( "convolve single element kernel",
-        `Quick,
-        test_convolve_single_element_kernel ctx );
-      ("correlate2d basic", `Quick, test_correlate2d_basic ctx);
-      ( "correlate2d winograd sanity case",
-        `Quick,
-        test_correlate2d_winograd_sanity_case ctx );
+      ("solve identity", `Quick, test_solve_identity ctx);
+      ("solve simple", `Quick, test_solve_simple ctx);
+      ("solve batch", `Quick, test_solve_batch ctx);
+      ("solve singular", `Quick, test_solve_singular ctx);
+      ("solve non-square", `Quick, test_solve_non_square ctx);
+      ("inv identity", `Quick, test_inv_identity ctx);
+      ("inv inverse", `Quick, test_inv_inverse ctx);
+      ("inv singular", `Quick, test_inv_singular ctx);
     ]
 
-  let solve_inverse_tests _ctx =
-    [ (* ("solve identity", `Quick, test_solve_identity ctx); *)
-      (* ("solve simple", `Quick, test_solve_simple ctx); *)
-      (* ("solve batch", `Quick, test_solve_batch ctx); *)
-      (* ("solve singular", `Quick, test_solve_singular ctx); *)
-      (* ("solve non-square", `Quick, test_solve_non_square ctx); *)
-      (* ("inv identity", `Quick, test_inv_identity ctx); *)
-      (* ("inv inverse", `Quick, test_inv_inverse ctx); *)
-      (* ("inv singular", `Quick, test_inv_singular ctx); *) ]
-
-  let decomposition_tests _ctx =
-    [ (* ("qr shape", `Quick, test_qr_shape ctx); *)
-      (* ("qr property", `Quick, test_qr_property ctx); *)
-      (* ("qr orthogonal", `Quick, test_qr_orthogonal ctx); *)
-      (* ("svd shape", `Quick, test_svd_shape ctx); *)
-      (* ("svd property", `Quick, test_svd_property ctx); *)
-      (* ("cholesky posdef", `Quick, test_cholesky_posdef ctx); *)
-      (* ("cholesky property", `Quick, test_cholesky_property ctx); *)
-      (* ("eig shape", `Quick, test_eig_shape ctx); *)
-      (* ("eig property", `Quick, test_eig_property ctx); *) ]
-
-  let norm_tests _ctx =
-    [ (* ("norm vector L1", `Quick, test_norm_vector_1 ctx); *)
-      (* ("norm vector L2", `Quick, test_norm_vector_2 ctx); *)
-      (* ("norm vector Linf", `Quick, test_norm_vector_inf ctx); *)
-      (* ("norm matrix Frobenius", `Quick, test_norm_matrix_fro ctx); *)
-      (* ("norm matrix L1", `Quick, test_norm_matrix_1 ctx); *)
-      (* ("norm axis", `Quick, test_norm_axis ctx); *)
-      (* ("norm empty", `Quick, test_norm_empty ctx); *) ]
-
-  let utility_tests _ctx =
-    [ (* ("det 2x2", `Quick, test_det_2x2 ctx); *)
-      (* ("det singular", `Quick, test_det_singular ctx); *)
-      (* ("trace", `Quick, test_trace ctx); *)
-      (* ("diag extract", `Quick, test_diag_extract ctx); *)
-      (* ("diag create", `Quick, test_diag_create ctx); *)
-      (* ("tril triu", `Quick, test_tril_triu ctx); *) ]
-
-  let pooling_tests ctx =
+  let decomposition_tests ctx =
     [
-      ("max_pool1d basic", `Quick, test_max_pool1d_basic ctx);
-      ("max_pool1d stride", `Quick, test_max_pool1d_stride ctx);
-      ("max_pool2d basic", `Quick, test_max_pool2d_basic ctx);
-      ("max_pool2d stride", `Quick, test_max_pool2d_stride ctx);
-      ("max_pool2d padding", `Quick, test_max_pool2d_padding ctx);
-      ("min_pool1d basic", `Quick, test_min_pool1d_basic ctx);
-      ("min_pool1d stride", `Quick, test_min_pool1d_stride ctx);
-      ("min_pool2d basic", `Quick, test_min_pool2d_basic ctx);
-      ("min_pool2d stride", `Quick, test_min_pool2d_stride ctx);
-      ("min_pool2d padding", `Quick, test_min_pool2d_padding ctx);
-      ("min_pool2d uint8", `Quick, test_min_pool2d_uint8 ctx);
-      ("avg_pool1d basic", `Quick, test_avg_pool1d_basic ctx);
-      ("avg_pool2d basic", `Quick, test_avg_pool2d_basic ctx);
-      ("pool batch", `Quick, test_pool_batch ctx);
-      ("pool multichannel", `Quick, test_pool_multichannel ctx);
-      ("pool edge cases", `Quick, test_pool_edge_cases ctx);
+      ("qr shape", `Quick, test_qr_shape ctx);
+      ("qr property", `Quick, test_qr_property ctx);
+      ("qr orthogonal", `Quick, test_qr_orthogonal ctx);
+      ("svd shape", `Quick, test_svd_shape ctx);
+      ("svd property", `Quick, test_svd_property ctx);
+      ("cholesky posdef", `Quick, test_cholesky_posdef ctx);
+      ("cholesky property", `Quick, test_cholesky_property ctx);
+      ("eig shape", `Quick, test_eig_shape ctx);
+      ("eig property", `Quick, test_eig_property ctx);
+    ]
+
+  let norm_tests ctx =
+    [
+      ("norm vector L1", `Quick, test_norm_vector_1 ctx);
+      ("norm vector L2", `Quick, test_norm_vector_2 ctx);
+      ("norm vector Linf", `Quick, test_norm_vector_inf ctx);
+      ("norm matrix Frobenius", `Quick, test_norm_matrix_fro ctx);
+      ("norm matrix L1", `Quick, test_norm_matrix_1 ctx);
+      ("norm axis", `Quick, test_norm_axis ctx);
+      ("norm empty", `Quick, test_norm_empty ctx);
+    ]
+
+  let utility_tests ctx =
+    [
+      ("det 2x2", `Quick, test_det_2x2 ctx);
+      ("det singular", `Quick, test_det_singular ctx);
+      ("trace", `Quick, test_trace ctx);
+      ("diag extract", `Quick, test_diag_extract ctx);
+    ]
+
+  let advanced_utility_tests ctx =
+    [
+      ("diagonal", `Quick, test_diagonal ctx);
+      ("diagonal edge", `Quick, test_diagonal_edge ctx);
+      ("matrix transpose", `Quick, test_matrix_transpose ctx);
+      ("trace offset", `Quick, test_trace_offset ctx);
+      ("det batch", `Quick, test_det_batch ctx);
+      ("slogdet", `Quick, test_slogdet ctx);
+      ("slogdet singular", `Quick, test_slogdet_singular ctx);
+      ("matrix rank", `Quick, test_matrix_rank ctx);
+      ("matrix rank tol", `Quick, test_matrix_rank_tol ctx);
+    ]
+
+  let product_tests ctx =
+    [
+      ("vdot", `Quick, test_vdot ctx);
+      ("vdot mismatch", `Quick, test_vdot_mismatch ctx);
+      ("vecdot", `Quick, test_vecdot ctx);
+      ("inner", `Quick, test_inner ctx);
+      ("inner mismatch", `Quick, test_inner_mismatch ctx);
+      ("outer", `Quick, test_outer ctx);
+      ("tensordot", `Quick, test_tensordot ctx);
+      ("tensordot mismatch", `Quick, test_tensordot_mismatch ctx);
+      ("einsum", `Quick, test_einsum ctx);
+      ("kron", `Quick, test_kron ctx);
+      ("multi dot", `Quick, test_multi_dot ctx);
+      ("multi dot empty", `Quick, test_multi_dot_empty ctx);
+      ("matrix power", `Quick, test_matrix_power ctx);
+      ("matrix power singular", `Quick, test_matrix_power_singular ctx);
+      ("cross", `Quick, test_cross ctx);
+      ("cross invalid", `Quick, test_cross_invalid ctx);
+    ]
+
+  let advanced_decomposition_tests ctx =
+    [
+      ("cholesky upper", `Quick, test_cholesky_upper ctx);
+      ("cholesky non posdef", `Quick, test_cholesky_non_posdef ctx);
+      ("qr mode", `Quick, test_qr_mode ctx);
+      ("svd full matrices", `Quick, test_svd_full_matrices ctx);
+      ("svdvals", `Quick, test_svdvals ctx);
+    ]
+
+  let eigen_tests ctx =
+    [
+      ("eigh", `Quick, test_eigh ctx);
+      ("eigh uplo", `Quick, test_eigh_uplo ctx);
+      ("eigvals", `Quick, test_eigvals ctx);
+      ("eigvalsh", `Quick, test_eigvalsh ctx);
+    ]
+
+  let advanced_norm_tests ctx =
+    [
+      ("norm ord", `Quick, test_norm_ord ctx);
+      ("norm keepdims", `Quick, test_norm_keepdims ctx);
+      ("cond", `Quick, test_cond ctx);
+    ]
+
+  let advanced_solve_tests ctx =
+    [
+      ("lstsq", `Quick, test_lstsq ctx);
+      ("lstsq rcond", `Quick, test_lstsq_rcond ctx);
+      ("pinv", `Quick, test_pinv ctx);
+      ("pinv singular", `Quick, test_pinv_singular ctx);
+      ("tensorsolve", `Quick, test_tensorsolve ctx);
+      ("tensorsolve axes", `Quick, test_tensorsolve_axes ctx);
+      ("tensorinv", `Quick, test_tensorinv ctx);
+      ("tensorinv ind", `Quick, test_tensorinv_ind ctx);
     ]
 
   let suite backend_name ctx =
     [
       ("Linalg :: " ^ backend_name ^ " Matrix Multiply", matmul_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Dot Product", dot_tests ctx);
-      ("Linalg :: " ^ backend_name ^ " Convolution", convolution_tests ctx);
-      ("Linalg :: " ^ backend_name ^ " Pooling", pooling_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Solve/Inverse", solve_inverse_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Decompositions", decomposition_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Norms", norm_tests ctx);
       ("Linalg :: " ^ backend_name ^ " Utilities", utility_tests ctx);
+      ( "Linalg :: " ^ backend_name ^ " Advanced Utilities",
+        advanced_utility_tests ctx );
+      ("Linalg :: " ^ backend_name ^ " Product Ops", product_tests ctx);
+      ( "Linalg :: " ^ backend_name ^ " Advanced Decompositions",
+        advanced_decomposition_tests ctx );
+      ("Linalg :: " ^ backend_name ^ " Eigen", eigen_tests ctx);
+      ("Linalg :: " ^ backend_name ^ " Advanced Norms", advanced_norm_tests ctx);
+      ("Linalg :: " ^ backend_name ^ " Advanced Solve", advanced_solve_tests ctx);
     ]
 end

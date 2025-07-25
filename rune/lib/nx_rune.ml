@@ -754,3 +754,19 @@ let op_irfft t ~axes ~s =
     | C_tensor t -> C_tensor (Nx_c.op_irfft t ~axes ~s)
     | Metal_tensor t -> Metal_tensor (Rune_metal.op_irfft t ~axes ~s)
     | Symbolic_tensor _ -> failwith "todo: op_irfft for symbolic tensors")
+
+(* Linear algebra operations *)
+
+let op_cholesky ~upper:_ _ =
+  failwith "op_cholesky: not implemented in Rune backend"
+
+let op_qr ~reduced:_ _ = failwith "op_qr: not implemented in Rune backend"
+
+let op_svd ~full_matrices:_ _ =
+  failwith "op_svd: not implemented in Rune backend"
+
+let op_eig ~vectors:_ _ = failwith "op_eig: not implemented in Rune backend"
+let op_eigh ~vectors:_ _ = failwith "op_eigh: not implemented in Rune backend"
+
+let op_triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
+  failwith "op_triangular_solve: not implemented in Rune backend"

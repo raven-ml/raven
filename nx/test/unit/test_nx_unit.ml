@@ -4,6 +4,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
   module Indexing_tests = Test_nx_indexing.Make (Backend)
   module Linalg_tests = Test_nx_linalg.Make (Backend)
   module Manipulation_tests = Test_nx_manipulation.Make (Backend)
+  module Neural_net_tests = Test_nx_neural_net.Make (Backend)
   module Ops_tests = Test_nx_ops.Make (Backend)
   module Sanity_tests = Test_nx_sanity.Make (Backend)
   module Sorting_tests = Test_nx_sorting.Make (Backend)
@@ -21,6 +22,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
            Indexing_tests.suite backend_name ctx;
            Linalg_tests.suite backend_name ctx;
            Manipulation_tests.suite backend_name ctx;
+           Neural_net_tests.suite backend_name ctx;
            Ops_tests.suite backend_name ctx;
            Sanity_tests.suite backend_name ctx;
            Sorting_tests.suite backend_name ctx;

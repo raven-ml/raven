@@ -1832,10 +1832,20 @@ val argsort :
 
 (** {2 Linear Algebra}
 
-    Matrix operations and linear algebra functions. *)
+    Matrix operations and linear algebra functions.
+
+    Most linear algebra functions require floating-point or complex tensors.
+    Functions will raise [Invalid_argument] if given integer tensors. *)
 
 val dot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [dot a b] computes generalized dot product.
+
+    Important: [dot] has different broadcasting behavior than [matmul]:
+    - [matmul] broadcasts batch dimensions
+    - [dot] does NOT broadcast; it concatenates non-contracted dimensions
+
+    For N-D × M-D arrays: [dot(a, b)[i,j,k,m] = sum(a[i,j,:] * b[k,:,m])] This
+    can result in much larger output arrays than [matmul].
 
     Contracts last axis of [a] with:
     - 1-D [b]: the only axis (axis 0)
@@ -1909,6 +1919,347 @@ val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       # matmul (ones float32 [| 1; 3; 4 |]) (ones float32 [| 5; 4; 2 |]) |> shape
       - : int array = [|5; 3; 2|]
     ]} *)
+
+val diagonal :
+  ?offset:int -> ?axis1:int -> ?axis2:int -> ('a, 'b) t -> ('a, 'b) t
+(** [diagonal ?offset ?axis1 ?axis2 a] extracts diagonal from 2-D planes.
+
+    - [offset]: diagonal offset (0=main, positive=above, negative=below)
+    - [axis1], [axis2]: axes of 2-D planes (default: last two axes)
+
+    For 2-D array, returns 1-D array of diagonal elements. For N-D array,
+    returns array with diagonals from each 2-D subarray.
+
+    @raise Invalid_argument if axis1 = axis2 or axes out of bounds *)
+
+val matrix_transpose : ('a, 'b) t -> ('a, 'b) t
+(** [matrix_transpose a] transposes matrix dimensions.
+
+    Swaps last two axes: [..., M, N] -> [..., N, M]. For 1-D arrays, returns
+    unchanged.
+
+    This is specifically for matrix operations, unlike general [transpose] which
+    can permute any axes. *)
+
+val vdot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [vdot a b] returns dot product of two vectors.
+
+    For complex vectors, conjugates first vector before multiplication. Always
+    returns scalar tensor regardless of input shapes. Flattens inputs before
+    computation.
+
+    @raise Invalid_argument if inputs have different number of elements *)
+
+val vecdot : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [vecdot ?axis x1 x2] computes vector dot product along an axis.
+
+    - [axis]: axis along which to compute dot product (default: -1)
+
+    Unlike [vdot] which always flattens, [vecdot] computes dot products along
+    specified axis with broadcasting support.
+
+    @raise Invalid_argument if specified axis dimensions differ *)
+
+val inner : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [inner a b] computes inner product over last axes.
+
+    For 1-D arrays, this is ordinary inner product. For higher dimensions, sums
+    products over last axes of a and b.
+
+    @raise Invalid_argument if last dimensions differ *)
+
+val outer : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [outer a b] computes outer product of two vectors.
+
+    Given vectors a[i] and b[j], produces matrix M[i,j] = a[i] * b[j]. Input
+    tensors are flattened if not already 1-D.
+
+    {@ocaml[
+      # outer (create float32 [|2|] [|1.; 2.|]) (create float32 [|3|] [|3.; 4.; 5.|])
+      - : (float, float32_elt) t = [[3, 4, 5],
+                                    [6, 8, 10]]
+    ]} *)
+
+val tensordot :
+  ?axes:int array * int array -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [tensordot ?axes a b] computes tensor contraction along specified axes.
+
+    - [axes]: pair of axis arrays to contract (default: last of a, first of b)
+
+    Generalizes matrix multiplication to arbitrary dimensions.
+
+    @raise Invalid_argument if specified axes have different sizes *)
+
+val einsum : string -> ('a, 'b) t array -> ('a, 'b) t
+(** [einsum subscripts operands] evaluates Einstein summation convention.
+
+    Subscripts string specifies contraction, e.g., "ij,jk->ik" for matmul.
+    Repeated indices are summed, free indices form output dimensions.
+
+    {@ocaml[
+      # einsum "ij,jk->ik" [|a; b|]  (* matrix multiplication *)
+      # einsum "ii->i" [|a|]         (* diagonal *)
+      # einsum "ij->ji" [|a|]        (* transpose *)
+    ]} *)
+
+val kron : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [kron a b] computes Kronecker product.
+
+    Result has shape [a.shape[i] * b.shape[i] for i in range(ndim)]. Each
+    element a[i,j] is replaced by a[i,j] * b. *)
+
+val multi_dot : ('a, 'b) t array -> ('a, 'b) t
+(** [multi_dot arrays] computes chained matrix multiplication optimally.
+
+    Automatically selects the association order that minimizes computational
+    cost. Much more efficient than repeated [matmul] for chains of 3+ matrices.
+
+    @raise Invalid_argument if array is empty or shapes incompatible
+    @raise Invalid_argument if inputs are not float or complex *)
+
+val matrix_power : ('a, 'b) t -> int -> ('a, 'b) t
+(** [matrix_power a n] raises square matrix to integer power.
+    
+    - n > 0: a @ a @ ... @ a (n times)
+    - n = 0: identity matrix
+    - n < 0: inv(a) @ inv(a) @ ... @ inv(a) (|n| times)
+    
+    @raise Invalid_argument if matrix is not square
+    @raise Invalid_argument if input is not float or complex
+    @raise Invalid_argument if n < 0 and matrix is singular *)
+
+val cross : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [cross ?axis a b] returns cross product of 3-element vectors.
+
+    - [axis]: axis containing vectors (default: last axis)
+
+    @raise Invalid_argument if axis dimension is not 3 *)
+
+(** {3 Matrix Decompositions} *)
+
+val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
+(** [cholesky ?upper a] computes Cholesky decomposition.
+    
+    - [upper]: return upper triangular if true (default: false)
+    
+    Returns L (or U) such that a = L @ L.T (or U.T @ U).
+    
+    @raise Invalid_argument if matrix is not positive-definite
+    @raise Invalid_argument if input is not float or complex *)
+
+val qr : ?mode:[ `Complete | `Reduced ] -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
+(** [qr ?mode a] computes QR decomposition.
+    
+    - [mode]: [`Reduced] for economy mode (default), [`Complete] for full
+    
+    Returns (Q, R) where a = Q @ R, Q is orthogonal, R is upper triangular.
+    
+    @raise Invalid_argument if input is not float or complex *)
+
+val svd :
+  ?full_matrices:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t * (float, float64_elt) t * ('a, 'b) t
+(** [svd ?full_matrices a] computes singular value decomposition.
+    
+    - [full_matrices]: compute full U, V matrices (default: false)
+    
+    Returns (U, S, Vh) where a = U @ diag(S) @ Vh.
+    S is 1-D array of singular values in descending order.
+    
+    @raise Invalid_argument if input is not float or complex *)
+
+val svdvals : ('a, 'b) t -> (float, float64_elt) t
+(** [svdvals a] returns singular values only.
+
+    More efficient than [svd] when only singular values are needed.
+
+    @raise Invalid_argument if input is not float or complex *)
+
+(** {3 Eigenvalues and Eigenvectors} *)
+
+val eig :
+  ('a, 'b) t -> (Complex.t, complex64_elt) t * (Complex.t, complex64_elt) t
+(** [eig a] computes eigenvalues and right eigenvectors.
+
+    Returns (eigenvalues, eigenvectors) for general square matrix. For real
+    float32/float64 inputs, outputs are complex32/complex64 since real matrices
+    can have complex eigenvalues.
+
+    @raise Invalid_argument if matrix is not square
+    @raise Invalid_argument if input is not float or complex *)
+
+val eigh :
+  ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t * ('a, 'b) t
+(** [eigh ?uplo a] computes eigenvalues for symmetric/Hermitian matrix.
+
+    - [uplo]: use upper (`U) or lower (`L) triangle (default: `L`)
+
+    Returns (eigenvalues, eigenvectors) in ascending order. For real symmetric
+    matrices, eigenvalues are guaranteed real. More efficient than [eig] for
+    symmetric matrices.
+
+    @raise Invalid_argument if matrix is not square
+    @raise Invalid_argument if input is not float or complex *)
+
+val eigvals : ('a, 'b) t -> (Complex.t, complex64_elt) t
+(** [eigvals a] computes eigenvalues only.
+
+    For real inputs, returns complex tensor since eigenvalues may be complex.
+    More efficient than [eig] when eigenvectors not needed.
+
+    @raise Invalid_argument if matrix is not square
+    @raise Invalid_argument if input is not float or complex *)
+
+val eigvalsh : ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t
+(** [eigvalsh ?uplo a] computes eigenvalues for symmetric/Hermitian matrix.
+
+    For real symmetric inputs, returns real eigenvalues. More efficient than
+    [eigvals] for symmetric matrices.
+
+    @raise Invalid_argument if matrix is not square
+    @raise Invalid_argument if input is not float or complex *)
+
+(** {3 Norms and Condition Numbers} *)
+
+val norm :
+  ?ord:
+    [ `Fro | `Nuc | `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf | `P of 'a ] ->
+  ?axes:int array ->
+  ?keepdims:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [norm ?ord ?axes ?keepdims x] computes matrix or vector norm.
+
+    - [ord]: norm type (default: Frobenius for matrices, 2-norm for vectors)
+    - [`Fro]: Frobenius norm
+    - [`Nuc]: nuclear norm (sum of singular values)
+    - [`One]: max column sum (for matrices)
+    - [`Two]: spectral norm (largest singular value)
+    - [`Inf]: max row sum (for matrices)
+    - [`NegOne]: min column sum
+    - [`NegTwo]: smallest singular value
+    - [`NegInf]: min row sum
+    - [`P p]: p-norm for vectors
+    - [axes]: axes to compute norm over. For matrix norms, must be 2-element
+      array
+    - [keepdims]: keep reduced dimensions as size 1
+
+    @raise Invalid_argument if ord requires float/complex input *)
+
+val cond :
+  ?p:[ `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf | `Fro ] ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [cond ?p x] computes condition number.
+
+    - [p]: norm to use (default: 2-norm)
+    - [`One]: 1-norm (max column sum)
+    - [`Two]: 2-norm (max singular value)
+    - [`Inf]: infinity norm (max row sum)
+    - [`NegOne]: -1 norm (min column sum)
+    - [`NegTwo]: -2 norm (min singular value)
+    - [`NegInf]: -infinity norm (min row sum)
+    - [`Fro]: Frobenius norm
+
+    Returns ratio of largest to smallest norm.
+
+    @raise Invalid_argument if input is not float or complex *)
+
+val det : ('a, 'b) t -> ('a, 'b) t
+(** [det a] computes determinant of square matrix.
+
+    @raise Invalid_argument if matrix is not square
+    @raise Invalid_argument if input is not float or complex *)
+
+val slogdet : ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
+(** [slogdet a] computes sign and log of determinant.
+
+    Returns (sign, logdet) where det(a) = sign * exp(logdet). More stable than
+    [det] for matrices with very small/large determinants.
+
+    @raise Invalid_argument if matrix is not square
+    @raise Invalid_argument if input is not float or complex *)
+
+val matrix_rank :
+  ?tol:float -> ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> int
+(** [matrix_rank ?tol ?rtol ?hermitian a] returns rank of matrix.
+
+    - [tol]: absolute tolerance for small singular values
+    - [rtol]: relative tolerance (default: max(M,N) * eps *
+      largest_singular_value)
+    - [hermitian]: if true, use more efficient algorithm for Hermitian matrices
+
+    Counts singular values greater than tolerance.
+
+    @raise Invalid_argument if input is not float or complex *)
+
+val trace : ?offset:int -> ('a, 'b) t -> ('a, 'b) t
+(** [trace ?offset a] returns sum along diagonal.
+
+    - [offset]: diagonal offset (default: 0, positive for upper diagonals) *)
+
+(** {3 Solving Linear Systems} *)
+
+val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [solve a b] solves linear system a @ x = b for x.
+    
+    Supports batched operations when a, b have compatible batch dimensions.
+    
+    @raise Invalid_argument if a is singular
+    @raise Invalid_argument if input is not float or complex *)
+
+val lstsq :
+  ?rcond:float ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t * ('a, 'b) t * int * (float, float64_elt) t
+(** [lstsq ?rcond a b] computes least-squares solution to a @ x = b.
+    
+    - [rcond]: cutoff for small singular values (default: machine precision)
+    
+    Returns (solution, residuals, rank, singular_values).
+    Handles over/under-determined systems.
+    
+    @raise Invalid_argument if input is not float or complex *)
+
+val inv : ('a, 'b) t -> ('a, 'b) t
+(** [inv a] computes inverse of square matrix.
+
+    @raise Invalid_argument if matrix is singular
+    @raise Invalid_argument if matrix is not square
+    @raise Invalid_argument if input is not float or complex *)
+
+val pinv : ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> ('a, 'b) t
+(** [pinv ?rtol ?hermitian a] computes Moore-Penrose pseudoinverse.
+
+    - [rtol]: relative tolerance for small singular values
+    - [hermitian]: if true, use more efficient algorithm for Hermitian matrices
+
+    Handles non-square and singular matrices.
+
+    @raise Invalid_argument if input is not float or complex *)
+
+val tensorsolve : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [tensorsolve ?axes a b] solves tensor equation a x = b for x.
+
+    - [axes]: axes in [a] to reorder to end (default: product of b.ndim
+      rightmost axes)
+
+    Solves for x such that tensordot(a, x, axes) = b.
+
+    @raise Invalid_argument if shapes incompatible
+    @raise Invalid_argument if input is not float or complex *)
+
+val tensorinv : ?ind:int -> ('a, 'b) t -> ('a, 'b) t
+(** [tensorinv ?ind a] computes 'inverse' of N-D array.
+
+    - [ind]: number of first indices involved in inverse sum (default: 2)
+
+    Result is such that tensordot(a, a_inv, ind) = I.
+
+    @raise Invalid_argument if input is not square in specified dimensions
+    @raise Invalid_argument if input is not float or complex *)
 
 (** {2 Fourier Transform}
 

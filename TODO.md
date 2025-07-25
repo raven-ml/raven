@@ -4,16 +4,18 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
+- fft
+- linear algebra functions
+- jit with xla
+
+## alpha1
+
 docs
 - website examples tested with mdx
 - review website+docs examples systematically.
 
-## alpha1
-
-- jit with xla
-
 feature requests:
-- complete linear algebra suite (cholesky, einsum, qr, svd)
+- complete linear algebra suite (cholesky, einsum, qr, svd, inv, solve, norm, eig, eigh, etc.)
 - forward mode ad (jvp)
 - vmap (that compose with jvp!)
 - nx cuda backend

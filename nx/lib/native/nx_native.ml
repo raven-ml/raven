@@ -731,3 +731,14 @@ let op_fft x ~axes ~s = Ops_fft.fft x.context x ~axes ~s
 let op_ifft x ~axes ~s = Ops_fft.ifft x.context x ~axes ~s
 let op_rfft x ~axes ~s = Ops_fft.rfft x.context x ~axes ~s
 let op_irfft x ~axes ~s = Ops_fft.irfft x.context x ~axes ~s
+
+(* Linear algebra operations *)
+
+let op_cholesky ~upper x = Ops_linalg.cholesky ~upper x.context x
+let op_qr ~reduced x = Ops_linalg.qr ~reduced x.context x
+let op_svd ~full_matrices x = Ops_linalg.svd ~full_matrices x.context x
+let op_eig ~vectors x = Ops_linalg.eig ~vectors x.context x
+let op_eigh ~vectors x = Ops_linalg.eigh ~vectors x.context x
+
+let op_triangular_solve ~upper ~transpose ~unit_diag a b =
+  Ops_linalg.triangular_solve ~upper ~transpose ~unit_diag a.context a b

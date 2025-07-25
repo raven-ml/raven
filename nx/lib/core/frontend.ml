@@ -3337,6 +3337,478 @@ module Make (B : Backend_intf.S) = struct
          (...,m,n) *)
       result_intermediate
 
+  (* ───── Additional Linear Algebra Operations ───── *)
+
+  let diagonal ?offset ?axis1 ?axis2 a =
+    let _offset = Option.value offset ~default:0 in
+    let ndim_a = ndim a in
+    let axis1 = Option.value axis1 ~default:(ndim_a - 2) in
+    let axis2 = Option.value axis2 ~default:(ndim_a - 1) in
+    let axis1 = if axis1 < 0 then ndim_a + axis1 else axis1 in
+    let axis2 = if axis2 < 0 then ndim_a + axis2 else axis2 in
+
+    if axis1 = axis2 then
+      Error.invalid ~op:"diagonal" ~what:"axes"
+        ~reason:"axis1 and axis2 must be different" ();
+
+    (* Extract diagonal using gather or slicing *)
+    Error.failed ~op:"diagonal" ~what:"not implemented" ()
+
+  let matrix_transpose x =
+    let nd = ndim x in
+    if nd < 2 then x else swapaxes (nd - 2) (nd - 1) x
+
+  let vdot (type a b) (a : (a, b) t) (b : (a, b) t) =
+    let flat_a = flatten a in
+    let flat_b = flatten b in
+    if numel flat_a <> numel flat_b then
+      Error.invalid ~op:"vdot" ~what:"shapes"
+        ~reason:
+          (Printf.sprintf "different number of elements: %d vs %d"
+             (numel flat_a) (numel flat_b))
+        ();
+
+    (* For complex types, conjugate first vector *)
+    match dtype a with
+    | (Complex32 | Complex64) when dtype a = dtype b ->
+        (* TODO: implement conj when available *)
+        sum (mul flat_a flat_b)
+    | _ -> sum (mul flat_a flat_b)
+
+  let vecdot ?axis x1 x2 =
+    match axis with
+    | None ->
+        (* Default to last axis *)
+        let axis = ndim x1 - 1 in
+        let prod = mul x1 x2 in
+        B.op_reduce_sum ~axes:[| axis |] ~keepdims:false prod
+    | Some ax ->
+        let ax = if ax < 0 then ndim x1 + ax else ax in
+        let prod = mul x1 x2 in
+        B.op_reduce_sum ~axes:[| ax |] ~keepdims:false prod
+
+  let inner a b = vecdot ~axis:(-1) a b
+
+  let outer a b =
+    let flat_a = flatten a in
+    let flat_b = flatten b in
+    let a_col = reshape [| numel flat_a; 1 |] flat_a in
+    let b_row = reshape [| 1; numel flat_b |] flat_b in
+    matmul a_col b_row
+
+  let tensordot ?axes a b =
+    match axes with
+    | None ->
+        (* Default: contract last axis of a with first axis of b *)
+        matmul a b
+    | Some (_axes_a, _axes_b) ->
+        (* Complex reshaping and transposing needed *)
+        Error.failed ~op:"tensordot" ~what:"general axes not implemented" ()
+
+  let einsum subscripts operands =
+    (* Parse subscripts and implement einsum logic *)
+    match (operands, subscripts) with
+    | [| a; b |], "ij,jk->ik" -> matmul a b
+    | [| _a |], "ii->i" ->
+        (* Extract diagonal *)
+        Error.failed ~op:"einsum" ~what:"diagonal extraction not implemented" ()
+    | [| a |], "ij->ji" -> transpose a
+    | _ ->
+        Error.failed ~op:"einsum" ~what:"general subscripts not implemented" ()
+
+  let kron a b =
+    let shape_a = shape a in
+    let shape_b = shape b in
+    let ndim_a = Array.length shape_a in
+    let ndim_b = Array.length shape_b in
+
+    (* Ensure same number of dimensions *)
+    let a, b =
+      if ndim_a < ndim_b then (
+        let new_shape = Array.make ndim_b 1 in
+        Array.blit shape_a 0 new_shape (ndim_b - ndim_a) ndim_a;
+        (reshape new_shape a, b))
+      else if ndim_b < ndim_a then (
+        let new_shape = Array.make ndim_a 1 in
+        Array.blit shape_b 0 new_shape (ndim_a - ndim_b) ndim_b;
+        (a, reshape new_shape b))
+      else (a, b)
+    in
+
+    (* Compute Kronecker product *)
+    let a_flat = flatten a in
+    let b_flat = flatten b in
+    let a_col = reshape [| numel a_flat; 1 |] a_flat in
+    let b_row = reshape [| 1; numel b_flat |] b_flat in
+    let prod = mul a_col b_row in
+
+    (* Reshape to final shape *)
+    let final_shape =
+      Array.init
+        (Array.length (shape a))
+        (fun i -> (shape a).(i) * (shape b).(i))
+    in
+    reshape final_shape (flatten prod)
+
+  let multi_dot arrays =
+    match arrays with
+    | [||] ->
+        Error.invalid ~op:"multi_dot" ~what:"input"
+          ~reason:"requires at least one array" ()
+    | [| arr |] -> arr
+    | _ ->
+        (* Simple left-to-right multiplication for now *)
+        (* TODO: Implement optimal order using dynamic programming *)
+        let rec multiply_all = function
+          | [] -> failwith "unreachable"
+          | [ x ] -> x
+          | x :: xs -> matmul x (multiply_all xs)
+        in
+        multiply_all (Array.to_list arrays)
+
+  let matrix_power a n =
+    let shape_a = shape a in
+    let ndim_a = Array.length shape_a in
+    if ndim_a < 2 then
+      Error.invalid ~op:"matrix_power" ~what:"input"
+        ~reason:"requires at least 2D array" ();
+
+    let m = shape_a.(ndim_a - 2) in
+    let k = shape_a.(ndim_a - 1) in
+    if m <> k then
+      Error.invalid ~op:"matrix_power" ~what:"matrix"
+        ~reason:(Printf.sprintf "must be square, got %dx%d" m k)
+        ();
+
+    if n = 0 then eye (B.context a) (dtype a) m
+    else if n = 1 then copy a
+    else if n > 0 then
+      (* Use binary exponentiation for efficiency *)
+      let rec power acc base exp =
+        if exp = 0 then acc
+        else if exp mod 2 = 0 then power acc (matmul base base) (exp / 2)
+        else power (matmul acc base) (matmul base base) (exp / 2)
+      in
+      power a a (n - 1)
+    else
+      (* Negative power: not implemented yet *)
+      Error.failed ~op:"matrix_power" ~what:"negative powers not implemented" ()
+
+  let cross ?axis a _b =
+    let axis = Option.value axis ~default:(-1) in
+    let axis = if axis < 0 then ndim a + axis else axis in
+
+    let shape_a = shape a in
+    if axis >= ndim a then
+      Error.invalid ~op:"cross" ~what:"axis" ~reason:"out of bounds" ();
+
+    if shape_a.(axis) <> 3 then
+      Error.invalid ~op:"cross" ~what:"dimension"
+        ~reason:
+          (Printf.sprintf "axis %d must have size 3, got %d" axis shape_a.(axis))
+        ();
+
+    (* Extract components and compute cross product *)
+    Error.failed ~op:"cross" ~what:"3D cross product not implemented" ()
+
+  (* Matrix Decompositions *)
+
+  let check_square ~op a =
+    let sh = shape a in
+    let n = Array.length sh in
+    if n < 2 then
+      Error.invalid ~op ~what:"input" ~reason:"requires at least 2D array" ();
+    if sh.(n - 1) <> sh.(n - 2) then
+      Error.invalid ~op ~what:"matrix"
+        ~reason:
+          (Printf.sprintf "must be square, got shape %s" (Shape.to_string sh))
+        ()
+
+  let check_float_or_complex (type a b) ~op (a : (a, b) t) =
+    match dtype a with
+    | Float16 -> ()
+    | Float32 -> ()
+    | Float64 -> ()
+    | Complex32 -> ()
+    | Complex64 -> ()
+    | _ -> Error.invalid ~op ~what:"dtype" ~reason:"must be float or complex" ()
+
+  let check_real (type a b) ~op (a : (a, b) t) =
+    match dtype a with
+    | Float16 -> ()
+    | Float32 -> ()
+    | Float64 -> ()
+    | _ -> Error.invalid ~op ~what:"dtype" ~reason:"must be real (float)" ()
+
+  let cholesky ?upper a =
+    check_square ~op:"cholesky" a;
+    check_float_or_complex ~op:"cholesky" a;
+    let upper = Option.value upper ~default:false in
+    B.op_cholesky ~upper a
+
+  let qr ?mode a =
+    check_float_or_complex ~op:"qr" a;
+    let reduced =
+      match mode with None | Some `Reduced -> true | Some `Complete -> false
+    in
+    B.op_qr ~reduced a
+
+  let svd ?full_matrices a =
+    check_float_or_complex ~op:"svd" a;
+    let full_matrices = Option.value full_matrices ~default:false in
+    B.op_svd ~full_matrices a
+
+  let svdvals a =
+    check_float_or_complex ~op:"svdvals" a;
+    let _, s, _ = B.op_svd ~full_matrices:false a in
+    s
+
+  (* Eigenvalues and Eigenvectors *)
+
+  let eig a =
+    check_square ~op:"eig" a;
+    check_float_or_complex ~op:"eig" a;
+    match B.op_eig ~vectors:true a with
+    | vals, Some vecs -> (vals, vecs)
+    | _vals, None ->
+        Error.invalid ~op:"eig" ~what:"result" ~reason:"expected eigenvectors"
+          ()
+
+  let eigh ?uplo a =
+    check_square ~op:"eigh" a;
+    check_real ~op:"eigh" a;
+    let _ = uplo in
+    (* uplo handled by backend if needed *)
+    match B.op_eigh ~vectors:true a with
+    | vals, Some vecs -> (vals, vecs)
+    | _vals, None ->
+        Error.invalid ~op:"eigh" ~what:"result" ~reason:"expected eigenvectors"
+          ()
+
+  let eigvals a =
+    check_square ~op:"eigvals" a;
+    check_float_or_complex ~op:"eigvals" a;
+    let vals, _ = B.op_eig ~vectors:false a in
+    vals
+
+  let eigvalsh ?uplo a =
+    check_square ~op:"eigvalsh" a;
+    check_real ~op:"eigvalsh" a;
+    let _ = uplo in
+    (* uplo handled by backend if needed *)
+    let vals, _ = B.op_eigh ~vectors:false a in
+    vals
+
+  (* Norms and Condition Numbers *)
+
+  let norm (type a b) ?ord ?axes ?keepdims (x : (a, b) t) =
+    let keepdims = Option.value keepdims ~default:false in
+    match (ord, axes) with
+    | None, None ->
+        (* Frobenius norm for matrices, 2-norm for vectors *)
+        sqrt (sum (square (abs x)) ~keepdims)
+    | Some `Fro, _ -> sqrt (sum (square (abs x)) ?axes ~keepdims)
+    | Some `One, None ->
+        max (sum (abs x) ~axes:[| ndim x - 2 |] ~keepdims) ~keepdims
+    | Some `Two, None ->
+        let s = svdvals x in
+        let s_cast = cast (dtype x) s in
+        max s_cast ~keepdims
+    | Some `Inf, None ->
+        max (sum (abs x) ~axes:[| ndim x - 1 |] ~keepdims) ~keepdims
+    | Some (`P p), _ ->
+        let abs_x = abs x in
+        let pow_x = pow abs_x (scalar (B.context x) (dtype x) p) in
+        let sum_pow = sum pow_x ?axes ~keepdims in
+        let s = Dtype.div (dtype x) (Dtype.one (dtype x)) p in
+        pow sum_pow (scalar (B.context x) (dtype x) s)
+    | _ ->
+        Error.failed ~op:"norm"
+          ~what:"this combination of ord and axis not implemented" ()
+
+  let cond ?p x =
+    check_square ~op:"cond" x;
+    check_float_or_complex ~op:"cond" x;
+    let s = svdvals x in
+    let max_s = max s in
+    let min_s = min s in
+    let result = div max_s min_s in
+    match p with
+    | None | Some `Two -> cast (dtype x) result
+    | _ -> Error.failed ~op:"cond" ~what:"non-2 norms not implemented" ()
+
+  let det a =
+    check_square ~op:"det" a;
+    check_float_or_complex ~op:"det" a;
+    (* Use LU decomposition for general case *)
+    Error.failed ~op:"det" ~what:"determinant computation not implemented" ()
+
+  let slogdet a =
+    check_square ~op:"slogdet" a;
+    check_float_or_complex ~op:"slogdet" a;
+    (* Use LU decomposition for sign *)
+    Error.failed ~op:"slogdet"
+      ~what:"log determinant computation not implemented" ()
+
+  let matrix_rank ?tol ?rtol ?hermitian a =
+    check_float_or_complex ~op:"matrix_rank" a;
+    let _ = hermitian in
+    (* TODO: use for optimization *)
+    let s = svdvals a in
+    let max_s = max s |> unsafe_get [] in
+    let m, n =
+      shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
+    in
+    let eps = 1e-15 in
+    (* Machine epsilon for float64 *)
+    let tol =
+      match (tol, rtol) with
+      | Some t, _ -> t
+      | None, Some r -> r *. max_s
+      | None, None -> float_of_int (Stdlib.max m n) *. eps *. max_s
+    in
+    let greater_tol = greater s (scalar (B.context a) (dtype s) tol) in
+    sum greater_tol |> unsafe_get []
+
+  let trace ?offset a =
+    let _offset = Option.value offset ~default:0 in
+    let sh = shape a in
+    let n = Array.length sh in
+    if n < 2 then
+      Error.invalid ~op:"trace" ~what:"input"
+        ~reason:"requires at least 2D array" ();
+
+    (* Sum along diagonal *)
+    Error.failed ~op:"trace" ~what:"diagonal sum not implemented" ()
+
+  (* Solving Linear Systems *)
+
+  let solve a b =
+    check_square ~op:"solve" a;
+    check_float_or_complex ~op:"solve" a;
+    check_float_or_complex ~op:"solve" b;
+
+    (* Handle batch dimension compatibility *)
+    let a_ndim = ndim a in
+    let b_ndim = ndim b in
+    let b_expanded =
+      if a_ndim > 2 && b_ndim = 2 then
+        (* Check if b could be batch of vectors matching a's batch size *)
+        let a_shape = shape a in
+        let b_shape = shape b in
+        let a_batch_size =
+          Array.fold_left ( * ) 1 (Array.sub a_shape 0 (a_ndim - 2))
+        in
+        if b_shape.(0) = a_batch_size && b_shape.(1) = a_shape.(a_ndim - 2) then
+          (* Expand b from [batch, n] to [batch, n, 1] *)
+          expand_dims [| -1 |] b
+        else b
+      else b
+    in
+
+    (* Use QR decomposition *)
+    let q, r = B.op_qr ~reduced:true a in
+    let y = matmul (transpose q) b_expanded in
+    let result =
+      B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r y
+    in
+
+    (* Squeeze result if we expanded b *)
+    if b_expanded != b then squeeze ~axes:[| ndim result - 1 |] result
+    else result
+
+  let lstsq ?rcond a b =
+    check_float_or_complex ~op:"lstsq" a;
+    check_float_or_complex ~op:"lstsq" b;
+    let _ = rcond in
+    (* TODO: use for rank determination *)
+
+    (* Use QR decomposition *)
+    let q, r = B.op_qr ~reduced:false a in
+    let y = matmul (transpose q) b in
+
+    (* Solve upper triangular system *)
+    let m, n =
+      shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
+    in
+    let x =
+      if m >= n then
+        B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r y
+      else
+        Error.failed ~op:"lstsq" ~what:"underdetermined systems not implemented"
+          ()
+    in
+
+    (* Compute residuals *)
+    let residuals =
+      if m > n then
+        let res = sub b (matmul a x) in
+        sum (square res) ~axes:[| ndim res - 2 |] ~keepdims:false
+      else zeros (B.context a) (dtype b) [||]
+    in
+
+    let rank = matrix_rank a in
+    let s = svdvals a in
+
+    (x, residuals, rank, s)
+
+  let inv a =
+    check_square ~op:"inv" a;
+    check_float_or_complex ~op:"inv" a;
+
+    let sh = shape a in
+    let n = sh.(Array.length sh - 1) in
+    let batch_shape = Array.sub sh 0 (Array.length sh - 2) in
+    let eye_shape = Array.append batch_shape [| n; n |] in
+    let i = eye (B.context a) (dtype a) n in
+    let i = broadcast_to eye_shape i in
+    solve a i
+
+  let pinv (type a b) ?rtol:_ ?hermitian (a : (a, b) t) =
+    check_float_or_complex ~op:"pinv" a;
+    let _ = hermitian in
+    (* TODO: use for optimization *)
+
+    let u, s, vh = B.op_svd ~full_matrices:false a in
+
+    (* Determine cutoff *)
+    let cutoff =
+      let max_s = max s |> unsafe_get [] in
+      (* Default cutoff is max(m,n) * eps * max_s *)
+      let m, n =
+        shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
+      in
+      let eps = 1e-15 in
+      (* Machine epsilon for float64 *)
+      float_of_int (Stdlib.max m n) *. eps *. max_s
+    in
+
+    (* Compute pseudoinverse *)
+    let ones_s = ones (B.context s) (dtype s) (shape s) in
+    let s_inv = div ones_s s in
+    let mask = greater s (scalar (B.context a) (dtype s) cutoff) in
+    let mask = cast (dtype s) mask in
+    let s_inv = mul s_inv mask in
+
+    (* Expand s_inv for broadcasting *)
+    let s_inv = unsqueeze ~axes:[| ndim s_inv |] s_inv in
+
+    (* Cast s_inv to match input type *)
+    let s_inv = cast (dtype a) s_inv in
+
+    (* Compute V @ S^-1 @ U^H *)
+    let vs = mul (transpose vh) s_inv in
+    matmul vs (transpose u)
+
+  let tensorsolve ?axes _a _b =
+    let _ = axes in
+    Error.failed ~op:"tensorsolve"
+      ~what:"tensor equation solving not implemented" ()
+
+  let tensorinv ?ind _a =
+    let _ = ind in
+    Error.failed ~op:"tensorinv" ~what:"tensor inversion not implemented" ()
+
   (* ───── Complex Operations and FFT ───── *)
 
   (* Create complex tensor from real and imaginary parts *)

@@ -92,6 +92,89 @@ let prod ?axes ?keepdims x =
 let matmul a b = Debug.with_context "matmul" (fun () -> T.matmul a b)
 let dot a b = Debug.with_context "dot" (fun () -> T.dot a b)
 
+(* Additional Linear Algebra Operations *)
+
+let diagonal ?offset ?axis1 ?axis2 a =
+  Debug.with_context "diagonal" (fun () -> T.diagonal ?offset ?axis1 ?axis2 a)
+
+let matrix_transpose a =
+  Debug.with_context "matrix_transpose" (fun () -> T.matrix_transpose a)
+
+let vdot a b = Debug.with_context "vdot" (fun () -> T.vdot a b)
+
+let vecdot ?axis a b =
+  Debug.with_context "vecdot" (fun () -> T.vecdot ?axis a b)
+
+let inner a b = Debug.with_context "inner" (fun () -> T.inner a b)
+let outer a b = Debug.with_context "outer" (fun () -> T.outer a b)
+
+let tensordot ?axes a b =
+  Debug.with_context "tensordot" (fun () -> T.tensordot ?axes a b)
+
+let einsum subscripts operands =
+  Debug.with_context "einsum" (fun () -> T.einsum subscripts operands)
+
+let kron a b = Debug.with_context "kron" (fun () -> T.kron a b)
+
+let multi_dot arrays =
+  Debug.with_context "multi_dot" (fun () -> T.multi_dot arrays)
+
+let matrix_power a n =
+  Debug.with_context "matrix_power" (fun () -> T.matrix_power a n)
+
+let cross ?axis a b = Debug.with_context "cross" (fun () -> T.cross ?axis a b)
+
+(* Matrix Decompositions *)
+
+let cholesky ?upper a =
+  Debug.with_context "cholesky" (fun () -> T.cholesky ?upper a)
+
+let qr ?mode a = Debug.with_context "qr" (fun () -> T.qr ?mode a)
+
+let svd ?full_matrices a =
+  Debug.with_context "svd" (fun () -> T.svd ?full_matrices a)
+
+let svdvals a = Debug.with_context "svdvals" (fun () -> T.svdvals a)
+
+(* Eigenvalues and Eigenvectors *)
+
+let eig a = Debug.with_context "eig" (fun () -> T.eig a)
+let eigh ?uplo a = Debug.with_context "eigh" (fun () -> T.eigh ?uplo a)
+let eigvals a = Debug.with_context "eigvals" (fun () -> T.eigvals a)
+
+let eigvalsh ?uplo a =
+  Debug.with_context "eigvalsh" (fun () -> T.eigvalsh ?uplo a)
+
+(* Norms and Condition Numbers *)
+
+let norm ?ord ?axes ?keepdims x =
+  Debug.with_context "norm" (fun () -> T.norm ?ord ?axes ?keepdims x)
+
+let cond ?p x = Debug.with_context "cond" (fun () -> T.cond ?p x)
+let det a = Debug.with_context "det" (fun () -> T.det a)
+let slogdet a = Debug.with_context "slogdet" (fun () -> T.slogdet a)
+
+let matrix_rank ?tol ?rtol ?hermitian a =
+  Debug.with_context "matrix_rank" (fun () ->
+      T.matrix_rank ?tol ?rtol ?hermitian a)
+
+let trace ?offset a = Debug.with_context "trace" (fun () -> T.trace ?offset a)
+
+(* Solving Linear Systems *)
+
+let solve a b = Debug.with_context "solve" (fun () -> T.solve a b)
+let lstsq ?rcond a b = Debug.with_context "lstsq" (fun () -> T.lstsq ?rcond a b)
+let inv a = Debug.with_context "inv" (fun () -> T.inv a)
+
+let pinv ?rtol ?hermitian a =
+  Debug.with_context "pinv" (fun () -> T.pinv ?rtol ?hermitian a)
+
+let tensorsolve ?axes a b =
+  Debug.with_context "tensorsolve" (fun () -> T.tensorsolve ?axes a b)
+
+let tensorinv ?ind a =
+  Debug.with_context "tensorinv" (fun () -> T.tensorinv ?ind a)
+
 (* FFT *)
 
 let fft ?axis ?n ?(norm = `Backward) x =
