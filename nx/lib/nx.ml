@@ -36,6 +36,11 @@ let randn dtype ?seed shape = F.randn (Lazy.force context) dtype ?seed shape
 let randint dtype ?seed ?high shape low =
   F.randint (Lazy.force context) dtype ?seed ?high shape low
 
+(* ───── FFT ───── *)
+
+let fftfreq ?d n = F.fftfreq (Lazy.force context) ?d n
+let rfftfreq ?d n = F.rfftfreq (Lazy.force context) ?d n
+
 (* ───── Aliases to unsafe functions ───── *)
 
 let data t = F.unsafe_data t

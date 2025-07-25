@@ -52,6 +52,10 @@ let op_fold _t ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
   not_available ()
 
 let op_matmul _a _b = not_available ()
+let op_fft _t ~axes:_ ~s:_ = not_available ()
+let op_ifft _t ~axes:_ ~s:_ = not_available ()
+let op_rfft _t ~axes:_ ~s:_ = not_available ()
+let op_irfft _t ~axes:_ ~s:_ = not_available ()
 let op_cat _t = not_available ()
 let op_cast _t = not_available ()
 let op_contiguous _t = not_available ()

@@ -92,6 +92,59 @@ let prod ?axes ?keepdims x =
 let matmul a b = Debug.with_context "matmul" (fun () -> T.matmul a b)
 let dot a b = Debug.with_context "dot" (fun () -> T.dot a b)
 
+(* FFT *)
+
+let fft ?axis ?n ?(norm = `Backward) x =
+  Debug.with_context "fft" (fun () -> T.fft ?axis ?n ~norm x)
+
+let ifft ?axis ?n ?(norm = `Backward) x =
+  Debug.with_context "ifft" (fun () -> T.ifft ?axis ?n ~norm x)
+
+let fft2 ?s ?axes ?(norm = `Backward) x =
+  Debug.with_context "fft2" (fun () -> T.fft2 ?s ?axes ~norm x)
+
+let ifft2 ?s ?axes ?(norm = `Backward) x =
+  Debug.with_context "ifft2" (fun () -> T.ifft2 ?s ?axes ~norm x)
+
+let fftn ?s ?axes ?(norm = `Backward) x =
+  Debug.with_context "fftn" (fun () -> T.fftn ?s ?axes ~norm x)
+
+let ifftn ?s ?axes ?(norm = `Backward) x =
+  Debug.with_context "ifftn" (fun () -> T.ifftn ?s ?axes ~norm x)
+
+let rfft ?axis ?n ?(norm = `Backward) x =
+  Debug.with_context "rfft" (fun () -> T.rfft ?axis ?n ~norm x)
+
+let irfft ?axis ?n ?(norm = `Backward) x =
+  Debug.with_context "irfft" (fun () -> T.irfft ?axis ?n ~norm x)
+
+let rfft2 ?s ?axes ?(norm = `Backward) x =
+  Debug.with_context "rfft2" (fun () -> T.rfft2 ?s ?axes ~norm x)
+
+let irfft2 ?axes ?s ?(norm = `Backward) x =
+  Debug.with_context "irfft2" (fun () -> T.irfft2 ?axes ?s ~norm x)
+
+let rfftn ?s ?axes ?(norm = `Backward) x =
+  Debug.with_context "rfftn" (fun () -> T.rfftn ?s ?axes ~norm x)
+
+let irfftn ?axes ?s ?(norm = `Backward) x =
+  Debug.with_context "irfftn" (fun () -> T.irfftn ?axes ?s ~norm x)
+
+let hfft ~n ~axis x = Debug.with_context "hfft" (fun () -> T.hfft ~n ~axis x)
+let ihfft ~n ~axis x = Debug.with_context "ihfft" (fun () -> T.ihfft ~n ~axis x)
+
+let fftfreq ctx ?d n =
+  Debug.with_context "fftfreq" (fun () -> T.fftfreq ctx ?d n)
+
+let rfftfreq ctx ?d n =
+  Debug.with_context "rfftfreq" (fun () -> T.rfftfreq ctx ?d n)
+
+let fftshift ?axes x =
+  Debug.with_context "fftshift" (fun () -> T.fftshift ?axes x)
+
+let ifftshift ?axes x =
+  Debug.with_context "ifftshift" (fun () -> T.ifftshift ?axes x)
+
 (* Other operations *)
 
 let cast dtype x = Debug.with_context "cast" (fun () -> T.cast dtype x)

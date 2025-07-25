@@ -725,3 +725,9 @@ let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
     ~padding
 
 let op_matmul a b = Ops_matmul.matmul a.context a b
+
+(* FFT operations *)
+let op_fft x ~axes ~s = Ops_fft.fft x.context x ~axes ~s
+let op_ifft x ~axes ~s = Ops_fft.ifft x.context x ~axes ~s
+let op_rfft x ~axes ~s = Ops_fft.rfft x.context x ~axes ~s
+let op_irfft x ~axes ~s = Ops_fft.irfft x.context x ~axes ~s

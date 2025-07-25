@@ -275,6 +275,30 @@ type _ Effect.t +=
     }
       -> ('a, 'b) t Effect.t
   | E_matmul : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
+  | E_fft : {
+      t : (Complex.t, 'b) t;
+      axes : int array;
+      s : int array option;
+    }
+      -> (Complex.t, 'b) t Effect.t
+  | E_ifft : {
+      t : (Complex.t, 'b) t;
+      axes : int array;
+      s : int array option;
+    }
+      -> (Complex.t, 'b) t Effect.t
+  | E_rfft : {
+      t : (float, 'b) t;
+      axes : int array;
+      s : int array option;
+    }
+      -> (Complex.t, Dtype.complex64_elt) t Effect.t
+  | E_irfft : {
+      t : (Complex.t, 'b) t;
+      axes : int array;
+      s : int array option;
+    }
+      -> (float, Dtype.float64_elt) t Effect.t
 
 (* Helper functions for different operation types *)
 
@@ -693,3 +717,40 @@ let op_matmul a b =
     | Symbolic_tensor _, _ | _, Symbolic_tensor _ ->
         failwith "todo: op_matmul for symbolic tensors"
     | _ -> assert false)
+
+(* FFT operations *)
+let op_fft t ~axes ~s =
+  try Effect.perform (E_fft { t; axes; s })
+  with Effect.Unhandled _ -> (
+    match t with
+    | Ocaml_tensor t -> Ocaml_tensor (Nx_native.op_fft t ~axes ~s)
+    | C_tensor t -> C_tensor (Nx_c.op_fft t ~axes ~s)
+    | Metal_tensor t -> Metal_tensor (Rune_metal.op_fft t ~axes ~s)
+    | Symbolic_tensor _ -> failwith "todo: op_fft for symbolic tensors")
+
+let op_ifft t ~axes ~s =
+  try Effect.perform (E_ifft { t; axes; s })
+  with Effect.Unhandled _ -> (
+    match t with
+    | Ocaml_tensor t -> Ocaml_tensor (Nx_native.op_ifft t ~axes ~s)
+    | C_tensor t -> C_tensor (Nx_c.op_ifft t ~axes ~s)
+    | Metal_tensor t -> Metal_tensor (Rune_metal.op_ifft t ~axes ~s)
+    | Symbolic_tensor _ -> failwith "todo: op_ifft for symbolic tensors")
+
+let op_rfft t ~axes ~s =
+  try Effect.perform (E_rfft { t; axes; s })
+  with Effect.Unhandled _ -> (
+    match t with
+    | Ocaml_tensor t -> Ocaml_tensor (Nx_native.op_rfft t ~axes ~s)
+    | C_tensor t -> C_tensor (Nx_c.op_rfft t ~axes ~s)
+    | Metal_tensor t -> Metal_tensor (Rune_metal.op_rfft t ~axes ~s)
+    | Symbolic_tensor _ -> failwith "todo: op_rfft for symbolic tensors")
+
+let op_irfft t ~axes ~s =
+  try Effect.perform (E_irfft { t; axes; s })
+  with Effect.Unhandled _ -> (
+    match t with
+    | Ocaml_tensor t -> Ocaml_tensor (Nx_native.op_irfft t ~axes ~s)
+    | C_tensor t -> C_tensor (Nx_c.op_irfft t ~axes ~s)
+    | Metal_tensor t -> Metal_tensor (Rune_metal.op_irfft t ~axes ~s)
+    | Symbolic_tensor _ -> failwith "todo: op_irfft for symbolic tensors")

@@ -35,6 +35,14 @@ kernel void copy_uchar(device uchar* out [[buffer(0)]],
     out[gid] = in[gid];
 }
 
+kernel void copy_float2(device float2* out [[buffer(0)]],
+                       device const float2* in [[buffer(1)]],
+                       constant uint& size [[buffer(2)]],
+                       uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
 // Strided copy for contiguous operation
 kernel void strided_copy_float(device float* out [[buffer(0)]],
                               device const float* in [[buffer(1)]],
@@ -103,6 +111,35 @@ kernel void strided_copy_uchar(device uchar* out [[buffer(0)]],
                               constant uint& size [[buffer(5)]],
                               constant uint& offset [[buffer(6)]],
                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    // Compute position from linear index
+    uint coords[8]; // Support up to 8 dimensions
+    uint temp = gid;
+    
+    // Convert linear index to coordinates
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    // Compute strided index with offset
+    uint in_idx = offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * strides[i];
+    }
+    
+    out[gid] = in[in_idx];
+}
+
+kernel void strided_copy_float2(device float2* out [[buffer(0)]],
+                               device const float2* in [[buffer(1)]],
+                               constant uint* shape [[buffer(2)]],
+                               constant int* strides [[buffer(3)]],
+                               constant uint& ndim [[buffer(4)]],
+                               constant uint& size [[buffer(5)]],
+                               constant uint& offset [[buffer(6)]],
+                               uint gid [[thread_position_in_grid]]) {
     if (gid >= size) return;
     
     // Compute position from linear index

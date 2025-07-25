@@ -565,3 +565,106 @@ DEFINE_BINARY_OP(or, |, long)
 DEFINE_BINARY_OP(and, &, uchar)
 DEFINE_BINARY_OP(and, &, int)
 DEFINE_BINARY_OP(and, &, long)
+
+// Complex number operations for float2
+kernel void add_float2(device float2* out [[buffer(0)]],
+                      device const float2* a [[buffer(1)]],
+                      device const float2* b [[buffer(2)]],
+                      constant uint* out_shape [[buffer(3)]],
+                      constant int* a_strides [[buffer(4)]],
+                      constant int* b_strides [[buffer(5)]],
+                      constant uint& ndim [[buffer(6)]],
+                      constant int& a_offset [[buffer(7)]],
+                      constant int& b_offset [[buffer(8)]],
+                      uint3 gid [[thread_position_in_grid]]) {
+    uint out_idx = gid.x;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint a_idx = compute_index_from_linear(out_idx, out_shape, a_strides, ndim) + a_offset;
+    uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
+    
+    out[out_idx] = a[a_idx] + b[b_idx];
+}
+
+kernel void sub_float2(device float2* out [[buffer(0)]],
+                      device const float2* a [[buffer(1)]],
+                      device const float2* b [[buffer(2)]],
+                      constant uint* out_shape [[buffer(3)]],
+                      constant int* a_strides [[buffer(4)]],
+                      constant int* b_strides [[buffer(5)]],
+                      constant uint& ndim [[buffer(6)]],
+                      constant int& a_offset [[buffer(7)]],
+                      constant int& b_offset [[buffer(8)]],
+                      uint3 gid [[thread_position_in_grid]]) {
+    uint out_idx = gid.x;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint a_idx = compute_index_from_linear(out_idx, out_shape, a_strides, ndim) + a_offset;
+    uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
+    
+    out[out_idx] = a[a_idx] - b[b_idx];
+}
+
+kernel void mul_float2(device float2* out [[buffer(0)]],
+                      device const float2* a [[buffer(1)]],
+                      device const float2* b [[buffer(2)]],
+                      constant uint* out_shape [[buffer(3)]],
+                      constant int* a_strides [[buffer(4)]],
+                      constant int* b_strides [[buffer(5)]],
+                      constant uint& ndim [[buffer(6)]],
+                      constant int& a_offset [[buffer(7)]],
+                      constant int& b_offset [[buffer(8)]],
+                      uint3 gid [[thread_position_in_grid]]) {
+    uint out_idx = gid.x;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint a_idx = compute_index_from_linear(out_idx, out_shape, a_strides, ndim) + a_offset;
+    uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
+    
+    float2 av = a[a_idx];
+    float2 bv = b[b_idx];
+    
+    // Complex multiplication: (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
+    out[out_idx] = float2(av.x * bv.x - av.y * bv.y, av.x * bv.y + av.y * bv.x);
+}
+
+kernel void div_float2(device float2* out [[buffer(0)]],
+                      device const float2* a [[buffer(1)]],
+                      device const float2* b [[buffer(2)]],
+                      constant uint* out_shape [[buffer(3)]],
+                      constant int* a_strides [[buffer(4)]],
+                      constant int* b_strides [[buffer(5)]],
+                      constant uint& ndim [[buffer(6)]],
+                      constant int& a_offset [[buffer(7)]],
+                      constant int& b_offset [[buffer(8)]],
+                      uint3 gid [[thread_position_in_grid]]) {
+    uint out_idx = gid.x;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= out_shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint a_idx = compute_index_from_linear(out_idx, out_shape, a_strides, ndim) + a_offset;
+    uint b_idx = compute_index_from_linear(out_idx, out_shape, b_strides, ndim) + b_offset;
+    
+    float2 av = a[a_idx];
+    float2 bv = b[b_idx];
+    
+    // Complex division: (a + bi) / (c + di) = ((ac + bd) + (bc - ad)i) / (c^2 + d^2)
+    float denom = bv.x * bv.x + bv.y * bv.y;
+    out[out_idx] = float2((av.x * bv.x + av.y * bv.y) / denom,
+                         (av.y * bv.x - av.x * bv.y) / denom);
+}

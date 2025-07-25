@@ -3337,6 +3337,510 @@ module Make (B : Backend_intf.S) = struct
          (...,m,n) *)
       result_intermediate
 
+  (* ───── Complex Operations and FFT ───── *)
+
+  (* Create complex tensor from real and imaginary parts *)
+  let complex (type a b) ~(real : (a, b) t) ~(imag : (a, b) t) =
+    (* Check shapes match *)
+    let real_shape = shape real in
+    let imag_shape = shape imag in
+    if real_shape <> imag_shape then
+      Error.shape_mismatch ~op:"complex" ~expected:real_shape ~actual:imag_shape
+        ();
+
+    (* Create complex tensor based on the input dtype *)
+    let size = Array.fold_left ( * ) 1 real_shape in
+    match dtype real with
+    | Float32 ->
+        let real = (real : (float, float32_elt) t) in
+        let imag = (imag : (float, float32_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex32 real_shape complex_data)
+    | Float64 ->
+        let real = (real : (float, float64_elt) t) in
+        let imag = (imag : (float, float64_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex64 real_shape complex_data)
+    | _ ->
+        Error.invalid ~op:"complex" ~what:"dtype"
+          ~reason:"real and imag must be float32 or float64" ()
+
+  (* Extract real part of complex tensor *)
+  let real (type a b) (x : (a, b) t) =
+    match dtype x with
+    | Complex32 ->
+        let x = (x : (Complex.t, complex32_elt) t) in
+        (* Extract real part by creating a new tensor *)
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let real_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.re)
+        in
+        Obj.magic (create (B.context x) float32 shape_x real_data)
+    | Complex64 ->
+        let x = (x : (Complex.t, complex64_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let real_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.re)
+        in
+        Obj.magic (create (B.context x) float64 shape_x real_data)
+    | _ ->
+        Error.invalid ~op:"real" ~what:"dtype"
+          ~reason:"input must be complex32 or complex64" ()
+
+  (* Extract imaginary part of complex tensor *)
+  let imag (type a b) (x : (a, b) t) =
+    match dtype x with
+    | Complex32 ->
+        let x = (x : (Complex.t, complex32_elt) t) in
+        (* Extract imaginary part by creating a new tensor *)
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let imag_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.im)
+        in
+        Obj.magic (create (B.context x) float32 shape_x imag_data)
+    | Complex64 ->
+        let x = (x : (Complex.t, complex64_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let imag_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.im)
+        in
+        Obj.magic (create (B.context x) float64 shape_x imag_data)
+    | _ ->
+        Error.invalid ~op:"imag" ~what:"dtype"
+          ~reason:"input must be complex32 or complex64" ()
+
+  (* FFT operations *)
+
+  type fft_norm = [ `Backward | `Forward | `Ortho ]
+
+  (* Helper to pad or truncate along axes *)
+  let pad_or_truncate_for_fft x axes s =
+    if s = None then x
+    else
+      let s_arr = Option.get s in
+      let x_padded = ref x in
+      Array.iteri
+        (fun i ax ->
+          let ax = if ax < 0 then ndim !x_padded + ax else ax in
+          let cur_size = dim ax !x_padded in
+          let target = s_arr.(i) in
+          if target <> cur_size then
+            if target > cur_size then (
+              (* Zero-pad at the end for FFT *)
+              let pad_config = Array.make (ndim !x_padded) (0, 0) in
+              let pad_amount = target - cur_size in
+              pad_config.(ax) <- (0, pad_amount);
+              x_padded :=
+                B.op_pad !x_padded pad_config (Dtype.zero (dtype !x_padded)))
+            else
+              (* Truncate from the end for FFT - keep low frequencies *)
+              let shrink_config =
+                Array.init (ndim !x_padded) (fun idx ->
+                    if idx = ax then (0, target) else (0, dim idx !x_padded))
+              in
+              x_padded := B.op_shrink !x_padded shrink_config)
+        axes;
+      !x_padded
+
+  let fftn (type a) ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
+      (Complex.t, a) t =
+    let ndim_x = ndim x in
+    let axes_arr =
+      match axes with
+      | None -> Array.init ndim_x Fun.id
+      | Some a -> Array.map (fun ax -> if ax < 0 then ndim_x + ax else ax) a
+    in
+
+    (* Validate s parameter *)
+    (match s with
+    | Some sizes when Array.length sizes <> Array.length axes_arr ->
+        Error.invalid ~op:"fft" ~what:"s parameter"
+          ~reason:"must have same length as axes" ()
+    | _ -> ());
+
+    (* Pad or truncate if needed *)
+    let x_padded = pad_or_truncate_for_fft x axes_arr s in
+
+    (* Compute normalization scale *)
+    let norm_scale =
+      match norm with
+      | `Backward -> 1.0 (* No scaling on forward *)
+      | `Forward ->
+          let n =
+            Array.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_arr
+          in
+          1.0 /. float_of_int n
+      | `Ortho ->
+          let n =
+            Array.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_arr
+          in
+          1.0 /. Stdlib.sqrt (float_of_int n)
+    in
+
+    let result = B.op_fft x_padded ~axes:axes_arr ~s:None in
+
+    (* Apply normalization if needed *)
+    if norm_scale <> 1.0 then
+      let scale_value =
+        match B.dtype result with
+        | Complex32 -> Complex.{ re = norm_scale; im = 0.0 }
+        | Complex64 -> Complex.{ re = norm_scale; im = 0.0 }
+      in
+      let scale_tensor =
+        scalar (B.context result) (B.dtype result) scale_value
+      in
+      mul result scale_tensor
+    else result
+
+  let ifftn (type a) ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
+      (Complex.t, a) t =
+    let ndim_x = ndim x in
+    let axes_arr =
+      match axes with
+      | None -> Array.init ndim_x Fun.id
+      | Some a -> Array.map (fun ax -> if ax < 0 then ndim_x + ax else ax) a
+    in
+
+    (* Validate s parameter *)
+    (match s with
+    | Some sizes when Array.length sizes <> Array.length axes_arr ->
+        Error.invalid ~op:"ifft" ~what:"s parameter"
+          ~reason:"must have same length as axes" ()
+    | _ -> ());
+
+    (* For IFFT, we need special handling of the size parameter *)
+    let result_with_size =
+      match s with
+      | None ->
+          (* No size specified, standard IFFT *)
+          let norm_scale =
+            match norm with
+            | `Backward ->
+                let n =
+                  Array.fold_left (fun acc ax -> acc * dim ax x) 1 axes_arr
+                in
+                1.0 /. float_of_int n
+            | `Forward -> 1.0
+            | `Ortho ->
+                let n =
+                  Array.fold_left (fun acc ax -> acc * dim ax x) 1 axes_arr
+                in
+                1.0 /. Stdlib.sqrt (float_of_int n)
+          in
+          let result = B.op_ifft x ~axes:axes_arr ~s:None in
+          (result, norm_scale)
+      | Some _sizes ->
+          (* Size specified - we need to handle this carefully *)
+          (* Do IFFT on input, then truncate/pad the result *)
+          let norm_scale =
+            match norm with
+            | `Backward ->
+                (* Use the INPUT size for normalization *)
+                let n =
+                  Array.fold_left (fun acc ax -> acc * dim ax x) 1 axes_arr
+                in
+                1.0 /. float_of_int n
+            | `Forward -> 1.0
+            | `Ortho ->
+                let n =
+                  Array.fold_left (fun acc ax -> acc * dim ax x) 1 axes_arr
+                in
+                1.0 /. Stdlib.sqrt (float_of_int n)
+          in
+          let result = B.op_ifft x ~axes:axes_arr ~s:None in
+          (* Now pad or truncate the result in time domain *)
+          let result_padded = pad_or_truncate_for_fft result axes_arr s in
+          (result_padded, norm_scale)
+    in
+    let result, norm_scale = result_with_size in
+
+    (* Backend does not apply any scaling - all normalization is handled here *)
+    let backend_scale = 1.0 in
+
+    (* Adjust scaling: multiply by backend_scale to undo, then by norm_scale *)
+    let total_scale = backend_scale *. norm_scale in
+    if total_scale <> 1.0 then
+      let scale_value =
+        match B.dtype result with
+        | Complex32 -> Complex.{ re = total_scale; im = 0.0 }
+        | Complex64 -> Complex.{ re = total_scale; im = 0.0 }
+      in
+      let scale_tensor =
+        scalar (B.context result) (B.dtype result) scale_value
+      in
+      mul result scale_tensor
+    else result
+
+  let rfftn ?axes ?s ?(norm = `Backward) x =
+    let ndim_x = ndim x in
+    let axes_arr = match axes with None -> [| ndim_x - 1 |] | Some ax -> ax in
+
+    (* Pad or truncate if needed *)
+    let x_padded = pad_or_truncate_for_fft x axes_arr s in
+
+    (* Compute normalization scale *)
+    let norm_scale =
+      match norm with
+      | `Backward -> 1.0
+      | `Forward ->
+          let n =
+            Array.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_arr
+          in
+          1.0 /. float_of_int n
+      | `Ortho ->
+          let n =
+            Array.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_arr
+          in
+          1.0 /. Stdlib.sqrt (float_of_int n)
+    in
+
+    let result = B.op_rfft x_padded ~axes:axes_arr ~s:None in
+
+    if norm_scale <> 1.0 then
+      let scale_value = Complex.{ re = norm_scale; im = 0.0 } in
+      let scale_tensor =
+        scalar (B.context result) (B.dtype result) scale_value
+      in
+      mul result scale_tensor
+    else result
+
+  let irfftn ?axes ?s ?(norm = `Backward) x =
+    let ndim_x = ndim x in
+    let axes_arr = match axes with None -> [| ndim_x - 1 |] | Some ax -> ax in
+
+    (* Determine output sizes *)
+    let output_sizes =
+      match s with
+      | Some sizes -> sizes
+      | None ->
+          (* Infer sizes from input shape *)
+          let input_shape = shape x in
+          Array.mapi
+            (fun i axis ->
+              let axis = if axis < 0 then ndim_x + axis else axis in
+              if i = Array.length axes_arr - 1 then
+                (* Last axis: reconstruct full size from hermitian input *)
+                (input_shape.(axis) - 1) * 2
+              else input_shape.(axis))
+            axes_arr
+    in
+
+    (* Compute normalization scale *)
+    let norm_scale =
+      match norm with
+      | `Backward ->
+          let n = Array.fold_left (fun acc size -> acc * size) 1 output_sizes in
+          1.0 /. float_of_int n
+      | `Forward -> 1.0
+      | `Ortho ->
+          let n = Array.fold_left (fun acc size -> acc * size) 1 output_sizes in
+          1.0 /. Stdlib.sqrt (float_of_int n)
+    in
+
+    (* Backend does not apply any scaling - all normalization is handled here *)
+    let backend_scale = 1.0 in
+
+    let result = B.op_irfft x ~axes:axes_arr ~s in
+
+    let total_scale = backend_scale *. norm_scale in
+    if total_scale <> 1.0 then
+      let scale_tensor =
+        scalar (B.context result) (B.dtype result) total_scale
+      in
+      mul result scale_tensor
+    else result
+
+  (* 1D FFT operations - convenience functions *)
+  let fft ?(axis = -1) ?n ?(norm = `Backward) x =
+    let n_param = match n with None -> None | Some size -> Some [| size |] in
+    fftn x ~axes:[| axis |] ?s:n_param ~norm
+
+  let ifft ?(axis = -1) ?n ?(norm = `Backward) x =
+    let n_param = match n with None -> None | Some size -> Some [| size |] in
+    ifftn x ~axes:[| axis |] ?s:n_param ~norm
+
+  let rfft ?(axis = -1) ?n ?(norm = `Backward) x =
+    let n_param = match n with None -> None | Some size -> Some [| size |] in
+    rfftn x ~axes:[| axis |] ?s:n_param ~norm
+
+  let irfft ?(axis = -1) ?n ?(norm = `Backward) x =
+    let n_param = match n with None -> None | Some size -> Some [| size |] in
+    irfftn x ~axes:[| axis |] ?s:n_param ~norm
+
+  (* 2D FFT operations *)
+  let fft2 ?axes ?s ?(norm = `Backward) x =
+    let n = ndim x in
+    if n < 2 then
+      Error.invalid ~op:"fft2" ~what:"input"
+        ~reason:(Printf.sprintf "requires at least 2D array, got %dD" n)
+        ();
+    let axes = match axes with None -> [| n - 2; n - 1 |] | Some ax -> ax in
+    if Array.length axes <> 2 then
+      Error.invalid ~op:"fft2" ~what:"axes"
+        ~reason:"must specify exactly 2 axes" ();
+    fftn x ~axes ?s ~norm
+
+  let ifft2 ?axes ?s ?(norm = `Backward) x =
+    let n = ndim x in
+    if n < 2 then
+      Error.invalid ~op:"ifft2" ~what:"input"
+        ~reason:(Printf.sprintf "requires at least 2D array, got %dD" n)
+        ();
+    let axes = match axes with None -> [| n - 2; n - 1 |] | Some ax -> ax in
+    if Array.length axes <> 2 then
+      Error.invalid ~op:"ifft2" ~what:"axes"
+        ~reason:"must specify exactly 2 axes" ();
+    ifftn x ~axes ?s ~norm
+
+  (* N-dimensional FFT operations *)
+  let fftn ?axes ?s ?(norm = `Backward) x =
+    let axes =
+      match axes with None -> Array.init (ndim x) Fun.id | Some ax -> ax
+    in
+    fftn x ~axes ?s ~norm
+
+  let ifftn ?axes ?s ?(norm = `Backward) x =
+    let axes =
+      match axes with None -> Array.init (ndim x) Fun.id | Some ax -> ax
+    in
+    ifftn x ~axes ?s ~norm
+
+  (* 2D Real FFT operations *)
+  let rfft2 ?axes ?s ?(norm = `Backward) x =
+    let n = ndim x in
+    if n < 2 then
+      Error.invalid ~op:"rfft2" ~what:"input"
+        ~reason:(Printf.sprintf "requires at least 2D array, got %dD" n)
+        ();
+    let axes = match axes with None -> [| n - 2; n - 1 |] | Some ax -> ax in
+    if Array.length axes <> 2 then
+      Error.invalid ~op:"rfft2" ~what:"axes"
+        ~reason:"must specify exactly 2 axes" ();
+    rfftn x ~axes ?s ~norm
+
+  let irfft2 ?axes ?s ?(norm = `Backward) x =
+    let n = ndim x in
+    if n < 2 then
+      Error.invalid ~op:"irfft2" ~what:"input"
+        ~reason:(Printf.sprintf "requires at least 2D array, got %dD" n)
+        ();
+    let axes = match axes with None -> [| n - 2; n - 1 |] | Some ax -> ax in
+    if Array.length axes <> 2 then
+      Error.invalid ~op:"irfft2" ~what:"axes"
+        ~reason:"must specify exactly 2 axes" ();
+    irfftn x ~axes ?s ~norm
+
+  (* N-dimensional Real FFT operations *)
+  let rfftn ?axes ?s ?(norm = `Backward) x =
+    let axes =
+      match axes with None -> Array.init (ndim x) Fun.id | Some ax -> ax
+    in
+    rfftn x ~axes ?s ~norm
+
+  let irfftn ?axes ?s ?(norm = `Backward) x =
+    let axes =
+      match axes with None -> Array.init (ndim x) Fun.id | Some ax -> ax
+    in
+    irfftn x ~axes ?s ~norm
+
+  (* Hermitian FFT operations *)
+  let hfft ?(axis = -1) ?n ?norm x =
+    let n = match n with None -> 2 * (dim axis x - 1) | Some n -> n in
+    let axis = resolve_single_axis x axis in
+    irfftn x ~axes:[| axis |] ~s:[| n |] ?norm
+
+  let ihfft ?(axis = -1) ?n ?norm x =
+    let n = match n with None -> dim axis x | Some n -> n in
+    let axis = resolve_single_axis x axis in
+    rfftn x ~axes:[| axis |] ~s:[| n |] ?norm
+
+  (* FFT helper functions *)
+  let fftfreq ctx ?(d = 1.0) n =
+    (* Return the Discrete Fourier Transform sample frequencies *)
+    let dtype = Dtype.float64 in
+    let val_ = 1.0 /. (float_of_int n *. d) in
+    let results =
+      if n mod 2 = 0 then
+        (* Even case *)
+        let p1 = arange ctx Dtype.int32 0 (n / 2) 1 in
+        let p2 = arange ctx Dtype.int32 (-(n / 2)) 0 1 in
+        concatenate ~axis:0 [ cast dtype p1; cast dtype p2 ]
+      else
+        (* Odd case *)
+        let p1 = arange ctx Dtype.int32 0 ((n + 1) / 2) 1 in
+        let p2 = arange ctx Dtype.int32 (-((n - 1) / 2)) 0 1 in
+        concatenate ~axis:0 [ cast dtype p1; cast dtype p2 ]
+    in
+    mul_s results val_
+
+  let rfftfreq ctx ?(d = 1.0) n =
+    (* Return the Discrete Fourier Transform sample frequencies for rfft *)
+    let dtype = Dtype.float64 in
+    let val_ = 1.0 /. (float_of_int n *. d) in
+    let results = arange ctx Dtype.int32 0 ((n / 2) + 1) 1 in
+    let scale_tensor = scalar ctx dtype val_ in
+    mul (cast dtype results) scale_tensor
+
+  let fftshift ?axes x =
+    (* Shift the zero-frequency component to the center of the spectrum *)
+    let shape_x = shape x in
+    let ndim_x = Array.length shape_x in
+    let axes =
+      match axes with None -> Array.init ndim_x Fun.id | Some ax -> ax
+    in
+    (* For each axis, roll by shape[axis] // 2 *)
+    Array.fold_left
+      (fun acc axis ->
+        let axis = resolve_single_axis acc axis in
+        let n = shape_x.(axis) in
+        let shift = n / 2 in
+        roll shift acc ~axis)
+      x axes
+
+  let ifftshift ?axes x =
+    (* The inverse of fftshift *)
+    let shape_x = shape x in
+    let ndim_x = Array.length shape_x in
+    let axes =
+      match axes with None -> Array.init ndim_x Fun.id | Some ax -> ax
+    in
+    (* For each axis, roll by -(shape[axis] // 2) *)
+    Array.fold_left
+      (fun acc axis ->
+        let axis = resolve_single_axis acc axis in
+        let n = shape_x.(axis) in
+        let shift = -(n / 2) in
+        roll shift acc ~axis)
+      x axes
+
   (* ───── Neural Network Operations ───── *)
 
   (* Activations *)

@@ -2032,6 +2032,212 @@ val matmul : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
       - : int array = [|5; 3; 2|]
     ]} *)
 
+(** {2 Fourier Transform}
+
+    Fast Fourier Transform (FFT) and related signal processing functions. *)
+
+type fft_norm = [ `Backward | `Forward | `Ortho ]
+(** FFT normalization mode:
+    - [`Backward]: normalize by 1/n on inverse transform (default)
+    - [`Forward]: normalize by 1/n on forward transform
+    - [`Ortho]: normalize by 1/√n on both transforms *)
+
+val fft :
+  ?axis:int ->
+  ?n:int ->
+  ?norm:fft_norm ->
+  (Complex.t, 'a, 'dev) t ->
+  (Complex.t, 'a, 'dev) t
+(** [fft x ?axis ?n ?norm] computes discrete Fourier transform over specified
+    axis.
+
+    Transforms the last axis if [axis] is [None]. Forward transform is unscaled,
+    inverse transform applies 1/N normalization.
+
+    Computing 1D FFT of a signal:
+    {@ocaml[
+      # let real = Nx.create Nx.float32 [|4|] [|0.; 1.; 2.; 3.|] in
+        let imag = Nx.zeros Nx.float32 [|4|] in
+        let x = Nx.complex ~real ~imag in
+        let result = Nx.fft x ~axes:(Some [|0|]) in
+        Nx.real result
+      - : (float, float32_elt) t = [6, -2, -2, -2]
+    ]} *)
+
+val ifft :
+  ?axis:int ->
+  ?n:int ->
+  ?norm:fft_norm ->
+  (Complex.t, 'a, 'dev) t ->
+  (Complex.t, 'a, 'dev) t
+(** [ifft x ?axis ?n ?norm] computes inverse discrete Fourier transform.
+
+    Divides by product of sizes along transformed axes. *)
+
+val fft2 :
+  ?s:int array ->
+  ?axes:int array ->
+  ?norm:fft_norm ->
+  (Complex.t, 'a, 'dev) t ->
+  (Complex.t, 'a, 'dev) t
+(** [fft2 ?s ?axes x] computes 2-dimensional FFT.
+
+    Transforms last two axes by default. Truncates or pads to shape [s] if
+    given.
+
+    @raise Invalid_argument if input has less than 2 dimensions
+
+    Computing 2D FFT of a 2x2 matrix:
+    {@ocaml[
+      # let real = Nx.create Nx.float32 [|2; 2|] [|1.; 2.; 3.; 4.|] in
+        let imag = Nx.zeros Nx.float32 [|2; 2|] in
+        let x = Nx.complex ~real ~imag in
+        Nx.shape (Nx.fft2 x)
+      - : int array = [|2; 2|]
+    ]} *)
+
+val ifft2 :
+  ?s:int array ->
+  ?axes:int array ->
+  ?norm:fft_norm ->
+  (Complex.t, 'a, 'dev) t ->
+  (Complex.t, 'a, 'dev) t
+(** [ifft2 ?s ?axes x] computes 2-dimensional inverse FFT.
+
+    @raise Invalid_argument if input has less than 2 dimensions *)
+
+val fftn :
+  ?s:int array ->
+  ?axes:int array ->
+  ?norm:fft_norm ->
+  (Complex.t, 'a, 'dev) t ->
+  (Complex.t, 'a, 'dev) t
+(** [fftn ?s ?axes x] computes N-dimensional FFT.
+
+    Transforms all axes by default. *)
+
+val ifftn :
+  ?s:int array ->
+  ?axes:int array ->
+  ?norm:fft_norm ->
+  (Complex.t, 'a, 'dev) t ->
+  (Complex.t, 'a, 'dev) t
+(** [ifftn ?s ?axes x] computes N-dimensional inverse FFT. *)
+
+val rfft :
+  ?axis:int ->
+  ?n:int ->
+  ?norm:fft_norm ->
+  (float, 'a, 'dev) t ->
+  (Complex.t, complex64_elt, 'dev) t
+(** [rfft x ?axis ?n ?norm] computes FFT of real input.
+
+    Returns only non-redundant positive frequencies. Output size along last
+    transformed axis is n/2+1 where n is input size.
+
+    Computing real FFT:
+    {@ocaml[
+      # let x = Nx.create Nx.float32 [|4|] [|0.; 1.; 2.; 3.|] in
+        let result = Nx.rfft x ~axes:(Some [|0|]) in
+        Nx.shape result
+      - : int array = [|3|]
+    ]} *)
+
+val irfft :
+  ?axis:int ->
+  ?n:int ->
+  ?norm:fft_norm ->
+  (Complex.t, 'a, 'dev) t ->
+  (float, float64_elt, 'dev) t
+(** [irfft x ?axis ?n ?norm] computes inverse FFT returning real output.
+
+    Assumes Hermitian symmetry. Shape [s] specifies output size along
+    transformed axes. *)
+
+val rfft2 :
+  ?s:int array ->
+  ?axes:int array ->
+  ?norm:fft_norm ->
+  (float, 'a, 'dev) t ->
+  (Complex.t, complex64_elt, 'dev) t
+(** [rfft2 ?s ?axes x] computes 2D FFT of real input.
+
+    @raise Invalid_argument if input has less than 2 dimensions *)
+
+val irfft2 :
+  ?axes:int array ->
+  ?s:int array ->
+  ?norm:fft_norm ->
+  (Complex.t, 'a, 'dev) t ->
+  (float, float64_elt, 'dev) t
+(** [irfft2 ?s ?axes x] computes 2D inverse FFT returning real output.
+
+    @raise Invalid_argument
+      if input has less than 2 dimensions or if [s] not specified *)
+
+val rfftn :
+  ?s:int array ->
+  ?axes:int array ->
+  ?norm:fft_norm ->
+  (float, 'a, 'dev) t ->
+  (Complex.t, complex64_elt, 'dev) t
+(** [rfftn ?s ?axes x] computes N-dimensional FFT of real input. *)
+
+val irfftn :
+  ?axes:int array ->
+  ?s:int array ->
+  ?norm:fft_norm ->
+  (Complex.t, 'a, 'dev) t ->
+  (float, float64_elt, 'dev) t
+(** [irfftn ?s ?axes x] computes N-dimensional inverse FFT returning real
+    output.
+
+    @raise Invalid_argument if [s] not specified *)
+
+val hfft :
+  n:int -> axis:int -> (Complex.t, 'a, 'dev) t -> (float, float64_elt, 'dev) t
+(** [hfft x ~n ~axis] computes FFT of Hermitian signal.
+
+    Interprets input as positive frequencies of Hermitian signal. *)
+
+val ihfft :
+  n:int -> axis:int -> (float, 'a, 'dev) t -> (Complex.t, complex64_elt, 'dev) t
+(** [ihfft x ~n ~axis] computes inverse FFT for Hermitian output. *)
+
+val fftfreq : 'dev device -> ?d:float -> int -> (float, float64_elt, 'dev) t
+(** [fftfreq ctx device ?d n] returns DFT sample frequencies.
+
+    For window length [n] and sample spacing [d], returns frequencies
+    [0, 1, ..., n/2-1, -n/2, ..., -1] / (d*n) if n is even.
+
+    Getting frequencies for 4-point FFT:
+    {@ocaml[
+      # let ctx = Nx_native.create_context () in
+        Nx.fftfreq ctx 4 ()
+      - : (float, float64_elt) t = [0, 0.25, -0.5, -0.25]
+    ]} *)
+
+val rfftfreq : 'dev device -> ?d:float -> int -> (float, float64_elt, 'dev) t
+(** [rfftfreq ctx device n ?d ()] returns positive DFT frequencies.
+
+    Returns [0, 1, ..., n/2] / (d*n). *)
+
+val fftshift : ?axes:int array -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+(** [fftshift x ?axes] shifts zero-frequency component to center.
+
+    Shifts all axes by default. For visualization of frequency spectra.
+
+    Centering frequency spectrum:
+    {@ocaml[
+      # let ctx = Nx_native.create_context () in
+        let freqs = Nx.fftfreq ctx 5 () in
+        Nx.fftshift freqs
+      - : (float, float64_elt) t = [-0.4, -0.2, 0, 0.2, 0.4]
+    ]} *)
+
+val ifftshift : ?axes:int array -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+(** [ifftshift x ?axes] undoes fftshift. *)
+
 (** {2 Activation Functions}
 
     Neural network activation functions. *)
