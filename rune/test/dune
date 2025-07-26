@@ -1,5 +1,10 @@
-(tests
- (names test_autodiff)
+(test
+ (name test_autodiff)
+ (package rune)
+ (libraries rune alcotest test_rune_support))
+
+(test
+ (name test_vmap)
  (package rune)
  (libraries rune alcotest test_rune_support))
 

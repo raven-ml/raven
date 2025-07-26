@@ -41,6 +41,25 @@ let grad = Autodiff.grad
 let grads = Autodiff.grads
 let value_and_grad = Autodiff.value_and_grad
 let value_and_grads = Autodiff.value_and_grads
+let jvp = Autodiff.jvp
+let jvp_aux = Autodiff.jvp_aux
+let jvps = Autodiff.jvps
+
+(* ───── Vmap ───── *)
+
+type axis_spec = Vmap.axis_spec =
+  | Map of int
+  | NoMap
+
+type 'a in_axes_spec = 'a Vmap.in_axes_spec =
+  | Single of axis_spec
+  | Container of 'a
+
+type 'a out_axes_spec = 'a Vmap.out_axes_spec =
+  | OutSingle of int option
+  | OutContainer of 'a
+
+let vmap = Vmap.vmap
 
 (* ───── Debugging ───── *)
 

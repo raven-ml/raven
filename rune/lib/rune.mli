@@ -3339,6 +3339,110 @@ val value_and_grads :
       - : float * float list = (18., [6.; 12.])
     ]} *)
 
+val jvp :
+  (('a, 'b, 'dev) t -> ('c, 'd, 'dev) t) ->
+  ('a, 'b, 'dev) t ->
+  ('a, 'b, 'dev) t ->
+  ('c, 'd, 'dev) t * ('c, 'd, 'dev) t
+(** [jvp f primals tangents] computes a Jacobian-vector product (forward-mode
+    AD).
+
+    Returns a tuple of (primal_output, tangent_output) where:
+    - primal_output = f(primals)
+    - tangent_output = Jf(primals) · tangents
+
+    {@ocaml[
+      # let x = scalar float32 2. in
+        let v = scalar float32 1. in
+        let f x = mul x x in
+        jvp f x v |> (fun (p, t) -> (unsafe_get p [], unsafe_get t []))
+      - : float * float = (4., 4.)
+    ]} *)
+
+val jvp_aux :
+  (('a, 'b, 'dev) t -> ('c, 'd, 'dev) t * 'e) ->
+  ('a, 'b, 'dev) t ->
+  ('a, 'b, 'dev) t ->
+  ('c, 'd, 'dev) t * ('c, 'd, 'dev) t * 'e
+(** [jvp_aux f primals tangents] like [jvp] but for functions with auxiliary
+    output.
+
+    Returns (primal_output, tangent_output, aux) where aux is the auxiliary
+    data.
+
+    {@ocaml[
+      # let x = scalar float32 2. in
+        let v = scalar float32 1. in
+        let f x = (mul x x, shape x) in
+        jvp_aux f x v |> (fun (p, t, aux) -> (unsafe_get p [], unsafe_get t [], aux))
+      - : float * float * int array = (4., 4., [||])
+    ]} *)
+
+val jvps :
+  (('a, 'b, 'dev) t list -> ('c, 'd, 'dev) t) ->
+  ('a, 'b, 'dev) t list ->
+  ('a, 'b, 'dev) t list ->
+  ('c, 'd, 'dev) t * ('c, 'd, 'dev) t
+(** [jvps f primals tangents] computes JVP for functions with multiple inputs.
+
+    Returns (primal_output, tangent_output) for the list of inputs.
+
+    {@ocaml[
+      # let xs = [scalar float32 3.; scalar float32 2.] in
+        let vs = [scalar float32 1.; scalar float32 0.5] in
+        let f inputs = mul (List.hd inputs) (List.nth inputs 1) in
+        jvps f xs vs |> (fun (p, t) -> (unsafe_get p [], unsafe_get t []))
+      - : float * float = (6., 3.5)
+    ]} *)
+
+(** {2 Vectorizing Map (vmap)}
+
+    Functions for mapping computations over batch dimensions. *)
+
+type axis_spec = Vmap.axis_spec =
+  | Map of int  (** Map over this axis index *)
+  | NoMap  (** Don't map this axis *)
+
+type 'a in_axes_spec = 'a Vmap.in_axes_spec =
+  | Single of axis_spec
+  | Container of 'a
+
+type 'a out_axes_spec = 'a Vmap.out_axes_spec =
+  | OutSingle of int option
+  | OutContainer of 'a
+
+val vmap :
+  ?in_axes:'a in_axes_spec ->
+  ?out_axes:'b out_axes_spec ->
+  ?axis_name:string ->
+  ?axis_size:int ->
+  (('c, 'd, 'dev) t -> ('e, 'f, 'dev) t) ->
+  ('c, 'd, 'dev) t ->
+  ('e, 'f, 'dev) t
+(** [vmap ?in_axes ?out_axes ?axis_name ?axis_size f] creates a vectorized
+    version of function [f].
+
+    @param in_axes
+      Specifies which input array axes to map over. Default: Single (Map 0) -
+      maps over the first axis.
+    @param out_axes
+      Specifies where the mapped axis should appear in output. Default:
+      OutSingle (Some 0) - mapped axis at position 0. Use None to not include
+      mapped axis in output.
+    @param axis_name
+      Optional name for the mapped axis (for collective operations).
+    @param axis_size
+      Optional size of the mapped axis. Required when in_axes is NoMap.
+    @param f The function to be mapped.
+
+    {@ocaml[
+      # let batch_x = create float32 [| 10; 3; 3 |] (Array.init 90 float_of_int) in
+        let w = create float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+        let batched_matmul = vmap (fun x -> matmul x w) in
+        batched_matmul batch_x |> shape
+      - : int array = [| 10; 3; 2 |]
+    ]} *)
+
 (** {2 Debugging}
 
     Functions for debugging, JIT compilation, and gradient computation. *)

@@ -7,6 +7,8 @@ goalpost: mnist notebook in quill with rune + hugin
 - fft
 - linear algebra functions
 - jit with xla
+- vmap
+- jvp
 
 ## alpha1
 
