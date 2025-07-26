@@ -47,9 +47,7 @@ let jvps = Autodiff.jvps
 
 (* ───── Vmap ───── *)
 
-type axis_spec = Vmap.axis_spec =
-  | Map of int
-  | NoMap
+type axis_spec = Vmap.axis_spec = Map of int | NoMap
 
 type 'a in_axes_spec = 'a Vmap.in_axes_spec =
   | Single of axis_spec
@@ -60,6 +58,7 @@ type 'a out_axes_spec = 'a Vmap.out_axes_spec =
   | OutContainer of 'a
 
 let vmap = Vmap.vmap
+let vmaps = Vmap.vmaps
 
 (* ───── Debugging ───── *)
 

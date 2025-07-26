@@ -51,3 +51,34 @@ val vmap :
       (* Don't include batch dimension in output *)
       let g = vmap ~out_axes:(OutSingle None) sum
     ]} *)
+
+val vmaps :
+  ?in_axes:axis_spec list ->
+  ?out_axes:'b out_axes_spec ->
+  ?axis_name:string ->
+  ?axis_size:int ->
+  (('c, 'd) t list -> ('e, 'f) t) ->
+  ('c, 'd) t list ->
+  ('e, 'f) t
+(** [vmaps ?in_axes ?out_axes ?axis_name ?axis_size f] creates a vectorized
+    version of function [f] that takes multiple tensor arguments.
+
+    @param in_axes
+      List of axis specifications for each input tensor. Default: all Map 0.
+    @param out_axes
+      Specifies where the mapped axis should appear in output. Default:
+      OutSingle (Some 0) - mapped axis at position 0.
+    @param axis_name
+      Optional name for the mapped axis (for collective operations).
+    @param axis_size
+      Optional size of the mapped axis. Required when any in_axes is NoMap.
+    @param f The function to be mapped.
+
+    Examples:
+    {[
+      (* Batched function with two inputs *)
+      let batched_add = vmaps (fun [ x; y ] -> add x y)
+
+      (* Map over different axes for different inputs *)
+      let f = vmaps ~in_axes:[ Map 0; Map 1 ] fn
+    ]} *)

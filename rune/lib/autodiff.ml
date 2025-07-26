@@ -45,11 +45,7 @@ let unwrap_twg (type a b) (_dtype : (a, b) Dtype.t) (any : any_t_with_grad) :
   match any with Any_t_with_grad m -> Obj.magic m
 
 (* Forward mode AD: dual numbers storing value and tangent *)
-type ('a, 'b) dual = {
-  primal : ('a, 'b) t;
-  tangent : ('a, 'b) t;
-}
-
+type ('a, 'b) dual = { primal : ('a, 'b) t; tangent : ('a, 'b) t }
 type any_dual = Any_dual : ('a, 'b) dual -> any_dual
 
 let primal_of dual = dual.primal
@@ -1162,7 +1158,9 @@ let make_forward_handler primal_to_dual_map =
             let dual1 = get_dual op1_val in
             let dual2 = get_dual op2_val in
             let result_tangent = T.add dual1.tangent dual2.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_mul { a = op1_val; b = op2_val } ->
@@ -1176,7 +1174,9 @@ let make_forward_handler primal_to_dual_map =
             let tangent1 = T.mul dual1.tangent dual2.primal in
             let tangent2 = T.mul dual1.primal dual2.tangent in
             let result_tangent = T.add tangent1 tangent2 in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_neg { t_in } ->
@@ -1186,7 +1186,9 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent = T.neg dual_in.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_log2 { t_in } ->
@@ -1197,7 +1199,9 @@ let make_forward_handler primal_to_dual_map =
             let dual_in = get_dual t_in in
             let deriv = deriv_log2 dual_in.primal in
             let result_tangent = T.mul dual_in.tangent deriv in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_exp2 { t_in } ->
@@ -1208,7 +1212,9 @@ let make_forward_handler primal_to_dual_map =
             let dual_in = get_dual t_in in
             let deriv = deriv_exp2 result_val dual_in.primal in
             let result_tangent = T.mul dual_in.tangent deriv in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_sin { t_in } ->
@@ -1219,7 +1225,9 @@ let make_forward_handler primal_to_dual_map =
             let dual_in = get_dual t_in in
             let deriv = deriv_sin dual_in.primal in
             let result_tangent = T.mul dual_in.tangent deriv in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_sqrt { t_in } ->
@@ -1230,7 +1238,9 @@ let make_forward_handler primal_to_dual_map =
             let dual_in = get_dual t_in in
             let deriv = deriv_sqrt result_val dual_in.primal in
             let result_tangent = T.mul dual_in.tangent deriv in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_recip { t_in } ->
@@ -1241,7 +1251,9 @@ let make_forward_handler primal_to_dual_map =
             let dual_in = get_dual t_in in
             let deriv = deriv_recip dual_in.primal in
             let result_tangent = T.mul dual_in.tangent deriv in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_fdiv { a; b } ->
@@ -1257,7 +1269,9 @@ let make_forward_handler primal_to_dual_map =
             let term2_den = T.mul dual_b.primal dual_b.primal in
             let term2 = T.div term2_num term2_den in
             let result_tangent = T.sub term1 term2 in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_pow { a; b } ->
@@ -1275,13 +1289,19 @@ let make_forward_handler primal_to_dual_map =
               | Dtype.Float32 | Dtype.Float64 ->
                   let a_float = T.cast Dtype.float32 dual_a.primal in
                   let result_float = T.cast Dtype.float32 result_val in
-                  let deriv_wrt_b = deriv_pow_wrt_op2_float result_float a_float in
-                  let deriv_wrt_b_orig = T.cast (dtype dual_b.primal) deriv_wrt_b in
+                  let deriv_wrt_b =
+                    deriv_pow_wrt_op2_float result_float a_float
+                  in
+                  let deriv_wrt_b_orig =
+                    T.cast (dtype dual_b.primal) deriv_wrt_b
+                  in
                   T.mul dual_b.tangent deriv_wrt_b_orig
               | _ -> T.zeros_like result_val
             in
             let result_tangent = T.add term1 term2 in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_max { a; b } ->
@@ -1291,12 +1311,20 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_a = get_dual a in
             let dual_b = get_dual b in
-            let mask_a = deriv_max_wrt_op1 dual_a.primal dual_b.primal (dtype dual_a.primal) in
-            let mask_b = deriv_max_wrt_op2 dual_a.primal dual_b.primal (dtype dual_b.primal) in
+            let mask_a =
+              deriv_max_wrt_op1 dual_a.primal dual_b.primal
+                (dtype dual_a.primal)
+            in
+            let mask_b =
+              deriv_max_wrt_op2 dual_a.primal dual_b.primal
+                (dtype dual_b.primal)
+            in
             let term1 = T.mul mask_a dual_a.tangent in
             let term2 = T.mul mask_b dual_b.tangent in
             let result_tangent = T.add term1 term2 in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_reshape { t_in; new_shape } ->
@@ -1306,7 +1334,9 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent = T.reshape new_shape dual_in.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_expand { t_in; new_target_shape } ->
@@ -1315,8 +1345,12 @@ let make_forward_handler primal_to_dual_map =
             let result_val = op_expand t_in new_target_shape in
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
-            let result_tangent = T.broadcast_to new_target_shape dual_in.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_tangent =
+              T.broadcast_to new_target_shape dual_in.tangent
+            in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_reduce_sum { t_in; axes; keepdims } ->
@@ -1326,7 +1360,9 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent = T.sum dual_in.tangent ~axes ~keepdims in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_reduce_max { t_in; axes; keepdims } ->
@@ -1341,7 +1377,9 @@ let make_forward_handler primal_to_dual_map =
               if keepdims then result_val
               else
                 let dummy = T.zeros_like t_in in
-                let shape_with_dims = T.shape (T.max dummy ~axes ~keepdims:true) in
+                let shape_with_dims =
+                  T.shape (T.max dummy ~axes ~keepdims:true)
+                in
                 let reshaped = T.reshape shape_with_dims result_val in
                 T.broadcast_to original_shape reshaped
             in
@@ -1349,7 +1387,9 @@ let make_forward_handler primal_to_dual_map =
             let mask_float = T.cast (dtype dual_in.tangent) mask in
             let masked_tangent = T.mul dual_in.tangent mask_float in
             let result_tangent = T.sum masked_tangent ~axes ~keepdims in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_reduce_prod { t_in; axes; keepdims } ->
@@ -1364,7 +1404,9 @@ let make_forward_handler primal_to_dual_map =
               if keepdims then result_val
               else
                 let dummy = T.zeros_like t_in in
-                let shape_with_dims = T.shape (T.prod dummy ~axes ~keepdims:true) in
+                let shape_with_dims =
+                  T.shape (T.prod dummy ~axes ~keepdims:true)
+                in
                 let reshaped = T.reshape shape_with_dims result_val in
                 T.broadcast_to original_shape reshaped
             in
@@ -1373,7 +1415,9 @@ let make_forward_handler primal_to_dual_map =
             let grad_term = T.div result_broadcasted safe_input in
             let result_tangent_full = T.mul dual_in.tangent grad_term in
             let result_tangent = T.sum result_tangent_full ~axes ~keepdims in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_permute { t_in; axes } ->
@@ -1383,7 +1427,9 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent = T.transpose dual_in.tangent ~axes in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_pad { t_in; padding_config; fill_value } ->
@@ -1393,8 +1439,12 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let zero_val = Dtype.zero (dtype dual_in.tangent) in
-            let result_tangent = T.pad padding_config zero_val dual_in.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_tangent =
+              T.pad padding_config zero_val dual_in.tangent
+            in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_shrink { t_in; limits } ->
@@ -1404,7 +1454,9 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent = T.shrink limits dual_in.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_flip { t_in; dims_to_flip } ->
@@ -1419,7 +1471,9 @@ let make_forward_handler primal_to_dual_map =
               |> List.filter_map Fun.id |> Array.of_list
             in
             let result_tangent = T.flip dual_in.tangent ~axes:axes_to_flip in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_cat { t_list; axis } ->
@@ -1430,7 +1484,9 @@ let make_forward_handler primal_to_dual_map =
             let duals = List.map get_dual t_list in
             let tangents = List.map (fun d -> d.tangent) duals in
             let result_tangent = op_cat tangents axis in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_cast { t_in; target_dtype } ->
@@ -1440,7 +1496,9 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent = T.cast target_dtype dual_in.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_contiguous { t_in } ->
@@ -1450,7 +1508,9 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent = T.contiguous dual_in.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_copy { t_in } ->
@@ -1460,7 +1520,9 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
             let result_tangent = T.copy dual_in.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_where { condition; if_true; if_false } ->
@@ -1470,8 +1532,12 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_true = get_dual if_true in
             let dual_false = get_dual if_false in
-            let result_tangent = T.where condition dual_true.tangent dual_false.tangent in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_tangent =
+              T.where condition dual_true.tangent dual_false.tangent
+            in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_gather { data; indices; axis } ->
@@ -1481,7 +1547,9 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_data = get_dual data in
             let result_tangent = op_gather dual_data.tangent indices axis in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_scatter { data_template; indices; updates; axis } ->
@@ -1491,8 +1559,12 @@ let make_forward_handler primal_to_dual_map =
             let forward_val = continue k result_val in
             let dual_template = get_dual data_template in
             let dual_updates = get_dual updates in
-            let result_tangent = op_scatter dual_template.tangent indices dual_updates.tangent axis in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_tangent =
+              op_scatter dual_template.tangent indices dual_updates.tangent axis
+            in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_matmul { a; b } ->
@@ -1506,27 +1578,42 @@ let make_forward_handler primal_to_dual_map =
             let term1 = op_matmul dual_a.tangent dual_b.primal in
             let term2 = op_matmul dual_a.primal dual_b.tangent in
             let result_tangent = op_add term1 term2 in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
         Some
           (fun k ->
-            let result_val = op_unfold t_in ~kernel_size ~stride ~dilation ~padding in
+            let result_val =
+              op_unfold t_in ~kernel_size ~stride ~dilation ~padding
+            in
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
-            let result_tangent = op_unfold dual_in.tangent ~kernel_size ~stride ~dilation ~padding in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_tangent =
+              op_unfold dual_in.tangent ~kernel_size ~stride ~dilation ~padding
+            in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_fold { t_in; output_size; kernel_size; stride; dilation; padding } ->
         Some
           (fun k ->
-            let result_val = op_fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding in
+            let result_val =
+              op_fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding
+            in
             let forward_val = continue k result_val in
             let dual_in = get_dual t_in in
-            let result_tangent = op_fold dual_in.tangent ~output_size ~kernel_size ~stride ~dilation ~padding in
-            let result_dual = { primal = result_val; tangent = result_tangent } in
+            let result_tangent =
+              op_fold dual_in.tangent ~output_size ~kernel_size ~stride
+                ~dilation ~padding
+            in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
             forward_val)
     | E_assign { dst; src } ->
@@ -1620,17 +1707,17 @@ let jvp (type a b c d) (f : (a, b) t -> (c, d) t) (primals : (a, b) t)
   (* Initialize input dual *)
   let input_dual = { primal = primals; tangent = tangents } in
   PhysicalTbl.add primal_to_dual_map primals (Any_dual input_dual);
-  
+
   let handler = make_forward_handler primal_to_dual_map in
   let result_primal = Effect.Deep.match_with f primals handler in
-  
+
   (* Get result tangent *)
   let result_dual =
     match PhysicalTbl.find_opt primal_to_dual_map result_primal with
     | Some (Any_dual d) -> unwrap_dual (dtype result_primal) (Any_dual d)
     | None -> { primal = result_primal; tangent = T.zeros_like result_primal }
   in
-  
+
   (result_dual.primal, result_dual.tangent)
 
 (* JVP with auxiliary output *)
@@ -1640,25 +1727,25 @@ let jvp_aux (type a b c d e) (f : (a, b) t -> (c, d) t * e) (primals : (a, b) t)
   (* Initialize input dual *)
   let input_dual = { primal = primals; tangent = tangents } in
   PhysicalTbl.add primal_to_dual_map primals (Any_dual input_dual);
-  
+
   let handler = make_forward_handler primal_to_dual_map in
   let result_primal, aux = Effect.Deep.match_with f primals handler in
-  
+
   (* Get result tangent *)
   let result_dual =
     match PhysicalTbl.find_opt primal_to_dual_map result_primal with
     | Some (Any_dual d) -> unwrap_dual (dtype result_primal) (Any_dual d)
     | None -> { primal = result_primal; tangent = T.zeros_like result_primal }
   in
-  
+
   (result_dual.primal, result_dual.tangent, aux)
 
 (* Multiple inputs version *)
-let jvps (type a b c d) (f : (a, b) t list -> (c, d) t) (primals : (a, b) t list)
-    (tangents : (a, b) t list) : (c, d) t * (c, d) t =
+let jvps (type a b c d) (f : (a, b) t list -> (c, d) t)
+    (primals : (a, b) t list) (tangents : (a, b) t list) : (c, d) t * (c, d) t =
   if List.length primals <> List.length tangents then
     failwith "jvps: primals and tangents must have the same length";
-  
+
   let primal_to_dual_map = PhysicalTbl.create 16 in
   (* Initialize input duals *)
   List.iter2
@@ -1666,15 +1753,15 @@ let jvps (type a b c d) (f : (a, b) t list -> (c, d) t) (primals : (a, b) t list
       let dual = { primal; tangent } in
       PhysicalTbl.add primal_to_dual_map primal (Any_dual dual))
     primals tangents;
-  
+
   let handler = make_forward_handler primal_to_dual_map in
   let result_primal = Effect.Deep.match_with f primals handler in
-  
+
   (* Get result tangent *)
   let result_dual =
     match PhysicalTbl.find_opt primal_to_dual_map result_primal with
     | Some (Any_dual d) -> unwrap_dual (dtype result_primal) (Any_dual d)
     | None -> { primal = result_primal; tangent = T.zeros_like result_primal }
   in
-  
+
   (result_dual.primal, result_dual.tangent)

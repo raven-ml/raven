@@ -3443,6 +3443,28 @@ val vmap :
       - : int array = [| 10; 3; 2 |]
     ]} *)
 
+val vmaps :
+  ?in_axes:Vmap.axis_spec list ->
+  ?out_axes:'b Vmap.out_axes_spec ->
+  ?axis_name:string ->
+  ?axis_size:int ->
+  (('c, 'd, 'dev) t list -> ('e, 'f, 'dev) t) ->
+  ('c, 'd, 'dev) t list ->
+  ('e, 'f, 'dev) t
+(** [vmaps ?in_axes ?out_axes ?axis_name ?axis_size f] creates a vectorized
+    version of function [f] that takes multiple tensor arguments.
+
+    Similar to {!vmap} but for functions taking multiple arguments.
+
+    Examples:
+    {[
+      let x = create float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+      let y = create float32 [| 3; 2 |] [| 10.; 20.; 30.; 40.; 50.; 60. |] in
+      let batched_add = vmaps (fun [x; y] -> add x y) in
+      batched_add [x; y] |> to_float1
+      - : float array = [| 11.; 22.; 33.; 44.; 55.; 66. |]
+    ]} *)
+
 (** {2 Debugging}
 
     Functions for debugging, JIT compilation, and gradient computation. *)

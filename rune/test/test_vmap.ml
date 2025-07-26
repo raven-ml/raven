@@ -58,7 +58,7 @@ let test_vmap_axis () =
   let x = T.create ctx T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
   let f = T.vmap ~in_axes:(T.Single (T.Map 1)) (fun t -> T.sum t) in
   let result = f x in
-  let expected_shape = [| 3; 2 |] in
+  let expected_shape = [| 3 |] in
   check_shape "vmap axis shape" expected_shape result
 
 (* Test vmap with no output axis *)
@@ -149,6 +149,236 @@ let test_vmap_elementwise () =
   test_op "sub" T.sub (fun _ -> 0.);
   test_op "div" T.div (fun _ -> 1.)
 
+(* Test composition: jvp (vmap f) *)
+let test_jvp_vmap_composition () =
+  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let v =
+    T.create ctx T.float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |]
+  in
+
+  (* Define f: sum of squares *)
+  let f t = T.sum (T.mul t t) in
+
+  (* vmap f *)
+  let vmapped_f = T.vmap f in
+
+  (* jvp of vmapped f *)
+  let primals, tangents = T.jvp vmapped_f x v in
+
+  let expected_primals = T.create ctx T.float32 [| 3 |] [| 5.; 25.; 61. |] in
+  let expected_tangents = T.create ctx T.float32 [| 3 |] [| 1.; 5.; 12.2 |] in
+
+  check_rune ~eps:1e-5 "jvp(vmap(f)) primals" expected_primals primals;
+  check_rune ~eps:1e-5 "jvp(vmap(f)) tangents" expected_tangents tangents
+
+(* Test composition: vmap (jvp f) *)
+let test_vmap_jvp_composition () =
+  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let v =
+    T.create ctx T.float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |]
+  in
+
+  (* Define f: sum of squares *)
+  let f t = T.sum (T.mul t t) in
+
+  (* Function that computes jvp and returns primals *)
+  let jvp_f_primals inputs =
+    match inputs with
+    | [ x; v ] ->
+        let primals, _ = T.jvp f x v in
+        primals
+    | _ -> failwith "jvp_f_primals expects exactly 2 inputs"
+  in
+
+  (* Function that computes jvp and returns tangents *)
+  let jvp_f_tangents inputs =
+    match inputs with
+    | [ x; v ] ->
+        let _, tangents = T.jvp f x v in
+        tangents
+    | _ -> failwith "jvp_f_tangents expects exactly 2 inputs"
+  in
+
+  (* vmap the jvp functions *)
+  let vmapped_jvp_f_primals = T.vmaps jvp_f_primals in
+  let vmapped_jvp_f_tangents = T.vmaps jvp_f_tangents in
+  let primals = vmapped_jvp_f_primals [ x; v ] in
+  let tangents = vmapped_jvp_f_tangents [ x; v ] in
+
+  let expected_primals = T.create ctx T.float32 [| 3 |] [| 5.; 25.; 61. |] in
+  let expected_tangents = T.create ctx T.float32 [| 3 |] [| 1.; 5.; 12.2 |] in
+
+  check_rune ~eps:1e-5 "vmap(jvp(f)) primals" expected_primals primals;
+  check_rune ~eps:1e-5 "vmap(jvp(f)) tangents" expected_tangents tangents
+
+(* Test composition: grad (vmap f) *)
+let test_grad_vmap_composition () =
+  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+
+  (* Define f: sum of squares *)
+  let f t = T.sum (T.mul t t) in
+
+  (* vmap f *)
+  let vmapped_f = T.vmap f in
+
+  (* To take grad of vmap, we need to sum the output *)
+  let sum_vmapped_f x = T.sum (vmapped_f x) in
+
+  (* grad of sum of vmapped f *)
+  let grad_sum_vmapped_f = T.grad sum_vmapped_f in
+  let grads = grad_sum_vmapped_f x in
+
+  let expected_grads =
+    T.create ctx T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |]
+  in
+
+  check_rune ~eps:1e-5 "grad(sum(vmap(f)))" expected_grads grads
+
+(* Test composition: vmap (grad f) *)
+let test_vmap_grad_composition () =
+  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+
+  (* Define f: sum of squares *)
+  let f t = T.sum (T.mul t t) in
+
+  (* grad f *)
+  let grad_f = T.grad f in
+
+  (* vmap grad f *)
+  let vmapped_grad_f = T.vmap grad_f in
+  let grads = vmapped_grad_f x in
+
+  let expected_grads =
+    T.create ctx T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |]
+  in
+
+  check_rune ~eps:1e-5 "vmap(grad(f))" expected_grads grads
+
+(* Test composition with two-argument function: jvp (vmap g) *)
+let test_jvp_vmap_composition_two_args () =
+  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let y = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let v_x = T.create ctx T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let v_y = T.create ctx T.float32 [| 2; 2 |] [| 0.5; 0.6; 0.7; 0.8 |] in
+
+  (* Define g: sum of element-wise product *)
+  let g inputs =
+    match inputs with
+    | [ x; y ] -> T.sum (T.mul x y)
+    | _ -> failwith "g expects exactly 2 inputs"
+  in
+
+  (* vmap g *)
+  let vmapped_g = T.vmaps g in
+
+  (* jvp of vmapped g *)
+  let primals, tangents = T.jvps vmapped_g [ x; y ] [ v_x; v_y ] in
+
+  let expected_primals = T.create ctx T.float32 [| 2 |] [| 17.; 53. |] in
+  let expected_tangents = T.create ctx T.float32 [| 2 |] [| 3.4; 10.6 |] in
+
+  check_rune ~eps:1e-5 "jvp(vmap(g)) primals" expected_primals primals;
+  check_rune ~eps:1e-5 "jvp(vmap(g)) tangents" expected_tangents tangents
+
+(* Test composition with two-argument function: vmap (jvp g) *)
+let test_vmap_jvp_composition_two_args () =
+  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let y = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let v_x = T.create ctx T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let v_y = T.create ctx T.float32 [| 2; 2 |] [| 0.5; 0.6; 0.7; 0.8 |] in
+
+  (* Define g: sum of element-wise product *)
+  let g inputs =
+    match inputs with
+    | [ x; y ] -> T.sum (T.mul x y)
+    | _ -> failwith "g expects exactly 2 inputs"
+  in
+
+  (* Function that computes jvp and returns primals *)
+  let jvp_g_primals inputs =
+    match inputs with
+    | [ x; y; v_x; v_y ] ->
+        let primals, _ = T.jvps g [ x; y ] [ v_x; v_y ] in
+        primals
+    | _ -> failwith "jvp_g_primals expects exactly 4 inputs"
+  in
+
+  (* Function that computes jvp and returns tangents *)
+  let jvp_g_tangents inputs =
+    match inputs with
+    | [ x; y; v_x; v_y ] ->
+        let _, tangents = T.jvps g [ x; y ] [ v_x; v_y ] in
+        tangents
+    | _ -> failwith "jvp_g_tangents expects exactly 4 inputs"
+  in
+
+  (* vmap the jvp functions *)
+  let vmapped_jvp_g_primals = T.vmaps jvp_g_primals in
+  let vmapped_jvp_g_tangents = T.vmaps jvp_g_tangents in
+  let primals = vmapped_jvp_g_primals [ x; y; v_x; v_y ] in
+  let tangents = vmapped_jvp_g_tangents [ x; y; v_x; v_y ] in
+
+  let expected_primals = T.create ctx T.float32 [| 2 |] [| 17.; 53. |] in
+  let expected_tangents = T.create ctx T.float32 [| 2 |] [| 3.4; 10.6 |] in
+
+  check_rune ~eps:1e-5 "vmap(jvp(g)) primals" expected_primals primals;
+  check_rune ~eps:1e-5 "vmap(jvp(g)) tangents" expected_tangents tangents
+
+(* Test composition with two-argument function: grad (vmap g) *)
+let test_grad_vmap_composition_two_args () =
+  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let y = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+
+  (* Define g: sum of element-wise product *)
+  let g inputs =
+    match inputs with
+    | [ x; y ] -> T.sum (T.mul x y)
+    | _ -> failwith "g expects exactly 2 inputs"
+  in
+
+  (* vmap g *)
+  let vmapped_g = T.vmaps g in
+
+  (* To take grad of vmap, we need to sum the output *)
+  let sum_vmapped_g inputs = T.sum (vmapped_g inputs) in
+
+  (* grad of sum of vmapped g *)
+  let grads_list = T.grads sum_vmapped_g [ x; y ] in
+  let grad_x = List.nth grads_list 0 in
+
+  let expected_grads = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+
+  check_rune ~eps:1e-5 "grad(sum(vmap(g)), argnums=0)" expected_grads grad_x
+
+(* Test composition with two-argument function: vmap (grad g) *)
+let test_vmap_grad_composition_two_args () =
+  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let y = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+
+  (* Define g: sum of element-wise product *)
+  let g inputs =
+    match inputs with
+    | [ x; y ] -> T.sum (T.mul x y)
+    | _ -> failwith "g expects exactly 2 inputs"
+  in
+
+  (* Function that computes grad w.r.t. first argument *)
+  let grad_g inputs =
+    match inputs with
+    | [ x; y ] ->
+        let grads = T.grads g [ x; y ] in
+        List.nth grads 0 (* Return gradient w.r.t. x *)
+    | _ -> failwith "grad_g expects exactly 2 inputs"
+  in
+
+  (* vmap grad g *)
+  let vmapped_grad_g = T.vmaps grad_g in
+  let grads = vmapped_grad_g [ x; y ] in
+
+  let expected_grads = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+
+  check_rune ~eps:1e-5 "vmap(grad(g), argnums=0)" expected_grads grads
+
 let () =
   let open Alcotest in
   run "Vmap tests"
@@ -165,5 +395,20 @@ let () =
           test_case "where" `Quick test_vmap_where;
           test_case "transpose" `Quick test_vmap_transpose;
           test_case "elementwise" `Quick test_vmap_elementwise;
+        ] );
+      ( "composition",
+        [
+          test_case "jvp_vmap" `Quick test_jvp_vmap_composition;
+          test_case "vmap_jvp" `Quick test_vmap_jvp_composition;
+          test_case "grad_vmap" `Quick test_grad_vmap_composition;
+          test_case "vmap_grad" `Quick test_vmap_grad_composition;
+          test_case "jvp_vmap_two_args" `Quick
+            test_jvp_vmap_composition_two_args;
+          test_case "vmap_jvp_two_args" `Quick
+            test_vmap_jvp_composition_two_args;
+          test_case "grad_vmap_two_args" `Quick
+            test_grad_vmap_composition_two_args;
+          test_case "vmap_grad_two_args" `Quick
+            test_vmap_grad_composition_two_args;
         ] );
     ]

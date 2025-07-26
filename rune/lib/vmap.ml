@@ -91,18 +91,6 @@ let add_batch_dim (tensor : ('a, 'b) t) ~axis ~size : ('a, 'b) t =
   in
   T.reshape new_shape (T.expand_dims [| axis |] tensor)
 
-(* Helper to remove batch dimension from a tensor *)
-let remove_batch_dim (tensor : ('a, 'b) t) ~axis : ('a, 'b) t =
-  let shape = T.shape tensor in
-  let new_shape =
-    Array.concat
-      [
-        Array.sub shape 0 axis;
-        Array.sub shape (axis + 1) (Array.length shape - axis - 1);
-      ]
-  in
-  T.reshape new_shape tensor
-
 (* The main vmap effect handler *)
 let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
   let open Effect.Deep in
@@ -121,6 +109,12 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
           batch_size;
           original_shape;
         }
+  in
+
+  (* Helper to get the actual batched tensor from a possibly unbatched view *)
+  let get_batched_tensor (type a b) (tensor_val : (a, b) t) : (a, b) t =
+    let vm = get_or_check_vmapped tensor_val in
+    if vm.mapped_axis >= 0 then vm.base else tensor_val
   in
 
   let effc : type c. c Effect.t -> ((c, _) continuation -> _) option = function
@@ -148,6 +142,10 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
             let vm1 = get_or_check_vmapped op1_val in
             let vm2 = get_or_check_vmapped op2_val in
 
+            (* Get the actual batched tensors *)
+            let batched_t1 = get_batched_tensor op1_val in
+            let batched_t2 = get_batched_tensor op2_val in
+
             (* Handle broadcasting if one tensor is not mapped *)
             let t1, t2 =
               if vm1.mapped_axis = -1 && vm2.mapped_axis >= 0 then
@@ -156,19 +154,19 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
                   add_batch_dim vm1.base ~axis:0 ~size:batch_size
                 in
                 let t1_expanded =
-                  T.broadcast_to (T.shape op2_val) t1_broadcast
+                  T.broadcast_to (T.shape batched_t2) t1_broadcast
                 in
-                (t1_expanded, op2_val)
+                (t1_expanded, batched_t2)
               else if vm2.mapped_axis = -1 && vm1.mapped_axis >= 0 then
                 (* Broadcast tensor2 to match tensor1's batch dimension *)
                 let t2_broadcast =
                   add_batch_dim vm2.base ~axis:0 ~size:batch_size
                 in
                 let t2_expanded =
-                  T.broadcast_to (T.shape op1_val) t2_broadcast
+                  T.broadcast_to (T.shape batched_t1) t2_broadcast
                 in
-                (op1_val, t2_expanded)
-              else (op1_val, op2_val)
+                (batched_t1, t2_expanded)
+              else (batched_t1, batched_t2)
             in
 
             let result = op_add t1 t2 in
@@ -186,7 +184,9 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
     | E_mul { a = op1_val; b = op2_val } ->
         Some
           (fun k ->
-            let result = op_mul op1_val op2_val in
+            let batched_t1 = get_batched_tensor op1_val in
+            let batched_t2 = get_batched_tensor op2_val in
+            let result = op_mul batched_t1 batched_t2 in
             let forward_val = continue k result in
             let vmapped_result =
               {
@@ -201,7 +201,8 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
     | E_neg { t_in } ->
         Some
           (fun k ->
-            let result = op_neg t_in in
+            let batched_tensor = get_batched_tensor t_in in
+            let result = op_neg batched_tensor in
             let forward_val = continue k result in
             let vmapped_result =
               {
@@ -223,7 +224,11 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
                 Array.concat [ [| batch_size |]; new_shape ]
               else new_shape
             in
-            let result = op_reshape t_in batched_shape in
+            (* Use the actual batched tensor, not the unbatched view *)
+            let batched_tensor =
+              if vm.mapped_axis >= 0 then vm.base else t_in
+            in
+            let result = op_reshape batched_tensor batched_shape in
             let forward_val = continue k result in
             let vmapped_result =
               {
@@ -426,12 +431,26 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
         Some
           (fun k ->
             let vm = get_or_check_vmapped t_in in
+            let batched_tensor = get_batched_tensor t_in in
             (* Adjust axes for batch dimension at front *)
             let adjusted_axes =
-              if vm.mapped_axis >= 0 then Array.map (fun a -> a + 1) axes
+              if vm.mapped_axis >= 0 then
+                (* Check if this is a "reduce all" operation *)
+                let tensor_shape = T.shape batched_tensor in
+                let num_dims = Array.length tensor_shape in
+                if Array.length axes = num_dims - 1 then
+                  (* This is reducing all dimensions of the unbatched tensor *)
+                  (* We need to reduce all dimensions except the batch dimension *)
+                  Array.init (num_dims - 1) (fun i -> i + 1)
+                else
+                  (* Normal case: adjust each axis by 1 to account for batch
+                     dim *)
+                  Array.map (fun a -> a + 1) axes
               else axes
             in
-            let result = op_reduce_sum ~axes:adjusted_axes ~keepdims t_in in
+            let result =
+              op_reduce_sum ~axes:adjusted_axes ~keepdims batched_tensor
+            in
             let forward_val = continue k result in
             let vmapped_result =
               {
@@ -736,9 +755,12 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
         (* Handle output axis specification *)
         match out_axis with
         | None ->
-            (* Remove batch dimension *)
+            (* When out_axes is None, we need to aggregate the batch dimension *)
+            (* For now, we'll sum across the batch dimension *)
+            (* This might need to be more general in the future *)
             if Array.length (T.shape final_result) > 0 then
-              remove_batch_dim final_result ~axis:0
+              (* Use the backend operation directly to avoid recursion *)
+              op_reduce_sum ~axes:[| 0 |] ~keepdims:false final_result
             else final_result
         | Some out_pos ->
             (* Move batch dimension to specified position *)
@@ -749,8 +771,8 @@ let make_vmap_handler mapped_tensors batch_size _in_axis out_axis =
   }
 
 (* Main vmap function *)
-let vmap ?(in_axes = Single (Map 0)) ?(out_axes = OutSingle (Some 0)) ?axis_name:_
-    ?axis_size f =
+let vmap ?(in_axes = Single (Map 0)) ?(out_axes = OutSingle (Some 0))
+    ?axis_name:_ ?axis_size f =
  fun input ->
   let mapped_tensors = PhysicalTbl.create 16 in
 
@@ -802,3 +824,80 @@ let vmap ?(in_axes = Single (Map 0)) ?(out_axes = OutSingle (Some 0)) ?axis_name
     make_vmap_handler mapped_tensors batch_size axis_spec out_axis_spec
   in
   Effect.Deep.match_with f prepared_input vmap_handler
+
+(* vmaps function for multiple arguments *)
+let vmaps ?(in_axes = []) ?(out_axes = OutSingle (Some 0)) ?axis_name:_
+    ?axis_size f =
+ fun inputs ->
+  let mapped_tensors = PhysicalTbl.create 16 in
+
+  (* Default to Map 0 for all inputs if in_axes is empty *)
+  let axis_specs =
+    if in_axes = [] then List.map (fun _ -> Map 0) inputs
+    else if List.length in_axes <> List.length inputs then
+      failwith "vmaps: in_axes must have the same length as inputs or be empty"
+    else in_axes
+  in
+
+  let out_axis_spec = extract_out_axis_spec out_axes in
+
+  (* Determine batch size from first mapped input *)
+  let batch_size =
+    match axis_size with
+    | Some size -> size
+    | None ->
+        (* Find first mapped input to determine batch size *)
+        let rec find_batch_size inputs specs =
+          match (inputs, specs) with
+          | input :: _, Map axis_idx :: _ ->
+              let shape = T.shape input in
+              if axis_idx >= Array.length shape || axis_idx < 0 then
+                failwith
+                  (Printf.sprintf
+                     "vmaps: invalid axis %d for tensor with %d dimensions"
+                     axis_idx (Array.length shape));
+              shape.(axis_idx)
+          | _ :: rest_inputs, NoMap :: rest_specs ->
+              find_batch_size rest_inputs rest_specs
+          | [], [] ->
+              failwith
+                "vmaps: axis_size must be provided when all in_axes are NoMap"
+          | _ -> failwith "vmaps: internal error"
+        in
+        find_batch_size inputs axis_specs
+  in
+
+  (* Prepare each input tensor *)
+  let prepared_inputs =
+    List.map2
+      (fun input axis_spec ->
+        match axis_spec with
+        | Map axis_idx when axis_idx <> 0 ->
+            (* Move mapped axis to front *)
+            move_axis input ~from_axis:axis_idx ~to_axis:0
+        | Map _ -> input
+        | NoMap ->
+            (* Add batch dimension at front *)
+            add_batch_dim input ~axis:0 ~size:batch_size)
+      inputs axis_specs
+  in
+
+  (* Store mapped tensor info for each input *)
+  List.iter2
+    (fun prepared_input axis_spec ->
+      let vmapped_input =
+        {
+          base = prepared_input;
+          mapped_axis = (match axis_spec with NoMap -> -1 | Map _ -> 0);
+          batch_size;
+          original_shape = T.shape prepared_input;
+        }
+      in
+      PhysicalTbl.add mapped_tensors prepared_input (Any_vmapped vmapped_input))
+    prepared_inputs axis_specs;
+
+  (* Apply vmap handler *)
+  let vmap_handler =
+    make_vmap_handler mapped_tensors batch_size (Map 0) out_axis_spec
+  in
+  Effect.Deep.match_with (fun inputs -> f inputs) prepared_inputs vmap_handler
