@@ -1,0 +1,21 @@
+(library
+ (name zip)
+ (public_name nx.zip)
+ (synopsis "OCaml ZIP interface")
+ (wrapped false)
+ (modules gzip zip zlib)
+ (libraries stdlib-shims)
+ (foreign_stubs
+  (language c)
+  (names zlibstubs)
+  (flags
+   (:include c_flags.sexp)))
+ (c_library_flags
+  (:include c_library_flags.sexp)))
+
+(rule
+ (targets c_flags.sexp c_library_flags.sexp)
+ (deps
+  (:discover config/discover.exe))
+ (action
+  (run %{discover})))

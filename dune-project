@@ -44,9 +44,6 @@
   (ocaml
    (>= 5.2.0))
   dune
-  ; nx.io
-  camlzip
-  (dune-configurator :build)
   ; nx.metal - only on macOS
   (ctypes
    (and
@@ -73,7 +70,6 @@
   (ocaml
    (>= 5.2.0))
   dune
-  camlzip
   ocurl
   csv
   logs
