@@ -1,0 +1,4 @@
+(library
+ (name nx_oxcaml)
+ (public_name nx-oxcaml)
+ (libraries nx.core))
