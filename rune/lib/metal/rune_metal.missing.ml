@@ -44,6 +44,12 @@ let op_permute _t = not_available ()
 let op_pad _t = not_available ()
 let op_shrink _t = not_available ()
 let op_flip _t = not_available ()
+let op_cholesky ~upper:_ _t = not_available ()
+let op_qr ~reduced:_ _t = not_available ()
+let op_svd ~full_matrices:_ _t = not_available ()
+let op_eig ~vectors:_ _t = not_available ()
+let op_eigh ~vectors:_ _t = not_available ()
+let op_triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _t = not_available ()
 
 let op_unfold _t ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
   not_available ()
