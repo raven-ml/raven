@@ -99,6 +99,10 @@ module Make (B : Backend_intf.S) = struct
   let offset x = View.offset (B.view x)
   let is_c_contiguous x = View.is_c_contiguous (B.view x)
 
+  (* ───── View Operations ───── *)
+
+  let with_view x new_view = B.with_view x new_view
+
   (* ───── Internal Utilities ───── *)
 
   (* Create a power of 2 for integer shift operations *)

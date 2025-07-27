@@ -147,6 +147,17 @@ val offset : ('a, 'b) t -> int
 val is_c_contiguous : ('a, 'b) t -> bool
 (** [is_c_contiguous t] returns true if elements are contiguous in C order. *)
 
+val with_view : ('a, 'b) t -> Nx_core.View.t -> ('a, 'b) t
+(** [with_view t view] creates a new tensor with the same context, dtype, and
+    data but with a different view.
+
+    This is a low-level operation that allows direct manipulation of tensor view
+    metadata. Use with caution as it can create invalid tensor states if the
+    view is incompatible with the underlying data.
+
+    @raise Invalid_argument
+      if the view is incompatible with the tensor's buffer size *)
+
 val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
 (** [to_bigarray t] converts to bigarray.
 

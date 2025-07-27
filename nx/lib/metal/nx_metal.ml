@@ -13,6 +13,7 @@ type ('a, 'b) t = ('a, 'b) Internal.t = {
 let view t = t.view
 let dtype t = t.dtype
 let context t = t.context
+let with_view t view = { t with view }
 
 let create_context () =
   let device = Metal.Device.create_system_default () in
