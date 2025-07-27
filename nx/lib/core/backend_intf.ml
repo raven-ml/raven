@@ -31,6 +31,11 @@ module type S = sig
   val data : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
   (** Return the raw buffer of [t]. *)
 
+  val with_view : ('a, 'b) t -> View.t -> ('a, 'b) t
+  (** Create a new tensor with the same context, dtype, and data but with a
+      different view. This is a low-level operation that allows direct
+      manipulation of tensor view metadata. *)
+
   (* ops: mirrors tinygrad UOps *)
 
   val op_buffer :

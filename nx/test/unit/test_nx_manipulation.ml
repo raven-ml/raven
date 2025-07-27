@@ -661,7 +661,100 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       "concatenate: invalid dimension 1 (size 3\226\137\1602)" (fun () ->
         Nx.dstack [ t1; t2 ])
 
+  (* ───── With View Tests ───── *)
+
+  let test_with_view_basic ctx () =
+    let t =
+      Nx.create ctx Nx_core.Dtype.float32 [| 2; 3 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6. |]
+    in
+    let new_view = Nx_core.View.create [| 3; 2 |] in
+    let t_reshaped = Nx.with_view t new_view in
+
+    check_shape "with_view reshape" [| 3; 2 |] t_reshaped;
+    check_t "with_view data preserved" [| 3; 2 |]
+      [| 1.; 2.; 3.; 4.; 5.; 6. |]
+      t_reshaped
+
+  let test_with_view_offset ctx () =
+    let t =
+      Nx.create ctx Nx_core.Dtype.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+    in
+    let offset_view = Nx_core.View.create ~offset:2 [| 3 |] in
+    let t_offset = Nx.with_view t offset_view in
+
+    check_shape "with_view offset shape" [| 3 |] t_offset;
+    check_t "with_view offset data" [| 3 |] [| 3.; 4.; 5. |] t_offset
+
+  let test_with_view_strided ctx () =
+    let t =
+      Nx.create ctx Nx_core.Dtype.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+    in
+    let strided_view = Nx_core.View.create ~strides:[| 2 |] [| 3 |] in
+    let t_strided = Nx.with_view t strided_view in
+
+    check_shape "with_view strided shape" [| 3 |] t_strided;
+    check_t "with_view strided data" [| 3 |] [| 1.; 3.; 5. |] t_strided
+
+  let test_with_view_scalar ctx () =
+    let t = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 42. |] in
+    let scalar_view = Nx_core.View.create [||] in
+    let t_scalar = Nx.with_view t scalar_view in
+
+    check_shape "with_view scalar shape" [||] t_scalar;
+    check_t "with_view scalar data" [||] [| 42. |] t_scalar
+
+  let test_with_view_shared_data ctx () =
+    let t = Nx.create ctx Nx_core.Dtype.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+    let view_2x2 = Nx_core.View.create [| 2; 2 |] in
+    let t_view = Nx.with_view t view_2x2 in
+
+    Nx.unsafe_set [ 0 ] 99. t;
+
+    check (float 1e-6) "with_view shared data" 99.
+      (Nx.unsafe_get [ 0; 0 ] t_view)
+
+  let test_with_view_complex_strides ctx () =
+    let t =
+      Nx.create ctx Nx_core.Dtype.float32 [| 12 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
+    in
+
+    let complex_view = Nx_core.View.create ~strides:[| 6; 2 |] [| 2; 2 |] in
+    let t_complex = Nx.with_view t complex_view in
+
+    check_shape "with_view complex shape" [| 2; 2 |] t_complex;
+    check (float 1e-6) "with_view complex [0,0]" 1.
+      (Nx.unsafe_get [ 0; 0 ] t_complex);
+    check (float 1e-6) "with_view complex [0,1]" 3.
+      (Nx.unsafe_get [ 0; 1 ] t_complex);
+    check (float 1e-6) "with_view complex [1,0]" 7.
+      (Nx.unsafe_get [ 1; 0 ] t_complex);
+    check (float 1e-6) "with_view complex [1,1]" 9.
+      (Nx.unsafe_get [ 1; 1 ] t_complex)
+
+  let test_with_view_different_dtypes ctx () =
+    let t_int =
+      Nx.create ctx Nx_core.Dtype.int32 [| 4 |] [| 1l; 2l; 3l; 4l |]
+    in
+    let view_2x2 = Nx_core.View.create [| 2; 2 |] in
+    let t_view = Nx.with_view t_int view_2x2 in
+
+    check_shape "with_view int32 shape" [| 2; 2 |] t_view;
+    check_t "with_view int32 data" [| 2; 2 |] [| 1l; 2l; 3l; 4l |] t_view
+
   (* Test Suite Organization *)
+
+  let with_view_tests ctx =
+    [
+      ("with_view basic", `Quick, test_with_view_basic ctx);
+      ("with_view offset", `Quick, test_with_view_offset ctx);
+      ("with_view strided", `Quick, test_with_view_strided ctx);
+      ("with_view scalar", `Quick, test_with_view_scalar ctx);
+      ("with_view shared data", `Quick, test_with_view_shared_data ctx);
+      ("with_view complex strides", `Quick, test_with_view_complex_strides ctx);
+      ("with_view different dtypes", `Quick, test_with_view_different_dtypes ctx);
+    ]
 
   let reshape_tests ctx =
     [
@@ -777,6 +870,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
 
   let suite backend_name ctx =
     [
+      ("Manipulation :: " ^ backend_name ^ " With View", with_view_tests ctx);
       ("Manipulation :: " ^ backend_name ^ " Reshape", reshape_tests ctx);
       ("Manipulation :: " ^ backend_name ^ " Transpose", transpose_tests ctx);
       ("Manipulation :: " ^ backend_name ^ " Concatenate", concatenate_tests ctx);

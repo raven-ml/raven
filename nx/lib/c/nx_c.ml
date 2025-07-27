@@ -444,6 +444,7 @@ let view t = t.view
 let dtype t = t.dtype
 let context t = t.context
 let data t = t.buffer
+let with_view t view = { t with view }
 let create ctx dtype buffer view = { context = ctx; dtype; buffer; view }
 
 let make_buffer (type a b) (dtype : (a, b) Dtype.t) size =
