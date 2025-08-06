@@ -1,0 +1,28 @@
+(lang dune 3.0)
+
+(name talon)
+
+(generate_opam_files true)
+
+(source
+ (github raven-ml/raven))
+
+(authors "Thibaut Mattio")
+
+(maintainers "Thibaut Mattio <thibaut.mattio@gmail.com>")
+
+(license ISC)
+
+(package
+ (name talon)
+ (synopsis "A dataframe library for OCaml")
+ (description
+  "Talon provides efficient tabular data manipulation with heterogeneous column types, inspired by pandas and polars.")
+ (depends
+  ocaml
+  dune
+  (nx
+   (>= 0.1.0))
+  yojson
+  csv
+  (alcotest :with-test)))
