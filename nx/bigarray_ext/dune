@@ -1,0 +1,10 @@
+(library
+ (name bigarray_ext)
+ (public_name nx.bigarray_ext)
+ (install_c_headers bigarray_ext_stubs)
+ (foreign_stubs
+  (language c)
+  (names bigarray_ext_stubs))
+ (js_of_ocaml
+  (javascript_files bigarray_ext_stubs.js))
+ (libraries))

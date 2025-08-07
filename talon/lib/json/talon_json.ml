@@ -18,6 +18,10 @@ let value_to_json col idx =
           let arr : float array = Nx.to_array tensor in
           let value = arr.(idx) in
           if classify_float value = FP_nan then `Null else `Float value
+      | Nx.BFloat16 ->
+          let arr : float array = Nx.to_array tensor in
+          let value = arr.(idx) in
+          if classify_float value = FP_nan then `Null else `Float value
       | Nx.Int8 ->
           let arr : int array = Nx.to_array tensor in
           `Int arr.(idx)
@@ -49,7 +53,34 @@ let value_to_json col idx =
       | Nx.Complex64 ->
           let arr : Complex.t array = Nx.to_array tensor in
           let c = arr.(idx) in
-          `String (Printf.sprintf "%g+%gi" c.re c.im))
+          `String (Printf.sprintf "%g+%gi" c.re c.im)
+      | Nx.Bool ->
+          let arr : bool array = Nx.to_array tensor in
+          `Bool arr.(idx)
+      | Nx.Int4 ->
+          let arr : int array = Nx.to_array tensor in
+          `Int arr.(idx)
+      | Nx.UInt4 ->
+          let arr : int array = Nx.to_array tensor in
+          `Int arr.(idx)
+      | Nx.Float8_e4m3 ->
+          let arr : float array = Nx.to_array tensor in
+          let value = arr.(idx) in
+          if classify_float value = FP_nan then `Null else `Float value
+      | Nx.Float8_e5m2 ->
+          let arr : float array = Nx.to_array tensor in
+          let value = arr.(idx) in
+          if classify_float value = FP_nan then `Null else `Float value
+      | Nx.Complex16 ->
+          let arr : Complex.t array = Nx.to_array tensor in
+          let c = arr.(idx) in
+          `String (Printf.sprintf "%g+%gi" c.re c.im)
+      | Nx.QInt8 ->
+          let arr : int array = Nx.to_array tensor in
+          `Int arr.(idx)
+      | Nx.QUInt8 ->
+          let arr : int array = Nx.to_array tensor in
+          `Int arr.(idx))
   | Col.S arr -> ( match arr.(idx) with Some s -> `String s | None -> `Null)
   | Col.B arr -> ( match arr.(idx) with Some b -> `Bool b | None -> `Null)
 

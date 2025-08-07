@@ -40,6 +40,15 @@ type int_elt = Bigarray.int_elt
 type nativeint_elt = Bigarray.nativeint_elt
 type complex32_elt = Bigarray.complex32_elt
 type complex64_elt = Bigarray.complex64_elt
+type bfloat16_elt = Bigarray_ext.bfloat16_elt
+type bool_elt = Bigarray_ext.bool_elt
+type int4_elt = Bigarray_ext.int4_signed_elt
+type uint4_elt = Bigarray_ext.int4_unsigned_elt
+type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
+type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
+type complex16_elt = Bigarray_ext.complex16_elt
+type qint8_elt = Bigarray_ext.qint8_elt
+type quint8_elt = Bigarray_ext.quint8_elt
 
 type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | Float16 : (float, float16_elt) dtype
@@ -55,6 +64,15 @@ type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | NativeInt : (nativeint, nativeint_elt) dtype
   | Complex32 : (Complex.t, complex32_elt) dtype
   | Complex64 : (Complex.t, complex64_elt) dtype
+  | BFloat16 : (float, bfloat16_elt) dtype
+  | Bool : (bool, bool_elt) dtype
+  | Int4 : (int, int4_elt) dtype
+  | UInt4 : (int, uint4_elt) dtype
+  | Float8_e4m3 : (float, float8_e4m3_elt) dtype
+  | Float8_e5m2 : (float, float8_e5m2_elt) dtype
+  | Complex16 : (Complex.t, complex16_elt) dtype
+  | QInt8 : (int, qint8_elt) dtype
+  | QUInt8 : (int, quint8_elt) dtype
       (** Data type specification. Links OCaml types to bigarray element types.
       *)
 
@@ -71,6 +89,15 @@ type std_int_t = (int, int_elt) t
 type std_nativeint_t = (nativeint, nativeint_elt) t
 type complex32_t = (Complex.t, complex32_elt) t
 type complex64_t = (Complex.t, complex64_elt) t
+type bfloat16_t = (float, bfloat16_elt) t
+type bool_t = (bool, bool_elt) t
+type int4_t = (int, int4_elt) t
+type uint4_t = (int, uint4_elt) t
+type float8_e4m3_t = (float, float8_e4m3_elt) t
+type float8_e5m2_t = (float, float8_e5m2_elt) t
+type complex16_t = (Complex.t, complex16_elt) t
+type qint8_t = (int, qint8_elt) t
+type quint8_t = (int, quint8_elt) t
 
 val float16 : (float, float16_elt) dtype
 val float32 : (float, float32_elt) dtype
@@ -85,6 +112,15 @@ val int : (int, int_elt) dtype
 val nativeint : (nativeint, nativeint_elt) dtype
 val complex32 : (Complex.t, complex32_elt) dtype
 val complex64 : (Complex.t, complex64_elt) dtype
+val bfloat16 : (float, bfloat16_elt) dtype
+val bool : (bool, bool_elt) dtype
+val int4 : (int, int4_elt) dtype
+val uint4 : (int, uint4_elt) dtype
+val float8_e4m3 : (float, float8_e4m3_elt) dtype
+val float8_e5m2 : (float, float8_e5m2_elt) dtype
+val complex16 : (Complex.t, complex16_elt) dtype
+val qint8 : (int, qint8_elt) dtype
+val quint8 : (int, quint8_elt) dtype
 
 (** Index specification for slicing *)
 type index =

@@ -41,6 +41,15 @@ type int_elt = Bigarray.int_elt
 type nativeint_elt = Bigarray.nativeint_elt
 type complex32_elt = Bigarray.complex32_elt
 type complex64_elt = Bigarray.complex64_elt
+type bfloat16_elt = Bigarray_ext.bfloat16_elt
+type bool_elt = Bigarray_ext.bool_elt
+type int4_elt = Bigarray_ext.int4_signed_elt
+type uint4_elt = Bigarray_ext.int4_unsigned_elt
+type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
+type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
+type complex16_elt = Bigarray_ext.complex16_elt
+type qint8_elt = Bigarray_ext.qint8_elt
+type quint8_elt = Bigarray_ext.quint8_elt
 
 type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | Float16 : (float, float16_elt) dtype
@@ -56,6 +65,15 @@ type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | NativeInt : (nativeint, nativeint_elt) dtype
   | Complex32 : (Complex.t, complex32_elt) dtype
   | Complex64 : (Complex.t, complex64_elt) dtype
+  | BFloat16 : (float, bfloat16_elt) dtype
+  | Bool : (bool, bool_elt) dtype
+  | Int4 : (int, int4_elt) dtype
+  | UInt4 : (int, uint4_elt) dtype
+  | Float8_e4m3 : (float, float8_e4m3_elt) dtype
+  | Float8_e5m2 : (float, float8_e5m2_elt) dtype
+  | Complex16 : (Complex.t, complex16_elt) dtype
+  | QInt8 : (int, qint8_elt) dtype
+  | QUInt8 : (int, quint8_elt) dtype
       (** Data type specification. Links OCaml types to bigarray element types.
       *)
 

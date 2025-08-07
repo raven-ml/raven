@@ -2,19 +2,29 @@
 
 (** {2 Element Types} *)
 
-type float16_elt = Bigarray.float16_elt
-type float32_elt = Bigarray.float32_elt
-type float64_elt = Bigarray.float64_elt
-type int8_elt = Bigarray.int8_signed_elt
-type uint8_elt = Bigarray.int8_unsigned_elt
-type int16_elt = Bigarray.int16_signed_elt
-type uint16_elt = Bigarray.int16_unsigned_elt
-type int32_elt = Bigarray.int32_elt
-type int64_elt = Bigarray.int64_elt
-type int_elt = Bigarray.int_elt
-type nativeint_elt = Bigarray.nativeint_elt
-type complex32_elt = Bigarray.complex32_elt
-type complex64_elt = Bigarray.complex64_elt
+type float16_elt = Bigarray_ext.float16_elt
+type float32_elt = Bigarray_ext.float32_elt
+type float64_elt = Bigarray_ext.float64_elt
+type int8_elt = Bigarray_ext.int8_signed_elt
+type uint8_elt = Bigarray_ext.int8_unsigned_elt
+type int16_elt = Bigarray_ext.int16_signed_elt
+type uint16_elt = Bigarray_ext.int16_unsigned_elt
+type int32_elt = Bigarray_ext.int32_elt
+type int64_elt = Bigarray_ext.int64_elt
+type int_elt = Bigarray_ext.int_elt
+type nativeint_elt = Bigarray_ext.nativeint_elt
+type complex32_elt = Bigarray_ext.complex32_elt
+type complex64_elt = Bigarray_ext.complex64_elt
+(* Extended types from Bigarray_ext *)
+type bfloat16_elt = Bigarray_ext.bfloat16_elt
+type bool_elt = Bigarray_ext.bool_elt
+type int4_elt = Bigarray_ext.int4_signed_elt
+type uint4_elt = Bigarray_ext.int4_unsigned_elt
+type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
+type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
+type complex16_elt = Bigarray_ext.complex16_elt
+type qint8_elt = Bigarray_ext.qint8_elt
+type quint8_elt = Bigarray_ext.quint8_elt
 
 (** {2 Data Type} *)
 
@@ -34,6 +44,16 @@ type ('a, 'b) t =
   | NativeInt : (nativeint, nativeint_elt) t
   | Complex32 : (Complex.t, complex32_elt) t
   | Complex64 : (Complex.t, complex64_elt) t
+  (* Extended types *)
+  | BFloat16 : (float, bfloat16_elt) t
+  | Bool : (bool, bool_elt) t
+  | Int4 : (int, int4_elt) t
+  | UInt4 : (int, uint4_elt) t
+  | Float8_e4m3 : (float, float8_e4m3_elt) t
+  | Float8_e5m2 : (float, float8_e5m2_elt) t
+  | Complex16 : (Complex.t, complex16_elt) t
+  | QInt8 : (int, qint8_elt) t
+  | QUInt8 : (int, quint8_elt) t
 
 (** {2 Constructors} *)
 
@@ -50,6 +70,16 @@ val int : (int, int_elt) t
 val nativeint : (nativeint, nativeint_elt) t
 val complex32 : (Complex.t, complex32_elt) t
 val complex64 : (Complex.t, complex64_elt) t
+(* Extended types *)
+val bfloat16 : (float, bfloat16_elt) t
+val bool : (bool, bool_elt) t
+val int4 : (int, int4_elt) t
+val uint4 : (int, uint4_elt) t
+val float8_e4m3 : (float, float8_e4m3_elt) t
+val float8_e5m2 : (float, float8_e5m2_elt) t
+val complex16 : (Complex.t, complex16_elt) t
+val qint8 : (int, qint8_elt) t
+val quint8 : (int, quint8_elt) t
 
 (** {2 Properties} *)
 
@@ -101,13 +131,19 @@ val max_value : ('a, 'b) t -> 'a
 val of_float : ('a, 'b) t -> float -> 'a
 (** [of_float dtype f] converts float to dtype value. *)
 
+val of_bigarray_ext_kind : ('a, 'b) Bigarray_ext.kind -> ('a, 'b) t
+(** [of_bigarray_ext_kind kind] returns corresponding dtype from Bigarray_ext kind. *)
+
 val to_bigarray_kind : ('a, 'b) t -> ('a, 'b) Bigarray.kind
-(** [to_bigarray_kind dtype] returns corresponding Bigarray kind. *)
+(** [to_bigarray_kind dtype] returns corresponding standard Bigarray kind.
+
+    @raise Failure if dtype is an extended type not supported by standard Bigarray *)
+
+val to_bigarray_ext_kind : ('a, 'b) t -> ('a, 'b) Bigarray_ext.kind
+(** [to_bigarray_ext_kind dtype] returns corresponding Bigarray_ext kind. Works for all types including extended ones. *)
 
 val of_bigarray_kind : ('a, 'b) Bigarray.kind -> ('a, 'b) t
-(** [of_bigarray_kind kind] returns corresponding dtype.
-
-    @raise Failure if kind is unsupported *)
+(** [of_bigarray_kind kind] returns corresponding dtype from standard Bigarray kind. *)
 
 (** {2 Equality} *)
 

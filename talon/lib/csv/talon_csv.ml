@@ -220,6 +220,11 @@ let to_string ?(sep = ',') ?(header = true) ?(na_repr = "") df =
                   let value = arr.(i) in
                   if classify_float value = FP_nan then na_repr
                   else string_of_float value
+              | Nx.BFloat16 ->
+                  let arr : float array = Nx.to_array tensor in
+                  let value = arr.(i) in
+                  if classify_float value = FP_nan then na_repr
+                  else string_of_float value
               | Nx.Int8 ->
                   let arr : int array = Nx.to_array tensor in
                   string_of_int arr.(i)
@@ -251,7 +256,36 @@ let to_string ?(sep = ',') ?(header = true) ?(na_repr = "") df =
               | Nx.Complex64 ->
                   let arr : Complex.t array = Nx.to_array tensor in
                   let c = arr.(i) in
-                  Printf.sprintf "%g+%gi" c.re c.im)
+                  Printf.sprintf "%g+%gi" c.re c.im
+              | Nx.Bool ->
+                  let arr : bool array = Nx.to_array tensor in
+                  string_of_bool arr.(i)
+              | Nx.Int4 ->
+                  let arr : int array = Nx.to_array tensor in
+                  string_of_int arr.(i)
+              | Nx.UInt4 ->
+                  let arr : int array = Nx.to_array tensor in
+                  string_of_int arr.(i)
+              | Nx.Float8_e4m3 ->
+                  let arr : float array = Nx.to_array tensor in
+                  let value = arr.(i) in
+                  if classify_float value = FP_nan then na_repr
+                  else string_of_float value
+              | Nx.Float8_e5m2 ->
+                  let arr : float array = Nx.to_array tensor in
+                  let value = arr.(i) in
+                  if classify_float value = FP_nan then na_repr
+                  else string_of_float value
+              | Nx.Complex16 ->
+                  let arr : Complex.t array = Nx.to_array tensor in
+                  let c = arr.(i) in
+                  Printf.sprintf "%g+%gi" c.re c.im
+              | Nx.QInt8 ->
+                  let arr : int array = Nx.to_array tensor in
+                  string_of_int arr.(i)
+              | Nx.QUInt8 ->
+                  let arr : int array = Nx.to_array tensor in
+                  string_of_int arr.(i))
           | Col.S arr -> ( match arr.(i) with Some s -> s | None -> na_repr)
           | Col.B arr -> (
               match arr.(i) with Some b -> string_of_bool b | None -> na_repr))

@@ -1,4 +1,5 @@
 open Nx_core
+open Bigarray_ext
 
 type buffer = Internal.metal_buffer
 type context = Internal.context
@@ -22,14 +23,13 @@ let create_context () =
   let pool = Buffer_pool.create device in
   { Internal.device; queue; library; kernels; pool }
 
-let data : type a b. (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t =
+let data : type a b. (a, b) t -> (a, b, c_layout) Array1.t =
  fun t ->
   (* For compatibility with the frontend's unsafe_get, we need to return a
      bigarray that preserves the view's offset. This means returning the entire
      buffer, not just the viewed portion. *)
   let contents = Metal.Buffer.contents t.buffer.buffer in
-  let kind = Dtype.to_bigarray_kind t.dtype in
-
+  
   match t.dtype with
   | Dtype.Complex64 ->
       (* Special handling for Complex64 - Metal uses float2 (8 bytes) but OCaml
@@ -38,7 +38,7 @@ let data : type a b. (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t =
       (* 8 bytes per float2 in Metal *)
       (* Create a Complex64 bigarray and convert from float2 *)
       let ba =
-        Bigarray.Array1.create Bigarray.complex64 Bigarray.c_layout num_elements
+        Array1.create complex64 c_layout num_elements
       in
       let float_ptr = Ctypes.(from_voidp float contents) in
       for i = 0 to num_elements - 1 do
@@ -46,10 +46,23 @@ let data : type a b. (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t =
         let im_ptr = Ctypes.(float_ptr +@ ((i * 2) + 1)) in
         let re = Ctypes.( !@ ) re_ptr in
         let im = Ctypes.( !@ ) im_ptr in
-        Bigarray.Array1.set ba i Complex.{ re; im }
+        Array1.set ba i Complex.{ re; im }
       done;
       Obj.magic ba
+  | Dtype.BFloat16 | Dtype.Bool ->
+      (* For extended types, use the extended kind and our special function *)
+      let kind = Dtype.to_bigarray_ext_kind t.dtype in
+      let elem_size = Internal.sizeof_dtype t.dtype in
+      let buffer_size = t.buffer.size_bytes / elem_size in
+      (* Use the external function to create bigarray from pointer *)
+      let ptr_as_nativeint = Ctypes.raw_address_of_ptr contents in
+      let genarray = Internal.ba_from_ptr (Internal.kind_to_int kind) 
+                                          (Internal.layout_to_int Bigarray_ext.c_layout)
+                                          buffer_size ptr_as_nativeint in
+      Bigarray_ext.array1_of_genarray genarray
   | _ ->
+      (* Standard bigarray types *)
+      let kind = Dtype.to_bigarray_kind t.dtype in
       let elem_size = Internal.sizeof_dtype t.dtype in
       let buffer_size = t.buffer.size_bytes / elem_size in
       (* Create a bigarray view of the entire Metal buffer *)
@@ -85,9 +98,9 @@ let op_const_scalar : type a b. context -> a -> (a, b) Dtype.t -> (a, b) t =
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
 
   (* Create temporary bigarray to hold the value *)
-  let kind = Dtype.to_bigarray_kind dtype in
-  let ba = Bigarray.Array1.create kind Bigarray.c_layout 1 in
-  Bigarray.Array1.set ba 0 value;
+  let kind = Dtype.to_bigarray_ext_kind dtype in
+  let ba = Array1.create kind c_layout 1 in
+  Array1.set ba 0 value;
 
   (* Copy to Metal buffer *)
   let metal_buffer = { Internal.buffer; size_bytes } in
@@ -98,12 +111,12 @@ let op_const_scalar : type a b. context -> a -> (a, b) Dtype.t -> (a, b) t =
   t
 
 let op_const_array : type a b.
-    context -> (a, b, Bigarray.c_layout) Bigarray.Array1.t -> (a, b) t =
+    context -> (a, b, c_layout) Array1.t -> (a, b) t =
  fun ctx bigarray ->
-  let dtype = Dtype.of_bigarray_kind (Bigarray.Array1.kind bigarray) in
+  let dtype = Dtype.of_bigarray_ext_kind (Array1.kind bigarray) in
   (* Check if dtype is supported by Metal *)
   let _ = Internal.dtype_to_metal_type dtype in
-  let size = Bigarray.Array1.dim bigarray in
+  let size = Array1.dim bigarray in
   let size_bytes = size * Internal.sizeof_dtype dtype in
   let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
   let metal_buffer = { Internal.buffer; size_bytes } in

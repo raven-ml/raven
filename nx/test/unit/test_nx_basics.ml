@@ -458,7 +458,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
   let test_data_buffer_view ctx () =
     let t = Nx.create ctx Nx_core.Dtype.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
     let d = Nx.unsafe_data t in
-    Bigarray.Array1.set d 0 99.0;
+    Bigarray_ext.Array1.set d 0 99.0;
     check (float 1e-6) "data buffer view" 99.0 (Nx.unsafe_get [ 0 ] t)
 
   let test_strides_after_transpose ctx () =
@@ -520,10 +520,10 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
     in
     let ba = Nx.unsafe_to_bigarray t in
-    check (float 1e-6) "initial [0,0]" 1.0 (Bigarray.Genarray.get ba [| 0; 0 |]);
+    check (float 1e-6) "initial [0,0]" 1.0 (Bigarray_ext.Genarray.get ba [| 0; 0 |]);
     Nx.unsafe_set [ 0; 0 ] 55.0 t;
     check (float 1e-6) "after set [0,0]" 55.0
-      (Bigarray.Genarray.get ba [| 0; 0 |])
+      (Bigarray_ext.Genarray.get ba [| 0; 0 |])
 
   let test_copy ctx () =
     let original =

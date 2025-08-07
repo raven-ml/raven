@@ -1,4 +1,4 @@
-open Bigarray
+open Bigarray_ext
 open Nx_core.Dtype
 module Shape = Nx_core.Shape
 module View = Nx_core.View

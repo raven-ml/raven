@@ -1,12 +1,13 @@
 open Nx_core
+open Bigarray_ext
 
 external assign :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_assign_bc" "caml_nx_assign"
@@ -14,10 +15,10 @@ external assign :
 external copy :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_copy_bc" "caml_nx_copy"
@@ -25,10 +26,10 @@ external copy :
 external cast :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('d, 'e, 'c) Bigarray.Array1.t ->
+  ('d, 'e, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_cast_bc" "caml_nx_cast"
@@ -36,10 +37,10 @@ external cast :
 external neg :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_neg_bc" "caml_nx_neg"
@@ -47,10 +48,10 @@ external neg :
 external sqrt :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_sqrt_bc" "caml_nx_sqrt"
@@ -58,10 +59,10 @@ external sqrt :
 external sin :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_sin_bc" "caml_nx_sin"
@@ -69,10 +70,10 @@ external sin :
 external exp2 :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_exp2_bc" "caml_nx_exp2"
@@ -80,10 +81,10 @@ external exp2 :
 external log2 :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_log2_bc" "caml_nx_log2"
@@ -91,10 +92,10 @@ external log2 :
 external recip :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_recip_bc" "caml_nx_recip"
@@ -102,13 +103,13 @@ external recip :
 external add :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_add_bc" "caml_nx_add"
@@ -116,13 +117,13 @@ external add :
 external sub :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_sub_bc" "caml_nx_sub"
@@ -130,13 +131,13 @@ external sub :
 external mul :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_mul_bc" "caml_nx_mul"
@@ -144,13 +145,13 @@ external mul :
 external fdiv :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_fdiv_bc" "caml_nx_fdiv"
@@ -158,13 +159,13 @@ external fdiv :
 external max :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_max_bc" "caml_nx_max"
@@ -172,13 +173,13 @@ external max :
 external mod_ :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_mod_bc" "caml_nx_mod"
@@ -186,13 +187,13 @@ external mod_ :
 external pow :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_pow_bc" "caml_nx_pow"
@@ -200,13 +201,13 @@ external pow :
 external idiv :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_idiv_bc" "caml_nx_idiv"
@@ -214,13 +215,13 @@ external idiv :
 external xor :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_xor_bc" "caml_nx_xor"
@@ -228,13 +229,13 @@ external xor :
 external or_ :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_or_bc" "caml_nx_or"
@@ -242,13 +243,13 @@ external or_ :
 external and_ :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_and_bc" "caml_nx_and"
@@ -256,13 +257,13 @@ external and_ :
 external cmplt :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  (int, Bigarray.int8_unsigned_elt, 'c) Bigarray.Array1.t ->
+  (int, int8_unsigned_elt, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_cmplt_bc" "caml_nx_cmplt"
@@ -270,13 +271,13 @@ external cmplt :
 external cmpne :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  (int, Bigarray.int8_unsigned_elt, 'c) Bigarray.Array1.t ->
+  (int, int8_unsigned_elt, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_cmpne_bc" "caml_nx_cmpne"
@@ -284,10 +285,10 @@ external cmpne :
 external reduce_sum :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -297,10 +298,10 @@ external reduce_sum :
 external reduce_max :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -310,10 +311,10 @@ external reduce_max :
 external reduce_prod :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -323,16 +324,16 @@ external reduce_prod :
 external where :
   int ->
   int array ->
-  (int, Bigarray.int8_unsigned_elt, 'c) Bigarray.Array1.t ->
+  (int, int8_unsigned_elt, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_where_bc" "caml_nx_where"
@@ -340,11 +341,11 @@ external where :
 external pad :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -352,9 +353,9 @@ external pad :
   unit = "caml_nx_pad_bc" "caml_nx_pad"
 
 external cat :
-  (('a, 'b, 'c) Bigarray.Array1.t * View.t) array ->
+  (('a, 'b, 'c) Array1.t * View.t) array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -363,13 +364,13 @@ external cat :
 external threefry :
   int ->
   int array ->
-  (int32, Bigarray.int32_elt, 'c) Bigarray.Array1.t ->
+  (int32, int32_elt, 'c) Array1.t ->
   int array ->
   int ->
-  (int32, Bigarray.int32_elt, 'c) Bigarray.Array1.t ->
+  (int32, int32_elt, 'c) Array1.t ->
   int array ->
   int ->
-  (int32, Bigarray.int32_elt, 'c) Bigarray.Array1.t ->
+  (int32, int32_elt, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_threefry_bc" "caml_nx_threefry"
@@ -377,14 +378,14 @@ external threefry :
 external gather :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
-  (int32, Bigarray.int32_elt, 'c) Bigarray.Array1.t ->
+  (int32, int32_elt, 'c) Array1.t ->
   int array ->
   int ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   unit = "caml_nx_gather_bc" "caml_nx_gather"
@@ -398,19 +399,19 @@ external scatter :
   (* indices_ndim *)
   int array ->
   (* indices_shape *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* template buffer *)
   int array ->
   (* template strides *)
   int ->
   (* template offset *)
-  (int32, Bigarray.int32_elt, 'c) Bigarray.Array1.t ->
+  (int32, int32_elt, 'c) Array1.t ->
   (* indices buffer *)
   int array ->
   (* indices strides *)
   int ->
   (* indices offset *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* updates buffer *)
   int array ->
   (* updates strides *)
@@ -418,7 +419,7 @@ external scatter :
   (* updates offset *)
   int ->
   (* axis *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* output buffer *)
   int array ->
   (* output strides *)
@@ -428,7 +429,7 @@ external scatter :
   (* computation mode *)
   unit = "caml_nx_scatter_bc" "caml_nx_scatter"
 
-type ('a, 'b) buffer = ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
+type ('a, 'b) buffer = ('a, 'b, c_layout) Array1.t
 type context = unit
 
 let create_context () = ()
@@ -447,7 +448,7 @@ let data t = t.buffer
 let create ctx dtype buffer view = { context = ctx; dtype; buffer; view }
 
 let make_buffer (type a b) (dtype : (a, b) Dtype.t) size =
-  Bigarray.Array1.create (Dtype.to_bigarray_kind dtype) Bigarray.c_layout size
+  Array1.create (Dtype.to_bigarray_ext_kind dtype) c_layout size
 
 let make_tensor x shape =
   let numel = Array.fold_left ( * ) 1 shape in
@@ -458,14 +459,14 @@ let op_buffer ctx dtype size =
 
 let op_const_scalar ctx value dtype =
   let buffer = make_buffer dtype 1 in
-  Bigarray.Array1.set buffer 0 value;
+  Array1.set buffer 0 value;
   create ctx dtype buffer (View.create [||])
 
 let op_const_array ctx array =
-  let dtype = Dtype.of_bigarray_kind (Bigarray.Array1.kind array) in
-  let size = Bigarray.Array1.dim array in
+  let dtype = Dtype.of_bigarray_ext_kind (Array1.kind array) in
+  let size = Array1.dim array in
   let buffer = make_buffer dtype size in
-  Bigarray.Array1.blit array buffer;
+  Array1.blit array buffer;
   create ctx dtype buffer (View.create [| size |])
 
 (* op_copy always creates a fresh tensor with a new buffer and copies the
@@ -780,15 +781,15 @@ let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
   result
 
 external matmul :
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int array ->
   int ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int array ->
   int ->
@@ -797,12 +798,12 @@ external matmul :
 external unfold :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -815,12 +816,12 @@ external unfold :
 external fold :
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int ->
   int array ->
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -1061,10 +1062,10 @@ let op_pad x padding value =
 external fft_complex64 :
   int ->
   int array ->
-  (Complex.t, Bigarray.complex64_elt, 'c) Bigarray.Array1.t ->
+  (Complex.t, complex64_elt, 'c) Array1.t ->
   int array ->
   int ->
-  (Complex.t, Bigarray.complex64_elt, 'c) Bigarray.Array1.t ->
+  (Complex.t, complex64_elt, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -1075,10 +1076,10 @@ external fft_complex64 :
 external fft_complex32 :
   int ->
   int array ->
-  (Complex.t, Bigarray.complex32_elt, 'c) Bigarray.Array1.t ->
+  (Complex.t, complex32_elt, 'c) Array1.t ->
   int array ->
   int ->
-  (Complex.t, Bigarray.complex32_elt, 'c) Bigarray.Array1.t ->
+  (Complex.t, complex32_elt, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -1089,10 +1090,10 @@ external fft_complex32 :
 external rfft_float64 :
   int ->
   int array ->
-  (float, Bigarray.float64_elt, 'c) Bigarray.Array1.t ->
+  (float, float64_elt, 'c) Array1.t ->
   int array ->
   int ->
-  (Complex.t, Bigarray.complex64_elt, 'c) Bigarray.Array1.t ->
+  (Complex.t, complex64_elt, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -1102,10 +1103,10 @@ external rfft_float64 :
 external irfft_complex64 :
   int ->
   int array ->
-  (Complex.t, Bigarray.complex64_elt, 'c) Bigarray.Array1.t ->
+  (Complex.t, complex64_elt, 'c) Array1.t ->
   int array ->
   int ->
-  (float, Bigarray.float64_elt, 'c) Bigarray.Array1.t ->
+  (float, float64_elt, 'c) Array1.t ->
   int array ->
   int ->
   int array ->
@@ -1328,7 +1329,7 @@ let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
 external cholesky :
   int ->
   (* upper *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* input buffer *)
   int array ->
   (* input shape *)
@@ -1336,7 +1337,7 @@ external cholesky :
   (* input strides *)
   int ->
   (* input offset *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* output buffer *)
   int array ->
   (* output strides *)
@@ -1351,7 +1352,7 @@ external triangular_solve :
   (* transpose *)
   int ->
   (* unit_diag *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* A buffer *)
   int array ->
   (* A shape *)
@@ -1359,7 +1360,7 @@ external triangular_solve :
   (* A strides *)
   int ->
   (* A offset *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* B buffer *)
   int array ->
   (* B shape *)
@@ -1367,7 +1368,7 @@ external triangular_solve :
   (* B strides *)
   int ->
   (* B offset *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* output buffer *)
   int array ->
   (* output strides *)
@@ -1401,7 +1402,7 @@ let op_triangular_solve ~upper ~transpose ~unit_diag a b =
 external qr :
   int ->
   (* reduced *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* input buffer *)
   int array ->
   (* input shape *)
@@ -1409,7 +1410,7 @@ external qr :
   (* input strides *)
   int ->
   (* input offset *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* Q buffer *)
   int array ->
   (* Q shape *)
@@ -1417,7 +1418,7 @@ external qr :
   (* Q strides *)
   int ->
   (* Q offset *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* R buffer *)
   int array ->
   (* R shape *)
@@ -1462,7 +1463,7 @@ let op_qr ~reduced x =
 external svd :
   int ->
   (* full_matrices *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* input buffer *)
   int array ->
   (* input shape *)
@@ -1470,7 +1471,7 @@ external svd :
   (* input strides *)
   int ->
   (* input offset *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* U buffer *)
   int array ->
   (* U shape *)
@@ -1478,7 +1479,7 @@ external svd :
   (* U strides *)
   int ->
   (* U offset *)
-  ('d, 'e, 'c) Bigarray.Array1.t ->
+  ('d, 'e, 'c) Array1.t ->
   (* S buffer *)
   int array ->
   (* S shape *)
@@ -1486,7 +1487,7 @@ external svd :
   (* S strides *)
   int ->
   (* S offset *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* VT buffer *)
   int array ->
   (* VT shape *)
@@ -1547,7 +1548,7 @@ external eig :
   (* symmetric *)
   int ->
   (* compute_vectors *)
-  ('a, 'b, 'c) Bigarray.Array1.t ->
+  ('a, 'b, 'c) Array1.t ->
   (* input buffer *)
   int array ->
   (* input shape *)
@@ -1555,7 +1556,7 @@ external eig :
   (* input strides *)
   int ->
   (* input offset *)
-  ('d, 'e, 'c) Bigarray.Array1.t ->
+  ('d, 'e, 'c) Array1.t ->
   (* eigenvalues buffer *)
   int array ->
   (* eigenvalues shape *)
@@ -1563,7 +1564,7 @@ external eig :
   (* eigenvalues strides *)
   int ->
   (* eigenvalues offset *)
-  ('f, 'g, 'c) Bigarray.Array1.t ->
+  ('f, 'g, 'c) Array1.t ->
   (* eigenvectors buffer *)
   int array ->
   (* eigenvectors shape *)

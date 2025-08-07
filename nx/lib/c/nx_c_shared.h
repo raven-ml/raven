@@ -3,6 +3,7 @@
 #ifndef NX_C_SHARED_H
 #define NX_C_SHARED_H
 
+#include <bigarray_ext_stubs.h>
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
 #include <caml/fail.h>
@@ -183,6 +184,26 @@ static inline size_t get_element_size(int kind) {
       return sizeof(c32_t);
     case CAML_BA_COMPLEX64:
       return sizeof(c64_t);
+    case CAML_BA_FLOAT16:
+      return sizeof(uint16_t);  // Float16
+    case NX_BA_BFLOAT16:
+      return sizeof(uint16_t);  // BFloat16
+    case NX_BA_BOOL:
+      return sizeof(uint8_t);  // Bool
+    case NX_BA_INT4:
+      return 1;  // Int4 (2 values packed per byte)
+    case NX_BA_UINT4:
+      return 1;  // UInt4 (2 values packed per byte)
+    case NX_BA_FP8_E4M3:
+      return sizeof(uint8_t);  // Float8_e4m3
+    case NX_BA_FP8_E5M2:
+      return sizeof(uint8_t);  // Float8_e5m2
+    case NX_BA_COMPLEX16:
+      return 4;  // Complex16 (2 x bfloat16)
+    case NX_BA_QINT8:
+      return sizeof(int8_t);  // QInt8
+    case NX_BA_QUINT8:
+      return sizeof(uint8_t);  // QUInt8
     default:
       return 0;  // Should not happen with supported types
   }

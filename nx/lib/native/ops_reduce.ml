@@ -1,4 +1,4 @@
-open Bigarray
+open Bigarray_ext
 open Nx_core
 open Internal
 
@@ -73,6 +73,15 @@ let add_dtype (type a b) (dtype : (a, b) Dtype.t) (a : a) (b : a) : a =
   | NativeInt -> Nativeint.add a b
   | Complex32 -> Complex.add a b
   | Complex64 -> Complex.add a b
+  | BFloat16 -> Float.add a b
+  | Bool -> (a || b)
+  | Int4 -> Int.add a b
+  | UInt4 -> Int.add a b
+  | Float8_e4m3 -> Float.add a b
+  | Float8_e5m2 -> Float.add a b
+  | Complex16 -> Complex.add a b
+  | QInt8 -> Int.add a b
+  | QUInt8 -> Int.add a b
 
 let kernel_sum_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
     start_out_idx end_out_idx =
@@ -196,6 +205,15 @@ let mul_dtype (type a b) (dtype : (a, b) Dtype.t) (a : a) (b : a) : a =
   | NativeInt -> Nativeint.mul a b
   | Complex32 -> Complex.mul a b
   | Complex64 -> Complex.mul a b
+  | BFloat16 -> Float.mul a b
+  | Bool -> (a && b)
+  | Int4 -> Int.mul a b
+  | UInt4 -> Int.mul a b
+  | Float8_e4m3 -> Float.mul a b
+  | Float8_e5m2 -> Float.mul a b
+  | Complex16 -> Complex.mul a b
+  | QInt8 -> Int.mul a b
+  | QUInt8 -> Int.mul a b
 
 let kernel_prod_axis (type a b) (a : (a, b) t) (out : (a, b) t)
     (axes : int list) start_out_idx end_out_idx =
@@ -330,6 +348,19 @@ let min_dtype (type a b) (dtype : (a, b) Dtype.t) (a : a) (b : a) : a =
       else if a.re > b.re then b
       else if a.im < b.im then a
       else b
+  | BFloat16 -> Float.min a b
+  | Bool -> (a && b)
+  | Int4 -> Int.min a b
+  | UInt4 -> Int.min a b
+  | Float8_e4m3 -> Float.min a b
+  | Float8_e5m2 -> Float.min a b
+  | Complex16 ->
+      if a.re < b.re then a
+      else if a.re > b.re then b
+      else if a.im < b.im then a
+      else b
+  | QInt8 -> Int.min a b
+  | QUInt8 -> Int.min a b
 
 let kernel_min_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
     start_out_idx end_out_idx =
@@ -493,6 +524,15 @@ let min_identity (type a b) (dtype : (a, b) Dtype.t) : a =
   | NativeInt -> Nativeint.min_int
   | Complex32 -> { re = Float.neg_infinity; im = Float.neg_infinity }
   | Complex64 -> { re = Float.neg_infinity; im = Float.neg_infinity }
+  | BFloat16 -> Float.neg_infinity
+  | Bool -> false
+  | Int4 -> -8
+  | UInt4 -> 0
+  | Float8_e4m3 -> Float.neg_infinity
+  | Float8_e5m2 -> Float.neg_infinity
+  | Complex16 -> { re = Float.neg_infinity; im = Float.neg_infinity }
+  | QInt8 -> -128
+  | QUInt8 -> 0
 
 let max_dtype (type a b) (dtype : (a, b) Dtype.t) (a : a) (b : a) : a =
   match dtype with
@@ -517,6 +557,19 @@ let max_dtype (type a b) (dtype : (a, b) Dtype.t) (a : a) (b : a) : a =
       else if a.re < b.re then b
       else if a.im > b.im then a
       else b
+  | BFloat16 -> Float.max a b
+  | Bool -> (a || b)
+  | Int4 -> Int.max a b
+  | UInt4 -> Int.max a b
+  | Float8_e4m3 -> Float.max a b
+  | Float8_e5m2 -> Float.max a b
+  | Complex16 ->
+      if a.re > b.re then a
+      else if a.re < b.re then b
+      else if a.im > b.im then a
+      else b
+  | QInt8 -> Int.max a b
+  | QUInt8 -> Int.max a b
 
 let kernel_max_axis (type a b) (a : (a, b) t) (out : (a, b) t) (axes : int list)
     start_out_idx end_out_idx =

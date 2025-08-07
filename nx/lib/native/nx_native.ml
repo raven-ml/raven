@@ -1,6 +1,7 @@
 (* nx_native.ml *)
 
 open Nx_core
+open Bigarray_ext
 
 type ('a, 'b) buffer = ('a, 'b) Internal.buffer
 type context = Internal.context
@@ -22,8 +23,8 @@ let create_context () = Internal.{ pool = Parallel.get_or_setup_pool () }
 (* --- Backend Ops --- *)
 
 let op_buffer ctx dt size_in_elements =
-  let kind = Dtype.to_bigarray_kind dt in
-  let ba = Bigarray.Array1.create kind Bigarray.c_layout size_in_elements in
+  let kind = Dtype.to_bigarray_ext_kind dt in
+  let ba = Array1.create kind c_layout size_in_elements in
   let initial_view =
     if size_in_elements = 0 then View.create [| 0 |]
       (* Consistent 0-element view *)
@@ -32,18 +33,18 @@ let op_buffer ctx dt size_in_elements =
   { context = ctx; dtype = dt; buffer = ba; view = initial_view }
 
 let op_const_scalar ctx value dt =
-  let kind = Dtype.to_bigarray_kind dt in
-  let ba = Bigarray.Array1.create kind Bigarray.c_layout 1 in
-  Bigarray.Array1.set ba 0 value;
+  let kind = Dtype.to_bigarray_ext_kind dt in
+  let ba = Array1.create kind c_layout 1 in
+  Array1.set ba 0 value;
   let scalar_view = View.create [||] in
   (* 0-dim for scalar *)
   { context = ctx; dtype = dt; buffer = ba; view = scalar_view }
 
 let op_const_array ctx bigarray =
-  let dtype = Dtype.of_bigarray_kind (Bigarray.Array1.kind bigarray) in
-  let size = Bigarray.Array1.dim bigarray in
+  let dtype = Dtype.of_bigarray_ext_kind (Bigarray_ext.Array1.kind bigarray) in
+  let size = Bigarray_ext.Array1.dim bigarray in
   let t = op_buffer ctx dtype size in
-  Bigarray.Array1.blit bigarray (data t);
+  Bigarray_ext.Array1.blit bigarray (data t);
   t
 
 (* Binary Ops *)
@@ -262,7 +263,7 @@ let op_where cond if_true if_false =
 
 let fill_buffer_with_identity buf count identity_val =
   for i = 0 to count - 1 do
-    Bigarray.Array1.unsafe_set buf i identity_val
+    Array1.unsafe_set buf i identity_val
   done
 
 let op_reduce_sum ~(axes : int array) ~(keepdims : bool) xensor =
@@ -431,7 +432,7 @@ let op_pad t padding_config (fill_value : 'a) =
     in
 
     (* Fill new_t with fill_value *)
-    Bigarray.Array1.fill new_t.buffer fill_value;
+    Array1.fill new_t.buffer fill_value;
 
     (* Copy original data into the "center" of the new tensor *)
     (* Define the slice in the new_t that corresponds to the original t *)
@@ -605,7 +606,7 @@ let op_gather data_t indices_t axis =
       (* Read the index value from indices tensor *)
       let indices_offset = View.linear_index indices_view md_idx in
       let idx_value =
-        Int32.to_int (Bigarray.Array1.unsafe_get indices_buffer indices_offset)
+        Int32.to_int (Array1.unsafe_get indices_buffer indices_offset)
       in
 
       (* Handle negative indices and bounds checking *)
@@ -624,8 +625,8 @@ let op_gather data_t indices_t axis =
       (* Copy value from data to output *)
       if View.is_valid data_view src_idx then
         let data_offset = View.linear_index data_view src_idx in
-        let value = Bigarray.Array1.unsafe_get data_buffer data_offset in
-        Bigarray.Array1.unsafe_set output_buffer linear_idx value
+        let value = Array1.unsafe_get data_buffer data_offset in
+        Array1.unsafe_set output_buffer linear_idx value
       (* If invalid due to view mask, output remains at default (likely 0) *)
     done;
     output_t
@@ -688,7 +689,7 @@ let op_scatter (type a b) ?(mode = `Set) ?(unique_indices = false)
       (* Read the target index from indices tensor *)
       let indices_offset = View.linear_index indices_view md_idx in
       let idx_value =
-        Int32.to_int (Bigarray.Array1.unsafe_get indices_buffer indices_offset)
+        Int32.to_int (Array1.unsafe_get indices_buffer indices_offset)
       in
 
       (* Handle negative indices *)
@@ -706,14 +707,14 @@ let op_scatter (type a b) ?(mode = `Set) ?(unique_indices = false)
         (* Write update value to output if destination is valid *)
         if View.is_valid output_view dst_idx then
           let updates_offset = View.linear_index updates_view md_idx in
-          let uv = Bigarray.Array1.unsafe_get updates_buffer updates_offset in
+          let uv = Array1.unsafe_get updates_buffer updates_offset in
           let output_offset = View.linear_index output_view dst_idx in
           match mode with
-          | `Set -> Bigarray.Array1.unsafe_set output_buffer output_offset uv
+          | `Set -> Array1.unsafe_set output_buffer output_offset uv
           | `Add ->
-              let cv = Bigarray.Array1.unsafe_get output_buffer output_offset in
+              let cv = Array1.unsafe_get output_buffer output_offset in
               let sum = Dtype.add data_template_t.dtype cv uv in
-              Bigarray.Array1.unsafe_set output_buffer output_offset sum)
+              Array1.unsafe_set output_buffer output_offset sum)
     done;
     output_t
 

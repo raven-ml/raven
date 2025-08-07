@@ -1,4 +1,4 @@
-open Bigarray
+open Bigarray_ext
 module Dtype = Nx_core.Dtype
 module Shape = Nx_core.Shape
 module View = Nx_core.View
@@ -1319,7 +1319,7 @@ let triangular_solve (type a b) ~upper ~transpose ~unit_diag ctx (a : (a, b) t)
   let output = create_output ctx b.dtype output_shape in
 
   (* Copy b to output *)
-  Bigarray.Array1.blit b_expanded.buffer output.buffer;
+  Array1.blit b_expanded.buffer output.buffer;
 
   (* Process batches in parallel if batch_size > 1 *)
   (if batch_size > 1 then

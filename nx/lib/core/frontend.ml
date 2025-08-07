@@ -1,5 +1,7 @@
 (* High-level tensor operations built on backend [B]. *)
 
+open Bigarray_ext
+
 module Make (B : Backend_intf.S) = struct
   module B = B
 
@@ -9,19 +11,29 @@ module Make (B : Backend_intf.S) = struct
   type context = B.context
 
   (* Concrete types for dtypes *)
-  type float16_elt = Bigarray.float16_elt
-  type float32_elt = Bigarray.float32_elt
-  type float64_elt = Bigarray.float64_elt
-  type int8_elt = Bigarray.int8_signed_elt
-  type uint8_elt = Bigarray.int8_unsigned_elt
-  type int16_elt = Bigarray.int16_signed_elt
-  type uint16_elt = Bigarray.int16_unsigned_elt
-  type int32_elt = Bigarray.int32_elt
-  type int64_elt = Bigarray.int64_elt
-  type int_elt = Bigarray.int_elt
-  type nativeint_elt = Bigarray.nativeint_elt
-  type complex32_elt = Bigarray.complex32_elt
-  type complex64_elt = Bigarray.complex64_elt
+  type float16_elt = Bigarray_ext.float16_elt
+  type float32_elt = Bigarray_ext.float32_elt
+  type float64_elt = Bigarray_ext.float64_elt
+  type int8_elt = Bigarray_ext.int8_signed_elt
+  type uint8_elt = Bigarray_ext.int8_unsigned_elt
+  type int16_elt = Bigarray_ext.int16_signed_elt
+  type uint16_elt = Bigarray_ext.int16_unsigned_elt
+  type int32_elt = Bigarray_ext.int32_elt
+  type int64_elt = Bigarray_ext.int64_elt
+  type int_elt = Bigarray_ext.int_elt
+  type nativeint_elt = Bigarray_ext.nativeint_elt
+  type complex32_elt = Bigarray_ext.complex32_elt
+  type complex64_elt = Bigarray_ext.complex64_elt
+  (* Extended types from Bigarray_ext *)
+  type bfloat16_elt = Bigarray_ext.bfloat16_elt
+  type bool_elt = Bigarray_ext.bool_elt
+  type int4_elt = Bigarray_ext.int4_signed_elt
+  type uint4_elt = Bigarray_ext.int4_unsigned_elt
+  type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
+  type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
+  type complex16_elt = Bigarray_ext.complex16_elt
+  type qint8_elt = Bigarray_ext.qint8_elt
+  type quint8_elt = Bigarray_ext.quint8_elt
 
   type ('a, 'b) dtype = ('a, 'b) Dtype.t =
     | Float16 : (float, float16_elt) dtype
@@ -37,6 +49,16 @@ module Make (B : Backend_intf.S) = struct
     | NativeInt : (nativeint, nativeint_elt) dtype
     | Complex32 : (Complex.t, complex32_elt) dtype
     | Complex64 : (Complex.t, complex64_elt) dtype
+    (* Extended types *)
+    | BFloat16 : (float, bfloat16_elt) dtype
+    | Bool : (bool, bool_elt) dtype
+    | Int4 : (int, int4_elt) dtype
+    | UInt4 : (int, uint4_elt) dtype
+    | Float8_e4m3 : (float, float8_e4m3_elt) dtype
+    | Float8_e5m2 : (float, float8_e5m2_elt) dtype
+    | Complex16 : (Complex.t, complex16_elt) dtype
+    | QInt8 : (int, qint8_elt) dtype
+    | QUInt8 : (int, quint8_elt) dtype
 
   type float16_t = (float, float16_elt) t
   type float32_t = (float, float32_elt) t
@@ -271,12 +293,12 @@ module Make (B : Backend_intf.S) = struct
         ();
 
     (* Create bigarray buffer with proper dtype *)
-    let kind = Dtype.to_bigarray_kind dtype in
-    let bigarray = Bigarray.Array1.create kind Bigarray.c_layout n in
+    let kind = Dtype.to_bigarray_ext_kind dtype in
+    let bigarray = Bigarray_ext.Array1.create kind c_layout n in
 
     (* Copy data from OCaml array to bigarray *)
     for i = 0 to n - 1 do
-      Bigarray.Array1.unsafe_set bigarray i arr.(i)
+      Bigarray_ext.Array1.unsafe_set bigarray i arr.(i)
     done;
 
     (* Create flat tensor and reshape if needed *)
@@ -365,14 +387,14 @@ module Make (B : Backend_intf.S) = struct
     let t_contiguous = contiguous x in
     let array1 = unsafe_data t_contiguous in
     let ba =
-      Bigarray.reshape (Bigarray.genarray_of_array1 array1) (shape t_contiguous)
+      Bigarray.reshape (genarray_of_array1 array1) (shape t_contiguous)
     in
     ba
 
   let of_bigarray ctx ba =
-    let size = Array.fold_left ( * ) 1 (Bigarray.Genarray.dims ba) in
-    let arr = Bigarray.reshape_1 ba size in
-    let shape = Bigarray.Genarray.dims ba in
+    let size = Array.fold_left ( * ) 1 (Genarray.dims ba) in
+    let arr = reshape_1 ba size in
+    let shape = Genarray.dims ba in
     let flat_xensor = B.op_const_array ctx arr in
     reshape shape flat_xensor
 
@@ -380,7 +402,7 @@ module Make (B : Backend_intf.S) = struct
     let t_contiguous = contiguous x in
     let ba = unsafe_data t_contiguous in
     let n = numel t_contiguous in
-    Array.init n (fun i -> Bigarray.Array1.get ba i)
+    Array.init n (fun i -> Array1.get ba i)
 
   (* ───── Element-wise Binary Operations ───── *)
 
@@ -606,13 +628,14 @@ module Make (B : Backend_intf.S) = struct
     (* But sub doesn't support uint8, so we use XOR with 1 *)
     let dt = dtype a in
     match dt with
-    | Dtype.UInt8 ->
+    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 | Dtype.QUInt8 ->
         let one_val = Dtype.one dt in
         let one_tensor = full (B.context a) dt (shape a) one_val in
         B.op_xor a one_tensor
     | Dtype.Float16 | Dtype.Float32 | Dtype.Float64 | Dtype.Int32 | Dtype.Int64
     | Dtype.Int8 | Dtype.Int16 | Dtype.UInt16 | Dtype.Int | Dtype.NativeInt
-    | Dtype.Complex32 | Dtype.Complex64 ->
+    | Dtype.Complex32 | Dtype.Complex64 | Dtype.BFloat16 | Dtype.Int4 
+    | Dtype.Float8_e4m3 | Dtype.Float8_e5m2 | Dtype.Complex16 | Dtype.QInt8 ->
         let one_val = Dtype.one dt in
         let one_tensor = full (B.context a) dt (shape a) one_val in
         sub one_tensor a
@@ -1971,21 +1994,27 @@ module Make (B : Backend_intf.S) = struct
             float_of_int start +. (float_of_int i *. float_of_int step)
         | Dtype.Float64 ->
             float_of_int start +. (float_of_int i *. float_of_int step)
+        | Dtype.BFloat16 ->
+            float_of_int start +. (float_of_int i *. float_of_int step)
+        | Dtype.Float8_e4m3 ->
+            float_of_int start +. (float_of_int i *. float_of_int step)
+        | Dtype.Float8_e5m2 ->
+            float_of_int start +. (float_of_int i *. float_of_int step)
         | Dtype.Int8 -> start + (i * step)
-        | Dtype.UInt8 ->
-            start + (i * step)
-            (* Bigarray will handle unsigned conversion implicitly for 'int'
-               OCaml type *)
+        | Dtype.UInt8 -> start + (i * step)
         | Dtype.Int16 -> start + (i * step)
-        | Dtype.UInt16 ->
-            start + (i * step)
-            (* Bigarray will handle unsigned conversion implicitly for 'int'
-               OCaml type *)
+        | Dtype.UInt16 -> start + (i * step)
+        | Dtype.Int -> start + (i * step)
+        | Dtype.Int4 -> start + (i * step)
+        | Dtype.UInt4 -> start + (i * step)
+        | Dtype.QInt8 -> start + (i * step)
+        | Dtype.QUInt8 -> start + (i * step)
+        | Dtype.Bool -> 
+            if i = 0 then false else true
         | Dtype.Int32 ->
             Int32.(add (of_int start) (mul (of_int i) (of_int step)))
         | Dtype.Int64 ->
             Int64.(add (of_int start) (mul (of_int i) (of_int step)))
-        | Dtype.Int -> start + (i * step)
         | Dtype.NativeInt ->
             Nativeint.(add (of_int start) (mul (of_int i) (of_int step)))
         | Dtype.Complex32 ->
@@ -1995,6 +2024,12 @@ module Make (B : Backend_intf.S) = struct
               im = 0.;
             }
         | Dtype.Complex64 ->
+            {
+              Complex.re =
+                float_of_int start +. (float_of_int i *. float_of_int step);
+              im = 0.;
+            }
+        | Dtype.Complex16 ->
             {
               Complex.re =
                 float_of_int start +. (float_of_int i *. float_of_int step);
@@ -2722,10 +2757,10 @@ module Make (B : Backend_intf.S) = struct
     let ba = unsafe_data scalar_tensor in
     (* For a scalar tensor (result of get), the data is already at index 0 *)
     if List.length indices = 0 && numel scalar_tensor = 1 then
-      Bigarray.Array1.get ba 0
+      Array1.get ba 0
     else
       let view_offset = offset scalar_tensor in
-      Bigarray.Array1.get ba view_offset
+      Array1.get ba view_offset
 
   let unsafe_set indices value x =
     let scalar_tensor = scalar (B.context x) (dtype x) value in
@@ -3983,8 +4018,8 @@ module Make (B : Backend_intf.S) = struct
     if norm_scale <> 1.0 then
       let scale_value =
         match B.dtype result with
-        | Complex32 -> Complex.{ re = norm_scale; im = 0.0 }
-        | Complex64 -> Complex.{ re = norm_scale; im = 0.0 }
+        | Complex32 | Complex64 | Complex16 -> 
+            Complex.{ re = norm_scale; im = 0.0 }
       in
       let scale_tensor =
         scalar (B.context result) (B.dtype result) scale_value
@@ -4062,8 +4097,8 @@ module Make (B : Backend_intf.S) = struct
     if total_scale <> 1.0 then
       let scale_value =
         match B.dtype result with
-        | Complex32 -> Complex.{ re = total_scale; im = 0.0 }
-        | Complex64 -> Complex.{ re = total_scale; im = 0.0 }
+        | Complex32 | Complex64 | Complex16 -> 
+            Complex.{ re = total_scale; im = 0.0 }
       in
       let scale_tensor =
         scalar (B.context result) (B.dtype result) scale_value
@@ -5316,6 +5351,9 @@ module Make (B : Backend_intf.S) = struct
       | Float16 -> fprintf fmt "%g" elt
       | Float32 -> fprintf fmt "%g" elt
       | Float64 -> fprintf fmt "%g" elt
+      | BFloat16 -> fprintf fmt "%g" elt
+      | Float8_e4m3 -> fprintf fmt "%g" elt
+      | Float8_e5m2 -> fprintf fmt "%g" elt
       | Int8 -> fprintf fmt "%d" elt
       | Int16 -> fprintf fmt "%d" elt
       | Int32 -> fprintf fmt "%ld" elt
@@ -5324,14 +5362,20 @@ module Make (B : Backend_intf.S) = struct
       | UInt16 -> fprintf fmt "%d" elt
       | Int -> fprintf fmt "%d" elt
       | NativeInt -> fprintf fmt "%nd" elt
+      | Int4 -> fprintf fmt "%d" elt
+      | UInt4 -> fprintf fmt "%d" elt
+      | QInt8 -> fprintf fmt "%d" elt
+      | QUInt8 -> fprintf fmt "%d" elt
+      | Bool -> fprintf fmt "%b" elt
       | Complex32 -> fprintf fmt "(%g+%gi)" elt.re elt.im
       | Complex64 -> fprintf fmt "(%g+%gi)" elt.re elt.im
+      | Complex16 -> fprintf fmt "(%g+%gi)" elt.re elt.im
     in
 
     if sz = 0 && ndim > 0 then fprintf fmt "[]"
     else if ndim = 0 then
       if sz > 0 then
-        let value = Bigarray.Array1.unsafe_get buffer (View.offset view) in
+        let value = Array1.unsafe_get buffer (View.offset view) in
         pp_element fmt value
       else fprintf fmt "<empty scalar>"
     else
@@ -5342,11 +5386,11 @@ module Make (B : Backend_intf.S) = struct
           let linear_offset =
             Shape.ravel_index md_index (View.strides view) + View.offset view
           in
-          if linear_offset < 0 || linear_offset >= Bigarray.Array1.dim buffer
+          if linear_offset < 0 || linear_offset >= Array1.dim buffer
           then
-            fprintf fmt "<OOB:%d/%d>" linear_offset (Bigarray.Array1.dim buffer)
+            fprintf fmt "<OOB:%d/%d>" linear_offset (Array1.dim buffer)
           else
-            let value = Bigarray.Array1.unsafe_get buffer linear_offset in
+            let value = Array1.unsafe_get buffer linear_offset in
             pp_element fmt value
         else
           let axis = current_ndim in
@@ -5421,9 +5465,9 @@ module Make (B : Backend_intf.S) = struct
     let data_dst = unsafe_data result in
     let sz = size x in
     for i = 0 to sz - 1 do
-      let v = Bigarray.Array1.unsafe_get data_src i in
+      let v = Array1.unsafe_get data_src i in
       let v' = f v in
-      Bigarray.Array1.unsafe_set data_dst i v'
+      Array1.unsafe_set data_dst i v'
     done;
     result
 
@@ -5432,7 +5476,7 @@ module Make (B : Backend_intf.S) = struct
     let data_src = unsafe_data (contiguous x) in
     let sz = size x in
     for i = 0 to sz - 1 do
-      let v = Bigarray.Array1.unsafe_get data_src i in
+      let v = Array1.unsafe_get data_src i in
       f v
     done
 
@@ -5442,7 +5486,7 @@ module Make (B : Backend_intf.S) = struct
     let sz = size x in
     let acc = ref init in
     for i = 0 to sz - 1 do
-      let v = Bigarray.Array1.unsafe_get data_src i in
+      let v = Array1.unsafe_get data_src i in
       acc := f !acc v
     done;
     !acc

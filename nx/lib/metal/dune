@@ -11,8 +11,8 @@
  (public_name nx.metal)
  (enabled_if
   (= %{system} "macosx"))
- (libraries nx.core metal ctypes integers)
+ (libraries bigarray_ext nx.core metal ctypes integers)
  (flags :standard -w -27-32-33-34-37)
  (foreign_stubs
   (language c)
-  (names kernels_data_generated)))
+  (names kernels_data_generated nx_metal_stubs)))

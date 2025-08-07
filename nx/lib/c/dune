@@ -1,7 +1,7 @@
 (library
  (name nx_c)
  (public_name nx.c)
- (libraries nx_core)
+ (libraries bigarray_ext nx_core)
  (foreign_stubs
   (language c)
   (names nx_c_stubs nx_c_linalg_stubs nx_c_fft_stubs)

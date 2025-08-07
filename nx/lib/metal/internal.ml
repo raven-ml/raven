@@ -1,4 +1,5 @@
 open Nx_core
+open Bigarray_ext
 
 type metal_buffer = { buffer : Metal.Buffer.t; size_bytes : int }
 
@@ -57,31 +58,50 @@ let get_dtype_info : type a b. (a, b) Dtype.t -> dtype_info = function
   | Dtype.NativeInt -> { metal_name = "long"; size_bytes = Sys.word_size / 8 }
   | Dtype.Complex32 -> { metal_name = "float2"; size_bytes = 8 }
   | Dtype.Complex64 -> { metal_name = "float2"; size_bytes = 16 }
-(* Keep OCaml size for compatibility *)
+  | Dtype.BFloat16 -> { metal_name = "bfloat"; size_bytes = 2 }  (* Metal supports bfloat natively *)
+  | Dtype.Bool -> { metal_name = "bool"; size_bytes = 1 }
+  (* Extended types that Metal can't properly support - will fail at creation *)
+  | Dtype.Int4 -> invalid_arg "Metal backend: Int4 dtype not supported (requires packed nibble operations)"
+  | Dtype.UInt4 -> invalid_arg "Metal backend: UInt4 dtype not supported (requires packed nibble operations)"
+  | Dtype.Float8_e4m3 -> invalid_arg "Metal backend: Float8_e4m3 dtype not supported"
+  | Dtype.Float8_e5m2 -> invalid_arg "Metal backend: Float8_e5m2 dtype not supported"
+  | Dtype.Complex16 -> invalid_arg "Metal backend: Complex16 dtype not supported"
+  | Dtype.QInt8 -> invalid_arg "Metal backend: QInt8 dtype not supported"
+  | Dtype.QUInt8 -> invalid_arg "Metal backend: QUInt8 dtype not supported"
 
 (* Convenience functions for backward compatibility *)
 let dtype_to_metal_type dtype = (get_dtype_info dtype).metal_name
 let sizeof_dtype dtype = (get_dtype_info dtype).size_bytes
 
+(* External functions to create bigarrays from pointers for extended types *)
+external ba_from_ptr : int -> int -> int -> nativeint -> ('a, 'b, 'c) Bigarray_ext.Genarray.t 
+  = "caml_metal_ba_from_ptr"
+external kind_to_int : ('a, 'b) Bigarray_ext.kind -> int = "caml_metal_kind_to_int"
+
+(* Helper to get layout as int *)
+let layout_to_int : type a. a Bigarray_ext.layout -> int = function
+  | Bigarray_ext.C_layout -> 0
+  | Bigarray_ext.Fortran_layout -> 0x100
+
 let copy_from_bigarray : type a b.
     context ->
     metal_buffer ->
-    (a, b, Bigarray.c_layout) Bigarray.Array1.t ->
+    (a, b, c_layout) Array1.t ->
     unit =
  fun ctx mbuf ba ->
   (* For shared memory buffers, we can directly copy using Bigarray *)
   let metal_buf : Metal.Buffer.t = mbuf.buffer in
   let contents = Metal.Buffer.contents metal_buf in
-  let size = Bigarray.Array1.dim ba in
-  let kind = Bigarray.Array1.kind ba in
+  let size = Array1.dim ba in
+  let kind = Array1.kind ba in
 
   (* Special handling for Complex64 - convert from double to float *)
   match kind with
-  | Bigarray.Complex64 ->
+  | Complex64 ->
       (* Convert Complex64 (double precision) to float2 for Metal *)
       let float_array = Ctypes.(from_voidp float contents) in
       for i = 0 to size - 1 do
-        let c = Bigarray.Array1.get ba i in
+        let c = Array1.get ba i in
         (* Write as float precision to Metal buffer *)
         let re_val = c.Complex.re in
         let im_val = c.Complex.im in
@@ -92,24 +112,27 @@ let copy_from_bigarray : type a b.
         Ctypes.(im_ptr <-@ im_val)
       done
   | _ ->
-      (* For other types, direct copy *)
-      let metal_ba =
-        Ctypes.bigarray_of_ptr Ctypes.array1 size kind (Obj.magic contents)
-      in
-      (* Copy data from source to Metal buffer *)
-      Bigarray.Array1.blit ba metal_ba
+      (* For all other types, create a bigarray view of the Metal buffer *)
+      (* This works for both standard and extended types without copying *)
+      let ptr_as_nativeint = Ctypes.raw_address_of_ptr contents in
+      let metal_ba_genarray = 
+        ba_from_ptr (kind_to_int kind) (layout_to_int Bigarray_ext.c_layout) 
+                    size ptr_as_nativeint in
+      let metal_ba = Bigarray_ext.array1_of_genarray metal_ba_genarray in
+      (* Now blit from source to Metal buffer *)
+      Array1.blit ba metal_ba
 
 let copy_to_bigarray : type a b.
-    (a, b) t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t -> unit =
+    (a, b) t -> (a, b, c_layout) Array1.t -> unit =
  fun t ba ->
   (* Handle views correctly by considering offset and strides *)
   let view = t.view in
   let contents = Metal.Buffer.contents t.buffer.buffer in
-  let kind = Bigarray.Array1.kind ba in
+  let kind = Array1.kind ba in
 
   (* Special handling for Complex64 *)
   match kind with
-  | Bigarray.Complex64 ->
+  | Complex64 ->
       (* Convert from float2 (Metal) to Complex64 (OCaml) *)
       let float_ptr = Ctypes.(from_voidp float contents) in
       let view_size = View.numel view in
@@ -123,7 +146,7 @@ let copy_to_bigarray : type a b.
           let im_ptr = Ctypes.(float_ptr +@ ((idx * 2) + 1)) in
           let re = Ctypes.( !@ ) re_ptr in
           let im = Ctypes.( !@ ) im_ptr in
-          Bigarray.Array1.set ba i Complex.{ re; im }
+          Array1.set ba i Complex.{ re; im }
         done
       else
         (* For non-contiguous views, handle strides *)
@@ -140,7 +163,7 @@ let copy_to_bigarray : type a b.
             let im_ptr = Ctypes.(float_ptr +@ ((!src_idx * 2) + 1)) in
             let re = Ctypes.( !@ ) re_ptr in
             let im = Ctypes.( !@ ) im_ptr in
-            Bigarray.Array1.set ba dst_idx Complex.{ re; im })
+            Array1.set ba dst_idx Complex.{ re; im })
           else
             for i = 0 to shape.(pos) - 1 do
               indices.(pos) <- i;
@@ -156,10 +179,12 @@ let copy_to_bigarray : type a b.
       let elem_size = sizeof_dtype t.dtype in
       (* Create a bigarray view of the entire Metal buffer *)
       let buffer_size = t.buffer.size_bytes / elem_size in
-      let metal_ba =
-        Ctypes.bigarray_of_ptr Ctypes.array1 buffer_size kind
-          (Obj.magic contents)
-      in
+      (* Use our efficient function that works with extended types *)
+      let ptr_as_nativeint = Ctypes.raw_address_of_ptr contents in
+      let metal_ba_genarray = 
+        ba_from_ptr (kind_to_int kind) (layout_to_int Bigarray_ext.c_layout) 
+                    buffer_size ptr_as_nativeint in
+      let metal_ba = Bigarray_ext.array1_of_genarray metal_ba_genarray in
 
       (* Check if the view is contiguous AND the buffer has enough elements *)
       let view_size = View.numel view in
@@ -171,8 +196,8 @@ let copy_to_bigarray : type a b.
         let offset = View.offset view in
         if view_size > 0 then
           (* Create sub-arrays and blit *)
-          let src = Bigarray.Array1.sub metal_ba offset view_size in
-          Bigarray.Array1.blit src ba)
+          let src = Array1.sub metal_ba offset view_size in
+          Array1.blit src ba)
       else
         (* For non-contiguous views, we need to copy element by element *)
         (* NOTE: For better performance, callers should use Ops_movement.make_contiguous
@@ -208,14 +233,14 @@ let copy_to_bigarray : type a b.
                 (Printf.sprintf
                    "Source index %d out of bounds (buffer size: %d)" !src_idx
                    buffer_size)
-            else if !dst_idx >= Bigarray.Array1.dim ba then
+            else if !dst_idx >= Array1.dim ba then
               failwith
                 (Printf.sprintf
                    "Destination index %d out of bounds (ba size: %d)" !dst_idx
-                   (Bigarray.Array1.dim ba))
+                   (Array1.dim ba))
             else
-              Bigarray.Array1.set ba !dst_idx
-                (Bigarray.Array1.get metal_ba !src_idx))
+              Array1.set ba !dst_idx
+                (Array1.get metal_ba !src_idx))
           else
             for
               (* Iterate through this dimension *)

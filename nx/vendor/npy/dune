@@ -1,4 +1,7 @@
 (library
  (name npy)
  (public_name nx.io.npy)
- (libraries unix bigarray zip))
+ (libraries bigarray_ext unix bigarray zip)
+ (foreign_stubs
+  (language c)
+  (names npy_stubs)))

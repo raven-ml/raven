@@ -1,4 +1,4 @@
-open Bigarray
+open Bigarray_ext
 open Nx_core.Dtype
 module Shape = Nx_core.Shape
 module View = Nx_core.View
@@ -126,20 +126,20 @@ let kernel_fft_multi (type b) ~inverse (input : (Complex.t, b) t)
 
      if same_shape then
        (* Same shape, can directly copy if buffers are the same size *)
-       let input_size = Bigarray.Array1.dim (buffer input) in
-       let output_size = Bigarray.Array1.dim (buffer output) in
+       let input_size = Array1.dim (buffer input) in
+       let output_size = Array1.dim (buffer output) in
        if input_size = output_size then
-         Bigarray.Array1.blit (buffer input) (buffer output)
+         Array1.blit (buffer input) (buffer output)
        else
          (* Different buffer sizes, use element-wise copy *)
          let size = min input_size output_size in
          for i = 0 to size - 1 do
-           Bigarray.Array1.set (buffer output) i
-             (Bigarray.Array1.get (buffer input) i)
+           Array1.set (buffer output) i
+             (Array1.get (buffer input) i)
          done
      else (
        (* Different shapes - zero fill and copy what fits *)
-       Bigarray.Array1.fill (buffer output) Complex.zero;
+       Array1.fill (buffer output) Complex.zero;
 
        (* Copy the overlapping region *)
        let rec copy_region indices dim =
@@ -157,8 +157,8 @@ let kernel_fft_multi (type b) ~inverse (input : (Complex.t, b) t)
              out_stride := !out_stride * output_shape.(d)
            done;
 
-           let v = Bigarray.Array1.get (buffer input) !in_idx in
-           Bigarray.Array1.set (buffer output) !out_idx v)
+           let v = Array1.get (buffer input) !in_idx in
+           Array1.set (buffer output) !out_idx v)
          else
            let limit = min input_shape.(dim) output_shape.(dim) in
            for i = 0 to limit - 1 do
@@ -305,8 +305,8 @@ let kernel_rfft (type b) context (input : (float, b) t) axes _s =
       for i = 0 to output_shape.(last_axis) - 1 do
         let src_idx = !src_offset + (i * stride_in) in
         let dst_idx = !dst_offset + (i * stride_out) in
-        let v = Bigarray.Array1.get (buffer temp) src_idx in
-        Bigarray.Array1.set (buffer output) dst_idx v
+        let v = Array1.get (buffer temp) src_idx in
+        Array1.set (buffer output) dst_idx v
       done)
     else if dim = last_axis then (
       indices.(dim) <- 0;
@@ -401,8 +401,8 @@ let kernel_irfft (type b) context (input : (Complex.t, b) t) axes s =
       for i = 0 to hermitian_size - 1 do
         let src_idx = !src_offset + (i * src_stride_elem) in
         let dst_idx = !dst_offset + (i * dst_stride_elem) in
-        let v = Bigarray.Array1.get (buffer input) src_idx in
-        Bigarray.Array1.set (buffer full_complex) dst_idx v
+        let v = Array1.get (buffer input) src_idx in
+        Array1.set (buffer full_complex) dst_idx v
       done;
 
       (* Fill the symmetric part *)
@@ -411,9 +411,9 @@ let kernel_irfft (type b) context (input : (Complex.t, b) t) axes s =
         if mirror_idx > 0 && mirror_idx < hermitian_size then
           let src_idx = !dst_offset + (mirror_idx * dst_stride_elem) in
           let dst_idx = !dst_offset + (i * dst_stride_elem) in
-          let v = Bigarray.Array1.get (buffer full_complex) src_idx in
+          let v = Array1.get (buffer full_complex) src_idx in
           (* Complex conjugate for Hermitian symmetry *)
-          Bigarray.Array1.set (buffer full_complex) dst_idx
+          Array1.set (buffer full_complex) dst_idx
             Complex.{ re = v.re; im = -.v.im }
       done)
     else if dim = last_axis then (
@@ -435,8 +435,8 @@ let kernel_irfft (type b) context (input : (Complex.t, b) t) axes s =
   let complex_buf = buffer full_complex in
   let size = Internal.size output in
   for i = 0 to size - 1 do
-    let v = Bigarray.Array1.unsafe_get complex_buf i in
-    Bigarray.Array1.unsafe_set output_buf i v.re
+    let v = Array1.unsafe_get complex_buf i in
+    Array1.unsafe_set output_buf i v.re
   done;
 
   output
@@ -447,6 +447,10 @@ let fft (type b) (context : context) (input : (Complex.t, b) t) ~axes ~s :
   let output_shape = get_fft_output_shape (Internal.shape input) axes s in
 
   match dtype input with
+  | Complex16 ->
+      let output = empty context Complex16 output_shape in
+      kernel_fft_multi ~inverse:false input output axes;
+      output
   | Complex32 ->
       let output = empty context Complex32 output_shape in
       kernel_fft_multi ~inverse:false input output axes;
@@ -461,6 +465,10 @@ let ifft (type b) (context : context) (input : (Complex.t, b) t) ~axes ~s :
   let output_shape = get_fft_output_shape (Internal.shape input) axes s in
 
   match dtype input with
+  | Complex16 ->
+      let output = empty context Complex16 output_shape in
+      kernel_fft_multi ~inverse:true input output axes;
+      output
   | Complex32 ->
       let output = empty context Complex32 output_shape in
       kernel_fft_multi ~inverse:true input output axes;
@@ -476,9 +484,13 @@ let rfft (type b) (context : context) (input : (float, b) t) ~axes ~s :
   | Float16 -> kernel_rfft context input axes s
   | Float32 -> kernel_rfft context input axes s
   | Float64 -> kernel_rfft context input axes s
+  | BFloat16 -> kernel_rfft context input axes s
+  | Float8_e4m3 -> kernel_rfft context input axes s
+  | Float8_e5m2 -> kernel_rfft context input axes s
 
 let irfft (type b) (context : context) (input : (Complex.t, b) t) ~axes ~s :
     (float, float64_elt) t =
   match dtype input with
+  | Complex16 -> kernel_irfft context input axes s
   | Complex32 -> kernel_irfft context input axes s
   | Complex64 -> kernel_irfft context input axes s

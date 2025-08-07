@@ -56,6 +56,52 @@ static inline void iterate_inner_dims(
   }
 }
 
+// Helper functions for Int4/UInt4 packed value access
+static inline uint8_t get_int4_value(const void *data, long index) {
+  const uint8_t *bytes = (const uint8_t *)data;
+  long byte_idx = index / 2;
+  int nibble_idx = index % 2;
+  uint8_t byte = bytes[byte_idx];
+  if (nibble_idx == 0) {
+    // Lower nibble
+    return byte & 0x0F;
+  } else {
+    // Upper nibble
+    return (byte >> 4) & 0x0F;
+  }
+}
+
+static inline void set_int4_value(void *data, long index, uint8_t value) {
+  uint8_t *bytes = (uint8_t *)data;
+  long byte_idx = index / 2;
+  int nibble_idx = index % 2;
+  uint8_t byte = bytes[byte_idx];
+  if (nibble_idx == 0) {
+    // Set lower nibble
+    bytes[byte_idx] = (byte & 0xF0) | (value & 0x0F);
+  } else {
+    // Set upper nibble
+    bytes[byte_idx] = (byte & 0x0F) | ((value & 0x0F) << 4);
+  }
+}
+
+static void nx_c_copy_int4(const ndarray_t *x, ndarray_t *z) {
+  long total = total_elements(x);
+  if (total == 0) return;
+
+  nd_iterator_t it;
+  nd_iterator_init(&it, x, NULL, z);
+
+  do {
+    long x_off, z_off;
+    nd_iterator_get_offsets(&it, &x_off, NULL, &z_off);
+    uint8_t value = get_int4_value(x->data, x->offset + x_off);
+    set_int4_value(z->data, z->offset + z_off, value);
+  } while (nd_iterator_next(&it));
+
+  nd_iterator_destroy(&it);
+}
+
 static void nx_c_generic_copy(const ndarray_t *x, ndarray_t *z,
                               size_t elem_size) {
   long total = total_elements(x);
@@ -1035,8 +1081,14 @@ CAMLprim value caml_nx_assign_bc(value *argv, int argn) {
     int src_offset = Int_val(v_src_offset);
     int dst_offset = Int_val(v_dst_offset);
 
-    memcpy((char *)dst_data + dst_offset * elem_size,
-           (char *)src_data + src_offset * elem_size, elem_size);
+    // Special handling for Int4/UInt4 packed types
+    if (kind == NX_BA_INT4 || kind == NX_BA_UINT4) {
+      uint8_t value = get_int4_value(src_data, src_offset);
+      set_int4_value(dst_data, dst_offset, value);
+    } else {
+      memcpy((char *)dst_data + dst_offset * elem_size,
+             (char *)src_data + src_offset * elem_size, elem_size);
+    }
 
     return Val_unit;
   }
@@ -1067,7 +1119,14 @@ CAMLprim value caml_nx_assign_bc(value *argv, int argn) {
   dst.offset = Int_val(v_dst_offset);
 
   caml_enter_blocking_section();
-  nx_c_generic_copy(&src, &dst, elem_size);
+  
+  // Special handling for Int4/UInt4 packed types
+  if (kind == NX_BA_INT4 || kind == NX_BA_UINT4) {
+    nx_c_copy_int4(&src, &dst);
+  } else {
+    nx_c_generic_copy(&src, &dst, elem_size);
+  }
+  
   caml_leave_blocking_section();
 
   return Val_unit;

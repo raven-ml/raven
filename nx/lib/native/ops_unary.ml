@@ -1,4 +1,4 @@
-open Bigarray
+open Bigarray_ext
 open Nx_core.Dtype
 module Shape = Nx_core.Shape
 open Internal
@@ -715,20 +715,20 @@ let kernel_recip_float16 (a : (float, float16_elt) t)
     let n = end_idx - start_idx in
     while !i + 3 < n do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let v0 = Bigarray.Array1.unsafe_get a_buf (arg_base + i0) in
-      let v1 = Bigarray.Array1.unsafe_get a_buf (arg_base + i1) in
-      let v2 = Bigarray.Array1.unsafe_get a_buf (arg_base + i2) in
-      let v3 = Bigarray.Array1.unsafe_get a_buf (arg_base + i3) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + i0) (1.0 /. v0);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i1) (1.0 /. v1);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i2) (1.0 /. v2);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i3) (1.0 /. v3);
+      let v0 = Array1.unsafe_get a_buf (arg_base + i0) in
+      let v1 = Array1.unsafe_get a_buf (arg_base + i1) in
+      let v2 = Array1.unsafe_get a_buf (arg_base + i2) in
+      let v3 = Array1.unsafe_get a_buf (arg_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (1.0 /. v0);
+      Array1.unsafe_set out_buf (out_base + i1) (1.0 /. v1);
+      Array1.unsafe_set out_buf (out_base + i2) (1.0 /. v2);
+      Array1.unsafe_set out_buf (out_base + i3) (1.0 /. v3);
       i := !i + 4
     done;
     while !i < n do
       let idx = !i in
-      let v = Bigarray.Array1.unsafe_get a_buf (arg_base + idx) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + idx) (1.0 /. v);
+      let v = Array1.unsafe_get a_buf (arg_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (1.0 /. v);
       incr i
     done)
   else
@@ -740,9 +740,9 @@ let kernel_recip_float16 (a : (float, float16_elt) t)
       Shape.broadcast_index_into md_index (shape a) a_idx;
       let a_lin_offset_in_a_data = Shape.ravel_index a_idx (strides a) in
       let v =
-        Bigarray.Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
+        Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
       in
-      Bigarray.Array1.unsafe_set out_buf (offset out + k) (1.0 /. v)
+      Array1.unsafe_set out_buf (offset out + k) (1.0 /. v)
     done
 
 let kernel_recip_float32 (a : (float, float32_elt) t)
@@ -755,20 +755,20 @@ let kernel_recip_float32 (a : (float, float32_elt) t)
     let n = end_idx - start_idx in
     while !i + 3 < n do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let v0 = Bigarray.Array1.unsafe_get a_buf (arg_base + i0) in
-      let v1 = Bigarray.Array1.unsafe_get a_buf (arg_base + i1) in
-      let v2 = Bigarray.Array1.unsafe_get a_buf (arg_base + i2) in
-      let v3 = Bigarray.Array1.unsafe_get a_buf (arg_base + i3) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + i0) (1.0 /. v0);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i1) (1.0 /. v1);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i2) (1.0 /. v2);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i3) (1.0 /. v3);
+      let v0 = Array1.unsafe_get a_buf (arg_base + i0) in
+      let v1 = Array1.unsafe_get a_buf (arg_base + i1) in
+      let v2 = Array1.unsafe_get a_buf (arg_base + i2) in
+      let v3 = Array1.unsafe_get a_buf (arg_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (1.0 /. v0);
+      Array1.unsafe_set out_buf (out_base + i1) (1.0 /. v1);
+      Array1.unsafe_set out_buf (out_base + i2) (1.0 /. v2);
+      Array1.unsafe_set out_buf (out_base + i3) (1.0 /. v3);
       i := !i + 4
     done;
     while !i < n do
       let idx = !i in
-      let v = Bigarray.Array1.unsafe_get a_buf (arg_base + idx) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + idx) (1.0 /. v);
+      let v = Array1.unsafe_get a_buf (arg_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (1.0 /. v);
       incr i
     done)
   else
@@ -780,9 +780,9 @@ let kernel_recip_float32 (a : (float, float32_elt) t)
       Shape.broadcast_index_into md_index (shape a) a_idx;
       let a_lin_offset_in_a_data = Shape.ravel_index a_idx (strides a) in
       let v =
-        Bigarray.Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
+        Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
       in
-      Bigarray.Array1.unsafe_set out_buf (offset out + k) (1.0 /. v)
+      Array1.unsafe_set out_buf (offset out + k) (1.0 /. v)
     done
 
 let kernel_recip_float64 (a : (float, float64_elt) t)
@@ -795,20 +795,20 @@ let kernel_recip_float64 (a : (float, float64_elt) t)
     let n = end_idx - start_idx in
     while !i + 3 < n do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let v0 = Bigarray.Array1.unsafe_get a_buf (arg_base + i0) in
-      let v1 = Bigarray.Array1.unsafe_get a_buf (arg_base + i1) in
-      let v2 = Bigarray.Array1.unsafe_get a_buf (arg_base + i2) in
-      let v3 = Bigarray.Array1.unsafe_get a_buf (arg_base + i3) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + i0) (1.0 /. v0);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i1) (1.0 /. v1);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i2) (1.0 /. v2);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i3) (1.0 /. v3);
+      let v0 = Array1.unsafe_get a_buf (arg_base + i0) in
+      let v1 = Array1.unsafe_get a_buf (arg_base + i1) in
+      let v2 = Array1.unsafe_get a_buf (arg_base + i2) in
+      let v3 = Array1.unsafe_get a_buf (arg_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (1.0 /. v0);
+      Array1.unsafe_set out_buf (out_base + i1) (1.0 /. v1);
+      Array1.unsafe_set out_buf (out_base + i2) (1.0 /. v2);
+      Array1.unsafe_set out_buf (out_base + i3) (1.0 /. v3);
       i := !i + 4
     done;
     while !i < n do
       let idx = !i in
-      let v = Bigarray.Array1.unsafe_get a_buf (arg_base + idx) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + idx) (1.0 /. v);
+      let v = Array1.unsafe_get a_buf (arg_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (1.0 /. v);
       incr i
     done)
   else
@@ -820,9 +820,9 @@ let kernel_recip_float64 (a : (float, float64_elt) t)
       Shape.broadcast_index_into md_index (shape a) a_idx;
       let a_lin_offset_in_a_data = Shape.ravel_index a_idx (strides a) in
       let v =
-        Bigarray.Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
+        Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
       in
-      Bigarray.Array1.unsafe_set out_buf (offset out + k) (1.0 /. v)
+      Array1.unsafe_set out_buf (offset out + k) (1.0 /. v)
     done
 
 let kernel_recip_complex32 (a : (Complex.t, complex32_elt) t)
@@ -835,20 +835,20 @@ let kernel_recip_complex32 (a : (Complex.t, complex32_elt) t)
     let n = end_idx - start_idx in
     while !i + 3 < n do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let v0 = Bigarray.Array1.unsafe_get a_buf (arg_base + i0) in
-      let v1 = Bigarray.Array1.unsafe_get a_buf (arg_base + i1) in
-      let v2 = Bigarray.Array1.unsafe_get a_buf (arg_base + i2) in
-      let v3 = Bigarray.Array1.unsafe_get a_buf (arg_base + i3) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + i0) (Complex.inv v0);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i1) (Complex.inv v1);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i2) (Complex.inv v2);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i3) (Complex.inv v3);
+      let v0 = Array1.unsafe_get a_buf (arg_base + i0) in
+      let v1 = Array1.unsafe_get a_buf (arg_base + i1) in
+      let v2 = Array1.unsafe_get a_buf (arg_base + i2) in
+      let v3 = Array1.unsafe_get a_buf (arg_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.inv v0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.inv v1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.inv v2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.inv v3);
       i := !i + 4
     done;
     while !i < n do
       let idx = !i in
-      let v = Bigarray.Array1.unsafe_get a_buf (arg_base + idx) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + idx) (Complex.inv v);
+      let v = Array1.unsafe_get a_buf (arg_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.inv v);
       incr i
     done)
   else
@@ -859,8 +859,8 @@ let kernel_recip_complex32 (a : (Complex.t, complex32_elt) t)
       Shape.unravel_index_into k (shape out) md_index;
       Shape.broadcast_index_into md_index (shape a) a_idx;
       let a_lin = Shape.ravel_index a_idx (strides a) in
-      let v = Bigarray.Array1.unsafe_get a_buf (offset a + a_lin) in
-      Bigarray.Array1.unsafe_set out_buf (offset out + k) (Complex.inv v)
+      let v = Array1.unsafe_get a_buf (offset a + a_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Complex.inv v)
     done
 
 let kernel_recip_complex64 (a : (Complex.t, complex64_elt) t)
@@ -873,20 +873,20 @@ let kernel_recip_complex64 (a : (Complex.t, complex64_elt) t)
     let n = end_idx - start_idx in
     while !i + 3 < n do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
-      let v0 = Bigarray.Array1.unsafe_get a_buf (arg_base + i0) in
-      let v1 = Bigarray.Array1.unsafe_get a_buf (arg_base + i1) in
-      let v2 = Bigarray.Array1.unsafe_get a_buf (arg_base + i2) in
-      let v3 = Bigarray.Array1.unsafe_get a_buf (arg_base + i3) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + i0) (Complex.inv v0);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i1) (Complex.inv v1);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i2) (Complex.inv v2);
-      Bigarray.Array1.unsafe_set out_buf (out_base + i3) (Complex.inv v3);
+      let v0 = Array1.unsafe_get a_buf (arg_base + i0) in
+      let v1 = Array1.unsafe_get a_buf (arg_base + i1) in
+      let v2 = Array1.unsafe_get a_buf (arg_base + i2) in
+      let v3 = Array1.unsafe_get a_buf (arg_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Complex.inv v0);
+      Array1.unsafe_set out_buf (out_base + i1) (Complex.inv v1);
+      Array1.unsafe_set out_buf (out_base + i2) (Complex.inv v2);
+      Array1.unsafe_set out_buf (out_base + i3) (Complex.inv v3);
       i := !i + 4
     done;
     while !i < n do
       let idx = !i in
-      let v = Bigarray.Array1.unsafe_get a_buf (arg_base + idx) in
-      Bigarray.Array1.unsafe_set out_buf (out_base + idx) (Complex.inv v);
+      let v = Array1.unsafe_get a_buf (arg_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Complex.inv v);
       incr i
     done)
   else
@@ -897,8 +897,8 @@ let kernel_recip_complex64 (a : (Complex.t, complex64_elt) t)
       Shape.unravel_index_into k (shape out) md_index;
       Shape.broadcast_index_into md_index (shape a) a_idx;
       let a_lin = Shape.ravel_index a_idx (strides a) in
-      let v = Bigarray.Array1.unsafe_get a_buf (offset a + a_lin) in
-      Bigarray.Array1.unsafe_set out_buf (offset out + k) (Complex.inv v)
+      let v = Array1.unsafe_get a_buf (offset a + a_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Complex.inv v)
     done
 
 let kernel_exp2_float16 (a : (float, float16_elt) t)

@@ -822,16 +822,16 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       test_case "unsafe_to_bigarray" `Quick (fun () ->
           let a = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
           let ba = Nx.unsafe_to_bigarray a in
-          check int "bigarray dims" 1 (Bigarray.Genarray.num_dims ba);
+          check int "bigarray dims" 1 (Bigarray_ext.Genarray.num_dims ba);
           check (float 1e-6) "bigarray value" 2.0
-            (Bigarray.Genarray.get ba [| 1 |]));
+            (Bigarray_ext.Genarray.get ba [| 1 |]));
       test_case "of_bigarray" `Quick (fun () ->
           let ba =
-            Bigarray.Genarray.create Bigarray.float32 Bigarray.c_layout [| 3 |]
+            Bigarray_ext.Genarray.create Bigarray_ext.float32 Bigarray_ext.c_layout [| 3 |]
           in
-          Bigarray.Genarray.set ba [| 0 |] 4.0;
-          Bigarray.Genarray.set ba [| 1 |] 5.0;
-          Bigarray.Genarray.set ba [| 2 |] 6.0;
+          Bigarray_ext.Genarray.set ba [| 0 |] 4.0;
+          Bigarray_ext.Genarray.set ba [| 1 |] 5.0;
+          Bigarray_ext.Genarray.set ba [| 2 |] 6.0;
           Nx.of_bigarray ctx ba
           |> check_t "of_bigarray" [| 3 |] [| 4.; 5.; 6. |]);
       test_case "unsafe_to_array" `Quick (fun () ->

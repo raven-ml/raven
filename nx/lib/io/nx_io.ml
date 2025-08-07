@@ -1,4 +1,4 @@
-open Bigarray
+open Bigarray_ext
 open Utils
 
 type packed_nx = Utils.packed_nx = P : ('a, 'b) Nx.t -> packed_nx

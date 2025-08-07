@@ -1,6 +1,6 @@
-open Nx_core.Dtype
 module Shape = Nx_core.Shape
 open Internal
+open Bigarray_ext
 
 (* Threefry 2x32 Core Implementation *)
 module Threefry_impl = struct
@@ -57,48 +57,48 @@ let kernel_threefry_int32 (data_t : (int32, int32_elt) t)
     while !i + 3 < n do
       let i0 = !i and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
 
-      let d_val0 = Bigarray.Array1.unsafe_get data_buf (data_base + i0) in
-      let s_val0 = Bigarray.Array1.unsafe_get seed_buf (seed_base + i0) in
+      let d_val0 = Array1.unsafe_get data_buf (data_base + i0) in
+      let s_val0 = Array1.unsafe_get seed_buf (seed_base + i0) in
       let res0_0, _ =
         Threefry_impl.threefry2x32_20_rounds d_val0 c1_fixed s_val0 k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf (out_base + i0) res0_0;
+      Array1.unsafe_set out_buf (out_base + i0) res0_0;
 
-      let d_val1 = Bigarray.Array1.unsafe_get data_buf (data_base + i1) in
-      let s_val1 = Bigarray.Array1.unsafe_get seed_buf (seed_base + i1) in
+      let d_val1 = Array1.unsafe_get data_buf (data_base + i1) in
+      let s_val1 = Array1.unsafe_get seed_buf (seed_base + i1) in
       let res0_1, _ =
         Threefry_impl.threefry2x32_20_rounds d_val1 c1_fixed s_val1 k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf (out_base + i1) res0_1;
+      Array1.unsafe_set out_buf (out_base + i1) res0_1;
 
-      let d_val2 = Bigarray.Array1.unsafe_get data_buf (data_base + i2) in
-      let s_val2 = Bigarray.Array1.unsafe_get seed_buf (seed_base + i2) in
+      let d_val2 = Array1.unsafe_get data_buf (data_base + i2) in
+      let s_val2 = Array1.unsafe_get seed_buf (seed_base + i2) in
       let res0_2, _ =
         Threefry_impl.threefry2x32_20_rounds d_val2 c1_fixed s_val2 k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf (out_base + i2) res0_2;
+      Array1.unsafe_set out_buf (out_base + i2) res0_2;
 
-      let d_val3 = Bigarray.Array1.unsafe_get data_buf (data_base + i3) in
-      let s_val3 = Bigarray.Array1.unsafe_get seed_buf (seed_base + i3) in
+      let d_val3 = Array1.unsafe_get data_buf (data_base + i3) in
+      let s_val3 = Array1.unsafe_get seed_buf (seed_base + i3) in
       let res0_3, _ =
         Threefry_impl.threefry2x32_20_rounds d_val3 c1_fixed s_val3 k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf (out_base + i3) res0_3;
+      Array1.unsafe_set out_buf (out_base + i3) res0_3;
 
       i := !i + 4
     done;
     while !i < n do
       let current_idx = !i in
       let d_val =
-        Bigarray.Array1.unsafe_get data_buf (data_base + current_idx)
+        Array1.unsafe_get data_buf (data_base + current_idx)
       in
       let s_val =
-        Bigarray.Array1.unsafe_get seed_buf (seed_base + current_idx)
+        Array1.unsafe_get seed_buf (seed_base + current_idx)
       in
       let res0, _ =
         Threefry_impl.threefry2x32_20_rounds d_val c1_fixed s_val k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf (out_base + current_idx) res0;
+      Array1.unsafe_set out_buf (out_base + current_idx) res0;
       incr i
     done)
   else
@@ -118,16 +118,16 @@ let kernel_threefry_int32 (data_t : (int32, int32_elt) t)
       let seed_lin = Shape.ravel_index md_index seed_strides in
 
       let d_val =
-        Bigarray.Array1.unsafe_get data_buf (data_offset + data_lin)
+        Array1.unsafe_get data_buf (data_offset + data_lin)
       in
       let s_val =
-        Bigarray.Array1.unsafe_get seed_buf (seed_offset + seed_lin)
+        Array1.unsafe_get seed_buf (seed_offset + seed_lin)
       in
 
       let res0, _ =
         Threefry_impl.threefry2x32_20_rounds d_val c1_fixed s_val k1_fixed
       in
-      Bigarray.Array1.unsafe_set out_buf k res0
+      Array1.unsafe_set out_buf k res0
     done
 
 let threefry (context : context) (data_t : (int32, int32_elt) t)

@@ -1,7 +1,7 @@
 open Nx_core
-open Bigarray
+open Bigarray_ext
 
-type ('a, 'b) buffer = ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
+type ('a, 'b) buffer = ('a, 'b, c_layout) Array1.t
 type context = { pool : Parallel.pool }
 
 type ('a, 'b) t = {
@@ -26,12 +26,12 @@ let dim axis { view; _ } = View.dim axis view
 let ndim { view; _ } = View.ndim view
 let is_c_contiguous { view; _ } = View.is_c_contiguous view
 
-(* Low-level helper to create a Bigarray.Array1.t *)
+(* Low-level helper to create a Array1.t *)
 let create_buffer_unsafe (type a b) (dt : (a, b) Dtype.t)
     (size_in_elements : int) : (a, b) buffer =
-  Bigarray.Array1.create
-    (Dtype.to_bigarray_kind dt)
-    Bigarray.c_layout size_in_elements
+  Array1.create
+    (Dtype.to_bigarray_ext_kind dt)
+    c_layout size_in_elements
 
 (* Operations (These seem like they might belong in a higher-level API or were
    part of an older structure, but correcting them as requested.) Note: These
@@ -82,7 +82,7 @@ let copy : type a b. (a, b) t -> (a, b) t =
     && Array1.dim (buffer t_src) = total_elements
   then (
     (* If source is fully C-contiguous and view covers entire buffer, use fast
-       Bigarray.Array1.blit *)
+       Array1.blit *)
     Array1.blit (buffer t_src) new_buffer;
     new_t)
   else
@@ -92,8 +92,8 @@ let copy : type a b. (a, b) t -> (a, b) t =
     let n_dims = View.ndim src_view in
     if n_dims = 0 then (
       (* Scalar case *)
-      let v = Bigarray.Array1.get (buffer t_src) (View.offset src_view) in
-      Bigarray.Array1.set new_buffer (View.offset new_view) v;
+      let v = Array1.get (buffer t_src) (View.offset src_view) in
+      Array1.set new_buffer (View.offset new_view) v;
       new_t)
     else
       let current_md_idx = Array.make n_dims 0 in
@@ -133,7 +133,7 @@ let fill : type a b. a -> (a, b) t -> unit =
     let n_dims = View.ndim fill_view in
     if n_dims = 0 then
       (* Scalar case *)
-      Bigarray.Array1.set fill_buffer (View.offset fill_view) value
+      Array1.set fill_buffer (View.offset fill_view) value
     else
       let current_md_idx = Array.make n_dims 0 in
       let rec fill_slice dim =

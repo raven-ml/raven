@@ -1,4 +1,5 @@
 open Nx_core
+open Bigarray_ext
 open Metal
 
 let where ctx cond if_true if_false =
@@ -205,7 +206,7 @@ let assign ctx dst src =
     Internal.with_command_buffer ctx (fun _cmd_buffer ->
         (* Get CPU-accessible arrays *)
         let get_data : type a b.
-            (a, b) Internal.t -> (a, b, Bigarray.c_layout) Bigarray.Array1.t =
+            (a, b) Internal.t -> (a, b, c_layout) Array1.t =
          fun t ->
           let contents = Metal.Buffer.contents t.buffer.buffer in
           let kind = Dtype.to_bigarray_kind t.dtype in
@@ -232,8 +233,8 @@ let assign ctx dst src =
           let dst_offset = View.linear_index dst.view md_idx in
 
           (* Copy value *)
-          let value = Bigarray.Array1.unsafe_get src_arr src_offset in
-          Bigarray.Array1.unsafe_set dst_arr dst_offset value
+          let value = Array1.unsafe_get src_arr src_offset in
+          Array1.unsafe_set dst_arr dst_offset value
         done)
   else
     (* Destination is contiguous - use Metal kernel *)

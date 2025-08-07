@@ -3,8 +3,13 @@
   bug_blit_overlapping
   bug_gather_index_shape
   bug_logspace_division_by_zero
-  bug_slice_batch_process_bounds)
- (libraries nx nx_c nx_core))
+  bug_slice_batch_process_bounds
+  bug_extended_types_segfault
+  bug_extended_nx_test
+  test_extended_ops
+  test_fill_simple
+  test_fill_debug)
+ (libraries bigarray_ext nx_core nx_native nx))
 
 (executables
  (names bug_metal_reduce_stride)

@@ -16,6 +16,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     | Nx_core.Dtype.Float16 -> Alcotest.float eps
     | Nx_core.Dtype.Float32 -> Alcotest.float eps
     | Nx_core.Dtype.Float64 -> Alcotest.float eps
+    | Nx_core.Dtype.BFloat16 -> Alcotest.float eps
+    | Nx_core.Dtype.Float8_e4m3 -> Alcotest.float eps
+    | Nx_core.Dtype.Float8_e5m2 -> Alcotest.float eps
     | Nx_core.Dtype.Int8 -> Alcotest.int
     | Nx_core.Dtype.Int16 -> Alcotest.int
     | Nx_core.Dtype.Int32 -> Alcotest.int32
@@ -27,12 +30,22 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
         Alcotest.testable
           (fun ppf v -> Format.fprintf ppf "%nd" v)
           Nativeint.equal
+    | Nx_core.Dtype.Int4 -> Alcotest.int
+    | Nx_core.Dtype.UInt4 -> Alcotest.int
+    | Nx_core.Dtype.QInt8 -> Alcotest.int
+    | Nx_core.Dtype.QUInt8 -> Alcotest.int
+    | Nx_core.Dtype.Bool -> Alcotest.bool
     | Nx_core.Dtype.Complex32 ->
         Alcotest.testable
           (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
           (fun a b ->
             Float.abs (a.re -. b.re) < eps && Float.abs (a.im -. b.im) < eps)
     | Nx_core.Dtype.Complex64 ->
+        Alcotest.testable
+          (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
+          (fun a b ->
+            Float.abs (a.re -. b.re) < eps && Float.abs (a.im -. b.im) < eps)
+    | Nx_core.Dtype.Complex16 ->
         Alcotest.testable
           (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
           (fun a b ->
