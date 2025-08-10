@@ -232,6 +232,9 @@ let op_reduce_max ~axes ~keepdims t = Ops_reduce.max t.context t ~axes ~keepdims
 let op_reduce_prod ~axes ~keepdims t =
   Ops_reduce.prod t.context t ~axes ~keepdims
 
+(* Cumsum operation *)
+let op_cumsum ~axis t = Ops_cumsum.cumsum t.context ~axis t
+
 (* Special operations *)
 let op_cast : type a b c d. (a, b) t -> (c, d) Dtype.t -> (c, d) t =
  fun t target_dtype -> Ops_special.cast t.context t target_dtype

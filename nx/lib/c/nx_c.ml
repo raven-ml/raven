@@ -1668,3 +1668,76 @@ let op_eigh (type a b) ~vectors (x : (a, b) t) :
     (match vecs_opt with Some v -> View.offset v.view | None -> 0);
   let _ = x.view in
   (vals, vecs_opt)
+(* Helper function to perform cumsum using tensor slicing and addition *)
+let cumsum_via_slicing ~axis x =
+  let input_shape = View.shape x.view in
+  let axis_size = input_shape.(axis) in
+  
+  (* Create output tensor with same shape *)
+  let result = op_copy x in
+  
+  (* For each position along the axis, add the previous cumulative sum *)
+  for i = 1 to axis_size - 1 do
+    (* Create slices for current and previous positions *)
+    let current_bounds = Array.mapi (fun d size -> 
+      if d = axis then (i, i + 1) else (0, size)
+    ) input_shape in
+    let prev_bounds = Array.mapi (fun d size -> 
+      if d = axis then (i - 1, i) else (0, size)
+    ) input_shape in
+    
+    (* Get slices *)
+    let current_slice = op_shrink result current_bounds in
+    let prev_slice = op_shrink result prev_bounds in
+    let input_slice = op_shrink x current_bounds in
+    
+    (* Add previous cumulative sum to current input *)
+    let new_value = op_add prev_slice input_slice in
+    
+    (* Assign back to result *)
+    op_assign current_slice new_value
+  done;
+  
+  result
+
+(* Cumulative sum operation *)
+let op_cumsum ~axis x =
+  (* Check for supported data types first *)
+  (let dtype_supported = 
+    Dtype.equal x.dtype Dtype.int32 ||
+    Dtype.equal x.dtype Dtype.int64 ||
+    Dtype.equal x.dtype Dtype.float32 ||
+    Dtype.equal x.dtype Dtype.float64
+  in
+  if not dtype_supported then
+    failwith "cumsum: data type not yet supported");
+  
+  let input_shape = View.shape x.view in
+  let ndim = Array.length input_shape in
+  
+  (* Handle scalar tensor case *)
+  if ndim = 0 then (
+    if axis <> 0 && axis <> -1 then
+      invalid_arg (Printf.sprintf "op_cumsum: axis %d out of bounds for scalar tensor (rank 0)" axis)
+    else
+      op_copy x
+  ) else (
+    (* Validate axis bounds for non-scalar tensors *)
+    let normalized_axis = if axis < 0 then axis + ndim else axis in
+    if normalized_axis < 0 || normalized_axis >= ndim then
+      invalid_arg (Printf.sprintf "op_cumsum: axis %d out of bounds for tensor with rank %d" axis ndim);
+    
+    (* Handle empty tensor case *)
+    if Array.fold_left ( * ) 1 input_shape = 0 then
+      op_copy x
+    else (
+      let axis_size = input_shape.(normalized_axis) in
+      
+      if axis_size <= 1 then
+        (* Single element or empty along axis - just copy *)
+        op_copy x
+      else
+        (* Use tensor slicing approach to implement cumsum *)
+        cumsum_via_slicing ~axis:normalized_axis x
+    )
+  )
