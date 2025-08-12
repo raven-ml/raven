@@ -190,6 +190,21 @@ let test_row_map () =
   | Some arr -> check_bool "mapped values" true (arr = [|2l; 4l; 6l|])
   | None -> Alcotest.fail "doubled column should exist"
 
+let test_row_mapHomo () =
+  let df = create [
+    ("x", Col.int32_list [1l; 2l; 3l]);
+    ("y", Col.int32_list [4l; 5l; 6l]);
+    ("z", Col.int32_list [7l; 8l; 9l])
+  ] in
+  
+  (* Use map_column to create a new column *)
+  let df2 = map_column df "allMul" Nx.int32 
+    Row.(mapHomo [int32 "x"; int32 "y"; int32 "z"] ~f:(fun xl -> List.fold_left (Int32.mul) 1l xl)) in
+  
+  match to_int32_array df2 "allMul" with
+  | Some arr -> check_bool "mapped values" true (arr = [|28l; 80l; 162l|])
+  | None -> Alcotest.fail "allMul column should exist"
+
 (* Test sorting *)
 let test_sort () =
   let df = create [
@@ -379,6 +394,7 @@ let concat_tests = [
 let row_module_tests = [
   "accessors", `Quick, test_row_accessors;
   "map", `Quick, test_row_map;
+  "mapHomo", `Quick, test_row_mapHomo;
 ]
 
 let sort_group_tests = [

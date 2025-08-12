@@ -316,6 +316,12 @@ module Row : sig
 
   val map3 : 'a t -> 'b t -> 'c t -> f:('a -> 'b -> 'c -> 'd) -> 'd t
   (** [map3 x y z ~f] combines three computations with a ternary function. *)
+  
+  val mapHomo : ('a t) list -> f:('a list -> 'b) -> 'b t
+  (** [mapHomo [x] ~f] maps a function over a list of homogeneous computations. *)
+  
+  (* val mapHomo2 : ('a t) list -> ('b t) list -> f:('a list -> 'b list -> 'c) -> 'c t *)
+  (** [mapHomo2 [x] [y] ~f] maps a function over two lists of homogeneous computations. *)
 
   val both : 'a t -> 'b t -> ('a * 'b) t
   (** [both x y] pairs two computations. *)

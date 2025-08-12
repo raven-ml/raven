@@ -390,6 +390,11 @@ module Row = struct
   let map x ~f = { f = (fun df i -> f (x.f df i)) }
   let map2 x y ~f = { f = (fun df i -> f (x.f df i) (y.f df i)) }
   let map3 x y z ~f = { f = (fun df i -> f (x.f df i) (y.f df i) (z.f df i)) }
+  
+  let mapHomo xl ~f = { f = (fun df i ->
+    List.map (fun x -> x.f df i) xl
+    |> f) }
+
   let both x y = { f = (fun df i -> (x.f df i, y.f df i)) }
 
   let float32 name =
