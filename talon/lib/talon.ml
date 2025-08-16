@@ -250,16 +250,12 @@ module Cols = struct
 
   let float t =
     column_types t
-    |> List.filter (function
-         | _, (`Float32 | `Float64) -> true
-         | _ -> false)
+    |> List.filter (function _, (`Float32 | `Float64) -> true | _ -> false)
     |> List.map fst
 
   let int t =
     column_types t
-    |> List.filter (function
-         | _, (`Int32 | `Int64) -> true
-         | _ -> false)
+    |> List.filter (function _, (`Int32 | `Int64) -> true | _ -> false)
     |> List.map fst
 
   let bool t =
@@ -438,7 +434,6 @@ let reorder_columns t names =
 type 'a row = { f : t -> int -> 'a }
 
 module Row = struct
-
   let return x = { f = (fun _ _ -> x) }
 
   let apply ff fx =
@@ -606,24 +601,21 @@ module Row = struct
     }
 
   let numbers names = List.map number names
-
   let index = { f = (fun _ i -> i) }
   let sequence xs = { f = (fun df i -> List.map (fun x -> x.f df i) xs) }
   let all = sequence
   let map_list xs ~f = map (sequence xs) ~f
-  
+
   let fold_list xs ~init ~f =
-    { f = (fun df i ->
-        List.fold_left (fun acc x -> f acc (x.f df i)) init xs)
-    }
-  
+    { f = (fun df i -> List.fold_left (fun acc x -> f acc (x.f df i)) init xs) }
+
   let float32s names = List.map float32 names
   let float64s names = List.map float64 names
   let int32s names = List.map int32 names
   let int64s names = List.map int64 names
   let bools names = List.map bool names
   let strings names = List.map string names
-  
+
   module Agg = struct
     (* Vectorized row-wise aggregations using Nx operations *)
 
@@ -633,7 +625,8 @@ module Row = struct
         (fun (acc : (float, Bigarray.float64_elt) Nx.t list) name ->
           match get_column t name with
           | Some (Col.P (Nx.Float64, tensor)) -> tensor :: acc
-          | Some (Col.P (Nx.Float32, tensor)) -> Nx.cast Nx.float64 tensor :: acc
+          | Some (Col.P (Nx.Float32, tensor)) ->
+              Nx.cast Nx.float64 tensor :: acc
           | Some (Col.P (Nx.Int32, tensor)) -> Nx.cast Nx.float64 tensor :: acc
           | Some (Col.P (Nx.Int64, tensor)) -> Nx.cast Nx.float64 tensor :: acc
           | Some (Col.P (_, _)) -> acc (* Skip other types *)
@@ -1114,10 +1107,10 @@ let with_columns t cols =
 
 let with_columns_map t specs =
   (* Build all columns in one pass for efficiency *)
-  let new_cols = 
-    List.map (fun (name, dtype, row_fn) ->
-      (name, Col.of_tensor (map t dtype row_fn))
-    ) specs
+  let new_cols =
+    List.map
+      (fun (name, dtype, row_fn) -> (name, Col.of_tensor (map t dtype row_fn)))
+      specs
   in
   with_columns t new_cols
 
@@ -1291,7 +1284,6 @@ let group_by_column t name =
           in
           (key_col, create columns) :: acc)
         groups []
-
 
 module Agg = struct
   module Float = struct
@@ -2151,7 +2143,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
   (* Get the join columns *)
   let left_col = get_column_exn t1 left_on in
   let right_col = get_column_exn t2 right_on in
-  
+
   (* Extract values for comparison - handle different column types *)
   let get_key_array = function
     | Col.P (Nx.Int32, tensor) ->
@@ -2166,18 +2158,17 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
     | Col.P (Nx.Float64, tensor) ->
         let arr : float array = Nx.to_array tensor in
         Array.map (fun x -> `Float x) arr
-    | Col.S arr ->
-        Array.map (fun x -> `String x) arr
+    | Col.S arr -> Array.map (fun x -> `String x) arr
     | _ -> failwith "Unsupported column type for join"
   in
-  
+
   let left_keys = get_key_array left_col in
   let right_keys = get_key_array right_col in
-  
+
   (* Build index mappings for the join *)
   let left_indices = ref [] in
   let right_indices = ref [] in
-  
+
   let process_join () =
     match how with
     | `Inner ->
@@ -2186,8 +2177,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
           for j = 0 to Array.length right_keys - 1 do
             if left_keys.(i) = right_keys.(j) then (
               left_indices := i :: !left_indices;
-              right_indices := j :: !right_indices
-            )
+              right_indices := j :: !right_indices)
           done
         done
     | `Left ->
@@ -2198,13 +2188,11 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
             if left_keys.(i) = right_keys.(j) then (
               left_indices := i :: !left_indices;
               right_indices := j :: !right_indices;
-              found := true
-            )
+              found := true)
           done;
           if not !found then (
             left_indices := i :: !left_indices;
-            right_indices := (-1) :: !right_indices  (* -1 indicates null *)
-          )
+            right_indices := -1 :: !right_indices (* -1 indicates null *))
         done
     | `Right ->
         (* Right join: all rows from right, matching from left *)
@@ -2214,13 +2202,12 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
             if left_keys.(i) = right_keys.(j) then (
               left_indices := i :: !left_indices;
               right_indices := j :: !right_indices;
-              found := true
-            )
+              found := true)
           done;
           if not !found then (
-            left_indices := (-1) :: !left_indices;  (* -1 indicates null *)
-            right_indices := j :: !right_indices
-          )
+            left_indices := -1 :: !left_indices;
+            (* -1 indicates null *)
+            right_indices := j :: !right_indices)
         done
     | `Outer ->
         (* Outer join: all rows from both *)
@@ -2231,13 +2218,11 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
             if left_keys.(i) = right_keys.(j) then (
               left_indices := i :: !left_indices;
               right_indices := j :: !right_indices;
-              found := true
-            )
+              found := true)
           done;
           if not !found then (
             left_indices := i :: !left_indices;
-            right_indices := (-1) :: !right_indices
-          )
+            right_indices := -1 :: !right_indices)
         done;
         (* Then add unmatched right rows *)
         for j = 0 to Array.length right_keys - 1 do
@@ -2246,173 +2231,180 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
             if left_keys.(i) = right_keys.(j) then matched := true
           done;
           if not !matched then (
-            left_indices := (-1) :: !left_indices;
-            right_indices := j :: !right_indices
-          )
+            left_indices := -1 :: !left_indices;
+            right_indices := j :: !right_indices)
         done
   in
-  
+
   process_join ();
-  
+
   let left_idx = Array.of_list (List.rev !left_indices) in
   let right_idx = Array.of_list (List.rev !right_indices) in
-  
+
   (* Helper to reindex a column based on indices *)
   let reindex_column col indices n_source =
     match col with
-    | Col.P (dtype, tensor) ->
-        (match dtype with
+    | Col.P (dtype, tensor) -> (
+        match dtype with
         | Nx.Float32 ->
             let source_arr : float array = Nx.to_array tensor in
-            let result = Array.init (Array.length indices) (fun i ->
-              let idx = indices.(i) in
-              if idx >= 0 && idx < n_source then source_arr.(idx)
-              else Float.nan
-            ) in
+            let result =
+              Array.init (Array.length indices) (fun i ->
+                  let idx = indices.(i) in
+                  if idx >= 0 && idx < n_source then source_arr.(idx)
+                  else Float.nan)
+            in
             Col.P (dtype, Nx.create dtype [| Array.length result |] result)
         | Nx.Float64 ->
             let source_arr : float array = Nx.to_array tensor in
-            let result = Array.init (Array.length indices) (fun i ->
-              let idx = indices.(i) in
-              if idx >= 0 && idx < n_source then source_arr.(idx)
-              else Float.nan
-            ) in
+            let result =
+              Array.init (Array.length indices) (fun i ->
+                  let idx = indices.(i) in
+                  if idx >= 0 && idx < n_source then source_arr.(idx)
+                  else Float.nan)
+            in
             Col.P (dtype, Nx.create dtype [| Array.length result |] result)
         | Nx.Int32 ->
             let source_arr : int32 array = Nx.to_array tensor in
-            let result = Array.init (Array.length indices) (fun i ->
-              let idx = indices.(i) in
-              if idx >= 0 && idx < n_source then source_arr.(idx)
-              else Int32.min_int
-            ) in
+            let result =
+              Array.init (Array.length indices) (fun i ->
+                  let idx = indices.(i) in
+                  if idx >= 0 && idx < n_source then source_arr.(idx)
+                  else Int32.min_int)
+            in
             Col.P (dtype, Nx.create dtype [| Array.length result |] result)
         | Nx.Int64 ->
             let source_arr : int64 array = Nx.to_array tensor in
-            let result = Array.init (Array.length indices) (fun i ->
-              let idx = indices.(i) in
-              if idx >= 0 && idx < n_source then source_arr.(idx)
-              else Int64.min_int
-            ) in
+            let result =
+              Array.init (Array.length indices) (fun i ->
+                  let idx = indices.(i) in
+                  if idx >= 0 && idx < n_source then source_arr.(idx)
+                  else Int64.min_int)
+            in
             Col.P (dtype, Nx.create dtype [| Array.length result |] result)
         | _ ->
             (* For other types, just create zeros *)
             let source_arr = Nx.to_array tensor in
-            let result = Array.init (Array.length indices) (fun i ->
-              let idx = indices.(i) in
-              if idx >= 0 && idx < n_source then source_arr.(idx)
-              else source_arr.(0)  (* Use first element as default *)
-            ) in
+            let result =
+              Array.init (Array.length indices) (fun i ->
+                  let idx = indices.(i) in
+                  if idx >= 0 && idx < n_source then source_arr.(idx)
+                  else source_arr.(0)
+                  (* Use first element as default *))
+            in
             Col.P (dtype, Nx.create dtype [| Array.length result |] result))
     | Col.S arr ->
-        let result = Array.init (Array.length indices) (fun i ->
-          let idx = indices.(i) in
-          if idx >= 0 && idx < Array.length arr then arr.(idx)
-          else None
-        ) in
+        let result =
+          Array.init (Array.length indices) (fun i ->
+              let idx = indices.(i) in
+              if idx >= 0 && idx < Array.length arr then arr.(idx) else None)
+        in
         Col.S result
     | Col.B arr ->
-        let result = Array.init (Array.length indices) (fun i ->
-          let idx = indices.(i) in
-          if idx >= 0 && idx < Array.length arr then arr.(idx)
-          else None
-        ) in
+        let result =
+          Array.init (Array.length indices) (fun i ->
+              let idx = indices.(i) in
+              if idx >= 0 && idx < Array.length arr then arr.(idx) else None)
+        in
         Col.B result
   in
-  
+
   (* Build result columns *)
   let result_cols = ref [] in
-  
+
   (* Add columns from left table *)
   let left_suffix, right_suffix = suffixes in
-  List.iter (fun name ->
-    let col = get_column_exn t1 name in
-    let new_col = reindex_column col left_idx (num_rows t1) in
-    (* Check if this column name exists in right table (excluding join column) *)
-    let final_name = 
-      if name <> left_on && has_column t2 name then 
-        name ^ left_suffix 
-      else name 
-    in
-    result_cols := (final_name, new_col) :: !result_cols
-  ) (column_names t1);
-  
-  (* Add columns from right table (excluding the join column for join, not merge) *)
-  List.iter (fun name ->
-    if name <> right_on || left_on <> right_on then (
-      let col = get_column_exn t2 name in
-      let new_col = reindex_column col right_idx (num_rows t2) in
-      (* Check if this column name already exists *)
+  List.iter
+    (fun name ->
+      let col = get_column_exn t1 name in
+      let new_col = reindex_column col left_idx (num_rows t1) in
+      (* Check if this column name exists in right table (excluding join
+         column) *)
       let final_name =
-        if has_column t1 name then
-          name ^ right_suffix
+        if name <> left_on && has_column t2 name then name ^ left_suffix
         else name
       in
-      result_cols := (final_name, new_col) :: !result_cols
-    )
-  ) (column_names t2);
-  
+      result_cols := (final_name, new_col) :: !result_cols)
+    (column_names t1);
+
+  (* Add columns from right table (excluding the join column for join, not
+     merge) *)
+  List.iter
+    (fun name ->
+      if name <> right_on || left_on <> right_on then
+        let col = get_column_exn t2 name in
+        let new_col = reindex_column col right_idx (num_rows t2) in
+        (* Check if this column name already exists *)
+        let final_name =
+          if has_column t1 name then name ^ right_suffix else name
+        in
+        result_cols := (final_name, new_col) :: !result_cols)
+    (column_names t2);
+
   create (List.rev !result_cols)
 
 let pivot t ~index ~columns ~values ?(agg_func = `Sum) () =
   (* Get unique values from the columns column to become new column names *)
   let col_col = get_column_exn t columns in
-  let unique_cols = 
+  let unique_cols =
     match col_col with
     | Col.S arr ->
         let seen = Hashtbl.create 16 in
-        Array.fold_left (fun acc opt ->
-          match opt with
-          | Some s when not (Hashtbl.mem seen s) ->
-              Hashtbl.add seen s ();
-              s :: acc
-          | _ -> acc
-        ) [] arr |> List.rev
+        Array.fold_left
+          (fun acc opt ->
+            match opt with
+            | Some s when not (Hashtbl.mem seen s) ->
+                Hashtbl.add seen s ();
+                s :: acc
+            | _ -> acc)
+          [] arr
+        |> List.rev
     | Col.P (Nx.Int32, tensor) ->
         let arr : int32 array = Nx.to_array tensor in
         let seen = Hashtbl.create 16 in
-        Array.fold_left (fun acc v ->
-          let s = Int32.to_string v in
-          if not (Hashtbl.mem seen s) then (
-            Hashtbl.add seen s ();
-            s :: acc
-          ) else acc
-        ) [] arr |> List.rev
+        Array.fold_left
+          (fun acc v ->
+            let s = Int32.to_string v in
+            if not (Hashtbl.mem seen s) then (
+              Hashtbl.add seen s ();
+              s :: acc)
+            else acc)
+          [] arr
+        |> List.rev
     | _ -> failwith "pivot: columns must be string or int32"
   in
-  
+
   (* Get unique index values *)
   let index_col = get_column_exn t index in
-  let index_values = 
+  let index_values =
     match index_col with
     | Col.S arr -> Array.to_list arr
     | Col.P (_, tensor) ->
         let arr = Nx.to_array tensor in
-        Array.to_list (Array.map (fun _ -> Some "") arr)  (* Simplified *)
+        Array.to_list (Array.map (fun _ -> Some "") arr)
+        (* Simplified *)
     | _ -> failwith "pivot: index column type not supported"
   in
-  
+
   (* Group data by index and column values *)
   let groups = Hashtbl.create 16 in
   let values_col = get_column_exn t values in
-  
+
   for i = 0 to num_rows t - 1 do
-    let idx_key = 
-      match List.nth_opt index_values i with
-      | Some (Some s) -> s
-      | _ -> ""
+    let idx_key =
+      match List.nth_opt index_values i with Some (Some s) -> s | _ -> ""
     in
-    let col_key = 
+    let col_key =
       match col_col with
-      | Col.S arr -> (
-          match arr.(i) with Some s -> s | None -> "")
+      | Col.S arr -> ( match arr.(i) with Some s -> s | None -> "")
       | Col.P (Nx.Int32, tensor) ->
           let arr : int32 array = Nx.to_array tensor in
           Int32.to_string arr.(i)
       | _ -> ""
     in
     let key = (idx_key, col_key) in
-    
-    let value = 
+
+    let value =
       match values_col with
       | Col.P (Nx.Float64, tensor) ->
           let arr : float array = Nx.to_array tensor in
@@ -2425,116 +2417,129 @@ let pivot t ~index ~columns ~values ?(agg_func = `Sum) () =
           Int32.to_float arr.(i)
       | _ -> 0.0
     in
-    
-    let current = 
-      try Hashtbl.find groups key
-      with Not_found -> []
-    in
+
+    let current = try Hashtbl.find groups key with Not_found -> [] in
     Hashtbl.replace groups key (value :: current)
   done;
-  
+
   (* Aggregate values *)
   let aggregate values =
     match agg_func with
-    | `Sum -> List.fold_left (+.) 0.0 values
-    | `Mean -> 
-        let sum = List.fold_left (+.) 0.0 values in
+    | `Sum -> List.fold_left ( +. ) 0.0 values
+    | `Mean ->
+        let sum = List.fold_left ( +. ) 0.0 values in
         sum /. float_of_int (List.length values)
     | `Count -> float_of_int (List.length values)
     | `Min -> List.fold_left min Float.infinity values
     | `Max -> List.fold_left max Float.neg_infinity values
   in
-  
+
   (* Build unique index values for result *)
-  let unique_indices = 
+  let unique_indices =
     let seen = Hashtbl.create 16 in
-    List.fold_left (fun acc opt ->
-      match opt with
-      | Some s when not (Hashtbl.mem seen s) ->
-          Hashtbl.add seen s ();
-          s :: acc
-      | _ -> acc
-    ) [] index_values |> List.rev
+    List.fold_left
+      (fun acc opt ->
+        match opt with
+        | Some s when not (Hashtbl.mem seen s) ->
+            Hashtbl.add seen s ();
+            s :: acc
+        | _ -> acc)
+      [] index_values
+    |> List.rev
   in
-  
+
   (* Build result columns *)
-  let result_cols = ref [(index, Col.string (Array.of_list unique_indices))] in
-  
-  List.iter (fun col_name ->
-    let col_values = List.map (fun idx ->
-      let key = (idx, col_name) in
-      try
-        let values = Hashtbl.find groups key in
-        aggregate values
-      with Not_found -> Float.nan
-    ) unique_indices in
-    result_cols := (col_name, Col.float64 (Array.of_list col_values)) :: !result_cols
-  ) unique_cols;
-  
+  let result_cols =
+    ref [ (index, Col.string (Array.of_list unique_indices)) ]
+  in
+
+  List.iter
+    (fun col_name ->
+      let col_values =
+        List.map
+          (fun idx ->
+            let key = (idx, col_name) in
+            try
+              let values = Hashtbl.find groups key in
+              aggregate values
+            with Not_found -> Float.nan)
+          unique_indices
+      in
+      result_cols :=
+        (col_name, Col.float64 (Array.of_list col_values)) :: !result_cols)
+    unique_cols;
+
   create (List.rev !result_cols)
 
-let melt t ?(id_vars = []) ?(value_vars = []) ?(var_name = "variable") ?(value_name = "value") () =
+let melt t ?(id_vars = []) ?(value_vars = []) ?(var_name = "variable")
+    ?(value_name = "value") () =
   (* If value_vars is empty, use all columns except id_vars *)
-  let value_columns = 
+  let value_columns =
     if value_vars = [] then
       List.filter (fun name -> not (List.mem name id_vars)) (column_names t)
     else value_vars
   in
-  
+
   let n_rows = num_rows t in
   let n_value_cols = List.length value_columns in
   let total_rows = n_rows * n_value_cols in
-  
+
   (* Prepare result columns *)
   let result_cols = ref [] in
-  
+
   (* Add id columns - replicate each row n_value_cols times *)
-  List.iter (fun id_name ->
-    let col = get_column_exn t id_name in
-    let new_col = 
-      match col with
-      | Col.P (dtype, tensor) ->
-          let arr = Nx.to_array tensor in
-          let result = Array.init total_rows (fun i ->
-            arr.(i / n_value_cols)
-          ) in
-          Col.P (dtype, Nx.create dtype [| total_rows |] result)
-      | Col.S arr ->
-          let result = Array.init total_rows (fun i ->
-            arr.(i / n_value_cols)
-          ) in
-          Col.S result
-      | Col.B arr ->
-          let result = Array.init total_rows (fun i ->
-            arr.(i / n_value_cols)
-          ) in
-          Col.B result
-    in
-    result_cols := (id_name, new_col) :: !result_cols
-  ) id_vars;
-  
+  List.iter
+    (fun id_name ->
+      let col = get_column_exn t id_name in
+      let new_col =
+        match col with
+        | Col.P (dtype, tensor) ->
+            let arr = Nx.to_array tensor in
+            let result =
+              Array.init total_rows (fun i -> arr.(i / n_value_cols))
+            in
+            Col.P (dtype, Nx.create dtype [| total_rows |] result)
+        | Col.S arr ->
+            let result =
+              Array.init total_rows (fun i -> arr.(i / n_value_cols))
+            in
+            Col.S result
+        | Col.B arr ->
+            let result =
+              Array.init total_rows (fun i -> arr.(i / n_value_cols))
+            in
+            Col.B result
+      in
+      result_cols := (id_name, new_col) :: !result_cols)
+    id_vars;
+
   (* Add variable name column *)
-  let var_col_values = Array.init total_rows (fun i ->
-    Some (List.nth value_columns (i mod n_value_cols))
-  ) in
+  let var_col_values =
+    Array.init total_rows (fun i ->
+        Some (List.nth value_columns (i mod n_value_cols)))
+  in
   result_cols := (var_name, Col.S var_col_values) :: !result_cols;
-  
+
   (* Add value column - collect all values from value_columns *)
-  let value_arrays = List.map (fun col_name ->
-    match get_column_exn t col_name with
-    | Col.P (_, tensor) ->
-        let arr : float array = Nx.to_array (Nx.astype Nx.float64 tensor) in
-        arr
-    | _ -> Array.make n_rows Float.nan
-  ) value_columns in
-  
-  let value_col_data = Array.init total_rows (fun i ->
-    let row = i / n_value_cols in
-    let col = i mod n_value_cols in
-    (List.nth value_arrays col).(row)
-  ) in
+  let value_arrays =
+    List.map
+      (fun col_name ->
+        match get_column_exn t col_name with
+        | Col.P (_, tensor) ->
+            let arr : float array = Nx.to_array (Nx.astype Nx.float64 tensor) in
+            arr
+        | _ -> Array.make n_rows Float.nan)
+      value_columns
+  in
+
+  let value_col_data =
+    Array.init total_rows (fun i ->
+        let row = i / n_value_cols in
+        let col = i mod n_value_cols in
+        (List.nth value_arrays col).(row))
+  in
   result_cols := (value_name, Col.float64 value_col_data) :: !result_cols;
-  
+
   create (List.rev !result_cols)
 
 let to_nx t =

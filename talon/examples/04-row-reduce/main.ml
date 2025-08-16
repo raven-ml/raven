@@ -8,8 +8,8 @@ let () =
       [
         ("a", Col.float64_list [ 1.; nan; 3.; 4. ]);
         ("b", Col.float64_list [ 0.; 2.; nan; 1. ]);
-        (* ints can use sentinels to represent nulls in Talon (see docs).
-           Here we keep them valid for simplicity. *)
+        (* ints can use sentinels to represent nulls in Talon (see docs). Here
+           we keep them valid for simplicity. *)
         ("c", Col.int32_list [ 10l; 20l; 30l; 40l ]);
       ]
   in
