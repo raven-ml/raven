@@ -98,6 +98,21 @@
   (text-processing nlp natural-language-processing tokenization)))
 
 (package
+ (name talon)
+ (synopsis "A dataframe library for OCaml")
+ (description
+  "Talon provides efficient tabular data manipulation with heterogeneous column types, inspired by pandas and polars.")
+ (depends
+  ocaml
+  dune
+  (nx
+   (>= 0.1.0))
+  re
+  yojson
+  csv
+  (alcotest :with-test)))
+
+(package
  (name rune)
  (synopsis "Automatic differentiation and JIT compilation for OCaml")
  (description
