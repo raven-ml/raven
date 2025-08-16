@@ -720,9 +720,7 @@ let test_row_number () =
   in
 
   (* Test Row.number coerces all numeric types to float *)
-  let df2 =
-    with_column df "i32_as_float" Nx.float64 Row.(number "i32")
-  in
+  let df2 = with_column df "i32_as_float" Nx.float64 Row.(number "i32") in
   match to_float64_array df2 "i32_as_float" with
   | Some arr ->
       check_float "Int32 as float" 1.0 arr.(0);
@@ -743,7 +741,7 @@ let test_row_fold_list () =
   (* Test fold_list to compute sum without intermediate list *)
   let df2 =
     with_column df "sum" Nx.float64
-      Row.(fold_list (numbers ["a"; "b"; "c"]) ~init:0. ~f:( +. ))
+      Row.(fold_list (numbers [ "a"; "b"; "c" ]) ~init:0. ~f:( +. ))
   in
 
   match to_float64_array df2 "sum" with
@@ -765,15 +763,25 @@ let test_with_columns_map () =
   let df2 =
     with_columns_map df
       [
-        ("sum", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( +. ));
-        ("diff", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( -. ));
-        ("prod", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( *. ));
+        ( "sum",
+          Nx.float64,
+          Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( +. ) );
+        ( "diff",
+          Nx.float64,
+          Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( -. ) );
+        ( "prod",
+          Nx.float64,
+          Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( *. ) );
       ]
   in
 
   check_int "columns added" 5 (num_columns df2);
-  
-  match (to_float64_array df2 "sum", to_float64_array df2 "diff", to_float64_array df2 "prod") with
+
+  match
+    ( to_float64_array df2 "sum",
+      to_float64_array df2 "diff",
+      to_float64_array df2 "prod" )
+  with
   | Some sum, Some diff, Some prod ->
       check_float "Sum row 0" 5.0 sum.(0);
       check_float "Diff row 0" (-3.0) diff.(0);
@@ -794,7 +802,8 @@ let test_columns_except () =
 
   let kept = Cols.except df [ "drop1"; "drop2" ] in
   Alcotest.(check (list string))
-    "columns except" [ "keep1"; "keep2"; "keep3" ]
+    "columns except"
+    [ "keep1"; "keep2"; "keep3" ]
     (List.sort String.compare kept)
 
 let test_rowagg_dot () =
@@ -860,7 +869,7 @@ let test_join_left () =
 
   let result = join df1 df2 ~on:"key" ~how:`Left () in
   check_int "left join rows" 3 (num_rows result);
-  
+
   (* Check that all left keys are present *)
   match to_string_array result "key" with
   | Some arr ->
@@ -873,8 +882,7 @@ let test_merge () =
   let df1 =
     create
       [
-        ("id", Col.int32_list [ 1l; 2l ]);
-        ("x", Col.float64_list [ 10.0; 20.0 ]);
+        ("id", Col.int32_list [ 1l; 2l ]); ("x", Col.float64_list [ 10.0; 20.0 ]);
       ]
   in
   let df2 =
@@ -900,11 +908,13 @@ let test_pivot () =
       ]
   in
 
-  let pivoted = pivot df ~index:"date" ~columns:"product" ~values:"sales" ~agg_func:`Sum () in
+  let pivoted =
+    pivot df ~index:"date" ~columns:"product" ~values:"sales" ~agg_func:`Sum ()
+  in
   check_int "pivot rows" 2 (num_rows pivoted);
   check_bool "has A column" true (has_column pivoted "A");
   check_bool "has B column" true (has_column pivoted "B");
-  
+
   (* Check aggregated values *)
   match (to_float64_array pivoted "A", to_float64_array pivoted "B") with
   | Some a_vals, Some b_vals ->
@@ -925,12 +935,13 @@ let test_melt () =
       ]
   in
 
-  let melted = melt df ~id_vars:["id"] ~value_vars:["A"; "B"; "C"] () in
-  check_int "melt rows" 6 (num_rows melted);  (* 2 rows * 3 columns = 6 *)
+  let melted = melt df ~id_vars:[ "id" ] ~value_vars:[ "A"; "B"; "C" ] () in
+  check_int "melt rows" 6 (num_rows melted);
+  (* 2 rows * 3 columns = 6 *)
   check_bool "has id column" true (has_column melted "id");
   check_bool "has variable column" true (has_column melted "variable");
   check_bool "has value column" true (has_column melted "value");
-  
+
   (* Check melted structure *)
   match to_string_array melted "variable" with
   | Some vars ->
@@ -958,11 +969,15 @@ let test_join_with_suffixes () =
       ]
   in
 
-  let result = join df1 df2 ~on:"id" ~how:`Inner ~suffixes:("_left", "_right") () in
+  let result =
+    join df1 df2 ~on:"id" ~how:`Inner ~suffixes:("_left", "_right") ()
+  in
   check_bool "has value_left column" true (has_column result "value_left");
   check_bool "has value_right column" true (has_column result "value_right");
-  
-  match (to_float64_array result "value_left", to_float64_array result "value_right") with
+
+  match
+    (to_float64_array result "value_left", to_float64_array result "value_right")
+  with
   | Some left, Some right ->
       check_float "left value 1" 10.0 left.(0);
       check_float "right value 1" 100.0 right.(0);
