@@ -17,6 +17,7 @@
   --color-rune: #f59e0b;      /* amber */
   --color-kaun: #ef4444;      /* warm red */
   --color-sowilo: #0ea5e9;    /* sky blue */
+  --color-talon: #ec4899;     /* pink */
   
   /* Syntax highlighting */
   --syntax-comment: #666;
@@ -131,6 +132,7 @@ hr {
 .color-orange { color: var(--color-rune); }  /* rune - amber */
 .color-red { color: var(--color-kaun); }     /* kaun - warm red */
 .color-indigo { color: var(--color-sowilo); }  /* sowilo - sky blue */
+.color-pink { color: var(--color-talon); }   /* talon - pink */
 
 /* Remove underlines from colored library links */
 a.color-blue,
@@ -138,7 +140,8 @@ a.color-purple,
 a.color-orange,
 a.color-red,
 a.color-indigo,
-a.color-green {
+a.color-green,
+a.color-pink {
   text-decoration: none;
 }
 
@@ -185,12 +188,12 @@ a.color-green {
 
 .landing .links {
   margin: 0 auto 64px auto; /* 64px to footer nav */
-  font-size: 28px;
+  font-size: 24px;
   display: flex;
   justify-content: center;
   align-items: center;
   flex-wrap: wrap;
-  gap: 24px; /* Reduced from implicit ~36px */
+  gap: 20px; /* Reduced from implicit ~36px */
 }
 
 .landing .links a {
@@ -354,8 +357,8 @@ a.color-green {
   
   .landing .links {
     margin: 0 auto 51px auto; /* 20% reduction */
-    gap: 19px;
-    font-size: 24px;
+    gap: 16px;
+    font-size: 21px;
   }
 }
 
@@ -388,8 +391,8 @@ a.color-green {
   }
   
   .landing .links {
-    font-size: 20px;
-    gap: 16px;
+    font-size: 18px;
+    gap: 14px;
     margin: 0 auto 40px auto;
   }
   
@@ -473,6 +476,18 @@ a.color-green {
 
 .quill-nav a:hover {
   color: var(--color-quill);
+}
+
+.talon-hero {
+  border-color: var(--color-talon);
+}
+
+.talon-hero h1 {
+  color: var(--color-talon);
+}
+
+.talon-nav a:hover {
+  color: var(--color-talon);
 }
 
 /* Custom tooltips for project links */

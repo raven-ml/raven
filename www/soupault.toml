@@ -77,8 +77,8 @@
   selector = "#breadcrumbs"
   after = "breadcrumbs"
 
-[widgets.nx_api_nav]
-  widget = "nx_api_nav"
-  api_nav_file = "site/docs/nx/api_nav.html"
-  page = "docs/nx"
-  include_subsections = true
+# [widgets.nx_api_nav]
+#   widget = "nx_api_nav"
+#   api_nav_file = "site/docs/nx/api_nav.html"
+#   page = "docs/nx"
+#   include_subsections = true

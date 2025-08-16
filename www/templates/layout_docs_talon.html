@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>talon docs - <widget name="page-title" /></title>
+  <link rel="stylesheet" href="/docs.css">
+  <style>
+    :root {
+      --lib-color: var(--color-talon);
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <nav class="nav-header">
+      <a href="/" class="logo">raven</a>
+      <div class="nav-links">
+        <a href="/nx/">nx</a>
+        <a href="/hugin/">hugin</a>
+        <a href="/quill/">quill</a>
+        <a href="/rune/">rune</a>
+        <a href="/kaun/">kaun</a>
+        <a href="/sowilo/">sowilo</a>
+        <a href="/talon/" class="active">talon</a>
+        <span class="separator">|</span>
+        <a href="/docs/">docs</a>
+      </div>
+    </nav>
+  </header>
+
+  <div class="docs-container">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <a href="/docs/talon/" class="sidebar-title">talon docs</a>
+      </div>
+      <nav class="sidebar-nav">
+        <widget name="sidebar" />
+      </nav>
+    </aside>
+
+    <main class="content">
+      <widget name="page-body" />
+    </main>
+  </div>
+</body>
+</html>

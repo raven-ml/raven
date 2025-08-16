@@ -96,4 +96,4 @@ Then open http://localhost:8080 in your browser.
 
 ## Learn More
 
-- [Getting Started](getting-started.md) - Create your first notebook
+- [Getting Started](/docs/quill/getting-started/) - Create your first notebook

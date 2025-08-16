@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>talon - Fast and elegant dataframes for OCaml | raven</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="main-content">
+    <nav class="talon-nav nav-breadcrumb">
+      <a href="/">raven</a> / talon
+      [ <a href="/docs/talon/">docs</a> |
+      <a href="https://github.com/raven-ml/raven/tree/main/talon">source</a> ]
+    </nav>
+
+    <div class="talon-hero hero">
+      <h1>talon</h1>
+      <p class="tagline">pandas ergonomics. Polars performance. OCaml's type safety.</p>
+    </div>
+
+    <hr>
+
+    <h2>why talon?</h2>
+
+    <div class="feature-grid">
+      <div>
+        <h3 class="color-pink">type-safe row operations</h3>
+        <p>Work with heterogeneous columns safely. The compiler ensures your row operations match column types.</p>
+      </div>
+      <div>
+        <h3 class="color-pink">optimized for wide dataframes</h3>
+        <p>Efficient handling of 100+ columns. Vectorized operations that scale with your data.</p>
+      </div>
+      <div>
+        <h3 class="color-pink">familiar yet functional</h3>
+        <p>pandas-like API with functional programming. Use applicative functors for elegant row transformations.</p>
+      </div>
+      <div>
+        <h3 class="color-pink">built on nx</h3>
+        <p>Leverages Nx arrays for fast computation. Seamlessly integrates with the Raven ecosystem.</p>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>show me the code</h2>
+
+    <div class="code-compare">
+      <div>
+        <h4>PANDAS</h4>
+        <pre><span class="comment"># Create dataframe</span>
+<span class="keyword">df</span> <span class="operator">=</span> <span class="function">pd.DataFrame</span>({
+  <span class="string">'name'</span>: [<span class="string">'Alice'</span>, <span class="string">'Bob'</span>],
+  <span class="string">'age'</span>: [<span class="number">25</span>, <span class="number">30</span>],
+  <span class="string">'height'</span>: [<span class="number">1.70</span>, <span class="number">1.80</span>]
+})
+
+<span class="comment"># Add BMI column</span>
+<span class="keyword">df</span>[<span class="string">'bmi'</span>] <span class="operator">=</span> (
+  <span class="keyword">df</span>[<span class="string">'weight'</span>] <span class="operator">/</span> 
+  <span class="keyword">df</span>[<span class="string">'height'</span>]<span class="operator">**</span><span class="number">2</span>
+)
+
+<span class="comment"># Row-wise sum</span>
+<span class="keyword">df</span>[<span class="string">'total'</span>] <span class="operator">=</span> <span class="keyword">df</span>[[<span class="string">'a'</span>, <span class="string">'b'</span>, <span class="string">'c'</span>]].<span class="function">sum</span>(<span class="keyword">axis</span><span class="operator">=</span><span class="number">1</span>)
+
+<span class="comment"># Can fail at runtime</span>
+<span class="keyword">df</span>[<span class="string">'bad'</span>] <span class="operator">=</span> <span class="keyword">df</span>[<span class="string">'age'</span>] <span class="operator">+</span> <span class="keyword">df</span>[<span class="string">'name'</span>]  <span class="comment"># TypeError!</span></pre>
+      </div>
+      <div>
+        <h4>TALON</h4>
+        <pre><span class="comment">(* Create dataframe *)</span>
+<span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">create</span> [
+  (<span class="string">"name"</span>, <span class="type">Col</span>.<span class="function">string_list</span> [<span class="string">"Alice"</span>; <span class="string">"Bob"</span>]);
+  (<span class="string">"age"</span>, <span class="type">Col</span>.<span class="function">int32_list</span> [<span class="number">25l</span>; <span class="number">30l</span>]);
+  (<span class="string">"height"</span>, <span class="type">Col</span>.<span class="function">float64_list</span> [<span class="number">1.70</span>; <span class="number">1.80</span>])
+]
+
+<span class="comment">(* Add BMI column *)</span>
+<span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">with_column</span> <span class="keyword">df</span> <span class="string">"bmi"</span> <span class="type">Nx</span>.<span class="type">float64</span>
+  <span class="type">Row</span>.(<span class="function">map2</span> (<span class="function">number</span> <span class="string">"weight"</span>) (<span class="function">number</span> <span class="string">"height"</span>) 
+    <span class="operator">~</span><span class="keyword">f</span><span class="operator">:</span>(<span class="keyword">fun</span> <span class="keyword">w</span> <span class="keyword">h</span> <span class="operator">-></span> <span class="keyword">w</span> <span class="operator">/.</span> (<span class="keyword">h</span> <span class="operator">**</span> <span class="number">2.</span>)))
+
+<span class="comment">(* Row-wise sum *)</span>
+<span class="keyword">let</span> <span class="keyword">total</span> <span class="operator">=</span> <span class="type">Row.Agg</span>.<span class="function">sum</span> <span class="keyword">df</span> <span class="operator">~</span><span class="keyword">names</span><span class="operator">:</span>[<span class="string">"a"</span>; <span class="string">"b"</span>; <span class="string">"c"</span>]
+
+<span class="comment">(* This won't compile - type error! *)</span>
+<span class="comment">(* let bad = Row.(map2 (int32 "age") (string "name") ~f:(+)) *)</span></pre>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>the good parts</h2>
+
+    <p><b>Wide operations that scale</b><br>
+    Process 100+ columns efficiently with vectorized operations. No more iterating row by row.</p>
+
+    <p><b>Type-safe heterogeneous data</b><br>
+    Mix strings, floats, integers, and booleans. GADTs ensure type safety at compile time.</p>
+
+    <p><b>Functional transformations</b><br>
+    Use applicative functors for elegant row-wise operations. Compose transformations with map, filter, and fold.</p>
+
+    <p><b>pandas-compatible operations</b><br>
+    Join, merge, pivot, melt, groupby. All the operations you know, with better performance.</p>
+
+    <hr>
+
+    <h2>ergonomic apis</h2>
+
+    <pre><span class="comment">(* Column selectors *)</span>
+<span class="keyword">let</span> <span class="keyword">numeric_cols</span> <span class="operator">=</span> <span class="type">Cols</span>.<span class="function">numeric</span> <span class="keyword">df</span>
+<span class="keyword">let</span> <span class="keyword">price_cols</span> <span class="operator">=</span> <span class="type">Cols</span>.<span class="function">with_prefix</span> <span class="keyword">df</span> <span class="string">"price_"</span>
+
+<span class="comment">(* Batch column operations *)</span>
+<span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">with_columns</span> <span class="keyword">df</span> [
+  (<span class="string">"total"</span>, <span class="type">Row.Agg</span>.<span class="function">sum</span> <span class="keyword">df</span> <span class="operator">~</span><span class="keyword">names</span><span class="operator">:</span><span class="keyword">numeric_cols</span>);
+  (<span class="string">"avg"</span>, <span class="type">Row.Agg</span>.<span class="function">mean</span> <span class="keyword">df</span> <span class="operator">~</span><span class="keyword">names</span><span class="operator">:</span><span class="keyword">price_cols</span>)
+]
+
+<span class="comment">(* Functional row operations *)</span>
+<span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">with_columns_map</span> <span class="keyword">df</span>
+  <span class="type">Row</span>.([
+    (<span class="string">"sum"</span>, <span class="type">Nx</span>.<span class="type">float64</span>, <span class="function">map2</span> (<span class="function">number</span> <span class="string">"a"</span>) (<span class="function">number</span> <span class="string">"b"</span>) <span class="operator">~</span><span class="keyword">f</span><span class="operator">:</span>( <span class="operator">+.</span> ));
+    (<span class="string">"diff"</span>, <span class="type">Nx</span>.<span class="type">float64</span>, <span class="function">map2</span> (<span class="function">number</span> <span class="string">"a"</span>) (<span class="function">number</span> <span class="string">"b"</span>) <span class="operator">~</span><span class="keyword">f</span><span class="operator">:</span>( <span class="operator">-.</span> ))
+  ])</pre>
+
+    <hr>
+
+    <h2>get started</h2>
+
+    <p>Talon isn't released yet. For now, check out the <a href="/docs/talon/">documentation</a> to learn more.</p>
+
+    <p>When it's ready:</p>
+
+    <pre>
+<span class="comment"># Install</span>
+<span class="function">opam</span> install talon
+
+<span class="comment"># Try it</span>
+<span class="keyword">open</span> <span class="type">Talon</span>
+
+<span class="keyword">let</span> () <span class="operator">=</span> 
+  <span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">create</span> [
+    (<span class="string">"x"</span>, <span class="type">Col</span>.<span class="function">float64_list</span> [<span class="number">1.</span>; <span class="number">2.</span>; <span class="number">3.</span>]);
+    (<span class="string">"y"</span>, <span class="type">Col</span>.<span class="function">float64_list</span> [<span class="number">4.</span>; <span class="number">5.</span>; <span class="number">6.</span>])
+  ] <span class="keyword">in</span>
+  <span class="function">print</span> <span class="keyword">df</span>
+    </pre>
+  </main>
+</body>
+</html>

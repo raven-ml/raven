@@ -21,13 +21,14 @@
   (source_tree templates)
   (source_tree site)
   (source_tree odoc)
-  site/odoc.css
-  site/highlight.pack.js
-  site/katex.min.css
-  site/katex.min.js
-  site/odoc_search.js
-  site/sherlodoc.js
-  site/docs/nx/api_nav.html)
+  ; site/odoc.css
+  ; site/highlight.pack.js
+  ; site/katex.min.css
+  ; site/katex.min.js
+  ; site/odoc_search.js
+  ; site/sherlodoc.js
+  ; site/docs/nx/api_nav.html
+  )
  (action
   (run soupault)))
 
