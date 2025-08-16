@@ -231,6 +231,23 @@ val is_empty : t -> bool
 val numeric_column_names : t -> string list
 (** [numeric_column_names df] returns all columns of type float32/float64/int32/int64. *)
 
+(** {2 Column Selectors} *)
+
+val columns_matching : t -> Re.re -> string list
+(** [columns_matching df regex] returns column names matching the regex pattern. *)
+
+val columns_with_prefix : t -> string -> string list
+(** [columns_with_prefix df prefix] returns column names starting with prefix. *)
+
+val columns_with_suffix : t -> string -> string list
+(** [columns_with_suffix df suffix] returns column names ending with suffix. *)
+
+val select_dtypes : t -> [`Numeric | `Float | `Int | `Bool | `String] list -> string list
+(** [select_dtypes df types] returns column names of the specified types.
+    - `Numeric includes all float and int types
+    - `Float includes float32 and float64
+    - `Int includes int32 and int64 *)
+
 (** {1 Column Operations} *)
 
 val get_column : t -> string -> Col.t option
@@ -405,6 +422,18 @@ val map_column : t -> string -> ('a, 'b) Nx.dtype -> 'a Row.t -> t
 (** [map_column df name dtype f] creates new column from row-wise computation.
 *)
 
+val with_columns : t -> (string * Col.t) list -> t
+(** [with_columns df cols] adds or replaces multiple columns at once.
+    Similar to Polars' with_columns or pandas' assign.
+    
+    Example:
+    {[
+      with_columns df [
+        ("z", Col.of_tensor (Nx.add (get_tensor df "x") (get_tensor df "y")));
+        ("r", Col.of_tensor (Nx.div (get_tensor df "x") (get_tensor df "y")));
+      ]
+    ]} *)
+
 val iter : t -> unit Row.t -> unit
 (** [iter df f] iterates over rows. *)
 
@@ -430,6 +459,37 @@ val group_by : t -> 'key Row.t -> ('key * t) list
 
 val group_by_column : t -> string -> (Col.t * t) list
 (** [group_by_column df name] groups by column values. *)
+
+(** {1 Row-wise Aggregations} *)
+
+module Row_agg : sig
+  (** Efficient row-wise aggregations using vectorized operations.
+      Similar to pandas' axis=1 operations or Polars' horizontal functions. *)
+
+  val sum : ?skipna:bool -> t -> names:string list -> Col.t
+  (** [sum ?skipna df ~names] computes row-wise sum across specified columns.
+      Uses vectorized Nx operations for efficiency.
+      @param skipna if true (default), skip NaN values *)
+
+  val mean : ?skipna:bool -> t -> names:string list -> Col.t
+  (** [mean ?skipna df ~names] computes row-wise mean across specified columns. *)
+
+  val min : ?skipna:bool -> t -> names:string list -> Col.t
+  (** [min ?skipna df ~names] computes row-wise minimum across specified columns. *)
+
+  val max : ?skipna:bool -> t -> names:string list -> Col.t
+  (** [max ?skipna df ~names] computes row-wise maximum across specified columns. *)
+
+  val dot : t -> names:string list -> weights:float array -> Col.t
+  (** [dot df ~names ~weights] computes weighted sum (dot product) across columns.
+      Equivalent to pandas' df[cols].dot(weights). *)
+
+  val all : t -> names:string list -> Col.t
+  (** [all df ~names] returns true if all values in the row are true (for bool columns). *)
+
+  val any : t -> names:string list -> Col.t
+  (** [any df ~names] returns true if any value in the row is true (for bool columns). *)
+end
 
 (** {1 Aggregations and Column Operations} *)
 

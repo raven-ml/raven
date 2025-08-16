@@ -1,4 +1,4 @@
 (library
  (name talon)
  (public_name talon)
- (libraries nx))
+ (libraries nx re))

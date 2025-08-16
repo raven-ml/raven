@@ -562,6 +562,91 @@ let wide_tests = [
   "sequence/all equivalence", `Quick, test_sequence_all_equivalence;
 ]
 
+(* Test ergonomic APIs *)
+let test_with_columns () =
+  let df = create [
+    ("x", Col.float64_list [1.0; 2.0; 3.0]);
+    ("y", Col.float64_list [4.0; 5.0; 6.0]);
+  ] in
+  
+  let df2 = with_columns df [
+    ("z", Col.float64_list [7.0; 8.0; 9.0]);
+    ("sum", Col.float64_list [5.0; 7.0; 9.0]);
+  ] in
+  
+  check_int "columns added" 4 (num_columns df2);
+  check_bool "has z" true (has_column df2 "z");
+  check_bool "has sum" true (has_column df2 "sum")
+
+let test_column_selectors () =
+  let df = create [
+    ("feat_1", Col.float64_list [1.0]);
+    ("feat_2", Col.float64_list [2.0]);
+    ("id", Col.int32_list [1l]);
+    ("name", Col.string_list ["test"]);
+    ("score_a", Col.float64_list [3.0]);
+    ("score_b", Col.float64_list [4.0]);
+  ] in
+  
+  (* Test columns_with_prefix *)
+  let feat_cols = columns_with_prefix df "feat_" in
+  Alcotest.(check (list string)) "feat_ prefix" ["feat_1"; "feat_2"] 
+    (List.sort String.compare feat_cols);
+  
+  (* Test columns_with_suffix *)
+  let score_cols = columns_with_suffix df "_a" in
+  Alcotest.(check (list string)) "suffix _a" ["score_a"] score_cols;
+  
+  (* Test select_dtypes *)
+  let numeric = select_dtypes df [`Numeric] in
+  check_int "numeric columns" 5 (List.length numeric);
+  
+  let strings = select_dtypes df [`String] in
+  Alcotest.(check (list string)) "string columns" ["name"] strings
+
+let test_rowagg_sum () =
+  let df = create [
+    ("a", Col.float64_list [1.0; 2.0; Float.nan]);
+    ("b", Col.float64_list [3.0; 4.0; 5.0]);
+    ("c", Col.int32_list [5l; 6l; 7l]);
+  ] in
+  
+  (* Test sum with skipna=true (default) *)
+  let sum_col = Row_agg.sum df ~names:["a"; "b"; "c"] in
+  let df2 = add_column df "row_sum" sum_col in
+  
+  match to_float64_array df2 "row_sum" with
+  | Some arr ->
+      check_float "Row 0 sum" 9.0 arr.(0);  (* 1 + 3 + 5 *)
+      check_float "Row 1 sum" 12.0 arr.(1); (* 2 + 4 + 6 *)
+      check_float "Row 2 sum" 12.0 arr.(2)  (* NaN + 5 + 7, NaN skipped *)
+  | None -> Alcotest.fail "row_sum should exist"
+
+let test_rowagg_dot () =
+  let df = create [
+    ("x", Col.float64_list [1.0; 2.0; 3.0]);
+    ("y", Col.float64_list [4.0; 5.0; 6.0]);
+    ("z", Col.float64_list [7.0; 8.0; 9.0]);
+  ] in
+  
+  let weights = [|0.2; 0.3; 0.5|] in
+  let score = Row_agg.dot df ~names:["x"; "y"; "z"] ~weights in
+  let df2 = add_column df "score" score in
+  
+  match to_float64_array df2 "score" with
+  | Some arr ->
+      check_float "Row 0 weighted" 4.9 arr.(0);  (* 0.2*1 + 0.3*4 + 0.5*7 = 0.2 + 1.2 + 3.5 = 4.9 *)
+      check_float "Row 1 weighted" 5.9 arr.(1);  (* 0.2*2 + 0.3*5 + 0.5*8 = 0.4 + 1.5 + 4.0 = 5.9 *)
+      check_float "Row 2 weighted" 6.9 arr.(2)   (* 0.2*3 + 0.3*6 + 0.5*9 = 0.6 + 1.8 + 4.5 = 6.9 *)
+  | None -> Alcotest.fail "score should exist"
+
+let ergonomic_tests = [
+  "with_columns", `Quick, test_with_columns;
+  "column_selectors", `Quick, test_column_selectors;
+  "Row_agg.sum", `Quick, test_rowagg_sum;
+  "Row_agg.dot", `Quick, test_rowagg_dot;
+]
+
 let () =
   Alcotest.run "Talon" [
     "Col", col_tests;
@@ -575,4 +660,5 @@ let () =
     "Conversions", conversion_tests;
     "Edge cases", edge_tests;
     "Wide operations", wide_tests;
+    "Ergonomic APIs", ergonomic_tests;
   ]
