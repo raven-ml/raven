@@ -248,28 +248,28 @@ let numeric_column_names t =
   |> List.map fst
 
 let columns_matching t regex =
-  column_names t
-  |> List.filter (fun name -> Re.execp regex name)
+  column_names t |> List.filter (fun name -> Re.execp regex name)
 
 let columns_with_prefix t prefix =
-  column_names t
-  |> List.filter (fun name -> String.starts_with ~prefix name)
+  column_names t |> List.filter (fun name -> String.starts_with ~prefix name)
 
 let columns_with_suffix t suffix =
-  column_names t
-  |> List.filter (fun name -> String.ends_with ~suffix name)
+  column_names t |> List.filter (fun name -> String.ends_with ~suffix name)
 
 let select_dtypes t types =
   let matches_type typ = function
-    | `Numeric -> (match typ with `Float32 | `Float64 | `Int32 | `Int64 -> true | _ -> false)
-    | `Float -> (match typ with `Float32 | `Float64 -> true | _ -> false)
-    | `Int -> (match typ with `Int32 | `Int64 -> true | _ -> false)
+    | `Numeric -> (
+        match typ with
+        | `Float32 | `Float64 | `Int32 | `Int64 -> true
+        | _ -> false)
+    | `Float -> ( match typ with `Float32 | `Float64 -> true | _ -> false)
+    | `Int -> ( match typ with `Int32 | `Int64 -> true | _ -> false)
     | `Bool -> typ = `Bool
     | `String -> typ = `String
   in
   column_types t
   |> List.filter (fun (_, typ) ->
-       List.exists (fun t -> matches_type typ t) types)
+         List.exists (fun t -> matches_type typ t) types)
   |> List.map fst
 
 let get_column t name = Hashtbl.find_opt t.column_map name
@@ -433,13 +433,14 @@ module Row = struct
           let arr =
             match !cache with
             | Some a -> a
-            | None ->
+            | None -> (
                 match get_column df name with
                 | Some (Col.P (Nx.Float32, tensor)) ->
                     let a : float array = Nx.to_array tensor in
-                    cache := Some a; a
+                    cache := Some a;
+                    a
                 | Some _ -> failwith ("Column " ^ name ^ " is not float32")
-                | None -> failwith ("Column " ^ name ^ " not found")
+                | None -> failwith ("Column " ^ name ^ " not found"))
           in
           arr.(i));
     }
@@ -452,13 +453,14 @@ module Row = struct
           let arr =
             match !cache with
             | Some a -> a
-            | None ->
+            | None -> (
                 match get_column df name with
                 | Some (Col.P (Nx.Float64, tensor)) ->
                     let a : float array = Nx.to_array tensor in
-                    cache := Some a; a
+                    cache := Some a;
+                    a
                 | Some _ -> failwith ("Column " ^ name ^ " is not float64")
-                | None -> failwith ("Column " ^ name ^ " not found")
+                | None -> failwith ("Column " ^ name ^ " not found"))
           in
           arr.(i));
     }
@@ -471,13 +473,14 @@ module Row = struct
           let arr =
             match !cache with
             | Some a -> a
-            | None ->
+            | None -> (
                 match get_column df name with
                 | Some (Col.P (Nx.Int32, tensor)) ->
                     let a : int32 array = Nx.to_array tensor in
-                    cache := Some a; a
+                    cache := Some a;
+                    a
                 | Some _ -> failwith ("Column " ^ name ^ " is not int32")
-                | None -> failwith ("Column " ^ name ^ " not found")
+                | None -> failwith ("Column " ^ name ^ " not found"))
           in
           arr.(i));
     }
@@ -490,13 +493,14 @@ module Row = struct
           let arr =
             match !cache with
             | Some a -> a
-            | None ->
+            | None -> (
                 match get_column df name with
                 | Some (Col.P (Nx.Int64, tensor)) ->
                     let a : int64 array = Nx.to_array tensor in
-                    cache := Some a; a
+                    cache := Some a;
+                    a
                 | Some _ -> failwith ("Column " ^ name ^ " is not int64")
-                | None -> failwith ("Column " ^ name ^ " not found")
+                | None -> failwith ("Column " ^ name ^ " not found"))
           in
           arr.(i));
     }
@@ -509,10 +513,12 @@ module Row = struct
           let arr =
             match !cache with
             | Some a -> a
-            | None ->
+            | None -> (
                 match get_column df name with
-                | Some (Col.S a) -> cache := Some a; a
-                | _ -> failwith ("Column " ^ name ^ " is not string")
+                | Some (Col.S a) ->
+                    cache := Some a;
+                    a
+                | _ -> failwith ("Column " ^ name ^ " is not string"))
           in
           Option.value arr.(i) ~default:"");
     }
@@ -525,30 +531,26 @@ module Row = struct
           let arr =
             match !cache with
             | Some a -> a
-            | None ->
+            | None -> (
                 match get_column df name with
-                | Some (Col.B a) -> cache := Some a; a
-                | _ -> failwith ("Column " ^ name ^ " is not bool")
+                | Some (Col.B a) ->
+                    cache := Some a;
+                    a
+                | _ -> failwith ("Column " ^ name ^ " is not bool"))
           in
           Option.value arr.(i) ~default:false);
     }
 
   let index = { f = (fun _ i -> i) }
-
-  let sequence xs = 
-    { f = (fun df i -> List.map (fun x -> x.f df i) xs) }
-  
+  let sequence xs = { f = (fun df i -> List.map (fun x -> x.f df i) xs) }
   let all = sequence
-  
-  let map_list xs ~f = 
-    map (sequence xs) ~f
-
+  let map_list xs ~f = map (sequence xs) ~f
   let float32s names = List.map float32 names
   let float64s names = List.map float64 names
-  let int32s   names = List.map int32   names
-  let int64s   names = List.map int64   names
-  let bools    names = List.map bool    names
-  let strings  names = List.map string  names
+  let int32s names = List.map int32 names
+  let int64s names = List.map int64 names
+  let bools names = List.map bool names
+  let strings names = List.map string names
 end
 
 let head ?(n = 5) t =
@@ -1050,176 +1052,200 @@ let group_by_column t name =
 module Row_agg = struct
   (* Row-wise aggregations using simple iteration for now *)
   (* Each GADT branch must be handled separately due to type constraints *)
-  
-  let sum ?(skipna=true) t ~names =
+
+  let sum ?(skipna = true) t ~names =
     let n_rows = num_rows t in
-    let result = Array.init n_rows (fun i ->
-      let sum = ref 0.0 in
-      List.iter (fun name ->
-        match get_column t name with
-        | Some (Col.P (Nx.Float64, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            let v = arr.(i) in
-            if not (skipna && Float.is_nan v) then
-              sum := !sum +. v
-        | Some (Col.P (Nx.Float32, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            let v = arr.(i) in
-            if not (skipna && Float.is_nan v) then
-              sum := !sum +. v
-        | Some (Col.P (Nx.Int32, tensor)) ->
-            let arr : int32 array = Nx.to_array tensor in
-            sum := !sum +. Int32.to_float arr.(i)
-        | Some (Col.P (Nx.Int64, tensor)) ->
-            let arr : int64 array = Nx.to_array tensor in
-            sum := !sum +. Int64.to_float arr.(i)
-        | _ -> ()
-      ) names;
-      !sum
-    ) in
+    let result =
+      Array.init n_rows (fun i ->
+          let sum = ref 0.0 in
+          List.iter
+            (fun name ->
+              match get_column t name with
+              | Some (Col.P (Nx.Float64, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  let v = arr.(i) in
+                  if not (skipna && Float.is_nan v) then sum := !sum +. v
+              | Some (Col.P (Nx.Float32, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  let v = arr.(i) in
+                  if not (skipna && Float.is_nan v) then sum := !sum +. v
+              | Some (Col.P (Nx.Int32, tensor)) ->
+                  let arr : int32 array = Nx.to_array tensor in
+                  sum := !sum +. Int32.to_float arr.(i)
+              | Some (Col.P (Nx.Int64, tensor)) ->
+                  let arr : int64 array = Nx.to_array tensor in
+                  sum := !sum +. Int64.to_float arr.(i)
+              | _ -> ())
+            names;
+          !sum)
+    in
     Col.float64 result
 
-  let mean ?(skipna=true) t ~names =
+  let mean ?(skipna = true) t ~names =
     let n_rows = num_rows t in
-    let result = Array.init n_rows (fun i ->
-      let sum = ref 0.0 in
-      let count = ref 0 in
-      List.iter (fun name ->
-        match get_column t name with
-        | Some (Col.P (Nx.Float64, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            let v = arr.(i) in
-            if not (skipna && Float.is_nan v) then (
-              sum := !sum +. v;
-              incr count)
-        | Some (Col.P (Nx.Float32, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            let v = arr.(i) in
-            if not (skipna && Float.is_nan v) then (
-              sum := !sum +. v;
-              incr count)
-        | Some (Col.P (Nx.Int32, tensor)) ->
-            let arr : int32 array = Nx.to_array tensor in
-            sum := !sum +. Int32.to_float arr.(i);
-            incr count
-        | Some (Col.P (Nx.Int64, tensor)) ->
-            let arr : int64 array = Nx.to_array tensor in
-            sum := !sum +. Int64.to_float arr.(i);
-            incr count
-        | _ -> ()
-      ) names;
-      if !count > 0 then !sum /. float_of_int !count else Float.nan
-    ) in
+    let result =
+      Array.init n_rows (fun i ->
+          let sum = ref 0.0 in
+          let count = ref 0 in
+          List.iter
+            (fun name ->
+              match get_column t name with
+              | Some (Col.P (Nx.Float64, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  let v = arr.(i) in
+                  if not (skipna && Float.is_nan v) then (
+                    sum := !sum +. v;
+                    incr count)
+              | Some (Col.P (Nx.Float32, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  let v = arr.(i) in
+                  if not (skipna && Float.is_nan v) then (
+                    sum := !sum +. v;
+                    incr count)
+              | Some (Col.P (Nx.Int32, tensor)) ->
+                  let arr : int32 array = Nx.to_array tensor in
+                  sum := !sum +. Int32.to_float arr.(i);
+                  incr count
+              | Some (Col.P (Nx.Int64, tensor)) ->
+                  let arr : int64 array = Nx.to_array tensor in
+                  sum := !sum +. Int64.to_float arr.(i);
+                  incr count
+              | _ -> ())
+            names;
+          if !count > 0 then !sum /. float_of_int !count else Float.nan)
+    in
     Col.float64 result
 
-  let min ?(skipna=true) t ~names =
+  let min ?(skipna = true) t ~names =
     let n_rows = num_rows t in
-    let result = Array.init n_rows (fun i ->
-      let min_val = ref Float.infinity in
-      List.iter (fun name ->
-        match get_column t name with
-        | Some (Col.P (Nx.Float64, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            let v = arr.(i) in
-            if not (skipna && Float.is_nan v) then
-              min_val := Float.min !min_val v
-        | Some (Col.P (Nx.Float32, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            let v = arr.(i) in
-            if not (skipna && Float.is_nan v) then
-              min_val := Float.min !min_val v
-        | Some (Col.P (Nx.Int32, tensor)) ->
-            let arr : int32 array = Nx.to_array tensor in
-            min_val := Float.min !min_val (Int32.to_float arr.(i))
-        | Some (Col.P (Nx.Int64, tensor)) ->
-            let arr : int64 array = Nx.to_array tensor in
-            min_val := Float.min !min_val (Int64.to_float arr.(i))
-        | _ -> ()
-      ) names;
-      if Float.is_infinite !min_val then Float.nan else !min_val
-    ) in
+    let result =
+      Array.init n_rows (fun i ->
+          let min_val = ref Float.infinity in
+          List.iter
+            (fun name ->
+              match get_column t name with
+              | Some (Col.P (Nx.Float64, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  let v = arr.(i) in
+                  if not (skipna && Float.is_nan v) then
+                    min_val := Float.min !min_val v
+              | Some (Col.P (Nx.Float32, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  let v = arr.(i) in
+                  if not (skipna && Float.is_nan v) then
+                    min_val := Float.min !min_val v
+              | Some (Col.P (Nx.Int32, tensor)) ->
+                  let arr : int32 array = Nx.to_array tensor in
+                  min_val := Float.min !min_val (Int32.to_float arr.(i))
+              | Some (Col.P (Nx.Int64, tensor)) ->
+                  let arr : int64 array = Nx.to_array tensor in
+                  min_val := Float.min !min_val (Int64.to_float arr.(i))
+              | _ -> ())
+            names;
+          if Float.is_infinite !min_val then Float.nan else !min_val)
+    in
     Col.float64 result
 
-  let max ?(skipna=true) t ~names =
+  let max ?(skipna = true) t ~names =
     let n_rows = num_rows t in
-    let result = Array.init n_rows (fun i ->
-      let max_val = ref Float.neg_infinity in
-      List.iter (fun name ->
-        match get_column t name with
-        | Some (Col.P (Nx.Float64, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            let v = arr.(i) in
-            if not (skipna && Float.is_nan v) then
-              max_val := Float.max !max_val v
-        | Some (Col.P (Nx.Float32, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            let v = arr.(i) in
-            if not (skipna && Float.is_nan v) then
-              max_val := Float.max !max_val v
-        | Some (Col.P (Nx.Int32, tensor)) ->
-            let arr : int32 array = Nx.to_array tensor in
-            max_val := Float.max !max_val (Int32.to_float arr.(i))
-        | Some (Col.P (Nx.Int64, tensor)) ->
-            let arr : int64 array = Nx.to_array tensor in
-            max_val := Float.max !max_val (Int64.to_float arr.(i))
-        | _ -> ()
-      ) names;
-      if Float.is_infinite !max_val then Float.nan else !max_val
-    ) in
+    let result =
+      Array.init n_rows (fun i ->
+          let max_val = ref Float.neg_infinity in
+          List.iter
+            (fun name ->
+              match get_column t name with
+              | Some (Col.P (Nx.Float64, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  let v = arr.(i) in
+                  if not (skipna && Float.is_nan v) then
+                    max_val := Float.max !max_val v
+              | Some (Col.P (Nx.Float32, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  let v = arr.(i) in
+                  if not (skipna && Float.is_nan v) then
+                    max_val := Float.max !max_val v
+              | Some (Col.P (Nx.Int32, tensor)) ->
+                  let arr : int32 array = Nx.to_array tensor in
+                  max_val := Float.max !max_val (Int32.to_float arr.(i))
+              | Some (Col.P (Nx.Int64, tensor)) ->
+                  let arr : int64 array = Nx.to_array tensor in
+                  max_val := Float.max !max_val (Int64.to_float arr.(i))
+              | _ -> ())
+            names;
+          if Float.is_infinite !max_val then Float.nan else !max_val)
+    in
     Col.float64 result
 
   let dot t ~names ~weights =
     if List.length names <> Array.length weights then
       failwith "Number of columns must match number of weights";
     let n_rows = num_rows t in
-    let result = Array.init n_rows (fun i ->
-      let sum = ref 0.0 in
-      List.iteri (fun j name ->
-        let w = weights.(j) in
-        match get_column t name with
-        | Some (Col.P (Nx.Float64, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            sum := !sum +. (arr.(i) *. w)
-        | Some (Col.P (Nx.Float32, tensor)) ->
-            let arr : float array = Nx.to_array tensor in
-            sum := !sum +. (arr.(i) *. w)
-        | Some (Col.P (Nx.Int32, tensor)) ->
-            let arr : int32 array = Nx.to_array tensor in
-            sum := !sum +. (Int32.to_float arr.(i) *. w)
-        | Some (Col.P (Nx.Int64, tensor)) ->
-            let arr : int64 array = Nx.to_array tensor in
-            sum := !sum +. (Int64.to_float arr.(i) *. w)
-        | _ -> failwith ("Column " ^ name ^ " is not numeric")
-      ) names;
-      !sum
-    ) in
+    let result =
+      Array.init n_rows (fun i ->
+          let sum = ref 0.0 in
+          List.iteri
+            (fun j name ->
+              let w = weights.(j) in
+              match get_column t name with
+              | Some (Col.P (Nx.Float64, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  sum := !sum +. (arr.(i) *. w)
+              | Some (Col.P (Nx.Float32, tensor)) ->
+                  let arr : float array = Nx.to_array tensor in
+                  sum := !sum +. (arr.(i) *. w)
+              | Some (Col.P (Nx.Int32, tensor)) ->
+                  let arr : int32 array = Nx.to_array tensor in
+                  sum := !sum +. (Int32.to_float arr.(i) *. w)
+              | Some (Col.P (Nx.Int64, tensor)) ->
+                  let arr : int64 array = Nx.to_array tensor in
+                  sum := !sum +. (Int64.to_float arr.(i) *. w)
+              | _ -> failwith ("Column " ^ name ^ " is not numeric"))
+            names;
+          !sum)
+    in
     Col.float64 result
 
   let all t ~names =
-    let cols = List.filter_map (fun name ->
-      match get_column t name with
-      | Some (Col.B arr) -> Some arr
-      | _ -> None
-    ) names in
-    if cols = [] then failwith "No boolean columns found" else
-    let n_rows = num_rows t in
-    let result = Array.init n_rows (fun i ->
-      Some (List.for_all (fun arr -> Option.value arr.(i) ~default:false) cols)
-    ) in
-    Col.B result
+    let cols =
+      List.filter_map
+        (fun name ->
+          match get_column t name with
+          | Some (Col.B arr) -> Some arr
+          | _ -> None)
+        names
+    in
+    if cols = [] then failwith "No boolean columns found"
+    else
+      let n_rows = num_rows t in
+      let result =
+        Array.init n_rows (fun i ->
+            Some
+              (List.for_all
+                 (fun arr -> Option.value arr.(i) ~default:false)
+                 cols))
+      in
+      Col.B result
 
   let any t ~names =
-    let cols = List.filter_map (fun name ->
-      match get_column t name with
-      | Some (Col.B arr) -> Some arr
-      | _ -> None
-    ) names in
-    if cols = [] then failwith "No boolean columns found" else
-    let n_rows = num_rows t in
-    let result = Array.init n_rows (fun i ->
-      Some (List.exists (fun arr -> Option.value arr.(i) ~default:false) cols)
-    ) in
-    Col.B result
+    let cols =
+      List.filter_map
+        (fun name ->
+          match get_column t name with
+          | Some (Col.B arr) -> Some arr
+          | _ -> None)
+        names
+    in
+    if cols = [] then failwith "No boolean columns found"
+    else
+      let n_rows = num_rows t in
+      let result =
+        Array.init n_rows (fun i ->
+            Some
+              (List.exists
+                 (fun arr -> Option.value arr.(i) ~default:false)
+                 cols))
+      in
+      Col.B result
 end
 
 module Agg = struct

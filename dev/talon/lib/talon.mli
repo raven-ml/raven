@@ -229,20 +229,24 @@ val is_empty : t -> bool
 (** [is_empty df] returns true if dataframe has no rows. *)
 
 val numeric_column_names : t -> string list
-(** [numeric_column_names df] returns all columns of type float32/float64/int32/int64. *)
+(** [numeric_column_names df] returns all columns of type
+    float32/float64/int32/int64. *)
 
 (** {2 Column Selectors} *)
 
 val columns_matching : t -> Re.re -> string list
-(** [columns_matching df regex] returns column names matching the regex pattern. *)
+(** [columns_matching df regex] returns column names matching the regex pattern.
+*)
 
 val columns_with_prefix : t -> string -> string list
-(** [columns_with_prefix df prefix] returns column names starting with prefix. *)
+(** [columns_with_prefix df prefix] returns column names starting with prefix.
+*)
 
 val columns_with_suffix : t -> string -> string list
 (** [columns_with_suffix df suffix] returns column names ending with suffix. *)
 
-val select_dtypes : t -> [`Numeric | `Float | `Int | `Bool | `String] list -> string list
+val select_dtypes :
+  t -> [ `Numeric | `Float | `Int | `Bool | `String ] list -> string list
 (** [select_dtypes df types] returns column names of the specified types.
     - `Numeric includes all float and int types
     - `Float includes float32 and float64
@@ -366,23 +370,26 @@ module Row : sig
   (** [index] returns the current row index. *)
 
   val sequence : 'a t list -> 'a list t
-  (** [sequence xs] transforms a list of computations into a computation of a list.
-      Standard applicative operation for collecting multiple column values. *)
+  (** [sequence xs] transforms a list of computations into a computation of a
+      list. Standard applicative operation for collecting multiple column
+      values. *)
 
   val all : 'a t list -> 'a list t
-  (** [all xs] is an alias for [sequence xs]. Collects all values from the list of computations. *)
+  (** [all xs] is an alias for [sequence xs]. Collects all values from the list
+      of computations. *)
 
   val map_list : 'a t list -> f:('a list -> 'b) -> 'b t
-  (** [map_list xs ~f] sequences computations then maps f over the resulting list.
-      Equivalent to [map (sequence xs) ~f]. *)
+  (** [map_list xs ~f] sequences computations then maps f over the resulting
+      list. Equivalent to [map (sequence xs) ~f]. *)
 
-  (** Convenience builders to avoid writing [List.map int32 names] etc. *)
   val float32s : string list -> float t list
+  (** Convenience builders to avoid writing [List.map int32 names] etc. *)
+
   val float64s : string list -> float t list
-  val int32s   : string list -> int32 t list
-  val int64s   : string list -> int64 t list
-  val bools    : string list -> bool t list
-  val strings  : string list -> string t list
+  val int32s : string list -> int32 t list
+  val int64s : string list -> int64 t list
+  val bools : string list -> bool t list
+  val strings : string list -> string t list
 end
 
 (** {1 Row Operations} *)
@@ -423,15 +430,16 @@ val map_column : t -> string -> ('a, 'b) Nx.dtype -> 'a Row.t -> t
 *)
 
 val with_columns : t -> (string * Col.t) list -> t
-(** [with_columns df cols] adds or replaces multiple columns at once.
-    Similar to Polars' with_columns or pandas' assign.
-    
+(** [with_columns df cols] adds or replaces multiple columns at once. Similar to
+    Polars' with_columns or pandas' assign.
+
     Example:
     {[
-      with_columns df [
-        ("z", Col.of_tensor (Nx.add (get_tensor df "x") (get_tensor df "y")));
-        ("r", Col.of_tensor (Nx.div (get_tensor df "x") (get_tensor df "y")));
-      ]
+      with_columns df
+        [
+          ("z", Col.of_tensor (Nx.add (get_tensor df "x") (get_tensor df "y")));
+          ("r", Col.of_tensor (Nx.div (get_tensor df "x") (get_tensor df "y")));
+        ]
     ]} *)
 
 val iter : t -> unit Row.t -> unit
@@ -463,8 +471,8 @@ val group_by_column : t -> string -> (Col.t * t) list
 (** {1 Row-wise Aggregations} *)
 
 module Row_agg : sig
-  (** Efficient row-wise aggregations using vectorized operations.
-      Similar to pandas' axis=1 operations or Polars' horizontal functions. *)
+  (** Efficient row-wise aggregations using vectorized operations. Similar to
+      pandas' axis=1 operations or Polars' horizontal functions. *)
 
   val sum : ?skipna:bool -> t -> names:string list -> Col.t
   (** [sum ?skipna df ~names] computes row-wise sum across specified columns.
@@ -472,23 +480,28 @@ module Row_agg : sig
       @param skipna if true (default), skip NaN values *)
 
   val mean : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [mean ?skipna df ~names] computes row-wise mean across specified columns. *)
+  (** [mean ?skipna df ~names] computes row-wise mean across specified columns.
+  *)
 
   val min : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [min ?skipna df ~names] computes row-wise minimum across specified columns. *)
+  (** [min ?skipna df ~names] computes row-wise minimum across specified
+      columns. *)
 
   val max : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [max ?skipna df ~names] computes row-wise maximum across specified columns. *)
+  (** [max ?skipna df ~names] computes row-wise maximum across specified
+      columns. *)
 
   val dot : t -> names:string list -> weights:float array -> Col.t
-  (** [dot df ~names ~weights] computes weighted sum (dot product) across columns.
-      Equivalent to pandas' df[cols].dot(weights). *)
+  (** [dot df ~names ~weights] computes weighted sum (dot product) across
+      columns. Equivalent to pandas' df[cols].dot(weights). *)
 
   val all : t -> names:string list -> Col.t
-  (** [all df ~names] returns true if all values in the row are true (for bool columns). *)
+  (** [all df ~names] returns true if all values in the row are true (for bool
+      columns). *)
 
   val any : t -> names:string list -> Col.t
-  (** [any df ~names] returns true if any value in the row is true (for bool columns). *)
+  (** [any df ~names] returns true if any value in the row is true (for bool
+      columns). *)
 end
 
 (** {1 Aggregations and Column Operations} *)
