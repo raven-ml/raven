@@ -1050,160 +1050,123 @@ let group_by_column t name =
         groups []
 
 module Row_agg = struct
-  (* Row-wise aggregations using simple iteration for now *)
-  (* Each GADT branch must be handled separately due to type constraints *)
+  (* Vectorized row-wise aggregations using Nx operations *)
+
+  (* Helper to collect numeric columns and cast to float64 *)
+  let collect_as_float64 t names : (float, Bigarray.float64_elt) Nx.t list =
+    List.fold_left
+      (fun (acc : (float, Bigarray.float64_elt) Nx.t list) name ->
+        match get_column t name with
+        | Some (Col.P (Nx.Float64, tensor)) -> tensor :: acc
+        | Some (Col.P (Nx.Float32, tensor)) -> Nx.cast Nx.float64 tensor :: acc
+        | Some (Col.P (Nx.Int32, tensor)) -> Nx.cast Nx.float64 tensor :: acc
+        | Some (Col.P (Nx.Int64, tensor)) -> Nx.cast Nx.float64 tensor :: acc
+        | Some (Col.P (_, _)) -> acc (* Skip other types *)
+        | _ -> acc)
+      [] names
+    |> List.rev
 
   let sum ?(skipna = true) t ~names =
-    let n_rows = num_rows t in
-    let result =
-      Array.init n_rows (fun i ->
-          let sum = ref 0.0 in
-          List.iter
-            (fun name ->
-              match get_column t name with
-              | Some (Col.P (Nx.Float64, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  let v = arr.(i) in
-                  if not (skipna && Float.is_nan v) then sum := !sum +. v
-              | Some (Col.P (Nx.Float32, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  let v = arr.(i) in
-                  if not (skipna && Float.is_nan v) then sum := !sum +. v
-              | Some (Col.P (Nx.Int32, tensor)) ->
-                  let arr : int32 array = Nx.to_array tensor in
-                  sum := !sum +. Int32.to_float arr.(i)
-              | Some (Col.P (Nx.Int64, tensor)) ->
-                  let arr : int64 array = Nx.to_array tensor in
-                  sum := !sum +. Int64.to_float arr.(i)
-              | _ -> ())
-            names;
-          !sum)
-    in
-    Col.float64 result
+    let tensors = collect_as_float64 t names in
+    if tensors = [] then Col.float64 (Array.make (num_rows t) 0.0)
+    else
+      (* Stack tensors as rows and sum along axis 0 *)
+      let stacked = Nx.stack tensors ~axis:0 in
+      let result =
+        if skipna then
+          (* Replace NaN with 0 for sum *)
+          let nan_mask = Nx.isnan stacked in
+          let zeros = Nx.zeros_like stacked in
+          let cleaned = Nx.where nan_mask zeros stacked in
+          Nx.sum cleaned ~axes:[| 0 |]
+        else Nx.sum stacked ~axes:[| 0 |]
+      in
+      Col.of_tensor result
 
   let mean ?(skipna = true) t ~names =
-    let n_rows = num_rows t in
-    let result =
-      Array.init n_rows (fun i ->
-          let sum = ref 0.0 in
-          let count = ref 0 in
-          List.iter
-            (fun name ->
-              match get_column t name with
-              | Some (Col.P (Nx.Float64, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  let v = arr.(i) in
-                  if not (skipna && Float.is_nan v) then (
-                    sum := !sum +. v;
-                    incr count)
-              | Some (Col.P (Nx.Float32, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  let v = arr.(i) in
-                  if not (skipna && Float.is_nan v) then (
-                    sum := !sum +. v;
-                    incr count)
-              | Some (Col.P (Nx.Int32, tensor)) ->
-                  let arr : int32 array = Nx.to_array tensor in
-                  sum := !sum +. Int32.to_float arr.(i);
-                  incr count
-              | Some (Col.P (Nx.Int64, tensor)) ->
-                  let arr : int64 array = Nx.to_array tensor in
-                  sum := !sum +. Int64.to_float arr.(i);
-                  incr count
-              | _ -> ())
-            names;
-          if !count > 0 then !sum /. float_of_int !count else Float.nan)
-    in
-    Col.float64 result
+    let tensors = collect_as_float64 t names in
+    if tensors = [] then Col.float64 (Array.make (num_rows t) Float.nan)
+    else
+      let stacked = Nx.stack tensors ~axis:0 in
+      let result =
+        if skipna then
+          (* Count non-NaN values per position *)
+          let nan_mask = Nx.isnan stacked in
+          let zeros = Nx.zeros_like stacked in
+          let cleaned = Nx.where nan_mask zeros stacked in
+          let ones = Nx.ones_like stacked in
+          let valid_mask = Nx.where nan_mask zeros ones in
+          let sum = Nx.sum cleaned ~axes:[| 0 |] in
+          let count = Nx.sum valid_mask ~axes:[| 0 |] in
+          (* Avoid division by zero *)
+          let safe_count = Nx.maximum count (Nx.ones_like count) in
+          let mean = Nx.div sum safe_count in
+          (* Set to NaN where all values were NaN *)
+          let all_nan = Nx.equal count (Nx.zeros_like count) in
+          Nx.where all_nan (Nx.full_like mean Float.nan) mean
+        else Nx.mean stacked ~axes:[| 0 |]
+      in
+      Col.of_tensor result
 
   let min ?(skipna = true) t ~names =
-    let n_rows = num_rows t in
-    let result =
-      Array.init n_rows (fun i ->
-          let min_val = ref Float.infinity in
-          List.iter
-            (fun name ->
-              match get_column t name with
-              | Some (Col.P (Nx.Float64, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  let v = arr.(i) in
-                  if not (skipna && Float.is_nan v) then
-                    min_val := Float.min !min_val v
-              | Some (Col.P (Nx.Float32, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  let v = arr.(i) in
-                  if not (skipna && Float.is_nan v) then
-                    min_val := Float.min !min_val v
-              | Some (Col.P (Nx.Int32, tensor)) ->
-                  let arr : int32 array = Nx.to_array tensor in
-                  min_val := Float.min !min_val (Int32.to_float arr.(i))
-              | Some (Col.P (Nx.Int64, tensor)) ->
-                  let arr : int64 array = Nx.to_array tensor in
-                  min_val := Float.min !min_val (Int64.to_float arr.(i))
-              | _ -> ())
-            names;
-          if Float.is_infinite !min_val then Float.nan else !min_val)
-    in
-    Col.float64 result
+    let tensors = collect_as_float64 t names in
+    if tensors = [] then Col.float64 (Array.make (num_rows t) Float.nan)
+    else
+      let stacked = Nx.stack tensors ~axis:0 in
+      let result =
+        if skipna then
+          (* Replace NaN with +inf for min *)
+          let nan_mask = Nx.isnan stacked in
+          let inf = Nx.full_like stacked Float.infinity in
+          let cleaned = Nx.where nan_mask inf stacked in
+          let min_vals = Nx.min cleaned ~axes:[| 0 |] in
+          (* Set to NaN where all values were NaN *)
+          let is_inf =
+            Nx.equal min_vals (Nx.full_like min_vals Float.infinity)
+          in
+          Nx.where is_inf (Nx.full_like min_vals Float.nan) min_vals
+        else Nx.min stacked ~axes:[| 0 |]
+      in
+      Col.of_tensor result
 
   let max ?(skipna = true) t ~names =
-    let n_rows = num_rows t in
-    let result =
-      Array.init n_rows (fun i ->
-          let max_val = ref Float.neg_infinity in
-          List.iter
-            (fun name ->
-              match get_column t name with
-              | Some (Col.P (Nx.Float64, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  let v = arr.(i) in
-                  if not (skipna && Float.is_nan v) then
-                    max_val := Float.max !max_val v
-              | Some (Col.P (Nx.Float32, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  let v = arr.(i) in
-                  if not (skipna && Float.is_nan v) then
-                    max_val := Float.max !max_val v
-              | Some (Col.P (Nx.Int32, tensor)) ->
-                  let arr : int32 array = Nx.to_array tensor in
-                  max_val := Float.max !max_val (Int32.to_float arr.(i))
-              | Some (Col.P (Nx.Int64, tensor)) ->
-                  let arr : int64 array = Nx.to_array tensor in
-                  max_val := Float.max !max_val (Int64.to_float arr.(i))
-              | _ -> ())
-            names;
-          if Float.is_infinite !max_val then Float.nan else !max_val)
-    in
-    Col.float64 result
+    let tensors = collect_as_float64 t names in
+    if tensors = [] then Col.float64 (Array.make (num_rows t) Float.nan)
+    else
+      let stacked = Nx.stack tensors ~axis:0 in
+      let result =
+        if skipna then
+          (* Replace NaN with -inf for max *)
+          let nan_mask = Nx.isnan stacked in
+          let neg_inf = Nx.full_like stacked Float.neg_infinity in
+          let cleaned = Nx.where nan_mask neg_inf stacked in
+          let max_vals = Nx.max cleaned ~axes:[| 0 |] in
+          (* Set to NaN where all values were NaN *)
+          let is_neg_inf =
+            Nx.equal max_vals (Nx.full_like max_vals Float.neg_infinity)
+          in
+          Nx.where is_neg_inf (Nx.full_like max_vals Float.nan) max_vals
+        else Nx.max stacked ~axes:[| 0 |]
+      in
+      Col.of_tensor result
 
   let dot t ~names ~weights =
     if List.length names <> Array.length weights then
       failwith "Number of columns must match number of weights";
-    let n_rows = num_rows t in
-    let result =
-      Array.init n_rows (fun i ->
-          let sum = ref 0.0 in
-          List.iteri
-            (fun j name ->
-              let w = weights.(j) in
-              match get_column t name with
-              | Some (Col.P (Nx.Float64, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  sum := !sum +. (arr.(i) *. w)
-              | Some (Col.P (Nx.Float32, tensor)) ->
-                  let arr : float array = Nx.to_array tensor in
-                  sum := !sum +. (arr.(i) *. w)
-              | Some (Col.P (Nx.Int32, tensor)) ->
-                  let arr : int32 array = Nx.to_array tensor in
-                  sum := !sum +. (Int32.to_float arr.(i) *. w)
-              | Some (Col.P (Nx.Int64, tensor)) ->
-                  let arr : int64 array = Nx.to_array tensor in
-                  sum := !sum +. (Int64.to_float arr.(i) *. w)
-              | _ -> failwith ("Column " ^ name ^ " is not numeric"))
-            names;
-          !sum)
-    in
-    Col.float64 result
+    let tensors = collect_as_float64 t names in
+    if tensors = [] then Col.float64 (Array.make (num_rows t) 0.0)
+    else
+      (* Stack tensors as rows, multiply by weights, and sum *)
+      let stacked = Nx.stack tensors ~axis:0 in
+      let weights_tensor =
+        Nx.create Nx.float64 [| Array.length weights; 1 |] weights
+      in
+      (* Transpose stacked to [n_rows, n_cols], then matrix multiply *)
+      let transposed = Nx.transpose stacked ~axes:[| 1; 0 |] in
+      let result = Nx.matmul transposed weights_tensor in
+      (* Squeeze to remove the extra dimension *)
+      let squeezed = Nx.squeeze result ~axes:[| 1 |] in
+      Col.of_tensor squeezed
 
   let all t ~names =
     let cols =
