@@ -708,6 +708,95 @@ let test_rowagg_sum () =
       (* NaN + 5 + 7, NaN skipped *)
   | None -> Alcotest.fail "row_sum should exist"
 
+let test_row_number () =
+  let df =
+    create
+      [
+        ("i32", Col.int32_list [ 1l; 2l; 3l ]);
+        ("i64", Col.int64_list [ 10L; 20L; 30L ]);
+        ("f32", Col.float32_list [ 1.5; 2.5; 3.5 ]);
+        ("f64", Col.float64_list [ 100.0; 200.0; 300.0 ]);
+      ]
+  in
+
+  (* Test Row.number coerces all numeric types to float *)
+  let df2 =
+    map_column df "i32_as_float" Nx.float64 Row.(number "i32")
+  in
+  match to_float64_array df2 "i32_as_float" with
+  | Some arr ->
+      check_float "Int32 as float" 1.0 arr.(0);
+      check_float "Int32 as float" 2.0 arr.(1);
+      check_float "Int32 as float" 3.0 arr.(2)
+  | None -> Alcotest.fail "i32_as_float should exist"
+
+let test_row_fold_list () =
+  let df =
+    create
+      [
+        ("a", Col.float64_list [ 1.0; 2.0; 3.0 ]);
+        ("b", Col.float64_list [ 10.0; 20.0; 30.0 ]);
+        ("c", Col.float64_list [ 100.0; 200.0; 300.0 ]);
+      ]
+  in
+
+  (* Test fold_list to compute sum without intermediate list *)
+  let df2 =
+    map_column df "sum" Nx.float64
+      Row.(fold_list (numbers ["a"; "b"; "c"]) ~init:0. ~f:( +. ))
+  in
+
+  match to_float64_array df2 "sum" with
+  | Some arr ->
+      check_float "Row 0 sum" 111.0 arr.(0);
+      check_float "Row 1 sum" 222.0 arr.(1);
+      check_float "Row 2 sum" 333.0 arr.(2)
+  | None -> Alcotest.fail "sum should exist"
+
+let test_with_columns_map () =
+  let df =
+    create
+      [
+        ("x", Col.float64_list [ 1.0; 2.0; 3.0 ]);
+        ("y", Col.float64_list [ 4.0; 5.0; 6.0 ]);
+      ]
+  in
+
+  let df2 =
+    with_columns_map df
+      [
+        ("sum", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( +. ));
+        ("diff", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( -. ));
+        ("prod", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( *. ));
+      ]
+  in
+
+  check_int "columns added" 5 (num_columns df2);
+  
+  match (to_float64_array df2 "sum", to_float64_array df2 "diff", to_float64_array df2 "prod") with
+  | Some sum, Some diff, Some prod ->
+      check_float "Sum row 0" 5.0 sum.(0);
+      check_float "Diff row 0" (-3.0) diff.(0);
+      check_float "Prod row 0" 4.0 prod.(0)
+  | _ -> Alcotest.fail "computed columns should exist"
+
+let test_columns_except () =
+  let df =
+    create
+      [
+        ("keep1", Col.int32_list [ 1l ]);
+        ("drop1", Col.int32_list [ 2l ]);
+        ("keep2", Col.int32_list [ 3l ]);
+        ("drop2", Col.int32_list [ 4l ]);
+        ("keep3", Col.int32_list [ 5l ]);
+      ]
+  in
+
+  let kept = columns_except df [ "drop1"; "drop2" ] in
+  Alcotest.(check (list string))
+    "columns except" [ "keep1"; "keep2"; "keep3" ]
+    (List.sort String.compare kept)
+
 let test_rowagg_dot () =
   let df =
     create
@@ -735,7 +824,11 @@ let test_rowagg_dot () =
 let ergonomic_tests =
   [
     ("with_columns", `Quick, test_with_columns);
+    ("with_columns_map", `Quick, test_with_columns_map);
     ("column_selectors", `Quick, test_column_selectors);
+    ("columns_except", `Quick, test_columns_except);
+    ("Row.number", `Quick, test_row_number);
+    ("Row.fold_list", `Quick, test_row_fold_list);
     ("Row_agg.sum", `Quick, test_rowagg_sum);
     ("Row_agg.dot", `Quick, test_rowagg_dot);
   ]
