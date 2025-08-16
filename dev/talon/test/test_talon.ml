@@ -821,6 +821,165 @@ let test_rowagg_dot () =
       (* 0.2*3 + 0.3*6 + 0.5*9 = 0.6 + 1.8 + 4.5 = 6.9 *)
   | None -> Alcotest.fail "score should exist"
 
+let test_join_inner () =
+  let df1 =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 2l; 3l ]);
+        ("name", Col.string_list [ "Alice"; "Bob"; "Charlie" ]);
+      ]
+  in
+  let df2 =
+    create
+      [
+        ("id", Col.int32_list [ 2l; 3l; 4l ]);
+        ("score", Col.float64_list [ 85.0; 90.0; 95.0 ]);
+      ]
+  in
+
+  let result = join df1 df2 ~on:"id" ~how:`Inner () in
+  check_int "inner join rows" 2 (num_rows result);
+  check_bool "has name column" true (has_column result "name");
+  check_bool "has score column" true (has_column result "score")
+
+let test_join_left () =
+  let df1 =
+    create
+      [
+        ("key", Col.string_list [ "a"; "b"; "c" ]);
+        ("val1", Col.int32_list [ 1l; 2l; 3l ]);
+      ]
+  in
+  let df2 =
+    create
+      [
+        ("key", Col.string_list [ "b"; "c"; "d" ]);
+        ("val2", Col.int32_list [ 20l; 30l; 40l ]);
+      ]
+  in
+
+  let result = join df1 df2 ~on:"key" ~how:`Left () in
+  check_int "left join rows" 3 (num_rows result);
+  
+  (* Check that all left keys are present *)
+  match to_string_array result "key" with
+  | Some arr ->
+      check_string "first key" "a" arr.(0);
+      check_string "second key" "b" arr.(1);
+      check_string "third key" "c" arr.(2)
+  | None -> Alcotest.fail "key column should exist"
+
+let test_merge () =
+  let df1 =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 2l ]);
+        ("x", Col.float64_list [ 10.0; 20.0 ]);
+      ]
+  in
+  let df2 =
+    create
+      [
+        ("code", Col.int32_list [ 1l; 2l ]);
+        ("y", Col.float64_list [ 100.0; 200.0 ]);
+      ]
+  in
+
+  let result = merge df1 df2 ~left_on:"id" ~right_on:"code" ~how:`Inner () in
+  check_int "merge rows" 2 (num_rows result);
+  check_bool "has x column" true (has_column result "x");
+  check_bool "has y column" true (has_column result "y")
+
+let test_pivot () =
+  let df =
+    create
+      [
+        ("date", Col.string_list [ "2024-01"; "2024-01"; "2024-02"; "2024-02" ]);
+        ("product", Col.string_list [ "A"; "B"; "A"; "B" ]);
+        ("sales", Col.float64_list [ 100.0; 150.0; 120.0; 180.0 ]);
+      ]
+  in
+
+  let pivoted = pivot df ~index:"date" ~columns:"product" ~values:"sales" ~agg_func:`Sum () in
+  check_int "pivot rows" 2 (num_rows pivoted);
+  check_bool "has A column" true (has_column pivoted "A");
+  check_bool "has B column" true (has_column pivoted "B");
+  
+  (* Check aggregated values *)
+  match (to_float64_array pivoted "A", to_float64_array pivoted "B") with
+  | Some a_vals, Some b_vals ->
+      check_float "Jan A sales" 100.0 a_vals.(0);
+      check_float "Jan B sales" 150.0 b_vals.(0);
+      check_float "Feb A sales" 120.0 a_vals.(1);
+      check_float "Feb B sales" 180.0 b_vals.(1)
+  | _ -> Alcotest.fail "pivot columns should exist"
+
+let test_melt () =
+  let df =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 2l ]);
+        ("A", Col.float64_list [ 10.0; 20.0 ]);
+        ("B", Col.float64_list [ 30.0; 40.0 ]);
+        ("C", Col.float64_list [ 50.0; 60.0 ]);
+      ]
+  in
+
+  let melted = melt df ~id_vars:["id"] ~value_vars:["A"; "B"; "C"] () in
+  check_int "melt rows" 6 (num_rows melted);  (* 2 rows * 3 columns = 6 *)
+  check_bool "has id column" true (has_column melted "id");
+  check_bool "has variable column" true (has_column melted "variable");
+  check_bool "has value column" true (has_column melted "value");
+  
+  (* Check melted structure *)
+  match to_string_array melted "variable" with
+  | Some vars ->
+      check_string "first var" "A" vars.(0);
+      check_string "second var" "B" vars.(1);
+      check_string "third var" "C" vars.(2);
+      check_string "fourth var" "A" vars.(3);
+      check_string "fifth var" "B" vars.(4);
+      check_string "sixth var" "C" vars.(5)
+  | None -> Alcotest.fail "variable column should exist"
+
+let test_join_with_suffixes () =
+  let df1 =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 2l ]);
+        ("value", Col.float64_list [ 10.0; 20.0 ]);
+      ]
+  in
+  let df2 =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 2l ]);
+        ("value", Col.float64_list [ 100.0; 200.0 ]);
+      ]
+  in
+
+  let result = join df1 df2 ~on:"id" ~how:`Inner ~suffixes:("_left", "_right") () in
+  check_bool "has value_left column" true (has_column result "value_left");
+  check_bool "has value_right column" true (has_column result "value_right");
+  
+  match (to_float64_array result "value_left", to_float64_array result "value_right") with
+  | Some left, Some right ->
+      check_float "left value 1" 10.0 left.(0);
+      check_float "right value 1" 100.0 right.(0);
+      check_float "left value 2" 20.0 left.(1);
+      check_float "right value 2" 200.0 right.(1)
+  | _ -> Alcotest.fail "value columns should exist"
+
+let join_reshape_tests =
+  [
+    ("join inner", `Quick, test_join_inner);
+    ("join left", `Quick, test_join_left);
+    ("merge", `Quick, test_merge);
+    ("pivot", `Quick, test_pivot);
+    ("melt", `Quick, test_melt);
+    ("join with suffixes", `Quick, test_join_with_suffixes);
+  ]
+
 let ergonomic_tests =
   [
     ("with_columns", `Quick, test_with_columns);
@@ -848,4 +1007,5 @@ let () =
       ("Edge cases", edge_tests);
       ("Wide operations", wide_tests);
       ("Ergonomic APIs", ergonomic_tests);
+      ("Join & Reshape", join_reshape_tests);
     ]
