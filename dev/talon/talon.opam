@@ -12,6 +12,7 @@ depends: [
   "ocaml"
   "dune" {>= "3.0"}
   "nx" {>= "0.1.0"}
+  "re"
   "yojson"
   "csv"
   "alcotest" {with-test}
