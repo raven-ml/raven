@@ -57,6 +57,9 @@
 type t
 (** Type of dataframe. *)
 
+type 'a row
+(** Type for row-wise computations. *)
+
 (** {1 Columns} *)
 
 module Col : sig
@@ -228,32 +231,46 @@ val column_types :
 val is_empty : t -> bool
 (** [is_empty df] returns true if dataframe has no rows. *)
 
-val numeric_column_names : t -> string list
-(** [numeric_column_names df] returns all columns of type
-    float32/float64/int32/int64. *)
-
 (** {2 Column Selectors} *)
 
-val columns_matching : t -> Re.re -> string list
-(** [columns_matching df regex] returns column names matching the regex pattern.
-*)
+module Cols : sig
+  (** Column name selectors for working with subsets of columns. *)
 
-val columns_with_prefix : t -> string -> string list
-(** [columns_with_prefix df prefix] returns column names starting with prefix.
-*)
+  val numeric : t -> string list
+  (** [numeric df] returns all numeric columns (float32/float64/int32/int64). *)
 
-val columns_with_suffix : t -> string -> string list
-(** [columns_with_suffix df suffix] returns column names ending with suffix. *)
+  val float : t -> string list
+  (** [float df] returns all float columns (float32/float64). *)
 
-val select_dtypes :
-  t -> [ `Numeric | `Float | `Int | `Bool | `String ] list -> string list
-(** [select_dtypes df types] returns column names of the specified types.
-    - `Numeric includes all float and int types
-    - `Float includes float32 and float64
-    - `Int includes int32 and int64 *)
+  val int : t -> string list
+  (** [int df] returns all integer columns (int32/int64). *)
 
-val columns_except : t -> string list -> string list
-(** [columns_except df exclude] returns all column names except those in exclude list. *)
+  val bool : t -> string list
+  (** [bool df] returns all boolean columns. *)
+
+  val string : t -> string list
+  (** [string df] returns all string columns. *)
+
+  val matching : t -> Re.re -> string list
+  (** [matching df regex] returns column names matching the regex pattern. *)
+
+  val with_prefix : t -> string -> string list
+  (** [with_prefix df prefix] returns column names starting with prefix. *)
+
+  val with_suffix : t -> string -> string list
+  (** [with_suffix df suffix] returns column names ending with suffix. *)
+
+  val except : t -> string list -> string list
+  (** [except df exclude] returns all column names except those in exclude list.
+  *)
+
+  val select_dtypes :
+    t -> [ `Numeric | `Float | `Int | `Bool | `String ] list -> string list
+  (** [select_dtypes df types] returns column names of the specified types.
+      - `Numeric includes all float and int types
+      - `Float includes float32 and float64
+      - `Int includes int32 and int64 *)
+end
 
 (** {1 Column Operations} *)
 
@@ -324,85 +341,128 @@ val reorder_columns : t -> string list -> t
 
 (** Row applicative for functional row operations. *)
 module Row : sig
-  type 'a t
-  (** Applicative for row-wise computations. *)
-
   (** {2 Applicative Interface} *)
 
-  val return : 'a -> 'a t
+  val return : 'a -> 'a row
   (** [return x] creates a constant computation returning x for each row. *)
 
-  val apply : ('a -> 'b) t -> 'a t -> 'b t
+  val apply : ('a -> 'b) row -> 'a row -> 'b row
   (** [apply f x] applies a function computation to a value computation. *)
 
-  val map : 'a t -> f:('a -> 'b) -> 'b t
+  val map : 'a row -> f:('a -> 'b) -> 'b row
   (** [map x ~f] maps a function over a computation. *)
 
-  val map2 : 'a t -> 'b t -> f:('a -> 'b -> 'c) -> 'c t
+  val map2 : 'a row -> 'b row -> f:('a -> 'b -> 'c) -> 'c row
   (** [map2 x y ~f] combines two computations with a binary function. *)
 
-  val map3 : 'a t -> 'b t -> 'c t -> f:('a -> 'b -> 'c -> 'd) -> 'd t
+  val map3 : 'a row -> 'b row -> 'c row -> f:('a -> 'b -> 'c -> 'd) -> 'd row
   (** [map3 x y z ~f] combines three computations with a ternary function. *)
 
-  val both : 'a t -> 'b t -> ('a * 'b) t
+  val both : 'a row -> 'b row -> ('a * 'b) row
   (** [both x y] pairs two computations. *)
 
   (** {2 Column Accessors} *)
 
-  val float32 : string -> float t
+  val float32 : string -> float row
   (** [float32 name] extracts float32 values from column. *)
 
-  val float64 : string -> float t
+  val float64 : string -> float row
   (** [float64 name] extracts float64 values from column. *)
 
-  val int32 : string -> int32 t
+  val int32 : string -> int32 row
   (** [int32 name] extracts int32 values from column. *)
 
-  val int64 : string -> int64 t
+  val int64 : string -> int64 row
   (** [int64 name] extracts int64 values from column. *)
 
-  val string : string -> string t
+  val string : string -> string row
   (** [string name] extracts string values from column. *)
 
-  val bool : string -> bool t
+  val bool : string -> bool row
   (** [bool name] extracts boolean values from column. *)
 
-  val number : string -> float t
-  (** [number name] extracts numeric values from column, coercing int32/int64/float32/float64 to float. *)
+  val number : string -> float row
+  (** [number name] extracts numeric values from column, coercing
+      int32/int64/float32/float64 to float. *)
 
-  val numbers : string list -> float t list
-  (** [numbers names] creates a list of number accessors for the given column names. *)
+  val numbers : string list -> float row list
+  (** [numbers names] creates a list of number accessors for the given column
+      names. *)
 
   (** {2 Row Information} *)
 
-  val index : int t
+  val index : int row
   (** [index] returns the current row index. *)
 
-  val sequence : 'a t list -> 'a list t
+  val sequence : 'a row list -> 'a list row
   (** [sequence xs] transforms a list of computations into a computation of a
       list. Standard applicative operation for collecting multiple column
       values. *)
 
-  val all : 'a t list -> 'a list t
+  val all : 'a row list -> 'a list row
   (** [all xs] is an alias for [sequence xs]. Collects all values from the list
       of computations. *)
 
-  val map_list : 'a t list -> f:('a list -> 'b) -> 'b t
+  val map_list : 'a row list -> f:('a list -> 'b) -> 'b row
   (** [map_list xs ~f] sequences computations then maps f over the resulting
       list. Equivalent to [map (sequence xs) ~f]. *)
 
-  val fold_list : 'a t list -> init:'b -> f:('b -> 'a -> 'b) -> 'b t
+  val fold_list : 'a row list -> init:'b -> f:('b -> 'a -> 'b) -> 'b row
   (** [fold_list xs ~init ~f] folds over a list of computations without creating
       an intermediate list. More efficient than map_list for reductions. *)
 
-  val float32s : string list -> float t list
+  val float32s : string list -> float row list
   (** Convenience builders to avoid writing [List.map int32 names] etc. *)
 
-  val float64s : string list -> float t list
-  val int32s : string list -> int32 t list
-  val int64s : string list -> int64 t list
-  val bools : string list -> bool t list
-  val strings : string list -> string t list
+  val float64s : string list -> float row list
+  val int32s : string list -> int32 row list
+  val int64s : string list -> int64 row list
+  val bools : string list -> bool row list
+  val strings : string list -> string row list
+
+  (** {2 Row-wise Aggregations} *)
+
+  module Agg : sig
+    (** Efficient row-wise aggregations using vectorized operations. Similar to
+        pandas' axis=1 operations or Polars' horizontal functions.
+
+        Null semantics:
+        - Float columns: NaN values are treated as nulls
+        - Int columns: Int32.min_int and Int64.min_int are treated as nulls
+        - When skipna=true (default), nulls are excluded from computations
+        - When skipna=false, any null in a row produces a null result *)
+
+    val sum : ?skipna:bool -> t -> names:string list -> Col.t
+    (** [sum ?skipna df ~names] computes row-wise sum across specified columns.
+        Uses vectorized Nx operations for efficiency.
+        @param skipna
+          if true (default), skip null values (NaN for floats, min_int for ints)
+    *)
+
+    val mean : ?skipna:bool -> t -> names:string list -> Col.t
+    (** [mean ?skipna df ~names] computes row-wise mean across specified
+        columns. *)
+
+    val min : ?skipna:bool -> t -> names:string list -> Col.t
+    (** [min ?skipna df ~names] computes row-wise minimum across specified
+        columns. *)
+
+    val max : ?skipna:bool -> t -> names:string list -> Col.t
+    (** [max ?skipna df ~names] computes row-wise maximum across specified
+        columns. *)
+
+    val dot : t -> names:string list -> weights:float array -> Col.t
+    (** [dot df ~names ~weights] computes weighted sum (dot product) across
+        columns. Equivalent to pandas' df[cols].dot(weights). *)
+
+    val all : t -> names:string list -> Col.t
+    (** [all df ~names] returns true if all values in the row are true (for bool
+        columns). *)
+
+    val any : t -> names:string list -> Col.t
+    (** [any df ~names] returns true if any value in the row is true (for bool
+        columns). *)
+  end
 end
 
 (** {1 Row Operations} *)
@@ -425,7 +485,7 @@ val filter : t -> bool array -> t
 (** [filter df mask] filters rows where mask is true. Mask must match num_rows.
 *)
 
-val filter_by : t -> bool Row.t -> t
+val filter_by : t -> bool row -> t
 (** [filter_by df pred] filters rows where predicate returns true. *)
 
 val drop_duplicates : ?subset:string list -> t -> t
@@ -435,11 +495,11 @@ val drop_duplicates : ?subset:string list -> t -> t
 val concat : axis:[ `Rows | `Columns ] -> t list -> t
 (** [concat ~axis dfs] concatenates dataframes along rows or columns. *)
 
-val map : t -> ('a, 'b) Nx.dtype -> 'a Row.t -> ('a, 'b) Nx.t
+val map : t -> ('a, 'b) Nx.dtype -> 'a row -> ('a, 'b) Nx.t
 (** [map df dtype f] maps row-wise computation to new numeric column. *)
 
-val map_column : t -> string -> ('a, 'b) Nx.dtype -> 'a Row.t -> t
-(** [map_column df name dtype f] creates new column from row-wise computation.
+val with_column : t -> string -> ('a, 'b) Nx.dtype -> 'a row -> t
+(** [with_column df name dtype f] creates new column from row-wise computation.
 *)
 
 val with_columns : t -> (string * Col.t) list -> t
@@ -455,87 +515,49 @@ val with_columns : t -> (string * Col.t) list -> t
         ]
     ]} *)
 
-val with_columns_map : t -> (string * ('a, 'b) Nx.dtype * 'a Row.t) list -> t
-(** [with_columns_map df specs] computes many row-wise columns in one pass.
-    This is a performance and ergonomics win, similar to pandas .assign or 
-    Polars with_columns.
-    
+val with_columns_map : t -> (string * ('a, 'b) Nx.dtype * 'a row) list -> t
+(** [with_columns_map df specs] computes many row-wise columns in one pass. This
+    is a performance and ergonomics win, similar to pandas .assign or Polars
+    with_columns.
+
     Example:
     {[
       with_columns_map df
         [
-          ("z", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( +. ));
-          ("r", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( /. ));
+          ( "z",
+            Nx.float64,
+            Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( +. ) );
+          ( "r",
+            Nx.float64,
+            Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( /. ) );
         ]
     ]} *)
 
-val iter : t -> unit Row.t -> unit
+val iter : t -> unit row -> unit
 (** [iter df f] iterates over rows. *)
 
-val fold : t -> init:'acc -> f:('acc -> 'acc) Row.t -> 'acc
+val fold : t -> init:'acc -> f:('acc -> 'acc) row -> 'acc
 (** [fold df ~init ~f] folds over rows. *)
 
 val fold_left :
-  t -> init:'acc -> f:('acc -> 'a) Row.t -> ('acc -> 'a -> 'acc) -> 'acc
+  t -> init:'acc -> f:('acc -> 'a) row -> ('acc -> 'a -> 'acc) -> 'acc
 (** [fold_left df ~init ~f combine] folds with explicit combine function. *)
 
 (** {1 Sorting and Grouping} *)
 
-val sort : t -> 'a Row.t -> compare:('a -> 'a -> int) -> t
+val sort : t -> 'a row -> compare:('a -> 'a -> int) -> t
 (** [sort df key ~compare] sorts rows by key. *)
 
-val sort_by_column : ?ascending:bool -> t -> string -> t
-(** [sort_by_column ?ascending df name] sorts by column values (default
+val sort_values : ?ascending:bool -> t -> string -> t
+(** [sort_values ?ascending df name] sorts by column values (default
     ascending=true). *)
 
-val group_by : t -> 'key Row.t -> ('key * t) list
+val group_by : t -> 'key row -> ('key * t) list
 (** [group_by df key] groups rows by key, returning list of (key,
     sub-dataframe). *)
 
 val group_by_column : t -> string -> (Col.t * t) list
 (** [group_by_column df name] groups by column values. *)
-
-(** {1 Row-wise Aggregations} *)
-
-module Row_agg : sig
-  (** Efficient row-wise aggregations using vectorized operations. Similar to
-      pandas' axis=1 operations or Polars' horizontal functions. 
-      
-      Null semantics:
-      - Float columns: NaN values are treated as nulls
-      - Int columns: Int32.min_int and Int64.min_int are treated as nulls
-      - When skipna=true (default), nulls are excluded from computations
-      - When skipna=false, any null in a row produces a null result *)
-
-  val sum : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [sum ?skipna df ~names] computes row-wise sum across specified columns.
-      Uses vectorized Nx operations for efficiency.
-      @param skipna if true (default), skip null values (NaN for floats, min_int for ints) *)
-
-  val mean : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [mean ?skipna df ~names] computes row-wise mean across specified columns.
-  *)
-
-  val min : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [min ?skipna df ~names] computes row-wise minimum across specified
-      columns. *)
-
-  val max : ?skipna:bool -> t -> names:string list -> Col.t
-  (** [max ?skipna df ~names] computes row-wise maximum across specified
-      columns. *)
-
-  val dot : t -> names:string list -> weights:float array -> Col.t
-  (** [dot df ~names ~weights] computes weighted sum (dot product) across
-      columns. Equivalent to pandas' df[cols].dot(weights). *)
-
-  val all : t -> names:string list -> Col.t
-  (** [all df ~names] returns true if all values in the row are true (for bool
-      columns). *)
-
-  val any : t -> names:string list -> Col.t
-  (** [any df ~names] returns true if any value in the row is true (for bool
-      columns). *)
-end
 
 (** {1 Aggregations and Column Operations} *)
 
@@ -732,14 +754,10 @@ val melt :
 (** {1 I/O} *)
 
 val to_nx : t -> (float, Bigarray.float32_elt) Nx.t
-(** [to_nx df] converts all numeric columns to a 2D float32 tensor (columns are 
+(** [to_nx df] converts all numeric columns to a 2D float32 tensor (columns are
     cast to float32 first).
 
     @raise Invalid_argument if no numeric columns exist. *)
-
-(* CSV and JSON I/O are now available in separate sublibraries: - Talon_csv
-   module provides CSV reading/writing functionality - Talon_json module
-   provides JSON serialization/deserialization *)
 
 (** {1 Display} *)
 

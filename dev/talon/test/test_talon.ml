@@ -207,9 +207,9 @@ let test_row_accessors () =
 let test_row_map () =
   let df = create [ ("x", Col.int32_list [ 1l; 2l; 3l ]) ] in
 
-  (* Use map_column to create a new column *)
+  (* Use with_column to create a new column *)
   let df2 =
-    map_column df "doubled" Nx.int32
+    with_column df "doubled" Nx.int32
       Row.(map (int32 "x") ~f:(fun x -> Int32.mul x 2l))
   in
 
@@ -227,7 +227,7 @@ let test_sort () =
       ]
   in
 
-  let sorted = sort_by_column df "x" in
+  let sorted = sort_values df "x" in
   match to_int32_array sorted "x" with
   | Some arr -> check_bool "sorted" true (arr = [| 1l; 2l; 3l |])
   | None -> Alcotest.fail "column should exist"
@@ -455,7 +455,7 @@ let test_map_list_product () =
 
   (* Compute product of all 6 columns using map_list *)
   let df2 =
-    map_column df "allMul" Nx.int32
+    with_column df "allMul" Nx.int32
       Row.(
         map_list
           (int32s [ "A"; "B"; "C"; "D"; "E"; "F" ])
@@ -484,7 +484,7 @@ let test_sequence_sum () =
 
   (* Sum all columns using sequence + map *)
   let df2 =
-    map_column df "total" Nx.float64
+    with_column df "total" Nx.float64
       Row.(
         map
           (sequence (float64s [ "A"; "B"; "C" ]))
@@ -516,7 +516,7 @@ let test_weighted_sum () =
   let weights = [ 0.2; 0.3; 0.1; 0.1; 0.1; 0.2 ] in
 
   let df' =
-    map_column df "score" Nx.float64
+    with_column df "score" Nx.float64
       Row.(
         map_list (float64s feats) ~f:(fun xs ->
             List.fold_left2 (fun acc wi xi -> acc +. (wi *. xi)) 0. weights xs))
@@ -543,7 +543,7 @@ let test_numeric_column_names () =
       ]
   in
 
-  let numeric_cols = numeric_column_names df in
+  let numeric_cols = Cols.numeric df in
   let expected = [ "age"; "score"; "height"; "id" ] in
 
   (* Sort both lists for comparison since order might vary *)
@@ -573,7 +573,7 @@ let test_row_helpers () =
 
   (* Test using the helpers with all (alias for sequence) *)
   let df2 =
-    map_column df "sum" Nx.float64
+    with_column df "sum" Nx.float64
       Row.(
         map
           (all (float64s [ "c" ]))
@@ -602,7 +602,7 @@ let test_sequence_all_equivalence () =
 
   (* Using sequence *)
   let df_seq =
-    map_column df "sum_seq" Nx.int32
+    with_column df "sum_seq" Nx.int32
       Row.(
         map
           (sequence (int32s [ "x"; "y"; "z" ]))
@@ -611,7 +611,7 @@ let test_sequence_all_equivalence () =
 
   (* Using all (should be identical) *)
   let df_all =
-    map_column df "sum_all" Nx.int32
+    with_column df "sum_all" Nx.int32
       Row.(
         map (all (int32s [ "x"; "y"; "z" ])) ~f:(List.fold_left Int32.add 0l))
   in
@@ -668,20 +668,20 @@ let test_column_selectors () =
   in
 
   (* Test columns_with_prefix *)
-  let feat_cols = columns_with_prefix df "feat_" in
+  let feat_cols = Cols.with_prefix df "feat_" in
   Alcotest.(check (list string))
     "feat_ prefix" [ "feat_1"; "feat_2" ]
     (List.sort String.compare feat_cols);
 
   (* Test columns_with_suffix *)
-  let score_cols = columns_with_suffix df "_a" in
+  let score_cols = Cols.with_suffix df "_a" in
   Alcotest.(check (list string)) "suffix _a" [ "score_a" ] score_cols;
 
   (* Test select_dtypes *)
-  let numeric = select_dtypes df [ `Numeric ] in
+  let numeric = Cols.select_dtypes df [ `Numeric ] in
   check_int "numeric columns" 5 (List.length numeric);
 
-  let strings = select_dtypes df [ `String ] in
+  let strings = Cols.select_dtypes df [ `String ] in
   Alcotest.(check (list string)) "string columns" [ "name" ] strings
 
 let test_rowagg_sum () =
@@ -695,7 +695,7 @@ let test_rowagg_sum () =
   in
 
   (* Test sum with skipna=true (default) *)
-  let sum_col = Row_agg.sum df ~names:[ "a"; "b"; "c" ] in
+  let sum_col = Row.Agg.sum df ~names:[ "a"; "b"; "c" ] in
   let df2 = add_column df "row_sum" sum_col in
 
   match to_float64_array df2 "row_sum" with
@@ -721,7 +721,7 @@ let test_row_number () =
 
   (* Test Row.number coerces all numeric types to float *)
   let df2 =
-    map_column df "i32_as_float" Nx.float64 Row.(number "i32")
+    with_column df "i32_as_float" Nx.float64 Row.(number "i32")
   in
   match to_float64_array df2 "i32_as_float" with
   | Some arr ->
@@ -742,7 +742,7 @@ let test_row_fold_list () =
 
   (* Test fold_list to compute sum without intermediate list *)
   let df2 =
-    map_column df "sum" Nx.float64
+    with_column df "sum" Nx.float64
       Row.(fold_list (numbers ["a"; "b"; "c"]) ~init:0. ~f:( +. ))
   in
 
@@ -792,7 +792,7 @@ let test_columns_except () =
       ]
   in
 
-  let kept = columns_except df [ "drop1"; "drop2" ] in
+  let kept = Cols.except df [ "drop1"; "drop2" ] in
   Alcotest.(check (list string))
     "columns except" [ "keep1"; "keep2"; "keep3" ]
     (List.sort String.compare kept)
@@ -808,7 +808,7 @@ let test_rowagg_dot () =
   in
 
   let weights = [| 0.2; 0.3; 0.5 |] in
-  let score = Row_agg.dot df ~names:[ "x"; "y"; "z" ] ~weights in
+  let score = Row.Agg.dot df ~names:[ "x"; "y"; "z" ] ~weights in
   let df2 = add_column df "score" score in
 
   match to_float64_array df2 "score" with
@@ -988,8 +988,8 @@ let ergonomic_tests =
     ("columns_except", `Quick, test_columns_except);
     ("Row.number", `Quick, test_row_number);
     ("Row.fold_list", `Quick, test_row_fold_list);
-    ("Row_agg.sum", `Quick, test_rowagg_sum);
-    ("Row_agg.dot", `Quick, test_rowagg_dot);
+    ("Row.Agg.sum", `Quick, test_rowagg_sum);
+    ("Row.Agg.dot", `Quick, test_rowagg_dot);
   ]
 
 let () =

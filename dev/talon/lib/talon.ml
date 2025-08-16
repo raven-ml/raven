@@ -240,41 +240,67 @@ let column_types t =
 
 let is_empty t = num_rows t = 0
 
-let numeric_column_names t =
-  column_types t
-  |> List.filter (function
-       | _, (`Float32 | `Float64 | `Int32 | `Int64) -> true
-       | _ -> false)
-  |> List.map fst
+module Cols = struct
+  let numeric t =
+    column_types t
+    |> List.filter (function
+         | _, (`Float32 | `Float64 | `Int32 | `Int64) -> true
+         | _ -> false)
+    |> List.map fst
 
-let columns_matching t regex =
-  column_names t |> List.filter (fun name -> Re.execp regex name)
+  let float t =
+    column_types t
+    |> List.filter (function
+         | _, (`Float32 | `Float64) -> true
+         | _ -> false)
+    |> List.map fst
 
-let columns_with_prefix t prefix =
-  column_names t |> List.filter (fun name -> String.starts_with ~prefix name)
+  let int t =
+    column_types t
+    |> List.filter (function
+         | _, (`Int32 | `Int64) -> true
+         | _ -> false)
+    |> List.map fst
 
-let columns_with_suffix t suffix =
-  column_names t |> List.filter (fun name -> String.ends_with ~suffix name)
+  let bool t =
+    column_types t
+    |> List.filter (function _, `Bool -> true | _ -> false)
+    |> List.map fst
 
-let select_dtypes t types =
-  let matches_type typ = function
-    | `Numeric -> (
-        match typ with
-        | `Float32 | `Float64 | `Int32 | `Int64 -> true
-        | _ -> false)
-    | `Float -> ( match typ with `Float32 | `Float64 -> true | _ -> false)
-    | `Int -> ( match typ with `Int32 | `Int64 -> true | _ -> false)
-    | `Bool -> typ = `Bool
-    | `String -> typ = `String
-  in
-  column_types t
-  |> List.filter (fun (_, typ) ->
-         List.exists (fun t -> matches_type typ t) types)
-  |> List.map fst
+  let string t =
+    column_types t
+    |> List.filter (function _, `String -> true | _ -> false)
+    |> List.map fst
 
-let columns_except t exclude =
-  let is_excluded name = List.mem name exclude in
-  List.filter (fun name -> not (is_excluded name)) (column_names t)
+  let matching t regex =
+    column_names t |> List.filter (fun name -> Re.execp regex name)
+
+  let with_prefix t prefix =
+    column_names t |> List.filter (fun name -> String.starts_with ~prefix name)
+
+  let with_suffix t suffix =
+    column_names t |> List.filter (fun name -> String.ends_with ~suffix name)
+
+  let except t exclude =
+    let is_excluded name = List.mem name exclude in
+    List.filter (fun name -> not (is_excluded name)) (column_names t)
+
+  let select_dtypes t types =
+    let matches_type typ = function
+      | `Numeric -> (
+          match typ with
+          | `Float32 | `Float64 | `Int32 | `Int64 -> true
+          | _ -> false)
+      | `Float -> ( match typ with `Float32 | `Float64 -> true | _ -> false)
+      | `Int -> ( match typ with `Int32 | `Int64 -> true | _ -> false)
+      | `Bool -> typ = `Bool
+      | `String -> typ = `String
+    in
+    column_types t
+    |> List.filter (fun (_, typ) ->
+           List.exists (fun t -> matches_type typ t) types)
+    |> List.map fst
+end
 
 let get_column t name = Hashtbl.find_opt t.column_map name
 
@@ -409,9 +435,9 @@ let reorder_columns t names =
   in
   create (requested @ remaining)
 
+type 'a row = { f : t -> int -> 'a }
+
 module Row = struct
-  type df = t
-  type 'a t = { f : df -> int -> 'a }
 
   let return x = { f = (fun _ _ -> x) }
 
@@ -597,6 +623,168 @@ module Row = struct
   let int64s names = List.map int64 names
   let bools names = List.map bool names
   let strings names = List.map string names
+  
+  module Agg = struct
+    (* Vectorized row-wise aggregations using Nx operations *)
+
+    (* Helper to collect numeric columns and cast to float64 *)
+    let collect_as_float64 t names : (float, Bigarray.float64_elt) Nx.t list =
+      List.fold_left
+        (fun (acc : (float, Bigarray.float64_elt) Nx.t list) name ->
+          match get_column t name with
+          | Some (Col.P (Nx.Float64, tensor)) -> tensor :: acc
+          | Some (Col.P (Nx.Float32, tensor)) -> Nx.cast Nx.float64 tensor :: acc
+          | Some (Col.P (Nx.Int32, tensor)) -> Nx.cast Nx.float64 tensor :: acc
+          | Some (Col.P (Nx.Int64, tensor)) -> Nx.cast Nx.float64 tensor :: acc
+          | Some (Col.P (_, _)) -> acc (* Skip other types *)
+          | _ -> acc)
+        [] names
+      |> List.rev
+
+    let sum ?(skipna = true) t ~names =
+      let tensors = collect_as_float64 t names in
+      if tensors = [] then Col.float64 (Array.make (num_rows t) 0.0)
+      else
+        (* Stack tensors as rows and sum along axis 0 *)
+        let stacked = Nx.stack tensors ~axis:0 in
+        let result =
+          if skipna then
+            (* Replace NaN with 0 for sum *)
+            let nan_mask = Nx.isnan stacked in
+            let zeros = Nx.zeros_like stacked in
+            let cleaned = Nx.where nan_mask zeros stacked in
+            Nx.sum cleaned ~axes:[| 0 |]
+          else Nx.sum stacked ~axes:[| 0 |]
+        in
+        Col.of_tensor result
+
+    let mean ?(skipna = true) t ~names =
+      let tensors = collect_as_float64 t names in
+      if tensors = [] then Col.float64 (Array.make (num_rows t) Float.nan)
+      else
+        let stacked = Nx.stack tensors ~axis:0 in
+        let result =
+          if skipna then
+            (* Count non-NaN values per position *)
+            let nan_mask = Nx.isnan stacked in
+            let zeros = Nx.zeros_like stacked in
+            let cleaned = Nx.where nan_mask zeros stacked in
+            let ones = Nx.ones_like stacked in
+            let valid_mask = Nx.where nan_mask zeros ones in
+            let sum = Nx.sum cleaned ~axes:[| 0 |] in
+            let count = Nx.sum valid_mask ~axes:[| 0 |] in
+            (* Avoid division by zero *)
+            let safe_count = Nx.maximum count (Nx.ones_like count) in
+            let mean = Nx.div sum safe_count in
+            (* Set to NaN where all values were NaN *)
+            let all_nan = Nx.equal count (Nx.zeros_like count) in
+            Nx.where all_nan (Nx.full_like mean Float.nan) mean
+          else Nx.mean stacked ~axes:[| 0 |]
+        in
+        Col.of_tensor result
+
+    let min ?(skipna = true) t ~names =
+      let tensors = collect_as_float64 t names in
+      if tensors = [] then Col.float64 (Array.make (num_rows t) Float.nan)
+      else
+        let stacked = Nx.stack tensors ~axis:0 in
+        let result =
+          if skipna then
+            (* Replace NaN with +inf for min *)
+            let nan_mask = Nx.isnan stacked in
+            let inf = Nx.full_like stacked Float.infinity in
+            let cleaned = Nx.where nan_mask inf stacked in
+            let min_vals = Nx.min cleaned ~axes:[| 0 |] in
+            (* Set to NaN where all values were NaN *)
+            let is_inf =
+              Nx.equal min_vals (Nx.full_like min_vals Float.infinity)
+            in
+            Nx.where is_inf (Nx.full_like min_vals Float.nan) min_vals
+          else Nx.min stacked ~axes:[| 0 |]
+        in
+        Col.of_tensor result
+
+    let max ?(skipna = true) t ~names =
+      let tensors = collect_as_float64 t names in
+      if tensors = [] then Col.float64 (Array.make (num_rows t) Float.nan)
+      else
+        let stacked = Nx.stack tensors ~axis:0 in
+        let result =
+          if skipna then
+            (* Replace NaN with -inf for max *)
+            let nan_mask = Nx.isnan stacked in
+            let neg_inf = Nx.full_like stacked Float.neg_infinity in
+            let cleaned = Nx.where nan_mask neg_inf stacked in
+            let max_vals = Nx.max cleaned ~axes:[| 0 |] in
+            (* Set to NaN where all values were NaN *)
+            let is_neg_inf =
+              Nx.equal max_vals (Nx.full_like max_vals Float.neg_infinity)
+            in
+            Nx.where is_neg_inf (Nx.full_like max_vals Float.nan) max_vals
+          else Nx.max stacked ~axes:[| 0 |]
+        in
+        Col.of_tensor result
+
+    let dot t ~names ~weights =
+      if List.length names <> Array.length weights then
+        failwith "Number of columns must match number of weights";
+      let tensors = collect_as_float64 t names in
+      if tensors = [] then Col.float64 (Array.make (num_rows t) 0.0)
+      else
+        (* Stack tensors as rows, multiply by weights, and sum *)
+        let stacked = Nx.stack tensors ~axis:0 in
+        let weights_tensor =
+          Nx.create Nx.float64 [| Array.length weights; 1 |] weights
+        in
+        (* Transpose stacked to [n_rows, n_cols], then matrix multiply *)
+        let transposed = Nx.transpose stacked ~axes:[| 1; 0 |] in
+        let result = Nx.matmul transposed weights_tensor in
+        (* Squeeze to remove the extra dimension *)
+        let squeezed = Nx.squeeze result ~axes:[| 1 |] in
+        Col.of_tensor squeezed
+
+    let all t ~names =
+      let cols =
+        List.filter_map
+          (fun name ->
+            match get_column t name with
+            | Some (Col.B arr) -> Some arr
+            | _ -> None)
+          names
+      in
+      if cols = [] then failwith "No boolean columns found"
+      else
+        let n_rows = num_rows t in
+        let result =
+          Array.init n_rows (fun i ->
+              Some
+                (List.for_all
+                   (fun arr -> Option.value arr.(i) ~default:false)
+                   cols))
+        in
+        Col.B result
+
+    let any t ~names =
+      let cols =
+        List.filter_map
+          (fun name ->
+            match get_column t name with
+            | Some (Col.B arr) -> Some arr
+            | _ -> None)
+          names
+      in
+      if cols = [] then failwith "No boolean columns found"
+      else
+        let n_rows = num_rows t in
+        let result =
+          Array.init n_rows (fun i ->
+              Some
+                (List.exists
+                   (fun arr -> Option.value arr.(i) ~default:false)
+                   cols))
+        in
+        Col.B result
+  end
 end
 
 let head ?(n = 5) t =
@@ -722,7 +910,7 @@ let filter t mask =
 
 let filter_by t pred =
   let n_rows = num_rows t in
-  let mask = Array.init n_rows (fun i -> pred.Row.f t i) in
+  let mask = Array.init n_rows (fun i -> pred.f t i) in
   filter t mask
 
 let drop_duplicates ?subset t =
@@ -912,12 +1100,12 @@ let concat ~axis dfs =
           let all_columns = List.concat_map (fun df -> df.columns) dfs in
           create all_columns
 
-let map (type a b) t (dtype : (a, b) Nx.dtype) (f : a Row.t) : (a, b) Nx.t =
+let map (type a b) t (dtype : (a, b) Nx.dtype) (f : a row) : (a, b) Nx.t =
   let n_rows = num_rows t in
-  let data = Array.init n_rows (fun i -> f.Row.f t i) in
+  let data = Array.init n_rows (fun i -> f.f t i) in
   Nx.create dtype [| n_rows |] data
 
-let map_column t name dtype f =
+let with_column t name dtype f =
   let tensor = map t dtype f in
   add_column t name (Col.of_tensor tensor)
 
@@ -936,7 +1124,7 @@ let with_columns_map t specs =
 let iter t f =
   let n_rows = num_rows t in
   for i = 0 to n_rows - 1 do
-    f.Row.f t i
+    f.f t i
   done
 
 let fold t ~init ~f =
@@ -944,7 +1132,7 @@ let fold t ~init ~f =
   let rec loop i acc =
     if i >= n_rows then acc
     else
-      let update_fn = f.Row.f t i in
+      let update_fn = f.f t i in
       let next_acc = update_fn acc in
       loop (i + 1) next_acc
   in
@@ -955,7 +1143,7 @@ let fold_left t ~init ~f combine =
   let rec loop i acc =
     if i >= n_rows then acc
     else
-      let fn = f.Row.f t i in
+      let fn = f.f t i in
       let value = fn acc in
       loop (i + 1) (combine acc value)
   in
@@ -963,7 +1151,7 @@ let fold_left t ~init ~f combine =
 
 let sort t key ~compare =
   let n_rows = num_rows t in
-  let keys = Array.init n_rows (fun i -> (i, key.Row.f t i)) in
+  let keys = Array.init n_rows (fun i -> (i, key.f t i)) in
   Array.sort (fun (_, k1) (_, k2) -> compare k1 k2) keys;
   let indices = Array.map fst keys in
   let columns =
@@ -985,7 +1173,7 @@ let sort t key ~compare =
   in
   create columns
 
-let sort_by_column ?(ascending = true) t name =
+let sort_values ?(ascending = true) t name =
   match get_column t name with
   | None -> raise Not_found
   | Some col -> (
@@ -1003,7 +1191,7 @@ let group_by t key =
   let n_rows = num_rows t in
   let groups = Hashtbl.create 16 in
   for i = 0 to n_rows - 1 do
-    let k = key.Row.f t i in
+    let k = key.f t i in
     let indices =
       match Hashtbl.find_opt groups k with None -> [] | Some lst -> lst
     in
@@ -1104,167 +1292,6 @@ let group_by_column t name =
           (key_col, create columns) :: acc)
         groups []
 
-module Row_agg = struct
-  (* Vectorized row-wise aggregations using Nx operations *)
-
-  (* Helper to collect numeric columns and cast to float64 *)
-  let collect_as_float64 t names : (float, Bigarray.float64_elt) Nx.t list =
-    List.fold_left
-      (fun (acc : (float, Bigarray.float64_elt) Nx.t list) name ->
-        match get_column t name with
-        | Some (Col.P (Nx.Float64, tensor)) -> tensor :: acc
-        | Some (Col.P (Nx.Float32, tensor)) -> Nx.cast Nx.float64 tensor :: acc
-        | Some (Col.P (Nx.Int32, tensor)) -> Nx.cast Nx.float64 tensor :: acc
-        | Some (Col.P (Nx.Int64, tensor)) -> Nx.cast Nx.float64 tensor :: acc
-        | Some (Col.P (_, _)) -> acc (* Skip other types *)
-        | _ -> acc)
-      [] names
-    |> List.rev
-
-  let sum ?(skipna = true) t ~names =
-    let tensors = collect_as_float64 t names in
-    if tensors = [] then Col.float64 (Array.make (num_rows t) 0.0)
-    else
-      (* Stack tensors as rows and sum along axis 0 *)
-      let stacked = Nx.stack tensors ~axis:0 in
-      let result =
-        if skipna then
-          (* Replace NaN with 0 for sum *)
-          let nan_mask = Nx.isnan stacked in
-          let zeros = Nx.zeros_like stacked in
-          let cleaned = Nx.where nan_mask zeros stacked in
-          Nx.sum cleaned ~axes:[| 0 |]
-        else Nx.sum stacked ~axes:[| 0 |]
-      in
-      Col.of_tensor result
-
-  let mean ?(skipna = true) t ~names =
-    let tensors = collect_as_float64 t names in
-    if tensors = [] then Col.float64 (Array.make (num_rows t) Float.nan)
-    else
-      let stacked = Nx.stack tensors ~axis:0 in
-      let result =
-        if skipna then
-          (* Count non-NaN values per position *)
-          let nan_mask = Nx.isnan stacked in
-          let zeros = Nx.zeros_like stacked in
-          let cleaned = Nx.where nan_mask zeros stacked in
-          let ones = Nx.ones_like stacked in
-          let valid_mask = Nx.where nan_mask zeros ones in
-          let sum = Nx.sum cleaned ~axes:[| 0 |] in
-          let count = Nx.sum valid_mask ~axes:[| 0 |] in
-          (* Avoid division by zero *)
-          let safe_count = Nx.maximum count (Nx.ones_like count) in
-          let mean = Nx.div sum safe_count in
-          (* Set to NaN where all values were NaN *)
-          let all_nan = Nx.equal count (Nx.zeros_like count) in
-          Nx.where all_nan (Nx.full_like mean Float.nan) mean
-        else Nx.mean stacked ~axes:[| 0 |]
-      in
-      Col.of_tensor result
-
-  let min ?(skipna = true) t ~names =
-    let tensors = collect_as_float64 t names in
-    if tensors = [] then Col.float64 (Array.make (num_rows t) Float.nan)
-    else
-      let stacked = Nx.stack tensors ~axis:0 in
-      let result =
-        if skipna then
-          (* Replace NaN with +inf for min *)
-          let nan_mask = Nx.isnan stacked in
-          let inf = Nx.full_like stacked Float.infinity in
-          let cleaned = Nx.where nan_mask inf stacked in
-          let min_vals = Nx.min cleaned ~axes:[| 0 |] in
-          (* Set to NaN where all values were NaN *)
-          let is_inf =
-            Nx.equal min_vals (Nx.full_like min_vals Float.infinity)
-          in
-          Nx.where is_inf (Nx.full_like min_vals Float.nan) min_vals
-        else Nx.min stacked ~axes:[| 0 |]
-      in
-      Col.of_tensor result
-
-  let max ?(skipna = true) t ~names =
-    let tensors = collect_as_float64 t names in
-    if tensors = [] then Col.float64 (Array.make (num_rows t) Float.nan)
-    else
-      let stacked = Nx.stack tensors ~axis:0 in
-      let result =
-        if skipna then
-          (* Replace NaN with -inf for max *)
-          let nan_mask = Nx.isnan stacked in
-          let neg_inf = Nx.full_like stacked Float.neg_infinity in
-          let cleaned = Nx.where nan_mask neg_inf stacked in
-          let max_vals = Nx.max cleaned ~axes:[| 0 |] in
-          (* Set to NaN where all values were NaN *)
-          let is_neg_inf =
-            Nx.equal max_vals (Nx.full_like max_vals Float.neg_infinity)
-          in
-          Nx.where is_neg_inf (Nx.full_like max_vals Float.nan) max_vals
-        else Nx.max stacked ~axes:[| 0 |]
-      in
-      Col.of_tensor result
-
-  let dot t ~names ~weights =
-    if List.length names <> Array.length weights then
-      failwith "Number of columns must match number of weights";
-    let tensors = collect_as_float64 t names in
-    if tensors = [] then Col.float64 (Array.make (num_rows t) 0.0)
-    else
-      (* Stack tensors as rows, multiply by weights, and sum *)
-      let stacked = Nx.stack tensors ~axis:0 in
-      let weights_tensor =
-        Nx.create Nx.float64 [| Array.length weights; 1 |] weights
-      in
-      (* Transpose stacked to [n_rows, n_cols], then matrix multiply *)
-      let transposed = Nx.transpose stacked ~axes:[| 1; 0 |] in
-      let result = Nx.matmul transposed weights_tensor in
-      (* Squeeze to remove the extra dimension *)
-      let squeezed = Nx.squeeze result ~axes:[| 1 |] in
-      Col.of_tensor squeezed
-
-  let all t ~names =
-    let cols =
-      List.filter_map
-        (fun name ->
-          match get_column t name with
-          | Some (Col.B arr) -> Some arr
-          | _ -> None)
-        names
-    in
-    if cols = [] then failwith "No boolean columns found"
-    else
-      let n_rows = num_rows t in
-      let result =
-        Array.init n_rows (fun i ->
-            Some
-              (List.for_all
-                 (fun arr -> Option.value arr.(i) ~default:false)
-                 cols))
-      in
-      Col.B result
-
-  let any t ~names =
-    let cols =
-      List.filter_map
-        (fun name ->
-          match get_column t name with
-          | Some (Col.B arr) -> Some arr
-          | _ -> None)
-        names
-    in
-    if cols = [] then failwith "No boolean columns found"
-    else
-      let n_rows = num_rows t in
-      let result =
-        Array.init n_rows (fun i ->
-            Some
-              (List.exists
-                 (fun arr -> Option.value arr.(i) ~default:false)
-                 cols))
-      in
-      Col.B result
-end
 
 module Agg = struct
   module Float = struct
