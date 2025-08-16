@@ -252,6 +252,9 @@ val select_dtypes :
     - `Float includes float32 and float64
     - `Int includes int32 and int64 *)
 
+val columns_except : t -> string list -> string list
+(** [columns_except df exclude] returns all column names except those in exclude list. *)
+
 (** {1 Column Operations} *)
 
 val get_column : t -> string -> Col.t option
@@ -364,6 +367,12 @@ module Row : sig
   val bool : string -> bool t
   (** [bool name] extracts boolean values from column. *)
 
+  val number : string -> float t
+  (** [number name] extracts numeric values from column, coercing int32/int64/float32/float64 to float. *)
+
+  val numbers : string list -> float t list
+  (** [numbers names] creates a list of number accessors for the given column names. *)
+
   (** {2 Row Information} *)
 
   val index : int t
@@ -381,6 +390,10 @@ module Row : sig
   val map_list : 'a t list -> f:('a list -> 'b) -> 'b t
   (** [map_list xs ~f] sequences computations then maps f over the resulting
       list. Equivalent to [map (sequence xs) ~f]. *)
+
+  val fold_list : 'a t list -> init:'b -> f:('b -> 'a -> 'b) -> 'b t
+  (** [fold_list xs ~init ~f] folds over a list of computations without creating
+      an intermediate list. More efficient than map_list for reductions. *)
 
   val float32s : string list -> float t list
   (** Convenience builders to avoid writing [List.map int32 names] etc. *)
@@ -437,8 +450,22 @@ val with_columns : t -> (string * Col.t) list -> t
     {[
       with_columns df
         [
-          ("z", Col.of_tensor (Nx.add (get_tensor df "x") (get_tensor df "y")));
-          ("r", Col.of_tensor (Nx.div (get_tensor df "x") (get_tensor df "y")));
+          ("z", Col.float64_list [ 7.0; 8.0; 9.0 ]);
+          ("sum", Col.float64_list [ 5.0; 7.0; 9.0 ]);
+        ]
+    ]} *)
+
+val with_columns_map : t -> (string * ('a, 'b) Nx.dtype * 'a Row.t) list -> t
+(** [with_columns_map df specs] computes many row-wise columns in one pass.
+    This is a performance and ergonomics win, similar to pandas .assign or 
+    Polars with_columns.
+    
+    Example:
+    {[
+      with_columns_map df
+        [
+          ("z", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( +. ));
+          ("r", Nx.float64, Row.map2 (Row.float64 "x") (Row.float64 "y") ~f:( /. ));
         ]
     ]} *)
 
@@ -472,12 +499,18 @@ val group_by_column : t -> string -> (Col.t * t) list
 
 module Row_agg : sig
   (** Efficient row-wise aggregations using vectorized operations. Similar to
-      pandas' axis=1 operations or Polars' horizontal functions. *)
+      pandas' axis=1 operations or Polars' horizontal functions. 
+      
+      Null semantics:
+      - Float columns: NaN values are treated as nulls
+      - Int columns: Int32.min_int and Int64.min_int are treated as nulls
+      - When skipna=true (default), nulls are excluded from computations
+      - When skipna=false, any null in a row produces a null result *)
 
   val sum : ?skipna:bool -> t -> names:string list -> Col.t
   (** [sum ?skipna df ~names] computes row-wise sum across specified columns.
       Uses vectorized Nx operations for efficiency.
-      @param skipna if true (default), skip NaN values *)
+      @param skipna if true (default), skip null values (NaN for floats, min_int for ints) *)
 
   val mean : ?skipna:bool -> t -> names:string list -> Col.t
   (** [mean ?skipna df ~names] computes row-wise mean across specified columns.
@@ -699,10 +732,10 @@ val melt :
 (** {1 I/O} *)
 
 val to_nx : t -> (float, Bigarray.float32_elt) Nx.t
-(** [to_nx df] converts all numeric columns to 2D tensor.
+(** [to_nx df] converts all numeric columns to a 2D float32 tensor (columns are 
+    cast to float32 first).
 
-    @raise Invalid_argument
-      if columns have different types or non-numeric columns exist. *)
+    @raise Invalid_argument if no numeric columns exist. *)
 
 (* CSV and JSON I/O are now available in separate sublibraries: - Talon_csv
    module provides CSV reading/writing functionality - Talon_json module

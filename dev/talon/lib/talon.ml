@@ -272,6 +272,10 @@ let select_dtypes t types =
          List.exists (fun t -> matches_type typ t) types)
   |> List.map fst
 
+let columns_except t exclude =
+  let is_excluded name = List.mem name exclude in
+  List.filter (fun name -> not (is_excluded name)) (column_names t)
+
 let get_column t name = Hashtbl.find_opt t.column_map name
 
 let get_column_exn t name =
@@ -541,10 +545,52 @@ module Row = struct
           Option.value arr.(i) ~default:false);
     }
 
+  let number name =
+    let cache : float array option ref = ref None in
+    {
+      f =
+        (fun df i ->
+          let arr =
+            match !cache with
+            | Some a -> a
+            | None -> (
+                match get_column df name with
+                | Some (Col.P (Nx.Float32, tensor)) ->
+                    let a : float array = Nx.to_array tensor in
+                    cache := Some a;
+                    a
+                | Some (Col.P (Nx.Float64, tensor)) ->
+                    let a : float array = Nx.to_array tensor in
+                    cache := Some a;
+                    a
+                | Some (Col.P (Nx.Int32, tensor)) ->
+                    let int_arr : int32 array = Nx.to_array tensor in
+                    let a = Array.map Int32.to_float int_arr in
+                    cache := Some a;
+                    a
+                | Some (Col.P (Nx.Int64, tensor)) ->
+                    let int_arr : int64 array = Nx.to_array tensor in
+                    let a = Array.map Int64.to_float int_arr in
+                    cache := Some a;
+                    a
+                | Some _ -> failwith ("Column " ^ name ^ " is not numeric")
+                | None -> failwith ("Column " ^ name ^ " not found"))
+          in
+          arr.(i));
+    }
+
+  let numbers names = List.map number names
+
   let index = { f = (fun _ i -> i) }
   let sequence xs = { f = (fun df i -> List.map (fun x -> x.f df i) xs) }
   let all = sequence
   let map_list xs ~f = map (sequence xs) ~f
+  
+  let fold_list xs ~init ~f =
+    { f = (fun df i ->
+        List.fold_left (fun acc x -> f acc (x.f df i)) init xs)
+    }
+  
   let float32s names = List.map float32 names
   let float64s names = List.map float64 names
   let int32s names = List.map int32 names
@@ -877,6 +923,15 @@ let map_column t name dtype f =
 
 let with_columns t cols =
   List.fold_left (fun df (name, col) -> add_column df name col) t cols
+
+let with_columns_map t specs =
+  (* Build all columns in one pass for efficiency *)
+  let new_cols = 
+    List.map (fun (name, dtype, row_fn) ->
+      (name, Col.of_tensor (map t dtype row_fn))
+    ) specs
+  in
+  with_columns t new_cols
 
 let iter t f =
   let n_rows = num_rows t in
@@ -2062,16 +2117,17 @@ module Agg = struct
           "fillna: value column must have 1 element or match column length"
 end
 
-let join t1 _t2 ~on:_ ~how:_ ?suffixes () =
-  let _ = suffixes in
-  t1
+let join _t1 _t2 ~on:_ ~how:_ ?suffixes:_ () =
+  invalid_arg "join: not implemented yet. This feature is planned for a future release."
 
-let merge t1 _t2 ~left_on:_ ~right_on:_ ~how:_ ?suffixes () =
-  let _ = suffixes in
-  t1
+let merge _t1 _t2 ~left_on:_ ~right_on:_ ~how:_ ?suffixes:_ () =
+  invalid_arg "merge: not implemented yet. This feature is planned for a future release."
 
-let pivot t ~index:_ ~columns:_ ~values:_ ?agg_func:_ () = t
-let melt t ?id_vars:_ ?value_vars:_ ?var_name:_ ?value_name:_ () = t
+let pivot _t ~index:_ ~columns:_ ~values:_ ?agg_func:_ () =
+  invalid_arg "pivot: not implemented yet. This feature is planned for a future release."
+
+let melt _t ?id_vars:_ ?value_vars:_ ?var_name:_ ?value_name:_ () =
+  invalid_arg "melt: not implemented yet. This feature is planned for a future release."
 
 let to_nx t =
   let numeric_tensors =
