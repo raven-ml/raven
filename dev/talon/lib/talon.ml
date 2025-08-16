@@ -239,6 +239,14 @@ let column_types t =
     t.columns
 
 let is_empty t = num_rows t = 0
+
+let numeric_column_names t =
+  column_types t
+  |> List.filter (function
+       | _, (`Float32 | `Float64 | `Int32 | `Int64) -> true
+       | _ -> false)
+  |> List.map fst
+
 let get_column t name = Hashtbl.find_opt t.column_map name
 
 let get_column_exn t name =
@@ -393,72 +401,129 @@ module Row = struct
   let both x y = { f = (fun df i -> (x.f df i, y.f df i)) }
 
   let float32 name =
+    let cache : float array option ref = ref None in
     {
       f =
         (fun df i ->
-          match get_column df name with
-          | Some (Col.P (Nx.Float32, tensor)) ->
-              let arr : float array = Nx.to_array tensor in
-              arr.(i)
-          | Some _ -> failwith ("Column " ^ name ^ " is not float32")
-          | None -> failwith ("Column " ^ name ^ " not found"));
+          let arr =
+            match !cache with
+            | Some a -> a
+            | None ->
+                match get_column df name with
+                | Some (Col.P (Nx.Float32, tensor)) ->
+                    let a : float array = Nx.to_array tensor in
+                    cache := Some a; a
+                | Some _ -> failwith ("Column " ^ name ^ " is not float32")
+                | None -> failwith ("Column " ^ name ^ " not found")
+          in
+          arr.(i));
     }
 
   let float64 name =
+    let cache : float array option ref = ref None in
     {
       f =
         (fun df i ->
-          match get_column df name with
-          | Some (Col.P (Nx.Float64, tensor)) ->
-              let arr : float array = Nx.to_array tensor in
-              arr.(i)
-          | Some _ -> failwith ("Column " ^ name ^ " is not float64")
-          | None -> failwith ("Column " ^ name ^ " not found"));
+          let arr =
+            match !cache with
+            | Some a -> a
+            | None ->
+                match get_column df name with
+                | Some (Col.P (Nx.Float64, tensor)) ->
+                    let a : float array = Nx.to_array tensor in
+                    cache := Some a; a
+                | Some _ -> failwith ("Column " ^ name ^ " is not float64")
+                | None -> failwith ("Column " ^ name ^ " not found")
+          in
+          arr.(i));
     }
 
   let int32 name =
+    let cache : int32 array option ref = ref None in
     {
       f =
         (fun df i ->
-          match get_column df name with
-          | Some (Col.P (Nx.Int32, tensor)) ->
-              let arr : int32 array = Nx.to_array tensor in
-              arr.(i)
-          | Some _ -> failwith ("Column " ^ name ^ " is not int32")
-          | None -> failwith ("Column " ^ name ^ " not found"));
+          let arr =
+            match !cache with
+            | Some a -> a
+            | None ->
+                match get_column df name with
+                | Some (Col.P (Nx.Int32, tensor)) ->
+                    let a : int32 array = Nx.to_array tensor in
+                    cache := Some a; a
+                | Some _ -> failwith ("Column " ^ name ^ " is not int32")
+                | None -> failwith ("Column " ^ name ^ " not found")
+          in
+          arr.(i));
     }
 
   let int64 name =
+    let cache : int64 array option ref = ref None in
     {
       f =
         (fun df i ->
-          match get_column df name with
-          | Some (Col.P (Nx.Int64, tensor)) ->
-              let arr : int64 array = Nx.to_array tensor in
-              arr.(i)
-          | Some _ -> failwith ("Column " ^ name ^ " is not int64")
-          | None -> failwith ("Column " ^ name ^ " not found"));
+          let arr =
+            match !cache with
+            | Some a -> a
+            | None ->
+                match get_column df name with
+                | Some (Col.P (Nx.Int64, tensor)) ->
+                    let a : int64 array = Nx.to_array tensor in
+                    cache := Some a; a
+                | Some _ -> failwith ("Column " ^ name ^ " is not int64")
+                | None -> failwith ("Column " ^ name ^ " not found")
+          in
+          arr.(i));
     }
 
   let string name =
+    let cache : string option array option ref = ref None in
     {
       f =
         (fun df i ->
-          match get_column df name with
-          | Some (Col.S arr) -> Option.value arr.(i) ~default:""
-          | _ -> failwith ("Column " ^ name ^ " is not string"));
+          let arr =
+            match !cache with
+            | Some a -> a
+            | None ->
+                match get_column df name with
+                | Some (Col.S a) -> cache := Some a; a
+                | _ -> failwith ("Column " ^ name ^ " is not string")
+          in
+          Option.value arr.(i) ~default:"");
     }
 
   let bool name =
+    let cache : bool option array option ref = ref None in
     {
       f =
         (fun df i ->
-          match get_column df name with
-          | Some (Col.B arr) -> Option.value arr.(i) ~default:false
-          | _ -> failwith ("Column " ^ name ^ " is not bool"));
+          let arr =
+            match !cache with
+            | Some a -> a
+            | None ->
+                match get_column df name with
+                | Some (Col.B a) -> cache := Some a; a
+                | _ -> failwith ("Column " ^ name ^ " is not bool")
+          in
+          Option.value arr.(i) ~default:false);
     }
 
   let index = { f = (fun _ i -> i) }
+
+  let sequence xs = 
+    { f = (fun df i -> List.map (fun x -> x.f df i) xs) }
+  
+  let all = sequence
+  
+  let map_list xs ~f = 
+    map (sequence xs) ~f
+
+  let float32s names = List.map float32 names
+  let float64s names = List.map float64 names
+  let int32s   names = List.map int32   names
+  let int64s   names = List.map int64   names
+  let bools    names = List.map bool    names
+  let strings  names = List.map string  names
 end
 
 let head ?(n = 5) t =

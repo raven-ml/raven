@@ -407,6 +407,161 @@ let edge_tests = [
   "single_row", `Quick, test_single_row;
 ]
 
+(* Test wide operations with mapHomo *)
+let test_map_list_product () =
+  (* Create a dataframe with 6 int32 columns *)
+  let df = create [
+    ("A", Col.int32_list [2l; 3l; 4l]);
+    ("B", Col.int32_list [1l; 2l; 3l]);
+    ("C", Col.int32_list [3l; 1l; 2l]);
+    ("D", Col.int32_list [1l; 1l; 1l]);
+    ("E", Col.int32_list [2l; 2l; 2l]);
+    ("F", Col.int32_list [1l; 3l; 1l]);
+  ] in
+  
+  (* Compute product of all 6 columns using map_list *)
+  let df2 = map_column df "allMul" Nx.int32
+    Row.(map_list (int32s ["A";"B";"C";"D";"E";"F"])
+           ~f:(List.fold_left Int32.mul 1l)) in
+  
+  (* Check the results *)
+  match to_int32_array df2 "allMul" with
+  | Some arr -> 
+      (* Row 1: 2*1*3*1*2*1 = 12 *)
+      (* Row 2: 3*2*1*1*2*3 = 36 *)
+      (* Row 3: 4*3*2*1*2*1 = 48 *)
+      check_bool "Product of 6 columns" true 
+        (arr = [|12l; 36l; 48l|])
+  | None -> Alcotest.fail "allMul column should exist"
+
+let test_sequence_sum () =
+  (* Create a dataframe with float columns *)
+  let df = create [
+    ("A", Col.float64_list [1.0; 2.0; 3.0]);
+    ("B", Col.float64_list [2.0; 3.0; 4.0]);
+    ("C", Col.float64_list [3.0; 4.0; 5.0]);
+  ] in
+  
+  (* Sum all columns using sequence + map *)
+  let df2 = map_column df "total" Nx.float64
+    Row.(map (sequence (float64s ["A";"B";"C"]))
+           ~f:(List.fold_left ( +. ) 0.)) in
+  
+  match to_float64_array df2 "total" with
+  | Some arr -> 
+      check_float "Row 1 sum" 6.0 arr.(0);
+      check_float "Row 2 sum" 9.0 arr.(1);
+      check_float "Row 3 sum" 12.0 arr.(2)
+  | None -> Alcotest.fail "total column should exist"
+
+let test_weighted_sum () =
+  (* Test weighted sum example *)
+  let df = create [
+    ("A", Col.float64_list [1.0; 2.0; 3.0]);
+    ("B", Col.float64_list [2.0; 3.0; 4.0]);
+    ("C", Col.float64_list [3.0; 4.0; 5.0]);
+    ("D", Col.float64_list [4.0; 5.0; 6.0]);
+    ("E", Col.float64_list [5.0; 6.0; 7.0]);
+    ("F", Col.float64_list [6.0; 7.0; 8.0]);
+  ] in
+  
+  let feats = ["A";"B";"C";"D";"E";"F"] in
+  let weights = [0.2; 0.3; 0.1; 0.1; 0.1; 0.2] in
+  
+  let df' = map_column df "score" Nx.float64
+    Row.(map_list (float64s feats)
+          ~f:(fun xs -> List.fold_left2 
+                (fun acc wi xi -> acc +. wi *. xi) 0. weights xs)) in
+  
+  match to_float64_array df' "score" with
+  | Some scores ->
+      (* First row: 0.2*1 + 0.3*2 + 0.1*3 + 0.1*4 + 0.1*5 + 0.2*6 = 3.2 *)
+      check_float "First weighted sum" 3.2 scores.(0);
+      check_float "Second weighted sum" 4.2 scores.(1);
+      check_float "Third weighted sum" 5.2 scores.(2)
+  | None -> Alcotest.fail "score column should exist"
+
+let test_numeric_column_names () =
+  let df = create [
+    ("name", Col.string_list ["Alice"; "Bob"; "Charlie"]);
+    ("age", Col.int32_list [25l; 30l; 35l]);
+    ("score", Col.float64_list [85.5; 92.0; 78.5]);
+    ("active", Col.bool_list [true; false; true]);
+    ("height", Col.float32_list [1.75; 1.80; 1.70]);
+    ("id", Col.int64_list [1L; 2L; 3L]);
+  ] in
+  
+  let numeric_cols = numeric_column_names df in
+  let expected = ["age"; "score"; "height"; "id"] in
+  
+  (* Sort both lists for comparison since order might vary *)
+  let sorted_numeric = List.sort String.compare numeric_cols in
+  let sorted_expected = List.sort String.compare expected in
+  
+  Alcotest.(check (list string)) "Numeric column names" 
+    sorted_expected sorted_numeric
+
+let test_row_helpers () =
+  let df = create [
+    ("a", Col.int32_list [1l; 2l]);
+    ("b", Col.int32_list [3l; 4l]);
+    ("c", Col.float64_list [5.0; 6.0]);
+  ] in
+  
+  (* Test int32s helper *)
+  let int_cols = Row.int32s ["a"; "b"] in
+  check_int "int32s creates 2 accessors" 2 (List.length int_cols);
+  
+  (* Test float64s helper *)
+  let float_cols = Row.float64s ["c"] in
+  check_int "float64s creates 1 accessor" 1 (List.length float_cols);
+  
+  (* Test using the helpers with all (alias for sequence) *)
+  let df2 = map_column df "sum" Nx.float64
+    Row.(map (all (float64s ["c"])) ~f:(fun xs -> 
+      match xs with 
+      | [x] -> x *. 2.0
+      | _ -> failwith "Expected exactly one column")) in
+  
+  match to_float64_array df2 "sum" with
+  | Some arr ->
+      check_float "First doubled" 10.0 arr.(0);
+      check_float "Second doubled" 12.0 arr.(1)
+  | None -> Alcotest.fail "sum column should exist"
+
+let test_sequence_all_equivalence () =
+  (* Test that sequence and all are equivalent *)
+  let df = create [
+    ("x", Col.int32_list [1l; 2l]);
+    ("y", Col.int32_list [10l; 20l]);
+    ("z", Col.int32_list [100l; 200l]);
+  ] in
+  
+  (* Using sequence *)
+  let df_seq = map_column df "sum_seq" Nx.int32
+    Row.(map (sequence (int32s ["x"; "y"; "z"]))
+           ~f:(List.fold_left Int32.add 0l)) in
+  
+  (* Using all (should be identical) *)
+  let df_all = map_column df "sum_all" Nx.int32
+    Row.(map (all (int32s ["x"; "y"; "z"]))
+           ~f:(List.fold_left Int32.add 0l)) in
+  
+  match to_int32_array df_seq "sum_seq", to_int32_array df_all "sum_all" with
+  | Some seq_arr, Some all_arr ->
+      check_bool "sequence and all produce same results" true
+        (seq_arr = all_arr && seq_arr = [|111l; 222l|])
+  | _ -> Alcotest.fail "columns should exist"
+
+let wide_tests = [
+  "map_list product", `Quick, test_map_list_product;
+  "sequence sum", `Quick, test_sequence_sum;
+  "weighted sum", `Quick, test_weighted_sum;
+  "numeric_column_names", `Quick, test_numeric_column_names;
+  "row helpers", `Quick, test_row_helpers;
+  "sequence/all equivalence", `Quick, test_sequence_all_equivalence;
+]
+
 let () =
   Alcotest.run "Talon" [
     "Col", col_tests;
@@ -419,4 +574,5 @@ let () =
     "Aggregations", agg_tests;
     "Conversions", conversion_tests;
     "Edge cases", edge_tests;
+    "Wide operations", wide_tests;
   ]

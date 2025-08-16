@@ -228,6 +228,9 @@ val column_types :
 val is_empty : t -> bool
 (** [is_empty df] returns true if dataframe has no rows. *)
 
+val numeric_column_names : t -> string list
+(** [numeric_column_names df] returns all columns of type float32/float64/int32/int64. *)
+
 (** {1 Column Operations} *)
 
 val get_column : t -> string -> Col.t option
@@ -344,6 +347,25 @@ module Row : sig
 
   val index : int t
   (** [index] returns the current row index. *)
+
+  val sequence : 'a t list -> 'a list t
+  (** [sequence xs] transforms a list of computations into a computation of a list.
+      Standard applicative operation for collecting multiple column values. *)
+
+  val all : 'a t list -> 'a list t
+  (** [all xs] is an alias for [sequence xs]. Collects all values from the list of computations. *)
+
+  val map_list : 'a t list -> f:('a list -> 'b) -> 'b t
+  (** [map_list xs ~f] sequences computations then maps f over the resulting list.
+      Equivalent to [map (sequence xs) ~f]. *)
+
+  (** Convenience builders to avoid writing [List.map int32 names] etc. *)
+  val float32s : string list -> float t list
+  val float64s : string list -> float t list
+  val int32s   : string list -> int32 t list
+  val int64s   : string list -> int64 t list
+  val bools    : string list -> bool t list
+  val strings  : string list -> string t list
 end
 
 (** {1 Row Operations} *)
