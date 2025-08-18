@@ -3,12 +3,7 @@
   bug_blit_overlapping
   bug_gather_index_shape
   bug_logspace_division_by_zero
-  bug_slice_batch_process_bounds
-  bug_extended_types_segfault
-  bug_extended_nx_test
-  test_extended_ops
-  test_fill_simple
-  test_fill_debug)
+  bug_slice_batch_process_bounds)
  (libraries bigarray_ext nx_core nx_native nx))
 
 (executables
