@@ -4,6 +4,7 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
+- gemma kaun example 
 - add bf16, fp8, bool data types
   - add actual support in operations
   - replace mask and cond operations with bool tensors
@@ -13,6 +14,7 @@ goalpost: mnist notebook in quill with rune + hugin
 - linear algebra functions  
   - fix tests
 - jit with xla
+- jit
 - vmap
 - jvp
 
@@ -23,6 +25,7 @@ docs
 - review website+docs examples systematically.
 
 feature requests:
+- make nx c backend usable with nx (global backend?)
 - complete linear algebra suite (cholesky, einsum, qr, svd, inv, solve, norm, eig, eigh, etc.)
 - forward mode ad (jvp)
 - vmap (that compose with jvp!)
