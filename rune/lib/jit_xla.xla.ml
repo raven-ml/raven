@@ -113,18 +113,15 @@ let tensor_to_literal (type a b) (tensor : (a, b) Nx_rune.t) : Xla.Literal.t =
   | Nx_rune.Ocaml_tensor native_t ->
       (* For OCaml backend, the buffer is the bigarray *)
       let arr = Nx_native.data native_t in
-      Xla.Literal.of_bigarray
-        (Obj.magic arr : (_, _, c_layout) Genarray.t)
+      Xla.Literal.of_bigarray (Obj.magic arr : (_, _, c_layout) Genarray.t)
   | Nx_rune.C_tensor c_t ->
       (* For C backend, similar approach *)
       let arr = Nx_c.data c_t in
-      Xla.Literal.of_bigarray
-        (Obj.magic arr : (_, _, c_layout) Genarray.t)
+      Xla.Literal.of_bigarray (Obj.magic arr : (_, _, c_layout) Genarray.t)
   | Nx_rune.Metal_tensor metal_t ->
       (* For Metal backend, get the data from GPU *)
       let arr = Rune_metal.data metal_t in
-      Xla.Literal.of_bigarray
-        (Obj.magic arr : (_, _, c_layout) Genarray.t)
+      Xla.Literal.of_bigarray (Obj.magic arr : (_, _, c_layout) Genarray.t)
   | Nx_rune.Symbolic_tensor _ ->
       failwith "XLA: Cannot convert symbolic tensor to literal"
 
@@ -753,9 +750,7 @@ let build_expr (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t)
                     (* Create array constant from bigarray *)
                     (* Convert Array1 to Genarray *)
                     let dims = [| Array1.dim array |] in
-                    let genarray =
-                      reshape (genarray_of_array1 array) dims
-                    in
+                    let genarray = reshape (genarray_of_array1 array) dims in
                     let literal = Xla.Literal.of_bigarray genarray in
                     (* We need to infer dtype from the array kind *)
                     let dtype_pack =

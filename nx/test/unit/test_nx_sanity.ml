@@ -827,7 +827,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
             (Bigarray_ext.Genarray.get ba [| 1 |]));
       test_case "of_bigarray" `Quick (fun () ->
           let ba =
-            Bigarray_ext.Genarray.create Bigarray_ext.float32 Bigarray_ext.c_layout [| 3 |]
+            Bigarray_ext.Genarray.create Bigarray_ext.float32
+              Bigarray_ext.c_layout [| 3 |]
           in
           Bigarray_ext.Genarray.set ba [| 0 |] 4.0;
           Bigarray_ext.Genarray.set ba [| 1 |] 5.0;

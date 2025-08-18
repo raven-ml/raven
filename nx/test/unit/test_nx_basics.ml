@@ -520,7 +520,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
     in
     let ba = Nx.unsafe_to_bigarray t in
-    check (float 1e-6) "initial [0,0]" 1.0 (Bigarray_ext.Genarray.get ba [| 0; 0 |]);
+    check (float 1e-6) "initial [0,0]" 1.0
+      (Bigarray_ext.Genarray.get ba [| 0; 0 |]);
     Nx.unsafe_set [ 0; 0 ] 55.0 t;
     check (float 1e-6) "after set [0,0]" 55.0
       (Bigarray_ext.Genarray.get ba [| 0; 0 |])

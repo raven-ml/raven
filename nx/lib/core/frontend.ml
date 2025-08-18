@@ -24,6 +24,7 @@ module Make (B : Backend_intf.S) = struct
   type nativeint_elt = Bigarray_ext.nativeint_elt
   type complex32_elt = Bigarray_ext.complex32_elt
   type complex64_elt = Bigarray_ext.complex64_elt
+
   (* Extended types from Bigarray_ext *)
   type bfloat16_elt = Bigarray_ext.bfloat16_elt
   type bool_elt = Bigarray_ext.bool_elt
@@ -720,7 +721,7 @@ module Make (B : Backend_intf.S) = struct
         B.op_xor a one_tensor
     | Dtype.Float16 | Dtype.Float32 | Dtype.Float64 | Dtype.Int32 | Dtype.Int64
     | Dtype.Int8 | Dtype.Int16 | Dtype.UInt16 | Dtype.Int | Dtype.NativeInt
-    | Dtype.Complex32 | Dtype.Complex64 | Dtype.BFloat16 | Dtype.Int4 
+    | Dtype.Complex32 | Dtype.Complex64 | Dtype.BFloat16 | Dtype.Int4
     | Dtype.Float8_e4m3 | Dtype.Float8_e5m2 | Dtype.Complex16 | Dtype.QInt8 ->
         let one_val = Dtype.one dt in
         let one_tensor = full (B.context a) dt (shape a) one_val in
@@ -2082,8 +2083,7 @@ module Make (B : Backend_intf.S) = struct
         | Dtype.UInt4 -> start + (i * step)
         | Dtype.QInt8 -> start + (i * step)
         | Dtype.QUInt8 -> start + (i * step)
-        | Dtype.Bool -> 
-            if i = 0 then false else true
+        | Dtype.Bool -> if i = 0 then false else true
         | Dtype.Int32 ->
             Int32.(add (of_int start) (mul (of_int i) (of_int step)))
         | Dtype.Int64 ->
@@ -4108,7 +4108,7 @@ module Make (B : Backend_intf.S) = struct
     if norm_scale <> 1.0 then
       let scale_value =
         match B.dtype result with
-        | Complex32 | Complex64 | Complex16 -> 
+        | Complex32 | Complex64 | Complex16 ->
             Complex.{ re = norm_scale; im = 0.0 }
       in
       let scale_tensor =
@@ -4187,7 +4187,7 @@ module Make (B : Backend_intf.S) = struct
     if total_scale <> 1.0 then
       let scale_value =
         match B.dtype result with
-        | Complex32 | Complex64 | Complex16 -> 
+        | Complex32 | Complex64 | Complex16 ->
             Complex.{ re = total_scale; im = 0.0 }
       in
       let scale_tensor =
@@ -5586,8 +5586,7 @@ module Make (B : Backend_intf.S) = struct
             in
             Shape.ravel_index md_index strides + offset
           in
-          if linear_offset < 0 || linear_offset >= Array1.dim buffer
-          then
+          if linear_offset < 0 || linear_offset >= Array1.dim buffer then
             fprintf fmt "<OOB:%d/%d>" linear_offset (Array1.dim buffer)
           else
             let value = Array1.unsafe_get buffer linear_offset in

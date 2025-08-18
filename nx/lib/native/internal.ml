@@ -84,9 +84,7 @@ let is_c_contiguous { view; _ } = Lazy_view.is_contiguous view
 (* Low-level helper to create a Array1.t *)
 let create_buffer_unsafe (type a b) (dt : (a, b) Dtype.t)
     (size_in_elements : int) : (a, b) buffer =
-  Array1.create
-    (Dtype.to_bigarray_ext_kind dt)
-    c_layout size_in_elements
+  Array1.create (Dtype.to_bigarray_ext_kind dt) c_layout size_in_elements
 
 (* Operations (These seem like they might belong in a higher-level API or were
    part of an older structure, but correcting them as requested.) Note: These

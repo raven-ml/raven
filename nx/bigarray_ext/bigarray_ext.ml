@@ -160,7 +160,8 @@ external nx_ba_set_generic : ('a, 'b, 'c) Genarray.t -> int array -> 'a -> unit
   = "caml_nx_ba_set_generic"
 
 (* External function to get extended kind - needs C stub implementation *)
-external nx_ba_kind : ('a, 'b, 'c) Genarray.t -> ('a, 'b) kind = "caml_nx_ba_kind"
+external nx_ba_kind : ('a, 'b, 'c) Genarray.t -> ('a, 'b) kind
+  = "caml_nx_ba_kind"
 
 (* Shadow the Genarray module *)
 module Genarray = struct
@@ -183,13 +184,13 @@ module Genarray = struct
         match to_stdlib_kind kind with
         | Some k -> Stdlib.Bigarray.Genarray.create k layout dims
         | None -> failwith "Internal error: unhandled kind")
-  
+
   (* Override kind to return Bigarray_ext.kind *)
   let kind : type a b c. (a, b, c) t -> (a, b) kind = nx_ba_kind
-  
+
   (* Shadow get to handle extended types *)
   let get arr idx = nx_ba_get_generic arr idx
-  
+
   (* Shadow set to handle extended types *)
   let set arr idx value = nx_ba_set_generic arr idx value
 
@@ -225,17 +226,16 @@ module Genarray = struct
   let size_in_bytes arr =
     (* We can't get the extended kind from the array, so we keep the original *)
     Stdlib.Bigarray.Genarray.size_in_bytes arr
-  
+
   (* Override blit to handle extended types *)
   external nx_ba_blit_genarray : ('a, 'b, 'c) t -> ('a, 'b, 'c) t -> unit
     = "caml_nx_ba_blit"
-  
+
   let blit = nx_ba_blit_genarray
-  
+
   (* Override fill for extended types *)
-  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit
-    = "caml_nx_ba_fill"
-    
+  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit = "caml_nx_ba_fill"
+
   let fill = nx_ba_fill
 end
 
@@ -267,13 +267,13 @@ module Array1 = struct
     array1_of_genarray (Genarray.create kind layout [| dim |])
 
   (* Override kind to return Bigarray_ext.kind *)
-  let kind : type a b c. (a, b, c) t -> (a, b) kind = 
+  let kind : type a b c. (a, b, c) t -> (a, b) kind =
    fun arr -> Genarray.kind (genarray_of_array1 arr)
-  
+
   (* Override get and set to use our extended functions *)
   let get arr i = Genarray.get (genarray_of_array1 arr) [| i |]
   let set arr i v = Genarray.set (genarray_of_array1 arr) [| i |] v
-  
+
   (* unsafe versions just call the safe versions for extended types *)
   let unsafe_get arr i = get arr i
   let unsafe_set arr i v = set arr i v
@@ -281,13 +281,12 @@ module Array1 = struct
   (* Override blit to handle extended types *)
   external nx_ba_blit : ('a, 'b, 'c) t -> ('a, 'b, 'c) t -> unit
     = "caml_nx_ba_blit"
-  
+
   let blit = nx_ba_blit
-  
+
   (* Override fill for extended types *)
-  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit
-    = "caml_nx_ba_fill"
-    
+  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit = "caml_nx_ba_fill"
+
   let fill = nx_ba_fill
 
   let init (type t) kind (layout : t layout) dim f =
@@ -323,13 +322,13 @@ module Array2 = struct
     array2_of_genarray (Genarray.create kind layout [| dim1; dim2 |])
 
   (* Override kind to return Bigarray_ext.kind *)
-  let kind : type a b c. (a, b, c) t -> (a, b) kind = 
+  let kind : type a b c. (a, b, c) t -> (a, b) kind =
    fun arr -> Genarray.kind (genarray_of_array2 arr)
-  
+
   (* Override get and set to use our extended functions *)
   let get arr i j = Genarray.get (genarray_of_array2 arr) [| i; j |]
   let set arr i j v = Genarray.set (genarray_of_array2 arr) [| i; j |] v
-  
+
   (* unsafe versions just call the safe versions for extended types *)
   let unsafe_get arr i j = get arr i j
   let unsafe_set arr i j v = set arr i j v
@@ -337,13 +336,12 @@ module Array2 = struct
   (* Override blit to handle extended types *)
   external nx_ba_blit : ('a, 'b, 'c) t -> ('a, 'b, 'c) t -> unit
     = "caml_nx_ba_blit"
-  
+
   let blit = nx_ba_blit
-  
+
   (* Override fill for extended types *)
-  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit
-    = "caml_nx_ba_fill"
-    
+  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit = "caml_nx_ba_fill"
+
   let fill = nx_ba_fill
 
   let init (type t) kind (layout : t layout) dim1 dim2 f =
@@ -378,17 +376,16 @@ module Array2 = struct
       done
     done;
     ba
-  
+
   (* Override blit to handle extended types *)
   external nx_ba_blit : ('a, 'b, 'c) t -> ('a, 'b, 'c) t -> unit
     = "caml_nx_ba_blit"
-  
+
   let blit = nx_ba_blit
-  
+
   (* Override fill for extended types *)
-  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit
-    = "caml_nx_ba_fill"
-    
+  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit = "caml_nx_ba_fill"
+
   let fill = nx_ba_fill
 end
 
@@ -402,13 +399,13 @@ module Array3 = struct
     array3_of_genarray (Genarray.create kind layout [| dim1; dim2; dim3 |])
 
   (* Override kind to return Bigarray_ext.kind *)
-  let kind : type a b c. (a, b, c) t -> (a, b) kind = 
+  let kind : type a b c. (a, b, c) t -> (a, b) kind =
    fun arr -> Genarray.kind (genarray_of_array3 arr)
-  
+
   (* Override get and set to use our extended functions *)
   let get arr i j k = Genarray.get (genarray_of_array3 arr) [| i; j; k |]
   let set arr i j k v = Genarray.set (genarray_of_array3 arr) [| i; j; k |] v
-  
+
   (* unsafe versions just call the safe versions for extended types *)
   let unsafe_get arr i j k = get arr i j k
   let unsafe_set arr i j k v = set arr i j k v
@@ -416,13 +413,12 @@ module Array3 = struct
   (* Override blit to handle extended types *)
   external nx_ba_blit : ('a, 'b, 'c) t -> ('a, 'b, 'c) t -> unit
     = "caml_nx_ba_blit"
-  
+
   let blit = nx_ba_blit
-  
+
   (* Override fill for extended types *)
-  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit
-    = "caml_nx_ba_fill"
-    
+  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit = "caml_nx_ba_fill"
+
   let fill = nx_ba_fill
 
   let init (type t) kind (layout : t layout) dim1 dim2 dim3 f =
@@ -467,16 +463,15 @@ module Array3 = struct
       done
     done;
     ba
-  
+
   (* Override blit to handle extended types *)
   external nx_ba_blit : ('a, 'b, 'c) t -> ('a, 'b, 'c) t -> unit
     = "caml_nx_ba_blit"
-  
+
   let blit = nx_ba_blit
-  
+
   (* Override fill for extended types *)
-  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit
-    = "caml_nx_ba_fill"
-    
+  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit = "caml_nx_ba_fill"
+
   let fill = nx_ba_fill
 end

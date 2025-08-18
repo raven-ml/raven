@@ -74,7 +74,7 @@ let add_dtype (type a b) (dtype : (a, b) Dtype.t) (a : a) (b : a) : a =
   | Complex32 -> Complex.add a b
   | Complex64 -> Complex.add a b
   | BFloat16 -> Float.add a b
-  | Bool -> (a || b)
+  | Bool -> a || b
   | Int4 -> Int.add a b
   | UInt4 -> Int.add a b
   | Float8_e4m3 -> Float.add a b
@@ -206,7 +206,7 @@ let mul_dtype (type a b) (dtype : (a, b) Dtype.t) (a : a) (b : a) : a =
   | Complex32 -> Complex.mul a b
   | Complex64 -> Complex.mul a b
   | BFloat16 -> Float.mul a b
-  | Bool -> (a && b)
+  | Bool -> a && b
   | Int4 -> Int.mul a b
   | UInt4 -> Int.mul a b
   | Float8_e4m3 -> Float.mul a b
@@ -349,7 +349,7 @@ let min_dtype (type a b) (dtype : (a, b) Dtype.t) (a : a) (b : a) : a =
       else if a.im < b.im then a
       else b
   | BFloat16 -> Float.min a b
-  | Bool -> (a && b)
+  | Bool -> a && b
   | Int4 -> Int.min a b
   | UInt4 -> Int.min a b
   | Float8_e4m3 -> Float.min a b
@@ -558,7 +558,7 @@ let max_dtype (type a b) (dtype : (a, b) Dtype.t) (a : a) (b : a) : a =
       else if a.im > b.im then a
       else b
   | BFloat16 -> Float.max a b
-  | Bool -> (a || b)
+  | Bool -> a || b
   | Int4 -> Int.max a b
   | UInt4 -> Int.max a b
   | Float8_e4m3 -> Float.max a b

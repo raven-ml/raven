@@ -739,9 +739,7 @@ let kernel_recip_float16 (a : (float, float16_elt) t)
       Shape.unravel_index_into k (shape out) md_index;
       Shape.broadcast_index_into md_index (shape a) a_idx;
       let a_lin_offset_in_a_data = Shape.ravel_index a_idx (strides a) in
-      let v =
-        Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
-      in
+      let v = Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data) in
       Array1.unsafe_set out_buf (offset out + k) (1.0 /. v)
     done
 
@@ -779,9 +777,7 @@ let kernel_recip_float32 (a : (float, float32_elt) t)
       Shape.unravel_index_into k (shape out) md_index;
       Shape.broadcast_index_into md_index (shape a) a_idx;
       let a_lin_offset_in_a_data = Shape.ravel_index a_idx (strides a) in
-      let v =
-        Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
-      in
+      let v = Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data) in
       Array1.unsafe_set out_buf (offset out + k) (1.0 /. v)
     done
 
@@ -819,9 +815,7 @@ let kernel_recip_float64 (a : (float, float64_elt) t)
       Shape.unravel_index_into k (shape out) md_index;
       Shape.broadcast_index_into md_index (shape a) a_idx;
       let a_lin_offset_in_a_data = Shape.ravel_index a_idx (strides a) in
-      let v =
-        Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data)
-      in
+      let v = Array1.unsafe_get a_buf (offset a + a_lin_offset_in_a_data) in
       Array1.unsafe_set out_buf (offset out + k) (1.0 /. v)
     done
 

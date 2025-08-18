@@ -266,8 +266,8 @@ let assign ctx dst src =
     (* Destination is strided - use CPU fallback for now *)
     Internal.with_command_buffer ctx (fun _cmd_buffer ->
         (* Get CPU-accessible arrays *)
-        let get_data : type a b.
-            (a, b) Internal.t -> (a, b, c_layout) Array1.t =
+        let get_data : type a b. (a, b) Internal.t -> (a, b, c_layout) Array1.t
+            =
          fun t ->
           let contents = Metal.Buffer.contents t.buffer.buffer in
           let kind = Dtype.to_bigarray_kind t.dtype in

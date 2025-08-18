@@ -158,7 +158,8 @@ let log_operation context_stack op_name input_tensors output_tensor =
           | Float32 | Int32 | Complex32 -> 4
           | Float64 | Int64 | Complex64 -> 8
           | Float16 | Int16 | UInt16 | BFloat16 -> 2
-          | UInt8 | Int8 | Float8_e4m3 | Float8_e5m2 | Bool | QInt8 | QUInt8 -> 1
+          | UInt8 | Int8 | Float8_e4m3 | Float8_e5m2 | Bool | QInt8 | QUInt8 ->
+              1
           | Int | NativeInt -> Sys.word_size / 8
           | Complex16 -> 4
           | Int4 | UInt4 -> 1 (* 2 values packed per byte *)

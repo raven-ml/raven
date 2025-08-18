@@ -127,10 +127,12 @@ let test_e2e_add () =
   let arr_a = [| 1.0; 2.0; 3.0; 4.0 |] in
   let arr_b = [| 0.1; 0.2; 0.3; 0.4 |] in
   let ba_a =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout arr_a
+    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+      arr_a
   in
   let ba_b =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout arr_b
+    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+      arr_b
   in
   let len = Array.length arr_a in
   (* allocate device buffers *)
@@ -166,8 +168,8 @@ let test_e2e_add () =
   in
   let buf_c = Hashtbl.find outs c in
   let ba_res =
-    get_ba_from_buf buf_c ~dtype:Ir.Dtype.Float32 ~kind:Bigarray_ext.float32 ~len
-      "c"
+    get_ba_from_buf buf_c ~dtype:Ir.Dtype.Float32 ~kind:Bigarray_ext.float32
+      ~len "c"
   in
   let expected =
     Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout

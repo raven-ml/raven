@@ -183,7 +183,8 @@ val offset : ('a, 'b) t -> int
 val is_c_contiguous : ('a, 'b) t -> bool
 (** [is_c_contiguous t] returns true if elements are contiguous in C order. *)
 
-val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t
+val to_bigarray :
+  ('a, 'b) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t
 (** [to_bigarray t] converts to bigarray_ext.
 
     Always returns contiguous copy with same shape. Use for interop with
@@ -415,7 +416,8 @@ val meshgrid :
                      [1, 1, 1]])
     ]} *)
 
-val of_bigarray : ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t -> ('a, 'b) t
+val of_bigarray :
+  ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t -> ('a, 'b) t
 (** [of_bigarray ba] creates tensor from bigarray_ext.
 
     Zero-copy when bigarray is contiguous. Creates view sharing same memory.

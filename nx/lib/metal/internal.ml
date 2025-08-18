@@ -71,14 +71,25 @@ let get_dtype_info : type a b. (a, b) Dtype.t -> dtype_info = function
   | Dtype.NativeInt -> { metal_name = "long"; size_bytes = Sys.word_size / 8 }
   | Dtype.Complex32 -> { metal_name = "float2"; size_bytes = 8 }
   | Dtype.Complex64 -> { metal_name = "float2"; size_bytes = 16 }
-  | Dtype.BFloat16 -> { metal_name = "bfloat"; size_bytes = 2 }  (* Metal supports bfloat natively *)
+  | Dtype.BFloat16 ->
+      { metal_name = "bfloat"; size_bytes = 2 }
+      (* Metal supports bfloat natively *)
   | Dtype.Bool -> { metal_name = "bool"; size_bytes = 1 }
   (* Extended types that Metal can't properly support - will fail at creation *)
-  | Dtype.Int4 -> invalid_arg "Metal backend: Int4 dtype not supported (requires packed nibble operations)"
-  | Dtype.UInt4 -> invalid_arg "Metal backend: UInt4 dtype not supported (requires packed nibble operations)"
-  | Dtype.Float8_e4m3 -> invalid_arg "Metal backend: Float8_e4m3 dtype not supported"
-  | Dtype.Float8_e5m2 -> invalid_arg "Metal backend: Float8_e5m2 dtype not supported"
-  | Dtype.Complex16 -> invalid_arg "Metal backend: Complex16 dtype not supported"
+  | Dtype.Int4 ->
+      invalid_arg
+        "Metal backend: Int4 dtype not supported (requires packed nibble \
+         operations)"
+  | Dtype.UInt4 ->
+      invalid_arg
+        "Metal backend: UInt4 dtype not supported (requires packed nibble \
+         operations)"
+  | Dtype.Float8_e4m3 ->
+      invalid_arg "Metal backend: Float8_e4m3 dtype not supported"
+  | Dtype.Float8_e5m2 ->
+      invalid_arg "Metal backend: Float8_e5m2 dtype not supported"
+  | Dtype.Complex16 ->
+      invalid_arg "Metal backend: Complex16 dtype not supported"
   | Dtype.QInt8 -> invalid_arg "Metal backend: QInt8 dtype not supported"
   | Dtype.QUInt8 -> invalid_arg "Metal backend: QUInt8 dtype not supported"
 
@@ -87,9 +98,12 @@ let dtype_to_metal_type dtype = (get_dtype_info dtype).metal_name
 let sizeof_dtype dtype = (get_dtype_info dtype).size_bytes
 
 (* External functions to create bigarrays from pointers for extended types *)
-external ba_from_ptr : int -> int -> int -> nativeint -> ('a, 'b, 'c) Bigarray_ext.Genarray.t 
+external ba_from_ptr :
+  int -> int -> int -> nativeint -> ('a, 'b, 'c) Bigarray_ext.Genarray.t
   = "caml_metal_ba_from_ptr"
-external kind_to_int : ('a, 'b) Bigarray_ext.kind -> int = "caml_metal_kind_to_int"
+
+external kind_to_int : ('a, 'b) Bigarray_ext.kind -> int
+  = "caml_metal_kind_to_int"
 
 (* Helper to get layout as int *)
 let layout_to_int : type a. a Bigarray_ext.layout -> int = function
@@ -97,10 +111,7 @@ let layout_to_int : type a. a Bigarray_ext.layout -> int = function
   | Bigarray_ext.Fortran_layout -> 0x100
 
 let copy_from_bigarray : type a b.
-    context ->
-    metal_buffer ->
-    (a, b, c_layout) Array1.t ->
-    unit =
+    context -> metal_buffer -> (a, b, c_layout) Array1.t -> unit =
  fun ctx mbuf ba ->
   (* For shared memory buffers, we can directly copy using Bigarray *)
   let metal_buf : Metal.Buffer.t = mbuf.buffer in
@@ -128,15 +139,16 @@ let copy_from_bigarray : type a b.
       (* For all other types, create a bigarray view of the Metal buffer *)
       (* This works for both standard and extended types without copying *)
       let ptr_as_nativeint = Ctypes.raw_address_of_ptr contents in
-      let metal_ba_genarray = 
-        ba_from_ptr (kind_to_int kind) (layout_to_int Bigarray_ext.c_layout) 
-                    size ptr_as_nativeint in
+      let metal_ba_genarray =
+        ba_from_ptr (kind_to_int kind)
+          (layout_to_int Bigarray_ext.c_layout)
+          size ptr_as_nativeint
+      in
       let metal_ba = Bigarray_ext.array1_of_genarray metal_ba_genarray in
       (* Now blit from source to Metal buffer *)
       Array1.blit ba metal_ba
 
-let copy_to_bigarray : type a b.
-    (a, b) t -> (a, b, c_layout) Array1.t -> unit =
+let copy_to_bigarray : type a b. (a, b) t -> (a, b, c_layout) Array1.t -> unit =
  fun t ba ->
   (* Handle views correctly by considering offset and strides *)
   let view = t.view in
@@ -218,9 +230,11 @@ let copy_to_bigarray : type a b.
       let buffer_size = t.buffer.size_bytes / elem_size in
       (* Use our efficient function that works with extended types *)
       let ptr_as_nativeint = Ctypes.raw_address_of_ptr contents in
-      let metal_ba_genarray = 
-        ba_from_ptr (kind_to_int kind) (layout_to_int Bigarray_ext.c_layout) 
-                    buffer_size ptr_as_nativeint in
+      let metal_ba_genarray =
+        ba_from_ptr (kind_to_int kind)
+          (layout_to_int Bigarray_ext.c_layout)
+          buffer_size ptr_as_nativeint
+      in
       let metal_ba = Bigarray_ext.array1_of_genarray metal_ba_genarray in
 
       (* Check if the view is contiguous AND the buffer has enough elements *)
@@ -300,9 +314,7 @@ let copy_to_bigarray : type a b.
                 (Printf.sprintf
                    "Destination index %d out of bounds (ba size: %d)" !dst_idx
                    (Array1.dim ba))
-            else
-              Array1.set ba !dst_idx
-                (Array1.get metal_ba !src_idx))
+            else Array1.set ba !dst_idx (Array1.get metal_ba !src_idx))
           else
             for
               (* Iterate through this dimension *)

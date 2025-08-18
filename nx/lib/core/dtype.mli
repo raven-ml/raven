@@ -15,6 +15,7 @@ type int_elt = Bigarray_ext.int_elt
 type nativeint_elt = Bigarray_ext.nativeint_elt
 type complex32_elt = Bigarray_ext.complex32_elt
 type complex64_elt = Bigarray_ext.complex64_elt
+
 (* Extended types from Bigarray_ext *)
 type bfloat16_elt = Bigarray_ext.bfloat16_elt
 type bool_elt = Bigarray_ext.bool_elt
@@ -70,6 +71,7 @@ val int : (int, int_elt) t
 val nativeint : (nativeint, nativeint_elt) t
 val complex32 : (Complex.t, complex32_elt) t
 val complex64 : (Complex.t, complex64_elt) t
+
 (* Extended types *)
 val bfloat16 : (float, bfloat16_elt) t
 val bool : (bool, bool_elt) t
@@ -132,18 +134,22 @@ val of_float : ('a, 'b) t -> float -> 'a
 (** [of_float dtype f] converts float to dtype value. *)
 
 val of_bigarray_ext_kind : ('a, 'b) Bigarray_ext.kind -> ('a, 'b) t
-(** [of_bigarray_ext_kind kind] returns corresponding dtype from Bigarray_ext kind. *)
+(** [of_bigarray_ext_kind kind] returns corresponding dtype from Bigarray_ext
+    kind. *)
 
 val to_bigarray_kind : ('a, 'b) t -> ('a, 'b) Bigarray.kind
 (** [to_bigarray_kind dtype] returns corresponding standard Bigarray kind.
 
-    @raise Failure if dtype is an extended type not supported by standard Bigarray *)
+    @raise Failure
+      if dtype is an extended type not supported by standard Bigarray *)
 
 val to_bigarray_ext_kind : ('a, 'b) t -> ('a, 'b) Bigarray_ext.kind
-(** [to_bigarray_ext_kind dtype] returns corresponding Bigarray_ext kind. Works for all types including extended ones. *)
+(** [to_bigarray_ext_kind dtype] returns corresponding Bigarray_ext kind. Works
+    for all types including extended ones. *)
 
 val of_bigarray_kind : ('a, 'b) Bigarray.kind -> ('a, 'b) t
-(** [of_bigarray_kind kind] returns corresponding dtype from standard Bigarray kind. *)
+(** [of_bigarray_kind kind] returns corresponding dtype from standard Bigarray
+    kind. *)
 
 (** {2 Equality} *)
 

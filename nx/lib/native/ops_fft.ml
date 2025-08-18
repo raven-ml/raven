@@ -134,8 +134,7 @@ let kernel_fft_multi (type b) ~inverse (input : (Complex.t, b) t)
          (* Different buffer sizes, use element-wise copy *)
          let size = min input_size output_size in
          for i = 0 to size - 1 do
-           Array1.set (buffer output) i
-             (Array1.get (buffer input) i)
+           Array1.set (buffer output) i (Array1.get (buffer input) i)
          done
      else (
        (* Different shapes - zero fill and copy what fits *)

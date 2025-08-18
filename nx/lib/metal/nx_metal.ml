@@ -29,7 +29,7 @@ let data : type a b. (a, b) t -> (a, b, c_layout) Array1.t =
      bigarray that preserves the view's offset. This means returning the entire
      buffer, not just the viewed portion. *)
   let contents = Metal.Buffer.contents t.buffer.buffer in
-  
+
   match t.dtype with
   | Dtype.Complex64 ->
       (* Special handling for Complex64 - Metal uses float2 (8 bytes) but OCaml
@@ -37,9 +37,7 @@ let data : type a b. (a, b) t -> (a, b, c_layout) Array1.t =
       let num_elements = t.buffer.size_bytes / 8 in
       (* 8 bytes per float2 in Metal *)
       (* Create a Complex64 bigarray and convert from float2 *)
-      let ba =
-        Array1.create complex64 c_layout num_elements
-      in
+      let ba = Array1.create complex64 c_layout num_elements in
       let float_ptr = Ctypes.(from_voidp float contents) in
       for i = 0 to num_elements - 1 do
         let re_ptr = Ctypes.(float_ptr +@ (i * 2)) in
@@ -56,9 +54,12 @@ let data : type a b. (a, b) t -> (a, b, c_layout) Array1.t =
       let buffer_size = t.buffer.size_bytes / elem_size in
       (* Use the external function to create bigarray from pointer *)
       let ptr_as_nativeint = Ctypes.raw_address_of_ptr contents in
-      let genarray = Internal.ba_from_ptr (Internal.kind_to_int kind) 
-                                          (Internal.layout_to_int Bigarray_ext.c_layout)
-                                          buffer_size ptr_as_nativeint in
+      let genarray =
+        Internal.ba_from_ptr
+          (Internal.kind_to_int kind)
+          (Internal.layout_to_int Bigarray_ext.c_layout)
+          buffer_size ptr_as_nativeint
+      in
       Bigarray_ext.array1_of_genarray genarray
   | _ ->
       (* Standard bigarray types *)
@@ -116,8 +117,8 @@ let op_const_scalar : type a b. context -> a -> (a, b) Dtype.t -> (a, b) t =
   Internal.copy_from_bigarray ctx metal_buffer ba;
   t
 
-let op_const_array : type a b.
-    context -> (a, b, c_layout) Array1.t -> (a, b) t =
+let op_const_array : type a b. context -> (a, b, c_layout) Array1.t -> (a, b) t
+    =
  fun ctx bigarray ->
   let dtype = Dtype.of_bigarray_ext_kind (Array1.kind bigarray) in
   (* Check if dtype is supported by Metal *)

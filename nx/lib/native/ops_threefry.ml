@@ -89,12 +89,8 @@ let kernel_threefry_int32 (data_t : (int32, int32_elt) t)
     done;
     while !i < n do
       let current_idx = !i in
-      let d_val =
-        Array1.unsafe_get data_buf (data_base + current_idx)
-      in
-      let s_val =
-        Array1.unsafe_get seed_buf (seed_base + current_idx)
-      in
+      let d_val = Array1.unsafe_get data_buf (data_base + current_idx) in
+      let s_val = Array1.unsafe_get seed_buf (seed_base + current_idx) in
       let res0, _ =
         Threefry_impl.threefry2x32_20_rounds d_val c1_fixed s_val k1_fixed
       in
@@ -117,12 +113,8 @@ let kernel_threefry_int32 (data_t : (int32, int32_elt) t)
       let data_lin = Shape.ravel_index md_index data_strides in
       let seed_lin = Shape.ravel_index md_index seed_strides in
 
-      let d_val =
-        Array1.unsafe_get data_buf (data_offset + data_lin)
-      in
-      let s_val =
-        Array1.unsafe_get seed_buf (seed_offset + seed_lin)
-      in
+      let d_val = Array1.unsafe_get data_buf (data_offset + data_lin) in
+      let s_val = Array1.unsafe_get seed_buf (seed_offset + seed_lin) in
 
       let res0, _ =
         Threefry_impl.threefry2x32_20_rounds d_val c1_fixed s_val k1_fixed

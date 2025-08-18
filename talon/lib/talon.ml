@@ -1517,8 +1517,7 @@ module Agg = struct
                 failwith "Float.std: complex numbers not supported"
             | Nx.Complex64 ->
                 failwith "Float.std: complex numbers not supported"
-            | Nx.Bool ->
-                failwith "Float.std: boolean values not supported"
+            | Nx.Bool -> failwith "Float.std: boolean values not supported"
             | Nx.Int4 ->
                 let arr : int array = Nx.to_array tensor in
                 let n = float_of_int (Array.length arr) in

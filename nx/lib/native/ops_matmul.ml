@@ -318,9 +318,9 @@ let matmul (type a b) (ctx : context) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
     | Dtype.Float64 -> kernel_matmul_generic_float64 ctx.pool a b out
     | Dtype.Int32 | Dtype.Int64 | Dtype.UInt8 | Dtype.UInt16 | Dtype.Int8
     | Dtype.Int16 | Dtype.Float16 | Dtype.Complex32 | Dtype.Complex64
-    | Dtype.Int | Dtype.NativeInt | Dtype.BFloat16 | Dtype.Bool
-    | Dtype.Int4 | Dtype.UInt4 | Dtype.Float8_e4m3 | Dtype.Float8_e5m2
-    | Dtype.Complex16 | Dtype.QInt8 | Dtype.QUInt8 ->
+    | Dtype.Int | Dtype.NativeInt | Dtype.BFloat16 | Dtype.Bool | Dtype.Int4
+    | Dtype.UInt4 | Dtype.Float8_e4m3 | Dtype.Float8_e5m2 | Dtype.Complex16
+    | Dtype.QInt8 | Dtype.QUInt8 ->
         failwith "matmul: dtype not supported"
   in
   out

@@ -149,18 +149,22 @@ let test_genarray_get_set () =
   let arr_bf16 = Genarray.create bfloat16 c_layout [| 2; 3 |] in
   Genarray.set arr_bf16 [| 0; 0 |] 1.5;
   Genarray.set arr_bf16 [| 1; 2 |] 3.14;
-  Alcotest.(check (float 0.1)) "Genarray bfloat16 get" 1.5 
+  Alcotest.(check (float 0.1))
+    "Genarray bfloat16 get" 1.5
     (Genarray.get arr_bf16 [| 0; 0 |]);
-  Alcotest.(check (float 0.1)) "Genarray bfloat16 get" 3.14 
+  Alcotest.(check (float 0.1))
+    "Genarray bfloat16 get" 3.14
     (Genarray.get arr_bf16 [| 1; 2 |]);
 
   (* Test bool *)
   let arr_bool = Genarray.create bool c_layout [| 3; 3 |] in
   Genarray.set arr_bool [| 0; 0 |] true;
   Genarray.set arr_bool [| 2; 1 |] false;
-  Alcotest.(check bool) "Genarray bool get" true 
+  Alcotest.(check bool)
+    "Genarray bool get" true
     (Genarray.get arr_bool [| 0; 0 |]);
-  Alcotest.(check bool) "Genarray bool get" false 
+  Alcotest.(check bool)
+    "Genarray bool get" false
     (Genarray.get arr_bool [| 2; 1 |]);
 
   (* Test int4_signed *)
@@ -168,20 +172,25 @@ let test_genarray_get_set () =
   Genarray.set arr_int4 [| 0 |] (-8);
   Genarray.set arr_int4 [| 1 |] 7;
   Genarray.set arr_int4 [| 2 |] 0;
-  Alcotest.(check int) "Genarray int4_signed get" (-8) 
+  Alcotest.(check int)
+    "Genarray int4_signed get" (-8)
     (Genarray.get arr_int4 [| 0 |]);
-  Alcotest.(check int) "Genarray int4_signed get" 7 
+  Alcotest.(check int)
+    "Genarray int4_signed get" 7
     (Genarray.get arr_int4 [| 1 |]);
-  Alcotest.(check int) "Genarray int4_signed get" 0 
+  Alcotest.(check int)
+    "Genarray int4_signed get" 0
     (Genarray.get arr_int4 [| 2 |]);
 
   (* Test float8_e4m3 *)
   let arr_fp8 = Genarray.create float8_e4m3 c_layout [| 2; 2 |] in
   Genarray.set arr_fp8 [| 0; 0 |] 1.0;
   Genarray.set arr_fp8 [| 1; 1 |] (-2.0);
-  Alcotest.(check (float 0.2)) "Genarray float8_e4m3 get" 1.0 
+  Alcotest.(check (float 0.2))
+    "Genarray float8_e4m3 get" 1.0
     (Genarray.get arr_fp8 [| 0; 0 |]);
-  Alcotest.(check (float 0.2)) "Genarray float8_e4m3 get" (-2.0) 
+  Alcotest.(check (float 0.2))
+    "Genarray float8_e4m3 get" (-2.0)
     (Genarray.get arr_fp8 [| 1; 1 |]);
 
   (* Test complex16 *)

@@ -122,8 +122,8 @@ let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
 
 let is_symbolic = function Symbolic_tensor _ -> true | _ -> false
 
-let data : type a b. (a, b) t -> (a, b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t =
-  function
+let data : type a b.
+    (a, b) t -> (a, b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t = function
   | Ocaml_tensor t -> Nx_native.data t
   | Metal_tensor t -> Rune_metal.data t
   | C_tensor t -> Nx_c.data t

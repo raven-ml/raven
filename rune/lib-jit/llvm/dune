@@ -1,14 +1,14 @@
 (library
  (public_name rune.jit.llvm)
  (name rune_jit_llvm)
- (libraries 
-  rune_jit 
-  rune.llvm 
-  rune.llvm.executionengine 
-  rune.llvm.analysis 
+ (libraries
+  rune_jit
+  rune.llvm
+  rune.llvm.executionengine
+  rune.llvm.analysis
   rune.llvm.target
   rune.llvm.all_backends
   rune.llvm.passbuilder
-  ctypes 
+  ctypes
   ctypes-foreign
   integers))
