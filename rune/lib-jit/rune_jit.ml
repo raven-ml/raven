@@ -6,9 +6,12 @@ module Var = Ir.Var
 module Backend_intf = Backend_intf
 
 type 'a kernel_artifact = {
-  spec_name : string;
-  compiled : 'a;
+  kernel_id : int;
+  kernel_name : string;
+  compiled : 'a; (* backend callable kernel *)
   arg_order : Var.t list; (* inputs first, then outputs *)
+  global_dims : int array; (* [|gx; gy; gz|] from Scheduled.context *)
+  local_dims : int array option;
 }
 
 type 'a exe_internal = {
@@ -27,14 +30,9 @@ let rec result_fold_left f init = function
       let* acc = f init x in
       result_fold_left f acc xs
 
-(* ───── top-level API ───── *)
+(* ───── LEGACY (optional) tinygrad-style path ───── *)
 
-let schedule = Scheduler.schedule
-
-let lower ~kernel_spec ~original_graph_vars_metadata =
-  Lowerer.lower_kernel ~kernel_spec ~original_graph_vars_metadata
-
-let compile (type callable_kernel_native)
+let compile_legacy (type callable_kernel_native)
     ~(backend :
        (module Backend_intf.S
           with type callable_kernel_native = callable_kernel_native))
@@ -45,12 +43,12 @@ let compile (type callable_kernel_native)
         : Backend_intf.S
         with type callable_kernel_native = callable_kernel_native)
   in
-  let specs = Scheduler.schedule graph in
+  let specs = Grouper.group graph in
   let dev = B.Device_info.get_default () in
   let opts = B.Compiler.default_options dev in
 
-  let compile_kernel (spec : Scheduler.kernel_spec_t) =
-    let* lowered =
+  let compile_kernel (spec : Grouper.cluster_t) =
+    let lowered =
       Lowerer.lower_kernel ~kernel_spec:spec
         ~original_graph_vars_metadata:graph.vars_metadata
     in
@@ -64,9 +62,12 @@ let compile (type callable_kernel_native)
     let* kern = B.Runtime.get_kernel ~artifact:art ~kernel_name:spec.name in
     Ok
       {
-        spec_name = spec.name;
+        kernel_id = -1;
+        kernel_name = spec.name;
         compiled = kern;
         arg_order = spec.inputs @ spec.outputs;
+        global_dims = [| 128; 1; 1 |];
+        local_dims = None;
       }
   in
   let* kernels =
@@ -84,6 +85,92 @@ let compile (type callable_kernel_native)
          graph_outputs = graph.output_vars;
        })
 
+(* ───── NEW: Scheduled IR pipeline ───── *)
+
+let compile (type callable_kernel_native)
+    ~(backend :
+       (module Backend_intf.S
+          with type callable_kernel_native = callable_kernel_native))
+    (graph : Ir.graph_t) =
+  let ( let* ) = Result.bind in
+  let module B =
+    (val backend
+        : Backend_intf.S
+        with type callable_kernel_native = callable_kernel_native)
+  in
+  (* 1) Build Scheduled IR *)
+  let scheduled : Ir.Scheduled.graph_t = Schedule.build graph in
+  let dev = B.Device_info.get_default () in
+  let opts = B.Compiler.default_options dev in
+
+  (* 2) Compile scheduled items (only kernels for now) *)
+  let compile_item (it : Ir.Scheduled.schedule_item) =
+    match it.operation with
+    | Ir.Scheduled.S_Kernel
+        { kernel_id; kernel_name; ops; inputs; outputs; context; _ } ->
+        (* Bridge to existing Lowerer: synthesize a cluster_t *)
+        let input_vars =
+          List.map (fun (b : Ir.Scheduled.buffer_info) -> b.buf_var) inputs
+        in
+        let output_vars =
+          List.map (fun (b : Ir.Scheduled.buffer_info) -> b.buf_var) outputs
+        in
+        let spec : Grouper.cluster_t =
+          {
+            name = kernel_name;
+            nodes = ops;
+            inputs = input_vars;
+            outputs = output_vars;
+            vars_metadata = scheduled.vars_metadata;
+          }
+        in
+        let lowered =
+          Lowerer.lower_kernel ~kernel_spec:spec
+            ~original_graph_vars_metadata:scheduled.vars_metadata
+        in
+        let src =
+          B.Renderer.render ~device_info:dev ~lowered_ir:lowered ~kernel_name
+        in
+        let* art =
+          B.Compiler.compile ~device_info:dev ~source_code:src ~options:opts
+        in
+        let* kern = B.Runtime.get_kernel ~artifact:art ~kernel_name in
+        Ok
+          (Some
+             {
+               kernel_id;
+               kernel_name;
+               compiled = kern;
+               arg_order = input_vars @ output_vars;
+               global_dims = context.global_dims;
+               local_dims = Some context.local_dims;
+             })
+    | _ ->
+        (* Skip non-kernel items (transfers/sync) until Multi is wired to
+           runtime *)
+        Ok None
+  in
+
+  let* built =
+    result_fold_left
+      (fun acc it ->
+        let* kopt = compile_item it in
+        Ok (kopt :: acc))
+      []
+      (Array.to_list scheduled.schedule_items)
+  in
+  let kernels = List.filter_map (fun x -> x) (List.rev built) in
+
+  Ok
+    (Executable
+       {
+         kernels;
+         graph_meta = scheduled.vars_metadata;
+         graph_outputs = graph.output_vars;
+       })
+
+(* ───── Execute ───── *)
+
 let execute (type device_buffer_native callable_kernel_native)
     ~(backend :
        (module Backend_intf.S
@@ -93,58 +180,74 @@ let execute (type device_buffer_native callable_kernel_native)
   let ( let* ) = Result.bind in
   let module B = (val backend) in
   let dev = B.Device_info.get_default () in
-  let live = Hashtbl.copy inputs in
+  let live : (Var.t, B.any_device_buffer) Hashtbl.t = Hashtbl.copy inputs in
 
-  let ensure_output v =
-    if Hashtbl.mem live v then Ok ()
-    else
-      match Hashtbl.find_opt exe.graph_meta v with
-      | None -> Error ("Missing metadata for " ^ Var.to_string v)
-      | Some { dtype = Dtype.Any_Dtype dt; shape; _ } ->
-          let bytes = Array.fold_left ( * ) 1 shape * Dtype.sizeof_elt dt in
-          let* buf =
-            B.Runtime.allocate_buffer ~device_info:dev ~size_in_bytes:bytes
-              ~dtype:dt
-          in
-          Hashtbl.add live v (Backend_intf.Any_Device_Buffer buf);
-          Ok ()
-  in
-  let* () = result_fold_left (fun () v -> ensure_output v) () outputs in
-
-  let buffer_for v =
+  (* Allocate a buffer for var v if missing, using graph_meta *)
+  let ensure_buffer (v : Var.t) : (B.any_device_buffer, string) result =
     match Hashtbl.find_opt live v with
     | Some b -> Ok b
-    | None -> Error ("No buffer for " ^ Var.to_string v)
+    | None -> (
+        match Hashtbl.find_opt exe.graph_meta v with
+        | None -> Error ("Missing metadata for " ^ Var.to_string v)
+        | Some { dtype = Dtype.Any_Dtype dt; shape; _ } ->
+            let bytes =
+              let n =
+                Array.fold_left ( * ) 1
+                  (if Array.length shape = 0 then [| 1 |] else shape)
+              in
+              n * Dtype.sizeof_elt dt
+            in
+            let* buf =
+              B.Runtime.allocate_buffer ~device_info:dev ~size_in_bytes:bytes
+                ~dtype:dt
+            in
+            let any = Backend_intf.Any_Device_Buffer buf in
+            Hashtbl.add live v any;
+            Ok any)
   in
 
-  let launch k =
+  let launch (k : _ kernel_artifact) =
     let* args =
       result_fold_left
-        (fun acc hl ->
-          let* b = buffer_for hl in
+        (fun acc v ->
+          let* b = ensure_buffer v in
           Ok (b :: acc))
         [] k.arg_order
     in
-    (* Get the size from the first output variable's shape *)
-    let size =
-      match k.arg_order with
-      | [] -> 128 (* fallback *)
-      | first_var :: _ -> (
-          match Hashtbl.find_opt exe.graph_meta first_var with
-          | None -> 128 (* fallback *)
-          | Some { shape; _ } -> Array.fold_left ( * ) 1 shape)
-    in
-    B.Runtime.launch_kernel ~device_info:dev ~global_dims:[| size; 1; 1 |]
-      ?local_dims:None ~args:(List.rev args) k.compiled
+    B.Runtime.launch_kernel ~device_info:dev ~global_dims:k.global_dims
+      ?local_dims:k.local_dims ~args:(List.rev args) k.compiled
   in
+
   let* () = result_fold_left (fun () k -> launch k) () exe.kernels in
 
+  (* Collect requested outputs *)
   let result_tbl = Hashtbl.create (List.length outputs) in
   List.iter
     (fun v ->
-      Option.iter
-        (fun b -> Hashtbl.add result_tbl v b)
-        (Hashtbl.find_opt live v))
+      match Hashtbl.find_opt live v with
+      | Some b -> Hashtbl.add result_tbl v b
+      | None -> (
+          (* If a requested output didn’t exist yet, allocate an empty buffer so
+             caller can fill *)
+          match Hashtbl.find_opt exe.graph_meta v with
+          | Some { dtype = Dtype.Any_Dtype dt; shape; _ } -> (
+              let bytes =
+                let n =
+                  Array.fold_left ( * ) 1
+                    (if Array.length shape = 0 then [| 1 |] else shape)
+                in
+                n * Dtype.sizeof_elt dt
+              in
+              match
+                B.Runtime.allocate_buffer ~device_info:dev ~size_in_bytes:bytes
+                  ~dtype:dt
+              with
+              | Ok buf ->
+                  let any = Backend_intf.Any_Device_Buffer buf in
+                  Hashtbl.add result_tbl v any;
+                  Hashtbl.add live v any
+              | Error _ -> ())
+          | None -> ()))
     outputs;
   Ok result_tbl
 
@@ -189,9 +292,8 @@ let copy_from_device (type device_buffer_native)
     B.Runtime.copy_from_device ~src_buffer ~host_dest_ptr:ptr
       ~device_data_offset_bytes:0 ~copy_size_bytes:bytes
 
-module Debug = struct
-  let schedule = schedule
-
-  let lower_kernel ~kernel_spec ~original_graph_vars_metadata =
-    lower ~kernel_spec ~original_graph_vars_metadata
+(* Internal modules exposed for testing *)
+module Internal = struct
+  module Grouper = Grouper
+  module Lowerer = Lowerer
 end

@@ -7,11 +7,14 @@ open Support
 let device_info = Rune_jit_metal.Device_info.get_default ()
 
 let make_metal_source graph =
-  let spec = List.hd (Rune_jit.Debug.schedule graph) in
+  (* Use the internal modules directly for testing *)
+  let module Grouper = Rune_jit.Internal.Grouper in
+  let module Lowerer = Rune_jit.Internal.Lowerer in
+  let specs = Grouper.group graph in
+  let spec = List.hd specs in
   let lowered =
-    Result.get_ok
-      (Rune_jit.Debug.lower_kernel ~kernel_spec:spec
-         ~original_graph_vars_metadata:graph.vars_metadata)
+    Lowerer.lower_kernel ~kernel_spec:spec
+      ~original_graph_vars_metadata:graph.vars_metadata
   in
   Rune_jit_metal.Renderer.render ~device_info ~lowered_ir:lowered
     ~kernel_name:spec.name

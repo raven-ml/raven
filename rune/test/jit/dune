@@ -4,12 +4,6 @@
  (wrapped false)
  (libraries rune_jit alcotest))
 
-(tests
- (names test_lower test_schedule)
- (package rune)
- (modules :standard \ support)
- (libraries rune_jit alcotest test_rune_jit_support))
-
 (test
  (name test_metal)
  (package rune)

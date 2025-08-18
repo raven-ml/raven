@@ -1,18 +1,19 @@
-(* scheduler.ml *)
+(* schedule/grouper.ml Tinygrad-style graph grouper: fuse elementwise ops into
+   kernel clusters. *)
 
 open Ir
 
-(* ───── kernel-spec record ───── *)
+(* Public cluster record (kept compatible with your old scheduler.ml) *)
 
-type kernel_spec_t = {
+type cluster_t = {
   name : string;
   nodes : any_node list;
-  inputs : Var.t list; (* HL vars *)
-  outputs : Var.t list; (* HL vars *)
+  inputs : Var.t list; (* High-level vars feeding this cluster *)
+  outputs : Var.t list; (* High-level vars produced and needed outside *)
   vars_metadata : (Var.t, var_metadata) Hashtbl.t;
 }
 
-(* ───── helpers on nodes ───── *)
+(* Helpers on nodes *)
 
 let get_node_input_vars (Any_Node node) : Var.t list =
   match node with
@@ -105,7 +106,10 @@ let get_node_output_var (Any_Node node) : Var.t =
   | Custom { out_var; _ }
   | Noop { out_var; _ } ->
       out_var
-  | Sink _ -> Var.fresh () (* Sink has no output var, create dummy *)
+  | Sink _ ->
+      (* Sink has no real SSA output; we return a fresh to keep types total.
+         Sinks are excluded from 'produced' below. *)
+      Var.fresh ()
 
 let is_boundary_node (Any_Node node) =
   match node with
@@ -123,14 +127,14 @@ let is_fusible_elementwise (Any_Node node) =
       true
   | _ -> false
 
-(* ───── main scheduling pass ───── *)
+(* Public API *)
 
-let schedule (graph : Ir.graph_t) : kernel_spec_t list =
+let group (graph : Ir.graph_t) : cluster_t list =
   let scheduled = ref [] in
   let current = ref [] in
   let kidx = ref 0 in
 
-  (* Map var -> list of nodes that read it (for output detection) *)
+  (* Build var -> (list of consuming nodes) to detect cross-cluster uses *)
   let var_consumers : (Var.t, any_node list) Hashtbl.t =
     Hashtbl.create (List.length graph.nodes)
   in
@@ -145,49 +149,65 @@ let schedule (graph : Ir.graph_t) : kernel_spec_t list =
         (get_node_input_vars consumer))
     graph.nodes;
 
+  (* Precompute all placeholder outputs across the HL graph (treated as allowed
+     inputs). *)
+  let all_placeholder_outputs : Var.Set.t =
+    List.filter_map
+      (function
+        | Any_Node (Placeholder { out_var; _ }) -> Some out_var | _ -> None)
+      graph.nodes
+    |> Var.Set.of_list
+  in
+
   let flush_current () =
     if !current <> [] then (
       let nodes = List.rev !current in
 
-      let produced =
+      (* Vars produced inside this cluster (exclude Placeholder & Sink) *)
+      let produced : Var.Set.t =
         List.filter
           (function
-            | Ir.Any_Node (Placeholder _) | Ir.Any_Node (Sink _) -> false
-            | _ -> true)
+            | Any_Node (Placeholder _) | Any_Node (Sink _) -> false | _ -> true)
           nodes
         |> List.map get_node_output_var
         |> Var.Set.of_list
       in
-      let node_inputs =
+
+      (* All vars read by nodes of this cluster *)
+      let node_inputs : Var.Set.t =
         List.concat_map get_node_input_vars nodes |> Var.Set.of_list
       in
+
+      (* Inputs are node_inputs minus those produced inside, plus any
+         Placeholder outputs used *)
       let inputs = Var.Set.diff node_inputs produced in
-      let placeholder_inputs =
+      let placeholder_inputs_in_cluster : Var.Set.t =
         List.filter_map
           (function
-            | Ir.Any_Node (Placeholder { out_var; _ }) -> Some out_var
-            | _ -> None)
+            | Any_Node (Placeholder { out_var; _ }) -> Some out_var | _ -> None)
           nodes
         |> Var.Set.of_list
       in
-      let inputs = Var.Set.union inputs placeholder_inputs in
+      let inputs : Var.Set.t =
+        Var.Set.union inputs placeholder_inputs_in_cluster
+      in
 
-      (* vars metadata used inside kernel *)
+      (* Vars metadata used inside kernel (copy from graph.vars_metadata) *)
       let vars_md = Hashtbl.create 16 in
+      let copy_md v =
+        match Hashtbl.find_opt graph.vars_metadata v with
+        | Some m -> Hashtbl.replace vars_md v m
+        | None -> ()
+      in
       List.iter
-        (fun (Any_Node n) ->
-          Var.Set.iter
-            (fun v ->
-              match Hashtbl.find_opt graph.vars_metadata v with
-              | Some m -> Hashtbl.replace vars_md v m
-              | None -> ())
-            (Var.Set.of_list
-               (get_node_output_var (Any_Node n)
-               :: get_node_input_vars (Any_Node n))))
+        (fun n ->
+          let outs_plus_ins = get_node_output_var n :: get_node_input_vars n in
+          List.iter copy_md outs_plus_ins)
         nodes;
 
-      (* outputs: graph outputs OR consumed outside kernel *)
-      let outputs =
+      (* Outputs are produced vars that are graph outputs or consumed outside
+         this cluster *)
+      let outputs : Var.t list =
         Var.Set.filter
           (fun v ->
             List.mem v graph.output_vars
@@ -195,12 +215,14 @@ let schedule (graph : Ir.graph_t) : kernel_spec_t list =
             match Hashtbl.find_opt var_consumers v with
             | None -> false
             | Some readers ->
+                (* If any reader node is not in 'nodes', it's consumed
+                   outside *)
                 List.exists (fun n -> not (List.memq n nodes)) readers)
           produced
         |> Var.Set.elements
       in
 
-      scheduled :=
+      let spec =
         {
           name = Printf.sprintf "kernel_%d" !kidx;
           nodes;
@@ -208,11 +230,14 @@ let schedule (graph : Ir.graph_t) : kernel_spec_t list =
           outputs;
           vars_metadata = vars_md;
         }
-        :: !scheduled;
+      in
+      scheduled := spec :: !scheduled;
       incr kidx;
       current := [])
   in
 
+  (* Greedy linear scan: fuse maximal runs of elementwise ops, split at
+     boundaries. *)
   List.iter
     (fun node ->
       let can_fuse =
@@ -223,25 +248,16 @@ let schedule (graph : Ir.graph_t) : kernel_spec_t list =
             && is_fusible_elementwise node
             &&
             (* check all inputs are either kernel inputs or already produced *)
-            let produced =
+            let produced_inside =
               List.map get_node_output_var !current |> Var.Set.of_list
             in
-            (* Also check if inputs come from placeholders anywhere in the
-               graph *)
-            let all_placeholder_outputs =
-              List.filter_map
-                (function
-                  | Ir.Any_Node (Placeholder { out_var; _ }) -> Some out_var
-                  | _ -> None)
-                graph.nodes
-              |> Var.Set.of_list
-            in
+            let inputs = get_node_input_vars node in
             List.for_all
               (fun v ->
                 List.mem v graph.input_vars
-                || Var.Set.mem v produced
+                || Var.Set.mem v produced_inside
                 || Var.Set.mem v all_placeholder_outputs)
-              (get_node_input_vars node)
+              inputs
       in
       if can_fuse then current := node :: !current
       else (

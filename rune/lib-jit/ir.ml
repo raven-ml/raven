@@ -544,6 +544,414 @@ let scatter ~indices_var ~updates_var ~axis ~shape ~out_var ~dtype =
 
 let fresh_var () = Var.fresh ()
 
+(* ───── Scheduled IR ───── *)
+
+(* ───── Scheduled IR (single module, structured loops/tiles/mapping) ───── *)
+
+module Scheduled = struct
+  (* Utilities *)
+
+  let[@inline] prod (arr : int array) = Array.fold_left ( * ) 1 arr
+
+  let[@inline] ensure3 (a : int array) : int array =
+    match Array.length a with
+    | 3 -> a
+    | 0 -> [| 1; 1; 1 |]
+    | 1 -> [| a.(0); 1; 1 |]
+    | 2 -> [| a.(0); a.(1); 1 |]
+    | _ -> [| a.(0); a.(1); a.(2) |]
+
+  let[@inline] contiguous_strides_elems (shape : int array) : int array =
+    let n = Array.length shape in
+    if n = 0 then [||]
+    else
+      let s = Array.make n 0 in
+      let stride = ref 1 in
+      for i = n - 1 downto 0 do
+        s.(i) <- !stride;
+        stride := !stride * if shape.(i) = 0 then 1 else shape.(i)
+      done;
+      s
+
+  (* Core scheduling types *)
+
+  type axis_role = [ `Normal | `Reduction ]
+
+  type axis = {
+    name : string;
+    size : int option; (* known static extent or None (symbolic) *)
+    sym : SymVar.t option; (* the symbolic var that bounds the axis *)
+    role : axis_role;
+  }
+
+  type mapping = {
+    block : int list; (* threadblock / grid dims on GPU; core on CPU *)
+    thread : int list; (* thread / lane *)
+    vec : int list; (* vector lanes (SIMD) *)
+    serial : int list; (* remaining serial loops *)
+  }
+
+  type iter_space = {
+    axes : axis array;
+    (* logical iteration axes *)
+    (* mapping selects WHICH axis indices (into [axes]) map to each machine
+           level *)
+    mapping : mapping;
+    (* tiling: for each axis i, a list of tile sizes (outer→inner) *)
+    tiles : int list array;
+  }
+
+  type memory_scope = Global | Shared | Register
+
+  (* Layout strides are measured in ELEMENTS (not bytes); dtype tells byte
+     width *)
+  type layout = {
+    shape : int array; (* logical shape in elements *)
+    strides : int array; (* strides in elements (row-major typical) *)
+    alignment : int; (* bytes *)
+    vector_width : int; (* elements per vector lane *)
+    contiguous_axes : int list; (* for coalescing; usually [last;...] *)
+  }
+
+  type allocation = {
+    scope : memory_scope;
+    size_bytes : int; (* final allocated size (post-tiling/packing) *)
+    lifetime : int * int; (* inclusive item-id range for reuse *)
+    alias_group : int option; (* optional alias set id for in-place plans *)
+  }
+
+  type buffer_info = {
+    buf_var : Var.t;
+    dtype : Dtype.any;
+    layout : layout;
+    alloc : allocation;
+    is_input : bool;
+    is_output : bool;
+  }
+
+  type loop_hint =
+    | Vectorize of { axis : int; width : int }
+    | Unroll of { axis : int; factor : int }
+    | Prefetch of { var : Var.t; into : memory_scope; distance : int }
+    | Pipeline of { axis : int; stages : int; overlap : bool }
+
+  type reduction_plan = {
+    axes : int list; (* indices (into iter_space.axes) tagged as reductions *)
+    intra_thread : [ `Tree | `Welford | `Shfl | `None ];
+    inter_thread : [ `SharedTree | `Atomic | `GridReduce ];
+  }
+
+  type schedule_context = {
+    global_dims : int array; (* [|gx;gy;gz|] *)
+    local_dims : int array; (* [|lx;ly;lz|] *)
+    upcasted : int;
+    device : string;
+    stream : int option;
+  }
+
+  type scheduled_op =
+    | S_Kernel of {
+        kernel_id : int;
+        kernel_name : string;
+        ops : any_node list; (* HL ops fused into this kernel *)
+        inputs : buffer_info list;
+        outputs : buffer_info list;
+        iter : iter_space; (* explicit loops/tiling/mapping *)
+        reduce : reduction_plan option;
+        hints : loop_hint list;
+        context : schedule_context;
+      }
+    | S_Memory_Transfer of {
+        transfer_id : int;
+        src_var : Var.t;
+        dst_var : Var.t;
+        src_device : string;
+        dst_device : string;
+        dims : int array; (* ND copy extents in elements *)
+        src_strides : int array option; (* elements; pitched if provided *)
+        dst_strides : int array option; (* elements *)
+        size_bytes : int; (* optional precomputed flat size *)
+        is_async : bool;
+        stream : int option;
+      }
+    | S_Synchronization of {
+        sync_id : int;
+        sync_type : [ `Barrier | `Fence | `Event of int ];
+        scope : [ `Threadgroup | `Device | `System ];
+        devices : string list;
+        stream : int option;
+      }
+    | S_Host_Callback of {
+        callback_id : int;
+        callback_name : string;
+        input_vars : Var.t list;
+        output_vars : Var.t list;
+      }
+
+  type dependency = {
+    dep_from : int; (* schedule_item id *)
+    dep_to : int; (* schedule_item id *)
+    dep_vars : Var.t list; (* values creating the edge *)
+    kind : [ `Data | `Control ];
+  }
+
+  type schedule_item = {
+    item_id : int;
+    operation : scheduled_op;
+    depends_on : int list; (* item ids *)
+    dependents : int list; (* filled by validation/toposort *)
+  }
+
+  type fusion_opportunity = {
+    kernel_a : int; (* item id *)
+    kernel_b : int; (* item id *)
+    fusion_type : [ `Elementwise | `Reduction | `Mixed ];
+    benefit_score : float;
+    memory_saved : int; (* bytes *)
+  }
+
+  (* Lightweight analysis product kept outside the core op shape *)
+  type item_analysis = {
+    item_id : int;
+    flops : int;
+    bytes_read : int;
+    bytes_written : int;
+    regs_per_thread : int;
+    smem_bytes : int;
+    occupancy : float; (* 0–1 estimate *)
+    est_ns : int; (* estimated latency in ns *)
+  }
+
+  type graph_t = {
+    schedule_items : schedule_item array;
+    dependencies : dependency list;
+    fusion_opportunities : fusion_opportunity list;
+    analysis : item_analysis array; (* same order as items; may be empty *)
+    critical_path : int list; (* item ids *)
+    total_memory_usage : int; (* approximate peak, bytes *)
+    estimated_runtime_ns : int; (* critical path sum *)
+    vars_metadata : (Var.t, var_metadata) Hashtbl.t;
+    symbolic_vars : SymVar.t list;
+  }
+
+  (* Validation & helpers *)
+
+  let validate_dims3 (a : int array) (label : string) : unit =
+    if Array.length a <> 3 then
+      invalid_arg (Printf.sprintf "Scheduled.%s must be length-3" label)
+
+  let validate_iter_space (it : iter_space) : unit =
+    let n = Array.length it.axes in
+    let in_range i =
+      if i < 0 || i >= n then
+        invalid_arg
+          (Printf.sprintf
+             "Scheduled.iter_space: axis index %d out of range 0..%d" i (n - 1))
+    in
+    List.iter in_range it.mapping.block;
+    List.iter in_range it.mapping.thread;
+    List.iter in_range it.mapping.vec;
+    List.iter in_range it.mapping.serial;
+    if Array.length it.tiles <> n then
+      invalid_arg "Scheduled.iter_space: tiles length must match axes length"
+
+  let size_bytes_of_layout (dt : Dtype.any) (ly : layout) : int =
+    let elt =
+      match dt with
+      | Dtype.Any_Dtype Dtype.Float32 -> 4
+      | Dtype.Any_Dtype Dtype.Int32 -> 4
+      | Dtype.Any_Dtype Dtype.Uint8 -> 1
+      | Dtype.Any_Dtype Dtype.Bool -> 1
+      | Dtype.Any_Dtype Dtype.Unit -> 0
+    in
+    prod ly.shape * elt
+
+  let default_layout ?(vector_width = 1) ?(alignment = 16) (shape : int array) :
+      layout =
+    {
+      shape;
+      strides = contiguous_strides_elems shape;
+      alignment;
+      vector_width;
+      contiguous_axes =
+        (let n = Array.length shape in
+         let rec aux i acc = if i < 0 then acc else aux (i - 1) (i :: acc) in
+         aux (n - 1) []);
+    }
+
+  let default_alloc ~scope ~dtype ~layout ~lifetime : allocation =
+    let sz = size_bytes_of_layout dtype layout in
+    { scope; size_bytes = sz; lifetime; alias_group = None }
+
+  (* Build dependents lists from depends_on *)
+  let compute_dependents (items : schedule_item array) : unit =
+    let n = Array.length items in
+    let deps_rev : int list array = Array.make n [] in
+    Array.iter
+      (fun (it : schedule_item) ->
+        List.iter
+          (fun (p : int) ->
+            if p >= 0 && p < n then deps_rev.(p) <- it.item_id :: deps_rev.(p))
+          it.depends_on)
+      items;
+    Array.iteri
+      (fun i (it : schedule_item) ->
+        items.(i) <- { it with dependents = List.rev deps_rev.(i) })
+      items
+
+  (* Topological order (Kahn). Returns item ids in topo sequence. *)
+  let topological_order (items : schedule_item array) : int list =
+    let n = Array.length items in
+    let indeg = Array.make n 0 in
+    Array.iter
+      (fun (it : schedule_item) ->
+        (* indegree of a node is number of its dependencies *)
+        indeg.(it.item_id) <- List.length it.depends_on)
+      items;
+    let q = Queue.create () in
+    for i = 0 to n - 1 do
+      if indeg.(i) = 0 then Queue.add i q
+    done;
+    let order = ref [] in
+    while not (Queue.is_empty q) do
+      let u = Queue.pop q in
+      order := u :: !order;
+      List.iter
+        (fun v ->
+          indeg.(v) <- indeg.(v) - 1;
+          if indeg.(v) = 0 then Queue.add v q)
+        items.(u).dependents
+    done;
+    List.rev !order
+
+  let find_critical_path (g : graph_t) : int list =
+    let n = Array.length g.schedule_items in
+    if n = 0 then []
+    else
+      let cost = Array.make n 1 in
+      Array.iter
+        (fun a -> if a.item_id < n then cost.(a.item_id) <- max 1 a.est_ns)
+        g.analysis;
+      let dist = Array.make n min_int in
+      let prev = Array.make n (-1) in
+      let indeg = Array.make n 0 in
+      Array.iter
+        (fun (it : schedule_item) ->
+          indeg.(it.item_id) <- List.length it.depends_on)
+        g.schedule_items;
+      let q = Queue.create () in
+      for i = 0 to n - 1 do
+        if indeg.(i) = 0 then (
+          dist.(i) <- cost.(i);
+          Queue.add i q)
+      done;
+      while not (Queue.is_empty q) do
+        let u = Queue.pop q in
+        List.iter
+          (fun v ->
+            (if dist.(u) <> min_int then
+               let cand = dist.(u) + cost.(v) in
+               if cand > dist.(v) then (
+                 dist.(v) <- cand;
+                 prev.(v) <- u));
+            indeg.(v) <- indeg.(v) - 1;
+            if indeg.(v) = 0 then Queue.add v q)
+          g.schedule_items.(u).dependents
+      done;
+      let end_id = ref 0 in
+      for i = 1 to n - 1 do
+        if dist.(i) > dist.(!end_id) then end_id := i
+      done;
+      let rec build acc u = if u = -1 then acc else build (u :: acc) prev.(u) in
+      build [] !end_id
+
+  let sum_estimated_runtime_ns (g : graph_t) : int =
+    List.fold_left
+      (fun acc id ->
+        match Array.find_opt (fun a -> a.item_id = id) g.analysis with
+        | Some a -> acc + max 1 a.est_ns
+        | None -> acc + 1)
+      0 g.critical_path
+
+  (* Very rough peak memory estimate: sum of distinct kernel allocations at each
+     item *)
+  let estimate_peak_memory (g : graph_t) : int =
+    let mem_at_item (it : schedule_item) : int =
+      match it.operation with
+      | S_Kernel { inputs; outputs; _ } ->
+          let sum l =
+            List.fold_left (fun acc b -> acc + b.alloc.size_bytes) 0 l
+          in
+          (* NOTE: This double counts shared/register; acceptable as an upper
+             bound. *)
+          sum inputs + sum outputs
+      | S_Memory_Transfer { size_bytes; _ } -> size_bytes
+      | _ -> 0
+    in
+    Array.fold_left (fun acc it -> max acc (mem_at_item it)) 0 g.schedule_items
+
+  (* Constructors *)
+
+  let make_iter_space ~axes ~mapping ~tiles : iter_space =
+    let s = { axes; mapping; tiles } in
+    validate_iter_space s;
+    s
+
+  let make_buffer_info ~(buf_var : Var.t) ~(dtype : Dtype.any)
+      ~(shape : int array) ~(scope : memory_scope) ~(is_input : bool)
+      ~(is_output : bool) ~(lifetime : int * int) : buffer_info =
+    let layout = default_layout shape in
+    let alloc = default_alloc ~scope ~dtype ~layout ~lifetime in
+    { buf_var; dtype; layout; alloc; is_input; is_output }
+
+  let create_kernel ~kernel_id ~kernel_name ~ops ~inputs ~outputs ~iter ~reduce
+      ~hints ~context : scheduled_op =
+    validate_dims3 context.global_dims "context.global_dims";
+    validate_dims3 context.local_dims "context.local_dims";
+    validate_iter_space iter;
+    S_Kernel
+      {
+        kernel_id;
+        kernel_name;
+        ops;
+        inputs;
+        outputs;
+        iter;
+        reduce;
+        hints;
+        context;
+      }
+
+  let create_memory_transfer ~transfer_id ~src_var ~dst_var ~src_device
+      ~dst_device ~dims ?src_strides ?dst_strides ~size_bytes ~is_async ~stream
+      () : scheduled_op =
+    S_Memory_Transfer
+      {
+        transfer_id;
+        src_var;
+        dst_var;
+        src_device;
+        dst_device;
+        dims;
+        src_strides;
+        dst_strides;
+        size_bytes;
+        is_async;
+        stream;
+      }
+
+  let create_synchronization ~sync_id ~sync_type ~scope ~devices ~stream :
+      scheduled_op =
+    S_Synchronization { sync_id; sync_type; scope; devices; stream }
+
+  let create_host_callback ~callback_id ~callback_name ~input_vars ~output_vars
+      : scheduled_op =
+    S_Host_Callback { callback_id; callback_name; input_vars; output_vars }
+
+  let create_schedule_item ~item_id ~operation ~depends_on : schedule_item =
+    { item_id; operation; depends_on; dependents = [] }
+end
+
 (* ───── Low-level / lowered IR ───── *)
 
 module Lowered = struct

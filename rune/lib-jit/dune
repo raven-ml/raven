@@ -1,3 +1,5 @@
+(include_subdirs unqualified)
+
 (library
  (name rune_jit)
  (public_name rune.jit)
