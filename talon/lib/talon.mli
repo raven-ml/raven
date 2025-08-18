@@ -341,16 +341,77 @@ module Col : sig
 
       Time complexity: O(n) where n is the original column length. *)
 
-  val fill_nulls : t -> value:'a -> t
-  (** [fill_nulls col ~value] replaces null values with the given value.
+  val fill_nulls_float32 : t -> value:float -> t
+  (** [fill_nulls_float32 col ~value] replaces null values with the given float
+      value.
 
-      Note: Current implementation is a no-op placeholder. The value parameter
-      is not type-constrained to match the column type, which will be addressed
-      in future versions.
+      Works only on float32 columns. NaN values are treated as nulls and
+      replaced with the specified value.
 
       @param value The replacement value for null entries
+      @raise Invalid_argument if column is not float32 type
 
-      Time complexity: O(1) currently (no-op), O(n) when implemented. *)
+      Time complexity: O(n) where n is the column length. *)
+
+  val fill_nulls_float64 : t -> value:float -> t
+  (** [fill_nulls_float64 col ~value] replaces null values with the given float
+      value.
+
+      Works only on float64 columns. NaN values are treated as nulls and
+      replaced with the specified value.
+
+      @param value The replacement value for null entries
+      @raise Invalid_argument if column is not float64 type
+
+      Time complexity: O(n) where n is the column length. *)
+
+  val fill_nulls_int32 : t -> value:int32 -> t
+  (** [fill_nulls_int32 col ~value] replaces null values with the given int32
+      value.
+
+      Works only on int32 columns. Int32.min_int values are treated as nulls and
+      replaced with the specified value.
+
+      @param value The replacement value for null entries
+      @raise Invalid_argument if column is not int32 type
+
+      Time complexity: O(n) where n is the column length. *)
+
+  val fill_nulls_int64 : t -> value:int64 -> t
+  (** [fill_nulls_int64 col ~value] replaces null values with the given int64
+      value.
+
+      Works only on int64 columns. Int64.min_int values are treated as nulls and
+      replaced with the specified value.
+
+      @param value The replacement value for null entries
+      @raise Invalid_argument if column is not int64 type
+
+      Time complexity: O(n) where n is the column length. *)
+
+  val fill_nulls_string : t -> value:string -> t
+  (** [fill_nulls_string col ~value] replaces null values with the given string
+      value.
+
+      Works only on string columns. None values are treated as nulls and
+      replaced with the specified value.
+
+      @param value The replacement value for null entries
+      @raise Invalid_argument if column is not string type
+
+      Time complexity: O(n) where n is the column length. *)
+
+  val fill_nulls_bool : t -> value:bool -> t
+  (** [fill_nulls_bool col ~value] replaces null values with the given boolean
+      value.
+
+      Works only on boolean columns. None values are treated as nulls and
+      replaced with the specified value.
+
+      @param value The replacement value for null entries
+      @raise Invalid_argument if column is not boolean type
+
+      Time complexity: O(n) where n is the column length. *)
 end
 
 (** {1 DataFrame Creation}

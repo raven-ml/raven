@@ -149,7 +149,63 @@ module Col = struct
         let filtered = Array.to_list arr |> List.filter_map Fun.id in
         bool (Array.of_list filtered)
 
-  let fill_nulls col ~value:_ = col
+  let fill_nulls_float32 col ~value =
+    match col with
+    | P (Nx.Float32, t) ->
+        let arr : float array = Nx.to_array t in
+        let filled =
+          Array.map
+            (fun x -> if classify_float x = FP_nan then value else x)
+            arr
+        in
+        float32 filled
+    | _ -> invalid_arg "fill_nulls_float32: column must be float32"
+
+  let fill_nulls_float64 col ~value =
+    match col with
+    | P (Nx.Float64, t) ->
+        let arr : float array = Nx.to_array t in
+        let filled =
+          Array.map
+            (fun x -> if classify_float x = FP_nan then value else x)
+            arr
+        in
+        float64 filled
+    | _ -> invalid_arg "fill_nulls_float64: column must be float64"
+
+  let fill_nulls_int32 col ~value =
+    match col with
+    | P (Nx.Int32, t) ->
+        let arr : int32 array = Nx.to_array t in
+        let filled =
+          Array.map (fun x -> if x = Int32.min_int then value else x) arr
+        in
+        int32 filled
+    | _ -> invalid_arg "fill_nulls_int32: column must be int32"
+
+  let fill_nulls_int64 col ~value =
+    match col with
+    | P (Nx.Int64, t) ->
+        let arr : int64 array = Nx.to_array t in
+        let filled =
+          Array.map (fun x -> if x = Int64.min_int then value else x) arr
+        in
+        int64 filled
+    | _ -> invalid_arg "fill_nulls_int64: column must be int64"
+
+  let fill_nulls_string col ~value =
+    match col with
+    | S arr ->
+        let filled = Array.map (fun x -> Option.value x ~default:value) arr in
+        string filled
+    | _ -> invalid_arg "fill_nulls_string: column must be string"
+
+  let fill_nulls_bool col ~value =
+    match col with
+    | B arr ->
+        let filled = Array.map (fun x -> Option.value x ~default:value) arr in
+        bool filled
+    | _ -> invalid_arg "fill_nulls_bool: column must be bool"
 end
 
 type t = {
