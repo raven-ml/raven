@@ -1,4 +1,5 @@
 #include "nx_c_shared.h"
+#include "nx_c_strides.h"
 
 // Helper functions for matrix operations
 static inline void* get_data_ptr(value ba, int offset, int kind) {
@@ -43,6 +44,7 @@ static void eye_matrix(void* data, int n, int kind) {
 
 // Cholesky decomposition for float32
 static int cholesky_float32(float* a, int n, int upper) {
+  float tol = nx_eps32() * n;  // Scaled tolerance
   if (upper) {
     // Upper triangular decomposition: A = U^T * U
     for (int k = 0; k < n; k++) {
@@ -51,8 +53,8 @@ static int cholesky_float32(float* a, int n, int upper) {
         sum += a[j * n + k] * a[j * n + k];
       }
       float diag = a[k * n + k] - sum;
-      if (diag <= 0.0f) return -1;  // Not positive definite
-      a[k * n + k] = sqrtf(diag);
+      if (diag < -tol) return -1;               // Not positive definite
+      a[k * n + k] = sqrtf(fmaxf(diag, 0.0f));  // Clamp to avoid tiny negatives
 
       for (int i = k + 1; i < n; i++) {
         sum = 0.0f;
@@ -75,8 +77,8 @@ static int cholesky_float32(float* a, int n, int upper) {
         sum += a[k * n + j] * a[k * n + j];
       }
       float diag = a[k * n + k] - sum;
-      if (diag <= 0.0f) return -1;  // Not positive definite
-      a[k * n + k] = sqrtf(diag);
+      if (diag < -tol) return -1;               // Not positive definite
+      a[k * n + k] = sqrtf(fmaxf(diag, 0.0f));  // Clamp to avoid tiny negatives
 
       for (int i = k + 1; i < n; i++) {
         sum = 0.0f;
@@ -97,6 +99,7 @@ static int cholesky_float32(float* a, int n, int upper) {
 
 // Cholesky decomposition for float64
 static int cholesky_float64(double* a, int n, int upper) {
+  double tol = nx_eps64() * n;  // Scaled tolerance
   if (upper) {
     // Upper triangular decomposition: A = U^T * U
     for (int k = 0; k < n; k++) {
@@ -105,8 +108,8 @@ static int cholesky_float64(double* a, int n, int upper) {
         sum += a[j * n + k] * a[j * n + k];
       }
       double diag = a[k * n + k] - sum;
-      if (diag <= 0.0) return -1;  // Not positive definite
-      a[k * n + k] = sqrt(diag);
+      if (diag < -tol) return -1;            // Not positive definite
+      a[k * n + k] = sqrt(fmax(diag, 0.0));  // Clamp to avoid tiny negatives
 
       for (int i = k + 1; i < n; i++) {
         sum = 0.0;
@@ -129,8 +132,8 @@ static int cholesky_float64(double* a, int n, int upper) {
         sum += a[k * n + j] * a[k * n + j];
       }
       double diag = a[k * n + k] - sum;
-      if (diag <= 0.0) return -1;  // Not positive definite
-      a[k * n + k] = sqrt(diag);
+      if (diag < -tol) return -1;            // Not positive definite
+      a[k * n + k] = sqrt(fmax(diag, 0.0));  // Clamp to avoid tiny negatives
 
       for (int i = k + 1; i < n; i++) {
         sum = 0.0;
@@ -151,6 +154,7 @@ static int cholesky_float64(double* a, int n, int upper) {
 
 // Cholesky decomposition for complex32
 static int cholesky_complex32(c32_t* a, int n, int upper) {
+  float tol = nx_eps32() * n;  // Scaled tolerance
   if (upper) {
     // Upper triangular decomposition: A = U^H * U
     for (int k = 0; k < n; k++) {
@@ -160,8 +164,8 @@ static int cholesky_complex32(c32_t* a, int n, int upper) {
         sum += crealf(val) * crealf(val) + cimagf(val) * cimagf(val);
       }
       float diag = crealf(a[k * n + k]) - sum;
-      if (diag <= 0.0f) return -1;  // Not positive definite
-      a[k * n + k] = sqrtf(diag);
+      if (diag < -tol) return -1;               // Not positive definite
+      a[k * n + k] = sqrtf(fmaxf(diag, 0.0f));  // Real positive sqrt
 
       for (int i = k + 1; i < n; i++) {
         c32_t sum_c = 0.0f + 0.0f * I;
@@ -185,8 +189,8 @@ static int cholesky_complex32(c32_t* a, int n, int upper) {
         sum += crealf(val) * crealf(val) + cimagf(val) * cimagf(val);
       }
       float diag = crealf(a[k * n + k]) - sum;
-      if (diag <= 0.0f) return -1;  // Not positive definite
-      a[k * n + k] = sqrtf(diag);
+      if (diag < -tol) return -1;               // Not positive definite
+      a[k * n + k] = sqrtf(fmaxf(diag, 0.0f));  // Real positive sqrt
 
       for (int i = k + 1; i < n; i++) {
         c32_t sum_c = 0.0f + 0.0f * I;
@@ -207,6 +211,7 @@ static int cholesky_complex32(c32_t* a, int n, int upper) {
 
 // Cholesky decomposition for complex64
 static int cholesky_complex64(c64_t* a, int n, int upper) {
+  double tol = nx_eps64() * n;  // Scaled tolerance
   if (upper) {
     // Upper triangular decomposition: A = U^H * U
     for (int k = 0; k < n; k++) {
@@ -216,8 +221,8 @@ static int cholesky_complex64(c64_t* a, int n, int upper) {
         sum += creal(val) * creal(val) + cimag(val) * cimag(val);
       }
       double diag = creal(a[k * n + k]) - sum;
-      if (diag <= 0.0) return -1;  // Not positive definite
-      a[k * n + k] = sqrt(diag);
+      if (diag < -tol) return -1;            // Not positive definite
+      a[k * n + k] = sqrt(fmax(diag, 0.0));  // Real positive sqrt
 
       for (int i = k + 1; i < n; i++) {
         c64_t sum_c = 0.0 + 0.0 * I;
@@ -241,8 +246,8 @@ static int cholesky_complex64(c64_t* a, int n, int upper) {
         sum += creal(val) * creal(val) + cimag(val) * cimag(val);
       }
       double diag = creal(a[k * n + k]) - sum;
-      if (diag <= 0.0) return -1;  // Not positive definite
-      a[k * n + k] = sqrt(diag);
+      if (diag < -tol) return -1;            // Not positive definite
+      a[k * n + k] = sqrt(fmax(diag, 0.0));  // Real positive sqrt
 
       for (int i = k + 1; i < n; i++) {
         c64_t sum_c = 0.0 + 0.0 * I;
@@ -282,28 +287,27 @@ CAMLprim value caml_nx_cholesky_bc(value* argv, int argn) {
   int kind = Caml_ba_array_val(ba_in)->flags & CAML_BA_KIND_MASK;
 
   // Get shape dimensions
-  int ndim = Wosize_val(v_shape);
+  int ndim = nx_ndim(v_shape);
   if (ndim < 2) {
     caml_failwith("cholesky: input must have at least 2 dimensions");
   }
 
   // Extract dimensions
-  int n = Int_val(Field(v_shape, ndim - 1));
-  int m = Int_val(Field(v_shape, ndim - 2));
+  int n = nx_shape_at(v_shape, ndim - 1);
+  int m = nx_shape_at(v_shape, ndim - 2);
 
   if (n != m) {
     caml_failwith("cholesky: input must be square matrix");
   }
 
   // Calculate batch size
-  int batch_size = 1;
-  for (int i = 0; i < ndim - 2; i++) {
-    batch_size *= Int_val(Field(v_shape, i));
-  }
+  int batch_size = nx_batch_size(v_shape);
 
-  // Get strides
-  int stride_in = Int_val(Field(v_strides, ndim - 2));
-  int stride_out = Int_val(Field(v_out_strides, ndim - 2));
+  // Get strides for last two dimensions
+  int s_in_row = nx_stride_at(v_strides, ndim - 2);
+  int s_in_col = nx_stride_at(v_strides, ndim - 1);
+  int s_out_row = nx_stride_at(v_out_strides, ndim - 2);
+  int s_out_col = nx_stride_at(v_out_strides, ndim - 1);
 
   int elem_size = get_element_size(kind);
 
@@ -311,28 +315,85 @@ CAMLprim value caml_nx_cholesky_bc(value* argv, int argn) {
 
   // Process each matrix in the batch
   for (int b = 0; b < batch_size; b++) {
-    void* data_in =
-        (char*)Caml_ba_data_val(ba_in) + (offset_in + b * n * n) * elem_size;
-    void* data_out =
-        (char*)Caml_ba_data_val(ba_out) + (offset_out + b * n * n) * elem_size;
-
-    // Copy input to output
-    copy_matrix(data_out, data_in, n, n, kind);
+    // Calculate strided offsets for this batch
+    size_t off_in = offset_in + nx_batch_offset_elems(b, v_shape, v_strides);
+    size_t off_out =
+        offset_out + nx_batch_offset_elems(b, v_shape, v_out_strides);
 
     int status = 0;
     switch (kind) {
-      case CAML_BA_FLOAT32:
-        status = cholesky_float32((float*)data_out, n, upper);
+      case CAML_BA_FLOAT32: {
+        float* base_in = (float*)Caml_ba_data_val(ba_in) + off_in;
+        float* base_out = (float*)Caml_ba_data_val(ba_out) + off_out;
+        float* A = (float*)malloc((size_t)n * n * sizeof(float));
+
+        // Pack input to contiguous array
+        nx_pack_f32(A, base_in, n, n, s_in_row, s_in_col);
+
+        // Compute Cholesky decomposition in-place
+        status = cholesky_float32(A, n, upper);
+
+        // Unpack result if successful
+        if (status == 0) {
+          nx_unpack_f32(base_out, A, n, n, s_out_row, s_out_col);
+        }
+        free(A);
         break;
-      case CAML_BA_FLOAT64:
-        status = cholesky_float64((double*)data_out, n, upper);
+      }
+      case CAML_BA_FLOAT64: {
+        double* base_in = (double*)Caml_ba_data_val(ba_in) + off_in;
+        double* base_out = (double*)Caml_ba_data_val(ba_out) + off_out;
+        double* A = (double*)malloc((size_t)n * n * sizeof(double));
+
+        // Pack input to contiguous array
+        nx_pack_f64(A, base_in, n, n, s_in_row, s_in_col);
+
+        // Compute Cholesky decomposition in-place
+        status = cholesky_float64(A, n, upper);
+
+        // Unpack result if successful
+        if (status == 0) {
+          nx_unpack_f64(base_out, A, n, n, s_out_row, s_out_col);
+        }
+        free(A);
         break;
-      case CAML_BA_COMPLEX32:
-        status = cholesky_complex32((c32_t*)data_out, n, upper);
+      }
+      case CAML_BA_COMPLEX32: {
+        c32_t* base_in = (c32_t*)Caml_ba_data_val(ba_in) + off_in;
+        c32_t* base_out = (c32_t*)Caml_ba_data_val(ba_out) + off_out;
+        c32_t* A = (c32_t*)malloc((size_t)n * n * sizeof(c32_t));
+
+        // Pack input to contiguous array
+        nx_pack_c32(A, base_in, n, n, s_in_row, s_in_col);
+
+        // Compute Cholesky decomposition in-place
+        status = cholesky_complex32(A, n, upper);
+
+        // Unpack result if successful
+        if (status == 0) {
+          nx_unpack_c32(base_out, A, n, n, s_out_row, s_out_col);
+        }
+        free(A);
         break;
-      case CAML_BA_COMPLEX64:
-        status = cholesky_complex64((c64_t*)data_out, n, upper);
+      }
+      case CAML_BA_COMPLEX64: {
+        c64_t* base_in = (c64_t*)Caml_ba_data_val(ba_in) + off_in;
+        c64_t* base_out = (c64_t*)Caml_ba_data_val(ba_out) + off_out;
+        c64_t* A = (c64_t*)malloc((size_t)n * n * sizeof(c64_t));
+
+        // Pack input to contiguous array
+        nx_pack_c64(A, base_in, n, n, s_in_row, s_in_col);
+
+        // Compute Cholesky decomposition in-place
+        status = cholesky_complex64(A, n, upper);
+
+        // Unpack result if successful
+        if (status == 0) {
+          nx_unpack_c64(base_out, A, n, n, s_out_row, s_out_col);
+        }
+        free(A);
         break;
+      }
       default:
         caml_leave_blocking_section();
         caml_failwith("cholesky: unsupported dtype");
@@ -355,6 +416,7 @@ NATIVE_WRAPPER_8(cholesky)
 static void triangular_solve_float32(const float* a, const float* b, float* x,
                                      int m, int n, int upper, int transpose,
                                      int unit_diag) {
+  float tol = nx_eps32() * m;  // Zero-diagonal tolerance
   // Copy b to x
   memcpy(x, b, m * n * sizeof(float));
 
@@ -364,7 +426,11 @@ static void triangular_solve_float32(const float* a, const float* b, float* x,
       for (int j = 0; j < n; j++) {
         for (int i = m - 1; i >= 0; i--) {
           if (!unit_diag) {
-            x[i * n + j] /= a[i * m + i];
+            if (fabsf(a[i * m + i]) < tol) {
+              x[i * n + j] = (x[i * n + j] == 0.0f) ? 0.0f : INFINITY;
+            } else {
+              x[i * n + j] /= a[i * m + i];
+            }
           }
           for (int k = i + 1; k < m; k++) {
             x[i * n + j] -= a[i * m + k] * x[k * n + j];
@@ -379,7 +445,11 @@ static void triangular_solve_float32(const float* a, const float* b, float* x,
             x[i * n + j] -= a[i * m + k] * x[k * n + j];
           }
           if (!unit_diag) {
-            x[i * n + j] /= a[i * m + i];
+            if (fabsf(a[i * m + i]) < tol) {
+              x[i * n + j] = (x[i * n + j] == 0.0f) ? 0.0f : INFINITY;
+            } else {
+              x[i * n + j] /= a[i * m + i];
+            }
           }
         }
       }
@@ -393,7 +463,11 @@ static void triangular_solve_float32(const float* a, const float* b, float* x,
             x[i * n + j] -= a[k * m + i] * x[k * n + j];
           }
           if (!unit_diag) {
-            x[i * n + j] /= a[i * m + i];
+            if (fabsf(a[i * m + i]) < tol) {
+              x[i * n + j] = (x[i * n + j] == 0.0f) ? 0.0f : INFINITY;
+            } else {
+              x[i * n + j] /= a[i * m + i];
+            }
           }
         }
       }
@@ -402,7 +476,11 @@ static void triangular_solve_float32(const float* a, const float* b, float* x,
       for (int j = 0; j < n; j++) {
         for (int i = m - 1; i >= 0; i--) {
           if (!unit_diag) {
-            x[i * n + j] /= a[i * m + i];
+            if (fabsf(a[i * m + i]) < tol) {
+              x[i * n + j] = (x[i * n + j] == 0.0f) ? 0.0f : INFINITY;
+            } else {
+              x[i * n + j] /= a[i * m + i];
+            }
           }
           for (int k = i + 1; k < m; k++) {
             x[i * n + j] -= a[k * m + i] * x[k * n + j];
@@ -416,6 +494,7 @@ static void triangular_solve_float32(const float* a, const float* b, float* x,
 static void triangular_solve_float64(const double* a, const double* b,
                                      double* x, int m, int n, int upper,
                                      int transpose, int unit_diag) {
+  double tol = nx_eps64() * m;  // Zero-diagonal tolerance
   // Copy b to x
   memcpy(x, b, m * n * sizeof(double));
 
@@ -425,7 +504,11 @@ static void triangular_solve_float64(const double* a, const double* b,
       for (int j = 0; j < n; j++) {
         for (int i = m - 1; i >= 0; i--) {
           if (!unit_diag) {
-            x[i * n + j] /= a[i * m + i];
+            if (fabsf(a[i * m + i]) < tol) {
+              x[i * n + j] = (x[i * n + j] == 0.0f) ? 0.0f : INFINITY;
+            } else {
+              x[i * n + j] /= a[i * m + i];
+            }
           }
           for (int k = i + 1; k < m; k++) {
             x[i * n + j] -= a[i * m + k] * x[k * n + j];
@@ -440,7 +523,11 @@ static void triangular_solve_float64(const double* a, const double* b,
             x[i * n + j] -= a[i * m + k] * x[k * n + j];
           }
           if (!unit_diag) {
-            x[i * n + j] /= a[i * m + i];
+            if (fabsf(a[i * m + i]) < tol) {
+              x[i * n + j] = (x[i * n + j] == 0.0f) ? 0.0f : INFINITY;
+            } else {
+              x[i * n + j] /= a[i * m + i];
+            }
           }
         }
       }
@@ -454,7 +541,11 @@ static void triangular_solve_float64(const double* a, const double* b,
             x[i * n + j] -= a[k * m + i] * x[k * n + j];
           }
           if (!unit_diag) {
-            x[i * n + j] /= a[i * m + i];
+            if (fabsf(a[i * m + i]) < tol) {
+              x[i * n + j] = (x[i * n + j] == 0.0f) ? 0.0f : INFINITY;
+            } else {
+              x[i * n + j] /= a[i * m + i];
+            }
           }
         }
       }
@@ -463,7 +554,11 @@ static void triangular_solve_float64(const double* a, const double* b,
       for (int j = 0; j < n; j++) {
         for (int i = m - 1; i >= 0; i--) {
           if (!unit_diag) {
-            x[i * n + j] /= a[i * m + i];
+            if (fabsf(a[i * m + i]) < tol) {
+              x[i * n + j] = (x[i * n + j] == 0.0f) ? 0.0f : INFINITY;
+            } else {
+              x[i * n + j] /= a[i * m + i];
+            }
           }
           for (int k = i + 1; k < m; k++) {
             x[i * n + j] -= a[k * m + i] * x[k * n + j];
@@ -568,154 +663,105 @@ NATIVE_WRAPPER_14(triangular_solve)
 // QR decomposition using Householder reflections
 static void qr_decompose_float32(float* a, float* q, float* r, int m, int n,
                                  int reduced) {
-  int k = reduced ? (m < n ? m : n) : m;
+  const int k = reduced ? (m < n ? m : n) : m;
 
-  // Initialize Q to identity matrix
-  for (int i = 0; i < m; i++) {
-    for (int j = 0; j < k; j++) {
-      q[i * k + j] = (i == j) ? 1.0f : 0.0f;
-    }
-  }
+  // Q = I, R = A
+  for (int i = 0; i < m; ++i)
+    for (int j = 0; j < k; ++j) q[i * k + j] = (i == j) ? 1.f : 0.f;
+  for (int i = 0; i < m; ++i)
+    for (int j = 0; j < n; ++j) r[i * n + j] = a[i * n + j];
 
-  // Copy A to R
-  for (int i = 0; i < m; i++) {
-    for (int j = 0; j < n; j++) {
-      r[i * n + j] = a[i * n + j];
-    }
-  }
+  const int lim = (m < n ? m : n);
+  for (int j = 0; j < lim; ++j) {
+    // norm of column j (rows j..m-1)
+    float norm2 = 0.f;
+    for (int i = j; i < m; ++i) norm2 += r[i * n + j] * r[i * n + j];
+    float norm = sqrtf(norm2);
+    if (norm == 0.f) continue;
 
-  // Householder QR decomposition
-  for (int j = 0; j < (m < n ? m : n); j++) {
-    // Compute Householder vector
-    float norm = 0.0f;
-    for (int i = j; i < m; i++) {
-      norm += r[i * n + j] * r[i * n + j];
-    }
-    norm = sqrtf(norm);
-
-    if (norm == 0.0f) continue;
-
-    float sign = r[j * n + j] >= 0 ? 1.0f : -1.0f;
+    float sign = (r[j * n + j] >= 0.f) ? 1.f : -1.f;
     float u1 = r[j * n + j] + sign * norm;
 
-    // Store Householder vector
-    float* v = (float*)calloc(m, sizeof(float));
-    v[j] = 1.0f;
-    for (int i = j + 1; i < m; i++) {
-      v[i] = r[i * n + j] / u1;
+    // v[j]=1, v[i>j] = r[i,j]/u1
+    float* v = (float*)calloc((size_t)m, sizeof(float));
+    v[j] = 1.f;
+    float tail2 = 0.f;
+    for (int i = j + 1; i < m; ++i) {
+      float vi = r[i * n + j] / u1;
+      v[i] = vi;
+      tail2 += vi * vi;
+    }
+    // beta = 2 / (v^T v) with v^T v = 1 + tail2
+    float beta = 2.f / (1.f + tail2);
+
+    // R := (I - beta v v^T) R   (apply to rows i>=j)
+    for (int col = j; col < n; ++col) {
+      float dot = 0.f;
+      for (int i = j; i < m; ++i) dot += v[i] * r[i * n + col];
+      dot *= beta;
+      for (int i = j; i < m; ++i) r[i * n + col] -= dot * v[i];
     }
 
-    // Apply Householder transformation to R
-    for (int col = j; col < n; col++) {
-      float dot = 0.0f;
-      for (int i = j; i < m; i++) {
-        dot += v[i] * r[i * n + col];
-      }
-      dot *= 2.0f / (1.0f + norm * norm / (u1 * u1));
-
-      for (int i = j; i < m; i++) {
-        r[i * n + col] -= dot * v[i];
-      }
+    // Q := Q (I - beta v v^T)
+    for (int col = 0; col < k; ++col) {
+      float dot = 0.f;
+      for (int i = j; i < m; ++i) dot += v[i] * q[i * k + col];
+      dot *= beta;
+      for (int i = j; i < m; ++i) q[i * k + col] -= dot * v[i];
     }
-
-    // Apply Householder transformation to Q
-    for (int col = 0; col < k; col++) {
-      float dot = 0.0f;
-      for (int i = j; i < m; i++) {
-        dot += v[i] * q[i * k + col];
-      }
-      dot *= 2.0f / (1.0f + norm * norm / (u1 * u1));
-
-      for (int i = j; i < m; i++) {
-        q[i * k + col] -= dot * v[i];
-      }
-    }
-
     free(v);
   }
 
-  // Zero out below diagonal in R
-  for (int i = 1; i < m; i++) {
-    for (int j = 0; j < i && j < n; j++) {
-      r[i * n + j] = 0.0f;
-    }
-  }
+  // Zero below diagonal
+  for (int i = 1; i < m; ++i)
+    for (int j = 0; j < i && j < n; ++j) r[i * n + j] = 0.f;
 }
 
 static void qr_decompose_float64(double* a, double* q, double* r, int m, int n,
                                  int reduced) {
-  int k = reduced ? (m < n ? m : n) : m;
+  const int k = reduced ? (m < n ? m : n) : m;
 
-  // Initialize Q to identity matrix
-  for (int i = 0; i < m; i++) {
-    for (int j = 0; j < k; j++) {
-      q[i * k + j] = (i == j) ? 1.0 : 0.0;
-    }
-  }
+  for (int i = 0; i < m; ++i)
+    for (int j = 0; j < k; ++j) q[i * k + j] = (i == j) ? 1.0 : 0.0;
+  for (int i = 0; i < m; ++i)
+    for (int j = 0; j < n; ++j) r[i * n + j] = a[i * n + j];
 
-  // Copy A to R
-  for (int i = 0; i < m; i++) {
-    for (int j = 0; j < n; j++) {
-      r[i * n + j] = a[i * n + j];
-    }
-  }
-
-  // Householder QR decomposition
-  for (int j = 0; j < (m < n ? m : n); j++) {
-    // Compute Householder vector
-    double norm = 0.0;
-    for (int i = j; i < m; i++) {
-      norm += r[i * n + j] * r[i * n + j];
-    }
-    norm = sqrt(norm);
-
+  const int lim = (m < n ? m : n);
+  for (int j = 0; j < lim; ++j) {
+    double norm2 = 0.0;
+    for (int i = j; i < m; ++i) norm2 += r[i * n + j] * r[i * n + j];
+    double norm = sqrt(norm2);
     if (norm == 0.0) continue;
 
-    double sign = r[j * n + j] >= 0 ? 1.0 : -1.0;
+    double sign = (r[j * n + j] >= 0.0) ? 1.0 : -1.0;
     double u1 = r[j * n + j] + sign * norm;
 
-    // Store Householder vector
-    double* v = (double*)calloc(m, sizeof(double));
+    double* v = (double*)calloc((size_t)m, sizeof(double));
     v[j] = 1.0;
-    for (int i = j + 1; i < m; i++) {
-      v[i] = r[i * n + j] / u1;
+    double tail2 = 0.0;
+    for (int i = j + 1; i < m; ++i) {
+      double vi = r[i * n + j] / u1;
+      v[i] = vi;
+      tail2 += vi * vi;
     }
+    double beta = 2.0 / (1.0 + tail2);
 
-    // Apply Householder transformation to R
-    for (int col = j; col < n; col++) {
+    for (int col = j; col < n; ++col) {
       double dot = 0.0;
-      for (int i = j; i < m; i++) {
-        dot += v[i] * r[i * n + col];
-      }
-      dot *= 2.0 / (1.0 + norm * norm / (u1 * u1));
-
-      for (int i = j; i < m; i++) {
-        r[i * n + col] -= dot * v[i];
-      }
+      for (int i = j; i < m; ++i) dot += v[i] * r[i * n + col];
+      dot *= beta;
+      for (int i = j; i < m; ++i) r[i * n + col] -= dot * v[i];
     }
-
-    // Apply Householder transformation to Q
-    for (int col = 0; col < k; col++) {
+    for (int col = 0; col < k; ++col) {
       double dot = 0.0;
-      for (int i = j; i < m; i++) {
-        dot += v[i] * q[i * k + col];
-      }
-      dot *= 2.0 / (1.0 + norm * norm / (u1 * u1));
-
-      for (int i = j; i < m; i++) {
-        q[i * k + col] -= dot * v[i];
-      }
+      for (int i = j; i < m; ++i) dot += v[i] * q[i * k + col];
+      dot *= beta;
+      for (int i = j; i < m; ++i) q[i * k + col] -= dot * v[i];
     }
-
     free(v);
   }
-
-  // Zero out below diagonal in R
-  for (int i = 1; i < m; i++) {
-    for (int j = 0; j < i && j < n; j++) {
-      r[i * n + j] = 0.0;
-    }
-  }
+  for (int i = 1; i < m; ++i)
+    for (int j = 0; j < i && j < n; ++j) r[i * n + j] = 0.0;
 }
 
 // OCaml interface for QR decomposition
@@ -745,46 +791,88 @@ CAMLprim value caml_nx_qr_bc(value* argv, int argn) {
   int kind = Caml_ba_array_val(ba_in)->flags & CAML_BA_KIND_MASK;
 
   // Get dimensions
-  int ndim = Wosize_val(v_shape);
+  int ndim = nx_ndim(v_shape);
   if (ndim < 2) {
     caml_failwith("qr: input must have at least 2 dimensions");
   }
 
-  int m = Int_val(Field(v_shape, ndim - 2));
-  int n = Int_val(Field(v_shape, ndim - 1));
+  int m = nx_shape_at(v_shape, ndim - 2);
+  int n = nx_shape_at(v_shape, ndim - 1);
+  int k = reduced ? (m < n ? m : n) : m;  // Q's column dimension
 
   // Calculate batch size
-  int batch_size = 1;
-  for (int i = 0; i < ndim - 2; i++) {
-    batch_size *= Int_val(Field(v_shape, i));
-  }
+  int batch_size = nx_batch_size(v_shape);
 
   int elem_size = get_element_size(kind);
+
+  // Get strides for last two dimensions
+  int s_in_row = nx_stride_at(v_strides, ndim - 2);
+  int s_in_col = nx_stride_at(v_strides, ndim - 1);
+  int s_q_row = nx_stride_at(v_strides_q, ndim - 2);
+  int s_q_col = nx_stride_at(v_strides_q, ndim - 1);
+  int s_r_row = nx_stride_at(v_strides_r, ndim - 2);
+  int s_r_col = nx_stride_at(v_strides_r, ndim - 1);
 
   caml_enter_blocking_section();
 
   // Process each matrix in the batch
   for (int b = 0; b < batch_size; b++) {
-    void* data_in =
-        (char*)Caml_ba_data_val(ba_in) + (offset_in + b * m * n) * elem_size;
-    void* data_q = (char*)Caml_ba_data_val(ba_q) +
-                   (offset_q + b * Int_val(Field(v_shape_q, ndim - 2)) *
-                                   Int_val(Field(v_shape_q, ndim - 1))) *
-                       elem_size;
-    void* data_r = (char*)Caml_ba_data_val(ba_r) +
-                   (offset_r + b * Int_val(Field(v_shape_r, ndim - 2)) *
-                                   Int_val(Field(v_shape_r, ndim - 1))) *
-                       elem_size;
+    // Calculate strided offsets for this batch
+    size_t off_in = offset_in + nx_batch_offset_elems(b, v_shape, v_strides);
+    size_t off_q = offset_q + nx_batch_offset_elems(b, v_shape_q, v_strides_q);
+    size_t off_r = offset_r + nx_batch_offset_elems(b, v_shape_r, v_strides_r);
 
     switch (kind) {
-      case CAML_BA_FLOAT32:
-        qr_decompose_float32((float*)data_in, (float*)data_q, (float*)data_r, m,
-                             n, reduced);
+      case CAML_BA_FLOAT32: {
+        float* base_in = (float*)Caml_ba_data_val(ba_in) + off_in;
+        float* base_q = (float*)Caml_ba_data_val(ba_q) + off_q;
+        float* base_r = (float*)Caml_ba_data_val(ba_r) + off_r;
+
+        // Allocate contiguous work arrays
+        float* A = (float*)malloc((size_t)m * n * sizeof(float));
+        float* Qc = (float*)malloc((size_t)m * k * sizeof(float));
+        float* Rc = (float*)malloc((size_t)m * n * sizeof(float));
+
+        // Pack input to contiguous array
+        nx_pack_f32(A, base_in, m, n, s_in_row, s_in_col);
+
+        // Compute QR decomposition
+        qr_decompose_float32(A, Qc, Rc, m, n, reduced);
+
+        // Unpack results back to strided arrays
+        nx_unpack_f32(base_q, Qc, m, k, s_q_row, s_q_col);
+        nx_unpack_f32(base_r, Rc, m, n, s_r_row, s_r_col);
+
+        free(A);
+        free(Qc);
+        free(Rc);
         break;
-      case CAML_BA_FLOAT64:
-        qr_decompose_float64((double*)data_in, (double*)data_q, (double*)data_r,
-                             m, n, reduced);
+      }
+      case CAML_BA_FLOAT64: {
+        double* base_in = (double*)Caml_ba_data_val(ba_in) + off_in;
+        double* base_q = (double*)Caml_ba_data_val(ba_q) + off_q;
+        double* base_r = (double*)Caml_ba_data_val(ba_r) + off_r;
+
+        // Allocate contiguous work arrays
+        double* A = (double*)malloc((size_t)m * n * sizeof(double));
+        double* Qc = (double*)malloc((size_t)m * k * sizeof(double));
+        double* Rc = (double*)malloc((size_t)m * n * sizeof(double));
+
+        // Pack input to contiguous array
+        nx_pack_f64(A, base_in, m, n, s_in_row, s_in_col);
+
+        // Compute QR decomposition
+        qr_decompose_float64(A, Qc, Rc, m, n, reduced);
+
+        // Unpack results back to strided arrays
+        nx_unpack_f64(base_q, Qc, m, k, s_q_row, s_q_col);
+        nx_unpack_f64(base_r, Rc, m, n, s_r_row, s_r_col);
+
+        free(A);
+        free(Qc);
+        free(Rc);
         break;
+      }
       default:
         caml_leave_blocking_section();
         caml_failwith(
@@ -908,204 +996,130 @@ static void apply_givens_right_float64(double* a, int m, int n, int i, int j,
 // Bidiagonalization using Householder reflections
 static void bidiagonalize_float32(float* a, float* u, float* v, float* diag,
                                   float* super, int m, int n) {
-  int min_mn = m < n ? m : n;
+  const int k = (m < n ? m : n);
+  // U=I, V=I
+  for (int i = 0; i < m; i++)
+    for (int j = 0; j < m; j++) u[i * m + j] = (i == j) ? 1.f : 0.f;
+  for (int i = 0; i < n; i++)
+    for (int j = 0; j < n; j++) v[i * n + j] = (i == j) ? 1.f : 0.f;
 
-  // Initialize U and V to identity
-  for (int i = 0; i < m; i++) {
-    for (int j = 0; j < m; j++) {
-      u[i * m + j] = (i == j) ? 1.0f : 0.0f;
-    }
-  }
-  for (int i = 0; i < n; i++) {
-    for (int j = 0; j < n; j++) {
-      v[i * n + j] = (i == j) ? 1.0f : 0.0f;
-    }
-  }
+  for (int p = 0; p < k; ++p) {
+    // Left reflector to zero below a[p,p]
+    float norm2 = 0.f;
+    for (int i = p; i < m; i++) norm2 += a[i * n + p] * a[i * n + p];
+    float norm = sqrtf(norm2);
+    if (norm > 0.f) {
+      float sign = (a[p * n + p] >= 0.f) ? 1.f : -1.f;
+      float alpha = -sign * norm;
+      float akk_old = a[p * n + p];
+      a[p * n + p] -= alpha;  // now 'u' is the column starting at p
+      float beta = 1.f / (alpha * a[p * n + p]);  // <-- corrected β
 
-  // Bidiagonalization
-  for (int k = 0; k < min_mn; k++) {
-    // Left Householder transformation
-    float alpha = 0.0f;
-    for (int i = k; i < m; i++) {
-      alpha += a[i * n + k] * a[i * n + k];
-    }
-    alpha = -sign_float32(a[k * n + k]) * sqrtf(alpha);
-
-    if (alpha != 0.0f) {
-      float beta = 1.0f / (alpha * (alpha - a[k * n + k]));
-      a[k * n + k] -= alpha;
-
-      // Apply to A
-      for (int j = k + 1; j < n; j++) {
-        float gamma = 0.0f;
-        for (int i = k; i < m; i++) {
-          gamma += a[i * n + k] * a[i * n + j];
-        }
+      // A := (I - beta u u^T) A
+      for (int j = p + 1; j < n; ++j) {
+        float gamma = 0.f;
+        for (int i = p; i < m; i++) gamma += a[i * n + p] * a[i * n + j];
         gamma *= beta;
-        for (int i = k; i < m; i++) {
-          a[i * n + j] -= gamma * a[i * n + k];
-        }
+        for (int i = p; i < m; i++) a[i * n + j] -= gamma * a[i * n + p];
       }
-
-      // Apply to U
-      for (int j = 0; j < m; j++) {
-        float gamma = 0.0f;
-        for (int i = k; i < m; i++) {
-          gamma += a[i * n + k] * u[i * m + j];
-        }
+      // U := U (I - beta u u^T)
+      for (int j = 0; j < m; ++j) {
+        float gamma = 0.f;
+        for (int i = p; i < m; i++) gamma += a[i * n + p] * u[i * m + j];
         gamma *= beta;
-        for (int i = k; i < m; i++) {
-          u[i * m + j] -= gamma * a[i * n + k];
-        }
+        for (int i = p; i < m; ++i) u[i * m + j] -= gamma * a[i * n + p];
       }
-
-      diag[k] = alpha;
-    } else {
-      diag[k] = a[k * n + k];
     }
+    diag[p] = a[p * n + p];
 
-    if (k < min_mn - 1) {
-      // Right Householder transformation
-      alpha = 0.0f;
-      for (int j = k + 1; j < n; j++) {
-        alpha += a[k * n + j] * a[k * n + j];
-      }
-      alpha = -sign_float32(a[k * n + k + 1]) * sqrtf(alpha);
+    if (p < n - 1) {
+      // Right reflector to zero right of a[p,p+1] in row p
+      float norm2r = 0.f;
+      for (int j = p + 1; j < n; j++) norm2r += a[p * n + j] * a[p * n + j];
+      float normr = sqrtf(norm2r);
+      if (normr > 0.f) {
+        float sign = (a[p * n + (p + 1)] >= 0.f) ? 1.f : -1.f;
+        float alpha = -sign * normr;
+        a[p * n + (p + 1)] -= alpha;  // 'v' is row segment starting at p+1
+        float beta = 1.f / (alpha * a[p * n + (p + 1)]);  // <-- corrected β
 
-      if (alpha != 0.0f) {
-        float beta = 1.0f / (alpha * (alpha - a[k * n + k + 1]));
-        a[k * n + k + 1] -= alpha;
-
-        // Apply to A
-        for (int i = k + 1; i < m; i++) {
-          float gamma = 0.0f;
-          for (int j = k + 1; j < n; j++) {
-            gamma += a[i * n + j] * a[k * n + j];
-          }
+        // A := A (I - beta v^T v)
+        for (int i = p + 1; i < m; ++i) {
+          float gamma = 0.f;
+          for (int j = p + 1; j < n; j++) gamma += a[i * n + j] * a[p * n + j];
           gamma *= beta;
-          for (int j = k + 1; j < n; j++) {
-            a[i * n + j] -= gamma * a[k * n + j];
-          }
+          for (int j = p + 1; j < n; j++) a[i * n + j] -= gamma * a[p * n + j];
         }
-
-        // Apply to V^T
-        for (int i = 0; i < n; i++) {
-          float gamma = 0.0f;
-          for (int j = k + 1; j < n; j++) {
-            gamma += v[j * n + i] * a[k * n + j];
-          }
+        // V := V (I - beta v^T v)
+        for (int j = 0; j < n; ++j) {
+          float gamma = 0.f;
+          for (int t = p + 1; t < n; t++) gamma += v[t * n + j] * a[p * n + t];
           gamma *= beta;
-          for (int j = k + 1; j < n; j++) {
-            v[j * n + i] -= gamma * a[k * n + j];
-          }
+          for (int t = p + 1; t < n; t++) v[t * n + j] -= gamma * a[p * n + t];
         }
-
-        super[k] = alpha;
-      } else {
-        super[k] = a[k * n + k + 1];
       }
+      super[p] = (p < k - 1) ? a[p * n + (p + 1)] : 0.f;
     }
   }
 }
 
 static void bidiagonalize_float64(double* a, double* u, double* v, double* diag,
                                   double* super, int m, int n) {
-  int min_mn = m < n ? m : n;
+  const int k = (m < n ? m : n);
+  for (int i = 0; i < m; i++)
+    for (int j = 0; j < m; j++) u[i * m + j] = (i == j) ? 1.0 : 0.0;
+  for (int i = 0; i < n; i++)
+    for (int j = 0; j < n; j++) v[i * n + j] = (i == j) ? 1.0 : 0.0;
 
-  // Initialize U and V to identity
-  for (int i = 0; i < m; i++) {
-    for (int j = 0; j < m; j++) {
-      u[i * m + j] = (i == j) ? 1.0 : 0.0;
-    }
-  }
-  for (int i = 0; i < n; i++) {
-    for (int j = 0; j < n; j++) {
-      v[i * n + j] = (i == j) ? 1.0 : 0.0;
-    }
-  }
+  for (int p = 0; p < k; ++p) {
+    double norm2 = 0.0;
+    for (int i = p; i < m; i++) norm2 += a[i * n + p] * a[i * n + p];
+    double norm = sqrt(norm2);
+    if (norm > 0.0) {
+      double sign = (a[p * n + p] >= 0.0) ? 1.0 : -1.0;
+      double alpha = -sign * norm;
+      a[p * n + p] -= alpha;
+      double beta = 1.0 / (alpha * a[p * n + p]);  // <-- corrected β
 
-  // Bidiagonalization
-  for (int k = 0; k < min_mn; k++) {
-    // Left Householder transformation
-    double alpha = 0.0;
-    for (int i = k; i < m; i++) {
-      alpha += a[i * n + k] * a[i * n + k];
-    }
-    alpha = -sign_float64(a[k * n + k]) * sqrt(alpha);
-
-    if (alpha != 0.0) {
-      double beta = 1.0 / (alpha * (alpha - a[k * n + k]));
-      a[k * n + k] -= alpha;
-
-      // Apply to A
-      for (int j = k + 1; j < n; j++) {
+      for (int j = p + 1; j < n; ++j) {
         double gamma = 0.0;
-        for (int i = k; i < m; i++) {
-          gamma += a[i * n + k] * a[i * n + j];
-        }
+        for (int i = p; i < m; i++) gamma += a[i * n + p] * a[i * n + j];
         gamma *= beta;
-        for (int i = k; i < m; i++) {
-          a[i * n + j] -= gamma * a[i * n + k];
-        }
+        for (int i = p; i < m; i++) a[i * n + j] -= gamma * a[i * n + p];
       }
-
-      // Apply to U
-      for (int j = 0; j < m; j++) {
+      for (int j = 0; j < m; ++j) {
         double gamma = 0.0;
-        for (int i = k; i < m; i++) {
-          gamma += a[i * n + k] * u[i * m + j];
-        }
+        for (int i = p; i < m; i++) gamma += a[i * n + p] * u[i * m + j];
         gamma *= beta;
-        for (int i = k; i < m; i++) {
-          u[i * m + j] -= gamma * a[i * n + k];
-        }
+        for (int i = p; i < m; i++) u[i * m + j] -= gamma * a[i * n + p];
       }
-
-      diag[k] = alpha;
-    } else {
-      diag[k] = a[k * n + k];
     }
+    diag[p] = a[p * n + p];
 
-    if (k < min_mn - 1) {
-      // Right Householder transformation
-      alpha = 0.0;
-      for (int j = k + 1; j < n; j++) {
-        alpha += a[k * n + j] * a[k * n + j];
-      }
-      alpha = -sign_float64(a[k * n + k + 1]) * sqrt(alpha);
+    if (p < n - 1) {
+      double norm2r = 0.0;
+      for (int j = p + 1; j < n; j++) norm2r += a[p * n + j] * a[p * n + j];
+      double normr = sqrt(norm2r);
+      if (normr > 0.0) {
+        double sign = (a[p * n + (p + 1)] >= 0.0) ? 1.0 : -1.0;
+        double alpha = -sign * normr;
+        a[p * n + (p + 1)] -= alpha;
+        double beta = 1.0 / (alpha * a[p * n + (p + 1)]);  // <-- corrected β
 
-      if (alpha != 0.0) {
-        double beta = 1.0 / (alpha * (alpha - a[k * n + k + 1]));
-        a[k * n + k + 1] -= alpha;
-
-        // Apply to A
-        for (int i = k + 1; i < m; i++) {
+        for (int i = p + 1; i < m; ++i) {
           double gamma = 0.0;
-          for (int j = k + 1; j < n; j++) {
-            gamma += a[i * n + j] * a[k * n + j];
-          }
+          for (int j = p + 1; j < n; j++) gamma += a[i * n + j] * a[p * n + j];
           gamma *= beta;
-          for (int j = k + 1; j < n; j++) {
-            a[i * n + j] -= gamma * a[k * n + j];
-          }
+          for (int j = p + 1; j < n; j++) a[i * n + j] -= gamma * a[p * n + j];
         }
-
-        // Apply to V^T
-        for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; ++j) {
           double gamma = 0.0;
-          for (int j = k + 1; j < n; j++) {
-            gamma += v[j * n + i] * a[k * n + j];
-          }
+          for (int t = p + 1; t < n; t++) gamma += v[t * n + j] * a[p * n + t];
           gamma *= beta;
-          for (int j = k + 1; j < n; j++) {
-            v[j * n + i] -= gamma * a[k * n + j];
-          }
+          for (int t = p + 1; t < n; t++) v[t * n + j] -= gamma * a[p * n + t];
         }
-
-        super[k] = alpha;
-      } else {
-        super[k] = a[k * n + k + 1];
       }
+      super[p] = (p < k - 1) ? a[p * n + (p + 1)] : 0.0;
     }
   }
 }
@@ -1193,6 +1207,48 @@ static void svd_qr_iteration_float64(double* diag, double* super, double* u,
   super[q - 1] = f;
 }
 
+// SVD iteration loop with proper deflation
+static void svd_iterate_float32(float* diag, float* super, float* u, float* v,
+                                int m, int n) {
+  const int k = (m < n ? m : n);
+  const float tol = 100.f * nx_eps32();
+  const int max_iter = 100 * (m > n ? m : n);
+
+  int it = 0;
+  while (it++ < max_iter) {
+    // Check if all blocks are deflated
+    int remaining = 0;
+    for (int i = 0; i < k - 1; i++) {
+      if (fabsf(super[i]) > tol * (fabsf(diag[i]) + fabsf(diag[i + 1]))) {
+        remaining = 1;
+        break;
+      }
+    }
+    if (!remaining) break;
+
+    // Find an active block [p..q]
+    int q = k - 1;
+    while (q > 0 &&
+           fabsf(super[q - 1]) <= tol * (fabsf(diag[q - 1]) + fabsf(diag[q]))) {
+      super[q - 1] = 0.f;
+      --q;
+    }
+
+    int p = q;
+    while (p > 0 &&
+           fabsf(super[p - 1]) > tol * (fabsf(diag[p - 1]) + fabsf(diag[p])))
+      --p;
+
+    if (p >= q) {
+      // Single element block, check for more blocks
+      continue;
+    }
+
+    // Apply one Golub-Kahan step on [p..q]
+    svd_qr_iteration_float32(diag, super, u, v, m, n, p, q);
+  }
+}
+
 // SVD using bidiagonalization and QR iteration
 static void svd_float32(float* a, float* u, float* s, float* vt, int m, int n,
                         int full_matrices) {
@@ -1212,40 +1268,8 @@ static void svd_float32(float* a, float* u, float* s, float* vt, int m, int n,
   // Bidiagonalize
   bidiagonalize_float32(work_a, u_work, v_work, diag, super, m, n);
 
-  // QR iteration
-  const float eps = 1e-6f;
-  const int max_iter = 100 * max_mn;
-
-  for (int iter = 0; iter < max_iter; iter++) {
-    // Find non-converged submatrix [p, q]
-    int p = 0, q = min_mn - 1;
-
-    // Find q
-    for (int i = min_mn - 2; i >= 0; i--) {
-      if (fabsf(super[i]) <= eps * (fabsf(diag[i]) + fabsf(diag[i + 1]))) {
-        super[i] = 0.0f;
-        if (i == q - 1) {
-          q = i;
-        }
-      } else {
-        break;
-      }
-    }
-
-    if (q == 0) break;  // Converged
-
-    // Find p
-    for (int i = q - 1; i >= 0; i--) {
-      if (i == 0 ||
-          fabsf(super[i - 1]) <= eps * (fabsf(diag[i - 1]) + fabsf(diag[i]))) {
-        p = i;
-        break;
-      }
-    }
-
-    // Apply QR iteration
-    svd_qr_iteration_float32(diag, super, u_work, v_work, m, n, p, q);
-  }
+  // QR iteration with proper deflation
+  svd_iterate_float32(diag, super, u_work, v_work, m, n);
 
   // Copy singular values
   for (int i = 0; i < min_mn; i++) {
@@ -1311,6 +1335,48 @@ static void svd_float32(float* a, float* u, float* s, float* vt, int m, int n,
   free(v_work);
 }
 
+// SVD iteration loop with proper deflation (double)
+static void svd_iterate_float64(double* diag, double* super, double* u,
+                                double* v, int m, int n) {
+  const int k = (m < n ? m : n);
+  const double tol = 100.0 * nx_eps64();
+  const int max_iter = 100 * (m > n ? m : n);
+
+  int it = 0;
+  while (it++ < max_iter) {
+    // Check if all blocks are deflated
+    int remaining = 0;
+    for (int i = 0; i < k - 1; i++) {
+      if (fabs(super[i]) > tol * (fabs(diag[i]) + fabs(diag[i + 1]))) {
+        remaining = 1;
+        break;
+      }
+    }
+    if (!remaining) break;
+
+    // Find an active block [p..q]
+    int q = k - 1;
+    while (q > 0 &&
+           fabs(super[q - 1]) <= tol * (fabs(diag[q - 1]) + fabs(diag[q]))) {
+      super[q - 1] = 0.0;
+      --q;
+    }
+
+    int p = q;
+    while (p > 0 &&
+           fabs(super[p - 1]) > tol * (fabs(diag[p - 1]) + fabs(diag[p])))
+      --p;
+
+    if (p >= q) {
+      // Single element block, check for more blocks
+      continue;
+    }
+
+    // Apply one Golub-Kahan step on [p..q]
+    svd_qr_iteration_float64(diag, super, u, v, m, n, p, q);
+  }
+}
+
 static void svd_float64(double* a, double* u, double* s, double* vt, int m,
                         int n, int full_matrices) {
   int min_mn = m < n ? m : n;
@@ -1329,40 +1395,8 @@ static void svd_float64(double* a, double* u, double* s, double* vt, int m,
   // Bidiagonalize
   bidiagonalize_float64(work_a, u_work, v_work, diag, super, m, n);
 
-  // QR iteration
-  const double eps = 1e-14;
-  const int max_iter = 100 * max_mn;
-
-  for (int iter = 0; iter < max_iter; iter++) {
-    // Find non-converged submatrix [p, q]
-    int p = 0, q = min_mn - 1;
-
-    // Find q
-    for (int i = min_mn - 2; i >= 0; i--) {
-      if (fabs(super[i]) <= eps * (fabs(diag[i]) + fabs(diag[i + 1]))) {
-        super[i] = 0.0;
-        if (i == q - 1) {
-          q = i;
-        }
-      } else {
-        break;
-      }
-    }
-
-    if (q == 0) break;  // Converged
-
-    // Find p
-    for (int i = q - 1; i >= 0; i--) {
-      if (i == 0 ||
-          fabs(super[i - 1]) <= eps * (fabs(diag[i - 1]) + fabs(diag[i]))) {
-        p = i;
-        break;
-      }
-    }
-
-    // Apply QR iteration
-    svd_qr_iteration_float64(diag, super, u_work, v_work, m, n, p, q);
-  }
+  // QR iteration with proper deflation
+  svd_iterate_float64(diag, super, u_work, v_work, m, n);
 
   // Copy singular values
   for (int i = 0; i < min_mn; i++) {
