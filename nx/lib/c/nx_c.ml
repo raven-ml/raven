@@ -1226,8 +1226,8 @@ let op_ifft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
   let _ = x.view in
   result
 
-let op_rfft (type a b) (x : (a, b) t) ~axes ~s :
-    (Complex.t, Dtype.complex64_elt) t =
+let op_rfft (type a b c) (x : (a, b) t) ~(dtype : (Complex.t, c) Dtype.t) ~axes
+    ~s : (Complex.t, c) t =
   let input_shape = get_shape x.view in
   let ndim = Array.length input_shape in
 
@@ -1253,13 +1253,6 @@ let op_rfft (type a b) (x : (a, b) t) ~axes ~s :
     shape
   in
 
-  (* Create complex output tensor *)
-  let result =
-    create x.context Dtype.Complex64
-      (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 output_shape))
-      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-  in
-
   (* We need to handle different float types separately due to OCaml's type system *)
   (* For simplicity, always work with float64 internally *)
   let float64_x : (float, Dtype.float64_elt) t =
@@ -1268,7 +1261,8 @@ let op_rfft (type a b) (x : (a, b) t) ~axes ~s :
     | None -> (
         (* Cast to float64 *)
         match x.dtype with
-        | Dtype.Float32 | Dtype.Float16 ->
+        | Dtype.Float32 | Dtype.Float16 | Dtype.BFloat16 | Dtype.Float8_e4m3
+        | Dtype.Float8_e5m2 ->
             let result =
               create x.context Dtype.Float64
                 (make_buffer Dtype.Float64 (get_numel x.view))
@@ -1281,16 +1275,54 @@ let op_rfft (type a b) (x : (a, b) t) ~axes ~s :
         | _ -> failwith "op_rfft: input must be real")
   in
 
+  (* Always compute FFT as Complex64 internally *)
+  let complex64_result =
+    create x.context Dtype.Complex64
+      (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 output_shape))
+      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+  in
+
   rfft_float64 ndim (get_shape float64_x.view) float64_x.buffer
     (get_strides float64_x.view)
     (get_offset float64_x.view)
-    result.buffer (get_strides result.view) (get_offset result.view) axes
-    (Array.length axes);
+    complex64_result.buffer
+    (get_strides complex64_result.view)
+    (get_offset complex64_result.view)
+    axes (Array.length axes);
 
-  let _ = x.view in
-  result
+  (* Cast to requested output dtype if needed *)
+  match dtype with
+  | Dtype.Complex64 ->
+      let _ = x.view in
+      complex64_result
+  | Dtype.Complex32 ->
+      let result =
+        create x.context Dtype.Complex32
+          (make_buffer Dtype.Complex32 (Array.fold_left ( * ) 1 output_shape))
+          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+      in
+      cast ndim output_shape complex64_result.buffer
+        (get_strides complex64_result.view)
+        (get_offset complex64_result.view)
+        result.buffer (get_strides result.view) (get_offset result.view);
+      let _ = x.view in
+      result
+  | Dtype.Complex16 ->
+      (* Cast from Complex64 to Complex16 *)
+      let result =
+        create x.context Dtype.Complex16
+          (make_buffer Dtype.Complex16 (Array.fold_left ( * ) 1 output_shape))
+          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+      in
+      cast ndim output_shape complex64_result.buffer
+        (get_strides complex64_result.view)
+        (get_offset complex64_result.view)
+        result.buffer (get_strides result.view) (get_offset result.view);
+      let _ = x.view in
+      result
 
-let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
+let op_irfft (type a b c) (x : (a, b) t) ~(dtype : (float, c) Dtype.t) ~axes ~s
+    : (float, c) t =
   let input_shape = get_shape x.view in
   let ndim = Array.length input_shape in
 
@@ -1318,13 +1350,6 @@ let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
         shape
   in
 
-  (* Create real output tensor *)
-  let result =
-    create x.context Dtype.Float64
-      (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 output_shape))
-      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-  in
-
   (* For simplicity, always work with complex64 internally *)
   let complex64_x : (Complex.t, Dtype.complex64_elt) t =
     match Dtype.equal_witness x.dtype Dtype.Complex64 with
@@ -1332,7 +1357,7 @@ let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
     | None -> (
         (* Cast to complex64 *)
         match x.dtype with
-        | Dtype.Complex32 ->
+        | Dtype.Complex32 | Dtype.Complex16 ->
             let result =
               create x.context Dtype.Complex64
                 (make_buffer Dtype.Complex64 (get_numel x.view))
@@ -1345,14 +1370,90 @@ let op_irfft (type a b) (x : (a, b) t) ~axes ~s : (float, Dtype.float64_elt) t =
         | _ -> failwith "op_irfft: input must be complex")
   in
 
+  (* Always compute IRFFT as Float64 internally *)
+  let float64_result =
+    create x.context Dtype.Float64
+      (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 output_shape))
+      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+  in
+
   irfft_complex64 ndim input_shape complex64_x.buffer
     (get_strides complex64_x.view)
     (get_offset complex64_x.view)
-    result.buffer (get_strides result.view) (get_offset result.view) axes
-    (Array.length axes) output_shape.(last_axis);
+    float64_result.buffer
+    (get_strides float64_result.view)
+    (get_offset float64_result.view)
+    axes (Array.length axes) output_shape.(last_axis);
 
-  let _ = x.view in
-  result
+  (* Cast to requested output dtype if needed *)
+  match dtype with
+  | Dtype.Float64 ->
+      let _ = x.view in
+      float64_result
+  | Dtype.Float32 ->
+      let result =
+        create x.context Dtype.Float32
+          (make_buffer Dtype.Float32 (Array.fold_left ( * ) 1 output_shape))
+          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+      in
+      cast ndim output_shape float64_result.buffer
+        (get_strides float64_result.view)
+        (get_offset float64_result.view)
+        result.buffer (get_strides result.view) (get_offset result.view);
+      let _ = x.view in
+      result
+  | Dtype.Float16 ->
+      (* Cast from Float64 to Float16 *)
+      let result =
+        create x.context Dtype.Float16
+          (make_buffer Dtype.Float16 (Array.fold_left ( * ) 1 output_shape))
+          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+      in
+      cast ndim output_shape float64_result.buffer
+        (get_strides float64_result.view)
+        (get_offset float64_result.view)
+        result.buffer (get_strides result.view) (get_offset result.view);
+      let _ = x.view in
+      result
+  | Dtype.BFloat16 ->
+      (* Cast from Float64 to BFloat16 *)
+      let result =
+        create x.context Dtype.BFloat16
+          (make_buffer Dtype.BFloat16 (Array.fold_left ( * ) 1 output_shape))
+          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+      in
+      cast ndim output_shape float64_result.buffer
+        (get_strides float64_result.view)
+        (get_offset float64_result.view)
+        result.buffer (get_strides result.view) (get_offset result.view);
+      let _ = x.view in
+      result
+  | Dtype.Float8_e4m3 ->
+      (* Cast from Float64 to Float8_e4m3 *)
+      let result =
+        create x.context Dtype.Float8_e4m3
+          (make_buffer Dtype.Float8_e4m3 (Array.fold_left ( * ) 1 output_shape))
+          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+      in
+      cast ndim output_shape float64_result.buffer
+        (get_strides float64_result.view)
+        (get_offset float64_result.view)
+        result.buffer (get_strides result.view) (get_offset result.view);
+      let _ = x.view in
+      result
+  | Dtype.Float8_e5m2 ->
+      (* Cast from Float64 to Float8_e5m2 *)
+      let result =
+        create x.context Dtype.Float8_e5m2
+          (make_buffer Dtype.Float8_e5m2 (Array.fold_left ( * ) 1 output_shape))
+          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+      in
+      cast ndim output_shape float64_result.buffer
+        (get_strides float64_result.view)
+        (get_offset float64_result.view)
+        result.buffer (get_strides result.view) (get_offset result.view);
+      let _ = x.view in
+      result
 
 (* Linear algebra operations *)
 

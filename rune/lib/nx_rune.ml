@@ -781,23 +781,33 @@ let op_ifft t ~axes ~s =
     | Metal_tensor t -> Metal_tensor (Rune_metal.op_ifft t ~axes ~s)
     | Symbolic_tensor _ -> failwith "todo: op_ifft for symbolic tensors")
 
-let op_rfft t ~axes ~s =
-  try Effect.perform (E_rfft { t; axes; s })
-  with Effect.Unhandled _ -> (
-    match t with
-    | Ocaml_tensor t -> Ocaml_tensor (Nx_native.op_rfft t ~axes ~s)
-    | C_tensor t -> C_tensor (Nx_c.op_rfft t ~axes ~s)
-    | Metal_tensor t -> Metal_tensor (Rune_metal.op_rfft t ~axes ~s)
-    | Symbolic_tensor _ -> failwith "todo: op_rfft for symbolic tensors")
+let op_rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t)
+    ~axes ~s : (Complex.t, c) t =
+  match t with
+  | Ocaml_tensor t ->
+      let result = Nx_native.op_rfft t ~dtype ~axes ~s in
+      (Ocaml_tensor result : (Complex.t, c) t)
+  | C_tensor t ->
+      let result = Nx_c.op_rfft t ~dtype ~axes ~s in
+      (C_tensor result : (Complex.t, c) t)
+  | Metal_tensor t ->
+      let result = Rune_metal.op_rfft t ~dtype ~axes ~s in
+      (Metal_tensor result : (Complex.t, c) t)
+  | Symbolic_tensor _ -> failwith "todo: op_rfft for symbolic tensors"
 
-let op_irfft t ~axes ~s =
-  try Effect.perform (E_irfft { t; axes; s })
-  with Effect.Unhandled _ -> (
-    match t with
-    | Ocaml_tensor t -> Ocaml_tensor (Nx_native.op_irfft t ~axes ~s)
-    | C_tensor t -> C_tensor (Nx_c.op_irfft t ~axes ~s)
-    | Metal_tensor t -> Metal_tensor (Rune_metal.op_irfft t ~axes ~s)
-    | Symbolic_tensor _ -> failwith "todo: op_irfft for symbolic tensors")
+let op_irfft (type a c) (t : (Complex.t, a) t) ~(dtype : (float, c) Dtype.t)
+    ~axes ~s : (float, c) t =
+  match t with
+  | Ocaml_tensor t ->
+      let result = Nx_native.op_irfft t ~dtype ~axes ~s in
+      (Ocaml_tensor result : (float, c) t)
+  | C_tensor t ->
+      let result = Nx_c.op_irfft t ~dtype ~axes ~s in
+      (C_tensor result : (float, c) t)
+  | Metal_tensor t ->
+      let result = Rune_metal.op_irfft t ~dtype ~axes ~s in
+      (Metal_tensor result : (float, c) t)
+  | Symbolic_tensor _ -> failwith "todo: op_irfft for symbolic tensors"
 
 (* Linear algebra operations *)
 

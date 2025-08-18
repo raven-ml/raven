@@ -282,8 +282,8 @@ let op_matmul a b = Ops_matmul.op_matmul a.context a b
 (* FFT operations *)
 let op_fft t ~axes ~s = Ops_fft.op_fft t.context t ~axes ~s
 let op_ifft t ~axes ~s = Ops_fft.op_ifft t.context t ~axes ~s
-let op_rfft t ~axes ~s = Ops_fft.op_rfft t.context t ~axes ~s
-let op_irfft t ~axes ~s = Ops_fft.op_irfft t.context t ~axes ~s
+let op_rfft t ~dtype ~axes ~s = Ops_fft.op_rfft t.context t ~dtype ~axes ~s
+let op_irfft t ~dtype ~axes ~s = Ops_fft.op_irfft t.context t ~dtype ~axes ~s
 
 (* Linear algebra operations *)
 let op_cholesky ~upper t = Ops_linalg.op_cholesky t.context ~upper t

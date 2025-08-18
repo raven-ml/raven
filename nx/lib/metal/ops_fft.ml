@@ -267,9 +267,9 @@ let op_ifft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t
       failwith "op_ifft: Complex16 IFFT not yet implemented in Metal backend"
 
 (* Real FFT - not yet implemented *)
-let op_rfft ctx _ ~axes:_ ~s:_ =
+let op_rfft ctx _ ~dtype:_ ~axes:_ ~s:_ =
   failwith "op_rfft: Real FFT not yet implemented in Metal backend"
 
 (* Inverse real FFT - not yet implemented *)
-let op_irfft ctx _ ~axes:_ ~s:_ =
+let op_irfft ctx _ ~dtype:_ ~axes:_ ~s:_ =
   failwith "op_irfft: Inverse real FFT not yet implemented in Metal backend"

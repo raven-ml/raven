@@ -4219,7 +4219,8 @@ module Make (B : Backend_intf.S) = struct
           1.0 /. Stdlib.sqrt (float_of_int n)
     in
 
-    let result = B.op_rfft x_padded ~axes:axes_arr ~s:None in
+    (* Use Complex64 as default - matches NumPy behavior *)
+    let result = B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:axes_arr ~s:None in
 
     if norm_scale <> 1.0 then
       let scale_value = Complex.{ re = norm_scale; im = 0.0 } in
@@ -4265,7 +4266,8 @@ module Make (B : Backend_intf.S) = struct
     (* Backend does not apply any scaling - all normalization is handled here *)
     let backend_scale = 1.0 in
 
-    let result = B.op_irfft x ~axes:axes_arr ~s in
+    (* Use Float64 as default - matches NumPy behavior *)
+    let result = B.op_irfft x ~dtype:Dtype.Float64 ~axes:axes_arr ~s in
 
     let total_scale = backend_scale *. norm_scale in
     if total_scale <> 1.0 then

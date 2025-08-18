@@ -1,5 +1,5 @@
 open Bigarray_ext
-open Nx_core.Dtype
+module Dtype = Nx_core.Dtype
 module Shape = Nx_core.Shape
 module View = Nx_core.View
 open Internal
@@ -239,7 +239,7 @@ let real_to_complex_copy (type b c) (real_input : (float, b) t)
     Array1.unsafe_set complex_buf i Complex.{ re = v; im = 0.0 }
   done
 
-let kernel_rfft (type b) context (input : (float, b) t) axes _s =
+let kernel_rfft (type b c) context (input : (float, b) t) (output_dtype : (Complex.t, c) Dtype.t) axes _s =
   let input_shape = Internal.shape input in
   let ndim = Array.length input_shape in
 
@@ -250,7 +250,7 @@ let kernel_rfft (type b) context (input : (float, b) t) axes _s =
   let last_axis = if last_axis < 0 then ndim + last_axis else last_axis in
 
   (* First, perform FFT on all axes except the last one *)
-  let temp = empty context Complex64 input_shape in
+  let temp = empty context output_dtype input_shape in
   real_to_complex_copy input temp;
 
   (if Array.length axes > 1 then
@@ -259,7 +259,7 @@ let kernel_rfft (type b) context (input : (float, b) t) axes _s =
 
   (* Now perform FFT on the last axis and extract only the non-redundant part *)
   let output_shape = get_rfft_output_shape input_shape axes in
-  let output = empty context Complex64 output_shape in
+  let output = empty context output_dtype output_shape in
 
   (* Perform 1D FFT on the last axis for each position in other dimensions *)
   let rec process_slices indices dim =
@@ -319,8 +319,8 @@ let kernel_rfft (type b) context (input : (float, b) t) axes _s =
   process_slices (Array.make ndim 0) 0;
   output
 
-(* IRFFT kernel for complex64 *)
-let kernel_irfft (type b) context (input : (Complex.t, b) t) axes s =
+(* IRFFT kernel *)
+let kernel_irfft (type b c) context (input : (Complex.t, b) t) (output_dtype : (float, c) Dtype.t) axes s =
   let input_shape = Internal.shape input in
   let ndim = Array.length input_shape in
 
@@ -351,11 +351,11 @@ let kernel_irfft (type b) context (input : (Complex.t, b) t) axes s =
   in
 
   (* Create real output tensor *)
-  let output = empty context Float64 output_shape in
+  let output = empty context output_dtype output_shape in
 
   (* First, create a full-size complex tensor with Hermitian symmetry *)
   let full_complex_shape = Array.copy output_shape in
-  let full_complex = empty context Complex64 full_complex_shape in
+  let full_complex = empty context (Internal.dtype input) full_complex_shape in
 
   (* Copy the non-redundant part from input and reconstruct the symmetric
      part *)
@@ -477,19 +477,14 @@ let ifft (type b) (context : context) (input : (Complex.t, b) t) ~axes ~s :
       kernel_fft_multi ~inverse:true input output axes;
       output
 
-let rfft (type b) (context : context) (input : (float, b) t) ~axes ~s :
-    (Complex.t, complex64_elt) t =
-  match dtype input with
-  | Float16 -> kernel_rfft context input axes s
-  | Float32 -> kernel_rfft context input axes s
-  | Float64 -> kernel_rfft context input axes s
-  | BFloat16 -> kernel_rfft context input axes s
-  | Float8_e4m3 -> kernel_rfft context input axes s
-  | Float8_e5m2 -> kernel_rfft context input axes s
+let rfft (type b c) (context : context) (input : (float, b) t)
+    ~(dtype : (Complex.t, c) Dtype.t) ~axes ~s : (Complex.t, c) t =
+  match Internal.dtype input with
+  | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2 ->
+      kernel_rfft context input dtype axes s
 
-let irfft (type b) (context : context) (input : (Complex.t, b) t) ~axes ~s :
-    (float, float64_elt) t =
-  match dtype input with
-  | Complex16 -> kernel_irfft context input axes s
-  | Complex32 -> kernel_irfft context input axes s
-  | Complex64 -> kernel_irfft context input axes s
+let irfft (type b c) (context : context) (input : (Complex.t, b) t)
+    ~(dtype : (float, c) Dtype.t) ~axes ~s : (float, c) t =
+  match Internal.dtype input with
+  | Complex16 | Complex32 | Complex64 ->
+      kernel_irfft context input dtype axes s

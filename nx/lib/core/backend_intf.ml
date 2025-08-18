@@ -252,18 +252,20 @@ module type S = sig
   *)
 
   val op_rfft :
-    (float, 'b) t ->
+    (float, 'a) t ->
+    dtype:(Complex.t, 'b) Dtype.t ->
     axes:int array ->
     s:int array option ->
-    (Complex.t, Dtype.complex64_elt) t
+    (Complex.t, 'b) t
   (** Compute the real-valued discrete Fourier transform (RDFT) of the input
       tensor. *)
 
   val op_irfft :
-    (Complex.t, 'b) t ->
+    (Complex.t, 'a) t ->
+    dtype:(float, 'b) Dtype.t ->
     axes:int array ->
     s:int array option ->
-    (float, Dtype.float64_elt) t
+    (float, 'b) t
   (** Compute the inverse real-valued discrete Fourier transform (IRDFT) of the
       input tensor. *)
 
