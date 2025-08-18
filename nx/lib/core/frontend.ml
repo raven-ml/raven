@@ -4251,15 +4251,41 @@ module Make (B : Backend_intf.S) = struct
             axes_arr
     in
 
-    (* Compute normalization scale *)
+    (* For normalization: when output size is specified and smaller than what
+       the frequency domain suggests, use the output size for normalization.
+       This handles the case of truncation in frequency domain. *)
+    let norm_sizes =
+      let input_shape = shape x in
+      Array.mapi
+        (fun i axis ->
+          let axis = if axis < 0 then ndim_x + axis else axis in
+          if i = Array.length axes_arr - 1 then
+            (* Last axis: check if we're truncating *)
+            let inferred_size = (input_shape.(axis) - 1) * 2 in
+            match s with
+            | Some sizes when sizes.(i) < inferred_size -> 
+                (* Truncating: use output size for normalization *)
+                sizes.(i)
+            | _ -> 
+                (* Not truncating: use inferred size *)
+                inferred_size
+          else 
+            (* Other axes: use output size if specified, else input size *)
+            match s with
+            | Some sizes -> sizes.(i)
+            | None -> input_shape.(axis))
+        axes_arr
+    in
+
+    (* Compute normalization scale based on the actual FFT size *)
     let norm_scale =
       match norm with
       | `Backward ->
-          let n = Array.fold_left (fun acc size -> acc * size) 1 output_sizes in
+          let n = Array.fold_left (fun acc size -> acc * size) 1 norm_sizes in
           1.0 /. float_of_int n
       | `Forward -> 1.0
       | `Ortho ->
-          let n = Array.fold_left (fun acc size -> acc * size) 1 output_sizes in
+          let n = Array.fold_left (fun acc size -> acc * size) 1 norm_sizes in
           1.0 /. Stdlib.sqrt (float_of_int n)
     in
 
@@ -4267,7 +4293,8 @@ module Make (B : Backend_intf.S) = struct
     let backend_scale = 1.0 in
 
     (* Use Float64 as default - matches NumPy behavior *)
-    let result = B.op_irfft x ~dtype:Dtype.Float64 ~axes:axes_arr ~s in
+    let s_param = match s with None -> None | Some _ -> Some output_sizes in
+    let result = B.op_irfft x ~dtype:Dtype.Float64 ~axes:axes_arr ~s:s_param in
 
     let total_scale = backend_scale *. norm_scale in
     if total_scale <> 1.0 then

@@ -19,7 +19,13 @@ let bit_reverse n x =
     if num_bits = 0 then acc
     else reverse_bits (bits lsr 1) (num_bits - 1) ((acc lsl 1) lor (bits land 1))
   in
-  let num_bits = int_of_float (log (float_of_int n) /. log 2.0) in
+  (* Compute number of bits using integer arithmetic to avoid floating-point
+     errors *)
+  let num_bits_for n =
+    let rec loop b = if 1 lsl b >= n then b else loop (b + 1) in
+    loop 0
+  in
+  let num_bits = num_bits_for n in
   reverse_bits x num_bits 0
 
 (* Check if n is a power of 2 *)
@@ -93,9 +99,31 @@ let fft_1d ~inverse ~scale data n stride offset =
           Complex.{ re = v.re *. scale; im = v.im *. scale }
       done)
 
+(* Validate axes and sizes parameters *)
+let validate_axes_and_sizes ndim axes s =
+  let module IntSet = Set.Make (Int) in
+  let seen = ref IntSet.empty in
+  Array.iter
+    (fun ax ->
+      let ax = if ax < 0 then ndim + ax else ax in
+      if ax < 0 || ax >= ndim then
+        failwith
+          (Printf.sprintf "axis %d out of range for %d-dimensional array" ax
+             ndim);
+      if IntSet.mem ax !seen then
+        failwith (Printf.sprintf "duplicate axis %d" ax);
+      seen := IntSet.add ax !seen)
+    axes;
+  match s with
+  | None -> ()
+  | Some sizes ->
+      if Array.length sizes <> Array.length axes then
+        failwith "s parameter length must match axes length"
+
 (* Helper to determine FFT output shape *)
 let get_fft_output_shape input_shape axes s =
   let ndim = Array.length input_shape in
+  validate_axes_and_sizes ndim axes s;
   match s with
   | None -> Array.copy input_shape
   | Some sizes ->
@@ -107,7 +135,7 @@ let get_fft_output_shape input_shape axes s =
         axes;
       out_shape
 
-(* Fixed Multi-dimensional FFT kernel for complex64 *)
+(* Multi-dimensional FFT kernel for complex types *)
 let kernel_fft_multi (type b) ~inverse (input : (Complex.t, b) t)
     (output : (Complex.t, b) t) axes =
   let output_shape = Internal.shape output in
@@ -124,18 +152,18 @@ let kernel_fft_multi (type b) ~inverse (input : (Complex.t, b) t)
        && Array.for_all2 ( = ) input_shape output_shape
      in
 
-     if same_shape then
+     if same_shape then (
        (* Same shape, can directly copy if buffers are the same size *)
        let input_size = Array1.dim (buffer input) in
        let output_size = Array1.dim (buffer output) in
        if input_size = output_size then
          Array1.blit (buffer input) (buffer output)
        else
-         (* Different buffer sizes, use element-wise copy *)
-         let size = min input_size output_size in
+         (* Different buffer sizes despite same shape - copy element by element *)
+         let size = Array.fold_left ( * ) 1 input_shape in
          for i = 0 to size - 1 do
            Array1.set (buffer output) i (Array1.get (buffer input) i)
-         done
+         done)
      else (
        (* Different shapes - zero fill and copy what fits *)
        Array1.fill (buffer output) Complex.zero;
@@ -228,7 +256,7 @@ let get_rfft_output_shape input_shape axes =
   output_shape.(last_axis) <- (input_shape.(last_axis) / 2) + 1;
   output_shape
 
-(* Real to complex copy for float64 *)
+(* Real to complex copy *)
 let real_to_complex_copy (type b c) (real_input : (float, b) t)
     (complex_output : (Complex.t, c) t) =
   let real_buf = buffer real_input in
@@ -239,9 +267,16 @@ let real_to_complex_copy (type b c) (real_input : (float, b) t)
     Array1.unsafe_set complex_buf i Complex.{ re = v; im = 0.0 }
   done
 
-let kernel_rfft (type b c) context (input : (float, b) t) (output_dtype : (Complex.t, c) Dtype.t) axes _s =
+let kernel_rfft (type b c) context (input : (float, b) t)
+    (output_dtype : (Complex.t, c) Dtype.t) axes s =
   let input_shape = Internal.shape input in
   let ndim = Array.length input_shape in
+
+  (* Validate axes and sizes *)
+  validate_axes_and_sizes ndim axes s;
+  
+  (* Require at least one axis *)
+  if Array.length axes = 0 then invalid_arg "rfft requires at least one axis";
 
   (* For rfft, we only transform the last axis to half size *)
   (* All other axes are transformed normally *)
@@ -249,16 +284,64 @@ let kernel_rfft (type b c) context (input : (float, b) t) (output_dtype : (Compl
   let last_axis = axes.(last_axis_idx) in
   let last_axis = if last_axis < 0 then ndim + last_axis else last_axis in
 
+  (* Apply sizes to get the working shape *)
+  let work_shape =
+    match s with
+    | None -> Array.copy input_shape
+    | Some sizes ->
+        let shape = Array.copy input_shape in
+        Array.iteri
+          (fun i axis ->
+            let axis = if axis < 0 then ndim + axis else axis in
+            shape.(axis) <- sizes.(i))
+          axes;
+        shape
+  in
+
+  (* Create a real work buffer with the desired shape and copy/pad input *)
+  let work_real = empty context (Internal.dtype input) work_shape in
+  (* Zero-fill the work buffer *)
+  let work_buf = buffer work_real in
+  let work_size = Internal.size work_real in
+  for i = 0 to work_size - 1 do
+    Array1.unsafe_set work_buf i 0.0
+  done;
+
+  (* Copy the overlapping region from input to work_real *)
+  let rec copy_data indices dim =
+    if dim = ndim then (
+      (* Calculate linear indices - bounds are already checked by limit = min *)
+      let idx_from = ref 0 in
+      let idx_to = ref 0 in
+      let stride_from = ref 1 in
+      let stride_to = ref 1 in
+      for d = ndim - 1 downto 0 do
+        idx_from := !idx_from + (indices.(d) * !stride_from);
+        idx_to := !idx_to + (indices.(d) * !stride_to);
+        stride_from := !stride_from * input_shape.(d);
+        stride_to := !stride_to * work_shape.(d)
+      done;
+      let v = Array1.unsafe_get (buffer input) !idx_from in
+      Array1.unsafe_set work_buf !idx_to v)
+    else
+      let limit = min input_shape.(dim) work_shape.(dim) in
+      for i = 0 to limit - 1 do
+        indices.(dim) <- i;
+        copy_data indices (dim + 1)
+      done
+  in
+  copy_data (Array.make ndim 0) 0;
+
   (* First, perform FFT on all axes except the last one *)
-  let temp = empty context output_dtype input_shape in
-  real_to_complex_copy input temp;
+  let temp = empty context output_dtype work_shape in
+  real_to_complex_copy work_real temp;
 
   (if Array.length axes > 1 then
      let other_axes = Array.sub axes 0 (Array.length axes - 1) in
      kernel_fft_multi ~inverse:false temp temp other_axes);
 
   (* Now perform FFT on the last axis and extract only the non-redundant part *)
-  let output_shape = get_rfft_output_shape input_shape axes in
+  let output_shape = get_rfft_output_shape work_shape axes in
   let output = empty context output_dtype output_shape in
 
   (* Perform 1D FFT on the last axis for each position in other dimensions *)
@@ -269,7 +352,7 @@ let kernel_rfft (type b c) context (input : (float, b) t) (output_dtype : (Compl
       let stride = ref 1 in
       for d = ndim - 1 downto 0 do
         src_offset := !src_offset + (indices.(d) * !stride);
-        stride := !stride * input_shape.(d)
+        stride := !stride * work_shape.(d)
       done;
 
       (* Calculate destination offset *)
@@ -281,11 +364,11 @@ let kernel_rfft (type b c) context (input : (float, b) t) (output_dtype : (Compl
       done;
 
       (* Perform 1D FFT and copy only non-redundant part *)
-      let n = input_shape.(last_axis) in
+      let n = work_shape.(last_axis) in
       let stride_in =
         let s = ref 1 in
         for d = last_axis + 1 to ndim - 1 do
-          s := !s * input_shape.(d)
+          s := !s * work_shape.(d)
         done;
         !s
       in
@@ -311,7 +394,7 @@ let kernel_rfft (type b c) context (input : (float, b) t) (output_dtype : (Compl
       indices.(dim) <- 0;
       process_slices indices (dim + 1))
     else
-      for i = 0 to input_shape.(dim) - 1 do
+      for i = 0 to work_shape.(dim) - 1 do
         indices.(dim) <- i;
         process_slices indices (dim + 1)
       done
@@ -320,9 +403,16 @@ let kernel_rfft (type b c) context (input : (float, b) t) (output_dtype : (Compl
   output
 
 (* IRFFT kernel *)
-let kernel_irfft (type b c) context (input : (Complex.t, b) t) (output_dtype : (float, c) Dtype.t) axes s =
+let kernel_irfft (type b c) context (input : (Complex.t, b) t)
+    (output_dtype : (float, c) Dtype.t) axes s =
   let input_shape = Internal.shape input in
   let ndim = Array.length input_shape in
+
+  (* Validate axes and sizes *)
+  validate_axes_and_sizes ndim axes s;
+  
+  (* Require at least one axis *)
+  if Array.length axes = 0 then invalid_arg "irfft requires at least one axis";
 
   (* For irfft, we need to handle the inverse of rfft *)
   (* The input has half-size on the last transformed axis *)
@@ -330,13 +420,25 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t) (output_dtype : (
   let last_axis = axes.(last_axis_idx) in
   let last_axis = if last_axis < 0 then ndim + last_axis else last_axis in
 
+  (* Determine the target output size and frequency domain size *)
+  let target_size =
+    match s with
+    | Some sizes -> sizes.(Array.length sizes - 1)
+    | None -> 
+        (* Default to even size when ambiguous *)
+        (input_shape.(last_axis) - 1) * 2
+  in
+  
+  (* The frequency domain size to use for reconstruction *)
+  let freq_domain_size = target_size in
+  
   (* Determine real output shape *)
   let output_shape =
     let shape = Array.copy input_shape in
     (* Restore full size for last axis *)
     shape.(last_axis) <-
       (match s with
-      | None -> (shape.(last_axis) - 1) * 2
+      | None -> freq_domain_size
       | Some sizes -> sizes.(Array.length sizes - 1));
 
     match s with
@@ -353,9 +455,13 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t) (output_dtype : (
   (* Create real output tensor *)
   let output = empty context output_dtype output_shape in
 
-  (* First, create a full-size complex tensor with Hermitian symmetry *)
-  let full_complex_shape = Array.copy output_shape in
+  (* First, create a complex tensor matching the frequency domain size *)
+  let full_complex_shape = Array.copy input_shape in
+  full_complex_shape.(last_axis) <- freq_domain_size;
   let full_complex = empty context (Internal.dtype input) full_complex_shape in
+  
+  (* Zero-fill the full complex buffer for padding case *)
+  Array1.fill (buffer full_complex) Complex.zero;
 
   (* Copy the non-redundant part from input and reconstruct the symmetric
      part *)
@@ -378,7 +484,7 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t) (output_dtype : (
 
       (* Copy non-redundant part *)
       let hermitian_size = input_shape.(last_axis) in
-      let full_size = output_shape.(last_axis) in
+      let full_size = freq_domain_size in
 
       let src_stride_elem =
         let s = ref 1 in
@@ -397,17 +503,42 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t) (output_dtype : (
       in
 
       (* Copy the non-redundant part *)
-      for i = 0 to hermitian_size - 1 do
+      (* Only copy the frequency bins that correspond to the target size *)
+      let target_bins = (full_size / 2) + 1 in
+      let copy_limit = min hermitian_size target_bins in
+      for i = 0 to copy_limit - 1 do
         let src_idx = !src_offset + (i * src_stride_elem) in
         let dst_idx = !dst_offset + (i * dst_stride_elem) in
         let v = Array1.get (buffer input) src_idx in
         Array1.set (buffer full_complex) dst_idx v
       done;
 
+      (* Only enforce real DC/Nyquist for the actual DC component *)
+      (* This is when all indices except the last axis are 0 *)
+      let is_dc_slice = 
+        let rec check i = 
+          if i = ndim then true
+          else if i = last_axis then check (i + 1)
+          else if indices.(i) = 0 then check (i + 1)
+          else false
+        in check 0
+      in
+      (if copy_limit > 0 && is_dc_slice then
+         let dc_idx = !dst_offset in
+         let v = Array1.get (buffer full_complex) dc_idx in
+         Array1.set (buffer full_complex) dc_idx Complex.{ re = v.re; im = 0.0 });
+
+      (* Enforce real Nyquist bin if N is even *)
+      (if full_size mod 2 = 0 && copy_limit > full_size / 2 && is_dc_slice then
+         let nyquist_idx = !dst_offset + (full_size / 2 * dst_stride_elem) in
+         let v = Array1.get (buffer full_complex) nyquist_idx in
+         Array1.set (buffer full_complex) nyquist_idx
+           Complex.{ re = v.re; im = 0.0 });
+
       (* Fill the symmetric part *)
-      for i = hermitian_size to full_size - 1 do
+      for i = copy_limit to full_size - 1 do
         let mirror_idx = full_size - i in
-        if mirror_idx > 0 && mirror_idx < hermitian_size then
+        if mirror_idx > 0 && mirror_idx < copy_limit then
           let src_idx = !dst_offset + (mirror_idx * dst_stride_elem) in
           let dst_idx = !dst_offset + (i * dst_stride_elem) in
           let v = Array1.get (buffer full_complex) src_idx in
@@ -419,7 +550,9 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t) (output_dtype : (
       indices.(dim) <- 0;
       process_slices indices (dim + 1))
     else
-      for i = 0 to input_shape.(dim) - 1 do
+      (* Use min to avoid out-of-bounds when s shrinks non-last axes *)
+      let limit = min input_shape.(dim) full_complex_shape.(dim) in
+      for i = 0 to limit - 1 do
         indices.(dim) <- i;
         process_slices indices (dim + 1)
       done
@@ -429,14 +562,36 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t) (output_dtype : (
   (* Now perform inverse FFT on all axes *)
   kernel_fft_multi ~inverse:true full_complex full_complex axes;
 
-  (* Extract real part *)
+  (* Extract real part, handling truncation if output is smaller *)
   let output_buf = buffer output in
   let complex_buf = buffer full_complex in
-  let size = Internal.size output in
-  for i = 0 to size - 1 do
-    let v = Array1.unsafe_get complex_buf i in
-    Array1.unsafe_set output_buf i v.re
-  done;
+  
+  (* Copy the real part, handling different shapes *)
+  let rec copy_real indices dim =
+    if dim = ndim then (
+      (* Calculate indices *)
+      let out_idx = ref 0 in
+      let complex_idx = ref 0 in
+      let out_stride = ref 1 in
+      let complex_stride = ref 1 in
+      
+      for d = ndim - 1 downto 0 do
+        out_idx := !out_idx + (indices.(d) * !out_stride);
+        complex_idx := !complex_idx + (indices.(d) * !complex_stride);
+        out_stride := !out_stride * output_shape.(d);
+        complex_stride := !complex_stride * full_complex_shape.(d)
+      done;
+      
+      let v = Array1.unsafe_get complex_buf !complex_idx in
+      Array1.unsafe_set output_buf !out_idx v.re
+    ) else
+      let limit = min output_shape.(dim) full_complex_shape.(dim) in
+      for i = 0 to limit - 1 do
+        indices.(dim) <- i;
+        copy_real indices (dim + 1)
+      done
+  in
+  copy_real (Array.make ndim 0) 0;
 
   output
 
@@ -486,5 +641,4 @@ let rfft (type b c) (context : context) (input : (float, b) t)
 let irfft (type b c) (context : context) (input : (Complex.t, b) t)
     ~(dtype : (float, c) Dtype.t) ~axes ~s : (float, c) t =
   match Internal.dtype input with
-  | Complex16 | Complex32 | Complex64 ->
-      kernel_irfft context input dtype axes s
+  | Complex16 | Complex32 | Complex64 -> kernel_irfft context input dtype axes s
