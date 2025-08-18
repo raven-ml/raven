@@ -226,8 +226,21 @@ let schedule (graph : Ir.graph_t) : kernel_spec_t list =
             let produced =
               List.map get_node_output_var !current |> Var.Set.of_list
             in
+            (* Also check if inputs come from placeholders anywhere in the
+               graph *)
+            let all_placeholder_outputs =
+              List.filter_map
+                (function
+                  | Ir.Any_Node (Placeholder { out_var; _ }) -> Some out_var
+                  | _ -> None)
+                graph.nodes
+              |> Var.Set.of_list
+            in
             List.for_all
-              (fun v -> List.mem v graph.input_vars || Var.Set.mem v produced)
+              (fun v ->
+                List.mem v graph.input_vars
+                || Var.Set.mem v produced
+                || Var.Set.mem v all_placeholder_outputs)
               (get_node_input_vars node)
       in
       if can_fuse then current := node :: !current

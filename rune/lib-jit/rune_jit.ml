@@ -125,7 +125,16 @@ let execute (type device_buffer_native callable_kernel_native)
           Ok (b :: acc))
         [] k.arg_order
     in
-    B.Runtime.launch_kernel ~device_info:dev ~global_dims:[| 128; 1; 1 |]
+    (* Get the size from the first output variable's shape *)
+    let size = 
+      match k.arg_order with
+      | [] -> 128  (* fallback *)
+      | first_var :: _ ->
+          match Hashtbl.find_opt exe.graph_meta first_var with
+          | None -> 128  (* fallback *)
+          | Some { shape; _ } -> Array.fold_left ( * ) 1 shape
+    in
+    B.Runtime.launch_kernel ~device_info:dev ~global_dims:[| size; 1; 1 |]
       ?local_dims:None ~args:(List.rev args) k.compiled
   in
   let* () = result_fold_left (fun () k -> launch k) () exe.kernels in

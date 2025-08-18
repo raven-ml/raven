@@ -73,10 +73,12 @@ let test_e2e_add () =
   let arr_a = [| 1.0; 2.0; 3.0; 4.0 |] in
   let arr_b = [| 0.1; 0.2; 0.3; 0.4 |] in
   let ba_a =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout arr_a
+    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+      arr_a
   in
   let ba_b =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout arr_b
+    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+      arr_b
   in
   let len = Array.length arr_a in
   (* allocate device buffers *)
@@ -112,8 +114,8 @@ let test_e2e_add () =
   in
   let buf_c = Hashtbl.find outs c in
   let ba_res =
-    get_ba_from_buf buf_c ~dtype:Ir.Dtype.Float32 ~kind:Bigarray_ext.float32 ~len
-      "c"
+    get_ba_from_buf buf_c ~dtype:Ir.Dtype.Float32 ~kind:Bigarray_ext.float32
+      ~len "c"
   in
   let expected =
     Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
@@ -121,32 +123,31 @@ let test_e2e_add () =
   in
   check (bigarray_float32 ()) "result" expected ba_res
 
-let _test_e2e_where () =
-  try
-    Printf.eprintf "test_e2e_where starting...\n%!";
-    (* build graph *)
-    let cond, x, y, out, graph = simple_where_graph () in
-    Printf.eprintf "Graph created\n%!";
-    (* compile *)
-    Printf.eprintf "Starting where test compilation...\n%!";
-    let exe =
-      match Rune_jit.compile ~backend:(module Rune_jit_llvm) graph with
-      | Ok e -> Printf.eprintf "Compilation successful\n%!"; e
-      | Error e -> failf "compile: %s" e
-    in
-    Printf.eprintf "Compilation done, starting host data prep...\n%!";
+let test_e2e_where () =
+  (* build graph *)
+  let cond, x, y, out, graph = simple_where_graph () in
+  (* compile *)
+  let exe =
+    match Rune_jit.compile ~backend:(module Rune_jit_llvm) graph with
+    | Ok e -> e
+    | Error e -> failf "compile: %s" e
+  in
   (* host data *)
-  let arr_cond = [| 1; 0; 1; 0 |] in (* bool as uint8 *)
+  let arr_cond = [| 1; 0; 1; 0 |] in
+  (* bool as uint8 *)
   let arr_x = [| 1.0; 2.0; 3.0; 4.0 |] in
   let arr_y = [| 10.0; 20.0; 30.0; 40.0 |] in
   let ba_cond =
-    Bigarray_ext.Array1.of_array Bigarray_ext.int8_unsigned Bigarray_ext.c_layout arr_cond
+    Bigarray_ext.Array1.of_array Bigarray_ext.int8_unsigned
+      Bigarray_ext.c_layout arr_cond
   in
   let ba_x =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout arr_x
+    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+      arr_x
   in
   let ba_y =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout arr_y
+    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+      arr_y
   in
   let len = Array.length arr_x in
   (* allocate device buffers *)
@@ -201,19 +202,17 @@ let _test_e2e_where () =
   in
   let buf_out = Hashtbl.find outs out in
   let ba_res =
-    get_ba_from_buf buf_out ~dtype:Ir.Dtype.Float32 ~kind:Bigarray_ext.float32 ~len
-      "out"
+    get_ba_from_buf buf_out ~dtype:Ir.Dtype.Float32 ~kind:Bigarray_ext.float32
+      ~len "out"
   in
   let expected =
     Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
-      [| 1.0; 20.0; 3.0; 40.0 |] (* where cond is true, take x, else y *)
+      [| 1.0; 20.0; 3.0; 40.0 |]
+    (* where cond is true, take x, else y *)
   in
   check (bigarray_float32 ()) "result" expected ba_res
-  with e ->
-    Printf.eprintf "Exception in test_e2e_where: %s\n%!" (Printexc.to_string e);
-    raise e
 
-let _test_e2e_mulacc () =
+let test_e2e_mulacc () =
   (* build graph *)
   let a, b, c, out, graph = simple_mulacc_graph () in
   (* compile *)
@@ -227,13 +226,16 @@ let _test_e2e_mulacc () =
   let arr_b = [| 10.0; 10.0; 10.0; 10.0 |] in
   let arr_c = [| 1.0; 2.0; 3.0; 4.0 |] in
   let ba_a =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout arr_a
+    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+      arr_a
   in
   let ba_b =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout arr_b
+    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+      arr_b
   in
   let ba_c =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout arr_c
+    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+      arr_c
   in
   let len = Array.length arr_a in
   (* allocate device buffers *)
@@ -272,12 +274,13 @@ let _test_e2e_mulacc () =
   in
   let buf_out = Hashtbl.find outs out in
   let ba_res =
-    get_ba_from_buf buf_out ~dtype:Ir.Dtype.Float32 ~kind:Bigarray_ext.float32 ~len
-      "out"
+    get_ba_from_buf buf_out ~dtype:Ir.Dtype.Float32 ~kind:Bigarray_ext.float32
+      ~len "out"
   in
   let expected =
     Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
-      [| 21.0; 32.0; 43.0; 54.0 |] (* a * b + c *)
+      [| 21.0; 32.0; 43.0; 54.0 |]
+    (* a * b + c *)
   in
   check (bigarray_float32 ()) "result" expected ba_res
 
@@ -287,12 +290,10 @@ let () =
   Alcotest.run "LLVM backend"
     [
       ("sanity", [ test_case "basic IR creation" `Quick test_sanity ]);
-      ("end-to-end", [
-        test_case "add f32" `Quick test_e2e_add;
-        test_case "simple test" `Quick (fun () -> 
-          Printf.eprintf "Simple test running...\n%!";
-          check bool "true" true true);
-        (* test_case "where f32" `Quick test_e2e_where; *)
-        (* test_case "mulacc f32" `Quick test_e2e_mulacc; *)
-      ]);
+      ( "end-to-end",
+        [
+          test_case "add f32" `Quick test_e2e_add;
+          test_case "where f32" `Quick test_e2e_where;
+          test_case "mulacc f32" `Quick test_e2e_mulacc;
+        ] );
     ]
