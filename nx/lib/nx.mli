@@ -1764,6 +1764,43 @@ val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
       - : (int32, int32_elt) t = [1, 2]
     ]} *)
 
+(** {2 Cumulative Operations}
+
+    Functions that compute cumulative operations along axes. *)
+
+val cumsum : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
+(** [cumsum ?axis t] computes cumulative sum along axis.
+    
+    Each element in the output is the sum of all preceding elements
+    (including itself) along the specified axis. If [axis] is not specified,
+    flattens tensor first then computes cumsum.
+    
+    @param axis Axis along which to compute cumsum. If not specified,
+                flattens tensor first then computes cumsum.
+    @return Tensor of same shape with cumulative sums
+    @raise Invalid_argument if axis is out of bounds
+    
+    {@ocaml[
+      # let x = create int32 [|3|] [|1l; 2l; 3l|] in
+        cumsum x
+      - : (int32, int32_elt) t = [1, 3, 6]
+      
+      # let x = create int32 [|2; 3|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
+        cumsum ~axis:1 x
+      - : (int32, int32_elt) t = [[1, 3, 6],
+                                  [4, 9, 15]]
+      
+      # let x = create int32 [|2; 3|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
+        cumsum ~axis:0 x
+      - : (int32, int32_elt) t = [[1, 2, 3],
+                                  [5, 7, 9]]
+      
+      # let x = create float32 [|2; 2|] [|1.; 2.; 3.; 4.|] in
+        cumsum x
+      - : (float, float32_elt) t = [[1, 3],
+                                    [6, 10]]
+    ]} *)
+
 (** {2 Sorting and Searching}
 
     Functions for sorting arrays and finding indices. *)

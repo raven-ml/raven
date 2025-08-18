@@ -127,6 +127,24 @@ module type S = sig
     axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
   (** Product over [axes]. Keeps reduced dimensions if [keepdims] is true. *)
 
+  (* Cumulative Ops *)
+
+  val op_cumsum : axis:int -> ('a, 'b) t -> ('a, 'b) t
+  (** Compute cumulative sum along [axis]. Output has same shape as input.
+      Each element in the output is the sum of all preceding elements
+      (including itself) along the specified axis.
+      
+      - [axis]: Dimension along which to compute cumulative sum. Must be in
+        range [-ndim, ndim-1] where negative values count from the end.
+      - Input: Tensor of any numeric type and shape.
+      - Output: Tensor of same shape and type with cumulative sums.
+      
+      For a 1D tensor [a, b, c], cumsum produces [a, a+b, a+b+c].
+      For higher dimensions, cumsum is applied independently along each
+      slice of the specified axis.
+      
+      Raises [Invalid_argument] if [axis] is out of bounds. *)
+
   (* Movement Ops - manipulate view metadata *)
 
   val op_expand : ('a, 'b) t -> int array -> ('a, 'b) t

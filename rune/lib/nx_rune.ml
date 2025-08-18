@@ -299,6 +299,7 @@ type _ Effect.t +=
       s : int array option;
     }
       -> (float, Dtype.float64_elt) t Effect.t
+  | E_cumsum : { t_in : ('a, 'b) t; axis : int } -> ('a, 'b) t Effect.t
 
 (* Helper functions for different operation types *)
 
@@ -754,6 +755,16 @@ let op_irfft t ~axes ~s =
     | C_tensor t -> C_tensor (Nx_c.op_irfft t ~axes ~s)
     | Metal_tensor t -> Metal_tensor (Rune_metal.op_irfft t ~axes ~s)
     | Symbolic_tensor _ -> failwith "todo: op_irfft for symbolic tensors")
+
+(* Cumulative operations *)
+let op_cumsum ~axis t_in =
+  try Effect.perform (E_cumsum { t_in; axis })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Ocaml_tensor t -> Ocaml_tensor (Nx_native.op_cumsum ~axis t)
+    | C_tensor t -> C_tensor (Nx_c.op_cumsum ~axis t)
+    | Metal_tensor t -> Metal_tensor (Rune_metal.op_cumsum ~axis t)
+    | Symbolic_tensor _ -> failwith "todo: op_cumsum for symbolic tensors")
 
 (* Linear algebra operations *)
 

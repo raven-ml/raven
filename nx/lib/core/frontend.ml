@@ -1201,6 +1201,27 @@ module Make (B : Backend_intf.S) = struct
       let eq_result = equal x y in
       all eq_result (* Reduce over all axes to get scalar result *)
 
+  (* ───── Cumulative Operations ───── *)
+
+  let cumsum ?axis x =
+    match axis with
+    | Some ax ->
+        let rank = ndim x in
+        let ax' = if ax < 0 then ax + rank else ax in
+        if ax' < 0 || ax' >= rank then
+          Error.invalid ~op:"cumsum" 
+            ~what:(Printf.sprintf "axis %d" ax)
+            ~reason:(Printf.sprintf "out of bounds for tensor with rank %d" rank)
+            ~hint:(Printf.sprintf "axis must be in range [%d, %d]" (-rank) (rank - 1))
+            ()
+        else
+          B.op_cumsum ~axis:ax' x
+    | None ->
+        let original_shape = shape x in
+        let flat = reshape [| Array.fold_left ( * ) 1 original_shape |] x in
+        let cumsum_flat = B.op_cumsum ~axis:0 flat in
+        reshape original_shape cumsum_flat
+
   (* ───── Shape Manipulation ───── *)
 
   let pad padding_config fill_value x =

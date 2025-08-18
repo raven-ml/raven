@@ -385,6 +385,39 @@ let op_reduce_prod ~(axes : int array) ~(keepdims : bool) xensor =
   Ops_reduce.prod ctx ~axes:axes_to_reduce ~keepdims xensor output_tensor;
   output_tensor
 
+(* Cumulative Ops *)
+let op_cumsum ~axis input =
+  let ctx = input.context in
+  let input_shape = Internal.shape input in
+  let ndim = Array.length input_shape in
+  
+  (* Handle scalar tensor case *)
+  if ndim = 0 then
+    if axis <> 0 && axis <> -1 then
+      invalid_arg (Printf.sprintf "op_cumsum: axis %d out of bounds for scalar tensor (rank 0)" axis)
+    else
+      Internal.copy input
+  else
+    (* Validate axis bounds for non-scalar tensors *)
+    let normalized_axis = if axis < 0 then axis + ndim else axis in
+    if normalized_axis < 0 || normalized_axis >= ndim then
+      invalid_arg (Printf.sprintf "op_cumsum: axis %d out of bounds for tensor with rank %d" axis ndim);
+    
+    (* Handle empty tensor case *)
+    if Array.fold_left ( * ) 1 input_shape = 0 then
+      Internal.copy input
+    else
+      (* Create output tensor with same shape and dtype as input *)
+      let out_size = Internal.size input in
+      let output_tensor = 
+        op_buffer ctx input.dtype out_size |> fun t ->
+        with_view t (View.create input_shape)
+      in
+      
+      (* Call the cumsum kernel *)
+      Ops_cumsum.cumsum_kernel input output_tensor ~axis:normalized_axis;
+      output_tensor
+
 (* Movement Ops: These just update the view *)
 let op_reshape t (new_shape : int array) =
   match View.reshape t.view new_shape with
