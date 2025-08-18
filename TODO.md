@@ -4,8 +4,14 @@ goalpost: mnist notebook in quill with rune + hugin
 
 ## current
 
+- add bf16, fp8, bool data types
+  - add actual support in operations
+  - replace mask and cond operations with bool tensors
 - fft
-- linear algebra functions
+  - update backend ops to support given dtype
+  - fix tests
+- linear algebra functions  
+  - fix tests
 - jit with xla
 - vmap
 - jvp
@@ -21,7 +27,6 @@ feature requests:
 - forward mode ad (jvp)
 - vmap (that compose with jvp!)
 - nx cuda backend
-- add bf16, fp8, bool data types
 - fft for soundml
 
 fix:
