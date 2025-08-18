@@ -4,6 +4,8 @@
    (Accelerated Linear Algebra). It is completely independent from the existing
    custom JIT infrastructure. *)
 
+open Bigarray_ext
+
 (* A unique identifier for symbolic variables in the graph *)
 module Var = struct
   type t = int
@@ -112,17 +114,17 @@ let tensor_to_literal (type a b) (tensor : (a, b) Nx_rune.t) : Xla.Literal.t =
       (* For OCaml backend, the buffer is the bigarray *)
       let arr = Nx_native.data native_t in
       Xla.Literal.of_bigarray
-        (Obj.magic arr : (_, _, Bigarray.c_layout) Bigarray.Genarray.t)
+        (Obj.magic arr : (_, _, c_layout) Genarray.t)
   | Nx_rune.C_tensor c_t ->
       (* For C backend, similar approach *)
       let arr = Nx_c.data c_t in
       Xla.Literal.of_bigarray
-        (Obj.magic arr : (_, _, Bigarray.c_layout) Bigarray.Genarray.t)
+        (Obj.magic arr : (_, _, c_layout) Genarray.t)
   | Nx_rune.Metal_tensor metal_t ->
       (* For Metal backend, get the data from GPU *)
       let arr = Rune_metal.data metal_t in
       Xla.Literal.of_bigarray
-        (Obj.magic arr : (_, _, Bigarray.c_layout) Bigarray.Genarray.t)
+        (Obj.magic arr : (_, _, c_layout) Genarray.t)
   | Nx_rune.Symbolic_tensor _ ->
       failwith "XLA: Cannot convert symbolic tensor to literal"
 
@@ -750,20 +752,20 @@ let build_expr (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t)
                   (fun (k : (a, _) continuation) ->
                     (* Create array constant from bigarray *)
                     (* Convert Array1 to Genarray *)
-                    let dims = [| Bigarray.Array1.dim array |] in
+                    let dims = [| Array1.dim array |] in
                     let genarray =
-                      Bigarray.reshape (Bigarray.genarray_of_array1 array) dims
+                      reshape (genarray_of_array1 array) dims
                     in
                     let literal = Xla.Literal.of_bigarray genarray in
                     (* We need to infer dtype from the array kind *)
                     let dtype_pack =
-                      match Bigarray.Array1.kind array with
-                      | Bigarray.Float32 -> Nx_core.Dtype.Pack Float32
-                      | Bigarray.Float64 -> Pack Float64
-                      | Bigarray.Int32 -> Pack Int32
-                      | Bigarray.Int64 -> Pack Int64
-                      | Bigarray.Int8_signed -> Pack Int8
-                      | Bigarray.Int8_unsigned -> Pack UInt8
+                      match Array1.kind array with
+                      | Float32 -> Nx_core.Dtype.Pack Float32
+                      | Float64 -> Pack Float64
+                      | Int32 -> Pack Int32
+                      | Int64 -> Pack Int64
+                      | Int8_signed -> Pack Int8
+                      | Int8_unsigned -> Pack UInt8
                       | _ -> failwith "XLA: Unsupported array kind"
                     in
                     let out_var = Var.fresh () in
@@ -1135,46 +1137,46 @@ let compile_expr (expr : expression) (device : Nx_rune.device_type) :
            types *)
         match var_info.dtype with
         | Pack Float32 ->
-            let arr = Xla.Literal.to_bigarray literal Bigarray.Float32 in
+            let arr = Xla.Literal.to_bigarray literal Float32 in
             (* Convert genarray to array1 by reshaping to flat array *)
-            let size = Array.fold_left ( * ) 1 (Bigarray.Genarray.dims arr) in
-            let arr1 = Bigarray.reshape_1 arr size in
+            let size = Array.fold_left ( * ) 1 (Genarray.dims arr) in
+            let arr1 = reshape_1 arr size in
             let tensor = Nx_rune.op_const_array ctx arr1 in
             (* Now reshape back to original shape *)
             let tensor = Nx_rune.op_reshape tensor var_info.shape in
             Packed_tensor tensor
         | Pack Float64 ->
-            let arr = Xla.Literal.to_bigarray literal Bigarray.Float64 in
-            let size = Array.fold_left ( * ) 1 (Bigarray.Genarray.dims arr) in
-            let arr1 = Bigarray.reshape_1 arr size in
+            let arr = Xla.Literal.to_bigarray literal Float64 in
+            let size = Array.fold_left ( * ) 1 (Genarray.dims arr) in
+            let arr1 = reshape_1 arr size in
             let tensor = Nx_rune.op_const_array ctx arr1 in
             let tensor = Nx_rune.op_reshape tensor var_info.shape in
             Packed_tensor tensor
         | Pack Int32 ->
-            let arr = Xla.Literal.to_bigarray literal Bigarray.Int32 in
-            let size = Array.fold_left ( * ) 1 (Bigarray.Genarray.dims arr) in
-            let arr1 = Bigarray.reshape_1 arr size in
+            let arr = Xla.Literal.to_bigarray literal Int32 in
+            let size = Array.fold_left ( * ) 1 (Genarray.dims arr) in
+            let arr1 = reshape_1 arr size in
             let tensor = Nx_rune.op_const_array ctx arr1 in
             let tensor = Nx_rune.op_reshape tensor var_info.shape in
             Packed_tensor tensor
         | Pack Int64 ->
-            let arr = Xla.Literal.to_bigarray literal Bigarray.Int64 in
-            let size = Array.fold_left ( * ) 1 (Bigarray.Genarray.dims arr) in
-            let arr1 = Bigarray.reshape_1 arr size in
+            let arr = Xla.Literal.to_bigarray literal Int64 in
+            let size = Array.fold_left ( * ) 1 (Genarray.dims arr) in
+            let arr1 = reshape_1 arr size in
             let tensor = Nx_rune.op_const_array ctx arr1 in
             let tensor = Nx_rune.op_reshape tensor var_info.shape in
             Packed_tensor tensor
         | Pack Int8 ->
-            let arr = Xla.Literal.to_bigarray literal Bigarray.Int8_signed in
-            let size = Array.fold_left ( * ) 1 (Bigarray.Genarray.dims arr) in
-            let arr1 = Bigarray.reshape_1 arr size in
+            let arr = Xla.Literal.to_bigarray literal Int8_signed in
+            let size = Array.fold_left ( * ) 1 (Genarray.dims arr) in
+            let arr1 = reshape_1 arr size in
             let tensor = Nx_rune.op_const_array ctx arr1 in
             let tensor = Nx_rune.op_reshape tensor var_info.shape in
             Packed_tensor tensor
         | Pack UInt8 ->
-            let arr = Xla.Literal.to_bigarray literal Bigarray.Int8_unsigned in
-            let size = Array.fold_left ( * ) 1 (Bigarray.Genarray.dims arr) in
-            let arr1 = Bigarray.reshape_1 arr size in
+            let arr = Xla.Literal.to_bigarray literal Int8_unsigned in
+            let size = Array.fold_left ( * ) 1 (Genarray.dims arr) in
+            let arr1 = reshape_1 arr size in
             let tensor = Nx_rune.op_const_array ctx arr1 in
             let tensor = Nx_rune.op_reshape tensor var_info.shape in
             Packed_tensor tensor

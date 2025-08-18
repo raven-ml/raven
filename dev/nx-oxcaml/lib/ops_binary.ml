@@ -23,10 +23,10 @@ let binary_op_impl (type a b) ~op_name ~f (ctx : context) (a : (a, b) t)
     Parallel.parallel_chunks (get_pool ctx) ~n_elements:n ~chunk_size:1024
       ~body:(fun ~chunk_idx:_ ~start ~stop ->
         for i = start to stop - 1 do
-          let a_val = Bigarray.Array1.get a_buf (a_offset + i) in
-          let b_val = Bigarray.Array1.get b_buf (b_offset + i) in
+          let a_val = Array1.get a_buf (a_offset + i) in
+          let b_val = Array1.get b_buf (b_offset + i) in
           let result = f a_val b_val in
-          Bigarray.Array1.set out_buf (out_offset + i) result
+          Array1.set out_buf (out_offset + i) result
         done))
   else
     (* General case: handle broadcasting and strided access *)
@@ -49,10 +49,10 @@ let binary_op_impl (type a b) ~op_name ~f (ctx : context) (a : (a, b) t)
           b_idx := !b_idx + (indices.(d) * b_strides.(d));
           out_idx := !out_idx + (indices.(d) * out_strides.(d))
         done;
-        let a_val = Bigarray.Array1.get a_buf !a_idx in
-        let b_val = Bigarray.Array1.get b_buf !b_idx in
+        let a_val = Array1.get a_buf !a_idx in
+        let b_val = Array1.get b_buf !b_idx in
         let result = f a_val b_val in
-        Bigarray.Array1.set out_buf !out_idx result)
+        Array1.set out_buf !out_idx result)
       else
         for i = 0 to out_shape.(dim) - 1 do
           indices.(dim) <- i;

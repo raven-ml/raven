@@ -1,3 +1,5 @@
+open Bigarray_ext
+
 let pi = 4. *. atan 1.
 
 module IntSet = Set.Make (Int)
@@ -17,7 +19,7 @@ module Rng = struct
 
   let standard_normal state shape =
     let total = Array.fold_left ( * ) 1 shape in
-    let data = Bigarray.Array1.create Float32 C_layout total in
+    let data = Array1.create Float32 C_layout total in
     let i = ref 0 in
     while !i < total do
       let u1 = Random.State.float state 1. in
@@ -32,25 +34,25 @@ module Rng = struct
         data.{!i} <- z1;
         incr i)
     done;
-    Nx.reshape shape (Nx.of_bigarray (Bigarray.genarray_of_array1 data))
+    Nx.reshape shape (Nx.of_bigarray (genarray_of_array1 data))
 
   let uniform state ?(low = 0.) ?(high = 1.) shape =
     let total = Array.fold_left ( * ) 1 shape in
     let range = high -. low in
-    let data = Bigarray.Array1.create Float32 C_layout total in
+    let data = Array1.create Float32 C_layout total in
     for i = 0 to total - 1 do
       data.{i} <- low +. Random.State.float state range
     done;
-    Nx.reshape shape (Nx.of_bigarray (Bigarray.genarray_of_array1 data))
+    Nx.reshape shape (Nx.of_bigarray (genarray_of_array1 data))
 
   let randint state ?(low = 0) high shape =
     let total = Array.fold_left ( * ) 1 shape in
     let range = high - low in
-    let data = Bigarray.Array1.create Int32 C_layout total in
+    let data = Array1.create Int32 C_layout total in
     for i = 0 to total - 1 do
       data.{i} <- Int32.of_int (low + Random.State.int state range)
     done;
-    Nx.reshape shape (Nx.of_bigarray (Bigarray.genarray_of_array1 data))
+    Nx.reshape shape (Nx.of_bigarray (genarray_of_array1 data))
 
   let shuffle state arr =
     let n = Array.length arr in
@@ -417,9 +419,7 @@ let make_multilabel_classification ?(n_samples = 100) ?(n_features = 20)
     List.iter (fun lbl -> y_indicator.(i).(lbl) <- true) labels
   done;
 
-  let x_data =
-    Bigarray.Array1.create Float32 C_layout (n_samples * n_features)
-  in
+  let x_data = Array1.create Float32 C_layout (n_samples * n_features) in
   let p_w_c_arr = Nx.to_array p_w_c in
   for i = 0 to n_samples - 1 do
     let topics = doc_topics.(i) in
@@ -440,7 +440,7 @@ let make_multilabel_classification ?(n_samples = 100) ?(n_features = 20)
         with Exit -> ()
       done
   done;
-  let x = Nx.of_bigarray (Bigarray.genarray_of_array1 x_data) in
+  let x = Nx.of_bigarray (genarray_of_array1 x_data) in
   let x = Nx.reshape [| n_samples; n_features |] x in
 
   let y =

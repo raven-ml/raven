@@ -27,19 +27,19 @@
 type ('a, 'b) t = ('a, 'b) Nx_native.t
 (** [('a, 'b) t] is a tensor with OCaml type ['a] and bigarray type ['b]. *)
 
-type float16_elt = Bigarray.float16_elt
-type float32_elt = Bigarray.float32_elt
-type float64_elt = Bigarray.float64_elt
-type int8_elt = Bigarray.int8_signed_elt
-type uint8_elt = Bigarray.int8_unsigned_elt
-type int16_elt = Bigarray.int16_signed_elt
-type uint16_elt = Bigarray.int16_unsigned_elt
-type int32_elt = Bigarray.int32_elt
-type int64_elt = Bigarray.int64_elt
-type int_elt = Bigarray.int_elt
-type nativeint_elt = Bigarray.nativeint_elt
-type complex32_elt = Bigarray.complex32_elt
-type complex64_elt = Bigarray.complex64_elt
+type float16_elt = Bigarray_ext.float16_elt
+type float32_elt = Bigarray_ext.float32_elt
+type float64_elt = Bigarray_ext.float64_elt
+type int8_elt = Bigarray_ext.int8_signed_elt
+type uint8_elt = Bigarray_ext.int8_unsigned_elt
+type int16_elt = Bigarray_ext.int16_signed_elt
+type uint16_elt = Bigarray_ext.int16_unsigned_elt
+type int32_elt = Bigarray_ext.int32_elt
+type int64_elt = Bigarray_ext.int64_elt
+type int_elt = Bigarray_ext.int_elt
+type nativeint_elt = Bigarray_ext.nativeint_elt
+type complex32_elt = Bigarray_ext.complex32_elt
+type complex64_elt = Bigarray_ext.complex64_elt
 type bfloat16_elt = Bigarray_ext.bfloat16_elt
 type bool_elt = Bigarray_ext.bool_elt
 type int4_elt = Bigarray_ext.int4_signed_elt
@@ -132,7 +132,7 @@ type index =
 
     Functions to inspect array dimensions, memory layout, and data access. *)
 
-val data : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
+val data : ('a, 'b) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t
 (** [data t] returns underlying bigarray buffer.
 
     Buffer may contain data beyond tensor bounds for strided views. Direct
@@ -183,8 +183,8 @@ val offset : ('a, 'b) t -> int
 val is_c_contiguous : ('a, 'b) t -> bool
 (** [is_c_contiguous t] returns true if elements are contiguous in C order. *)
 
-val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
-(** [to_bigarray t] converts to bigarray.
+val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t
+(** [to_bigarray t] converts to bigarray_ext.
 
     Always returns contiguous copy with same shape. Use for interop with
     libraries expecting bigarrays.
@@ -193,7 +193,7 @@ val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
       # let t = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
       val t : (float, float32_elt) t = [[1, 2, 3],
                                         [4, 5, 6]]
-      # Bigarray.Genarray.dims (to_bigarray t) = shape t
+      # Bigarray_ext.Genarray.dims (to_bigarray t) = shape t
       - : bool = true
     ]} *)
 
@@ -415,15 +415,15 @@ val meshgrid :
                      [1, 1, 1]])
     ]} *)
 
-val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
-(** [of_bigarray ba] creates tensor from bigarray.
+val of_bigarray : ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t -> ('a, 'b) t
+(** [of_bigarray ba] creates tensor from bigarray_ext.
 
     Zero-copy when bigarray is contiguous. Creates view sharing same memory.
     Modifications to either affect both.
 
     {@ocaml[
-      # let ba = Bigarray.Array2.create Float32 C_layout 2 3 in
-        let t = of_bigarray (Bigarray.genarray_of_array2 ba) in
+      # let ba = Bigarray_ext.Array2.create Float32 C_layout 2 3 in
+        let t = of_bigarray (Bigarray_ext.genarray_of_array2 ba) in
         t
       - : (float, float32_elt) t = [[0, 0, 0],
                                     [0, 0, 0]]

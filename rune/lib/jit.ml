@@ -1,5 +1,6 @@
 open Nx_core
 open Nx_rune
+open Bigarray_ext
 module Ir = Rune_jit.Ir
 module Var = Ir.Var
 module Rune_jit_metal = Rune_metal.Jit_backend
@@ -208,9 +209,9 @@ let make_jit_handler (state : jit_tracer_state) =
     | E_const_array { array; _ } ->
         Some
           (fun k ->
-            let numel = Bigarray.Array1.dim array in
+            let numel = Array1.dim array in
             let nx_dtype =
-              Nx_core.Dtype.of_bigarray_kind (Bigarray.Array1.kind array)
+              Nx_core.Dtype.of_bigarray_ext_kind (Array1.kind array)
             in
             let var = Var.fresh () in
             add_node state
@@ -633,10 +634,10 @@ let compile_graph (type kernel_native)
 
 let ir_dtype_to_bigarray_kind_any (Ir.Dtype.Any_Dtype dt) =
   match dt with
-  | Ir.Dtype.Float32 -> Obj.magic Bigarray.Float32
-  | Ir.Dtype.Int32 -> Obj.magic Bigarray.Int32
-  | Ir.Dtype.Bool -> Obj.magic Bigarray.Int8_unsigned
-  | Ir.Dtype.Uint8 -> Obj.magic Bigarray.Int8_unsigned
+  | Ir.Dtype.Float32 -> Obj.magic Float32
+  | Ir.Dtype.Int32 -> Obj.magic Int32
+  | Ir.Dtype.Bool -> Obj.magic Int8_unsigned
+  | Ir.Dtype.Uint8 -> Obj.magic Int8_unsigned
   | Ir.Dtype.Unit -> failwith "Unit dtype has no bigarray kind"
 
 (* ───── Compiled Function State ───── *)
@@ -673,7 +674,7 @@ let execute_compiled_fn (type kernel_native)
     match
       Rune_jit.allocate_buffer
         ~backend:(module B)
-        ~size_in_bytes:(Bigarray.Array1.size_in_bytes input_ba)
+        ~size_in_bytes:(Array1.size_in_bytes input_ba)
         ~dtype:(nx_dtype_to_ir_dtype (dtype input))
     with
     | Ok buf -> buf
@@ -713,7 +714,7 @@ let execute_compiled_fn (type kernel_native)
   let out_ba =
     let len = shape_prod state.output_shape in
     let kind = ir_dtype_to_bigarray_kind_any state.output_dtype in
-    Bigarray.Array1.create kind Bigarray.c_layout len
+    Array1.create kind c_layout len
   in
 
   (match
@@ -721,7 +722,7 @@ let execute_compiled_fn (type kernel_native)
        ~host_dest_ptr:
          Ctypes.(raw_address_of_ptr (to_voidp (bigarray_start array1 out_ba)))
        ~device_data_offset_bytes:0
-       ~copy_size_bytes:(Bigarray.Array1.size_in_bytes out_ba)
+       ~copy_size_bytes:(Array1.size_in_bytes out_ba)
    with
   | Ok () -> ()
   | Error e -> failwith (Printf.sprintf "Copy from device failed: %s" e));
