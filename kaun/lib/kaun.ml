@@ -777,7 +777,232 @@ module Layer = struct
                 apply_layers models param_list x 1
             | _ -> failwith "sequential: invalid params structure");
       }
+
+  (* New transformer-related layers *)
+
+  let einsum ~einsum_str ~shape ?kernel_init () =
+    let kernel_init =
+      Option.value kernel_init ~default:(Initializer.glorot_uniform ())
+    in
+    Model
+      {
+        init =
+          (fun ~rngs x ->
+            let dev = Rune.device x in
+            let dtype = Rune.dtype x in
+            let seed = fst (Rngs.split rngs) in
+            let w = Initializer.apply kernel_init seed shape dev dtype in
+            Tensor w);
+        apply =
+          (fun params ~training:_ ?rngs:_ x ->
+            match params with
+            | Tensor w ->
+                (* Use Rune.einsum which exists *)
+                Rune.einsum einsum_str [| x; w |]
+            | _ -> failwith "einsum: invalid params");
+      }
+
+  let rms_norm ~dim ?(eps = 1e-6) ?scale_init () =
+    let scale_init = Option.value scale_init ~default:(Initializer.ones ()) in
+    Model
+      {
+        init =
+          (fun ~rngs x ->
+            let dev = Rune.device x in
+            let dtype = Rune.dtype x in
+            let seed = fst (Rngs.split rngs) in
+            let scale = Initializer.apply scale_init seed [| dim |] dev dtype in
+            Tensor scale);
+        apply =
+          (fun params ~training:_ ?rngs:_ x ->
+            match params with
+            | Tensor scale ->
+                let var =
+                  Rune.mean (Rune.square x) ~axes:[| -1 |] ~keepdims:true
+                in
+                let normed =
+                  Rune.mul x
+                    (Rune.rsqrt
+                       (Rune.add var
+                          (Rune.scalar (Rune.device x) (Rune.dtype x) eps)))
+                in
+                let scale_expanded =
+                  let x_dims = Array.length (Rune.shape x) in
+                  let scale_shape = Array.make x_dims 1 in
+                  scale_shape.(x_dims - 1) <- dim;
+                  Rune.reshape scale_shape scale
+                in
+                Rune.mul normed
+                  (Rune.add
+                     (Rune.scalar (Rune.device x) (Rune.dtype x) 1.0)
+                     scale_expanded)
+            | _ -> failwith "rms_norm: invalid params");
+      }
+
+  let layer_norm ~dim ?(eps = 1e-5) ?(elementwise_affine = true) () =
+    Model
+      {
+        init =
+          (fun ~rngs:_ x ->
+            if elementwise_affine then
+              let dev = Rune.device x in
+              let dtype = Rune.dtype x in
+              let gamma = Rune.ones dev dtype [| dim |] in
+              let beta = Rune.zeros dev dtype [| dim |] in
+              Record [ ("gamma", Tensor gamma); ("beta", Tensor beta) ]
+            else List []);
+        apply =
+          (fun params ~training:_ ?rngs:_ x ->
+            let mean = Rune.mean x ~axes:[| -1 |] ~keepdims:true in
+            let var = Rune.var x ~axes:[| -1 |] ~keepdims:true in
+            let eps_scalar = Rune.scalar (Rune.device x) (Rune.dtype x) eps in
+            let normalized =
+              Rune.div (Rune.sub x mean) (Rune.sqrt (Rune.add var eps_scalar))
+            in
+            if elementwise_affine then
+              match params with
+              | Record fields ->
+                  let gamma =
+                    match List.assoc_opt "gamma" fields with
+                    | Some (Tensor t) -> t
+                    | _ -> failwith "layer_norm: missing gamma"
+                  in
+                  let beta =
+                    match List.assoc_opt "beta" fields with
+                    | Some (Tensor t) -> t
+                    | _ -> failwith "layer_norm: missing beta"
+                  in
+                  let x_dims = Array.length (Rune.shape x) in
+                  let reshape_dims = Array.make x_dims 1 in
+                  reshape_dims.(x_dims - 1) <- dim;
+                  let gamma_reshaped = Rune.reshape reshape_dims gamma in
+                  let beta_reshaped = Rune.reshape reshape_dims beta in
+                  Rune.add (Rune.mul normalized gamma_reshaped) beta_reshaped
+              | _ -> failwith "layer_norm: invalid params"
+            else normalized);
+      }
+
+  let embedding ~vocab_size ~embed_dim ?(scale = true) ?embedding_init () =
+    let embedding_init =
+      Option.value embedding_init
+        ~default:(Initializer.normal ~mean:0.0 ~std:0.02)
+    in
+    Model
+      {
+        init =
+          (fun ~rngs _x ->
+            let dev = Rune.device _x in
+            let dtype = Rune.dtype _x in
+            let seed = fst (Rngs.split rngs) in
+            let embedding =
+              Initializer.apply embedding_init seed
+                [| vocab_size; embed_dim |]
+                dev dtype
+            in
+            Tensor embedding);
+        apply =
+          (fun params ~training:_ ?rngs:_ x ->
+            match params with
+            | Tensor embedding ->
+                (* Use gather operation for embedding lookup *)
+                let embedded =
+                  Kaun_missing.Ops.gather embedding ~indices:x ~axis:0
+                in
+                if scale then
+                  let scale_factor = sqrt (float_of_int embed_dim) in
+                  Rune.mul embedded
+                    (Rune.scalar (Rune.device embedded) (Rune.dtype embedded)
+                       scale_factor)
+                else embedded
+            | _ -> failwith "embedding: invalid params");
+      }
+
+  let gelu () =
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply =
+          (fun _params ~training:_ ?rngs:_ x ->
+            (* GELU(x) = x * Φ(x) where Φ is the CDF of standard normal distribution *)
+            (* Approximation: 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3))) *)
+            let sqrt_2_over_pi = 0.7978845608 in
+            let x_cubed = Rune.mul x (Rune.mul x x) in
+            let inner =
+              Rune.add x
+                (Rune.mul
+                   (Rune.scalar (Rune.device x) (Rune.dtype x) 0.044715)
+                   x_cubed)
+            in
+            let tanh_arg =
+              Rune.mul
+                (Rune.scalar (Rune.device x) (Rune.dtype x) sqrt_2_over_pi)
+                inner
+            in
+            Rune.mul x
+              (Rune.mul
+                 (Rune.scalar (Rune.device x) (Rune.dtype x) 0.5)
+                 (Rune.add
+                    (Rune.scalar (Rune.device x) (Rune.dtype x) 1.0)
+                    (Rune.tanh tanh_arg))));
+      }
+
+  let swish () =
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply =
+          (fun _params ~training:_ ?rngs:_ x ->
+            (* Swish(x) = x * sigmoid(x) *)
+            Rune.mul x (Rune.sigmoid x));
+      }
+
+  let multi_head_attention ~embed_dim ~num_heads ?num_kv_heads:_ ?head_dim:_
+      ?dropout:_ ?use_qk_norm:_ ?attn_logits_soft_cap:_ ?query_pre_attn_scalar:_
+      () =
+    let _ = embed_dim in
+    let _ = num_heads in
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply =
+          (fun _params ~training:_ ?rngs:_ _x ->
+            failwith
+              "multi_head_attention: not yet fully implemented - needs \
+               attention mechanism");
+      }
+
+  let rope_embedding ~dim ?max_seq_len:_ ?base_frequency:_ ?scale_factor:_ () =
+    let _ = dim in
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply =
+          (fun _params ~training:_ ?rngs:_ _x ->
+            failwith
+              "rope_embedding: not yet implemented - needs complex number \
+               support");
+      }
+
+  let sinusoidal_pos_embedding ~max_len ~embed_dim () =
+    let _ = max_len in
+    let _ = embed_dim in
+    Model
+      {
+        init = (fun ~rngs:_ _x -> List []);
+        apply =
+          (fun _params ~training:_ ?rngs:_ _x ->
+            failwith
+              "sinusoidal_pos_embedding: not yet implemented - needs sin/cos \
+               filling");
+      }
 end
+
+(* Re-export missing features *)
+module Cache = Kaun_missing.Cache
+module Ops = Kaun_missing.Ops
+module Schedule = Kaun_missing.Schedule
+module Tokenizer = Kaun_missing.Tokenizer
+module Checkpoint = Kaun_missing.Checkpoint
 
 (* Optimizer module *)
 module Optimizer = struct

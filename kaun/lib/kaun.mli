@@ -220,6 +220,169 @@ module Layer : sig
   val sigmoid : unit -> model
   val tanh : unit -> model
   val sequential : model list -> model
+
+  (** New layers for transformer models *)
+
+  val einsum :
+    einsum_str:string ->
+    shape:int array ->
+    ?kernel_init:Initializer.t ->
+    unit ->
+    model
+
+  val rms_norm :
+    dim:int -> ?eps:float -> ?scale_init:Initializer.t -> unit -> model
+
+  val layer_norm :
+    dim:int -> ?eps:float -> ?elementwise_affine:bool -> unit -> model
+
+  val embedding :
+    vocab_size:int ->
+    embed_dim:int ->
+    ?scale:bool ->
+    ?embedding_init:Initializer.t ->
+    unit ->
+    model
+
+  val gelu : unit -> model
+  val swish : unit -> model
+
+  (** Attention layers *)
+
+  val multi_head_attention :
+    embed_dim:int ->
+    num_heads:int ->
+    ?num_kv_heads:int ->
+    ?head_dim:int ->
+    ?dropout:float ->
+    ?use_qk_norm:bool ->
+    ?attn_logits_soft_cap:float ->
+    ?query_pre_attn_scalar:float ->
+    unit ->
+    model
+
+  (** Positional embeddings *)
+
+  val rope_embedding :
+    dim:int ->
+    ?max_seq_len:int ->
+    ?base_frequency:float ->
+    ?scale_factor:float ->
+    unit ->
+    model
+
+  val sinusoidal_pos_embedding : max_len:int -> embed_dim:int -> unit -> model
+end
+
+(** {1 Additional modules for transformer support} *)
+
+(** Cache support for KV caching in autoregressive generation *)
+module Cache : sig
+  type ('layout, 'dev) t
+
+  val create :
+    batch_size:int ->
+    max_seq_len:int ->
+    num_layers:int ->
+    num_kv_heads:int ->
+    head_dim:int ->
+    device:'dev device ->
+    dtype:'layout dtype ->
+    ('layout, 'dev) t
+
+  val update :
+    ('layout, 'dev) t ->
+    layer_idx:int ->
+    k:('layout, 'dev) tensor ->
+    v:('layout, 'dev) tensor ->
+    pos:int ->
+    unit
+
+  val get :
+    ('layout, 'dev) t ->
+    layer_idx:int ->
+    ('layout, 'dev) tensor * ('layout, 'dev) tensor
+end
+
+(** Extended operations needed for transformers *)
+module Ops : sig
+  val dynamic_update_slice :
+    ('layout, 'dev) tensor ->
+    ('layout, 'dev) tensor ->
+    indices:int list ->
+    ('layout, 'dev) tensor
+
+  val gather :
+    ('layout, 'dev) tensor ->
+    indices:('layout, 'dev) tensor ->
+    axis:int ->
+    ('layout, 'dev) tensor
+
+  val one_hot :
+    indices:('layout, 'dev) tensor -> num_classes:int -> ('layout, 'dev) tensor
+
+  val tril : ('layout, 'dev) tensor -> ?k:int -> unit -> ('layout, 'dev) tensor
+  val triu : ('layout, 'dev) tensor -> ?k:int -> unit -> ('layout, 'dev) tensor
+  val to_float : ('layout, 'dev) tensor -> float
+end
+
+(** Learning rate schedules *)
+module Schedule : sig
+  type t = int -> float
+
+  val constant : lr:float -> t
+
+  val linear_warmup_cosine_decay :
+    init_lr:float ->
+    peak_lr:float ->
+    warmup_steps:int ->
+    decay_steps:int ->
+    end_lr:float ->
+    t
+
+  val exponential_decay :
+    init_lr:float ->
+    decay_rate:float ->
+    decay_steps:int ->
+    ?staircase:bool ->
+    unit ->
+    t
+end
+
+(** Tokenization support *)
+module Tokenizer : sig
+  type t
+
+  val from_sentencepiece : path:string -> t
+  val from_tiktoken : encoding:string -> t
+
+  val encode :
+    t -> string -> ?add_bos:bool -> ?add_eos:bool -> unit -> int array
+
+  val decode : t -> int array -> ?skip_special_tokens:bool -> unit -> string
+  val vocab_size : t -> int
+  val bos_id : t -> int option
+  val eos_id : t -> int option
+  val pad_id : t -> int option
+end
+
+(** Checkpointing *)
+module Checkpoint : sig
+  val save :
+    path:string ->
+    params:('layout, 'dev) params ->
+    step:int ->
+    ?metadata:(string * string) list ->
+    unit ->
+    unit
+
+  val load :
+    path:string ->
+    device:'dev device ->
+    dtype:'layout dtype ->
+    ('layout, 'dev) params * int * (string * string) list
+
+  val exists : path:string -> bool
 end
 
 module Optimizer : sig
