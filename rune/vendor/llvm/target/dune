@@ -1,0 +1,10 @@
+(library
+ (name llvm_target)
+ (public_name rune.llvm.target)
+ (modules llvm_target)
+ (libraries llvm)
+ (foreign_stubs
+  (language c)
+  (names target_ocaml)
+  (flags (:include ../llvm/llvm_cflags.sexp)))
+ (c_library_flags (:include ../llvm/llvm_libs_target.sexp)))

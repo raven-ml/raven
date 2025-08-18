@@ -19,3 +19,9 @@
  (build_if
   (= %{system} "macosx"))
  (libraries alcotest rune_jit rune_jit_metal test_rune_jit_support))
+
+(test
+ (name test_llvm)
+ (package rune)
+ (modules test_llvm)
+ (libraries alcotest rune_jit rune_jit_llvm test_rune_jit_support))
