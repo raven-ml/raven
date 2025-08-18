@@ -376,17 +376,6 @@ module Array2 = struct
       done
     done;
     ba
-
-  (* Override blit to handle extended types *)
-  external nx_ba_blit : ('a, 'b, 'c) t -> ('a, 'b, 'c) t -> unit
-    = "caml_nx_ba_blit"
-
-  let blit = nx_ba_blit
-
-  (* Override fill for extended types *)
-  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit = "caml_nx_ba_fill"
-
-  let fill = nx_ba_fill
 end
 
 (* Shadow Array3 module *)
@@ -463,15 +452,4 @@ module Array3 = struct
       done
     done;
     ba
-
-  (* Override blit to handle extended types *)
-  external nx_ba_blit : ('a, 'b, 'c) t -> ('a, 'b, 'c) t -> unit
-    = "caml_nx_ba_blit"
-
-  let blit = nx_ba_blit
-
-  (* Override fill for extended types *)
-  external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit = "caml_nx_ba_fill"
-
-  let fill = nx_ba_fill
 end

@@ -153,15 +153,21 @@ let test_e2e_where () =
   (* allocate device buffers *)
   let buf_cond =
     Result.get_ok
-      (Rune_jit.copy_to_device
+      (Rune_jit.allocate_buffer
          ~backend:(module Rune_jit_llvm)
-         ~dest_buffer:buf_cond ~host:ba_cond);
+         ~size_in_bytes:(Bigarray_ext.Array1.size_in_bytes ba_cond)
+         ~dtype:Ir.Dtype.Uint8)
+  in
+  let buf_x =
     Result.get_ok
-      (Rune_jit.copy_to_device
+      (Rune_jit.allocate_buffer
          ~backend:(module Rune_jit_llvm)
-         ~dest_buffer:buf_x ~host:ba_x);
+         ~size_in_bytes:(Bigarray_ext.Array1.size_in_bytes ba_x)
+         ~dtype:Ir.Dtype.Float32)
+  in
+  let buf_y =
     Result.get_ok
-      (Rune_jit.copy_to_device
+      (Rune_jit.allocate_buffer
          ~backend:(module Rune_jit_llvm)
          ~size_in_bytes:(Bigarray_ext.Array1.size_in_bytes ba_y)
          ~dtype:Ir.Dtype.Float32)
