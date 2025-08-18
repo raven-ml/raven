@@ -488,7 +488,7 @@ module Make (B : Backend_intf.S) = struct
     let t_contiguous = contiguous x in
     let ba = unsafe_data t_contiguous in
     let n = numel t_contiguous in
-    Array.init n (fun i -> Array1.get ba i)
+    Array.init n (fun i -> Bigarray_ext.Array1.get ba i)
 
   (* ───── Element-wise Binary Operations ───── *)
 

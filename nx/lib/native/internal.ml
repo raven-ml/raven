@@ -158,7 +158,7 @@ let copy : type a b. (a, b) t -> (a, b) t =
                    (Printf.sprintf "index %d not in [0, %d)" src_idx buffer_size)
                  ()
              else (
-               new_buffer.{!dst_idx} <- src_buffer.{src_idx};
+               Array1.set new_buffer !dst_idx (Array1.get src_buffer src_idx);
                incr dst_idx))
      | None ->
          (* This shouldn't happen if ensure_materializable works correctly *)
@@ -191,7 +191,7 @@ let fill : type a b. a -> (a, b) t -> unit =
               let physical_idx =
                 offset t_fill + Shape.ravel_index current_md_idx strides_arr
               in
-              fill_buffer.{physical_idx} <- value
+              Array1.set fill_buffer physical_idx value
             else
               for i = 0 to (shape t_fill).(dim) - 1 do
                 current_md_idx.(dim) <- i;
@@ -222,7 +222,7 @@ let blit : type a b. (a, b) t -> (a, b) t -> unit =
 
     if n_dims = 0 then
       (* Scalar case *)
-      dst_buffer.{offset dst} <- src_buffer.{offset src}
+      Array1.set dst_buffer (offset dst) (Array1.get src_buffer (offset src))
     else
       (* Get strides using the fixed Lazy_view.strides that returns last view's
          strides *)
@@ -238,8 +238,8 @@ let blit : type a b. (a, b) t -> (a, b) t -> unit =
               let dst_physical_offset =
                 offset dst + Shape.ravel_index current_md_idx dst_strides
               in
-              dst_buffer.{dst_physical_offset} <-
-                src_buffer.{src_physical_offset}
+              Array1.set dst_buffer dst_physical_offset
+                (Array1.get src_buffer src_physical_offset)
             else
               for i = 0 to (shape src).(dim) - 1 do
                 current_md_idx.(dim) <- i;
