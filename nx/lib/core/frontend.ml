@@ -3833,7 +3833,7 @@ module Make (B : Backend_intf.S) = struct
 
     (* Use QR decomposition *)
     let q, r = B.op_qr ~reduced:true a in
-    let y = matmul (transpose q) b_expanded in
+    let y = matmul (matrix_transpose q) b_expanded in
     let result =
       B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r y
     in
@@ -3849,8 +3849,8 @@ module Make (B : Backend_intf.S) = struct
     (* TODO: use for rank determination *)
 
     (* Use QR decomposition *)
-    let q, r = B.op_qr ~reduced:false a in
-    let y = matmul (transpose q) b in
+    let q, r = B.op_qr ~reduced:true a in
+    let y = matmul (matrix_transpose q) b in
 
     (* Solve upper triangular system *)
     let m, n =
@@ -3858,7 +3858,13 @@ module Make (B : Backend_intf.S) = struct
     in
     let x =
       if m >= n then
-        B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r y
+        (* For overdetermined systems, r is [n, n] when reduced=true *)
+        let r_square = if ndim r = 2 then slice [R [0; n]; R [0; n]] r
+                       else slice [R []; R [0; n]; R [0; n]] r in
+        let y_top = if ndim y = 2 then slice [R [0; n]; R []] y
+                    else if ndim y = 1 then slice [R [0; n]] y
+                    else slice [R []; R [0; n]; R []] y in
+        B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r_square y_top
       else
         Error.failed ~op:"lstsq" ~what:"underdetermined systems not implemented"
           ()
@@ -3922,8 +3928,8 @@ module Make (B : Backend_intf.S) = struct
     let s_inv = cast (dtype a) s_inv in
 
     (* Compute V @ S^-1 @ U^H *)
-    let vs = mul (transpose vh) s_inv in
-    matmul vs (transpose u)
+    let vs = mul (matrix_transpose vh) s_inv in
+    matmul vs (matrix_transpose u)
 
   let tensorsolve ?axes _a _b =
     let _ = axes in

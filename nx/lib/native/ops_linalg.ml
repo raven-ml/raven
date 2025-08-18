@@ -10,6 +10,13 @@ open Internal
 (* Constants *)
 let eps = 1e-10
 
+(* Dtype-specific machine epsilon *)
+let eps_of_dtype (type a b) (dtype : (a, b) Dtype.t) : float =
+  match dtype with
+  | Dtype.Float32 -> 1.1920929e-7
+  | Dtype.Float64 -> 2.220446049250313e-16
+  | _ -> failwith "eps_of_dtype: only float dtypes are supported"
+
 (* Helper to get concrete shape from view *)
 let get_shape view =
   match Symbolic_shape.eval (Lazy_view.shape view) with
@@ -26,82 +33,80 @@ let[@inline] to_float (type a b) (dtype : (a, b) Dtype.t) (value : a) : float =
   | Dtype.Float64 -> value
   | _ -> failwith "to_float: only float dtypes are supported"
 
-let[@inline] get_2d t i j =
+(* Generic N-dimensional indexing helper *)
+let[@inline] get_nd t indices =
   let strides =
     match Lazy_view.strides t.view with
     | Some s -> s
     | None ->
-        Error.failed ~op:"get_2d"
+        Error.failed ~op:"get_nd"
           ~what:"cannot get strides for non-contiguous view" ()
   in
-  let stride0 = strides.(0) in
-  let stride1 = strides.(1) in
   let offset =
     match Symbolic_shape.eval_dim (Lazy_view.offset t.view) with
     | Some n -> n
     | None ->
-        Error.failed ~op:"get_2d" ~what:"cannot evaluate symbolic offset" ()
+        Error.failed ~op:"get_nd" ~what:"cannot evaluate symbolic offset" ()
   in
-  Array1.unsafe_get t.buffer (offset + (i * stride0) + (j * stride1))
+  let acc = ref offset in
+  for d = 0 to Array.length indices - 1 do
+    acc := !acc + (indices.(d) * strides.(d))
+  done;
+  Array1.unsafe_get t.buffer !acc
 
-let[@inline] set_2d t i j value =
+(* Generic N-dimensional indexing setter *)
+let[@inline] set_nd t indices value =
   let strides =
     match Lazy_view.strides t.view with
     | Some s -> s
     | None ->
-        Error.failed ~op:"set_2d"
+        Error.failed ~op:"set_nd"
           ~what:"cannot get strides for non-contiguous view" ()
   in
-  let stride0 = strides.(0) in
-  let stride1 = strides.(1) in
   let offset =
     match Symbolic_shape.eval_dim (Lazy_view.offset t.view) with
     | Some n -> n
     | None ->
-        Error.failed ~op:"ops_linalg" ~what:"cannot evaluate symbolic offset" ()
+        Error.failed ~op:"set_nd" ~what:"cannot evaluate symbolic offset" ()
   in
-  Array1.unsafe_set t.buffer (offset + (i * stride0) + (j * stride1)) value
+  let acc = ref offset in
+  for d = 0 to Array.length indices - 1 do
+    acc := !acc + (indices.(d) * strides.(d))
+  done;
+  Array1.unsafe_set t.buffer !acc value
 
-let[@inline] get_3d t b i j =
-  let strides =
-    match Lazy_view.strides t.view with
-    | Some s -> s
-    | None ->
-        Error.failed ~op:"ops_linalg"
-          ~what:"cannot get strides for non-contiguous view" ()
-  in
-  let stride0 = strides.(0) in
-  let stride1 = strides.(1) in
-  let stride2 = strides.(2) in
-  let offset =
-    match Symbolic_shape.eval_dim (Lazy_view.offset t.view) with
-    | Some n -> n
-    | None ->
-        Error.failed ~op:"ops_linalg" ~what:"cannot evaluate symbolic offset" ()
-  in
-  Array1.unsafe_get t.buffer
-    (offset + (b * stride0) + (i * stride1) + (j * stride2))
+(* Helper to decompose a flattened batch index into multi-dimensional batch
+   coordinates *)
+let decompose_batch_index shape batch_idx =
+  let ndim = Array.length shape in
+  let batch_ndim = ndim - 2 in
+  let coords = Array.make ndim 0 in
+  let rem = ref batch_idx in
+  for d = batch_ndim - 1 downto 0 do
+    let size = shape.(d) in
+    coords.(d) <- !rem mod size;
+    rem := !rem / size
+  done;
+  coords
 
-let[@inline] set_3d t b i j value =
-  let strides =
-    match Lazy_view.strides t.view with
-    | Some s -> s
-    | None ->
-        Error.failed ~op:"ops_linalg"
-          ~what:"cannot get strides for non-contiguous view" ()
-  in
-  let stride0 = strides.(0) in
-  let stride1 = strides.(1) in
-  let stride2 = strides.(2) in
-  let offset =
-    match Symbolic_shape.eval_dim (Lazy_view.offset t.view) with
-    | Some n -> n
-    | None ->
-        Error.failed ~op:"ops_linalg" ~what:"cannot evaluate symbolic offset" ()
-  in
-  Array1.unsafe_set t.buffer
-    (offset + (b * stride0) + (i * stride1) + (j * stride2))
-    value
+(* Batched matrix element getters/setters using proper N-dimensional indexing *)
+let[@inline] get_batched_2d t shape batch_idx i j =
+  let coords = decompose_batch_index shape batch_idx in
+  let ndim = Array.length shape in
+  coords.(ndim - 2) <- i;
+  coords.(ndim - 1) <- j;
+  get_nd t coords
+
+let[@inline] set_batched_2d t shape batch_idx i j value =
+  let coords = decompose_batch_index shape batch_idx in
+  let ndim = Array.length shape in
+  coords.(ndim - 2) <- i;
+  coords.(ndim - 1) <- j;
+  set_nd t coords value
+
+(* Legacy 2D accessor for backward compatibility *)
+let[@inline] get_2d t i j = get_nd t [| i; j |]
+let[@inline] set_2d t i j value = set_nd t [| i; j |] value
 
 (* Get matrix dimensions, handling batched case *)
 let get_matrix_dims t =
@@ -188,23 +193,27 @@ let apply_givens_rows (type a b) (dtype : (a, b) Dtype.t) n row1 row2 c s =
 
 (* Kernel for single matrix Cholesky decomposition *)
 let kernel_cholesky_single (type a b) ~upper (dtype : (a, b) Dtype.t) input
-    output n batch_size batch =
+    output input_shape output_shape n batch_size batch =
+  (* Compute tolerance based on dtype and matrix size *)
+  let tol = eps_of_dtype dtype *. float_of_int n in
+
   if upper then
     (* Upper triangular Cholesky: A = U^T * U *)
     for i = 0 to n - 1 do
       for j = i to n - 1 do
         let sum =
           ref
-            (if batch_size = 1 then get_2d input i j else get_3d input batch i j)
+            (if batch_size = 1 then get_2d input i j
+             else get_batched_2d input input_shape batch i j)
         in
         for k = 0 to i - 1 do
           let u_ki =
             if batch_size = 1 then get_2d output k i
-            else get_3d output batch k i
+            else get_batched_2d output output_shape batch k i
           in
           let u_kj =
             if batch_size = 1 then get_2d output k j
-            else get_3d output batch k j
+            else get_batched_2d output output_shape batch k j
           in
           sum := Dtype.sub dtype !sum (Dtype.mul dtype u_ki u_kj)
         done;
@@ -213,19 +222,20 @@ let kernel_cholesky_single (type a b) ~upper (dtype : (a, b) Dtype.t) input
           if i = j then (
             (* Diagonal element *)
             let s_float = to_float dtype !sum in
-            if s_float <= 0.0 then
+            if s_float < -.tol then
               failwith "op_cholesky: matrix is not positive definite";
-            Dtype.of_float dtype (sqrt s_float))
+            (* Clamp small negative values to zero for numerical stability *)
+            Dtype.of_float dtype (sqrt (max 0.0 s_float)))
           else
             (* Off-diagonal element *)
             let u_ii =
               if batch_size = 1 then get_2d output i i
-              else get_3d output batch i i
+              else get_batched_2d output output_shape batch i i
             in
             Dtype.div dtype !sum u_ii
         in
         if batch_size = 1 then set_2d output i j value
-        else set_3d output batch i j value
+        else set_batched_2d output output_shape batch i j value
       done
     done
   else
@@ -234,16 +244,17 @@ let kernel_cholesky_single (type a b) ~upper (dtype : (a, b) Dtype.t) input
       for j = 0 to i do
         let sum =
           ref
-            (if batch_size = 1 then get_2d input i j else get_3d input batch i j)
+            (if batch_size = 1 then get_2d input i j
+             else get_batched_2d input input_shape batch i j)
         in
         for k = 0 to j - 1 do
           let l_ik =
             if batch_size = 1 then get_2d output i k
-            else get_3d output batch i k
+            else get_batched_2d output output_shape batch i k
           in
           let l_jk =
             if batch_size = 1 then get_2d output j k
-            else get_3d output batch j k
+            else get_batched_2d output output_shape batch j k
           in
           sum := Dtype.sub dtype !sum (Dtype.mul dtype l_ik l_jk)
         done;
@@ -252,19 +263,20 @@ let kernel_cholesky_single (type a b) ~upper (dtype : (a, b) Dtype.t) input
           if i = j then (
             (* Diagonal element *)
             let s_float = to_float dtype !sum in
-            if s_float <= 0.0 then
+            if s_float < -.tol then
               failwith "op_cholesky: matrix is not positive definite";
-            Dtype.of_float dtype (sqrt s_float))
+            (* Clamp small negative values to zero for numerical stability *)
+            Dtype.of_float dtype (sqrt (max 0.0 s_float)))
           else
             (* Off-diagonal element *)
             let l_jj =
               if batch_size = 1 then get_2d output j j
-              else get_3d output batch j j
+              else get_batched_2d output output_shape batch j j
             in
             Dtype.div dtype !sum l_jj
         in
         if batch_size = 1 then set_2d output i j value
-        else set_3d output batch i j value
+        else set_batched_2d output output_shape batch i j value
       done
     done
 
@@ -283,14 +295,19 @@ let cholesky (type a b) ~upper ctx (input : (a, b) t) =
     Array1.unsafe_set output.buffer i (Dtype.zero input.dtype)
   done;
 
+  (* Get input shape for batch indexing *)
+  let input_shape = get_shape input.view in
+
   (* Process batches in parallel if batch_size > 1 *)
   if batch_size > 1 then
-    Parallel.parallel_for pool 0 (batch_size - 1) (fun batch_start batch_end ->
+    Parallel.parallel_for pool 0 batch_size (fun batch_start batch_end ->
         for batch = batch_start to batch_end - 1 do
-          kernel_cholesky_single ~upper input.dtype input output n batch_size
-            batch
+          kernel_cholesky_single ~upper input.dtype input output input_shape
+            output_shape n batch_size batch
         done)
-  else kernel_cholesky_single ~upper input.dtype input output n batch_size 0;
+  else
+    kernel_cholesky_single ~upper input.dtype input output input_shape
+      output_shape n batch_size 0;
 
   output
 
@@ -333,13 +350,14 @@ let apply_householder_to_q (type a b) (dtype : (a, b) Dtype.t) q_work v tau j m
   done
 
 (* Kernel for single matrix QR decomposition *)
-let kernel_qr_single (type a b) ~reduced (dtype : (a, b) Dtype.t) input q r m n
-    k batch_size batch =
+let kernel_qr_single (type a b) ~reduced (dtype : (a, b) Dtype.t) input q r
+    input_shape q_shape r_shape m n k batch_size batch =
   (* Copy input to R and initialize Q as identity *)
   let r_work =
     Array.init m (fun i ->
         Array.init n (fun j ->
-            if batch_size = 1 then get_2d input i j else get_3d input batch i j))
+            if batch_size = 1 then get_2d input i j
+            else get_batched_2d input input_shape batch i j))
   in
 
   let q_work =
@@ -372,30 +390,40 @@ let kernel_qr_single (type a b) ~reduced (dtype : (a, b) Dtype.t) input q r m n
       let alpha = r_work.(j).(j) in
       let beta = Dtype.add dtype alpha (Dtype.mul dtype sign col_norm) in
 
-      (* Store Householder vector (normalized) in lower part of R *)
-      let v = Array.make m (Dtype.zero dtype) in
-      v.(j) <- Dtype.one dtype;
-      for i = j + 1 to m - 1 do
-        v.(i) <- Dtype.div dtype r_work.(i).(j) beta
-      done;
+      (* Guard against beta = 0 case *)
+      if abs_float (to_float dtype beta) < eps_of_dtype dtype then
+        (* Column is already zero, no reflection needed *)
+        tau.(j) <- Dtype.zero dtype
+      else
+        (* Store Householder vector (normalized) in lower part of R *)
+        let v = Array.make m (Dtype.zero dtype) in
+        v.(j) <- Dtype.one dtype;
+        for i = j + 1 to m - 1 do
+          v.(i) <- Dtype.div dtype r_work.(i).(j) beta
+        done;
 
-      (* Compute tau = 2 / ||v||^2 *)
-      let v_norm_sq = ref (Dtype.one dtype) in
-      (* v[j] = 1 *)
-      for i = j + 1 to m - 1 do
-        v_norm_sq := Dtype.add dtype !v_norm_sq (Dtype.mul dtype v.(i) v.(i))
-      done;
-      tau.(j) <- Dtype.div dtype (Dtype.of_float dtype 2.0) !v_norm_sq;
+        (* Compute tau = 2 / ||v||^2 *)
+        let v_norm_sq = ref (Dtype.one dtype) in
+        (* v[j] = 1 *)
+        for i = j + 1 to m - 1 do
+          v_norm_sq := Dtype.add dtype !v_norm_sq (Dtype.mul dtype v.(i) v.(i))
+        done;
+        tau.(j) <- Dtype.div dtype (Dtype.of_float dtype 2.0) !v_norm_sq;
 
-      (* Apply Householder reflections *)
-      apply_householder_to_r dtype r_work v tau.(j) j n;
-      apply_householder_to_q dtype q_work v tau.(j) j m;
+        (* Apply Householder reflections *)
+        apply_householder_to_r dtype r_work v tau.(j) j n;
+        apply_householder_to_q dtype q_work v tau.(j) j m;
 
-      (* Store the essential part of v below diagonal of R for potential later
-         use *)
-      for i = j + 1 to m - 1 do
-        r_work.(i).(j) <- v.(i)
-      done)
+        (* Store the essential part of v below diagonal of R for potential later
+           use *)
+        for i = j + 1 to m - 1 do
+          r_work.(i).(j) <- v.(i)
+        done;
+
+        (* Set diagonal element to negative norm for stability *)
+        r_work.(j).(j) <-
+          Dtype.mul dtype (Dtype.minus_one dtype)
+            (Dtype.mul dtype sign col_norm))
   done;
 
   (* Copy results to output tensors *)
@@ -421,7 +449,7 @@ let kernel_qr_single (type a b) ~reduced (dtype : (a, b) Dtype.t) input q r m n
     let q_cols = if reduced then k else m in
     for i = 0 to m - 1 do
       for j = 0 to q_cols - 1 do
-        set_3d q batch i j q_work.(i).(j)
+        set_batched_2d q q_shape batch i j q_work.(i).(j)
       done
     done;
 
@@ -429,8 +457,8 @@ let kernel_qr_single (type a b) ~reduced (dtype : (a, b) Dtype.t) input q r m n
     let r_rows = if reduced then k else m in
     for i = 0 to r_rows - 1 do
       for j = 0 to n - 1 do
-        if i <= j then set_3d r batch i j r_work.(i).(j)
-        else set_3d r batch i j (Dtype.zero dtype)
+        if i <= j then set_batched_2d r r_shape batch i j r_work.(i).(j)
+        else set_batched_2d r r_shape batch i j (Dtype.zero dtype)
       done
     done
 
@@ -485,13 +513,19 @@ let qr (type a b) ~reduced ctx (input : (a, b) t) =
     Array1.unsafe_set r.buffer i (Dtype.zero input.dtype)
   done;
 
+  (* Get shapes for batch indexing *)
+  let input_shape = get_shape input.view in
+
   (* Process batches in parallel if batch_size > 1 *)
   if batch_size > 1 then
-    Parallel.parallel_for pool 0 (batch_size - 1) (fun batch_start batch_end ->
+    Parallel.parallel_for pool 0 batch_size (fun batch_start batch_end ->
         for batch = batch_start to batch_end - 1 do
-          kernel_qr_single ~reduced input.dtype input q r m n k batch_size batch
+          kernel_qr_single ~reduced input.dtype input q r input_shape q_shape
+            r_shape m n k batch_size batch
         done)
-  else kernel_qr_single ~reduced input.dtype input q r m n k batch_size 0;
+  else
+    kernel_qr_single ~reduced input.dtype input q r input_shape q_shape r_shape
+      m n k batch_size 0;
 
   (q, r)
 
@@ -544,13 +578,14 @@ let update_orthogonal_matrix (type a b) (dtype : (a, b) Dtype.t) mat vec beta
 
 (* Kernel for single matrix SVD *)
 let kernel_svd_single (type a b) ~full_matrices (dtype : (a, b) Dtype.t) input u
-    s v m n k batch_size batch =
+    s v input_shape u_shape v_shape m n k batch_size batch =
   (* Copy input matrix to working array *)
   let a_work = Array.make_matrix m n (Dtype.zero dtype) in
   for i = 0 to m - 1 do
     for j = 0 to n - 1 do
       a_work.(i).(j) <-
-        (if batch_size = 1 then get_2d input i j else get_3d input batch i j)
+        (if batch_size = 1 then get_2d input i j
+         else get_batched_2d input input_shape batch i j)
     done
   done;
 
@@ -588,8 +623,7 @@ let kernel_svd_single (type a b) ~full_matrices (dtype : (a, b) Dtype.t) input u
           Dtype.add dtype a_work.(i).(i) (Dtype.mul dtype sign col_norm)
         in
         let beta =
-          Dtype.div dtype (Dtype.of_float dtype 2.0)
-            (Dtype.mul dtype u_0 col_norm)
+          Dtype.div dtype (Dtype.one dtype) (Dtype.mul dtype u_0 col_norm)
         in
 
         (* Apply reflection to A *)
@@ -624,8 +658,7 @@ let kernel_svd_single (type a b) ~full_matrices (dtype : (a, b) Dtype.t) input u
           Dtype.add dtype a_work.(i).(i + 1) (Dtype.mul dtype sign row_norm)
         in
         let beta =
-          Dtype.div dtype (Dtype.of_float dtype 2.0)
-            (Dtype.mul dtype v_0 row_norm)
+          Dtype.div dtype (Dtype.one dtype) (Dtype.mul dtype v_0 row_norm)
         in
 
         (* Apply reflection to A from the right *)
@@ -660,99 +693,150 @@ let kernel_svd_single (type a b) ~full_matrices (dtype : (a, b) Dtype.t) input u
     if i < k - 1 && i < n - 1 then superdiag.(i) <- a_work.(i).(i + 1)
   done;
 
-  (* Implicit QR algorithm with Wilkinson shift for singular values *)
+  (* Golub-Kahan SVD iteration with bulge-chasing *)
   let max_iter = 30 * k in
-  (* Usually converges much faster *)
+  let tol = eps_of_dtype dtype *. float_of_int k in
 
   for _ = 0 to max_iter - 1 do
-    (* Check for convergence and deflation *)
-    let converged = ref true in
+    (* Find active blocks by checking for negligible superdiagonal elements *)
+    let finished = ref true in
+
+    (* Deflate small superdiagonal elements *)
     for i = 0 to k - 2 do
-      if abs_float (to_float dtype superdiag.(i)) > eps then converged := false
+      let d_i = to_float dtype diag.(i) in
+      let d_i1 = to_float dtype diag.(i + 1) in
+      let s_i = to_float dtype superdiag.(i) in
+      if abs_float s_i <= tol *. (abs_float d_i +. abs_float d_i1) then
+        superdiag.(i) <- Dtype.zero dtype
+      else finished := false
     done;
-    if !converged then ()
+
+    if !finished then () (* Converged *)
     else
-      (* Find the largest unconverged block *)
-      let p = ref (k - 1) in
-      while !p > 0 && abs_float (to_float dtype superdiag.(!p - 1)) < eps do
-        decr p
+      (* Find the largest active block [p_start, p_end] *)
+      let p_end = ref (k - 1) in
+      while !p_end > 0 && to_float dtype superdiag.(!p_end - 1) = 0.0 do
+        decr p_end
       done;
 
-      if !p > 0 then
-        (* Apply QR step with shift *)
-        let shift =
-          let a = to_float dtype diag.(!p) in
-          let b = to_float dtype diag.(!p - 1) in
-          let c = if !p > 1 then to_float dtype superdiag.(!p - 2) else 0.0 in
-          (* Wilkinson shift *)
-          let d = (b -. a) /. 2.0 in
-          let sign_d = if d >= 0.0 then 1.0 else -1.0 in
-          a -. (c *. c /. (d +. (sign_d *. sqrt ((d *. d) +. (c *. c)))))
+      let p_start = ref !p_end in
+      while !p_start > 0 && to_float dtype superdiag.(!p_start - 1) <> 0.0 do
+        decr p_start
+      done;
+
+      if !p_end > !p_start then
+        (* Compute shift from trailing 2x2 of B^T B *)
+        let n = !p_end in
+        let d_n = to_float dtype diag.(n) in
+        let d_n1 = to_float dtype diag.(n - 1) in
+        let e_n1 = if n > 1 then to_float dtype superdiag.(n - 1) else 0.0 in
+
+        (* Wilkinson shift for B^T B *)
+        let t_nn = d_n *. d_n in
+        let t_n1n1 = (d_n1 *. d_n1) +. (e_n1 *. e_n1) in
+        let t_n1n = d_n1 *. e_n1 in
+
+        let delta = (t_n1n1 -. t_nn) /. 2.0 in
+        let mu =
+          t_nn
+          -. t_n1n *. t_n1n
+             /. (delta
+                +. (if delta >= 0.0 then 1.0 else -1.0)
+                   *. sqrt ((delta *. delta) +. (t_n1n *. t_n1n)))
         in
 
-        (* QR factorization of shifted matrix *)
-        for i = 0 to !p - 1 do
-          let d_shifted =
-            if i = 0 then Dtype.sub dtype diag.(i) (Dtype.of_float dtype shift)
-            else diag.(i)
+        (* First rotation to introduce bulge *)
+        let p = !p_start in
+        let y = (to_float dtype diag.(p) *. to_float dtype diag.(p)) -. mu in
+        let z =
+          to_float dtype diag.(p)
+          *. if p < k - 1 then to_float dtype superdiag.(p) else 0.0
+        in
+
+        (* Bulge chasing *)
+        let y = ref y in
+        let z = ref z in
+        for k_iter = p to !p_end - 1 do
+          (* Right Givens rotation G to zero out z *)
+          let c, s =
+            if abs_float !z < eps then (Dtype.one dtype, Dtype.zero dtype)
+            else
+              givens_rotation dtype (Dtype.of_float dtype !y)
+                (Dtype.of_float dtype !z)
           in
 
-          if i < !p - 1 then (
-            (* Compute Givens rotation *)
-            let c, s = givens_rotation dtype d_shifted superdiag.(i) in
-
-            (* Apply rotation *)
-            let new_diag =
-              Dtype.add dtype
-                (Dtype.mul dtype c d_shifted)
-                (Dtype.mul dtype s superdiag.(i))
+          (* Apply G from right to B (affects columns k_iter and k_iter+1) *)
+          if k_iter < k - 1 then (
+            (* Update diag and superdiag *)
+            let d_k = diag.(k_iter) in
+            let e_k =
+              if k_iter < k - 1 then superdiag.(k_iter) else Dtype.zero dtype
             in
-            let new_super =
-              if i < !p - 2 then Dtype.mul dtype s superdiag.(i + 1)
-              else Dtype.zero dtype
+            let _d_k1 =
+              if k_iter + 1 < k then diag.(k_iter + 1) else Dtype.zero dtype
             in
 
-            diag.(i) <- new_diag;
-            if i < !p - 2 then superdiag.(i + 1) <- new_super;
+            (* Apply rotation to B from right *)
+            diag.(k_iter) <-
+              Dtype.add dtype (Dtype.mul dtype c d_k) (Dtype.mul dtype s e_k);
 
-            if i < !p - 1 then (
-              let temp =
-                Dtype.sub dtype
-                  (Dtype.mul dtype c diag.(i + 1))
-                  (Dtype.mul dtype s superdiag.(i))
-              in
-              superdiag.(i) <-
-                Dtype.add dtype
-                  (Dtype.mul dtype s diag.(i + 1))
-                  (Dtype.mul dtype c superdiag.(i));
-              diag.(i + 1) <- temp);
+            if k_iter < k - 1 then
+              superdiag.(k_iter) <-
+                Dtype.sub dtype (Dtype.mul dtype c e_k) (Dtype.mul dtype s d_k);
 
-            (* Update U and V *)
-            for j = 0 to m - 1 do
-              let u_i = u_work.(j).(i) in
-              let u_i1 =
-                if i + 1 < m then u_work.(j).(i + 1) else Dtype.zero dtype
+            (* Apply to V *)
+            for i = 0 to n - 1 do
+              let v_k = v_work.(i).(k_iter) in
+              let v_k1 =
+                if k_iter + 1 < n then v_work.(i).(k_iter + 1)
+                else Dtype.zero dtype
               in
-              u_work.(j).(i) <-
-                Dtype.add dtype (Dtype.mul dtype c u_i) (Dtype.mul dtype s u_i1);
-              if i + 1 < m then
-                u_work.(j).(i + 1) <-
-                  Dtype.sub dtype (Dtype.mul dtype c u_i1)
-                    (Dtype.mul dtype s u_i)
+              v_work.(i).(k_iter) <-
+                Dtype.add dtype (Dtype.mul dtype c v_k) (Dtype.mul dtype s v_k1);
+              if k_iter + 1 < n then
+                v_work.(i).(k_iter + 1) <-
+                  Dtype.sub dtype (Dtype.mul dtype c v_k1)
+                    (Dtype.mul dtype s v_k)
             done;
 
-            for j = 0 to n - 1 do
-              let v_i = v_work.(j).(i) in
-              let v_i1 =
-                if i + 1 < n then v_work.(j).(i + 1) else Dtype.zero dtype
-              in
-              v_work.(j).(i) <-
-                Dtype.add dtype (Dtype.mul dtype c v_i) (Dtype.mul dtype s v_i1);
-              if i + 1 < n then
-                v_work.(j).(i + 1) <-
-                  Dtype.sub dtype (Dtype.mul dtype c v_i1)
-                    (Dtype.mul dtype s v_i)
-            done)
+            (* Now apply left Givens to zero the bulge *)
+            if k_iter < !p_end - 1 then (
+              let bulge = superdiag.(k_iter) in
+              let next_diag = diag.(k_iter + 1) in
+
+              let c_left, s_left = givens_rotation dtype next_diag bulge in
+
+              (* Apply from left *)
+              diag.(k_iter + 1) <-
+                Dtype.add dtype
+                  (Dtype.mul dtype c_left next_diag)
+                  (Dtype.mul dtype s_left bulge);
+              superdiag.(k_iter) <- Dtype.zero dtype;
+
+              (* Apply to U *)
+              for i = 0 to m - 1 do
+                let u_k = u_work.(i).(k_iter) in
+                let u_k1 =
+                  if k_iter + 1 < m then u_work.(i).(k_iter + 1)
+                  else Dtype.zero dtype
+                in
+                u_work.(i).(k_iter) <-
+                  Dtype.add dtype
+                    (Dtype.mul dtype c_left u_k)
+                    (Dtype.mul dtype s_left u_k1);
+                if k_iter + 1 < m then
+                  u_work.(i).(k_iter + 1) <-
+                    Dtype.sub dtype
+                      (Dtype.mul dtype c_left u_k1)
+                      (Dtype.mul dtype s_left u_k)
+              done;
+
+              (* Update y and z for next iteration *)
+              if k_iter + 1 < !p_end - 1 then (
+                y := to_float dtype diag.(k_iter + 1);
+                z :=
+                  if k_iter + 2 < k then to_float dtype superdiag.(k_iter + 1)
+                  else 0.0)))
         done
   done;
 
@@ -790,6 +874,22 @@ let kernel_svd_single (type a b) ~full_matrices (dtype : (a, b) Dtype.t) input u
       sorted_v.(i).(idx) <- v_work.(i).(orig_idx)
     done
   done;
+
+  (* If full_matrices, copy remaining columns from u_work and v_work *)
+  if full_matrices then (
+    (* Copy remaining columns of U (columns k to m-1) *)
+    for col = k to m - 1 do
+      for row = 0 to m - 1 do
+        sorted_u.(row).(col) <- u_work.(row).(col)
+      done
+    done;
+
+    (* Copy remaining columns of V (columns k to n-1) *)
+    for col = k to n - 1 do
+      for row = 0 to n - 1 do
+        sorted_v.(row).(col) <- v_work.(row).(col)
+      done
+    done);
 
   (* Copy to output tensors *)
   if batch_size = 1 then (
@@ -831,7 +931,7 @@ let kernel_svd_single (type a b) ~full_matrices (dtype : (a, b) Dtype.t) input u
     let u_cols = if full_matrices then m else k in
     for i = 0 to m - 1 do
       for j = 0 to u_cols - 1 do
-        set_3d u batch i j sorted_u.(i).(j)
+        set_batched_2d u u_shape batch i j sorted_u.(i).(j)
       done
     done;
 
@@ -839,7 +939,7 @@ let kernel_svd_single (type a b) ~full_matrices (dtype : (a, b) Dtype.t) input u
     let v_rows = if full_matrices then n else k in
     for i = 0 to v_rows - 1 do
       for j = 0 to n - 1 do
-        set_3d v batch i j sorted_v.(j).(i)
+        set_batched_2d v v_shape batch i j sorted_v.(j).(i)
       done
     done)
 
@@ -887,15 +987,19 @@ let svd (type a b) ~full_matrices ctx (input : (a, b) t) =
   (* Always float64 for singular values *)
   let v = create_output ctx input.dtype v_shape in
 
+  (* Get shapes for batch indexing *)
+  let input_shape = get_shape input.view in
+
   (* Process batches in parallel if batch_size > 1 *)
   if batch_size > 1 then
-    Parallel.parallel_for pool 0 (batch_size - 1) (fun batch_start batch_end ->
+    Parallel.parallel_for pool 0 batch_size (fun batch_start batch_end ->
         for batch = batch_start to batch_end - 1 do
-          kernel_svd_single ~full_matrices input.dtype input u s v m n k
-            batch_size batch
+          kernel_svd_single ~full_matrices input.dtype input u s v input_shape
+            u_shape v_shape m n k batch_size batch
         done)
   else
-    kernel_svd_single ~full_matrices input.dtype input u s v m n k batch_size 0;
+    kernel_svd_single ~full_matrices input.dtype input u s v input_shape u_shape
+      v_shape m n k batch_size 0;
 
   (u, s, v)
 
@@ -913,13 +1017,14 @@ let eig (type a b) ~vectors:_ _ctx (input : (a, b) t) =
 
 (* Kernel for single matrix symmetric eigenvalue decomposition *)
 let kernel_eigh_single (type a b) ~vectors (dtype : (a, b) Dtype.t) input
-    eigenvalues eigenvectors n batch_size batch =
+    eigenvalues eigenvectors input_shape evecs_shape n batch_size batch =
   (* Copy input matrix to working array *)
   let a_work = Array.make_matrix n n (Dtype.zero dtype) in
   for i = 0 to n - 1 do
     for j = 0 to n - 1 do
       a_work.(i).(j) <-
-        (if batch_size = 1 then get_2d input i j else get_3d input batch i j)
+        (if batch_size = 1 then get_2d input i j
+         else get_batched_2d input input_shape batch i j)
     done
   done;
 
@@ -1032,115 +1137,153 @@ let kernel_eigh_single (type a b) ~vectors (dtype : (a, b) Dtype.t) input
     if i < n - 1 then offdiag.(i) <- a_work.(i).(i + 1)
   done;
 
-  (* QR algorithm on tridiagonal matrix *)
+  (* QR algorithm on tridiagonal matrix with block deflation *)
   let max_iter = 100 * n in
+  let tol = eps_of_dtype dtype *. float_of_int n in
+
+  (* Deflate small off-diagonal elements *)
+  let deflate () =
+    for i = 0 to n - 2 do
+      let t_i = to_float dtype tridiag.(i) in
+      let t_i1 = to_float dtype tridiag.(i + 1) in
+      let o_i = to_float dtype offdiag.(i) in
+      if abs_float o_i <= tol *. (abs_float t_i +. abs_float t_i1) then
+        offdiag.(i) <- Dtype.zero dtype
+    done
+  in
 
   for _iter = 0 to max_iter - 1 do
-    (* Check convergence *)
-    let converged = ref true in
-    for i = 0 to n - 2 do
-      if
-        abs_float (to_float dtype offdiag.(i))
-        > eps
-          *. (abs_float (to_float dtype tridiag.(i))
-             +. abs_float (to_float dtype tridiag.(i + 1)))
-      then converged := false
+    (* Deflate negligible off-diagonals *)
+    deflate ();
+
+    (* Find active sub-blocks [p_start, p_end] *)
+    let finished = ref true in
+    let p_end = ref (n - 1) in
+
+    while !p_end > 0 do
+      (* Find the end of the current active block *)
+      while !p_end > 0 && to_float dtype offdiag.(!p_end - 1) = 0.0 do
+        decr p_end
+      done;
+
+      if !p_end = 0 then () (* All blocks processed *)
+      else
+        (* Find the start of the current active block *)
+        let p_start = ref !p_end in
+        while !p_start > 0 && to_float dtype offdiag.(!p_start - 1) <> 0.0 do
+          decr p_start
+        done;
+
+        if !p_end > !p_start then (
+          finished := false;
+          let block_size = !p_end - !p_start + 1 in
+
+          (* Wilkinson shift for this block *)
+          let d =
+            Dtype.div dtype
+              (Dtype.sub dtype tridiag.(!p_end - 1) tridiag.(!p_end))
+              (Dtype.of_float dtype 2.0)
+          in
+          let sign_d =
+            if to_float dtype d >= 0.0 then Dtype.one dtype
+            else Dtype.minus_one dtype
+          in
+          let shift =
+            if block_size = 1 then tridiag.(!p_end)
+            else
+              Dtype.sub dtype tridiag.(!p_end)
+                (Dtype.div dtype
+                   (Dtype.mul dtype offdiag.(!p_end - 1) offdiag.(!p_end - 1))
+                   (Dtype.add dtype d
+                      (Dtype.mul dtype sign_d
+                         (Dtype.of_float dtype
+                            (sqrt
+                               (to_float dtype
+                                  (Dtype.add dtype (Dtype.mul dtype d d)
+                                     (Dtype.mul dtype
+                                        offdiag.(!p_end - 1)
+                                        offdiag.(!p_end - 1)))))))))
+          in
+
+          (* QR step with shift on this block *)
+          let x = ref (Dtype.sub dtype tridiag.(!p_start) shift) in
+          let y =
+            ref
+              (if !p_start < n - 1 then offdiag.(!p_start) else Dtype.zero dtype)
+          in
+
+          for k = !p_start to !p_end - 1 do
+            (* Compute Givens rotation *)
+            let c, s = givens_rotation dtype !x !y in
+
+            (* Apply rotation to tridiagonal matrix *)
+            if k > !p_start then
+              offdiag.(k - 1) <-
+                Dtype.add dtype (Dtype.mul dtype c !x) (Dtype.mul dtype s !y);
+
+            let temp1 =
+              Dtype.add dtype
+                (Dtype.mul dtype c (Dtype.mul dtype c tridiag.(k)))
+                (Dtype.mul dtype s (Dtype.mul dtype s tridiag.(k + 1)))
+            in
+            let temp2 =
+              Dtype.mul dtype (Dtype.of_float dtype 2.0)
+                (Dtype.mul dtype c (Dtype.mul dtype s offdiag.(k)))
+            in
+            let new_diag_k = Dtype.add dtype temp1 temp2 in
+
+            let temp3 =
+              Dtype.add dtype
+                (Dtype.mul dtype s (Dtype.mul dtype s tridiag.(k)))
+                (Dtype.mul dtype c (Dtype.mul dtype c tridiag.(k + 1)))
+            in
+            let temp4 =
+              Dtype.mul dtype (Dtype.of_float dtype 2.0)
+                (Dtype.mul dtype c (Dtype.mul dtype s offdiag.(k)))
+            in
+            let new_diag_k1 = Dtype.sub dtype temp3 temp4 in
+
+            let cs_diff =
+              Dtype.sub dtype (Dtype.mul dtype c c) (Dtype.mul dtype s s)
+            in
+            let new_offdiag_k =
+              Dtype.add dtype
+                (Dtype.mul dtype cs_diff offdiag.(k))
+                (Dtype.mul dtype c
+                   (Dtype.mul dtype s
+                      (Dtype.sub dtype tridiag.(k) tridiag.(k + 1))))
+            in
+
+            tridiag.(k) <- new_diag_k;
+            tridiag.(k + 1) <- new_diag_k1;
+            offdiag.(k) <- new_offdiag_k;
+
+            if k < n - 2 then (
+              x := Dtype.mul dtype s offdiag.(k + 1);
+              y := Dtype.mul dtype c offdiag.(k + 1));
+
+            (* Update eigenvector matrix if needed *)
+            match q_accum with
+            | Some q ->
+                for i = 0 to n - 1 do
+                  let q_ik = q.(i).(k) in
+                  let q_ik1 = q.(i).(k + 1) in
+                  q.(i).(k) <-
+                    Dtype.add dtype (Dtype.mul dtype c q_ik)
+                      (Dtype.mul dtype s q_ik1);
+                  q.(i).(k + 1) <-
+                    Dtype.sub dtype (Dtype.mul dtype c q_ik1)
+                      (Dtype.mul dtype s q_ik)
+                done
+            | None -> ()
+          done);
+
+        (* Move to next block *)
+        p_end := !p_start - 1
     done;
 
-    if !converged then ()
-    else
-      (* Wilkinson shift *)
-      let d =
-        Dtype.div dtype
-          (Dtype.sub dtype tridiag.(n - 2) tridiag.(n - 1))
-          (Dtype.of_float dtype 2.0)
-      in
-      let sign_d =
-        if to_float dtype d >= 0.0 then Dtype.one dtype
-        else Dtype.minus_one dtype
-      in
-      let shift =
-        Dtype.sub dtype
-          tridiag.(n - 1)
-          (Dtype.div dtype
-             (Dtype.mul dtype offdiag.(n - 2) offdiag.(n - 2))
-             (Dtype.add dtype d
-                (Dtype.mul dtype sign_d
-                   (Dtype.of_float dtype
-                      (sqrt
-                         (to_float dtype
-                            (Dtype.add dtype (Dtype.mul dtype d d)
-                               (Dtype.mul dtype offdiag.(n - 2) offdiag.(n - 2)))))))))
-      in
-
-      (* QR step with shift *)
-      let x = ref (Dtype.sub dtype tridiag.(0) shift) in
-      let y = ref offdiag.(0) in
-
-      for k = 0 to n - 2 do
-        (* Compute Givens rotation *)
-        let c, s = givens_rotation dtype !x !y in
-
-        (* Apply rotation to tridiagonal matrix *)
-        if k > 0 then
-          offdiag.(k - 1) <-
-            Dtype.add dtype (Dtype.mul dtype c !x) (Dtype.mul dtype s !y);
-
-        let temp1 =
-          Dtype.add dtype
-            (Dtype.mul dtype c (Dtype.mul dtype c tridiag.(k)))
-            (Dtype.mul dtype s (Dtype.mul dtype s tridiag.(k + 1)))
-        in
-        let temp2 =
-          Dtype.mul dtype (Dtype.of_float dtype 2.0)
-            (Dtype.mul dtype c (Dtype.mul dtype s offdiag.(k)))
-        in
-        let new_diag_k = Dtype.add dtype temp1 temp2 in
-
-        let temp3 =
-          Dtype.add dtype
-            (Dtype.mul dtype s (Dtype.mul dtype s tridiag.(k)))
-            (Dtype.mul dtype c (Dtype.mul dtype c tridiag.(k + 1)))
-        in
-        let temp4 =
-          Dtype.mul dtype (Dtype.of_float dtype 2.0)
-            (Dtype.mul dtype c (Dtype.mul dtype s offdiag.(k)))
-        in
-        let new_diag_k1 = Dtype.sub dtype temp3 temp4 in
-
-        let cs_diff =
-          Dtype.sub dtype (Dtype.mul dtype c c) (Dtype.mul dtype s s)
-        in
-        let new_offdiag_k =
-          Dtype.add dtype
-            (Dtype.mul dtype cs_diff offdiag.(k))
-            (Dtype.mul dtype c
-               (Dtype.mul dtype s (Dtype.sub dtype tridiag.(k) tridiag.(k + 1))))
-        in
-
-        tridiag.(k) <- new_diag_k;
-        tridiag.(k + 1) <- new_diag_k1;
-        offdiag.(k) <- new_offdiag_k;
-
-        if k < n - 2 then (
-          x := Dtype.mul dtype s offdiag.(k + 1);
-          y := Dtype.mul dtype c offdiag.(k + 1));
-
-        (* Update eigenvector matrix if needed *)
-        match q_accum with
-        | Some q ->
-            for i = 0 to n - 1 do
-              let q_ik = q.(i).(k) in
-              let q_ik1 = q.(i).(k + 1) in
-              q.(i).(k) <-
-                Dtype.add dtype (Dtype.mul dtype c q_ik)
-                  (Dtype.mul dtype s q_ik1);
-              q.(i).(k + 1) <-
-                Dtype.sub dtype (Dtype.mul dtype c q_ik1)
-                  (Dtype.mul dtype s q_ik)
-            done
-        | None -> ()
-      done
+    (* Check if all blocks are converged *)
+    if !finished then ()
   done;
 
   (* Sort eigenvalues in descending order *)
@@ -1179,7 +1322,7 @@ let kernel_eigh_single (type a b) ~vectors (dtype : (a, b) Dtype.t) input
       else
         for i = 0 to n - 1 do
           for j = 0 to n - 1 do
-            set_3d evecs batch i j q.(i).(indices.(j))
+            set_batched_2d evecs evecs_shape batch i j q.(i).(indices.(j))
           done
         done
   | _ -> ()
@@ -1210,16 +1353,22 @@ let eigh (type a b) ~vectors ctx (input : (a, b) t) =
     else None
   in
 
+  (* Get shapes for batch indexing *)
+  let input_shape = get_shape input.view in
+  let evecs_shape =
+    match eigenvectors with Some evecs -> get_shape evecs.view | None -> [||]
+  in
+
   (* Process batches in parallel if batch_size > 1 *)
   if batch_size > 1 then
-    Parallel.parallel_for pool 0 (batch_size - 1) (fun batch_start batch_end ->
+    Parallel.parallel_for pool 0 batch_size (fun batch_start batch_end ->
         for batch = batch_start to batch_end - 1 do
           kernel_eigh_single ~vectors input.dtype input eigenvalues eigenvectors
-            n batch_size batch
+            input_shape evecs_shape n batch_size batch
         done)
   else
-    kernel_eigh_single ~vectors input.dtype input eigenvalues eigenvectors n
-      batch_size 0;
+    kernel_eigh_single ~vectors input.dtype input eigenvalues eigenvectors
+      input_shape evecs_shape n batch_size 0;
 
   (eigenvalues, eigenvectors)
 
@@ -1227,8 +1376,11 @@ let eigh (type a b) ~vectors ctx (input : (a, b) t) =
 
 (* Kernel for triangular solve on single matrix/vector pair *)
 let kernel_triangular_solve_single (type a b) ~upper ~transpose ~unit_diag
-    (dtype : (a, b) Dtype.t) a output n nb batch_size_a batch_size batch_a
-    batch_b =
+    (dtype : (a, b) Dtype.t) a output a_shape output_shape n nb batch_size_a
+    batch_size batch_a batch_b =
+  (* Compute tolerance for zero diagonal check *)
+  let tol = eps_of_dtype dtype *. float_of_int n in
+
   (* Solve for each column of b *)
   for col = 0 to nb - 1 do
     if upper && not transpose then
@@ -1237,26 +1389,32 @@ let kernel_triangular_solve_single (type a b) ~upper ~transpose ~unit_diag
         let sum =
           ref
             (if batch_size = 1 then get_2d output i col
-             else get_3d output batch_b i col)
+             else get_batched_2d output output_shape batch_b i col)
         in
         for j = i + 1 to n - 1 do
           let a_ij =
-            if batch_size_a = 1 then get_2d a i j else get_3d a batch_a i j
+            if batch_size_a = 1 then get_2d a i j
+            else get_batched_2d a a_shape batch_a i j
           in
           let x_j =
             if batch_size = 1 then get_2d output j col
-            else get_3d output batch_b j col
+            else get_batched_2d output output_shape batch_b j col
           in
           sum := Dtype.sub dtype !sum (Dtype.mul dtype a_ij x_j)
         done;
         let a_ii =
           if unit_diag then Dtype.one dtype
           else if batch_size_a = 1 then get_2d a i i
-          else get_3d a batch_a i i
+          else get_batched_2d a a_shape batch_a i i
         in
+        (* Check for near-zero diagonal *)
+        if (not unit_diag) && abs_float (to_float dtype a_ii) < tol then
+          failwith
+            (Printf.sprintf "triangular_solve: diagonal element %d is near zero"
+               i);
         let x_i = Dtype.div dtype !sum a_ii in
         if batch_size = 1 then set_2d output i col x_i
-        else set_3d output batch_b i col x_i
+        else set_batched_2d output output_shape batch_b i col x_i
       done
     else if (not upper) && not transpose then
       (* Solve L*x = b using forward substitution *)
@@ -1264,26 +1422,32 @@ let kernel_triangular_solve_single (type a b) ~upper ~transpose ~unit_diag
         let sum =
           ref
             (if batch_size = 1 then get_2d output i col
-             else get_3d output batch_b i col)
+             else get_batched_2d output output_shape batch_b i col)
         in
         for j = 0 to i - 1 do
           let a_ij =
-            if batch_size_a = 1 then get_2d a i j else get_3d a batch_a i j
+            if batch_size_a = 1 then get_2d a i j
+            else get_batched_2d a a_shape batch_a i j
           in
           let x_j =
             if batch_size = 1 then get_2d output j col
-            else get_3d output batch_b j col
+            else get_batched_2d output output_shape batch_b j col
           in
           sum := Dtype.sub dtype !sum (Dtype.mul dtype a_ij x_j)
         done;
         let a_ii =
           if unit_diag then Dtype.one dtype
           else if batch_size_a = 1 then get_2d a i i
-          else get_3d a batch_a i i
+          else get_batched_2d a a_shape batch_a i i
         in
+        (* Check for near-zero diagonal *)
+        if (not unit_diag) && abs_float (to_float dtype a_ii) < tol then
+          failwith
+            (Printf.sprintf "triangular_solve: diagonal element %d is near zero"
+               i);
         let x_i = Dtype.div dtype !sum a_ii in
         if batch_size = 1 then set_2d output i col x_i
-        else set_3d output batch_b i col x_i
+        else set_batched_2d output output_shape batch_b i col x_i
       done
     else if upper && transpose then
       (* Solve U^T*x = b using forward substitution *)
@@ -1291,26 +1455,32 @@ let kernel_triangular_solve_single (type a b) ~upper ~transpose ~unit_diag
         let sum =
           ref
             (if batch_size = 1 then get_2d output i col
-             else get_3d output batch_b i col)
+             else get_batched_2d output output_shape batch_b i col)
         in
         for j = 0 to i - 1 do
           let a_ji =
-            if batch_size_a = 1 then get_2d a j i else get_3d a batch_a j i
+            if batch_size_a = 1 then get_2d a j i
+            else get_batched_2d a a_shape batch_a j i
           in
           let x_j =
             if batch_size = 1 then get_2d output j col
-            else get_3d output batch_b j col
+            else get_batched_2d output output_shape batch_b j col
           in
           sum := Dtype.sub dtype !sum (Dtype.mul dtype a_ji x_j)
         done;
         let a_ii =
           if unit_diag then Dtype.one dtype
           else if batch_size_a = 1 then get_2d a i i
-          else get_3d a batch_a i i
+          else get_batched_2d a a_shape batch_a i i
         in
+        (* Check for near-zero diagonal *)
+        if (not unit_diag) && abs_float (to_float dtype a_ii) < tol then
+          failwith
+            (Printf.sprintf "triangular_solve: diagonal element %d is near zero"
+               i);
         let x_i = Dtype.div dtype !sum a_ii in
         if batch_size = 1 then set_2d output i col x_i
-        else set_3d output batch_b i col x_i
+        else set_batched_2d output output_shape batch_b i col x_i
       done
     else (* not upper && transpose *)
       (* Solve L^T*x = b using backward substitution *)
@@ -1318,26 +1488,32 @@ let kernel_triangular_solve_single (type a b) ~upper ~transpose ~unit_diag
         let sum =
           ref
             (if batch_size = 1 then get_2d output i col
-             else get_3d output batch_b i col)
+             else get_batched_2d output output_shape batch_b i col)
         in
         for j = i + 1 to n - 1 do
           let a_ji =
-            if batch_size_a = 1 then get_2d a j i else get_3d a batch_a j i
+            if batch_size_a = 1 then get_2d a j i
+            else get_batched_2d a a_shape batch_a j i
           in
           let x_j =
             if batch_size = 1 then get_2d output j col
-            else get_3d output batch_b j col
+            else get_batched_2d output output_shape batch_b j col
           in
           sum := Dtype.sub dtype !sum (Dtype.mul dtype a_ji x_j)
         done;
         let a_ii =
           if unit_diag then Dtype.one dtype
           else if batch_size_a = 1 then get_2d a i i
-          else get_3d a batch_a i i
+          else get_batched_2d a a_shape batch_a i i
         in
+        (* Check for near-zero diagonal *)
+        if (not unit_diag) && abs_float (to_float dtype a_ii) < tol then
+          failwith
+            (Printf.sprintf "triangular_solve: diagonal element %d is near zero"
+               i);
         let x_i = Dtype.div dtype !sum a_ii in
         if batch_size = 1 then set_2d output i col x_i
-        else set_3d output batch_b i col x_i
+        else set_batched_2d output output_shape batch_b i col x_i
       done
   done
 
@@ -1383,20 +1559,24 @@ let triangular_solve (type a b) ~upper ~transpose ~unit_diag ctx (a : (a, b) t)
   (* Copy b to output *)
   Array1.blit b_expanded.buffer output.buffer;
 
+  (* Get shapes for batch indexing *)
+  let a_shape = get_shape a.view in
+
   (* Process batches in parallel if batch_size > 1 *)
   (if batch_size > 1 then
-     Parallel.parallel_for pool 0 (batch_size - 1) (fun batch_start batch_end ->
+     Parallel.parallel_for pool 0 batch_size (fun batch_start batch_end ->
          for batch = batch_start to batch_end - 1 do
            let batch_a = if batch_size_a = 1 then 0 else batch in
            let batch_b = if batch_size_b = 1 then 0 else batch in
            kernel_triangular_solve_single ~upper ~transpose ~unit_diag a.dtype a
-             output n nb batch_size_a batch_size batch_a batch_b
+             output a_shape output_shape n nb batch_size_a batch_size batch_a
+             batch_b
          done)
    else
      let batch_a = 0 in
      let batch_b = 0 in
      kernel_triangular_solve_single ~upper ~transpose ~unit_diag a.dtype a
-       output n nb batch_size_a batch_size batch_a batch_b);
+       output a_shape output_shape n nb batch_size_a batch_size batch_a batch_b);
 
   (* Reshape output to match input b shape *)
   if b_is_1d then
