@@ -19,19 +19,19 @@ let feed_forward_network ~embed_dim ~hidden_dim () =
           (* Gate and up projections *)
           let gate_proj =
             Initializer.apply init
-              (Rune.Rng.to_int ((Rune.Rng.split rng1).(0)))
+              (Rune.Rng.to_int (Rune.Rng.split rng1).(0))
               [| embed_dim; hidden_dim |]
               dev dtype
           in
           let up_proj =
             Initializer.apply init
-              (Rune.Rng.to_int ((Rune.Rng.split rng2).(0)))
+              (Rune.Rng.to_int (Rune.Rng.split rng2).(0))
               [| embed_dim; hidden_dim |]
               dev dtype
           in
           let down_proj =
             Initializer.apply init
-              (Rune.Rng.to_int ((Rune.Rng.split rng3).(0)))
+              (Rune.Rng.to_int (Rune.Rng.split rng3).(0))
               [| hidden_dim; embed_dim |]
               dev dtype
           in
@@ -284,7 +284,7 @@ let create_gemma_model config =
           let embed_init = Initializer.normal ~mean:0.0 ~std:0.02 in
           let embeddings =
             Initializer.apply embed_init
-              (Rune.Rng.to_int ((Rune.Rng.split rng_embed).(0)))
+              (Rune.Rng.to_int (Rune.Rng.split rng_embed).(0))
               [| config.Config.vocab_size; config.Config.embed_dim |]
               dev dtype_float
           in
@@ -325,7 +325,7 @@ let create_gemma_model config =
           in
           let lm_head =
             Initializer.apply lm_head_init
-              (Rune.Rng.to_int ((Rune.Rng.split rng_lm_head).(0)))
+              (Rune.Rng.to_int (Rune.Rng.split rng_lm_head).(0))
               [| config.Config.embed_dim; config.Config.vocab_size |]
               dev dtype_float
           in

@@ -105,59 +105,47 @@ let test_bernoulli () =
   let p = 0.3 in
   let t = Rng.bernoulli key ctx ~p shape in
 
-  A.check (A.array A.int) "bernoulli produces correct shape" shape (Rune.shape t);
+  A.check (A.array A.int) "bernoulli produces correct shape" shape
+    (Rune.shape t);
 
   (* Check proportion roughly matches p *)
   let values = Rune.unsafe_to_array t in
-  let ones = Array.fold_left (fun acc v -> acc + if v > 0 then 1 else 0) 0 values in
+  let ones =
+    Array.fold_left (fun acc v -> acc + if v > 0 then 1 else 0) 0 values
+  in
   let prop = float_of_int ones /. float_of_int (Array.length values) in
   A.check (A.float 0.05) "bernoulli proportion ~p" p prop
 
-(* TODO: Enable when argsort works with lazy views
-let test_permutation () =
-  let key = Rng.key 42 in
-  let ctx = Rune.c in
-  let n = 10 in
-  let perm = Rng.permutation key ctx n in
+(* TODO: Enable when argsort works with lazy views let test_permutation () = let
+   key = Rng.key 42 in let ctx = Rune.c in let n = 10 in let perm =
+   Rng.permutation key ctx n in
 
-  A.check (A.array A.int) "permutation has correct shape" [| n |] (Rune.shape perm);
+   A.check (A.array A.int) "permutation has correct shape" [| n |] (Rune.shape
+   perm);
 
-  (* Check it's a valid permutation *)
-  let values = Rune.unsafe_to_array perm |> Array.map Int32.to_int in
-  let sorted = Array.copy values in
-  Array.sort compare sorted;
-  Array.iteri
-    (fun i v -> A.check A.int (Printf.sprintf "permutation contains %d" i) i v)
-    sorted
-*)
+   (* Check it's a valid permutation *) let values = Rune.unsafe_to_array perm
+   |> Array.map Int32.to_int in let sorted = Array.copy values in Array.sort
+   compare sorted; Array.iteri (fun i v -> A.check A.int (Printf.sprintf
+   "permutation contains %d" i) i v) sorted *)
 
-(* TODO: Enable when argsort works with lazy views
-let test_shuffle () =
-  let key = Rng.key 42 in
-  let ctx = Rune.c in
-  let x = Rune.arange ctx Float32 0 10 1 in
-  let x = Rune.reshape [| 10; 1 |] x in
-  let shuffled = Rng.shuffle key x in
+(* TODO: Enable when argsort works with lazy views let test_shuffle () = let key
+   = Rng.key 42 in let ctx = Rune.c in let x = Rune.arange ctx Float32 0 10 1 in
+   let x = Rune.reshape [| 10; 1 |] x in let shuffled = Rng.shuffle key x in
 
-  A.check (A.array A.int) "shuffle preserves shape" (Rune.shape x) (Rune.shape shuffled);
+   A.check (A.array A.int) "shuffle preserves shape" (Rune.shape x) (Rune.shape
+   shuffled);
 
-  (* Check all elements are still there *)
-  let original = Rune.unsafe_to_array (Rune.reshape [| 10 |] x) in
-  let shuffled_vals = Rune.unsafe_to_array (Rune.reshape [| 10 |] shuffled) in
-  let sorted_orig = Array.copy original in
-  let sorted_shuf = Array.copy shuffled_vals in
-  Array.sort compare sorted_orig;
-  Array.sort compare sorted_shuf;
-  A.check
-    (A.array (A.float 0.001))
-    "shuffle preserves elements" sorted_orig sorted_shuf;
+   (* Check all elements are still there *) let original = Rune.unsafe_to_array
+   (Rune.reshape [| 10 |] x) in let shuffled_vals = Rune.unsafe_to_array
+   (Rune.reshape [| 10 |] shuffled) in let sorted_orig = Array.copy original in
+   let sorted_shuf = Array.copy shuffled_vals in Array.sort compare sorted_orig;
+   Array.sort compare sorted_shuf; A.check (A.array (A.float 0.001)) "shuffle
+   preserves elements" sorted_orig sorted_shuf;
 
-  (* Check it's actually shuffled *)
-  let is_equal = Rune.all (Rune.array_equal x shuffled) in
-  let is_equal_val = Rune.unsafe_to_array is_equal in
-  let is_different = is_equal_val.(0) = 0 in
-  A.check A.bool "shuffle changes order" true is_different
-*)
+   (* Check it's actually shuffled *) let is_equal = Rune.all (Rune.array_equal
+   x shuffled) in let is_equal_val = Rune.unsafe_to_array is_equal in let
+   is_different = is_equal_val.(0) = 0 in A.check A.bool "shuffle changes order"
+   true is_different *)
 
 let test_truncated_normal () =
   let key = Rng.key 42 in
@@ -184,18 +172,18 @@ let test_truncated_normal () =
 let test_rng_with_autodiff () =
   let ctx = Rune.c in
   let key = Rng.key 42 in
-  
+
   (* Create a simple function that uses RNG *)
   let f x =
     let noise = Rng.normal key ctx Float32 (Rune.shape x) in
     Rune.add x noise
   in
-  
+
   (* Test gradient computation *)
   let x = Rune.ones ctx Float32 [| 3; 3 |] in
   let grad_fn = Rune.grad f in
   let dx = grad_fn x in
-  
+
   (* Gradient of x should be ones (since we just add noise) *)
   let expected = Rune.ones ctx Float32 [| 3; 3 |] in
   let is_equal = Rune.all (Rune.equal dx expected) in
@@ -222,8 +210,5 @@ let () =
           A.test_case "shuffle" `Quick test_shuffle; *)
           A.test_case "truncated_normal" `Quick test_truncated_normal;
         ] );
-      ( "autodiff",
-        [
-          A.test_case "rng_with_grad" `Quick test_rng_with_autodiff;
-        ] );
+      ("autodiff", [ A.test_case "rng_with_grad" `Quick test_rng_with_autodiff ]);
     ]

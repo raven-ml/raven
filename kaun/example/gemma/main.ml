@@ -86,8 +86,8 @@ let clip_gradients grads ~max_norm =
   else grads
 
 (* Training step *)
-let train_step model params optimizer opt_state batch_inputs batch_targets ~config ~step
-    ~rngs =
+let train_step model params optimizer opt_state batch_inputs batch_targets
+    ~config ~step ~rngs =
   (* Compute learning rate for this step *)
   let lr =
     get_learning_rate step ~warmup_steps:config.warmup_steps
@@ -260,8 +260,8 @@ let train config_name train_config =
 
   (* Create optimizer *)
   let optimizer =
-    adamw ~lr:train_config.learning_rate
-      ~weight_decay:train_config.weight_decay ()
+    adamw ~lr:train_config.learning_rate ~weight_decay:train_config.weight_decay
+      ()
   in
   let opt_state = ref (optimizer.init params) in
 
@@ -299,8 +299,8 @@ let train config_name train_config =
     let batch_inputs_float = Rune.cast Rune.float32 batch_inputs in
     let batch_targets_float = Rune.cast Rune.float32 batch_targets in
     let train_loss =
-      train_step model params optimizer opt_state batch_inputs_float batch_targets_float
-        ~config:train_config ~step ~rngs
+      train_step model params optimizer opt_state batch_inputs_float
+        batch_targets_float ~config:train_config ~step ~rngs
     in
 
     (* Update metrics *)

@@ -88,19 +88,19 @@ let multi_head_attention_with_rope ~embed_dim ~num_heads ~num_kv_heads ~head_dim
           (* Q, K, V projections *)
           let q_proj =
             Initializer.apply init
-              (Rune.Rng.to_int ((Rune.Rng.split rng1).(0)))
+              (Rune.Rng.to_int (Rune.Rng.split rng1).(0))
               [| embed_dim; num_heads * head_dim |]
               dev dtype
           in
           let k_proj =
             Initializer.apply init
-              (Rune.Rng.to_int ((Rune.Rng.split rng3).(0)))
+              (Rune.Rng.to_int (Rune.Rng.split rng3).(0))
               [| embed_dim; num_kv_heads * head_dim |]
               dev dtype
           in
           let v_proj =
             Initializer.apply init
-              (Rune.Rng.to_int ((Rune.Rng.split rng5).(0)))
+              (Rune.Rng.to_int (Rune.Rng.split rng5).(0))
               [| embed_dim; num_kv_heads * head_dim |]
               dev dtype
           in
@@ -108,7 +108,7 @@ let multi_head_attention_with_rope ~embed_dim ~num_heads ~num_kv_heads ~head_dim
           (* Output projection *)
           let out_proj =
             Initializer.apply init
-              (Rune.Rng.to_int ((Rune.Rng.split rng6).(0)))
+              (Rune.Rng.to_int (Rune.Rng.split rng6).(0))
               [| num_heads * head_dim; embed_dim |]
               dev dtype
           in

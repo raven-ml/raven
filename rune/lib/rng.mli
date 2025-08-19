@@ -42,7 +42,12 @@ val to_int : key -> int
 
 (** {2 Random Sampling Functions} *)
 
-val uniform : key -> Tensor.context -> ('a, 'b) Tensor.dtype -> int array -> ('a, 'b) Tensor.t
+val uniform :
+  key ->
+  Tensor.context ->
+  ('a, 'b) Tensor.dtype ->
+  int array ->
+  ('a, 'b) Tensor.t
 (** Generate uniform random values in [0, 1).
     
     [uniform key dtype shape] generates a tensor of the given shape with
@@ -53,7 +58,12 @@ val uniform : key -> Tensor.context -> ('a, 'b) Tensor.dtype -> int array -> ('a
     @param shape Shape of the output tensor
     @return Tensor with uniform random values *)
 
-val normal : key -> Tensor.context -> ('a, 'b) Tensor.dtype -> int array -> ('a, 'b) Tensor.t
+val normal :
+  key ->
+  Tensor.context ->
+  ('a, 'b) Tensor.dtype ->
+  int array ->
+  ('a, 'b) Tensor.t
 (** Generate standard normal random values.
 
     [normal key dtype shape] generates a tensor of the given shape with values
@@ -64,7 +74,8 @@ val normal : key -> Tensor.context -> ('a, 'b) Tensor.dtype -> int array -> ('a,
     @param shape Shape of the output tensor
     @return Tensor with normal random values *)
 
-val randint : key -> Tensor.context -> min:int -> max:int -> int array -> Tensor.int32_t
+val randint :
+  key -> Tensor.context -> min:int -> max:int -> int array -> Tensor.int32_t
 (** Generate random integers in a range.
     
     [randint key ~min ~max shape] generates a tensor of integers uniformly

@@ -378,5 +378,5 @@ module Checkpoint : sig
   val exists : path:string -> bool
 end
 
-(** Optimizer module - gradient processing and optimization *)
 module Optimizer = Kaun_optim
+(** Optimizer module - gradient processing and optimization *)

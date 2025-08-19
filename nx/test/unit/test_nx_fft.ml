@@ -110,17 +110,20 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     Alcotest.(check (array int))
       "fft pad reconstruct shape" shape (Nx.shape ifft_padded);
     (* Check the actual values match NumPy's output *)
-    let expected_padded_complex = 
-      [| Complex.{ re = 0.270598050073098; im = 0.500000000000000 };
-         Complex.{ re = 0.038060233744356; im = 0.191341716182545 };
-         Complex.{ re = -0.000000000000000; im = 0.153281482438188 };
-         Complex.{ re = -0.038060233744357; im = 0.191341716182545 };
-         Complex.{ re = -0.270598050073098; im = -0.500000000000000 };
-         Complex.{ re = -0.038060233744357; im = -0.191341716182545 };
-         Complex.{ re = 0.000000000000000; im = -0.153281482438188 };
-         Complex.{ re = 0.038060233744357; im = -0.191341716182545 } |]
+    let expected_padded_complex =
+      [|
+        Complex.{ re = 0.270598050073098; im = 0.500000000000000 };
+        Complex.{ re = 0.038060233744356; im = 0.191341716182545 };
+        Complex.{ re = -0.000000000000000; im = 0.153281482438188 };
+        Complex.{ re = -0.038060233744357; im = 0.191341716182545 };
+        Complex.{ re = -0.270598050073098; im = -0.500000000000000 };
+        Complex.{ re = -0.038060233744357; im = -0.191341716182545 };
+        Complex.{ re = 0.000000000000000; im = -0.153281482438188 };
+        Complex.{ re = 0.038060233744357; im = -0.191341716182545 };
+      |]
     in
-    check_t ~eps:1e-6 "fft pad reconstruct values" shape expected_padded_complex ifft_padded;
+    check_t ~eps:1e-6 "fft pad reconstruct values" shape expected_padded_complex
+      ifft_padded;
 
     (* Truncate to smaller size *)
     let trunc_size = 4 in
@@ -277,17 +280,20 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     Alcotest.(check (array int))
       "rfft pad reconstruct shape" shape (Nx.shape irfft_padded);
     (* Check the actual values match NumPy's output *)
-    let expected_padded = 
-      [| 0.270598050073098;
-         1.961939766255643;
-         0.000000000000000;
-         -1.961939766255643;
-         -0.270598050073099;
-         0.038060233744357;
-         -0.000000000000000;
-         -0.038060233744357 |]
+    let expected_padded =
+      [|
+        0.270598050073098;
+        1.961939766255643;
+        0.000000000000000;
+        -1.961939766255643;
+        -0.270598050073099;
+        0.038060233744357;
+        -0.000000000000000;
+        -0.038060233744357;
+      |]
     in
-    check_t ~eps:1e-6 "rfft pad reconstruct values" shape expected_padded irfft_padded;
+    check_t ~eps:1e-6 "rfft pad reconstruct values" shape expected_padded
+      irfft_padded;
 
     (* Truncate *)
     let trunc_size = 4 in

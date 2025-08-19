@@ -3859,12 +3859,17 @@ module Make (B : Backend_intf.S) = struct
     let x =
       if m >= n then
         (* For overdetermined systems, r is [n, n] when reduced=true *)
-        let r_square = if ndim r = 2 then slice [R [0; n]; R [0; n]] r
-                       else slice [R []; R [0; n]; R [0; n]] r in
-        let y_top = if ndim y = 2 then slice [R [0; n]; R []] y
-                    else if ndim y = 1 then slice [R [0; n]] y
-                    else slice [R []; R [0; n]; R []] y in
-        B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r_square y_top
+        let r_square =
+          if ndim r = 2 then slice [ R [ 0; n ]; R [ 0; n ] ] r
+          else slice [ R []; R [ 0; n ]; R [ 0; n ] ] r
+        in
+        let y_top =
+          if ndim y = 2 then slice [ R [ 0; n ]; R [] ] y
+          else if ndim y = 1 then slice [ R [ 0; n ] ] y
+          else slice [ R []; R [ 0; n ]; R [] ] y
+        in
+        B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false
+          r_square y_top
       else
         Error.failed ~op:"lstsq" ~what:"underdetermined systems not implemented"
           ()
@@ -4226,7 +4231,9 @@ module Make (B : Backend_intf.S) = struct
     in
 
     (* Use Complex64 as default - matches NumPy behavior *)
-    let result = B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:axes_arr ~s:None in
+    let result =
+      B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:axes_arr ~s:None
+    in
 
     if norm_scale <> 1.0 then
       let scale_value = Complex.{ re = norm_scale; im = 0.0 } in
@@ -4269,13 +4276,13 @@ module Make (B : Backend_intf.S) = struct
             (* Last axis: check if we're truncating *)
             let inferred_size = (input_shape.(axis) - 1) * 2 in
             match s with
-            | Some sizes when sizes.(i) < inferred_size -> 
+            | Some sizes when sizes.(i) < inferred_size ->
                 (* Truncating: use output size for normalization *)
                 sizes.(i)
-            | _ -> 
+            | _ ->
                 (* Not truncating: use inferred size *)
                 inferred_size
-          else 
+          else
             (* Other axes: use output size if specified, else input size *)
             match s with
             | Some sizes -> sizes.(i)

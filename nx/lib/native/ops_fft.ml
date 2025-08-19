@@ -152,18 +152,19 @@ let kernel_fft_multi (type b) ~inverse (input : (Complex.t, b) t)
        && Array.for_all2 ( = ) input_shape output_shape
      in
 
-     if same_shape then (
+     if same_shape then
        (* Same shape, can directly copy if buffers are the same size *)
        let input_size = Array1.dim (buffer input) in
        let output_size = Array1.dim (buffer output) in
        if input_size = output_size then
          Array1.blit (buffer input) (buffer output)
        else
-         (* Different buffer sizes despite same shape - copy element by element *)
+         (* Different buffer sizes despite same shape - copy element by
+            element *)
          let size = Array.fold_left ( * ) 1 input_shape in
          for i = 0 to size - 1 do
            Array1.set (buffer output) i (Array1.get (buffer input) i)
-         done)
+         done
      else (
        (* Different shapes - zero fill and copy what fits *)
        Array1.fill (buffer output) Complex.zero;
@@ -274,7 +275,7 @@ let kernel_rfft (type b c) context (input : (float, b) t)
 
   (* Validate axes and sizes *)
   validate_axes_and_sizes ndim axes s;
-  
+
   (* Require at least one axis *)
   if Array.length axes = 0 then invalid_arg "rfft requires at least one axis";
 
@@ -410,7 +411,7 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t)
 
   (* Validate axes and sizes *)
   validate_axes_and_sizes ndim axes s;
-  
+
   (* Require at least one axis *)
   if Array.length axes = 0 then invalid_arg "irfft requires at least one axis";
 
@@ -424,14 +425,14 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t)
   let target_size =
     match s with
     | Some sizes -> sizes.(Array.length sizes - 1)
-    | None -> 
+    | None ->
         (* Default to even size when ambiguous *)
         (input_shape.(last_axis) - 1) * 2
   in
-  
+
   (* The frequency domain size to use for reconstruction *)
   let freq_domain_size = target_size in
-  
+
   (* Determine real output shape *)
   let output_shape =
     let shape = Array.copy input_shape in
@@ -459,7 +460,7 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t)
   let full_complex_shape = Array.copy input_shape in
   full_complex_shape.(last_axis) <- freq_domain_size;
   let full_complex = empty context (Internal.dtype input) full_complex_shape in
-  
+
   (* Zero-fill the full complex buffer for padding case *)
   Array1.fill (buffer full_complex) Complex.zero;
 
@@ -515,13 +516,14 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t)
 
       (* Only enforce real DC/Nyquist for the actual DC component *)
       (* This is when all indices except the last axis are 0 *)
-      let is_dc_slice = 
-        let rec check i = 
+      let is_dc_slice =
+        let rec check i =
           if i = ndim then true
           else if i = last_axis then check (i + 1)
           else if indices.(i) = 0 then check (i + 1)
           else false
-        in check 0
+        in
+        check 0
       in
       (if copy_limit > 0 && is_dc_slice then
          let dc_idx = !dst_offset in
@@ -565,7 +567,7 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t)
   (* Extract real part, handling truncation if output is smaller *)
   let output_buf = buffer output in
   let complex_buf = buffer full_complex in
-  
+
   (* Copy the real part, handling different shapes *)
   let rec copy_real indices dim =
     if dim = ndim then (
@@ -574,17 +576,17 @@ let kernel_irfft (type b c) context (input : (Complex.t, b) t)
       let complex_idx = ref 0 in
       let out_stride = ref 1 in
       let complex_stride = ref 1 in
-      
+
       for d = ndim - 1 downto 0 do
         out_idx := !out_idx + (indices.(d) * !out_stride);
         complex_idx := !complex_idx + (indices.(d) * !complex_stride);
         out_stride := !out_stride * output_shape.(d);
         complex_stride := !complex_stride * full_complex_shape.(d)
       done;
-      
+
       let v = Array1.unsafe_get complex_buf !complex_idx in
-      Array1.unsafe_set output_buf !out_idx v.re
-    ) else
+      Array1.unsafe_set output_buf !out_idx v.re)
+    else
       let limit = min output_shape.(dim) full_complex_shape.(dim) in
       for i = 0 to limit - 1 do
         indices.(dim) <- i;

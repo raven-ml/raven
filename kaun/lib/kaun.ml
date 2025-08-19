@@ -537,7 +537,8 @@ module Layer = struct
                     dev dtype
                 in
                 let b =
-                  Initializer.apply bias_init (Rune.Rng.to_int rng2) [| out_features |] dev dtype
+                  Initializer.apply bias_init (Rune.Rng.to_int rng2)
+                    [| out_features |] dev dtype
                 in
                 Record [ ("weight", Tensor w); ("bias", Tensor b) ]));
         apply =
@@ -770,7 +771,10 @@ module Layer = struct
             let dev = Rune.device x in
             let dtype = Rune.dtype x in
             let key = (Rune.Rng.split rngs).(0) in
-            let w = Initializer.apply kernel_init (Rune.Rng.to_int key) shape dev dtype in
+            let w =
+              Initializer.apply kernel_init (Rune.Rng.to_int key) shape dev
+                dtype
+            in
             Tensor w);
         apply =
           (fun params ~training:_ ?rngs:_ x ->
@@ -790,7 +794,10 @@ module Layer = struct
             let dev = Rune.device x in
             let dtype = Rune.dtype x in
             let key = (Rune.Rng.split rngs).(0) in
-            let scale = Initializer.apply scale_init (Rune.Rng.to_int key) [| dim |] dev dtype in
+            let scale =
+              Initializer.apply scale_init (Rune.Rng.to_int key) [| dim |] dev
+                dtype
+            in
             Tensor scale);
         apply =
           (fun params ~training:_ ?rngs:_ x ->
