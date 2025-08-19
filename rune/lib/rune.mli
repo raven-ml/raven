@@ -1695,6 +1695,86 @@ val rshift : ('a, 'b, 'dev) t -> int -> ('a, 'b, 'dev) t
       - : (int32, int32_elt, 'dev) t = [2, 2, 2]
     ]} *)
 
+(** Infix operators *)
+module Infix : sig
+  val ( + ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 + t2] is a synonym for {!add}. *)
+
+  val ( +$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t +$ scalar] is a synonym for {!add_s}. *)
+
+  val ( - ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 - t2] is a synonym for {!sub}. *)
+
+  val ( -$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t -$ scalar] is a synonym for {!sub_s}. *)
+
+  val ( * ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 * t2] is a synonym for {!mul}. *)
+
+  val ( *$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t *$ scalar] is a synonym for {!mul_s}. *)
+
+  val ( / ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 / t2] is a synonym for {!div}. *)
+
+  val ( /$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t /$ scalar] is a synonym for {!div_s}. *)
+
+  val ( ** ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 ** t2] is a synonym for {!pow}. *)
+
+  val ( **$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t **$ scalar] is a synonym for {!pow_s}. *)
+
+  val ( % ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 % t2] is a synonym for {!mod_}. *)
+
+  val ( mod ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 mod t2] is a synonym for {!mod_}. *)
+
+  val ( %$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t %$ scalar] is a synonym for {!mod_s}. *)
+
+  val ( lxor ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 lxor t2] is a synonym for {!bitwise_xor}. *)
+
+  val ( lor ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 lor t2] is a synonym for {!bitwise_or}. *)
+
+  val ( land ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 land t2] is a synonym for {!bitwise_and}. *)
+
+  val ( ^ ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 ^ t2] is a synonym for {!logical_xor}. *)
+
+  val ( && ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (* [t1 && t2] is a synonym for {!logical_and}. *)
+
+  val ( || ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (* [t1 || t2] is a synonym for {!logical_or}. *)
+
+  val ( ~- ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (* [~-t] is a synonym for {!logical_not}. *)
+
+  val ( < ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (* [t1 < t2] is a synonym for {!less} *)
+
+  val ( <> ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (* [t1 <> t2] is a synonym for {!not_equal}. *)
+
+  val ( = ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (* [t1 = t1] is a synonym for {!equal}. *)
+
+  val ( > ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (* [t1 > t2] is a synonym for {!greater}. *)
+
+  val ( <= ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (* [t1 <= t2] is a synonym for {!less_equal}. *)
+
+  val ( >= ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (* [t1 >= t2] is a synonym for {!greater_equal}. *)
+end
 (** {2 Reduction Operations}
 
     Functions that reduce array dimensions. *)

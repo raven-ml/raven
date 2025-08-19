@@ -766,6 +766,36 @@ module Make (B : Backend_intf.S) = struct
 
   let invert x = bitwise_not x
 
+  (* ───── Infix operators ───── *)
+  module Infix = struct
+    let ( + ) = add
+    let ( +$ ) = add_s
+    let ( - ) = sub
+    let ( -$ ) = sub_s
+    let ( * ) = mul
+    let ( *$ ) = mul_s
+    let ( / ) = div
+    let ( /$ ) = div_s
+    let ( ** ) = pow
+    let ( **$ ) = pow_s
+    let ( % ) = mod_
+    let ( mod ) = mod_
+    let ( %$ ) = mod_s
+    let ( lxor ) = bitwise_xor
+    let ( lor ) = bitwise_or
+    let ( land ) = bitwise_and
+    let ( ^ ) = logical_xor
+    let ( && ) = logical_and
+    let ( || ) = logical_or
+    let ( ~- ) = logical_not
+    let ( < ) = less
+    let ( <> ) = not_equal
+    let ( = ) = equal
+    let ( > ) = greater
+    let ( <= ) = less_equal
+    let ( >= ) = greater_equal
+  end
+
   (* Math functions - assume float inputs as per B.op signatures *)
   let log2 x = B.op_log2 x
   let exp2 x = B.op_exp2 x
