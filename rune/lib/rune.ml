@@ -60,6 +60,12 @@ type 'a out_axes_spec = 'a Vmap.out_axes_spec =
 let vmap = Vmap.vmap
 let vmaps = Vmap.vmaps
 
+(* ───── RNG ───── *)
+
+module Rng = struct
+  include Rng
+end
+
 (* ───── Debugging ───── *)
 
 let debug = Debug.debug

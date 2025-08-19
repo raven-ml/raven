@@ -22,3 +22,8 @@
  (build_if
   (= %{system} "macosx"))
  (libraries rune alcotest test_rune_support))
+
+(test
+ (name test_rng)
+ (package rune)
+ (libraries rune alcotest test_rune_support))
