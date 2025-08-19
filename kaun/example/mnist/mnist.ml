@@ -1,6 +1,6 @@
 open Kaun
 
-let rngs = Rngs.create ~seed:0 ()
+let rngs = Rune.Rng.key 0
 
 let model =
   Layer.sequential
@@ -54,7 +54,8 @@ let train () =
   let start = Unix.gettimeofday () in
   let dummy_input = Rune.zeros device Rune.float32 [| 1; 1; 28; 28 |] in
   let params = init ~rngs model dummy_input in
-  let optimizer = Optimizer.create (Optimizer.adam ~lr:0.001 ()) in
+  let optimizer = Optimizer.adam ~lr:0.001 () in
+  let opt_state = ref (optimizer.init params) in
   Printf.printf "Model initialized in %.2fs\n%!" (Unix.gettimeofday () -. start);
 
   (* Training loop *)
@@ -93,7 +94,9 @@ let train () =
 
         (* Update weights *)
         let opt_start = Unix.gettimeofday () in
-        Optimizer.update optimizer params grads;
+        let updates, new_state = optimizer.update !opt_state params grads in
+        opt_state := new_state;
+        Optimizer.apply_updates_inplace params updates;
         let opt_time = Unix.gettimeofday () -. opt_start in
 
         (* Track metrics *)

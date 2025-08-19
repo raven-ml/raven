@@ -2,41 +2,34 @@ type ('layout, 'dev) tensor = (float, 'layout, 'dev) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 type 'dev device = 'dev Rune.device
 
-type ('layout, 'dev) params =
+type ('layout, 'dev) params = ('layout, 'dev) Kaun_optim.params =
   | Tensor of ('layout, 'dev) tensor
   | List of ('layout, 'dev) params list
   | Record of (string * ('layout, 'dev) params) list
-
-module Rngs : sig
-  type t = int
-
-  val create : seed:int -> unit -> t
-  val split : t -> t * t
-end
 
 type model =
   | Model : {
       init :
         'layout 'dev.
-        rngs:Rngs.t -> ('layout, 'dev) tensor -> ('layout, 'dev) params;
+        rngs:Rune.Rng.key -> ('layout, 'dev) tensor -> ('layout, 'dev) params;
       apply :
         'layout 'dev.
         ('layout, 'dev) params ->
         training:bool ->
-        ?rngs:Rngs.t ->
+        ?rngs:Rune.Rng.key ->
         ('layout, 'dev) tensor ->
         ('layout, 'dev) tensor;
     }
       -> model
 
 val init :
-  model -> rngs:Rngs.t -> ('layout, 'dev) tensor -> ('layout, 'dev) params
+  model -> rngs:Rune.Rng.key -> ('layout, 'dev) tensor -> ('layout, 'dev) params
 
 val apply :
   model ->
   ('layout, 'dev) params ->
   training:bool ->
-  ?rngs:Rngs.t ->
+  ?rngs:Rune.Rng.key ->
   ('layout, 'dev) tensor ->
   ('layout, 'dev) tensor
 
@@ -385,32 +378,5 @@ module Checkpoint : sig
   val exists : path:string -> bool
 end
 
-module Optimizer : sig
-  type ('layout, 'dev) t
-  type transform
-
-  (* Optimizers *)
-  val sgd : lr:float -> ?momentum:float -> unit -> transform
-
-  val adam :
-    lr:float -> ?beta1:float -> ?beta2:float -> ?eps:float -> unit -> transform
-
-  val adamw :
-    lr:float ->
-    ?beta1:float ->
-    ?beta2:float ->
-    ?eps:float ->
-    ?weight_decay:float ->
-    unit ->
-    transform
-
-  (* Create optimizer with transform *)
-  val create : transform -> ('layout, 'dev) t
-
-  (* Takes parameters and gradients, updates the parameters in-place *)
-  val update :
-    ('layout, 'dev) t ->
-    ('layout, 'dev) params ->
-    ('layout, 'dev) params ->
-    unit
-end
+(** Optimizer module - gradient processing and optimization *)
+module Optimizer = Kaun_optim

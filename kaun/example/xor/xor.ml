@@ -4,7 +4,7 @@ let device = Rune.c
 
 let train_xor () =
   (* Create RNG *)
-  let rngs = Rngs.create ~seed:42 () in
+  let rngs = Rune.Rng.key 42 in
 
   (* Define MLP model for XOR *)
   let model =
@@ -27,8 +27,9 @@ let train_xor () =
   (* Initialize model parameters *)
   let params = init model ~rngs x in
 
-  (* Create optimizer *)
-  let optimizer = Optimizer.create (Optimizer.adam ~lr:0.1 ()) in
+  (* Create optimizer - using new Optax-style API *)
+  let optimizer = Optimizer.adam ~lr:0.1 () in
+  let opt_state = ref (optimizer.init params) in
 
   (* Training loop *)
   let epochs = 2000 in
@@ -43,7 +44,10 @@ let train_xor () =
     in
 
     (* Update weights *)
-    Optimizer.update optimizer params grads;
+    let updates, new_state = optimizer.update !opt_state params grads in
+    opt_state := new_state;
+    (* Apply updates to params in place *)
+    Optimizer.apply_updates_inplace params updates;
 
     (* Print loss every 100 epochs *)
     if epoch mod 100 = 0 then

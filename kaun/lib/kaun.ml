@@ -3,49 +3,23 @@ type ('layout, 'dev) tensor = (float, 'layout, 'dev) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 type 'dev device = 'dev Rune.device
 
-(* Parameter tree to represent model parameters hierarchically *)
-type ('layout, 'dev) params =
+(* Parameter tree - re-use the type from Kaun_optim *)
+type ('layout, 'dev) params = ('layout, 'dev) Kaun_optim.params =
   | Tensor of ('layout, 'dev) tensor
   | List of ('layout, 'dev) params list
   | Record of (string * ('layout, 'dev) params) list
-
-(* Rngs module *)
-module Rngs = struct
-  type t = int
-
-  let create ~seed () =
-    abs seed land 0x7FFFFFFF (* Ensure positive 31-bit int *)
-
-  let split t =
-    (* MurmurHash-inspired integer hash for better distribution *)
-    let hash x =
-      (* Use Int32 operations to handle large constants on 32-bit systems *)
-      let open Int32 in
-      let x = of_int x in
-      let x = logxor x (shift_right_logical x 16) in
-      let x = mul x 0x85ebca6bl in
-      let x = logxor x (shift_right_logical x 13) in
-      let x = mul x 0xc2b2ae35l in
-      let x = logxor x (shift_right_logical x 16) in
-      to_int (logand x 0x7FFFFFFFl)
-      (* Ensure positive 31-bit int *)
-    in
-    let new_seed1 = hash ((t * 2) + 1) in
-    let new_seed2 = hash ((t * 2) + 2) in
-    (new_seed1, new_seed2)
-end
 
 (* Model type - stores the structure and initialization logic *)
 type model =
   | Model : {
       init :
         'layout 'dev.
-        rngs:Rngs.t -> ('layout, 'dev) tensor -> ('layout, 'dev) params;
+        rngs:Rune.Rng.key -> ('layout, 'dev) tensor -> ('layout, 'dev) params;
       apply :
         'layout 'dev.
         ('layout, 'dev) params ->
         training:bool ->
-        ?rngs:Rngs.t ->
+        ?rngs:Rune.Rng.key ->
         ('layout, 'dev) tensor ->
         ('layout, 'dev) tensor;
     }
@@ -482,14 +456,15 @@ module Layer = struct
             Rune.debug_with_context
               (Printf.sprintf "conv2d_%dx%d_%dx%d_init" in_channels out_channels
                  kh kw) (fun () ->
-                let rng1, _rng2 = Rngs.split rngs in
+                let rngs_split = Rune.Rng.split rngs in
+                let rng1 = rngs_split.(0) in
                 let dev = Rune.device x in
                 let dtype = Rune.dtype x in
                 let fan_in = in_channels * kh * kw in
                 let fan_out = out_channels * kh * kw in
                 let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
                 let weight_shape = [| out_channels; in_channels; kh; kw |] in
-                let w = Rune.rand dev dtype ~seed:rng1 weight_shape in
+                let w = Rune.Rng.uniform rng1 dev dtype weight_shape in
                 let w =
                   Rune.sub
                     (Rune.mul w (Rune.scalar dev dtype (2.0 *. limit)))
@@ -550,17 +525,19 @@ module Layer = struct
               (Printf.sprintf "linear_%dx%d_init" in_features out_features)
               (fun () ->
                 (* Use the rngs passed during initialization *)
-                let rng1, rng2 = Rngs.split rngs in
+                let rngs_split = Rune.Rng.split rngs in
+                let rng1 = rngs_split.(0) in
+                let rng2 = rngs_split.(1) in
                 let dev = Rune.device x in
                 let dtype = Rune.dtype x in
 
                 let w =
-                  Initializer.apply weight_init rng1
+                  Initializer.apply weight_init (Rune.Rng.to_int rng1)
                     [| in_features; out_features |]
                     dev dtype
                 in
                 let b =
-                  Initializer.apply bias_init rng2 [| out_features |] dev dtype
+                  Initializer.apply bias_init (Rune.Rng.to_int rng2) [| out_features |] dev dtype
                 in
                 Record [ ("weight", Tensor w); ("bias", Tensor b) ]));
         apply =
@@ -603,11 +580,11 @@ module Layer = struct
               match rngs with
               | Some rng ->
                   (* Generate dropout mask *)
-                  let seed = fst (Rngs.split rng) in
+                  let key = (Rune.Rng.split rng).(0) in
                   let dev = Rune.device x in
                   let dtype = Rune.dtype x in
                   let shape = Rune.shape x in
-                  let mask = Rune.rand dev dtype ~seed shape in
+                  let mask = Rune.Rng.uniform key dev dtype shape in
                   let keep_prob = 1.0 -. rate in
                   let threshold = Rune.scalar dev dtype keep_prob in
                   let binary_mask = Rune.less mask threshold in
@@ -626,7 +603,7 @@ module Layer = struct
           (fun ~rngs x ->
             Rune.debug_with_context
               (Printf.sprintf "batch_norm_%d_init" num_features) (fun () ->
-                let _rng1, _rng2 = Rngs.split rngs in
+                let _rngs_split = Rune.Rng.split rngs in
                 let dev = Rune.device x in
                 let dtype = Rune.dtype x in
                 (* Initialize scale (gamma) to 1 and bias (beta) to 0 *)
@@ -756,7 +733,9 @@ module Layer = struct
               match models with
               | [] -> List (List.rev acc)
               | Model m :: rest ->
-                  let rngs_layer, rngs_rest = Rngs.split rngs_current in
+                  let rngs_split = Rune.Rng.split rngs_current in
+                  let rngs_layer = rngs_split.(0) in
+                  let rngs_rest = rngs_split.(1) in
                   let params = m.init ~rngs:rngs_layer x in
                   let x' = m.apply params ~training:false x in
                   init_layers rest x' (params :: acc) rngs_rest (layer_idx + 1)
@@ -790,8 +769,8 @@ module Layer = struct
           (fun ~rngs x ->
             let dev = Rune.device x in
             let dtype = Rune.dtype x in
-            let seed = fst (Rngs.split rngs) in
-            let w = Initializer.apply kernel_init seed shape dev dtype in
+            let key = (Rune.Rng.split rngs).(0) in
+            let w = Initializer.apply kernel_init (Rune.Rng.to_int key) shape dev dtype in
             Tensor w);
         apply =
           (fun params ~training:_ ?rngs:_ x ->
@@ -810,8 +789,8 @@ module Layer = struct
           (fun ~rngs x ->
             let dev = Rune.device x in
             let dtype = Rune.dtype x in
-            let seed = fst (Rngs.split rngs) in
-            let scale = Initializer.apply scale_init seed [| dim |] dev dtype in
+            let key = (Rune.Rng.split rngs).(0) in
+            let scale = Initializer.apply scale_init (Rune.Rng.to_int key) [| dim |] dev dtype in
             Tensor scale);
         apply =
           (fun params ~training:_ ?rngs:_ x ->
@@ -893,9 +872,9 @@ module Layer = struct
           (fun ~rngs _x ->
             let dev = Rune.device _x in
             let dtype = Rune.dtype _x in
-            let seed = fst (Rngs.split rngs) in
+            let key = (Rune.Rng.split rngs).(0) in
             let embedding =
-              Initializer.apply embedding_init seed
+              Initializer.apply embedding_init (Rune.Rng.to_int key)
                 [| vocab_size; embed_dim |]
                 dev dtype
             in
@@ -1004,248 +983,5 @@ module Schedule = Kaun_missing.Schedule
 module Tokenizer = Kaun_missing.Tokenizer
 module Checkpoint = Kaun_missing.Checkpoint
 
-(* Optimizer module *)
-module Optimizer = struct
-  type transform =
-    | SGD of { lr : float; momentum : float option }
-    | Adam of { lr : float; beta1 : float; beta2 : float; eps : float }
-    | AdamW of {
-        lr : float;
-        beta1 : float;
-        beta2 : float;
-        eps : float;
-        weight_decay : float;
-      }
-
-  type ('layout, 'dev) state = {
-    m_tensors : ('layout, 'dev) tensor list;
-    v_tensors : ('layout, 'dev) tensor list;
-  }
-
-  type ('layout, 'dev) t = {
-    transform : transform;
-    mutable state : ('layout, 'dev) state option;
-    mutable step : int;
-  }
-
-  let sgd ~lr ?momentum () = SGD { lr; momentum }
-
-  let adam ~lr ?(beta1 = 0.9) ?(beta2 = 0.999) ?(eps = 1e-8) () =
-    Adam { lr; beta1; beta2; eps }
-
-  let adamw ~lr ?(beta1 = 0.9) ?(beta2 = 0.999) ?(eps = 1e-8)
-      ?(weight_decay = 0.01) () =
-    AdamW { lr; beta1; beta2; eps; weight_decay }
-
-  let create transform = { transform; state = None; step = 0 }
-
-  let rec apply_updates_inplace : type a b.
-      (a, b) params -> (a, b) params -> unit =
-   fun params updates ->
-    match (params, updates) with
-    | Tensor t, Tensor u -> ignore (Rune.isub t u)
-    | List ps, List us -> List.iter2 apply_updates_inplace ps us
-    | Record ps, Record us ->
-        let sorted_ps =
-          List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) ps
-        in
-        let sorted_us =
-          List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) us
-        in
-        List.iter2
-          (fun (k1, p) (k2, u) ->
-            assert (k1 = k2);
-            (* This assertion is now much safer *)
-            apply_updates_inplace p u)
-          sorted_ps sorted_us
-    | _ -> failwith "Mismatched parameter structure"
-
-  let update opt params grads =
-    opt.step <- opt.step + 1;
-    let params_tensors, rebuild_params = flatten_ptree params in
-    let grads_tensors, _ = flatten_ptree grads in
-
-    match opt.transform with
-    | SGD { lr; momentum } ->
-        (* Handle momentum if specified *)
-        let updates =
-          match momentum with
-          | None ->
-              (* Simple SGD without momentum *)
-              List.map
-                (fun g ->
-                  let dev = Rune.device g in
-                  let dt = Rune.dtype g in
-                  Rune.mul g (Rune.scalar dev dt lr))
-                grads_tensors
-          | Some momentum_val ->
-              (* SGD with momentum *)
-              let state =
-                match opt.state with
-                | None ->
-                    (* Initialize velocity tensors *)
-                    let v_tensors = List.map Rune.zeros_like params_tensors in
-                    let s = { m_tensors = v_tensors; v_tensors = [] } in
-                    opt.state <- Some s;
-                    s
-                | Some s -> s
-              in
-
-              (* Update velocities and compute updates *)
-              let new_velocities, updates =
-                List.fold_left2
-                  (fun (v_acc, u_acc) g v_old ->
-                    let dev = Rune.device g in
-                    let dt = Rune.dtype g in
-                    (* v = momentum * v_old + grad *)
-                    let v_new =
-                      Rune.(add (mul (scalar dev dt momentum_val) v_old) g)
-                    in
-                    (* update = lr * v *)
-                    let update = Rune.mul (Rune.scalar dev dt lr) v_new in
-                    (v_new :: v_acc, update :: u_acc))
-                  ([], []) grads_tensors state.m_tensors
-              in
-
-              (* Update state with new velocities *)
-              opt.state <-
-                Some { m_tensors = List.rev new_velocities; v_tensors = [] };
-              List.rev updates
-        in
-        apply_updates_inplace params (rebuild_params updates)
-    | Adam { lr; beta1; beta2; eps } ->
-        (* Initialize state if needed *)
-        let state =
-          match opt.state with
-          | None ->
-              let m_tensors = List.map Rune.zeros_like params_tensors in
-              let v_tensors = List.map Rune.zeros_like params_tensors in
-              let s = { m_tensors; v_tensors } in
-              opt.state <- Some s;
-              s
-          | Some s -> s
-        in
-
-        let t = opt.step in
-        let bc1 = 1. -. (beta1 ** float_of_int t) in
-        let bc2 = 1. -. (beta2 ** float_of_int t) in
-
-        let new_m_tensors, new_v_tensors, updates =
-          List.fold_left2
-            (fun (m_acc, v_acc, u_acc) (p, g) (m_old, v_old) ->
-              let dev = Rune.device p in
-              let dt = Rune.dtype p in
-
-              (* Update biased first moment estimate *)
-              let m_new =
-                Rune.(
-                  add
-                    (mul (scalar dev dt beta1) m_old)
-                    (mul (scalar dev dt (1. -. beta1)) g))
-              in
-
-              (* Update biased second moment estimate *)
-              let v_new =
-                Rune.(
-                  add
-                    (mul (scalar dev dt beta2) v_old)
-                    (mul (scalar dev dt (1. -. beta2)) (mul g g)))
-              in
-
-              (* Bias correction *)
-              let m_hat = Rune.div m_new (Rune.scalar dev dt bc1) in
-              let v_hat = Rune.div v_new (Rune.scalar dev dt bc2) in
-
-              (* Compute update *)
-              let update =
-                Rune.(
-                  mul (scalar dev dt lr)
-                    (div m_hat (add (sqrt v_hat) (scalar dev dt eps))))
-              in
-
-              (m_new :: m_acc, v_new :: v_acc, update :: u_acc))
-            ([], [], [])
-            (List.combine params_tensors grads_tensors)
-            (List.combine state.m_tensors state.v_tensors)
-        in
-
-        opt.state <-
-          Some
-            {
-              m_tensors = List.rev new_m_tensors;
-              v_tensors = List.rev new_v_tensors;
-            };
-        apply_updates_inplace params (rebuild_params (List.rev updates))
-    | AdamW { lr; beta1; beta2; eps; weight_decay } ->
-        (* Initialize state if needed *)
-        let state =
-          match opt.state with
-          | None ->
-              let m_tensors = List.map Rune.zeros_like params_tensors in
-              let v_tensors = List.map Rune.zeros_like params_tensors in
-              let s = { m_tensors; v_tensors } in
-              opt.state <- Some s;
-              s
-          | Some s -> s
-        in
-
-        let t = opt.step in
-        let bc1 = 1. -. (beta1 ** float_of_int t) in
-        let bc2 = 1. -. (beta2 ** float_of_int t) in
-
-        let new_m_tensors, new_v_tensors, updates =
-          List.fold_left2
-            (fun (m_acc, v_acc, u_acc) (p, g) (m_old, v_old) ->
-              let dev = Rune.device p in
-              let dt = Rune.dtype p in
-
-              (* Update biased first moment estimate *)
-              let m_new =
-                Rune.(
-                  add
-                    (mul (scalar dev dt beta1) m_old)
-                    (mul (scalar dev dt (1. -. beta1)) g))
-              in
-
-              (* Update biased second moment estimate *)
-              let v_new =
-                Rune.(
-                  add
-                    (mul (scalar dev dt beta2) v_old)
-                    (mul (scalar dev dt (1. -. beta2)) (mul g g)))
-              in
-
-              (* Bias correction *)
-              let m_hat = Rune.div m_new (Rune.scalar dev dt bc1) in
-              let v_hat = Rune.div v_new (Rune.scalar dev dt bc2) in
-
-              (* Compute update with weight decay applied directly to
-                 parameters *)
-              let adam_update =
-                Rune.(
-                  mul (scalar dev dt lr)
-                    (div m_hat (add (sqrt v_hat) (scalar dev dt eps))))
-              in
-
-              (* Add weight decay term: lr * weight_decay * param *)
-              let decay_update =
-                Rune.mul (Rune.scalar dev dt (lr *. weight_decay)) p
-              in
-
-              (* Total update = adam_update + decay_update *)
-              let total_update = Rune.add adam_update decay_update in
-
-              (m_new :: m_acc, v_new :: v_acc, total_update :: u_acc))
-            ([], [], [])
-            (List.combine params_tensors grads_tensors)
-            (List.combine state.m_tensors state.v_tensors)
-        in
-
-        opt.state <-
-          Some
-            {
-              m_tensors = List.rev new_m_tensors;
-              v_tensors = List.rev new_v_tensors;
-            };
-        apply_updates_inplace params (rebuild_params (List.rev updates))
-end
+(* Optimizer module - re-export kaun.optim *)
+module Optimizer = Kaun_optim

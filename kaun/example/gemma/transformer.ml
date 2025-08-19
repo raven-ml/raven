@@ -8,27 +8,30 @@ let feed_forward_network ~embed_dim ~hidden_dim () =
         (fun ~rngs x ->
           let dev = Rune.device x in
           let dtype = Rune.dtype x in
-          let rng1, rng2 = Rngs.split rngs in
-          let rng3, _ = Rngs.split rng2 in
+          let rngs_split = Rune.Rng.split rngs in
+          let rng1 = rngs_split.(0) in
+          let rng2 = rngs_split.(1) in
+          let rngs_split2 = Rune.Rng.split rng2 in
+          let rng3 = rngs_split2.(0) in
 
           let init = Initializer.glorot_uniform () in
 
           (* Gate and up projections *)
           let gate_proj =
             Initializer.apply init
-              (fst (Rngs.split rng1))
+              (Rune.Rng.to_int ((Rune.Rng.split rng1).(0)))
               [| embed_dim; hidden_dim |]
               dev dtype
           in
           let up_proj =
             Initializer.apply init
-              (fst (Rngs.split rng2))
+              (Rune.Rng.to_int ((Rune.Rng.split rng2).(0)))
               [| embed_dim; hidden_dim |]
               dev dtype
           in
           let down_proj =
             Initializer.apply init
-              (fst (Rngs.split rng3))
+              (Rune.Rng.to_int ((Rune.Rng.split rng3).(0)))
               [| hidden_dim; embed_dim |]
               dev dtype
           in
@@ -112,10 +115,18 @@ let transformer_block ~config ~layer_idx () =
     {
       init =
         (fun ~rngs x ->
-          let rng1, rng2 = Rngs.split rngs in
-          let rng3, rng4 = Rngs.split rng2 in
-          let rng5, rng6 = Rngs.split rng4 in
-          let rng7, rng8 = Rngs.split rng6 in
+          let rngs_split = Rune.Rng.split rngs in
+          let rng1 = rngs_split.(0) in
+          let rng2 = rngs_split.(1) in
+          let rngs_split2 = Rune.Rng.split rng2 in
+          let rng3 = rngs_split2.(0) in
+          let rng4 = rngs_split2.(1) in
+          let rngs_split3 = Rune.Rng.split rng4 in
+          let rng5 = rngs_split3.(0) in
+          let rng6 = rngs_split3.(1) in
+          let rngs_split4 = Rune.Rng.split rng6 in
+          let rng7 = rngs_split4.(0) in
+          let rng8 = rngs_split4.(1) in
 
           (* Pre-attention norm *)
           let pre_attn_norm =
@@ -259,15 +270,21 @@ let create_gemma_model config =
           let dtype_float = Rune.dtype x in
 
           (* Split RNGs for each component *)
-          let rng_embed, rng_rest = Rngs.split rngs in
-          let rng_blocks, rng_final = Rngs.split rng_rest in
-          let rng_norm, rng_lm_head = Rngs.split rng_final in
+          let rngs_split = Rune.Rng.split rngs in
+          let rng_embed = rngs_split.(0) in
+          let rng_rest = rngs_split.(1) in
+          let rngs_split2 = Rune.Rng.split rng_rest in
+          let rng_blocks = rngs_split2.(0) in
+          let rng_final = rngs_split2.(1) in
+          let rngs_split3 = Rune.Rng.split rng_final in
+          let rng_norm = rngs_split3.(0) in
+          let rng_lm_head = rngs_split3.(1) in
 
           (* Token embeddings *)
           let embed_init = Initializer.normal ~mean:0.0 ~std:0.02 in
           let embeddings =
             Initializer.apply embed_init
-              (fst (Rngs.split rng_embed))
+              (Rune.Rng.to_int ((Rune.Rng.split rng_embed).(0)))
               [| config.Config.vocab_size; config.Config.embed_dim |]
               dev dtype_float
           in
@@ -277,7 +294,9 @@ let create_gemma_model config =
             let rec init_blocks idx rngs acc =
               if idx >= config.Config.num_layers then List.rev acc
               else
-                let rng_block, rng_next = Rngs.split rngs in
+                let rngs_split_block = Rune.Rng.split rngs in
+                let rng_block = rngs_split_block.(0) in
+                let rng_next = rngs_split_block.(1) in
                 let block = transformer_block ~config ~layer_idx:idx () in
                 (* Create dummy input for block initialization *)
                 let dummy_input =
@@ -306,7 +325,7 @@ let create_gemma_model config =
           in
           let lm_head =
             Initializer.apply lm_head_init
-              (fst (Rngs.split rng_lm_head))
+              (Rune.Rng.to_int ((Rune.Rng.split rng_lm_head).(0)))
               [| config.Config.embed_dim; config.Config.vocab_size |]
               dev dtype_float
           in

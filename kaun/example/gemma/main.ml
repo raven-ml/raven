@@ -1,4 +1,5 @@
 open Kaun
+open Kaun.Optimizer
 
 (* Training configuration *)
 type train_config = {
@@ -85,7 +86,7 @@ let clip_gradients grads ~max_norm =
   else grads
 
 (* Training step *)
-let train_step model params optimizer batch_inputs batch_targets ~config ~step
+let train_step model params optimizer opt_state batch_inputs batch_targets ~config ~step
     ~rngs =
   (* Compute learning rate for this step *)
   let lr =
@@ -149,7 +150,9 @@ let train_step model params optimizer batch_inputs batch_targets ~config ~step
   let grads = scale_by_lr lr_scale grads in
 
   (* Update parameters *)
-  Optimizer.update optimizer params grads;
+  let updates, new_state = optimizer.update !opt_state params grads in
+  opt_state := new_state;
+  apply_updates_inplace params updates;
 
   loss
 
@@ -222,7 +225,7 @@ let train config_name train_config =
   let model = Transformer.create_gemma_model model_config in
 
   (* Initialize RNG *)
-  let rngs = Rngs.create ~seed:42 () in
+  let rngs = Rune.Rng.key 42 in
 
   (* Create device and dtype *)
   let device = Rune.c in
@@ -257,10 +260,10 @@ let train config_name train_config =
 
   (* Create optimizer *)
   let optimizer =
-    Optimizer.create
-      (Optimizer.adamw ~lr:train_config.learning_rate
-         ~weight_decay:train_config.weight_decay ())
+    adamw ~lr:train_config.learning_rate
+      ~weight_decay:train_config.weight_decay ()
   in
+  let opt_state = ref (optimizer.init params) in
 
   (* Training metrics *)
   let metrics =
@@ -296,7 +299,7 @@ let train config_name train_config =
     let batch_inputs_float = Rune.cast Rune.float32 batch_inputs in
     let batch_targets_float = Rune.cast Rune.float32 batch_targets in
     let train_loss =
-      train_step model params optimizer batch_inputs_float batch_targets_float
+      train_step model params optimizer opt_state batch_inputs_float batch_targets_float
         ~config:train_config ~step ~rngs
     in
 
