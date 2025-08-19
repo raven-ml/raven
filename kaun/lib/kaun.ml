@@ -988,7 +988,51 @@ module Cache = Kaun_missing.Cache
 module Ops = Kaun_missing.Ops
 module Schedule = Kaun_missing.Schedule
 module Tokenizer = Kaun_missing.Tokenizer
-module Checkpoint = Kaun_missing.Checkpoint
+
+module Checkpoint = struct
+  module C = Kaun_checkpoint
+
+  (* Convert between the two params types *)
+  let rec to_checkpoint_params : type layout dev.
+      (layout, dev) params -> (layout, dev) C.params = function
+    | Tensor t -> C.Tensor t
+    | List l -> C.List (List.map to_checkpoint_params l)
+    | Record r ->
+        C.Record (List.map (fun (k, v) -> (k, to_checkpoint_params v)) r)
+
+  let rec from_checkpoint_params : type layout dev.
+      (layout, dev) C.params -> (layout, dev) params = function
+    | C.Tensor t -> Tensor t
+    | C.List l -> List (List.map from_checkpoint_params l)
+    | C.Record r ->
+        Record (List.map (fun (k, v) -> (k, from_checkpoint_params v)) r)
+
+  (* Re-export the checkpointer for simple save/load *)
+  let save ~path ~params ~step ?(metadata = []) () =
+    let step_path = Printf.sprintf "%s/step-%d" path step in
+    let checkpoint_params = to_checkpoint_params params in
+    C.save_params ~path:step_path ~params:checkpoint_params ~metadata ()
+
+  let load ~path ~device ~dtype =
+    (* Try to load from path directly first *)
+    try
+      let checkpoint_params = C.load_params ~path ~device ~dtype in
+      let params = from_checkpoint_params checkpoint_params in
+      (params, 0, [])
+    with _ -> (
+      (* If that fails, look for the latest step *)
+      let manager = C.CheckpointManager.create ~directory:path () in
+      match C.CheckpointManager.latest_step manager with
+      | Some step ->
+          let checkpoint_params, info =
+            C.CheckpointManager.restore manager ~device ~dtype ~step ()
+          in
+          let params = from_checkpoint_params checkpoint_params in
+          (params, step, info.metadata)
+      | None -> failwith "No checkpoints found")
+
+  let exists ~path = Sys.file_exists path
+end
 
 (* Optimizer module - re-export kaun.optim *)
 module Optimizer = Kaun_optim

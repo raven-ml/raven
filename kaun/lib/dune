@@ -1,4 +1,4 @@
 (library
  (name kaun)
  (public_name kaun)
- (libraries rune unix kaun.optim))
+ (libraries rune unix kaun.optim kaun.checkpoint))

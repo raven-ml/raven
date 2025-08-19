@@ -1,0 +1,4 @@
+(test
+ (name test_checkpoint)
+ (package kaun)
+ (libraries rune kaun kaun.checkpoint alcotest))
