@@ -1484,11 +1484,17 @@ val cmplt : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 val less : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [less t1 t2] is synonym for {!cmplt}. *)
 
+val less_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [less_s t scalar] checks if each element is less than scalar. *)
+
 val cmpne : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmpne t1 t2] returns 1 where t1 ≠ t2, 0 elsewhere. *)
 
 val not_equal : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [not_equal t1 t2] is synonym for {!cmpne}. *)
+
+val not_equal_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [not_equal_s t scalar] compares each element with scalar for inequality. *)
 
 val cmpeq : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmpeq t1 t2] returns 1 where t1 = t2, 0 elsewhere. *)
@@ -1496,11 +1502,17 @@ val cmpeq : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 val equal : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [equal t1 t2] is synonym for {!cmpeq}. *)
 
+val equal_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [equal_s t scalar] compares each element with scalar for equality. *)
+
 val cmpgt : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmpgt t1 t2] returns 1 where t1 > t2, 0 elsewhere. *)
 
 val greater : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [greater t1 t2] is synonym for {!cmpgt}. *)
+
+val greater_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [greater_s t scalar] checks if each element is greater than scalar. *)
 
 val cmple : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmple t1 t2] returns 1 where t1 ≤ t2, 0 elsewhere. *)
@@ -1509,12 +1521,20 @@ val less_equal :
   ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [less_equal t1 t2] is synonym for {!cmple}. *)
 
+val less_equal_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [less_equal_s t scalar] checks if each element is less than or equal to
+    scalar. *)
+
 val cmpge : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmpge t1 t2] returns 1 where t1 ≥ t2, 0 elsewhere. *)
 
 val greater_equal :
   ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [greater_equal t1 t2] is synonym for {!cmpge}. *)
+
+val greater_equal_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [greater_equal_s t scalar] checks if each element is greater than or equal
+    to scalar. *)
 
 val array_equal :
   ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t

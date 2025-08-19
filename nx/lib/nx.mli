@@ -1415,11 +1415,17 @@ val cmplt : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 val less : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [less t1 t2] is synonym for {!cmplt}. *)
 
+val less_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [less_s t scalar] checks if each element is less than scalar. *)
+
 val cmpne : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [cmpne t1 t2] returns 1 where t1 ≠ t2, 0 elsewhere. *)
 
 val not_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [not_equal t1 t2] is synonym for {!cmpne}. *)
+
+val not_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [not_equal_s t scalar] compares each element with scalar for inequality. *)
 
 val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [cmpeq t1 t2] returns 1 where t1 = t2, 0 elsewhere. *)
@@ -1433,17 +1439,28 @@ val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 val greater : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [greater t1 t2] is synonym for {!cmpgt}. *)
 
+val greater_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [greater_s t scalar] checks if each element is greater than scalar. *)
+
 val cmple : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [cmple t1 t2] returns 1 where t1 ≤ t2, 0 elsewhere. *)
 
 val less_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [less_equal t1 t2] is synonym for {!cmple}. *)
 
+val less_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [less_equal_s t scalar] checks if each element is less than or equal to
+    scalar. *)
+
 val cmpge : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [cmpge t1 t2] returns 1 where t1 ≥ t2, 0 elsewhere. *)
 
 val greater_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [greater_equal t1 t2] is synonym for {!cmpge}. *)
+
+val greater_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [greater_equal_s t scalar] checks if each element is greater than or equal
+    to scalar. *)
 
 val array_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [array_equal t1 t2] returns scalar 1 if all elements equal, 0 otherwise.
