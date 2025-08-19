@@ -4,15 +4,12 @@ open Ubench
 
 (* Simple benchmark configuration *)
 let config =
-  {
-    quota = Time_limit 2.0;
-    warmup_iterations = 3;
-    min_measurements = 10;
-    stabilize_gc = true;
-    geometric_scale = 1.3;
-    fork_benchmarks = false;
-    regressions = [ (Time_per_run, [ Runs ]) ];
-  }
+  Config.default |> Config.time_limit 2.0 |> Config.warmup 3
+  |> Config.min_measurements 10
+  |> Config.gc_stabilization true
+  |> Config.geometric_scale 1.3 |> Config.fork false
+  |> Config.regressions [ (Time_per_run, [ Runs ], false) ]
+  |> Config.build
 
 (* Test parameters *)
 let sizes = [ 50; 100; 200; 500 ]
@@ -42,7 +39,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
             let add_bench =
               let a = Nx.rand ctx dtype shape in
               let b = Nx.rand ctx dtype shape in
-              create (make_name "Add" size dtype backend_name) (fun () ->
+              bench (make_name "Add" size dtype backend_name) (fun () ->
                   ignore (Nx.add a b))
             in
 
@@ -50,7 +47,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
             let mul_bench =
               let a = Nx.rand ctx dtype shape in
               let b = Nx.rand ctx dtype shape in
-              create (make_name "Mul" size dtype backend_name) (fun () ->
+              bench (make_name "Mul" size dtype backend_name) (fun () ->
                   ignore (Nx.mul a b))
             in
 
@@ -58,14 +55,14 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
             let matmul_bench =
               let a = Nx.rand ctx dtype shape in
               let b = Nx.rand ctx dtype shape in
-              create (make_name "MatMul" size dtype backend_name) (fun () ->
+              bench (make_name "MatMul" size dtype backend_name) (fun () ->
                   ignore (Nx.matmul a b))
             in
 
             (* Sum *)
             let sum_bench =
               let a = Nx.rand ctx dtype shape in
-              create (make_name "Sum" size dtype backend_name) (fun () ->
+              bench (make_name "Sum" size dtype backend_name) (fun () ->
                   ignore (Nx.sum a))
             in
 
@@ -75,8 +72,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
                 let input = Nx.rand ctx dtype [| 1; 3; size; size |] in
                 let kernel = Nx.rand ctx dtype [| 8; 3; 3; 3 |] in
                 Some
-                  (create (make_name "Conv2D" size dtype backend_name)
-                     (fun () ->
+                  (bench (make_name "Conv2D" size dtype backend_name) (fun () ->
                        ignore (Nx.convolve2d input kernel ~padding_mode:`Same)))
               else None
             in
