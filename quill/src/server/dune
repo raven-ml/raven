@@ -17,7 +17,7 @@
 (rule
  (target mode.txt)
  (enabled_if
-  (= %{profile} dev))
+  (<> %{profile} release))
  (action
   (with-stdout-to
    %{target}
@@ -78,7 +78,7 @@
 (rule
  (target asset_editor.ml)
  (enabled_if
-  (= %{profile} dev))
+  (<> %{profile} release))
  (deps
   ../editor/styles.css
   ../editor/main.bc.wasm.js
@@ -92,7 +92,7 @@
 (rule
  (target asset.ml)
  (enabled_if
-  (= %{profile} dev))
+  (<> %{profile} release))
  (deps
   (source_tree asset/))
  ; Generate stub in dev mode
