@@ -753,6 +753,31 @@ module Make (B : Backend_intf.S) = struct
   let cmpge a b = logical_not (cmplt a b)
   let greater_equal a b = cmpge a b
 
+  (* Scalar comparison operations *)
+  let equal_s a s =
+    let s_tensor = scalar (B.context a) (dtype a) s in
+    equal a s_tensor
+
+  let not_equal_s a s =
+    let s_tensor = scalar (B.context a) (dtype a) s in
+    not_equal a s_tensor
+
+  let less_s a s =
+    let s_tensor = scalar (B.context a) (dtype a) s in
+    less a s_tensor
+
+  let greater_s a s =
+    let s_tensor = scalar (B.context a) (dtype a) s in
+    greater a s_tensor
+
+  let less_equal_s a s =
+    let s_tensor = scalar (B.context a) (dtype a) s in
+    less_equal a s_tensor
+
+  let greater_equal_s a s =
+    let s_tensor = scalar (B.context a) (dtype a) s in
+    greater_equal a s_tensor
+
   (* ───── Element-wise Unary Operations ───── *)
 
   let neg x = B.op_neg x
@@ -765,36 +790,6 @@ module Make (B : Backend_intf.S) = struct
     B.op_xor x minus_one_b
 
   let invert x = bitwise_not x
-
-  (* ───── Infix operators ───── *)
-  module Infix = struct
-    let ( + ) = add
-    let ( +$ ) = add_s
-    let ( - ) = sub
-    let ( -$ ) = sub_s
-    let ( * ) = mul
-    let ( *$ ) = mul_s
-    let ( / ) = div
-    let ( /$ ) = div_s
-    let ( ** ) = pow
-    let ( **$ ) = pow_s
-    let ( % ) = mod_
-    let ( mod ) = mod_
-    let ( %$ ) = mod_s
-    let ( lxor ) = bitwise_xor
-    let ( lor ) = bitwise_or
-    let ( land ) = bitwise_and
-    let ( ^ ) = logical_xor
-    let ( && ) = logical_and
-    let ( || ) = logical_or
-    let ( ~- ) = logical_not
-    let ( < ) = less
-    let ( <> ) = not_equal
-    let ( = ) = equal
-    let ( > ) = greater
-    let ( <= ) = less_equal
-    let ( >= ) = greater_equal
-  end
 
   (* Math functions - assume float inputs as per B.op signatures *)
   let log2 x = B.op_log2 x
@@ -4250,7 +4245,9 @@ module Make (B : Backend_intf.S) = struct
     in
 
     (* Use Complex64 as default - matches NumPy behavior *)
-    let result = B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:axes_arr ~s:None in
+    let result =
+      B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:axes_arr ~s:None
+    in
 
     if norm_scale <> 1.0 then
       let scale_value = Complex.{ re = norm_scale; im = 0.0 } in
@@ -5773,4 +5770,51 @@ module Make (B : Backend_intf.S) = struct
       acc := f !acc v
     done;
     !acc
+
+  (* ───── Infix operators ───── *)
+
+  module Infix = struct
+    let ( + ) = add
+    let ( +$ ) = add_s
+    let ( - ) = sub
+    let ( -$ ) = sub_s
+    let ( * ) = mul
+    let ( *$ ) = mul_s
+    let ( / ) = div
+    let ( /$ ) = div_s
+    let ( ** ) = pow
+    let ( **$ ) = pow_s
+    let ( % ) = mod_
+    let ( mod ) = mod_
+    let ( %$ ) = mod_s
+    let ( lxor ) = bitwise_xor
+    let ( lor ) = bitwise_or
+    let ( land ) = bitwise_and
+    let ( ^ ) = logical_xor
+    let ( && ) = logical_and
+    let ( || ) = logical_or
+    let ( ~- ) = logical_not
+    let ( < ) = less
+    let ( <$ ) = less_s
+    let ( <> ) = not_equal
+    let ( <>$ ) = not_equal_s
+    let ( = ) = equal
+    let ( =$ ) = equal_s
+    let ( > ) = greater
+    let ( >$ ) = greater_s
+    let ( <= ) = less_equal
+    let ( <=$ ) = less_equal_s
+    let ( >= ) = greater_equal
+    let ( >=$ ) = greater_equal_s
+    let ( @@ ) = matmul
+    let ( /@ ) = solve
+    let ( **@ ) = matrix_power
+    let ( <.> ) = dot
+    let ( @= ) a b = concatenate ~axis:0 [ a; b ]
+    let ( @|| ) a b = concatenate ~axis:1 [ a; b ]
+    let ( .%{} ) x indices = get indices x
+    let ( .%{}<- ) x indices value = set indices x value
+    let ( .${} ) x slice_def = slice slice_def x
+    let ( .${}<- ) x slice_def value = set_slice slice_def x value
+  end
 end
