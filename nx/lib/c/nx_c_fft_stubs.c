@@ -4,6 +4,24 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+// Helper to validate and normalize axes
+static int validate_and_normalize_axes(int *axes, int num_axes, int ndim) {
+  // Normalize negative axes and validate range
+  for (int i = 0; i < num_axes; i++) {
+    if (axes[i] < 0) axes[i] += ndim;
+    if (axes[i] < 0 || axes[i] >= ndim) {
+      return 0;  // Invalid axis
+    }
+    // Check for duplicates
+    for (int j = 0; j < i; j++) {
+      if (axes[i] == axes[j]) {
+        return 0;  // Duplicate axis
+      }
+    }
+  }
+  return 1;  // Valid
+}
+
 // Helper function to compute twiddle factors
 static inline void compute_twiddle(double angle, double *cos_val,
                                    double *sin_val) {
@@ -21,33 +39,21 @@ static inline size_t bit_reverse(size_t x, int log2n) {
   return result;
 }
 
-// DFT implementation for arbitrary sizes with optimized twiddles
+// DFT implementation for arbitrary sizes with O(n) memory
 static void dft_complex64(double *data_re, double *data_im, size_t n,
                           int stride, size_t offset, bool inverse) {
   if (n == 0) return;
   
   double *temp_re = (double *)malloc(n * sizeof(double));
   double *temp_im = (double *)malloc(n * sizeof(double));
-  double *twiddle_cos = (double *)malloc(n * n * sizeof(double));  // Precompute
-  double *twiddle_sin = (double *)malloc(n * n * sizeof(double));
 
-  if (!temp_re || !temp_im || !twiddle_cos || !twiddle_sin) {
-    // Cleanup and return
-    free(temp_re); free(temp_im); free(twiddle_cos); free(twiddle_sin);
+  if (!temp_re || !temp_im) {
+    free(temp_re); free(temp_im);
     return;
   }
 
   double sign = inverse ? 1.0 : -1.0;
   double two_pi_n = 2.0 * M_PI / n;
-
-  // Precompute all twiddles
-  for (size_t k = 0; k < n; k++) {
-    for (size_t j = 0; j < n; j++) {
-      double angle = sign * two_pi_n * k * j;
-      twiddle_cos[k * n + j] = cos(angle);
-      twiddle_sin[k * n + j] = sin(angle);
-    }
-  }
 
   // Copy input
   for (size_t i = 0; i < n; i++) {
@@ -55,35 +61,36 @@ static void dft_complex64(double *data_re, double *data_im, size_t n,
     temp_im[i] = data_im[offset + i * stride];
   }
 
-  // Compute DFT with unrolling (partial, for performance)
+  // Compute DFT using recurrence for twiddle factors
   for (size_t k = 0; k < n; k++) {
     double sum_re = 0.0;
     double sum_im = 0.0;
-    size_t base = k * n;
     
-    // Process in groups of 4 for better performance
-    size_t j;
-    for (j = 0; j + 3 < n; j += 4) {
-      sum_re += temp_re[j] * twiddle_cos[base + j] - temp_im[j] * twiddle_sin[base + j] +
-                temp_re[j+1] * twiddle_cos[base + j+1] - temp_im[j+1] * twiddle_sin[base + j+1] +
-                temp_re[j+2] * twiddle_cos[base + j+2] - temp_im[j+2] * twiddle_sin[base + j+2] +
-                temp_re[j+3] * twiddle_cos[base + j+3] - temp_im[j+3] * twiddle_sin[base + j+3];
-      sum_im += temp_re[j] * twiddle_sin[base + j] + temp_im[j] * twiddle_cos[base + j] +
-                temp_re[j+1] * twiddle_sin[base + j+1] + temp_im[j+1] * twiddle_cos[base + j+1] +
-                temp_re[j+2] * twiddle_sin[base + j+2] + temp_im[j+2] * twiddle_cos[base + j+2] +
-                temp_re[j+3] * twiddle_sin[base + j+3] + temp_im[j+3] * twiddle_cos[base + j+3];
-    }
-    // Handle remainder
-    for (; j < n; j++) {
-      sum_re += temp_re[j] * twiddle_cos[base + j] - temp_im[j] * twiddle_sin[base + j];
-      sum_im += temp_re[j] * twiddle_sin[base + j] + temp_im[j] * twiddle_cos[base + j];
+    // Compute initial twiddle for this k
+    double angle_step = sign * two_pi_n * (double)k;
+    double cs, sn;
+    compute_twiddle(angle_step, &cs, &sn);
+    
+    // Start with W^0 = 1
+    double w_re = 1.0, w_im = 0.0;
+    
+    for (size_t j = 0; j < n; j++) {
+      // DFT sum: X[k] += x[j] * W^(kj)
+      sum_re += temp_re[j] * w_re - temp_im[j] * w_im;
+      sum_im += temp_re[j] * w_im + temp_im[j] * w_re;
+      
+      // Update twiddle factor using recurrence: W *= e^(i*angle_step)
+      double new_re = w_re * cs - w_im * sn;
+      double new_im = w_re * sn + w_im * cs;
+      w_re = new_re;
+      w_im = new_im;
     }
 
     data_re[offset + k * stride] = sum_re;
     data_im[offset + k * stride] = sum_im;
   }
 
-  free(temp_re); free(temp_im); free(twiddle_cos); free(twiddle_sin);
+  free(temp_re); free(temp_im);
 }
 
 // 1D FFT implementation using Cooley-Tukey algorithm
@@ -170,6 +177,10 @@ static void fft_multi_complex64(ndarray_t *data, int *axes, int num_axes,
                                 bool inverse) {
   int ndim = data->ndim;
   const int *shape = data->shape;
+  const int *strides = data->strides;
+  
+  // Early exit for no axes
+  if (num_axes == 0) return;
 
   // Find maximum axis size for temp allocation
   size_t max_n = 0;
@@ -198,11 +209,8 @@ static void fft_multi_complex64(ndarray_t *data, int *axes, int num_axes,
     size_t n = shape[axis];
     if (n <= 1) continue;
 
-    // Calculate stride for this axis
-    size_t axis_stride = 1;
-    for (int d = axis + 1; d < ndim; d++) {
-      axis_stride *= shape[d];
-    }
+    // Use the actual stride from the array
+    size_t axis_stride = (size_t)strides[axis];
 
     // Iterate over all other dimensions
     size_t total_elements = 1;
@@ -214,21 +222,16 @@ static void fft_multi_complex64(ndarray_t *data, int *axes, int num_axes,
 
     // Process each 1D FFT along the axis
     for (size_t fft_idx = 0; fft_idx < num_ffts; fft_idx++) {
-      // Calculate starting offset for this FFT
+      // Calculate starting offset for this FFT using actual strides
       size_t offset = 0;
       size_t temp_idx = fft_idx;
 
       for (int d = ndim - 1; d >= 0; d--) {
         if (d != axis) {
-          size_t dim_size = (d > axis) ? shape[d] : shape[d];
+          size_t dim_size = shape[d];
           size_t coord = temp_idx % dim_size;
           temp_idx /= dim_size;
-
-          size_t stride_d = 1;
-          for (int dd = d + 1; dd < ndim; dd++) {
-            stride_d *= shape[dd];
-          }
-          offset += coord * stride_d;
+          offset += coord * (size_t)strides[d];
         }
       }
 
@@ -340,15 +343,19 @@ CAMLprim value caml_nx_fft_complex64(value v_ndim, value v_shape, value v_input,
     axes[i] = Int_val(Field(v_axes, i));
   }
 
+  if (num_axes > 0 && !validate_and_normalize_axes(axes, num_axes, ndim)) {
+    caml_failwith("fft: invalid or duplicate axes");
+  }
+
   // Get arrays - input and output can be the same
   ndarray_t input = {
-      .data = Caml_ba_data_val(v_input) + Long_val(v_input_offset),
+      .data = (double*)Caml_ba_data_val(v_input) + Long_val(v_input_offset),
       .shape = shape,
       .strides = input_strides,
       .ndim = ndim};
 
   ndarray_t output = {
-      .data = Caml_ba_data_val(v_output) + Long_val(v_output_offset),
+      .data = (double*)Caml_ba_data_val(v_output) + Long_val(v_output_offset),
       .shape = shape,
       .strides = output_strides,
       .ndim = ndim};
@@ -369,33 +376,21 @@ CAMLprim value caml_nx_fft_complex64(value v_ndim, value v_shape, value v_input,
   return Val_unit;
 }
 
-// DFT implementation for arbitrary sizes (single precision) with optimized twiddles
+// DFT implementation for arbitrary sizes (single precision) with O(n) memory
 static void dft_complex32(float *data_re, float *data_im, size_t n, int stride,
                           size_t offset, bool inverse) {
   if (n == 0) return;
   
   float *temp_re = (float *)malloc(n * sizeof(float));
   float *temp_im = (float *)malloc(n * sizeof(float));
-  float *twiddle_cos = (float *)malloc(n * n * sizeof(float));  // Precompute
-  float *twiddle_sin = (float *)malloc(n * n * sizeof(float));
 
-  if (!temp_re || !temp_im || !twiddle_cos || !twiddle_sin) {
-    // Cleanup and return
-    free(temp_re); free(temp_im); free(twiddle_cos); free(twiddle_sin);
+  if (!temp_re || !temp_im) {
+    free(temp_re); free(temp_im);
     return;
   }
 
   float sign = inverse ? 1.0f : -1.0f;
   float two_pi_n = 2.0f * (float)M_PI / n;
-
-  // Precompute all twiddles
-  for (size_t k = 0; k < n; k++) {
-    for (size_t j = 0; j < n; j++) {
-      float angle = sign * two_pi_n * k * j;
-      twiddle_cos[k * n + j] = cosf(angle);
-      twiddle_sin[k * n + j] = sinf(angle);
-    }
-  }
 
   // Copy input
   for (size_t i = 0; i < n; i++) {
@@ -403,35 +398,36 @@ static void dft_complex32(float *data_re, float *data_im, size_t n, int stride,
     temp_im[i] = data_im[offset + i * stride];
   }
 
-  // Compute DFT with unrolling (partial, for performance)
+  // Compute DFT using recurrence for twiddle factors
   for (size_t k = 0; k < n; k++) {
     float sum_re = 0.0f;
     float sum_im = 0.0f;
-    size_t base = k * n;
     
-    // Process in groups of 4 for better performance
-    size_t j;
-    for (j = 0; j + 3 < n; j += 4) {
-      sum_re += temp_re[j] * twiddle_cos[base + j] - temp_im[j] * twiddle_sin[base + j] +
-                temp_re[j+1] * twiddle_cos[base + j+1] - temp_im[j+1] * twiddle_sin[base + j+1] +
-                temp_re[j+2] * twiddle_cos[base + j+2] - temp_im[j+2] * twiddle_sin[base + j+2] +
-                temp_re[j+3] * twiddle_cos[base + j+3] - temp_im[j+3] * twiddle_sin[base + j+3];
-      sum_im += temp_re[j] * twiddle_sin[base + j] + temp_im[j] * twiddle_cos[base + j] +
-                temp_re[j+1] * twiddle_sin[base + j+1] + temp_im[j+1] * twiddle_cos[base + j+1] +
-                temp_re[j+2] * twiddle_sin[base + j+2] + temp_im[j+2] * twiddle_cos[base + j+2] +
-                temp_re[j+3] * twiddle_sin[base + j+3] + temp_im[j+3] * twiddle_cos[base + j+3];
-    }
-    // Handle remainder
-    for (; j < n; j++) {
-      sum_re += temp_re[j] * twiddle_cos[base + j] - temp_im[j] * twiddle_sin[base + j];
-      sum_im += temp_re[j] * twiddle_sin[base + j] + temp_im[j] * twiddle_cos[base + j];
+    // Compute initial twiddle for this k
+    float angle_step = sign * two_pi_n * (float)k;
+    float cs = cosf(angle_step);
+    float sn = sinf(angle_step);
+    
+    // Start with W^0 = 1
+    float w_re = 1.0f, w_im = 0.0f;
+    
+    for (size_t j = 0; j < n; j++) {
+      // DFT sum: X[k] += x[j] * W^(kj)
+      sum_re += temp_re[j] * w_re - temp_im[j] * w_im;
+      sum_im += temp_re[j] * w_im + temp_im[j] * w_re;
+      
+      // Update twiddle factor using recurrence: W *= e^(i*angle_step)
+      float new_re = w_re * cs - w_im * sn;
+      float new_im = w_re * sn + w_im * cs;
+      w_re = new_re;
+      w_im = new_im;
     }
 
     data_re[offset + k * stride] = sum_re;
     data_im[offset + k * stride] = sum_im;
   }
 
-  free(temp_re); free(temp_im); free(twiddle_cos); free(twiddle_sin);
+  free(temp_re); free(temp_im);
 }
 
 // FFT for complex32 (single precision)
@@ -515,6 +511,10 @@ static void fft_multi_complex32(ndarray_t *data, int *axes, int num_axes,
                                 bool inverse) {
   int ndim = data->ndim;
   const int *shape = data->shape;
+  const int *strides = data->strides;
+  
+  // Early exit for no axes
+  if (num_axes == 0) return;
 
   // Find maximum axis size for temp allocation
   size_t max_n = 0;
@@ -542,10 +542,8 @@ static void fft_multi_complex32(ndarray_t *data, int *axes, int num_axes,
     size_t n = shape[axis];
     if (n <= 1) continue;
 
-    size_t axis_stride = 1;
-    for (int d = axis + 1; d < ndim; d++) {
-      axis_stride *= shape[d];
-    }
+    // Use the actual stride from the array
+    size_t axis_stride = (size_t)strides[axis];
 
     size_t total_elements = 1;
     for (int d = 0; d < ndim; d++) {
@@ -555,20 +553,16 @@ static void fft_multi_complex32(ndarray_t *data, int *axes, int num_axes,
     size_t num_ffts = total_elements / n;
 
     for (size_t fft_idx = 0; fft_idx < num_ffts; fft_idx++) {
+      // Calculate starting offset for this FFT using actual strides
       size_t offset = 0;
       size_t temp_idx = fft_idx;
 
       for (int d = ndim - 1; d >= 0; d--) {
         if (d != axis) {
-          size_t dim_size = (d > axis) ? shape[d] : shape[d];
+          size_t dim_size = shape[d];
           size_t coord = temp_idx % dim_size;
           temp_idx /= dim_size;
-
-          size_t stride_d = 1;
-          for (int dd = d + 1; dd < ndim; dd++) {
-            stride_d *= shape[dd];
-          }
-          offset += coord * stride_d;
+          offset += coord * (size_t)strides[d];
         }
       }
 
@@ -633,14 +627,18 @@ CAMLprim value caml_nx_fft_complex32(value v_ndim, value v_shape, value v_input,
     axes[i] = Int_val(Field(v_axes, i));
   }
 
+  if (num_axes > 0 && !validate_and_normalize_axes(axes, num_axes, ndim)) {
+    caml_failwith("fft: invalid or duplicate axes");
+  }
+
   ndarray_t input = {
-      .data = Caml_ba_data_val(v_input) + Long_val(v_input_offset),
+      .data = (float*)Caml_ba_data_val(v_input) + Long_val(v_input_offset),
       .shape = shape,
       .strides = input_strides,
       .ndim = ndim};
 
   ndarray_t output = {
-      .data = Caml_ba_data_val(v_output) + Long_val(v_output_offset),
+      .data = (float*)Caml_ba_data_val(v_output) + Long_val(v_output_offset),
       .shape = shape,
       .strides = output_strides,
       .ndim = ndim};
@@ -730,12 +728,6 @@ CAMLprim value caml_nx_rfft_float64(value v_ndim, value v_shape, value v_input,
       caml_failwith("rfft: memory allocation failed");
     }
 
-    size_t axis_stride_in = 1, axis_stride_out = 1;
-    for (int d = rfft_axis + 1; d < ndim; d++) {
-      axis_stride_in *= shape[d];
-      axis_stride_out *= output_shape[d];
-    }
-
     for (size_t fft_idx = 0; fft_idx < num_ffts; fft_idx++) {
       size_t offset_in = 0, offset_out = 0, temp = fft_idx;
       for (int d = ndim - 1; d >= 0; d--) {
@@ -748,7 +740,7 @@ CAMLprim value caml_nx_rfft_float64(value v_ndim, value v_shape, value v_input,
       }
 
       for (size_t i = 0; i < n; i++) {
-        size_t idx = offset_in + i * axis_stride_in * input_strides[rfft_axis];
+        size_t idx = offset_in + i * (size_t)input_strides[rfft_axis];
         temp_re[i] = input_data[idx];
         temp_im[i] = 0.0;
       }
@@ -756,7 +748,7 @@ CAMLprim value caml_nx_rfft_float64(value v_ndim, value v_shape, value v_input,
       fft_1d_complex64(temp_re, temp_im, n, 1, 0, false);  // Forward FFT
 
       for (size_t i = 0; i < n_out; i++) {
-        size_t idx = offset_out + i * axis_stride_out * output_strides[rfft_axis];
+        size_t idx = offset_out + i * (size_t)output_strides[rfft_axis];
         output_data[2 * idx] = temp_re[i];
         output_data[2 * idx + 1] = temp_im[i];
       }
@@ -923,12 +915,6 @@ CAMLprim value caml_nx_irfft_complex64(value v_ndim, value v_shape,
       caml_failwith("irfft: memory allocation failed");
     }
 
-    size_t axis_stride_in = 1, axis_stride_out = 1;
-    for (int d = irfft_axis + 1; d < ndim; d++) {
-      axis_stride_in *= shape[d];
-      axis_stride_out *= output_shape[d];
-    }
-
     for (size_t fft_idx = 0; fft_idx < num_ffts; fft_idx++) {
       size_t offset_in = 0, offset_out = 0, temp = fft_idx;
       for (int d = ndim - 1; d >= 0; d--) {
@@ -942,7 +928,7 @@ CAMLprim value caml_nx_irfft_complex64(value v_ndim, value v_shape,
 
       // Copy input and reconstruct Hermitian symmetry
       for (size_t i = 0; i < n_in; i++) {
-        size_t idx = offset_in + i * axis_stride_in * input_strides[irfft_axis];
+        size_t idx = offset_in + i * (size_t)input_strides[irfft_axis];
         temp_re[i] = input_data[2 * idx];
         temp_im[i] = input_data[2 * idx + 1];
       }
@@ -959,11 +945,15 @@ CAMLprim value caml_nx_irfft_complex64(value v_ndim, value v_shape,
         }
       }
 
+      // Zero DC and Nyquist imaginary parts for real output
+      temp_im[0] = 0.0;
+      if ((n_out % 2) == 0 && n_in > n_out/2) temp_im[n_out/2] = 0.0;
+
       fft_1d_complex64(temp_re, temp_im, n_out, 1, 0, true);  // Inverse FFT
 
       // Copy real part to output
       for (size_t i = 0; i < n_out; i++) {
-        size_t idx = offset_out + i * axis_stride_out * output_strides[irfft_axis];
+        size_t idx = offset_out + i * (size_t)output_strides[irfft_axis];
         output_data[idx] = temp_re[i];
       }
     }
@@ -1057,6 +1047,10 @@ CAMLprim value caml_nx_irfft_complex64(value v_ndim, value v_shape,
         }
       }
 
+      // Zero DC and Nyquist imaginary parts for real output
+      temp_im[0] = 0.0;
+      if ((n_out % 2) == 0 && n_in > n_out/2) temp_im[n_out/2] = 0.0;
+
       fft_1d_complex64(temp_re, temp_im, n_out, 1, 0, true);
 
       // Copy real part to output
@@ -1144,12 +1138,6 @@ CAMLprim value caml_nx_rfft_float32(value v_ndim, value v_shape, value v_input,
       caml_failwith("rfft: memory allocation failed");
     }
 
-    size_t axis_stride_in = 1, axis_stride_out = 1;
-    for (int d = rfft_axis + 1; d < ndim; d++) {
-      axis_stride_in *= shape[d];
-      axis_stride_out *= output_shape[d];
-    }
-
     for (size_t fft_idx = 0; fft_idx < num_ffts; fft_idx++) {
       size_t offset_in = 0, offset_out = 0, temp = fft_idx;
       for (int d = ndim - 1; d >= 0; d--) {
@@ -1162,7 +1150,7 @@ CAMLprim value caml_nx_rfft_float32(value v_ndim, value v_shape, value v_input,
       }
 
       for (size_t i = 0; i < n; i++) {
-        size_t idx = offset_in + i * axis_stride_in * input_strides[rfft_axis];
+        size_t idx = offset_in + i * (size_t)input_strides[rfft_axis];
         temp_re[i] = input_data[idx];
         temp_im[i] = 0.0f;
       }
@@ -1170,7 +1158,7 @@ CAMLprim value caml_nx_rfft_float32(value v_ndim, value v_shape, value v_input,
       fft_1d_complex32(temp_re, temp_im, n, 1, 0, false);  // Forward FFT
 
       for (size_t i = 0; i < n_out; i++) {
-        size_t idx = offset_out + i * axis_stride_out * output_strides[rfft_axis];
+        size_t idx = offset_out + i * (size_t)output_strides[rfft_axis];
         output_data[2 * idx] = temp_re[i];
         output_data[2 * idx + 1] = temp_im[i];
       }
@@ -1337,12 +1325,6 @@ CAMLprim value caml_nx_irfft_complex32(value v_ndim, value v_shape,
       caml_failwith("irfft: memory allocation failed");
     }
 
-    size_t axis_stride_in = 1, axis_stride_out = 1;
-    for (int d = irfft_axis + 1; d < ndim; d++) {
-      axis_stride_in *= shape[d];
-      axis_stride_out *= output_shape[d];
-    }
-
     for (size_t fft_idx = 0; fft_idx < num_ffts; fft_idx++) {
       size_t offset_in = 0, offset_out = 0, temp = fft_idx;
       for (int d = ndim - 1; d >= 0; d--) {
@@ -1356,7 +1338,7 @@ CAMLprim value caml_nx_irfft_complex32(value v_ndim, value v_shape,
 
       // Copy input and reconstruct Hermitian symmetry
       for (size_t i = 0; i < n_in; i++) {
-        size_t idx = offset_in + i * axis_stride_in * input_strides[irfft_axis];
+        size_t idx = offset_in + i * (size_t)input_strides[irfft_axis];
         temp_re[i] = input_data[2 * idx];
         temp_im[i] = input_data[2 * idx + 1];
       }
@@ -1373,11 +1355,15 @@ CAMLprim value caml_nx_irfft_complex32(value v_ndim, value v_shape,
         }
       }
 
+      // Zero DC and Nyquist imaginary parts for real output
+      temp_im[0] = 0.0f;
+      if ((n_out % 2) == 0 && n_in > n_out/2) temp_im[n_out/2] = 0.0f;
+
       fft_1d_complex32(temp_re, temp_im, n_out, 1, 0, true);  // Inverse FFT
 
       // Copy real part to output
       for (size_t i = 0; i < n_out; i++) {
-        size_t idx = offset_out + i * axis_stride_out * output_strides[irfft_axis];
+        size_t idx = offset_out + i * (size_t)output_strides[irfft_axis];
         output_data[idx] = temp_re[i];
       }
     }
@@ -1470,6 +1456,10 @@ CAMLprim value caml_nx_irfft_complex32(value v_ndim, value v_shape,
           temp_im[i] = 0.0f;
         }
       }
+
+      // Zero DC and Nyquist imaginary parts for real output
+      temp_im[0] = 0.0f;
+      if ((n_out % 2) == 0 && n_in > n_out/2) temp_im[n_out/2] = 0.0f;
 
       fft_1d_complex32(temp_re, temp_im, n_out, 1, 0, true);
 
