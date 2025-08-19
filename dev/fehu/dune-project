@@ -1,0 +1,14 @@
+(lang dune 3.14)
+
+(name fehu)
+
+(package
+ (name fehu)
+ (synopsis "Reinforcement learning framework for OCaml")
+ (description "Fehu is a reinforcement learning framework built on Raven's ecosystem, providing environments, algorithms, and training utilities")
+ (depends
+  ocaml
+  dune
+  rune
+  yojson
+  (alcotest :with-test)))

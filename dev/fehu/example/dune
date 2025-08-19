@@ -1,0 +1,3 @@
+(executables
+ (names cartpole_random dqn_cartpole)
+ (libraries fehu kaun))
