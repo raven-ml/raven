@@ -1484,11 +1484,17 @@ val cmplt : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 val less : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [less t1 t2] is synonym for {!cmplt}. *)
 
+val less_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [less_s t scalar] checks if each element is less than scalar. *)
+
 val cmpne : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmpne t1 t2] returns 1 where t1 ≠ t2, 0 elsewhere. *)
 
 val not_equal : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [not_equal t1 t2] is synonym for {!cmpne}. *)
+
+val not_equal_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [not_equal_s t scalar] compares each element with scalar for inequality. *)
 
 val cmpeq : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmpeq t1 t2] returns 1 where t1 = t2, 0 elsewhere. *)
@@ -1496,11 +1502,17 @@ val cmpeq : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 val equal : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [equal t1 t2] is synonym for {!cmpeq}. *)
 
+val equal_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [equal_s t scalar] compares each element with scalar for equality. *)
+
 val cmpgt : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmpgt t1 t2] returns 1 where t1 > t2, 0 elsewhere. *)
 
 val greater : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [greater t1 t2] is synonym for {!cmpgt}. *)
+
+val greater_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [greater_s t scalar] checks if each element is greater than scalar. *)
 
 val cmple : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmple t1 t2] returns 1 where t1 ≤ t2, 0 elsewhere. *)
@@ -1509,12 +1521,20 @@ val less_equal :
   ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [less_equal t1 t2] is synonym for {!cmple}. *)
 
+val less_equal_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [less_equal_s t scalar] checks if each element is less than or equal to
+    scalar. *)
+
 val cmpge : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [cmpge t1 t2] returns 1 where t1 ≥ t2, 0 elsewhere. *)
 
 val greater_equal :
   ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 (** [greater_equal t1 t2] is synonym for {!cmpge}. *)
+
+val greater_equal_s : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+(** [greater_equal_s t scalar] checks if each element is greater than or equal
+    to scalar. *)
 
 val array_equal :
   ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
@@ -1694,6 +1714,156 @@ val rshift : ('a, 'b, 'dev) t -> int -> ('a, 'b, 'dev) t
         rshift x 2
       - : (int32, int32_elt, 'dev) t = [2, 2, 2]
     ]} *)
+
+(** Infix operators *)
+module Infix : sig
+  (** {3 Elementwise Arithmetic} *)
+
+  val ( + ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 + t2] is a synonym for {!add}. *)
+
+  val ( - ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 - t2] is a synonym for {!sub}. *)
+
+  val ( * ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 * t2] is a synonym for {!mul}. *)
+
+  val ( / ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 / t2] is a synonym for {!div}. *)
+
+  val ( ** ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 ** t2] is a synonym for {!pow}. *)
+
+  (** {3 Scalar-right Arithmetic} *)
+
+  val ( +$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t +$ scalar] is a synonym for {!add_s}. *)
+
+  val ( -$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t -$ scalar] is a synonym for {!sub_s}. *)
+
+  val ( *$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t *$ scalar] is a synonym for {!mul_s}. *)
+
+  val ( /$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t /$ scalar] is a synonym for {!div_s}. *)
+
+  val ( **$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t **$ scalar] is a synonym for {!pow_s}. *)
+
+  (** {3 Comparisons} *)
+
+  val ( < ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (** [t1 < t2] is a synonym for {!less} *)
+
+  val ( <> ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (** [t1 <> t2] is a synonym for {!not_equal}. *)
+
+  val ( = ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (** [t1 = t1] is a synonym for {!equal}. *)
+
+  val ( > ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (** [t1 > t2] is a synonym for {!greater}. *)
+
+  val ( <= ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (** [t1 <= t2] is a synonym for {!less_equal}. *)
+
+  val ( >= ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
+  (** [t1 >= t2] is a synonym for {!greater_equal}. *)
+
+  (** {3 Scalar Comparisons} *)
+
+  val ( =$ ) : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+  (** [t =$ scalar] compares each element with scalar for equality. *)
+
+  val ( <>$ ) : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+  (** [t <>$ scalar] compares each element with scalar for inequality. *)
+
+  val ( <$ ) : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+  (** [t <$ scalar] checks if each element is less than scalar. *)
+
+  val ( >$ ) : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+  (** [t >$ scalar] checks if each element is greater than scalar. *)
+
+  val ( <=$ ) : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+  (** [t <=$ scalar] checks if each element is less than or equal to scalar. *)
+
+  val ( >=$ ) : ('a, 'b, 'dev) t -> 'a -> (int, uint8_elt, 'dev) t
+  (** [t >=$ scalar] checks if each element is greater than or equal to scalar.
+  *)
+
+  (** {3 Bitwise Operations} *)
+
+  val ( lxor ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 lxor t2] is a synonym for {!bitwise_xor}. *)
+
+  val ( lor ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 lor t2] is a synonym for {!bitwise_or}. *)
+
+  val ( land ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 land t2] is a synonym for {!bitwise_and}. *)
+
+  (** {3 Modulo Operations} *)
+
+  val ( % ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 % t2] is a synonym for {!mod_}. *)
+
+  val ( mod ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 mod t2] is a synonym for {!mod_}. *)
+
+  val ( %$ ) : ('a, 'b, 'dev) t -> 'a -> ('a, 'b, 'dev) t
+  (** [t %$ scalar] is a synonym for {!mod_s}. *)
+
+  (** {3 Boolean Mask Logic} *)
+
+  val ( ^ ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 ^ t2] is a synonym for {!logical_xor}. *)
+
+  val ( && ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 && t2] is a synonym for {!logical_and}. *)
+
+  val ( || ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 || t2] is a synonym for {!logical_or}. *)
+
+  val ( ~- ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [~-t] is a synonym for {!logical_not}. *)
+
+  (** {3 Linear Algebra} *)
+
+  val ( @@ ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 @@ t2] is a synonym for {!matmul}. *)
+
+  val ( /@ ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 /@ t2] solves the linear system t1 * x = t2 for x. *)
+
+  val ( **@ ) : ('a, 'b, 'dev) t -> int -> ('a, 'b, 'dev) t
+  (** [t **@ n] computes matrix power (t raised to the nth power). *)
+
+  val ( <.> ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 <.> t2] is a synonym for {!dot}. *)
+
+  (** {3 Concatenation} *)
+
+  val ( @= ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 @= t2] concatenates t1 and t2 vertically (along axis 0). *)
+
+  val ( @|| ) : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+  (** [t1 @|| t2] concatenates t1 and t2 horizontally (along axis 1). *)
+
+  (** {3 Indexing and Slicing} *)
+
+  val ( .%{} ) : ('a, 'b, 'dev) t -> int list -> ('a, 'b, 'dev) t
+  (** [t.%{indices}] is a synonym for {!get}. *)
+
+  val ( .%{}<- ) : ('a, 'b, 'dev) t -> int list -> ('a, 'b, 'dev) t -> unit
+  (** [t.%{indices} <- value] is a synonym for {!set}. *)
+
+  val ( .${} ) : ('a, 'b, 'dev) t -> index list -> ('a, 'b, 'dev) t
+  (** [t.${slice}] is a synonym for {!slice}. *)
+
+  val ( .${}<- ) : ('a, 'b, 'dev) t -> index list -> ('a, 'b, 'dev) t -> unit
+  (** [t.${slice} <- value] is a synonym for {!set_slice}. *)
+end
 
 (** {2 Reduction Operations}
 

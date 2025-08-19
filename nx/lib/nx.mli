@@ -1415,11 +1415,17 @@ val cmplt : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 val less : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [less t1 t2] is synonym for {!cmplt}. *)
 
+val less_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [less_s t scalar] checks if each element is less than scalar. *)
+
 val cmpne : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [cmpne t1 t2] returns 1 where t1 ≠ t2, 0 elsewhere. *)
 
 val not_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [not_equal t1 t2] is synonym for {!cmpne}. *)
+
+val not_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [not_equal_s t scalar] compares each element with scalar for inequality. *)
 
 val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [cmpeq t1 t2] returns 1 where t1 = t2, 0 elsewhere. *)
@@ -1433,17 +1439,28 @@ val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 val greater : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [greater t1 t2] is synonym for {!cmpgt}. *)
 
+val greater_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [greater_s t scalar] checks if each element is greater than scalar. *)
+
 val cmple : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [cmple t1 t2] returns 1 where t1 ≤ t2, 0 elsewhere. *)
 
 val less_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [less_equal t1 t2] is synonym for {!cmple}. *)
 
+val less_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [less_equal_s t scalar] checks if each element is less than or equal to
+    scalar. *)
+
 val cmpge : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [cmpge t1 t2] returns 1 where t1 ≥ t2, 0 elsewhere. *)
 
 val greater_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [greater_equal t1 t2] is synonym for {!cmpge}. *)
+
+val greater_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [greater_equal_s t scalar] checks if each element is greater than or equal
+    to scalar. *)
 
 val array_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [array_equal t1 t2] returns scalar 1 if all elements equal, 0 otherwise.
@@ -1618,6 +1635,156 @@ val rshift : ('a, 'b) t -> int -> ('a, 'b) t
         rshift x 2
       - : (int32, int32_elt) t = [2, 2, 2]
     ]} *)
+
+(** Infix operators *)
+module Infix : sig
+  (** {3 Elementwise Arithmetic} *)
+
+  val ( + ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 + t2] is a synonym for {!add}. *)
+
+  val ( - ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 - t2] is a synonym for {!sub}. *)
+
+  val ( * ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 * t2] is a synonym for {!mul}. *)
+
+  val ( / ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 / t2] is a synonym for {!div}. *)
+
+  val ( ** ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 ** t2] is a synonym for {!pow}. *)
+
+  (** {3 Scalar-right Arithmetic} *)
+
+  val ( +$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
+  (** [t +$ scalar] is a synonym for {!add_s}. *)
+
+  val ( -$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
+  (** [t -$ scalar] is a synonym for {!sub_s}. *)
+
+  val ( *$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
+  (** [t *$ scalar] is a synonym for {!mul_s}. *)
+
+  val ( /$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
+  (** [t /$ scalar] is a synonym for {!div_s}. *)
+
+  val ( **$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
+  (** [t **$ scalar] is a synonym for {!pow_s}. *)
+
+  (** {3 Comparisons} *)
+
+  val ( < ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  (** [t1 < t2] is a synonym for {!less} *)
+
+  val ( <> ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  (** [t1 <> t2] is a synonym for {!not_equal}. *)
+
+  val ( = ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  (** [t1 = t1] is a synonym for {!equal}. *)
+
+  val ( > ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  (** [t1 > t2] is a synonym for {!greater}. *)
+
+  val ( <= ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  (** [t1 <= t2] is a synonym for {!less_equal}. *)
+
+  val ( >= ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  (** [t1 >= t2] is a synonym for {!greater_equal}. *)
+
+  (** {3 Scalar Comparisons} *)
+
+  val ( =$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  (** [t =$ scalar] compares each element with scalar for equality. *)
+
+  val ( <>$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  (** [t <>$ scalar] compares each element with scalar for inequality. *)
+
+  val ( <$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  (** [t <$ scalar] checks if each element is less than scalar. *)
+
+  val ( >$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  (** [t >$ scalar] checks if each element is greater than scalar. *)
+
+  val ( <=$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  (** [t <=$ scalar] checks if each element is less than or equal to scalar. *)
+
+  val ( >=$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  (** [t >=$ scalar] checks if each element is greater than or equal to scalar.
+  *)
+
+  (** {3 Bitwise Operations} *)
+
+  val ( lxor ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 lxor t2] is a synonym for {!bitwise_xor}. *)
+
+  val ( lor ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 lor t2] is a synonym for {!bitwise_or}. *)
+
+  val ( land ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 land t2] is a synonym for {!bitwise_and}. *)
+
+  (** {3 Modulo Operations} *)
+
+  val ( % ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 % t2] is a synonym for {!mod_}. *)
+
+  val ( mod ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 mod t2] is a synonym for {!mod_}. *)
+
+  val ( %$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
+  (** [t %$ scalar] is a synonym for {!mod_s}. *)
+
+  (** {3 Boolean Mask Logic} *)
+
+  val ( ^ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 ^ t2] is a synonym for {!logical_xor}. *)
+
+  val ( && ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 && t2] is a synonym for {!logical_and}. *)
+
+  val ( || ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 || t2] is a synonym for {!logical_or}. *)
+
+  val ( ~- ) : ('a, 'b) t -> ('a, 'b) t
+  (** [~-t] is a synonym for {!logical_not}. *)
+
+  (** {3 Linear Algebra} *)
+
+  val ( @@ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 @@ t2] is a synonym for {!matmul}. *)
+
+  val ( /@ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 /@ t2] solves the linear system t1 * x = t2 for x. *)
+
+  val ( **@ ) : ('a, 'b) t -> int -> ('a, 'b) t
+  (** [t **@ n] computes matrix power (t raised to the nth power). *)
+
+  val ( <.> ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 <.> t2] is a synonym for {!dot}. *)
+
+  (** {3 Concatenation} *)
+
+  val ( @= ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 @= t2] concatenates t1 and t2 vertically (along axis 0). *)
+
+  val ( @|| ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [t1 @|| t2] concatenates t1 and t2 horizontally (along axis 1). *)
+
+  (** {3 Indexing and Slicing} *)
+
+  val ( .%{} ) : ('a, 'b) t -> int list -> ('a, 'b) t
+  (** [t.%{indices}] is a synonym for {!get}. *)
+
+  val ( .%{}<- ) : ('a, 'b) t -> int list -> ('a, 'b) t -> unit
+  (** [t.%{indices} <- value] is a synonym for {!set}. *)
+
+  val ( .${} ) : ('a, 'b) t -> index list -> ('a, 'b) t
+  (** [t.${slice}] is a synonym for {!slice}. *)
+
+  val ( .${}<- ) : ('a, 'b) t -> index list -> ('a, 'b) t -> unit
+  (** [t.${slice} <- value] is a synonym for {!set_slice}. *)
+end
 
 (** {2 Reduction Operations}
 
