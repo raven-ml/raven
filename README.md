@@ -16,6 +16,7 @@ Raven is built from modular projects that form a cohesive ecosystem:
 | **Raven Project**   | **Python Equivalent** | **Description**                                     |
 | ------------------- | --------------------- | --------------------------------------------------- |
 | [**Nx**](nx/)       | NumPy                 | N-dimensional arrays with pluggable backends        |
+| [**Talon**](talon/) | Pandas/Polars         | DataFrames with heterogeneous columns and rich API  |
 | [**Hugin**](hugin/) | Matplotlib            | Publication-quality data visualization and plotting |
 | [**Quill**](quill/) | Jupyter               | A love letter to scientific writing                 |
 
@@ -51,9 +52,8 @@ Raven is in active development and we welcome contributions from the community!
 - **Build new libraries** - Interested in creating any of the planned libraries below? Let's collaborate!
 
 **Future Libraries (Open for Contributions):**
-For our first release, we're focused on the foundation (Nx, Hugin, Quill) and the deep learning vertical (Rune, Kaun). These areas are planned for future development:
+For our first release, we're focused on the foundation (Nx, Talon, Hugin, Quill) and the deep learning vertical (Rune, Kaun). These areas are planned for future development:
 
-- **DataFrame library** (Pandas equivalent)
 - **Statistical computing** (R-like statistical functions)  
 - **Time series analysis** and **geospatial computing**
 - **Distributed computing** (Dask equivalent)
