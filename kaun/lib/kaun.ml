@@ -994,3 +994,4 @@ module Tokenizer = Kaun_missing.Tokenizer
 module Checkpoint = Kaun_checkpoint
 module Ptree = Ptree
 module Optimizer = Kaun_optim
+module Sampler = Sampler

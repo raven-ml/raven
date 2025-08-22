@@ -350,6 +350,19 @@ let from_csv ?(separator = ',') ?(text_column = 0) ?label_column
     spec = (fun () -> Scalar "string");
   }
 
+let from_text ~tokenizer path =
+  (* Read entire file as a single string *)
+  let ic = open_in path in
+  let len = in_channel_length ic in
+  let content = really_input_string ic len in
+  close_in ic;
+  
+  (* Tokenize the entire content *)
+  let tokens = tokenizer content in
+  
+  (* Create a single-element dataset containing all tokens *)
+  from_array [| tokens |]
+
 (** {1 Transformations} *)
 
 let map f dataset =
