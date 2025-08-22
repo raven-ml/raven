@@ -367,3 +367,75 @@ module Ptree = Ptree
 
 module Optimizer = Kaun_optim
 (** Optimizer module - gradient processing and optimization *)
+
+module Activations : sig
+  (** Activation functions for neural networks *)
+
+  (** {1 Standard Activations} *)
+
+  val relu : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+  val relu6 : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+  val sigmoid : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+  val tanh : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+
+  val softmax :
+    ?axes:int array -> (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+
+  (** {1 Modern Activations} *)
+
+  val gelu : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+  val silu : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+  val swish : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+  val mish : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+
+  (** {1 Parametric Activations} *)
+
+  val leaky_relu :
+    ?negative_slope:float ->
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t
+
+  val elu : ?alpha:float -> (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+  val selu : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+
+  val prelu :
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t
+
+  (** {1 Gated Linear Units} *)
+
+  val glu :
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t
+
+  val swiglu : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+
+  val geglu :
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t
+
+  val reglu :
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t
+
+  (** {1 Other Activations} *)
+
+  val softplus : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+  val softsign : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+
+  val hard_sigmoid :
+    ?alpha:float ->
+    ?beta:float ->
+    (float, 'a, 'dev) Rune.t ->
+    (float, 'a, 'dev) Rune.t
+
+  val hard_tanh : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+  val hard_swish : (float, 'a, 'dev) Rune.t -> (float, 'a, 'dev) Rune.t
+end
+
+module Transformers = Kaun_transformers
+(** Transformer building blocks - attention, RoPE *)

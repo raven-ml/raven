@@ -1,4 +1,11 @@
 (tests
- (names test_checkpoint test_ptree test_dataset)
+ (names test_checkpoint test_ptree test_dataset test_transformers)
  (package kaun)
- (libraries rune kaun kaun.checkpoint kaun.dataset alcotest))
+ (libraries
+  rune
+  kaun
+  kaun.checkpoint
+  kaun.dataset
+  kaun.transformers
+  bigarray_ext
+  alcotest))
