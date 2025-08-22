@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>saga - Modern text tokenization for OCaml</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/library.css">
+</head>
+
+<body>
+  <!-- Header with breadcrumbs -->
+  <header class="header">
+    <nav>
+      <a href="/" class="breadcrumb-link logo-link">
+        <img src="/raven.svg" alt="Raven" class="header-logo">
+        raven
+      </a>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-text color-teal">saga</span>
+    </nav>
+  </header>
+
+  <!-- Main Content -->
+  <main class="library-main">
+    <section class="hero">
+      <h1>saga</h1>
+      <p class="tagline">Modern text tokenization and processing for NLP</p>
+    </section>
+
+    <section class="intro">
+      <p>Saga brings state-of-the-art text processing to OCaml with support for BPE, WordPiece, and Unicode-aware tokenization. Built for machine learning pipelines with direct tensor encoding.</p>
+    </section>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <h3>Modern Tokenizers</h3>
+        <p>BPE and WordPiece tokenization compatible with Hugging Face models</p>
+      </div>
+      <div class="feature-card">
+        <h3>Unicode Support</h3>
+        <p>Proper handling of multilingual text, emoji, and special characters</p>
+      </div>
+      <div class="feature-card">
+        <h3>Tensor Integration</h3>
+        <p>Direct encoding to Nx tensors for ML pipelines</p>
+      </div>
+      <div class="feature-card">
+        <h3>Efficient Vocabularies</h3>
+        <p>Fast token-to-index mapping with frequency-based filtering</p>
+      </div>
+    </div>
+
+    <section class="code-example">
+      <h2>Quick Example</h2>
+      <pre><code><span class="keyword">open</span> <span class="type">Saga</span>
+
+<span class="comment">(* Simple tokenization *)</span>
+<span class="keyword">let</span> tokens = tokenize <span class="string">"Hello world! 你好世界"</span>
+<span class="comment">(* ["Hello"; "world"; "!"; "你好世界"] *)</span>
+
+<span class="comment">(* Build vocabulary and encode *)</span>
+<span class="keyword">let</span> vocab = vocab ~max_size:<span class="number">10000</span> tokens <span class="keyword">in</span>
+<span class="keyword">let</span> encoded = encode ~vocab <span class="string">"Hello world"</span>
+<span class="comment">(* [4; 5] *)</span>
+
+<span class="comment">(* Use advanced tokenizers *)</span>
+<span class="keyword">let</span> bpe = <span class="type">Bpe</span>.from_files ~vocab:<span class="string">"vocab.json"</span> ~merges:<span class="string">"merges.txt"</span> <span class="keyword">in</span>
+<span class="keyword">let</span> tokens = <span class="type">Bpe</span>.tokenize bpe text
+
+<span class="comment">(* Batch encode for neural networks *)</span>
+<span class="keyword">let</span> texts = [<span class="string">"Hello world"</span>; <span class="string">"How are you?"</span>] <span class="keyword">in</span>
+<span class="keyword">let</span> tensor = encode_batch ~vocab ~max_len:<span class="number">128</span> texts
+<span class="comment">(* Returns Nx tensor shape [2; 128] *)</span></code></pre>
+    </section>
+
+    <section class="comparison">
+      <h2>Comparison with Python</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>Saga</th>
+            <th>Hugging Face Tokenizers</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>BPE tokenization</td>
+            <td>✓</td>
+            <td>✓</td>
+          </tr>
+          <tr>
+            <td>WordPiece tokenization</td>
+            <td>✓</td>
+            <td>✓</td>
+          </tr>
+          <tr>
+            <td>Unicode normalization</td>
+            <td>✓</td>
+            <td>✓</td>
+          </tr>
+          <tr>
+            <td>Batch encoding</td>
+            <td>✓</td>
+            <td>✓</td>
+          </tr>
+          <tr>
+            <td>Type safety</td>
+            <td>✓</td>
+            <td>✗</td>
+          </tr>
+          <tr>
+            <td>Direct tensor output</td>
+            <td>✓</td>
+            <td>✓</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="installation">
+      <h2>Installation</h2>
+      <pre><code>opam install saga</code></pre>
+      <p>Or build from source:</p>
+      <pre><code>git clone https://github.com/raven-ml/raven
+cd raven
+dune build saga/</code></pre>
+    </section>
+
+    <section class="links">
+      <h2>Resources</h2>
+      <div class="links-grid">
+        <a href="/docs/saga/" class="link-card">
+          <h3>Documentation</h3>
+          <p>Learn how to use Saga</p>
+        </a>
+        <a href="/api/saga/" class="link-card">
+          <h3>API Reference</h3>
+          <p>Complete API documentation</p>
+        </a>
+        <a href="https://github.com/raven-ml/raven/tree/main/saga" class="link-card">
+          <h3>Source Code</h3>
+          <p>View on GitHub</p>
+        </a>
+      </div>
+    </section>
+
+    <section class="status">
+      <h2>Status</h2>
+      <p>Saga is in <strong>pre-alpha</strong>. Core tokenization features are implemented and tested. We're actively working on performance optimizations and pretrained vocabularies.</p>
+      
+      <h3>Implemented</h3>
+      <ul>
+        <li>✓ Word, character, and regex tokenization</li>
+        <li>✓ BPE (Byte Pair Encoding)</li>
+        <li>✓ WordPiece tokenization</li>
+        <li>✓ Unicode normalization and cleaning</li>
+        <li>✓ Vocabulary management</li>
+        <li>✓ Batch encoding to tensors</li>
+      </ul>
+      
+      <h3>Coming Soon</h3>
+      <ul>
+        <li>SentencePiece tokenization</li>
+        <li>Pretrained vocabularies for common models</li>
+        <li>Training tokenizers from scratch</li>
+        <li>Fast Rust backend (optional)</li>
+      </ul>
+    </section>
+  </main>
+</body>
+
+</html>

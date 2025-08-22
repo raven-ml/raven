@@ -1,10 +1,10 @@
-# Nx_text
+# Saga
 
 Fast tokenization and text processing for machine learning in OCaml.
 
 ## Overview
 
-Nx_text provides:
+Saga provides:
 - Simple tokenization (word, character, regex-based)
 - Vocabulary management with special tokens
 - Batch encoding to tensors for ML models
@@ -17,14 +17,14 @@ Nx_text provides:
 Tokenize text into words (default):
 
 ```ocaml
-let tokens = Nx_text.tokenize "Hello world!" in
+let tokens = Saga.tokenize "Hello world!" in
 (* ["Hello"; "world!"] *)
 ```
 
 Character-level tokenization:
 
 ```ocaml
-let chars = Nx_text.tokenize ~method_:`Chars "Hi!" in
+let chars = Saga.tokenize ~method_:`Chars "Hi!" in
 (* ["H"; "i"; "!"] *)
 ```
 
@@ -33,7 +33,7 @@ let chars = Nx_text.tokenize ~method_:`Chars "Hi!" in
 Encode text to indices automatically:
 
 ```ocaml
-let indices = Nx_text.encode "hello world hello" in
+let indices = Saga.encode "hello world hello" in
 (* [0; 1; 0] *)
 ```
 
@@ -41,7 +41,7 @@ Batch encoding for multiple texts:
 
 ```ocaml
 let texts = ["hi there"; "hello world"; "good morning"] in
-let tensor = Nx_text.encode_batch ~max_len:5 ~pad:true texts in
+let tensor = Saga.encode_batch ~max_len:5 ~pad:true texts in
 (* Returns int32 tensor of shape [3; 5] with padding *)
 ```
 
@@ -53,14 +53,14 @@ Create vocabulary from texts:
 
 ```ocaml
 let texts = ["hello world"; "hello there"; "world peace"] in
-let vocab = Nx_text.vocab texts in
-Printf.printf "Vocab size: %d\n" (Nx_text.vocab_size vocab)
+let vocab = Saga.vocab texts in
+Printf.printf "Vocab size: %d\n" (Saga.vocab_size vocab)
 ```
 
 Control vocabulary size and frequency:
 
 ```ocaml
-let vocab = Nx_text.vocab 
+let vocab = Saga.vocab 
   ~max_size:1000      (* Keep top 1000 tokens *)
   ~min_freq:2         (* Tokens must appear at least twice *)
   texts
@@ -78,10 +78,10 @@ Every vocabulary includes special tokens:
 
 ```ocaml
 (* Save vocabulary *)
-Nx_text.vocab_save vocab "vocab.txt"
+Saga.vocab_save vocab "vocab.txt"
 
 (* Load vocabulary *)
-let vocab = Nx_text.vocab_load "vocab.txt"
+let vocab = Saga.vocab_load "vocab.txt"
 ```
 
 ## Text Preprocessing
@@ -92,7 +92,7 @@ Clean and normalize text:
 
 ```ocaml
 let text = "  Hello   WORLD!  " in
-let normalized = Nx_text.normalize 
+let normalized = Saga.normalize 
   ~lowercase:true 
   ~collapse_whitespace:true 
   text in
@@ -102,7 +102,7 @@ let normalized = Nx_text.normalize
 Remove accents:
 
 ```ocaml
-let normalized = Nx_text.normalize 
+let normalized = Saga.normalize 
   ~strip_accents:true 
   "café naïve" in
 (* "cafe naive" *)
@@ -115,7 +115,7 @@ let normalized = Nx_text.normalize
 Use regex-based tokenization:
 
 ```ocaml
-open Nx_text.Tokenizer
+open Saga.Tokenizer
 
 let tokenizer = regex "\\w+|[^\\w\\s]+" in
 let tokens = run tokenizer "Hello, world!" in
@@ -136,7 +136,7 @@ Add normalization to tokenizer:
 ```ocaml
 let tokenizer = 
   words
-  |> with_normalizer (Nx_text.normalize ~lowercase:true) in
+  |> with_normalizer (Saga.normalize ~lowercase:true) in
 let tokens = run tokenizer "Hello WORLD!" in
 (* ["hello"; "world!"] *)
 ```
@@ -146,7 +146,7 @@ let tokens = run tokenizer "Hello WORLD!" in
 ### Character Classification
 
 ```ocaml
-open Nx_text.Unicode
+open Saga.Unicode
 
 let is_emoji = not (is_word_char (Uchar.of_char '😀'))
 let is_chinese = is_cjk (Uchar.of_int 0x4E00)  (* 一 *)
@@ -193,7 +193,7 @@ let words = split_words "Hello-world 你好世界" in
 For fine-grained control:
 
 ```ocaml
-open Nx_text.Vocab
+open Saga.Vocab
 
 (* Create empty vocabulary *)
 let vocab = create () in
