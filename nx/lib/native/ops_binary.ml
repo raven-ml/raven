@@ -11235,15 +11235,6 @@ let kernel_cmplt (type a b) (a : (a, b) t) (b : (a, b) t)
   | Nativeint -> kernel_cmplt_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_cmplt_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_cmplt_complex64 a b out start_idx end_idx
-  | Bfloat16 -> kernel_cmplt_bfloat16 a b out start_idx end_idx
-  | Bool -> kernel_cmplt_bool a b out start_idx end_idx
-  | Int4_signed -> kernel_cmplt_int4 a b out start_idx end_idx
-  | Int4_unsigned -> kernel_cmplt_uint4 a b out start_idx end_idx
-  | Float8_e4m3 -> kernel_cmplt_float8_e4m3 a b out start_idx end_idx
-  | Float8_e5m2 -> kernel_cmplt_float8_e5m2 a b out start_idx end_idx
-  | Complex16 -> kernel_cmplt_complex16 a b out start_idx end_idx
-  | Qint8 -> kernel_cmplt_qint8 a b out start_idx end_idx
-  | Quint8 -> kernel_cmplt_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_cmplt: unsupported type"
 
 let kernel_cmpne (type a b) (a : (a, b) t) (b : (a, b) t)
@@ -11262,15 +11253,6 @@ let kernel_cmpne (type a b) (a : (a, b) t) (b : (a, b) t)
   | Nativeint -> kernel_cmpne_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_cmpne_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_cmpne_complex64 a b out start_idx end_idx
-  | Bfloat16 -> kernel_cmpne_bfloat16 a b out start_idx end_idx
-  | Bool -> kernel_cmpne_bool a b out start_idx end_idx
-  | Int4_signed -> kernel_cmpne_int4 a b out start_idx end_idx
-  | Int4_unsigned -> kernel_cmpne_uint4 a b out start_idx end_idx
-  | Float8_e4m3 -> kernel_cmpne_float8_e4m3 a b out start_idx end_idx
-  | Float8_e5m2 -> kernel_cmpne_float8_e5m2 a b out start_idx end_idx
-  | Complex16 -> kernel_cmpne_complex16 a b out start_idx end_idx
-  | Qint8 -> kernel_cmpne_qint8 a b out start_idx end_idx
-  | Quint8 -> kernel_cmpne_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_cmpne: unsupported type"
 
 let kernel_bit_and (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
@@ -11289,15 +11271,6 @@ let kernel_bit_and (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
   | Nativeint -> kernel_bit_and_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_bit_and_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_bit_and_complex64 a b out start_idx end_idx
-  | Bfloat16 -> kernel_bit_and_bfloat16 a b out start_idx end_idx
-  | Bool -> kernel_bit_and_bool a b out start_idx end_idx
-  | Int4_signed -> kernel_bit_and_int4 a b out start_idx end_idx
-  | Int4_unsigned -> kernel_bit_and_uint4 a b out start_idx end_idx
-  | Float8_e4m3 -> kernel_bit_and_float8_e4m3 a b out start_idx end_idx
-  | Float8_e5m2 -> kernel_bit_and_float8_e5m2 a b out start_idx end_idx
-  | Complex16 -> kernel_bit_and_complex16 a b out start_idx end_idx
-  | Qint8 -> kernel_bit_and_qint8 a b out start_idx end_idx
-  | Quint8 -> kernel_bit_and_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_bit_and: unsupported type"
 
 let kernel_bit_or (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
@@ -11316,15 +11289,6 @@ let kernel_bit_or (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
   | Nativeint -> kernel_bit_or_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_bit_or_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_bit_or_complex64 a b out start_idx end_idx
-  | Bfloat16 -> kernel_bit_or_bfloat16 a b out start_idx end_idx
-  | Bool -> kernel_bit_or_bool a b out start_idx end_idx
-  | Int4_signed -> kernel_bit_or_int4 a b out start_idx end_idx
-  | Int4_unsigned -> kernel_bit_or_uint4 a b out start_idx end_idx
-  | Float8_e4m3 -> kernel_bit_or_float8_e4m3 a b out start_idx end_idx
-  | Float8_e5m2 -> kernel_bit_or_float8_e5m2 a b out start_idx end_idx
-  | Complex16 -> kernel_bit_or_complex16 a b out start_idx end_idx
-  | Qint8 -> kernel_bit_or_qint8 a b out start_idx end_idx
-  | Quint8 -> kernel_bit_or_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_bit_or: unsupported type"
 
 let kernel_bit_xor (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
@@ -11343,15 +11307,6 @@ let kernel_bit_xor (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
   | Nativeint -> kernel_bit_xor_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_bit_xor_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_bit_xor_complex64 a b out start_idx end_idx
-  | Bfloat16 -> kernel_bit_xor_bfloat16 a b out start_idx end_idx
-  | Bool -> kernel_bit_xor_bool a b out start_idx end_idx
-  | Int4_signed -> kernel_bit_xor_int4 a b out start_idx end_idx
-  | Int4_unsigned -> kernel_bit_xor_uint4 a b out start_idx end_idx
-  | Float8_e4m3 -> kernel_bit_xor_float8_e4m3 a b out start_idx end_idx
-  | Float8_e5m2 -> kernel_bit_xor_float8_e5m2 a b out start_idx end_idx
-  | Complex16 -> kernel_bit_xor_complex16 a b out start_idx end_idx
-  | Qint8 -> kernel_bit_xor_qint8 a b out start_idx end_idx
-  | Quint8 -> kernel_bit_xor_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_bit_xor: unsupported type"
 
 let add (type a b) context (a : (a, b) t) (b : (a, b) t) (out : (a, b) t) =
