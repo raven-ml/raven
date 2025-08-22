@@ -237,13 +237,12 @@ let train config_name train_config =
   (* Initialize or load model parameters *)
   let params =
     match train_config.checkpoint_path with
-    | Some path when Checkpoint.exists ~path ->
+    | Some path when Sys.file_exists path ->
         Printf.printf "Loading checkpoint from: %s\n" path;
-        let loaded_params, step, metadata =
-          Checkpoint.load ~path ~device ~dtype:dtype_float
+        let loaded_params =
+          Checkpoint.load_params ~path ~device ~dtype:dtype_float
         in
-        Printf.printf "Loaded checkpoint at step %d\n" step;
-        List.iter (fun (k, v) -> Printf.printf "  %s: %s\n" k v) metadata;
+        Printf.printf "Loaded checkpoint\n";
         loaded_params
     | Some path ->
         Printf.printf "Checkpoint path specified but file not found: %s\n" path;
@@ -360,7 +359,7 @@ let train config_name train_config =
           ("seq_len", string_of_int train_config.seq_len);
         ]
       in
-      Checkpoint.save ~path:checkpoint_path ~params ~step ~metadata ())
+      Checkpoint.save_params ~path:checkpoint_path ~params ~metadata ())
   done;
 
   Printf.printf "\nTraining complete!\n"

@@ -1,13 +1,5 @@
 (** Optax-inspired gradient processing and optimization library *)
 
-type ('layout, 'dev) tensor = (float, 'layout, 'dev) Rune.t
-
-(** Parameter tree type - recursive structure for model parameters *)
-type ('layout, 'dev) params =
-  | Tensor of ('layout, 'dev) tensor
-  | List of ('layout, 'dev) params list
-  | Record of (string * ('layout, 'dev) params) list
-
 type ('layout, 'dev) opt_state
 (** Optimizer state - opaque type containing internal state *)
 
@@ -24,12 +16,12 @@ type mask_tree =
   | MaskRecord of (string * mask_tree) list
 
 type ('layout, 'dev) gradient_transformation = {
-  init : ('layout, 'dev) params -> ('layout, 'dev) opt_state;
+  init : ('layout, 'dev) Ptree.t -> ('layout, 'dev) opt_state;
   update :
     ('layout, 'dev) opt_state ->
-    ('layout, 'dev) params ->
-    ('layout, 'dev) params ->
-    ('layout, 'dev) params * ('layout, 'dev) opt_state;
+    ('layout, 'dev) Ptree.t ->
+    ('layout, 'dev) Ptree.t ->
+    ('layout, 'dev) Ptree.t * ('layout, 'dev) opt_state;
 }
 (** Core gradient transformation type *)
 
@@ -129,14 +121,14 @@ val chain :
 
 val multi_transform :
   transforms:('layout, 'dev) gradient_transformation array ->
-  labels:(('layout, 'dev) params -> label_tree) ->
+  labels:(('layout, 'dev) Ptree.t -> label_tree) ->
   ('layout, 'dev) gradient_transformation
 (** Apply different transformations to different parameters The labels function
     maps parameters to integer labels. The transforms array maps labels to
     transformations. *)
 
 val masked :
-  mask:(('layout, 'dev) params -> mask_tree) ->
+  mask:(('layout, 'dev) Ptree.t -> mask_tree) ->
   inner:('layout, 'dev) gradient_transformation ->
   ('layout, 'dev) gradient_transformation
 (** Apply transformation only to masked parameters *)
@@ -223,17 +215,17 @@ val yogi :
 (** {1 Utilities} *)
 
 val apply_updates :
-  ('layout, 'dev) params -> ('layout, 'dev) params -> ('layout, 'dev) params
+  ('layout, 'dev) Ptree.t -> ('layout, 'dev) Ptree.t -> ('layout, 'dev) Ptree.t
 (** Apply updates to parameters: params = params - updates *)
 
 val apply_updates_inplace :
-  ('layout, 'dev) params -> ('layout, 'dev) params -> unit
+  ('layout, 'dev) Ptree.t -> ('layout, 'dev) Ptree.t -> unit
 (** Apply updates to parameters in place (mutates first argument) *)
 
-val global_norm : ('layout, 'dev) params -> float
+val global_norm : ('layout, 'dev) Ptree.t -> float
 (** Compute global norm of gradients *)
 
-val set_to_zero : ('layout, 'dev) params -> ('layout, 'dev) params
+val set_to_zero : ('layout, 'dev) Ptree.t -> ('layout, 'dev) Ptree.t
 (** Set step count (for schedules and bias correction) *)
 
 (** {1 Wrapper for Multi-step Updates} *)

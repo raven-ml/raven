@@ -2,3 +2,8 @@
  (name test_checkpoint)
  (package kaun)
  (libraries rune kaun kaun.checkpoint alcotest))
+
+(test
+ (name test_ptree)
+ (package kaun)
+ (libraries rune kaun alcotest))

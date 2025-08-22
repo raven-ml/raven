@@ -2,7 +2,7 @@ type ('layout, 'dev) tensor = (float, 'layout, 'dev) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 type 'dev device = 'dev Rune.device
 
-type ('layout, 'dev) params = ('layout, 'dev) Kaun_optim.params =
+type ('layout, 'dev) params = ('layout, 'dev) Ptree.t =
   | Tensor of ('layout, 'dev) tensor
   | List of ('layout, 'dev) params list
   | Record of (string * ('layout, 'dev) params) list
@@ -359,24 +359,11 @@ module Tokenizer : sig
   val pad_id : t -> int option
 end
 
+module Checkpoint = Kaun_checkpoint
 (** Checkpointing *)
-module Checkpoint : sig
-  val save :
-    path:string ->
-    params:('layout, 'dev) params ->
-    step:int ->
-    ?metadata:(string * string) list ->
-    unit ->
-    unit
 
-  val load :
-    path:string ->
-    device:'dev device ->
-    dtype:'layout dtype ->
-    ('layout, 'dev) params * int * (string * string) list
-
-  val exists : path:string -> bool
-end
+module Ptree = Ptree
+(** Parameter tree module - operations on parameter trees *)
 
 module Optimizer = Kaun_optim
 (** Optimizer module - gradient processing and optimization *)

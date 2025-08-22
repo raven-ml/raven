@@ -1,62 +1,18 @@
-type ('layout, 'dev) tensor = (float, 'layout, 'dev) Rune.t
-
-type ('layout, 'dev) params =
-  | Tensor of ('layout, 'dev) tensor
-  | List of ('layout, 'dev) params list
-  | Record of (string * ('layout, 'dev) params) list
-
 type ('layout, 'dev) opt_state = State : 'a -> ('layout, 'dev) opt_state
 
 type ('layout, 'dev) gradient_transformation = {
-  init : ('layout, 'dev) params -> ('layout, 'dev) opt_state;
+  init : ('layout, 'dev) Ptree.t -> ('layout, 'dev) opt_state;
   update :
     ('layout, 'dev) opt_state ->
-    ('layout, 'dev) params ->
-    ('layout, 'dev) params ->
-    ('layout, 'dev) params * ('layout, 'dev) opt_state;
+    ('layout, 'dev) Ptree.t ->
+    ('layout, 'dev) Ptree.t ->
+    ('layout, 'dev) Ptree.t * ('layout, 'dev) opt_state;
 }
 
-(* Utility functions *)
-let rec map_params : type a b.
-    (a, b) params -> ((a, b) tensor -> (a, b) tensor) -> (a, b) params =
- fun params f ->
-  match params with
-  | Tensor t -> Tensor (f t)
-  | List ps -> List (List.map (fun p -> map_params p f) ps)
-  | Record fields ->
-      Record (List.map (fun (name, p) -> (name, map_params p f)) fields)
-
-let rec map_params2 : type a b.
-    (a, b) params ->
-    (a, b) params ->
-    ((a, b) tensor -> (a, b) tensor -> (a, b) tensor) ->
-    (a, b) params =
- fun p1 p2 f ->
-  match (p1, p2) with
-  | Tensor t1, Tensor t2 -> Tensor (f t1 t2)
-  | List ps1, List ps2 ->
-      List (List.map2 (fun p1 p2 -> map_params2 p1 p2 f) ps1 ps2)
-  | Record fields1, Record fields2 ->
-      let sorted1 =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) fields1
-      in
-      let sorted2 =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) fields2
-      in
-      Record
-        (List.map2
-           (fun (k1, p1) (k2, p2) ->
-             assert (k1 = k2);
-             (k1, map_params2 p1 p2 f))
-           sorted1 sorted2)
-  | _ -> failwith "map_params2: parameter structure mismatch"
-
-let rec flatten_params : type a b. (a, b) params -> (a, b) tensor list =
- fun params ->
-  match params with
-  | Tensor t -> [ t ]
-  | List ps -> List.concat_map flatten_params ps
-  | Record fields -> List.concat_map (fun (_, p) -> flatten_params p) fields
+(* Utility functions - using Kaun_ptree *)
+let map_params params f = Ptree.map f params
+let map_params2 p1 p2 f = Ptree.map2 f p1 p2
+let flatten_params params = Ptree.to_flat_list params
 
 (* Helper functions for parameter tree flattening - removed as not currently
    used *)
@@ -151,7 +107,7 @@ let trace ~decay ?(nesterov = false) () =
         match state with
         | State momentum ->
             (* Type annotation to help OCaml understand momentum is params *)
-            let momentum : ('a, 'b) params = Obj.magic momentum in
+            let momentum : ('a, 'b) Ptree.t = Obj.magic momentum in
             let new_momentum =
               map_params2 momentum grads (fun m g ->
                   let dev = Rune.device g in
@@ -177,7 +133,7 @@ let scale_by_rms ?(decay = 0.999) ?(eps = 1e-8) () =
       (fun state _params grads ->
         match state with
         | State nu ->
-            let nu : ('a, 'b) params = Obj.magic nu in
+            let nu : ('a, 'b) Ptree.t = Obj.magic nu in
             let new_nu =
               map_params2 nu grads (fun v g ->
                   let dev = Rune.device g in
@@ -427,9 +383,9 @@ let multi_transform ~transforms ~labels =
                   let rec filter_by_label : type a b.
                       int ->
                       label_tree ->
-                      (a, b) params ->
-                      (a, b) params ->
-                      (a, b) params =
+                      (a, b) Ptree.t ->
+                      (a, b) Ptree.t ->
+                      (a, b) Ptree.t =
                    fun target_idx labels params grads ->
                     match (labels, params, grads) with
                     | LabelTensor label_idx, Tensor _p, Tensor g ->
@@ -494,7 +450,7 @@ let multi_transform ~transforms ~labels =
   }
 
 let rec apply_mask : type a b.
-    mask_tree -> (a, b) params -> (a, b) params -> (a, b) params =
+    mask_tree -> (a, b) Ptree.t -> (a, b) Ptree.t -> (a, b) Ptree.t =
  fun mask_tree params grads ->
   match (mask_tree, params, grads) with
   | MaskTensor true, Tensor _, Tensor g -> Tensor g
@@ -564,7 +520,7 @@ let adagrad ~lr ?(eps = 1e-8) () =
       (fun state _params grads ->
         match state with
         | State accum ->
-            let accum : ('a, 'b) params = Obj.magic accum in
+            let accum : ('a, 'b) Ptree.t = Obj.magic accum in
             let new_accum =
               map_params2 accum grads (fun acc g -> Rune.add acc (Rune.mul g g))
             in
@@ -770,8 +726,8 @@ let yogi ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-3) () =
 let apply_updates params updates =
   map_params2 params updates (fun p u -> Rune.sub p u)
 
-let rec apply_updates_inplace : type a b. (a, b) params -> (a, b) params -> unit
-    =
+let rec apply_updates_inplace : type a b.
+    (a, b) Ptree.t -> (a, b) Ptree.t -> unit =
  fun params updates ->
   match (params, updates) with
   | Tensor t, Tensor u -> ignore (Rune.isub t u)

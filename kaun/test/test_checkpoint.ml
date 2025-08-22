@@ -1,4 +1,4 @@
-open Kaun
+open Kaun.Ptree
 module A = Alcotest
 
 let test_save_and_load () =
@@ -8,28 +8,16 @@ let test_save_and_load () =
   (* Create some test parameters *)
   let w = Rune.ones device dtype [| 3; 3 |] in
   let b = Rune.zeros device dtype [| 3 |] in
-  let _params = Record [ ("weight", Tensor w); ("bias", Tensor b) ] in
+  let params = Record [ ("weight", Tensor w); ("bias", Tensor b) ] in
 
   (* Save checkpoint to specific file *)
   let path = "/tmp/test_checkpoint.json" in
   (* Use the lower-level save_params for single file *)
-  let module C = Kaun_checkpoint in
-  let checkpoint_params =
-    C.Record [ ("weight", C.Tensor w); ("bias", C.Tensor b) ]
-  in
-  C.save_params ~path ~params:checkpoint_params ~metadata:[ ("epoch", "10") ] ();
+  let module C = Kaun.Checkpoint in
+  C.save_params ~path ~params ~metadata:[ ("epoch", "10") ] ();
 
   (* Load checkpoint from file *)
-  let loaded_checkpoint_params = C.load_params ~path ~device ~dtype in
-
-  (* Convert back to Kaun params *)
-  let rec from_checkpoint : type l d. (l, d) C.params -> (l, d) params =
-    function
-    | C.Tensor t -> Tensor t
-    | C.List l -> List (List.map from_checkpoint l)
-    | C.Record r -> Record (List.map (fun (k, v) -> (k, from_checkpoint v)) r)
-  in
-  let loaded_params = from_checkpoint loaded_checkpoint_params in
+  let loaded_params = C.load_params ~path ~device ~dtype in
 
   (* Check parameters *)
   match loaded_params with
@@ -62,27 +50,14 @@ let test_checkpoint_manager () =
   let dir = "/tmp/test_checkpoint_manager" in
   let _ = Sys.command (Printf.sprintf "rm -rf %s" dir) in
 
-  let module CM = Kaun_checkpoint.CheckpointManager in
+  let module CM = Kaun.Checkpoint.CheckpointManager in
   let options = CM.{ default_options with max_to_keep = Some 2 } in
   let manager = CM.create ~directory:dir ~options () in
 
   (* Save multiple checkpoints *)
   for i = 1 to 5 do
     let params = create_params (float_of_int i) in
-    (* Convert params *)
-    let checkpoint_params : _ Kaun_checkpoint.params =
-      match params with
-      | Record fields ->
-          Kaun_checkpoint.Record
-            (List.map
-               (fun (k, v) ->
-                 match v with
-                 | Tensor t -> (k, Kaun_checkpoint.Tensor t)
-                 | _ -> failwith "unsupported")
-               fields)
-      | _ -> failwith "unsupported"
-    in
-    CM.save manager ~step:(i * 10) ~params:checkpoint_params ()
+    CM.save manager ~step:(i * 10) ~params ()
   done;
 
   (* Check that we have at least one checkpoint *)
@@ -99,9 +74,9 @@ let test_checkpoint_manager () =
 
   (* Check restored value *)
   match restored_params with
-  | Kaun_checkpoint.Record fields -> (
+  | Record fields -> (
       match List.assoc_opt "weight" fields with
-      | Some (Kaun_checkpoint.Tensor w) ->
+      | Some (Tensor w) ->
           let value = Rune.unsafe_get [ 0; 0 ] w in
           A.check (A.float 0.01) "restored value" 1.0 value
       | _ -> A.fail "weight not found")

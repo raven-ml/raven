@@ -1,21 +1,10 @@
-(** Orbax-style checkpoint management implementation *)
-
 open Rune
-
-(** {1 Types} *)
-
-type ('layout, 'dev) params =
-  | Tensor of (float, 'layout, 'dev) t
-  | List of ('layout, 'dev) params list
-  | Record of (string * ('layout, 'dev) params) list
 
 type metadata = (string * string) list
 type checkpoint_info = { step : int; timestamp : float; metadata : metadata }
 
-(** {1 Helper functions} *)
-
-let rec params_to_json : type layout dev. (layout, dev) params -> Yojson.Basic.t
-    = function
+let rec params_to_json : type layout dev.
+    (layout, dev) Ptree.t -> Yojson.Basic.t = function
   | Tensor t ->
       let shape = shape t in
       let data =
@@ -45,7 +34,7 @@ let rec params_from_json : type layout dev.
     Yojson.Basic.t ->
     device:dev device ->
     dtype:(float, layout) dtype ->
-    (layout, dev) params =
+    (layout, dev) Ptree.t =
  fun json ~device ~dtype ->
   match json with
   | `Assoc fields -> (
@@ -89,8 +78,6 @@ let rec params_from_json : type layout dev.
           | _ -> failwith "Missing or invalid record fields")
       | _ -> failwith "Unknown params type")
   | _ -> failwith "Invalid JSON structure for params"
-
-(** {1 Core Checkpointing} *)
 
 module Checkpointer = struct
   type t = unit (* Simple implementation for now *)
@@ -164,8 +151,6 @@ module Checkpointer = struct
         | None -> failwith "Missing params in checkpoint file")
     | _ -> failwith "Invalid checkpoint file format"
 end
-
-(** {1 Checkpoint Management} *)
 
 module CheckpointManager = struct
   type options = {
@@ -366,8 +351,6 @@ module CheckpointManager = struct
     t.checkpoints <- List.filter (fun (s, _) -> s <> step) t.checkpoints
 end
 
-(** {1 Utilities} *)
-
 let save_params ~path ~params ?(metadata = []) () =
   let checkpointer = Checkpointer.create () in
   if Filename.check_suffix path ".json" || Filename.check_suffix path ".ckpt"
@@ -379,8 +362,6 @@ let load_params ~path ~device ~dtype =
   if Filename.check_suffix path ".json" || Filename.check_suffix path ".ckpt"
   then Checkpointer.restore_file checkpointer ~path ~device ~dtype
   else Checkpointer.restore checkpointer ~path ~device ~dtype
-
-(** {1 Async Operations} *)
 
 module Async = struct
   type save_future = Thread.t

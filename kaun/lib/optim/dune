@@ -1,4 +1,4 @@
 (library
  (public_name kaun.optim)
  (name kaun_optim)
- (libraries rune))
+ (libraries rune kaun.ptree))

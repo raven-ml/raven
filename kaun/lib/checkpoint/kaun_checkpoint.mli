@@ -5,12 +5,6 @@
 
 (** {1 Types} *)
 
-type ('layout, 'dev) params =
-  | Tensor of (float, 'layout, 'dev) Rune.t
-  | List of ('layout, 'dev) params list
-  | Record of (string * ('layout, 'dev) params) list
-      (** Parameter tree structure matching Kaun's params type *)
-
 type metadata = (string * string) list
 (** Metadata as key-value pairs *)
 
@@ -33,7 +27,7 @@ module Checkpointer : sig
   val save :
     t ->
     path:string ->
-    params:('layout, 'dev) params ->
+    params:('layout, 'dev) Ptree.t ->
     ?metadata:metadata ->
     unit ->
     unit
@@ -48,7 +42,7 @@ module Checkpointer : sig
     path:string ->
     device:'dev Rune.device ->
     dtype:(float, 'layout) Rune.dtype ->
-    ('layout, 'dev) params
+    ('layout, 'dev) Ptree.t
   (** [restore checkpointer ~path ~device ~dtype] loads parameters from disk.
 
       @param path Directory path to load checkpoint from
@@ -59,7 +53,7 @@ module Checkpointer : sig
   val save_file :
     t ->
     path:string ->
-    params:('layout, 'dev) params ->
+    params:('layout, 'dev) Ptree.t ->
     ?metadata:metadata ->
     unit ->
     unit
@@ -74,7 +68,7 @@ module Checkpointer : sig
     path:string ->
     device:'dev Rune.device ->
     dtype:(float, 'layout) Rune.dtype ->
-    ('layout, 'dev) params
+    ('layout, 'dev) Ptree.t
   (** [restore_file checkpointer ~path ~device ~dtype] loads from a single file.
   *)
 end
@@ -117,7 +111,7 @@ module CheckpointManager : sig
   val save :
     t ->
     step:int ->
-    params:('layout, 'dev) params ->
+    params:('layout, 'dev) Ptree.t ->
     ?metadata:metadata ->
     ?metrics:(string * float) list ->
     unit ->
@@ -138,7 +132,7 @@ module CheckpointManager : sig
     dtype:(float, 'layout) Rune.dtype ->
     ?step:int ->
     unit ->
-    ('layout, 'dev) params * checkpoint_info
+    ('layout, 'dev) Ptree.t * checkpoint_info
   (** [restore manager ?step ~device ~dtype] restores a checkpoint.
 
       @param step Specific step to restore (default: latest)
@@ -150,7 +144,7 @@ module CheckpointManager : sig
     t ->
     device:'dev Rune.device ->
     dtype:(float, 'layout) Rune.dtype ->
-    ('layout, 'dev) params * checkpoint_info
+    ('layout, 'dev) Ptree.t * checkpoint_info
   (** [restore_best manager ~device ~dtype] restores the best checkpoint.
 
       Requires [best_fn] to be set in options.
@@ -179,7 +173,7 @@ end
 
 val save_params :
   path:string ->
-  params:('layout, 'dev) params ->
+  params:('layout, 'dev) Ptree.t ->
   ?metadata:metadata ->
   unit ->
   unit
@@ -193,21 +187,21 @@ val load_params :
   path:string ->
   device:'dev Rune.device ->
   dtype:(float, 'layout) Rune.dtype ->
-  ('layout, 'dev) params
+  ('layout, 'dev) Ptree.t
 (** Convenience function to load parameters without a manager.
 
     @param path File or directory path to load from
     @param device Device to load tensors onto
     @param dtype Data type for tensors *)
 
-val params_to_json : ('layout, 'dev) params -> Yojson.Basic.t
+val params_to_json : ('layout, 'dev) Ptree.t -> Yojson.Basic.t
 (** Convert parameters to JSON representation for serialization *)
 
 val params_from_json :
   Yojson.Basic.t ->
   device:'dev Rune.device ->
   dtype:(float, 'layout) Rune.dtype ->
-  ('layout, 'dev) params
+  ('layout, 'dev) Ptree.t
 (** Convert JSON back to parameters *)
 
 (** {1 Async Operations} *)
@@ -220,7 +214,7 @@ module Async : sig
 
   val save :
     path:string ->
-    params:('layout, 'dev) params ->
+    params:('layout, 'dev) Ptree.t ->
     ?metadata:metadata ->
     unit ->
     save_future
