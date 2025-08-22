@@ -57,6 +57,18 @@
   include_subsections = true
   content_selector = "main"
 
+[templates.docs_saga_config]
+  file = "templates/layout_docs_saga.html"
+  section = "docs/saga/"
+  include_subsections = true
+  content_selector = "main"
+
+[templates.docs_talon_config]
+  file = "templates/layout_docs_talon.html"
+  section = "docs/talon/"
+  include_subsections = true
+  content_selector = "main"
+
 [widgets.page_title]
   widget = "title"
   selector = "h1"
