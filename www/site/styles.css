@@ -193,10 +193,16 @@ a.color-pink {
   margin: 0 auto 64px auto; /* 64px to footer nav */
   font-size: 24px;
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 20px; /* Reduced from implicit ~36px */
+  gap: 8px;
+}
+
+.landing .links > div {
+  display: flex;
+  align-items: center;
+  gap: 20px;
 }
 
 .landing .links a {
@@ -360,8 +366,11 @@ a.color-pink {
   
   .landing .links {
     margin: 0 auto 51px auto; /* 20% reduction */
-    gap: 16px;
     font-size: 21px;
+  }
+  
+  .landing .links > div {
+    gap: 16px;
   }
 }
 
@@ -395,8 +404,12 @@ a.color-pink {
   
   .landing .links {
     font-size: 18px;
-    gap: 14px;
     margin: 0 auto 40px auto;
+  }
+  
+  .landing .links > div {
+    gap: 14px;
+    font-size: 18px;
   }
   
   .landing-footer-nav {
