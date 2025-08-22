@@ -196,6 +196,12 @@ let pad ctx t out padding fill_value =
 
       (* Set fill value based on dtype *)
       let set_fill_value : type a b. (a, b) Dtype.t -> unit = function
+        | Dtype.Float16 ->
+            (* Convert float to half precision (16-bit) *)
+            let half_val = Ctypes.(allocate uint16_t (Unsigned.UInt16.of_int (int_of_float (fill_value *. 65536.0) land 0xFFFF))) in
+            ComputeCommandEncoder.set_bytes encoder
+              ~bytes:Ctypes.(to_voidp half_val)
+              ~length:2 ~index:5
         | Dtype.Float32 ->
             let v = Ctypes.(allocate float fill_value) in
             ComputeCommandEncoder.set_bytes encoder
@@ -203,6 +209,26 @@ let pad ctx t out padding fill_value =
               ~length:4 ~index:5
         | Dtype.Float64 ->
             failwith "pad: Float64 dtype not supported by Metal backend"
+        | Dtype.Int8 ->
+            let v = Ctypes.(allocate int8_t (int_of_float fill_value)) in
+            ComputeCommandEncoder.set_bytes encoder
+              ~bytes:Ctypes.(to_voidp v)
+              ~length:1 ~index:5
+        | Dtype.UInt8 | Dtype.Bool ->
+            let v = Ctypes.(allocate uint8_t (Unsigned.UInt8.of_int (int_of_float fill_value))) in
+            ComputeCommandEncoder.set_bytes encoder
+              ~bytes:Ctypes.(to_voidp v)
+              ~length:1 ~index:5
+        | Dtype.Int16 ->
+            let v = Ctypes.(allocate int16_t (int_of_float fill_value)) in
+            ComputeCommandEncoder.set_bytes encoder
+              ~bytes:Ctypes.(to_voidp v)
+              ~length:2 ~index:5
+        | Dtype.UInt16 ->
+            let v = Ctypes.(allocate uint16_t (Unsigned.UInt16.of_int (int_of_float fill_value))) in
+            ComputeCommandEncoder.set_bytes encoder
+              ~bytes:Ctypes.(to_voidp v)
+              ~length:2 ~index:5
         | Dtype.Int32 ->
             let v = Ctypes.(allocate int32_t (Int32.of_float fill_value)) in
             ComputeCommandEncoder.set_bytes encoder
@@ -213,6 +239,12 @@ let pad ctx t out padding fill_value =
             ComputeCommandEncoder.set_bytes encoder
               ~bytes:Ctypes.(to_voidp v)
               ~length:8 ~index:5
+        | Dtype.BFloat16 ->
+            (* BFloat16 mapped to half - treat like Float16 *)
+            let half_val = Ctypes.(allocate uint16_t (Unsigned.UInt16.of_int (int_of_float (fill_value *. 65536.0) land 0xFFFF))) in
+            ComputeCommandEncoder.set_bytes encoder
+              ~bytes:Ctypes.(to_voidp half_val)
+              ~length:2 ~index:5
         | _ -> failwith "pad: unsupported dtype"
       in
       set_fill_value t.Internal.dtype;

@@ -641,3 +641,487 @@ kernel void pad_float(device float* out [[buffer(0)]],
     }
 }
 
+// Add copy operations for missing types
+kernel void copy_half(device half* out [[buffer(0)]],
+                     device const half* in [[buffer(1)]],
+                     constant uint& size [[buffer(2)]],
+                     uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+kernel void copy_char(device char* out [[buffer(0)]],
+                     device const char* in [[buffer(1)]],
+                     constant uint& size [[buffer(2)]],
+                     uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+kernel void copy_short(device short* out [[buffer(0)]],
+                      device const short* in [[buffer(1)]],
+                      constant uint& size [[buffer(2)]],
+                      uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+kernel void copy_ushort(device ushort* out [[buffer(0)]],
+                       device const ushort* in [[buffer(1)]],
+                       constant uint& size [[buffer(2)]],
+                       uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+// Add pad operations for all missing types
+kernel void pad_half(device half* out [[buffer(0)]],
+                    device const half* in [[buffer(1)]],
+                    constant uint* out_shape [[buffer(2)]],
+                    constant uint* in_shape [[buffer(3)]],
+                    constant uint* pad_before [[buffer(4)]],
+                    constant half& pad_value [[buffer(5)]],
+                    constant uint& ndim [[buffer(6)]],
+                    constant int* in_strides [[buffer(7)]],
+                    constant uint& in_offset [[buffer(8)]],
+                    uint gid [[thread_position_in_grid]]) {
+    uint out_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        out_size *= out_shape[i];
+    }
+    
+    if (gid >= out_size) return;
+    
+    uint out_pos[8];
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_pos[i] = temp % out_shape[i];
+        temp /= out_shape[i];
+    }
+    
+    bool in_bounds = true;
+    uint in_pos[8];
+    
+    for (uint i = 0; i < ndim; i++) {
+        if (out_pos[i] < pad_before[i] || out_pos[i] >= pad_before[i] + in_shape[i]) {
+            in_bounds = false;
+            break;
+        }
+        in_pos[i] = out_pos[i] - pad_before[i];
+    }
+    
+    if (in_bounds) {
+        uint in_idx = in_offset;
+        for (uint i = 0; i < ndim; i++) {
+            in_idx += in_pos[i] * in_strides[i];
+        }
+        out[gid] = in[in_idx];
+    } else {
+        out[gid] = pad_value;
+    }
+}
+
+kernel void pad_int(device int* out [[buffer(0)]],
+                   device const int* in [[buffer(1)]],
+                   constant uint* out_shape [[buffer(2)]],
+                   constant uint* in_shape [[buffer(3)]],
+                   constant uint* pad_before [[buffer(4)]],
+                   constant int& pad_value [[buffer(5)]],
+                   constant uint& ndim [[buffer(6)]],
+                   constant int* in_strides [[buffer(7)]],
+                   constant uint& in_offset [[buffer(8)]],
+                   uint gid [[thread_position_in_grid]]) {
+    uint out_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        out_size *= out_shape[i];
+    }
+    
+    if (gid >= out_size) return;
+    
+    uint out_pos[8];
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_pos[i] = temp % out_shape[i];
+        temp /= out_shape[i];
+    }
+    
+    bool in_bounds = true;
+    uint in_pos[8];
+    
+    for (uint i = 0; i < ndim; i++) {
+        if (out_pos[i] < pad_before[i] || out_pos[i] >= pad_before[i] + in_shape[i]) {
+            in_bounds = false;
+            break;
+        }
+        in_pos[i] = out_pos[i] - pad_before[i];
+    }
+    
+    if (in_bounds) {
+        uint in_idx = in_offset;
+        for (uint i = 0; i < ndim; i++) {
+            in_idx += in_pos[i] * in_strides[i];
+        }
+        out[gid] = in[in_idx];
+    } else {
+        out[gid] = pad_value;
+    }
+}
+
+kernel void pad_long(device long* out [[buffer(0)]],
+                    device const long* in [[buffer(1)]],
+                    constant uint* out_shape [[buffer(2)]],
+                    constant uint* in_shape [[buffer(3)]],
+                    constant uint* pad_before [[buffer(4)]],
+                    constant long& pad_value [[buffer(5)]],
+                    constant uint& ndim [[buffer(6)]],
+                    constant int* in_strides [[buffer(7)]],
+                    constant uint& in_offset [[buffer(8)]],
+                    uint gid [[thread_position_in_grid]]) {
+    uint out_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        out_size *= out_shape[i];
+    }
+    
+    if (gid >= out_size) return;
+    
+    uint out_pos[8];
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_pos[i] = temp % out_shape[i];
+        temp /= out_shape[i];
+    }
+    
+    bool in_bounds = true;
+    uint in_pos[8];
+    
+    for (uint i = 0; i < ndim; i++) {
+        if (out_pos[i] < pad_before[i] || out_pos[i] >= pad_before[i] + in_shape[i]) {
+            in_bounds = false;
+            break;
+        }
+        in_pos[i] = out_pos[i] - pad_before[i];
+    }
+    
+    if (in_bounds) {
+        uint in_idx = in_offset;
+        for (uint i = 0; i < ndim; i++) {
+            in_idx += in_pos[i] * in_strides[i];
+        }
+        out[gid] = in[in_idx];
+    } else {
+        out[gid] = pad_value;
+    }
+}
+
+kernel void pad_char(device char* out [[buffer(0)]],
+                    device const char* in [[buffer(1)]],
+                    constant uint* out_shape [[buffer(2)]],
+                    constant uint* in_shape [[buffer(3)]],
+                    constant uint* pad_before [[buffer(4)]],
+                    constant char& pad_value [[buffer(5)]],
+                    constant uint& ndim [[buffer(6)]],
+                    constant int* in_strides [[buffer(7)]],
+                    constant uint& in_offset [[buffer(8)]],
+                    uint gid [[thread_position_in_grid]]) {
+    uint out_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        out_size *= out_shape[i];
+    }
+    
+    if (gid >= out_size) return;
+    
+    uint out_pos[8];
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_pos[i] = temp % out_shape[i];
+        temp /= out_shape[i];
+    }
+    
+    bool in_bounds = true;
+    uint in_pos[8];
+    
+    for (uint i = 0; i < ndim; i++) {
+        if (out_pos[i] < pad_before[i] || out_pos[i] >= pad_before[i] + in_shape[i]) {
+            in_bounds = false;
+            break;
+        }
+        in_pos[i] = out_pos[i] - pad_before[i];
+    }
+    
+    if (in_bounds) {
+        uint in_idx = in_offset;
+        for (uint i = 0; i < ndim; i++) {
+            in_idx += in_pos[i] * in_strides[i];
+        }
+        out[gid] = in[in_idx];
+    } else {
+        out[gid] = pad_value;
+    }
+}
+
+kernel void pad_uchar(device uchar* out [[buffer(0)]],
+                     device const uchar* in [[buffer(1)]],
+                     constant uint* out_shape [[buffer(2)]],
+                     constant uint* in_shape [[buffer(3)]],
+                     constant uint* pad_before [[buffer(4)]],
+                     constant uchar& pad_value [[buffer(5)]],
+                     constant uint& ndim [[buffer(6)]],
+                     constant int* in_strides [[buffer(7)]],
+                     constant uint& in_offset [[buffer(8)]],
+                     uint gid [[thread_position_in_grid]]) {
+    uint out_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        out_size *= out_shape[i];
+    }
+    
+    if (gid >= out_size) return;
+    
+    uint out_pos[8];
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_pos[i] = temp % out_shape[i];
+        temp /= out_shape[i];
+    }
+    
+    bool in_bounds = true;
+    uint in_pos[8];
+    
+    for (uint i = 0; i < ndim; i++) {
+        if (out_pos[i] < pad_before[i] || out_pos[i] >= pad_before[i] + in_shape[i]) {
+            in_bounds = false;
+            break;
+        }
+        in_pos[i] = out_pos[i] - pad_before[i];
+    }
+    
+    if (in_bounds) {
+        uint in_idx = in_offset;
+        for (uint i = 0; i < ndim; i++) {
+            in_idx += in_pos[i] * in_strides[i];
+        }
+        out[gid] = in[in_idx];
+    } else {
+        out[gid] = pad_value;
+    }
+}
+
+kernel void pad_short(device short* out [[buffer(0)]],
+                     device const short* in [[buffer(1)]],
+                     constant uint* out_shape [[buffer(2)]],
+                     constant uint* in_shape [[buffer(3)]],
+                     constant uint* pad_before [[buffer(4)]],
+                     constant short& pad_value [[buffer(5)]],
+                     constant uint& ndim [[buffer(6)]],
+                     constant int* in_strides [[buffer(7)]],
+                     constant uint& in_offset [[buffer(8)]],
+                     uint gid [[thread_position_in_grid]]) {
+    uint out_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        out_size *= out_shape[i];
+    }
+    
+    if (gid >= out_size) return;
+    
+    uint out_pos[8];
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_pos[i] = temp % out_shape[i];
+        temp /= out_shape[i];
+    }
+    
+    bool in_bounds = true;
+    uint in_pos[8];
+    
+    for (uint i = 0; i < ndim; i++) {
+        if (out_pos[i] < pad_before[i] || out_pos[i] >= pad_before[i] + in_shape[i]) {
+            in_bounds = false;
+            break;
+        }
+        in_pos[i] = out_pos[i] - pad_before[i];
+    }
+    
+    if (in_bounds) {
+        uint in_idx = in_offset;
+        for (uint i = 0; i < ndim; i++) {
+            in_idx += in_pos[i] * in_strides[i];
+        }
+        out[gid] = in[in_idx];
+    } else {
+        out[gid] = pad_value;
+    }
+}
+
+kernel void pad_ushort(device ushort* out [[buffer(0)]],
+                      device const ushort* in [[buffer(1)]],
+                      constant uint* out_shape [[buffer(2)]],
+                      constant uint* in_shape [[buffer(3)]],
+                      constant uint* pad_before [[buffer(4)]],
+                      constant ushort& pad_value [[buffer(5)]],
+                      constant uint& ndim [[buffer(6)]],
+                      constant int* in_strides [[buffer(7)]],
+                      constant uint& in_offset [[buffer(8)]],
+                      uint gid [[thread_position_in_grid]]) {
+    uint out_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        out_size *= out_shape[i];
+    }
+    
+    if (gid >= out_size) return;
+    
+    uint out_pos[8];
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_pos[i] = temp % out_shape[i];
+        temp /= out_shape[i];
+    }
+    
+    bool in_bounds = true;
+    uint in_pos[8];
+    
+    for (uint i = 0; i < ndim; i++) {
+        if (out_pos[i] < pad_before[i] || out_pos[i] >= pad_before[i] + in_shape[i]) {
+            in_bounds = false;
+            break;
+        }
+        in_pos[i] = out_pos[i] - pad_before[i];
+    }
+    
+    if (in_bounds) {
+        uint in_idx = in_offset;
+        for (uint i = 0; i < ndim; i++) {
+            in_idx += in_pos[i] * in_strides[i];
+        }
+        out[gid] = in[in_idx];
+    } else {
+        out[gid] = pad_value;
+    }
+}// Add strided_copy operations for missing types
+kernel void strided_copy_half(device half* out [[buffer(0)]],
+                             device const half* in [[buffer(1)]],
+                             constant uint* shape [[buffer(2)]],
+                             constant int* strides [[buffer(3)]],
+                             constant uint& ndim [[buffer(4)]],
+                             constant uint& size [[buffer(5)]],
+                             constant uint& offset [[buffer(6)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    uint coords[8];
+    uint temp = gid;
+    
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    uint in_idx = offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * strides[i];
+    }
+    
+    out[gid] = in[in_idx];
+}
+
+kernel void strided_copy_char(device char* out [[buffer(0)]],
+                             device const char* in [[buffer(1)]],
+                             constant uint* shape [[buffer(2)]],
+                             constant int* strides [[buffer(3)]],
+                             constant uint& ndim [[buffer(4)]],
+                             constant uint& size [[buffer(5)]],
+                             constant uint& offset [[buffer(6)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    uint coords[8];
+    uint temp = gid;
+    
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    uint in_idx = offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * strides[i];
+    }
+    
+    out[gid] = in[in_idx];
+}
+
+kernel void strided_copy_short(device short* out [[buffer(0)]],
+                              device const short* in [[buffer(1)]],
+                              constant uint* shape [[buffer(2)]],
+                              constant int* strides [[buffer(3)]],
+                              constant uint& ndim [[buffer(4)]],
+                              constant uint& size [[buffer(5)]],
+                              constant uint& offset [[buffer(6)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    uint coords[8];
+    uint temp = gid;
+    
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    uint in_idx = offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * strides[i];
+    }
+    
+    out[gid] = in[in_idx];
+}
+
+kernel void strided_copy_ushort(device ushort* out [[buffer(0)]],
+                               device const ushort* in [[buffer(1)]],
+                               constant uint* shape [[buffer(2)]],
+                               constant int* strides [[buffer(3)]],
+                               constant uint& ndim [[buffer(4)]],
+                               constant uint& size [[buffer(5)]],
+                               constant uint& offset [[buffer(6)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    uint coords[8];
+    uint temp = gid;
+    
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    uint in_idx = offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * strides[i];
+    }
+    
+    out[gid] = in[in_idx];
+}
+
+kernel void strided_copy_long(device long* out [[buffer(0)]],
+                             device const long* in [[buffer(1)]],
+                             constant uint* shape [[buffer(2)]],
+                             constant int* strides [[buffer(3)]],
+                             constant uint& ndim [[buffer(4)]],
+                             constant uint& size [[buffer(5)]],
+                             constant uint& offset [[buffer(6)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    uint coords[8];
+    uint temp = gid;
+    
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    uint in_idx = offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * strides[i];
+    }
+    
+    out[gid] = in[in_idx];
+}

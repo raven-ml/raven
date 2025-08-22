@@ -1186,3 +1186,134 @@ kernel void gather_strided_uchar(device uchar* out [[buffer(0)]],
     // Copy the value
     out[gid] = data[data_idx];
 }
+// Add where operations for missing types
+kernel void where_half(device half* out [[buffer(0)]],
+                      device const uchar* condition [[buffer(1)]],
+                      device const half* true_val [[buffer(2)]],
+                      device const half* false_val [[buffer(3)]],
+                      constant uint* shape [[buffer(4)]],
+                      constant int* true_strides [[buffer(5)]],
+                      constant int* false_strides [[buffer(6)]],
+                      constant uint& ndim [[buffer(7)]],
+                      constant uint& size [[buffer(8)]],
+                      constant uint& true_offset [[buffer(9)]],
+                      constant uint& false_offset [[buffer(10)]],
+                      uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    // Compute position from linear index
+    uint coords[8]; // Support up to 8 dimensions
+    uint temp = gid;
+    
+    // Convert linear index to coordinates
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    // Compute strided indices
+    uint true_idx = true_offset;
+    uint false_idx = false_offset;
+    for (uint i = 0; i < ndim; i++) {
+        true_idx += coords[i] * true_strides[i];
+        false_idx += coords[i] * false_strides[i];
+    }
+    
+    out[gid] = condition[gid] ? true_val[true_idx] : false_val[false_idx];
+}
+
+kernel void where_char(device char* out [[buffer(0)]],
+                      device const uchar* condition [[buffer(1)]],
+                      device const char* true_val [[buffer(2)]],
+                      device const char* false_val [[buffer(3)]],
+                      constant uint* shape [[buffer(4)]],
+                      constant int* true_strides [[buffer(5)]],
+                      constant int* false_strides [[buffer(6)]],
+                      constant uint& ndim [[buffer(7)]],
+                      constant uint& size [[buffer(8)]],
+                      constant uint& true_offset [[buffer(9)]],
+                      constant uint& false_offset [[buffer(10)]],
+                      uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    uint coords[8];
+    uint temp = gid;
+    
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    uint true_idx = true_offset;
+    uint false_idx = false_offset;
+    for (uint i = 0; i < ndim; i++) {
+        true_idx += coords[i] * true_strides[i];
+        false_idx += coords[i] * false_strides[i];
+    }
+    
+    out[gid] = condition[gid] ? true_val[true_idx] : false_val[false_idx];
+}
+
+kernel void where_short(device short* out [[buffer(0)]],
+                       device const uchar* condition [[buffer(1)]],
+                       device const short* true_val [[buffer(2)]],
+                       device const short* false_val [[buffer(3)]],
+                       constant uint* shape [[buffer(4)]],
+                       constant int* true_strides [[buffer(5)]],
+                       constant int* false_strides [[buffer(6)]],
+                       constant uint& ndim [[buffer(7)]],
+                       constant uint& size [[buffer(8)]],
+                       constant uint& true_offset [[buffer(9)]],
+                       constant uint& false_offset [[buffer(10)]],
+                       uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    uint coords[8];
+    uint temp = gid;
+    
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    uint true_idx = true_offset;
+    uint false_idx = false_offset;
+    for (uint i = 0; i < ndim; i++) {
+        true_idx += coords[i] * true_strides[i];
+        false_idx += coords[i] * false_strides[i];
+    }
+    
+    out[gid] = condition[gid] ? true_val[true_idx] : false_val[false_idx];
+}
+
+kernel void where_ushort(device ushort* out [[buffer(0)]],
+                        device const uchar* condition [[buffer(1)]],
+                        device const ushort* true_val [[buffer(2)]],
+                        device const ushort* false_val [[buffer(3)]],
+                        constant uint* shape [[buffer(4)]],
+                        constant int* true_strides [[buffer(5)]],
+                        constant int* false_strides [[buffer(6)]],
+                        constant uint& ndim [[buffer(7)]],
+                        constant uint& size [[buffer(8)]],
+                        constant uint& true_offset [[buffer(9)]],
+                        constant uint& false_offset [[buffer(10)]],
+                        uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    
+    uint coords[8];
+    uint temp = gid;
+    
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % shape[i];
+        temp /= shape[i];
+    }
+    
+    uint true_idx = true_offset;
+    uint false_idx = false_offset;
+    for (uint i = 0; i < ndim; i++) {
+        true_idx += coords[i] * true_strides[i];
+        false_idx += coords[i] * false_strides[i];
+    }
+    
+    out[gid] = condition[gid] ? true_val[true_idx] : false_val[false_idx];
+}

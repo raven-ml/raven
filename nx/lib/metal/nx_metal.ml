@@ -120,7 +120,18 @@ let op_const_array : type a b. context -> (a, b, c_layout) Array1.t -> (a, b) t
 let op_expand t new_shape =
   (* Expand changes the view metadata, setting strides to 0 for broadcast
      dimensions *)
-  { t with view = Lazy_view.expand new_shape t.view }
+  let current_shape = Lazy_view.shape t.view in
+  let current_rank = Symbolic_shape.rank current_shape in
+  let new_rank = Symbolic_shape.rank new_shape in
+  
+  if current_rank = 0 && new_rank > 0 then
+    (* Special case: expanding a scalar to a higher rank *)
+    (* First reshape scalar to have the right number of dimensions with size 1 *)
+    let ones_shape = Array.make new_rank 1 in
+    let reshaped = { t with view = Lazy_view.reshape (Symbolic_shape.of_ints ones_shape) t.view } in
+    { reshaped with view = Lazy_view.expand new_shape reshaped.view }
+  else
+    { t with view = Lazy_view.expand new_shape t.view }
 
 let op_reshape t new_shape =
   (* Reshape changes the view metadata *)

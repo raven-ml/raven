@@ -14,7 +14,7 @@ let cmpeq ctx a b = Dispatch.dispatch_comparison_op ctx "cmpeq" a b
 
 let is_integer_dtype : type a b. (a, b) Dtype.t -> bool = function
   | Dtype.Int32 | Dtype.Int64 | Dtype.UInt8 | Dtype.UInt16 | Dtype.Int8
-  | Dtype.Int16 | Dtype.Int | Dtype.NativeInt ->
+  | Dtype.Int16 | Dtype.Int | Dtype.NativeInt | Dtype.Bool ->
       true
   | _ -> false
 
