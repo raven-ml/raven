@@ -196,10 +196,10 @@ a.color-pink {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: 8px;
+  gap: 0;
 }
 
-.landing .links > div {
+.landing .links-group {
   display: flex;
   align-items: center;
   gap: 20px;
@@ -369,7 +369,7 @@ a.color-pink {
     font-size: 21px;
   }
   
-  .landing .links > div {
+  .landing .links-group {
     gap: 16px;
   }
 }
@@ -407,7 +407,7 @@ a.color-pink {
     margin: 0 auto 40px auto;
   }
   
-  .landing .links > div {
+  .landing .links-group {
     gap: 14px;
     font-size: 18px;
   }
