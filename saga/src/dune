@@ -1,4 +1,4 @@
 (library
- (name nx_text)
- (public_name nx-text)
+ (name saga)
+ (public_name saga)
  (libraries nx nx_core re uutf uucp yojson str))

@@ -1,7 +1,7 @@
 (* Encoding and batch processing tests for nx-text *)
 
 open Alcotest
-open Nx_text
+open Saga
 
 (* Helper to check tensor shape *)
 let check_shape msg expected tensor =

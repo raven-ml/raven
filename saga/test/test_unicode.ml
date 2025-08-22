@@ -1,7 +1,7 @@
 (* Unicode processing tests for nx-text *)
 
 open Alcotest
-open Nx_text
+open Saga
 
 (* Basic Unicode Normalization Tests *)
 

@@ -1,7 +1,7 @@
 (* Error handling tests for nx-text *)
 
 open Alcotest
-open Nx_text
+open Saga
 
 (* Helper to check error messages *)
 let _check_error_msg expected_pattern f =

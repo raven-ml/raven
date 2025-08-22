@@ -141,7 +141,7 @@ let load_plugins () =
           "re.cma";
           "uutf.cma";
           "uucp.cma";
-          "nx_text.cma";
+          "saga.cma";
           "cairo.cma";
           "usdl.cma";
           "base64.cma";

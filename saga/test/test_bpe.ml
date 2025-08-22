@@ -1,4 +1,4 @@
-open Nx_text
+open Saga
 
 let test_bpe_basic () =
   (* Create a simple vocabulary and merges *)

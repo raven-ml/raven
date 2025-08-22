@@ -7,5 +7,5 @@
   test_errors
   test_bpe
   test_wordpiece)
- (package nx-text)
- (libraries nx_text nx alcotest unix))
+ (package saga)
+ (libraries saga nx alcotest unix))
