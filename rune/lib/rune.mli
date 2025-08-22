@@ -3583,6 +3583,123 @@ val jvps :
       - : float * float = (6., 3.5)
     ]} *)
 
+(** {2 Gradient Checking} *)
+
+type method_ = [ `Central | `Forward | `Backward ]
+(** Finite difference method to use:
+    - [`Central]: (f(x+h) - f(x-h)) / 2h (most accurate)
+    - [`Forward]: (f(x+h) - f(x)) / h
+    - [`Backward]: (f(x) - f(x-h)) / h *)
+
+val finite_diff :
+  ?eps:float ->
+  ?method_:method_ ->
+  (('a, 'b, 'dev) t -> ('c, 'd, 'dev) t) ->
+  ('a, 'b, 'dev) t ->
+  ('a, 'b, 'dev) t
+(** [finite_diff ?eps ?method_ f x] computes the gradient of scalar-valued
+    function [f] with respect to input [x] using finite differences. The
+    function [f] must return a scalar tensor.
+
+    @param eps Step size for finite differences (default: 1e-5)
+    @param method_ Finite difference method (default: `Central)
+    @param f Function to differentiate (must return scalar)
+    @param x Input tensor at which to compute gradient (must be float type)
+    @return Gradient tensor with same shape as [x] *)
+
+val finite_diff_jacobian :
+  ?eps:float ->
+  ?method_:method_ ->
+  (('a, 'b, 'dev) t -> ('c, 'd, 'dev) t) ->
+  ('a, 'b, 'dev) t ->
+  ('c, 'd, 'dev) t
+(** [finite_diff_jacobian ?eps ?method_ f x] computes the Jacobian matrix of
+    function [f] with respect to input [x] using finite differences.
+
+    @param eps Step size for finite differences (default: 1e-5)
+    @param method_ Finite difference method (default: `Central)
+    @param f Function to differentiate
+    @param x Input tensor at which to compute Jacobian (must be float type)
+    @return
+      Jacobian matrix of shape [output_size × input_size] if f returns
+      non-scalar, or gradient vector with same shape as [x] if f returns scalar
+*)
+
+type gradient_check_result = {
+  max_abs_error : float;
+      (** Maximum absolute error between autodiff and finite difference
+          gradients *)
+  max_rel_error : float;
+      (** Maximum relative error between autodiff and finite difference
+          gradients *)
+  mean_abs_error : float;
+      (** Mean absolute error across all checked elements *)
+  mean_rel_error : float;
+      (** Mean relative error across all checked elements *)
+  failed_indices : (int array * float * float * float) list;
+      (** List of (index, autodiff_value, finite_diff_value, absolute_error) for
+          failed elements *)
+  passed : bool;  (** Whether all checked elements passed the tolerance tests *)
+  num_checked : int;  (** Total number of elements checked *)
+  num_failed : int;  (** Number of elements that failed the tolerance tests *)
+}
+
+val check_gradient :
+  ?eps:float ->
+  ?rtol:float ->
+  ?atol:float ->
+  ?verbose:bool ->
+  ?check_indices:int list option ->
+  ?method_:[ `Central | `Forward | `Backward ] ->
+  ((float, 'a, 'dev) t -> ('b, 'c, 'dev) t) ->
+  (float, 'a, 'dev) t ->
+  [ `Pass of gradient_check_result | `Fail of gradient_check_result ]
+(** [check_gradient ?eps ?rtol ?atol ?verbose ?check_indices ?method_ f x]
+    compares the gradient of [f] at [x] computed via automatic differentiation
+    against finite differences.
+
+    @param eps Step size for finite differences (default: 1e-5)
+    @param rtol Relative tolerance for comparison (default: 1e-3)
+    @param atol Absolute tolerance for comparison (default: 1e-5)
+    @param verbose Whether to print detailed error information (default: false)
+    @param check_indices Optional list of indices to check (default: all)
+    @param method_ Finite difference method (default: `Central)
+    @param f Function to check (must return scalar)
+    @param x Input tensor at which to check gradient
+    @return
+      [`Pass result] if all gradients match within tolerance, [`Fail result]
+      otherwise
+
+    The check passes if for each element either:
+    - absolute_error <= atol, or
+    - relative_error <= rtol *)
+
+val check_gradients :
+  ?eps:float ->
+  ?rtol:float ->
+  ?atol:float ->
+  ?verbose:bool ->
+  ?method_:[ `Central | `Forward | `Backward ] ->
+  ((float, 'a, 'dev) t list -> ('b, 'c, 'dev) t) ->
+  (float, 'a, 'dev) t list ->
+  [ `Pass of gradient_check_result list | `Fail of gradient_check_result list ]
+(** [check_gradients ?eps ?rtol ?atol ?verbose ?method_ f xs] compares the
+    gradients of [f] with respect to each input in [xs] computed via automatic
+    differentiation against finite differences.
+
+    @param eps Step size for finite differences (default: 1e-5)
+    @param rtol Relative tolerance for comparison (default: 1e-3)
+    @param atol Absolute tolerance for comparison (default: 1e-5)
+    @param verbose Whether to print detailed error information (default: false)
+    @param method_ Finite difference method (default: `Central)
+    @param f Function to check (must return scalar)
+    @param xs List of input tensors at which to check gradients
+    @return
+      [`Pass results] if all gradients match within tolerance, [`Fail results]
+      otherwise
+
+    Returns a list of results, one for each input tensor. *)
+
 (** {2 Vectorizing Map (vmap)}
 
     Functions for mapping computations over batch dimensions. *)

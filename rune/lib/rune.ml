@@ -45,6 +45,29 @@ let jvp = Autodiff.jvp
 let jvp_aux = Autodiff.jvp_aux
 let jvps = Autodiff.jvps
 
+(* ───── Gradient Checking ───── *)
+
+module Finite_diff = Finite_diff
+module Gradcheck = Gradcheck
+
+type method_ = Finite_diff.method_
+
+type gradient_check_result = Gradcheck.gradient_check_result = {
+  max_abs_error : float;
+  max_rel_error : float;
+  mean_abs_error : float;
+  mean_rel_error : float;
+  failed_indices : (int array * float * float * float) list;
+  passed : bool;
+  num_checked : int;
+  num_failed : int;
+}
+
+let finite_diff = Finite_diff.finite_diff
+let finite_diff_jacobian = Finite_diff.finite_diff_jacobian
+let check_gradient = Gradcheck.check_gradient
+let check_gradients = Gradcheck.check_gradients
+
 (* ───── Vmap ───── *)
 
 type axis_spec = Vmap.axis_spec = Map of int | NoMap
