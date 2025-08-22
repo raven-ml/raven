@@ -29,12 +29,18 @@ let train () =
     (Unix.gettimeofday () -. start);
 
   let shuffle_start = Unix.gettimeofday () in
-  let train_data_shuffled = Dataset.shuffle ~seed:42 train_data in
+  let rng = Rune.Rng.key 42 in
+  let train_data_shuffled = Kaun_dataset.shuffle ~rng ~buffer_size:60000 train_data in
   Printf.printf "  Shuffle done in %.2fs\n%!"
     (Unix.gettimeofday () -. shuffle_start);
 
   let batch_start = Unix.gettimeofday () in
-  let train_ds = Dataset.batch_xy 32 train_data_shuffled in
+  let train_ds = Kaun_dataset.batch_map 32 (fun batch ->
+    let images, labels = Array.split batch in
+    let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
+    let batched_labels = Rune.stack ~axis:0 (Array.to_list labels) in
+    (batched_images, batched_labels)
+  ) train_data_shuffled in
   Printf.printf "  Batching done in %.2fs\n%!"
     (Unix.gettimeofday () -. batch_start);
 
@@ -44,7 +50,12 @@ let train () =
   let start = Unix.gettimeofday () in
   let test_ds =
     Kaun_datasets.mnist ~train:false ~flatten:false ~device ()
-    |> Dataset.batch_xy 100
+    |> Kaun_dataset.batch_map 100 (fun batch ->
+        let images, labels = Array.split batch in
+        let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
+        let batched_labels = Rune.stack ~axis:0 (Array.to_list labels) in
+        (batched_images, batched_labels)
+      )
   in
   Printf.printf "Test dataset created in %.2fs\n%!"
     (Unix.gettimeofday () -. start);
@@ -67,7 +78,7 @@ let train () =
 
     (* Training *)
     Printf.printf "Starting training iteration...\n%!";
-    Dataset.iter
+    Kaun_dataset.iter
       (fun (x_batch, y_batch) ->
         incr batch_count;
         if !batch_count = 1 then
@@ -126,7 +137,7 @@ let train () =
     Printf.printf "  Evaluating...\n%!";
     let eval_start = Unix.gettimeofday () in
     Metrics.reset metrics;
-    Dataset.iter
+    Kaun_dataset.iter
       (fun (x_batch, y_batch) ->
         let logits = apply model params ~training:false x_batch in
         let loss = Loss.softmax_cross_entropy_with_indices logits y_batch in
