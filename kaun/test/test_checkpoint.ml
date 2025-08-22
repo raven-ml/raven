@@ -11,7 +11,7 @@ let test_save_and_load () =
   let params = Record [ ("weight", Tensor w); ("bias", Tensor b) ] in
 
   (* Save checkpoint to specific file *)
-  let path = "/tmp/test_checkpoint.json" in
+  let path = "/tmp/test_checkpoint.safetensors" in
   (* Use the lower-level save_params for single file *)
   let module C = Kaun.Checkpoint in
   C.save_params ~path ~params ~metadata:[ ("epoch", "10") ] ();
@@ -66,11 +66,11 @@ let test_checkpoint_manager () =
 
   (* Check latest step *)
   let latest = CM.latest_step manager in
-  A.check (A.option A.int) "latest step" (Some 10) latest;
+  A.check (A.option A.int) "latest step" (Some 50) latest;
 
   (* Restore latest *)
   let restored_params, info = CM.restore manager ~device ~dtype () in
-  A.check A.int "restored step" 10 info.step;
+  A.check A.int "restored step" 50 info.step;
 
   (* Check restored value *)
   match restored_params with
@@ -78,7 +78,7 @@ let test_checkpoint_manager () =
       match List.assoc_opt "weight" fields with
       | Some (Tensor w) ->
           let value = Rune.unsafe_get [ 0; 0 ] w in
-          A.check (A.float 0.01) "restored value" 1.0 value
+          A.check (A.float 0.01) "restored value" 5.0 value
       | _ -> A.fail "weight not found")
   | _ -> A.fail "wrong params structure"
 

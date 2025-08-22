@@ -1,7 +1,11 @@
 (** Orbax-style checkpoint management for Kaun/Rune models.
 
     This module provides checkpoint functionality for saving and loading model
-    parameters, optimizer states, and training metadata. *)
+    parameters, optimizer states, and training metadata.
+
+    The default format is now Safetensors, which provides efficient, safe
+    serialization of tensors. JSON format is still supported for backward
+    compatibility. *)
 
 (** {1 Types} *)
 
@@ -15,14 +19,24 @@ type checkpoint_info = {
 }
 (** Information about a checkpoint *)
 
+type format =
+  | Safetensors
+      (** Checkpoint format - currently only Safetensors is supported *)
+
+val default_format : format
+(** Default format for new checkpoints (Safetensors) *)
+
+val infer_format_from_path : string -> format
+(** Infer format from file extension (.safetensors) *)
+
 (** {1 Core Checkpointing} *)
 
 module Checkpointer : sig
   type t
   (** Checkpointer handles saving and restoring of parameters *)
 
-  val create : unit -> t
-  (** Create a new checkpointer *)
+  val create : ?format:format -> unit -> t
+  (** Create a new checkpointer with specified format (default: Safetensors) *)
 
   val save :
     t ->
@@ -193,16 +207,6 @@ val load_params :
     @param path File or directory path to load from
     @param device Device to load tensors onto
     @param dtype Data type for tensors *)
-
-val params_to_json : ('layout, 'dev) Ptree.t -> Yojson.Basic.t
-(** Convert parameters to JSON representation for serialization *)
-
-val params_from_json :
-  Yojson.Basic.t ->
-  device:'dev Rune.device ->
-  dtype:(float, 'layout) Rune.dtype ->
-  ('layout, 'dev) Ptree.t
-(** Convert JSON back to parameters *)
 
 (** {1 Async Operations} *)
 
