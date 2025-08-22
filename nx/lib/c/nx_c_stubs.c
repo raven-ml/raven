@@ -249,6 +249,78 @@ DEFINE_CAST_OP(int64_t, intnat, (intnat))
 DEFINE_CAST_OP(float, intnat, (intnat))
 DEFINE_CAST_OP(double, intnat, (intnat))
 
+// float16 conversions
+DEFINE_CAST_OP(float16_t, int8_t, (int8_t))
+DEFINE_CAST_OP(float16_t, uint8_t, (uint8_t))
+DEFINE_CAST_OP(float16_t, int16_t, (int16_t))
+DEFINE_CAST_OP(float16_t, uint16_t, (uint16_t))
+DEFINE_CAST_OP(float16_t, int32_t, (int32_t))
+DEFINE_CAST_OP(float16_t, int64_t, (int64_t))
+DEFINE_CAST_OP(float16_t, intnat, (intnat))
+DEFINE_CAST_OP(float16_t, float, (float))
+DEFINE_CAST_OP(float16_t, double, (double))
+DEFINE_CAST_OP(float16_t, qint8_t, (qint8_t))
+DEFINE_CAST_OP(float16_t, quint8_t, (quint8_t))
+
+// Conversions to float16
+DEFINE_CAST_OP(int8_t, float16_t, (float16_t))
+DEFINE_CAST_OP(uint8_t, float16_t, (float16_t))
+DEFINE_CAST_OP(int16_t, float16_t, (float16_t))
+DEFINE_CAST_OP(uint16_t, float16_t, (float16_t))
+DEFINE_CAST_OP(int32_t, float16_t, (float16_t))
+DEFINE_CAST_OP(int64_t, float16_t, (float16_t))
+DEFINE_CAST_OP(intnat, float16_t, (float16_t))
+DEFINE_CAST_OP(float, float16_t, (float16_t))
+DEFINE_CAST_OP(double, float16_t, (float16_t))
+DEFINE_CAST_OP(qint8_t, float16_t, (float16_t))
+DEFINE_CAST_OP(quint8_t, float16_t, (float16_t))
+
+// qint8 conversions
+DEFINE_CAST_OP(qint8_t, int8_t, (int8_t))
+DEFINE_CAST_OP(qint8_t, uint8_t, (uint8_t))
+DEFINE_CAST_OP(qint8_t, int16_t, (int16_t))
+DEFINE_CAST_OP(qint8_t, uint16_t, (uint16_t))
+DEFINE_CAST_OP(qint8_t, int32_t, (int32_t))
+DEFINE_CAST_OP(qint8_t, int64_t, (int64_t))
+DEFINE_CAST_OP(qint8_t, intnat, (intnat))
+DEFINE_CAST_OP(qint8_t, float, (float))
+DEFINE_CAST_OP(qint8_t, double, (double))
+DEFINE_CAST_OP(qint8_t, quint8_t, (quint8_t))
+
+// Conversions to qint8
+DEFINE_CAST_OP(int8_t, qint8_t, (qint8_t))
+DEFINE_CAST_OP(uint8_t, qint8_t, (qint8_t))
+DEFINE_CAST_OP(int16_t, qint8_t, (qint8_t))
+DEFINE_CAST_OP(uint16_t, qint8_t, (qint8_t))
+DEFINE_CAST_OP(int32_t, qint8_t, (qint8_t))
+DEFINE_CAST_OP(int64_t, qint8_t, (qint8_t))
+DEFINE_CAST_OP(intnat, qint8_t, (qint8_t))
+DEFINE_CAST_OP(float, qint8_t, (qint8_t))
+DEFINE_CAST_OP(double, qint8_t, (qint8_t))
+DEFINE_CAST_OP(quint8_t, qint8_t, (qint8_t))
+
+// quint8 conversions
+DEFINE_CAST_OP(quint8_t, int8_t, (int8_t))
+DEFINE_CAST_OP(quint8_t, uint8_t, (uint8_t))
+DEFINE_CAST_OP(quint8_t, int16_t, (int16_t))
+DEFINE_CAST_OP(quint8_t, uint16_t, (uint16_t))
+DEFINE_CAST_OP(quint8_t, int32_t, (int32_t))
+DEFINE_CAST_OP(quint8_t, int64_t, (int64_t))
+DEFINE_CAST_OP(quint8_t, intnat, (intnat))
+DEFINE_CAST_OP(quint8_t, float, (float))
+DEFINE_CAST_OP(quint8_t, double, (double))
+
+// Conversions to quint8
+DEFINE_CAST_OP(int8_t, quint8_t, (quint8_t))
+DEFINE_CAST_OP(uint8_t, quint8_t, (quint8_t))
+DEFINE_CAST_OP(int16_t, quint8_t, (quint8_t))
+DEFINE_CAST_OP(uint16_t, quint8_t, (quint8_t))
+DEFINE_CAST_OP(int32_t, quint8_t, (quint8_t))
+DEFINE_CAST_OP(int64_t, quint8_t, (quint8_t))
+DEFINE_CAST_OP(intnat, quint8_t, (quint8_t))
+DEFINE_CAST_OP(float, quint8_t, (quint8_t))
+DEFINE_CAST_OP(double, quint8_t, (quint8_t))
+
 // Unary operation kernel for use with parallel iterator
 #define DEFINE_UNARY_OP_KERNEL(name, T, OP)                                    \
   static void nx_c_##name##_##T##_kernel(void *x_data, void *y_data,           \
@@ -326,17 +398,72 @@ DEFINE_UNARY_OP(neg, int64_t, -)
 DEFINE_UNARY_OP(neg, intnat, -)  // Covers both int and nativeint
 DEFINE_UNARY_OP(neg, c32_t, -)
 DEFINE_UNARY_OP(neg, c64_t, -)
+// float16 and quantized negation
+DEFINE_UNARY_OP(neg, float16_t, -)
+DEFINE_UNARY_OP(neg, qint8_t, -)
+
+// Extended types negation
+DEFINE_UNARY_OP(neg, bool_t, !)
+static inline bfloat16_t neg_bf16(bfloat16_t x) {
+  return float_to_bfloat16(-bfloat16_to_float(x));
+}
+DEFINE_UNARY_OP(neg, bfloat16_t, neg_bf16)
+static inline fp8_e4m3_t neg_fp8_e4m3(fp8_e4m3_t x) {
+  return float_to_fp8_e4m3(-fp8_e4m3_to_float(x));
+}
+DEFINE_UNARY_OP(neg, fp8_e4m3_t, neg_fp8_e4m3)
+static inline fp8_e5m2_t neg_fp8_e5m2(fp8_e5m2_t x) {
+  return float_to_fp8_e5m2(-fp8_e5m2_to_float(x));
+}
+DEFINE_UNARY_OP(neg, fp8_e5m2_t, neg_fp8_e5m2)
+static inline complex16_t neg_c16(complex16_t x) {
+  complex16_t result;
+  result.real = float_to_bfloat16(-bfloat16_to_float(x.real));
+  result.imag = float_to_bfloat16(-bfloat16_to_float(x.imag));
+  return result;
+}
+DEFINE_UNARY_OP(neg, complex16_t, neg_c16)
 
 // -- Other Unary Implementations --
 DEFINE_UNARY_OP(sqrt, float, sqrtf)
 DEFINE_UNARY_OP(sqrt, double, sqrt)
 DEFINE_UNARY_OP(sqrt, c32_t, csqrtf)
 DEFINE_UNARY_OP(sqrt, c64_t, csqrt)
+// float16 sqrt (using cast through float)
+static inline float16_t sqrtf16(float16_t x) { return (float16_t)sqrtf((float)x); }
+DEFINE_UNARY_OP(sqrt, float16_t, sqrtf16)
+
+// Extended types sqrt
+static inline bfloat16_t sqrt_bf16(bfloat16_t x) {
+  return float_to_bfloat16(sqrtf(bfloat16_to_float(x)));
+}
+DEFINE_UNARY_OP(sqrt, bfloat16_t, sqrt_bf16)
+static inline fp8_e4m3_t sqrt_fp8_e4m3(fp8_e4m3_t x) {
+  return float_to_fp8_e4m3(sqrtf(fp8_e4m3_to_float(x)));
+}
+DEFINE_UNARY_OP(sqrt, fp8_e4m3_t, sqrt_fp8_e4m3)
+static inline fp8_e5m2_t sqrt_fp8_e5m2(fp8_e5m2_t x) {
+  return float_to_fp8_e5m2(sqrtf(fp8_e5m2_to_float(x)));
+}
+DEFINE_UNARY_OP(sqrt, fp8_e5m2_t, sqrt_fp8_e5m2)
+static inline complex16_t sqrt_c16(complex16_t x) {
+  float complex fc = bfloat16_to_float(x.real) + bfloat16_to_float(x.imag) * I;
+  float complex result_c = csqrtf(fc);
+  complex16_t result;
+  result.real = float_to_bfloat16(crealf(result_c));
+  result.imag = float_to_bfloat16(cimagf(result_c));
+  return result;
+}
+DEFINE_UNARY_OP(sqrt, complex16_t, sqrt_c16)
+
 
 DEFINE_UNARY_OP(sin, float, sinf)
 DEFINE_UNARY_OP(sin, double, sin)
 DEFINE_UNARY_OP(sin, c32_t, csinf)
 DEFINE_UNARY_OP(sin, c64_t, csin)
+// float16 sin
+static inline float16_t sinf16(float16_t x) { return (float16_t)sinf((float)x); }
+DEFINE_UNARY_OP(sin, float16_t, sinf16)
 
 DEFINE_UNARY_OP(exp2, float, exp2f)
 DEFINE_UNARY_OP(exp2, double, exp2)
@@ -345,6 +472,9 @@ static inline c32_t cexp2f_op(c32_t v) { return cexpf(v * M_LN2); }
 static inline c64_t cexp2_op(c64_t v) { return cexp(v * M_LN2); }
 DEFINE_UNARY_OP(exp2, c32_t, cexp2f_op)
 DEFINE_UNARY_OP(exp2, c64_t, cexp2_op)
+// float16 exp2
+static inline float16_t exp2f16(float16_t x) { return (float16_t)exp2f((float)x); }
+DEFINE_UNARY_OP(exp2, float16_t, exp2f16)
 
 DEFINE_UNARY_OP(log2, float, log2f)
 DEFINE_UNARY_OP(log2, double, log2)
@@ -353,6 +483,9 @@ static inline c32_t clog2f_op(c32_t v) { return clogf(v) / M_LN2; }
 static inline c64_t clog2_op(c64_t v) { return clog(v) / M_LN2; }
 DEFINE_UNARY_OP(log2, c32_t, clog2f_op)
 DEFINE_UNARY_OP(log2, c64_t, clog2_op)
+// float16 log2
+static inline float16_t log2f16(float16_t x) { return (float16_t)log2f((float)x); }
+DEFINE_UNARY_OP(log2, float16_t, log2f16)
 
 static inline float recipf_op(float v) { return 1.0f / v; }
 static inline double recip_op(double v) { return 1.0 / v; }
@@ -362,6 +495,9 @@ DEFINE_UNARY_OP(recip, float, recipf_op)
 DEFINE_UNARY_OP(recip, double, recip_op)
 DEFINE_UNARY_OP(recip, c32_t, crecipf_op)
 DEFINE_UNARY_OP(recip, c64_t, crecip_op)
+// float16 recip
+static inline float16_t recipf16(float16_t x) { return (float16_t)(1.0f / (float)x); }
+DEFINE_UNARY_OP(recip, float16_t, recipf16)
 
 #define ADD_OP(a, b) ((a) + (b))
 #define SUB_OP(a, b) ((a) - (b))
@@ -561,6 +697,34 @@ DEFINE_BINARY_OP(sub, c64_t, SUB_OP)
 DEFINE_BINARY_OP(mul, c64_t, MUL_OP)
 DEFINE_BINARY_OP(fdiv, c64_t, DIV_OP)
 
+// float16 operations
+DEFINE_BINARY_OP(add, float16_t, ADD_OP)
+DEFINE_BINARY_OP(sub, float16_t, SUB_OP)
+DEFINE_BINARY_OP(mul, float16_t, MUL_OP)
+DEFINE_BINARY_OP(fdiv, float16_t, DIV_OP)
+DEFINE_BINARY_OP(max, float16_t, FMAX_OP)
+DEFINE_BINARY_OP(mod, float16_t, FMOD_OP)
+DEFINE_BINARY_OP(pow, float16_t, POW_OP)
+
+// qint8 operations
+DEFINE_BINARY_OP(add, qint8_t, ADD_OP)
+DEFINE_BINARY_OP(sub, qint8_t, SUB_OP)
+DEFINE_BINARY_OP(mul, qint8_t, MUL_OP)
+DEFINE_BINARY_OP(max, qint8_t, MAX_OP)
+DEFINE_BINARY_OP(mod, qint8_t, MOD_OP)
+DEFINE_BINARY_OP(xor, qint8_t, XOR_OP)
+DEFINE_BINARY_OP(or, qint8_t, OR_OP)
+DEFINE_BINARY_OP(and, qint8_t, AND_OP)
+
+// quint8 operations
+DEFINE_BINARY_OP(add, quint8_t, ADD_OP)
+DEFINE_BINARY_OP(sub, quint8_t, SUB_OP)
+DEFINE_BINARY_OP(mul, quint8_t, MUL_OP)
+DEFINE_BINARY_OP(max, quint8_t, MAX_OP)
+DEFINE_BINARY_OP(xor, quint8_t, XOR_OP)
+DEFINE_BINARY_OP(or, quint8_t, OR_OP)
+DEFINE_BINARY_OP(and, quint8_t, AND_OP)
+
 // int8_t operations
 DEFINE_BINARY_OP(add, int8_t, ADD_OP)
 DEFINE_BINARY_OP(sub, int8_t, SUB_OP)
@@ -639,6 +803,10 @@ DEFINE_COMPARE_OP(cmplt, int64_t, CMPLT_OP)
 DEFINE_COMPARE_OP(cmplt, intnat, CMPLT_OP)
 DEFINE_COMPARE_OP(cmplt, float, CMPLT_OP)
 DEFINE_COMPARE_OP(cmplt, double, CMPLT_OP)
+// float16 and quantized comparison
+DEFINE_COMPARE_OP(cmplt, float16_t, CMPLT_OP)
+DEFINE_COMPARE_OP(cmplt, qint8_t, CMPLT_OP)
+DEFINE_COMPARE_OP(cmplt, quint8_t, CMPLT_OP)
 
 DEFINE_COMPARE_OP(cmpne, int8_t, CMPNE_OP)
 DEFINE_COMPARE_OP(cmpne, uint8_t, CMPNE_OP)
@@ -651,6 +819,10 @@ DEFINE_COMPARE_OP(cmpne, float, CMPNE_OP)
 DEFINE_COMPARE_OP(cmpne, double, CMPNE_OP)
 DEFINE_COMPARE_OP(cmpne, c32_t, CMPNE_OP)
 DEFINE_COMPARE_OP(cmpne, c64_t, CMPNE_OP)
+// float16 and quantized comparison
+DEFINE_COMPARE_OP(cmpne, float16_t, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, qint8_t, CMPNE_OP)
+DEFINE_COMPARE_OP(cmpne, quint8_t, CMPNE_OP)
 
 // Reduce operation helpers
 static void compute_reduction_params(const ndarray_t *x, const int *axes,
@@ -775,6 +947,10 @@ DEFINE_REDUCE_OP_KERNEL(sum, int64_t, 0, SUM_OP)
 DEFINE_REDUCE_OP_KERNEL(sum, intnat, 0, SUM_OP)
 DEFINE_REDUCE_OP_KERNEL(sum, float, 0.0f, SUM_OP)
 DEFINE_REDUCE_OP_KERNEL(sum, double, 0.0, SUM_OP)
+// float16 and quantized sum
+DEFINE_REDUCE_OP_KERNEL(sum, float16_t, (float16_t)0.0f, SUM_OP)
+DEFINE_REDUCE_OP_KERNEL(sum, qint8_t, 0, SUM_OP)
+DEFINE_REDUCE_OP_KERNEL(sum, quint8_t, 0, SUM_OP)
 
 // Max operations
 DEFINE_REDUCE_OP_KERNEL(max, int8_t, INT8_MIN, MAX_OP)
@@ -786,6 +962,10 @@ DEFINE_REDUCE_OP_KERNEL(max, int64_t, INT64_MIN, MAX_OP)
 DEFINE_REDUCE_OP_KERNEL(max, intnat, INTNAT_MIN, MAX_OP)
 DEFINE_REDUCE_OP_KERNEL(max, float, -INFINITY, MAX_NAN_OP)
 DEFINE_REDUCE_OP_KERNEL(max, double, -INFINITY, MAX_NAN_OP)
+// float16 and quantized max
+DEFINE_REDUCE_OP_KERNEL(max, float16_t, (float16_t)(-INFINITY), MAX_NAN_OP)
+DEFINE_REDUCE_OP_KERNEL(max, qint8_t, INT8_MIN, MAX_OP)
+DEFINE_REDUCE_OP_KERNEL(max, quint8_t, 0, MAX_OP)
 
 // Prod operations
 DEFINE_REDUCE_OP_KERNEL(prod, int8_t, 1, PROD_OP)
@@ -797,6 +977,10 @@ DEFINE_REDUCE_OP_KERNEL(prod, int64_t, 1, PROD_OP)
 DEFINE_REDUCE_OP_KERNEL(prod, intnat, 1, PROD_OP)
 DEFINE_REDUCE_OP_KERNEL(prod, float, 1.0f, PROD_OP)
 DEFINE_REDUCE_OP_KERNEL(prod, double, 1.0, PROD_OP)
+// float16 and quantized prod
+DEFINE_REDUCE_OP_KERNEL(prod, float16_t, (float16_t)1.0f, PROD_OP)
+DEFINE_REDUCE_OP_KERNEL(prod, qint8_t, 1, PROD_OP)
+DEFINE_REDUCE_OP_KERNEL(prod, quint8_t, 1, PROD_OP)
 
 // Helper for where operation with 4 arrays
 static inline void iterate_where_inner_dims(
@@ -914,6 +1098,10 @@ DEFINE_WHERE_OP(float)
 DEFINE_WHERE_OP(double)
 DEFINE_WHERE_OP(c32_t)
 DEFINE_WHERE_OP(c64_t)
+// float16 and quantized where operations
+DEFINE_WHERE_OP(float16_t)
+DEFINE_WHERE_OP(qint8_t)
+DEFINE_WHERE_OP(quint8_t)
 
 // Pad operation - adds padding to array edges
 #define DEFINE_PAD_OP(T)                                                       \
@@ -985,6 +1173,10 @@ DEFINE_PAD_OP(double)
 DEFINE_PAD_OP(c32_t)
 DEFINE_PAD_OP(c64_t)
 DEFINE_PAD_OP(uint8_t)
+// float16 and quantized pad operations
+DEFINE_PAD_OP(float16_t)
+DEFINE_PAD_OP(qint8_t)
+DEFINE_PAD_OP(quint8_t)
 
 // Cat (concatenation) operation
 static void nx_c_cat_generic(const ndarray_t **inputs, int num_inputs,
@@ -1205,6 +1397,8 @@ CAMLprim value caml_nx_cast_bc(value *argv, int argn) {
   dst.offset = Int_val(v_dst_offset);
 
   cast_op_t func = NULL;
+  
+  // Create a comprehensive cast dispatch
   if (src_kind == CAML_BA_FLOAT32 && dst_kind == CAML_BA_FLOAT64)
     func = nx_c_cast_float_to_double;
   else if (src_kind == CAML_BA_FLOAT64 && dst_kind == CAML_BA_FLOAT32)
@@ -1253,6 +1447,53 @@ CAMLprim value caml_nx_cast_bc(value *argv, int argn) {
     func = nx_c_cast_float_to_uint8_t;
   else if (src_kind == CAML_BA_FLOAT64 && dst_kind == CAML_BA_UINT8)
     func = nx_c_cast_double_to_uint8_t;
+  // Float16 casts
+  else if (src_kind == CAML_BA_FLOAT16 && dst_kind == CAML_BA_FLOAT32)
+    func = nx_c_cast_float16_t_to_float;
+  else if (src_kind == CAML_BA_FLOAT16 && dst_kind == CAML_BA_FLOAT64)
+    func = nx_c_cast_float16_t_to_double;
+  else if (src_kind == CAML_BA_FLOAT16 && dst_kind == CAML_BA_INT32)
+    func = nx_c_cast_float16_t_to_int32_t;
+  else if (src_kind == CAML_BA_FLOAT16 && dst_kind == CAML_BA_INT64)
+    func = nx_c_cast_float16_t_to_int64_t;
+  else if (src_kind == CAML_BA_FLOAT32 && dst_kind == CAML_BA_FLOAT16)
+    func = nx_c_cast_float_to_float16_t;
+  else if (src_kind == CAML_BA_FLOAT64 && dst_kind == CAML_BA_FLOAT16)
+    func = nx_c_cast_double_to_float16_t;
+  else if (src_kind == CAML_BA_INT32 && dst_kind == CAML_BA_FLOAT16)
+    func = nx_c_cast_int32_t_to_float16_t;
+  else if (src_kind == CAML_BA_INT64 && dst_kind == CAML_BA_FLOAT16)
+    func = nx_c_cast_int64_t_to_float16_t;
+  else if (src_kind == CAML_BA_UINT8 && dst_kind == CAML_BA_FLOAT16)
+    func = nx_c_cast_uint8_t_to_float16_t;
+  else if (src_kind == CAML_BA_FLOAT16 && dst_kind == CAML_BA_UINT8)
+    func = nx_c_cast_float16_t_to_uint8_t;
+  // Qint8 casts  
+  else if (src_kind == NX_BA_QINT8 && dst_kind == CAML_BA_INT32)
+    func = nx_c_cast_qint8_t_to_int32_t;
+  else if (src_kind == NX_BA_QINT8 && dst_kind == CAML_BA_FLOAT32)
+    func = nx_c_cast_qint8_t_to_float;
+  else if (src_kind == NX_BA_QINT8 && dst_kind == CAML_BA_FLOAT64)
+    func = nx_c_cast_qint8_t_to_double;
+  else if (src_kind == CAML_BA_INT32 && dst_kind == NX_BA_QINT8)
+    func = nx_c_cast_int32_t_to_qint8_t;
+  else if (src_kind == CAML_BA_FLOAT32 && dst_kind == NX_BA_QINT8)
+    func = nx_c_cast_float_to_qint8_t;
+  else if (src_kind == CAML_BA_FLOAT64 && dst_kind == NX_BA_QINT8)
+    func = nx_c_cast_double_to_qint8_t;
+  // Quint8 casts
+  else if (src_kind == NX_BA_QUINT8 && dst_kind == CAML_BA_INT32)
+    func = nx_c_cast_quint8_t_to_int32_t;
+  else if (src_kind == NX_BA_QUINT8 && dst_kind == CAML_BA_FLOAT32)
+    func = nx_c_cast_quint8_t_to_float;
+  else if (src_kind == NX_BA_QUINT8 && dst_kind == CAML_BA_FLOAT64)
+    func = nx_c_cast_quint8_t_to_double;
+  else if (src_kind == CAML_BA_INT32 && dst_kind == NX_BA_QUINT8)
+    func = nx_c_cast_int32_t_to_quint8_t;
+  else if (src_kind == CAML_BA_FLOAT32 && dst_kind == NX_BA_QUINT8)
+    func = nx_c_cast_float_to_quint8_t;
+  else if (src_kind == CAML_BA_FLOAT64 && dst_kind == NX_BA_QUINT8)
+    func = nx_c_cast_double_to_quint8_t;
 
   if (func) {
     caml_enter_blocking_section();
@@ -1271,7 +1512,9 @@ NATIVE_WRAPPER_8(cast)
 typedef void (*unary_op_t)(const ndarray_t *, ndarray_t *);
 
 typedef struct {
-  unary_op_t i8, u8, i16, u16, i32, i64, inat, f32, f64, c32, c64;
+  unary_op_t i8, u8, i16, u16, i32, i64, inat, f16, f32, f64, c32, c64, qi8, qu8;
+  unary_op_t bool_, bf16, fp8_e4m3, fp8_e5m2, c16;
+  // Note: int4/uint4 need special handling due to packing
 } unary_op_table;
 
 static value dispatch_unary(value *argv, const unary_op_table *table,
@@ -1320,6 +1563,9 @@ static value dispatch_unary(value *argv, const unary_op_table *table,
       case CAML_BA_NATIVE_INT:
         func = table->inat;
         break;
+      case CAML_BA_FLOAT16:
+        func = table->f16;
+        break;
       case CAML_BA_FLOAT32:
         func = table->f32;
         break;
@@ -1332,6 +1578,28 @@ static value dispatch_unary(value *argv, const unary_op_table *table,
       case CAML_BA_COMPLEX64:
         func = table->c64;
         break;
+      case NX_BA_QINT8:
+        func = table->qi8;
+        break;
+      case NX_BA_QUINT8:
+        func = table->qu8;
+        break;
+      case NX_BA_BOOL:
+        func = table->bool_;
+        break;
+      case NX_BA_BFLOAT16:
+        func = table->bf16;
+        break;
+      case NX_BA_FP8_E4M3:
+        func = table->fp8_e4m3;
+        break;
+      case NX_BA_FP8_E5M2:
+        func = table->fp8_e5m2;
+        break;
+      case NX_BA_COMPLEX16:
+        func = table->c16;
+        break;
+      // Note: NX_BA_INT4 and NX_BA_UINT4 need special handling
     }
 
     if (func) {
@@ -1393,6 +1661,9 @@ static value dispatch_unary(value *argv, const unary_op_table *table,
     case CAML_BA_NATIVE_INT:
       func = table->inat;
       break;
+    case CAML_BA_FLOAT16:
+      func = table->f16;
+      break;
     case CAML_BA_FLOAT32:
       func = table->f32;
       break;
@@ -1405,6 +1676,28 @@ static value dispatch_unary(value *argv, const unary_op_table *table,
     case CAML_BA_COMPLEX64:
       func = table->c64;
       break;
+    case NX_BA_QINT8:
+      func = table->qi8;
+      break;
+    case NX_BA_QUINT8:
+      func = table->qu8;
+      break;
+      case NX_BA_BOOL:
+        func = table->bool_;
+        break;
+      case NX_BA_BFLOAT16:
+        func = table->bf16;
+        break;
+      case NX_BA_FP8_E4M3:
+        func = table->fp8_e4m3;
+        break;
+      case NX_BA_FP8_E5M2:
+        func = table->fp8_e5m2;
+        break;
+      case NX_BA_COMPLEX16:
+        func = table->c16;
+        break;
+      // Note: NX_BA_INT4 and NX_BA_UINT4 need special handling
   }
 
   if (func) {
@@ -1425,38 +1718,46 @@ static value dispatch_unary(value *argv, const unary_op_table *table,
     return dispatch_unary(argv, &table, #name);               \
   }
 
-UNARY_STUB(neg, .f32 = nx_c_neg_float, .f64 = nx_c_neg_double,
-           .i8 = nx_c_neg_int8_t, .i16 = nx_c_neg_int16_t,
-           .i32 = nx_c_neg_int32_t, .i64 = nx_c_neg_int64_t,
-           .inat = nx_c_neg_intnat, .c32 = nx_c_neg_c32_t,
-           .c64 = nx_c_neg_c64_t)
+UNARY_STUB(neg, .f16 = nx_c_neg_float16_t, .f32 = nx_c_neg_float,
+           .f64 = nx_c_neg_double, .i8 = nx_c_neg_int8_t,
+           .i16 = nx_c_neg_int16_t, .i32 = nx_c_neg_int32_t,
+           .i64 = nx_c_neg_int64_t, .inat = nx_c_neg_intnat,
+           .c32 = nx_c_neg_c32_t, .c64 = nx_c_neg_c64_t,
+           .qi8 = nx_c_neg_qint8_t)
 NATIVE_WRAPPER_8(neg)
 
-UNARY_STUB(sqrt, .f32 = nx_c_sqrt_float, .f64 = nx_c_sqrt_double,
-           .c32 = nx_c_sqrt_c32_t, .c64 = nx_c_sqrt_c64_t)
+UNARY_STUB(sqrt, .f16 = nx_c_sqrt_float16_t, .f32 = nx_c_sqrt_float,
+           .f64 = nx_c_sqrt_double, .c32 = nx_c_sqrt_c32_t,
+           .c64 = nx_c_sqrt_c64_t)
 NATIVE_WRAPPER_8(sqrt)
 
-UNARY_STUB(sin, .f32 = nx_c_sin_float, .f64 = nx_c_sin_double,
-           .c32 = nx_c_sin_c32_t, .c64 = nx_c_sin_c64_t)
+UNARY_STUB(sin, .f16 = nx_c_sin_float16_t, .f32 = nx_c_sin_float,
+           .f64 = nx_c_sin_double, .c32 = nx_c_sin_c32_t,
+           .c64 = nx_c_sin_c64_t)
 NATIVE_WRAPPER_8(sin)
 
-UNARY_STUB(exp2, .f32 = nx_c_exp2_float, .f64 = nx_c_exp2_double,
-           .c32 = nx_c_exp2_c32_t, .c64 = nx_c_exp2_c64_t)
+UNARY_STUB(exp2, .f16 = nx_c_exp2_float16_t, .f32 = nx_c_exp2_float,
+           .f64 = nx_c_exp2_double, .c32 = nx_c_exp2_c32_t,
+           .c64 = nx_c_exp2_c64_t)
 NATIVE_WRAPPER_8(exp2)
 
-UNARY_STUB(log2, .f32 = nx_c_log2_float, .f64 = nx_c_log2_double,
-           .c32 = nx_c_log2_c32_t, .c64 = nx_c_log2_c64_t)
+UNARY_STUB(log2, .f16 = nx_c_log2_float16_t, .f32 = nx_c_log2_float,
+           .f64 = nx_c_log2_double, .c32 = nx_c_log2_c32_t,
+           .c64 = nx_c_log2_c64_t)
 NATIVE_WRAPPER_8(log2)
 
-UNARY_STUB(recip, .f32 = nx_c_recip_float, .f64 = nx_c_recip_double,
-           .c32 = nx_c_recip_c32_t, .c64 = nx_c_recip_c64_t)
+UNARY_STUB(recip, .f16 = nx_c_recip_float16_t, .f32 = nx_c_recip_float,
+           .f64 = nx_c_recip_double, .c32 = nx_c_recip_c32_t,
+           .c64 = nx_c_recip_c64_t)
 NATIVE_WRAPPER_8(recip)
 
 // Table and dispatcher for binary operations
 
 typedef void (*binary_op_t)(const ndarray_t *, const ndarray_t *, ndarray_t *);
 typedef struct {
-  binary_op_t i8, u8, i16, u16, i32, i64, inat, f32, f64, c32, c64;
+  binary_op_t i8, u8, i16, u16, i32, i64, inat, f16, f32, f64, c32, c64, qi8, qu8;
+  binary_op_t bool_, bf16, fp8_e4m3, fp8_e5m2, c16;
+  // Note: int4/uint4 need special handling due to packing
 } binary_op_table;
 
 static value dispatch_binary(value *argv, const binary_op_table *table,
@@ -1508,6 +1809,9 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
       case CAML_BA_NATIVE_INT:
         func = table->inat;
         break;
+      case CAML_BA_FLOAT16:
+        func = table->f16;
+        break;
       case CAML_BA_FLOAT32:
         func = table->f32;
         break;
@@ -1520,6 +1824,28 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
       case CAML_BA_COMPLEX64:
         func = table->c64;
         break;
+      case NX_BA_QINT8:
+        func = table->qi8;
+        break;
+      case NX_BA_QUINT8:
+        func = table->qu8;
+        break;
+      case NX_BA_BOOL:
+        func = table->bool_;
+        break;
+      case NX_BA_BFLOAT16:
+        func = table->bf16;
+        break;
+      case NX_BA_FP8_E4M3:
+        func = table->fp8_e4m3;
+        break;
+      case NX_BA_FP8_E5M2:
+        func = table->fp8_e5m2;
+        break;
+      case NX_BA_COMPLEX16:
+        func = table->c16;
+        break;
+      // Note: NX_BA_INT4 and NX_BA_UINT4 need special handling
     }
 
     if (func) {
@@ -1586,6 +1912,9 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
     case CAML_BA_NATIVE_INT:
       func = table->inat;
       break;
+    case CAML_BA_FLOAT16:
+      func = table->f16;
+      break;
     case CAML_BA_FLOAT32:
       func = table->f32;
       break;
@@ -1598,6 +1927,28 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
     case CAML_BA_COMPLEX64:
       func = table->c64;
       break;
+    case NX_BA_QINT8:
+      func = table->qi8;
+      break;
+    case NX_BA_QUINT8:
+      func = table->qu8;
+      break;
+      case NX_BA_BOOL:
+        func = table->bool_;
+        break;
+      case NX_BA_BFLOAT16:
+        func = table->bf16;
+        break;
+      case NX_BA_FP8_E4M3:
+        func = table->fp8_e4m3;
+        break;
+      case NX_BA_FP8_E5M2:
+        func = table->fp8_e5m2;
+        break;
+      case NX_BA_COMPLEX16:
+        func = table->c16;
+        break;
+      // Note: NX_BA_INT4 and NX_BA_UINT4 need special handling
   }
 
   if (func) {
@@ -1622,29 +1973,33 @@ static value dispatch_binary(value *argv, const binary_op_table *table,
 BINARY_STUB(add, .i8 = nx_c_add_int8_t, .u8 = nx_c_add_uint8_t,
             .i16 = nx_c_add_int16_t, .u16 = nx_c_add_uint16_t,
             .i32 = nx_c_add_int32_t, .i64 = nx_c_add_int64_t,
-            .inat = nx_c_add_intnat, .f32 = nx_c_add_float,
-            .f64 = nx_c_add_double, .c32 = nx_c_add_c32_t,
-            .c64 = nx_c_add_c64_t)
+            .inat = nx_c_add_intnat, .f16 = nx_c_add_float16_t,
+            .f32 = nx_c_add_float, .f64 = nx_c_add_double,
+            .c32 = nx_c_add_c32_t, .c64 = nx_c_add_c64_t,
+            .qi8 = nx_c_add_qint8_t, .qu8 = nx_c_add_quint8_t)
 NATIVE_WRAPPER_11(add)
 
 BINARY_STUB(sub, .i8 = nx_c_sub_int8_t, .u8 = nx_c_sub_uint8_t,
             .i16 = nx_c_sub_int16_t, .u16 = nx_c_sub_uint16_t,
             .i32 = nx_c_sub_int32_t, .i64 = nx_c_sub_int64_t,
-            .inat = nx_c_sub_intnat, .f32 = nx_c_sub_float,
-            .f64 = nx_c_sub_double, .c32 = nx_c_sub_c32_t,
-            .c64 = nx_c_sub_c64_t)
+            .inat = nx_c_sub_intnat, .f16 = nx_c_sub_float16_t,
+            .f32 = nx_c_sub_float, .f64 = nx_c_sub_double,
+            .c32 = nx_c_sub_c32_t, .c64 = nx_c_sub_c64_t,
+            .qi8 = nx_c_sub_qint8_t, .qu8 = nx_c_sub_quint8_t)
 NATIVE_WRAPPER_11(sub)
 
 BINARY_STUB(mul, .i8 = nx_c_mul_int8_t, .u8 = nx_c_mul_uint8_t,
             .i16 = nx_c_mul_int16_t, .u16 = nx_c_mul_uint16_t,
             .i32 = nx_c_mul_int32_t, .i64 = nx_c_mul_int64_t,
-            .inat = nx_c_mul_intnat, .f32 = nx_c_mul_float,
-            .f64 = nx_c_mul_double, .c32 = nx_c_mul_c32_t,
-            .c64 = nx_c_mul_c64_t)
+            .inat = nx_c_mul_intnat, .f16 = nx_c_mul_float16_t,
+            .f32 = nx_c_mul_float, .f64 = nx_c_mul_double,
+            .c32 = nx_c_mul_c32_t, .c64 = nx_c_mul_c64_t,
+            .qi8 = nx_c_mul_qint8_t, .qu8 = nx_c_mul_quint8_t)
 NATIVE_WRAPPER_11(mul)
 
-BINARY_STUB(fdiv, .f32 = nx_c_fdiv_float, .f64 = nx_c_fdiv_double,
-            .c32 = nx_c_fdiv_c32_t, .c64 = nx_c_fdiv_c64_t)
+BINARY_STUB(fdiv, .f16 = nx_c_fdiv_float16_t, .f32 = nx_c_fdiv_float,
+            .f64 = nx_c_fdiv_double, .c32 = nx_c_fdiv_c32_t,
+            .c64 = nx_c_fdiv_c64_t)
 NATIVE_WRAPPER_11(fdiv)
 
 BINARY_STUB(idiv, .i32 = nx_c_idiv_int32_t, .i64 = nx_c_idiv_int64_t)
@@ -1653,58 +2008,68 @@ NATIVE_WRAPPER_11(idiv)
 BINARY_STUB(max, .i8 = nx_c_max_int8_t, .u8 = nx_c_max_uint8_t,
             .i16 = nx_c_max_int16_t, .u16 = nx_c_max_uint16_t,
             .i32 = nx_c_max_int32_t, .i64 = nx_c_max_int64_t,
-            .inat = nx_c_max_intnat, .f32 = nx_c_max_float,
-            .f64 = nx_c_max_double)
+            .inat = nx_c_max_intnat, .f16 = nx_c_max_float16_t,
+            .f32 = nx_c_max_float, .f64 = nx_c_max_double,
+            .qi8 = nx_c_max_qint8_t, .qu8 = nx_c_max_quint8_t)
 NATIVE_WRAPPER_11(max)
 
 BINARY_STUB(mod, .i8 = nx_c_mod_int8_t, .i16 = nx_c_mod_int16_t,
             .i32 = nx_c_mod_int32_t, .i64 = nx_c_mod_int64_t,
-            .inat = nx_c_mod_intnat, .f32 = nx_c_mod_float,
-            .f64 = nx_c_mod_double)
+            .inat = nx_c_mod_intnat, .f16 = nx_c_mod_float16_t,
+            .f32 = nx_c_mod_float, .f64 = nx_c_mod_double,
+            .qi8 = nx_c_mod_qint8_t)
 NATIVE_WRAPPER_11(mod)
 
-BINARY_STUB(pow, .f32 = nx_c_pow_float, .f64 = nx_c_pow_double)
+BINARY_STUB(pow, .f16 = nx_c_pow_float16_t, .f32 = nx_c_pow_float,
+            .f64 = nx_c_pow_double)
 NATIVE_WRAPPER_11(pow)
 
 BINARY_STUB(xor, .i8 = nx_c_xor_int8_t, .u8 = nx_c_xor_uint8_t,
             .i16 = nx_c_xor_int16_t, .u16 = nx_c_xor_uint16_t,
             .i32 = nx_c_xor_int32_t, .i64 = nx_c_xor_int64_t,
-            .inat = nx_c_xor_intnat)
+            .inat = nx_c_xor_intnat, .qi8 = nx_c_xor_qint8_t,
+            .qu8 = nx_c_xor_quint8_t)
 NATIVE_WRAPPER_11(xor)
 
 BINARY_STUB(or, .i8 = nx_c_or_int8_t, .u8 = nx_c_or_uint8_t,
             .i16 = nx_c_or_int16_t, .u16 = nx_c_or_uint16_t,
             .i32 = nx_c_or_int32_t, .i64 = nx_c_or_int64_t,
-            .inat = nx_c_or_intnat)
+            .inat = nx_c_or_intnat, .qi8 = nx_c_or_qint8_t,
+            .qu8 = nx_c_or_quint8_t)
 NATIVE_WRAPPER_11(or)
 
 BINARY_STUB(and, .i8 = nx_c_and_int8_t, .u8 = nx_c_and_uint8_t,
             .i16 = nx_c_and_int16_t, .u16 = nx_c_and_uint16_t,
             .i32 = nx_c_and_int32_t, .i64 = nx_c_and_int64_t,
-            .inat = nx_c_and_intnat)
+            .inat = nx_c_and_intnat, .qi8 = nx_c_and_qint8_t,
+            .qu8 = nx_c_and_quint8_t)
 NATIVE_WRAPPER_11(and)
 
 // Comparison operations
 BINARY_STUB(cmplt, .i8 = nx_c_cmplt_int8_t, .u8 = nx_c_cmplt_uint8_t,
             .i16 = nx_c_cmplt_int16_t, .u16 = nx_c_cmplt_uint16_t,
             .i32 = nx_c_cmplt_int32_t, .i64 = nx_c_cmplt_int64_t,
-            .inat = nx_c_cmplt_intnat, .f32 = nx_c_cmplt_float,
-            .f64 = nx_c_cmplt_double)
+            .inat = nx_c_cmplt_intnat, .f16 = nx_c_cmplt_float16_t,
+            .f32 = nx_c_cmplt_float, .f64 = nx_c_cmplt_double,
+            .qi8 = nx_c_cmplt_qint8_t, .qu8 = nx_c_cmplt_quint8_t)
 NATIVE_WRAPPER_11(cmplt)
 
 BINARY_STUB(cmpne, .i8 = nx_c_cmpne_int8_t, .u8 = nx_c_cmpne_uint8_t,
             .i16 = nx_c_cmpne_int16_t, .u16 = nx_c_cmpne_uint16_t,
             .i32 = nx_c_cmpne_int32_t, .i64 = nx_c_cmpne_int64_t,
-            .inat = nx_c_cmpne_intnat, .f32 = nx_c_cmpne_float,
-            .f64 = nx_c_cmpne_double, .c32 = nx_c_cmpne_c32_t,
-            .c64 = nx_c_cmpne_c64_t)
+            .inat = nx_c_cmpne_intnat, .f16 = nx_c_cmpne_float16_t,
+            .f32 = nx_c_cmpne_float, .f64 = nx_c_cmpne_double,
+            .c32 = nx_c_cmpne_c32_t, .c64 = nx_c_cmpne_c64_t,
+            .qi8 = nx_c_cmpne_qint8_t, .qu8 = nx_c_cmpne_quint8_t)
 NATIVE_WRAPPER_11(cmpne)
 
 // Reduce operation dispatch
 typedef void (*reduce_op_t)(const ndarray_t *, ndarray_t *, const int *, int);
 
 typedef struct {
-  reduce_op_t i8, u8, i16, u16, i32, i64, inat, f32, f64, c32, c64;
+  reduce_op_t i8, u8, i16, u16, i32, i64, inat, f16, f32, f64, c32, c64, qi8, qu8;
+  reduce_op_t bool_, bf16, fp8_e4m3, fp8_e5m2, c16;
+  // Note: int4/uint4 need special handling due to packing
 } reduce_op_table;
 
 static value dispatch_reduce(value *argv, const reduce_op_table *table,
@@ -1771,6 +2136,9 @@ static value dispatch_reduce(value *argv, const reduce_op_table *table,
     case CAML_BA_NATIVE_INT:
       func = table->inat;
       break;
+    case CAML_BA_FLOAT16:
+      func = table->f16;
+      break;
     case CAML_BA_FLOAT32:
       func = table->f32;
       break;
@@ -1783,6 +2151,28 @@ static value dispatch_reduce(value *argv, const reduce_op_table *table,
     case CAML_BA_COMPLEX64:
       func = table->c64;
       break;
+    case NX_BA_QINT8:
+      func = table->qi8;
+      break;
+    case NX_BA_QUINT8:
+      func = table->qu8;
+      break;
+      case NX_BA_BOOL:
+        func = table->bool_;
+        break;
+      case NX_BA_BFLOAT16:
+        func = table->bf16;
+        break;
+      case NX_BA_FP8_E4M3:
+        func = table->fp8_e4m3;
+        break;
+      case NX_BA_FP8_E5M2:
+        func = table->fp8_e5m2;
+        break;
+      case NX_BA_COMPLEX16:
+        func = table->c16;
+        break;
+      // Note: NX_BA_INT4 and NX_BA_UINT4 need special handling
   }
 
   if (func) {
@@ -1810,8 +2200,11 @@ REDUCE_STUB(sum, .i8 = nx_c_reduce_sum_int8_t_kernel,
             .i32 = nx_c_reduce_sum_int32_t_kernel,
             .i64 = nx_c_reduce_sum_int64_t_kernel,
             .inat = nx_c_reduce_sum_intnat_kernel,
+            .f16 = nx_c_reduce_sum_float16_t_kernel,
             .f32 = nx_c_reduce_sum_float_kernel,
-            .f64 = nx_c_reduce_sum_double_kernel)
+            .f64 = nx_c_reduce_sum_double_kernel,
+            .qi8 = nx_c_reduce_sum_qint8_t_kernel,
+            .qu8 = nx_c_reduce_sum_quint8_t_kernel)
 REDUCE_NATIVE_WRAPPER_10(sum)
 
 REDUCE_STUB(max, .i8 = nx_c_reduce_max_int8_t_kernel,
@@ -1821,8 +2214,11 @@ REDUCE_STUB(max, .i8 = nx_c_reduce_max_int8_t_kernel,
             .i32 = nx_c_reduce_max_int32_t_kernel,
             .i64 = nx_c_reduce_max_int64_t_kernel,
             .inat = nx_c_reduce_max_intnat_kernel,
+            .f16 = nx_c_reduce_max_float16_t_kernel,
             .f32 = nx_c_reduce_max_float_kernel,
-            .f64 = nx_c_reduce_max_double_kernel)
+            .f64 = nx_c_reduce_max_double_kernel,
+            .qi8 = nx_c_reduce_max_qint8_t_kernel,
+            .qu8 = nx_c_reduce_max_quint8_t_kernel)
 REDUCE_NATIVE_WRAPPER_10(max)
 
 REDUCE_STUB(prod, .i8 = nx_c_reduce_prod_int8_t_kernel,
@@ -1832,8 +2228,11 @@ REDUCE_STUB(prod, .i8 = nx_c_reduce_prod_int8_t_kernel,
             .i32 = nx_c_reduce_prod_int32_t_kernel,
             .i64 = nx_c_reduce_prod_int64_t_kernel,
             .inat = nx_c_reduce_prod_intnat_kernel,
+            .f16 = nx_c_reduce_prod_float16_t_kernel,
             .f32 = nx_c_reduce_prod_float_kernel,
-            .f64 = nx_c_reduce_prod_double_kernel)
+            .f64 = nx_c_reduce_prod_double_kernel,
+            .qi8 = nx_c_reduce_prod_qint8_t_kernel,
+            .qu8 = nx_c_reduce_prod_quint8_t_kernel)
 REDUCE_NATIVE_WRAPPER_10(prod)
 
 // Where operation dispatch
@@ -1841,7 +2240,9 @@ typedef void (*where_op_t)(const ndarray_t *, const ndarray_t *,
                            const ndarray_t *, ndarray_t *);
 
 typedef struct {
-  where_op_t i32, i64, f32, f64, c32, c64;
+  where_op_t i8, u8, i16, u16, i32, i64, inat, f16, f32, f64, c32, c64, qi8, qu8;
+  where_op_t bool_, bf16, fp8_e4m3, fp8_e5m2, c16;
+  // Note: int4/uint4 need special handling due to packing
 } where_op_table;
 
 CAMLprim value caml_nx_where_bc(value *argv, int argn) {
@@ -1914,6 +2315,9 @@ CAMLprim value caml_nx_where_bc(value *argv, int argn) {
     case CAML_BA_NATIVE_INT:
       func = nx_c_where_intnat;
       break;
+    case CAML_BA_FLOAT16:
+      func = nx_c_where_float16_t;
+      break;
     case CAML_BA_FLOAT32:
       func = nx_c_where_float;
       break;
@@ -1925,6 +2329,12 @@ CAMLprim value caml_nx_where_bc(value *argv, int argn) {
       break;
     case CAML_BA_COMPLEX64:
       func = nx_c_where_c64_t;
+      break;
+    case NX_BA_QINT8:
+      func = nx_c_where_qint8_t;
+      break;
+    case NX_BA_QUINT8:
+      func = nx_c_where_quint8_t;
       break;
   }
 
@@ -2017,6 +2427,15 @@ CAMLprim value caml_nx_pad_bc(value *argv, int argn) {
       nx_c_pad_c64_t(&x, &z, padding, pad_val);
       break;
     }
+    case CAML_BA_FLOAT16:
+      nx_c_pad_float16_t(&x, &z, padding, (float16_t)Double_val(v_pad_value));
+      break;
+    case NX_BA_QINT8:
+      nx_c_pad_qint8_t(&x, &z, padding, (qint8_t)Int_val(v_pad_value));
+      break;
+    case NX_BA_QUINT8:
+      nx_c_pad_quint8_t(&x, &z, padding, (quint8_t)Int_val(v_pad_value));
+      break;
     default:
       caml_leave_blocking_section();
       caml_failwith("pad: unsupported dtype");
@@ -2319,13 +2738,20 @@ static void nx_c_threefry(const ndarray_t *data, const ndarray_t *seed,
     }                                                                          \
   }
 
-DEFINE_GATHER_OP(float, int32_t)
-DEFINE_GATHER_OP(double, int32_t)
+DEFINE_GATHER_OP(int8_t, int32_t)
 DEFINE_GATHER_OP(uint8_t, int32_t)
+DEFINE_GATHER_OP(int16_t, int32_t)
+DEFINE_GATHER_OP(uint16_t, int32_t)
 DEFINE_GATHER_OP(int32_t, int32_t)
 DEFINE_GATHER_OP(int64_t, int32_t)
+DEFINE_GATHER_OP(intnat, int32_t)
+DEFINE_GATHER_OP(float16_t, int32_t)
+DEFINE_GATHER_OP(float, int32_t)
+DEFINE_GATHER_OP(double, int32_t)
 DEFINE_GATHER_OP(c32_t, int32_t)
 DEFINE_GATHER_OP(c64_t, int32_t)
+DEFINE_GATHER_OP(qint8_t, int32_t)
+DEFINE_GATHER_OP(quint8_t, int32_t)
 
 // Scatter computation modes
 typedef enum { SCATTER_REPLACE = 0, SCATTER_ADD = 1 } scatter_computation_t;
@@ -2427,13 +2853,20 @@ typedef enum { SCATTER_REPLACE = 0, SCATTER_ADD = 1 } scatter_computation_t;
     }                                                                        \
   }
 
-DEFINE_SCATTER_OP(float, int32_t)
-DEFINE_SCATTER_OP(double, int32_t)
+DEFINE_SCATTER_OP(int8_t, int32_t)
 DEFINE_SCATTER_OP(uint8_t, int32_t)
+DEFINE_SCATTER_OP(int16_t, int32_t)
+DEFINE_SCATTER_OP(uint16_t, int32_t)
 DEFINE_SCATTER_OP(int32_t, int32_t)
 DEFINE_SCATTER_OP(int64_t, int32_t)
+DEFINE_SCATTER_OP(intnat, int32_t)
+DEFINE_SCATTER_OP(float16_t, int32_t)
+DEFINE_SCATTER_OP(float, int32_t)
+DEFINE_SCATTER_OP(double, int32_t)
 DEFINE_SCATTER_OP(c32_t, int32_t)
 DEFINE_SCATTER_OP(c64_t, int32_t)
+DEFINE_SCATTER_OP(qint8_t, int32_t)
+DEFINE_SCATTER_OP(quint8_t, int32_t)
 
 // Threefry dispatch
 CAMLprim value caml_nx_threefry_bc(value *argv, int argn) {
@@ -2550,14 +2983,17 @@ CAMLprim value caml_nx_gather_bc(value *argv, int argn) {
 
   caml_enter_blocking_section();
   switch (kind) {
-    case CAML_BA_FLOAT32:
-      nx_c_gather_float(&data, &indices, &z, axis);
-      break;
-    case CAML_BA_FLOAT64:
-      nx_c_gather_double(&data, &indices, &z, axis);
+    case CAML_BA_SINT8:
+      nx_c_gather_int8_t(&data, &indices, &z, axis);
       break;
     case CAML_BA_UINT8:
       nx_c_gather_uint8_t(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_SINT16:
+      nx_c_gather_int16_t(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_UINT16:
+      nx_c_gather_uint16_t(&data, &indices, &z, axis);
       break;
     case CAML_BA_INT32:
       nx_c_gather_int32_t(&data, &indices, &z, axis);
@@ -2565,11 +3001,30 @@ CAMLprim value caml_nx_gather_bc(value *argv, int argn) {
     case CAML_BA_INT64:
       nx_c_gather_int64_t(&data, &indices, &z, axis);
       break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      nx_c_gather_intnat(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_FLOAT16:
+      nx_c_gather_float16_t(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_FLOAT32:
+      nx_c_gather_float(&data, &indices, &z, axis);
+      break;
+    case CAML_BA_FLOAT64:
+      nx_c_gather_double(&data, &indices, &z, axis);
+      break;
     case CAML_BA_COMPLEX32:
       nx_c_gather_c32_t(&data, &indices, &z, axis);
       break;
     case CAML_BA_COMPLEX64:
       nx_c_gather_c64_t(&data, &indices, &z, axis);
+      break;
+    case NX_BA_QINT8:
+      nx_c_gather_qint8_t(&data, &indices, &z, axis);
+      break;
+    case NX_BA_QUINT8:
+      nx_c_gather_quint8_t(&data, &indices, &z, axis);
       break;
     default:
       caml_leave_blocking_section();
@@ -2661,12 +3116,8 @@ CAMLprim value caml_nx_scatter_bc(value *argv, int argn) {
 
   caml_enter_blocking_section();
   switch (kind) {
-    case CAML_BA_FLOAT32:
-      nx_c_scatter_float(&template_arr, &indices_arr, &updates_arr, &output_arr,
-                         axis, (scatter_computation_t)computation_mode);
-      break;
-    case CAML_BA_FLOAT64:
-      nx_c_scatter_double(&template_arr, &indices_arr, &updates_arr,
+    case CAML_BA_SINT8:
+      nx_c_scatter_int8_t(&template_arr, &indices_arr, &updates_arr,
                           &output_arr, axis,
                           (scatter_computation_t)computation_mode);
       break;
@@ -2674,6 +3125,16 @@ CAMLprim value caml_nx_scatter_bc(value *argv, int argn) {
       nx_c_scatter_uint8_t(&template_arr, &indices_arr, &updates_arr,
                            &output_arr, axis,
                            (scatter_computation_t)computation_mode);
+      break;
+    case CAML_BA_SINT16:
+      nx_c_scatter_int16_t(&template_arr, &indices_arr, &updates_arr,
+                           &output_arr, axis,
+                           (scatter_computation_t)computation_mode);
+      break;
+    case CAML_BA_UINT16:
+      nx_c_scatter_uint16_t(&template_arr, &indices_arr, &updates_arr,
+                            &output_arr, axis,
+                            (scatter_computation_t)computation_mode);
       break;
     case CAML_BA_INT32:
       nx_c_scatter_int32_t(&template_arr, &indices_arr, &updates_arr,
@@ -2685,6 +3146,26 @@ CAMLprim value caml_nx_scatter_bc(value *argv, int argn) {
                            &output_arr, axis,
                            (scatter_computation_t)computation_mode);
       break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      nx_c_scatter_intnat(&template_arr, &indices_arr, &updates_arr,
+                          &output_arr, axis,
+                          (scatter_computation_t)computation_mode);
+      break;
+    case CAML_BA_FLOAT16:
+      nx_c_scatter_float16_t(&template_arr, &indices_arr, &updates_arr,
+                             &output_arr, axis,
+                             (scatter_computation_t)computation_mode);
+      break;
+    case CAML_BA_FLOAT32:
+      nx_c_scatter_float(&template_arr, &indices_arr, &updates_arr, &output_arr,
+                         axis, (scatter_computation_t)computation_mode);
+      break;
+    case CAML_BA_FLOAT64:
+      nx_c_scatter_double(&template_arr, &indices_arr, &updates_arr,
+                          &output_arr, axis,
+                          (scatter_computation_t)computation_mode);
+      break;
     case CAML_BA_COMPLEX32:
       nx_c_scatter_c32_t(&template_arr, &indices_arr, &updates_arr, &output_arr,
                          axis, (scatter_computation_t)computation_mode);
@@ -2692,6 +3173,16 @@ CAMLprim value caml_nx_scatter_bc(value *argv, int argn) {
     case CAML_BA_COMPLEX64:
       nx_c_scatter_c64_t(&template_arr, &indices_arr, &updates_arr, &output_arr,
                          axis, (scatter_computation_t)computation_mode);
+      break;
+    case NX_BA_QINT8:
+      nx_c_scatter_qint8_t(&template_arr, &indices_arr, &updates_arr,
+                           &output_arr, axis,
+                           (scatter_computation_t)computation_mode);
+      break;
+    case NX_BA_QUINT8:
+      nx_c_scatter_quint8_t(&template_arr, &indices_arr, &updates_arr,
+                            &output_arr, axis,
+                            (scatter_computation_t)computation_mode);
       break;
     default:
       caml_leave_blocking_section();
@@ -3178,17 +3669,35 @@ static void nx_c_zero_generic(ndarray_t *z, size_t elem_size) {
     }                                                                          \
   }
 
-DEFINE_UNFOLD_OP(float)
-DEFINE_UNFOLD_OP(double)
+DEFINE_UNFOLD_OP(int8_t)
 DEFINE_UNFOLD_OP(uint8_t)
+DEFINE_UNFOLD_OP(int16_t)
+DEFINE_UNFOLD_OP(uint16_t)
 DEFINE_UNFOLD_OP(int32_t)
 DEFINE_UNFOLD_OP(int64_t)
+DEFINE_UNFOLD_OP(intnat)
+DEFINE_UNFOLD_OP(float16_t)
+DEFINE_UNFOLD_OP(float)
+DEFINE_UNFOLD_OP(double)
+DEFINE_UNFOLD_OP(c32_t)
+DEFINE_UNFOLD_OP(c64_t)
+DEFINE_UNFOLD_OP(qint8_t)
+DEFINE_UNFOLD_OP(quint8_t)
 
-DEFINE_FOLD_OP(float)
-DEFINE_FOLD_OP(double)
+DEFINE_FOLD_OP(int8_t)
 DEFINE_FOLD_OP(uint8_t)
+DEFINE_FOLD_OP(int16_t)
+DEFINE_FOLD_OP(uint16_t)
 DEFINE_FOLD_OP(int32_t)
 DEFINE_FOLD_OP(int64_t)
+DEFINE_FOLD_OP(intnat)
+DEFINE_FOLD_OP(float16_t)
+DEFINE_FOLD_OP(float)
+DEFINE_FOLD_OP(double)
+DEFINE_FOLD_OP(c32_t)
+DEFINE_FOLD_OP(c64_t)
+DEFINE_FOLD_OP(qint8_t)
+DEFINE_FOLD_OP(quint8_t)
 
 // Unfold dispatch
 CAMLprim value caml_nx_unfold_bc(value *argv, int argn) {
@@ -3265,17 +3774,21 @@ CAMLprim value caml_nx_unfold_bc(value *argv, int argn) {
 
   caml_enter_blocking_section();
   switch (kind) {
-    case CAML_BA_FLOAT32:
-      nx_c_unfold_float(&input, &output, output_spatial_shape, kernel_shape,
-                        strides, padding_lower, dilation, num_spatial_dims);
-      break;
-    case CAML_BA_FLOAT64:
-      nx_c_unfold_double(&input, &output, output_spatial_shape, kernel_shape,
+    case CAML_BA_SINT8:
+      nx_c_unfold_int8_t(&input, &output, output_spatial_shape, kernel_shape,
                          strides, padding_lower, dilation, num_spatial_dims);
       break;
     case CAML_BA_UINT8:
       nx_c_unfold_uint8_t(&input, &output, output_spatial_shape, kernel_shape,
                           strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_SINT16:
+      nx_c_unfold_int16_t(&input, &output, output_spatial_shape, kernel_shape,
+                          strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_UINT16:
+      nx_c_unfold_uint16_t(&input, &output, output_spatial_shape, kernel_shape,
+                           strides, padding_lower, dilation, num_spatial_dims);
       break;
     case CAML_BA_INT32:
       nx_c_unfold_int32_t(&input, &output, output_spatial_shape, kernel_shape,
@@ -3284,6 +3797,39 @@ CAMLprim value caml_nx_unfold_bc(value *argv, int argn) {
     case CAML_BA_INT64:
       nx_c_unfold_int64_t(&input, &output, output_spatial_shape, kernel_shape,
                           strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      nx_c_unfold_intnat(&input, &output, output_spatial_shape, kernel_shape,
+                         strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_FLOAT16:
+      nx_c_unfold_float16_t(&input, &output, output_spatial_shape, kernel_shape,
+                            strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_FLOAT32:
+      nx_c_unfold_float(&input, &output, output_spatial_shape, kernel_shape,
+                        strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_FLOAT64:
+      nx_c_unfold_double(&input, &output, output_spatial_shape, kernel_shape,
+                         strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_COMPLEX32:
+      nx_c_unfold_c32_t(&input, &output, output_spatial_shape, kernel_shape,
+                        strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_COMPLEX64:
+      nx_c_unfold_c64_t(&input, &output, output_spatial_shape, kernel_shape,
+                        strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case NX_BA_QINT8:
+      nx_c_unfold_qint8_t(&input, &output, output_spatial_shape, kernel_shape,
+                          strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case NX_BA_QUINT8:
+      nx_c_unfold_quint8_t(&input, &output, output_spatial_shape, kernel_shape,
+                           strides, padding_lower, dilation, num_spatial_dims);
       break;
     default:
       caml_leave_blocking_section();
@@ -3389,18 +3935,23 @@ CAMLprim value caml_nx_fold_bc(value *argv, int argn) {
 
   caml_enter_blocking_section();
   switch (kind) {
-    case CAML_BA_FLOAT32:
-      nx_c_fold_float(&input_cols, &output, output_spatial_shape, kernel_shape,
-                      strides, padding_lower, dilation, num_spatial_dims);
-      break;
-    case CAML_BA_FLOAT64:
-      nx_c_fold_double(&input_cols, &output, output_spatial_shape, kernel_shape,
+    case CAML_BA_SINT8:
+      nx_c_fold_int8_t(&input_cols, &output, output_spatial_shape, kernel_shape,
                        strides, padding_lower, dilation, num_spatial_dims);
       break;
     case CAML_BA_UINT8:
       nx_c_fold_uint8_t(&input_cols, &output, output_spatial_shape,
                         kernel_shape, strides, padding_lower, dilation,
                         num_spatial_dims);
+      break;
+    case CAML_BA_SINT16:
+      nx_c_fold_int16_t(&input_cols, &output, output_spatial_shape, kernel_shape,
+                        strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_UINT16:
+      nx_c_fold_uint16_t(&input_cols, &output, output_spatial_shape,
+                         kernel_shape, strides, padding_lower, dilation,
+                         num_spatial_dims);
       break;
     case CAML_BA_INT32:
       nx_c_fold_int32_t(&input_cols, &output, output_spatial_shape,
@@ -3411,6 +3962,41 @@ CAMLprim value caml_nx_fold_bc(value *argv, int argn) {
       nx_c_fold_int64_t(&input_cols, &output, output_spatial_shape,
                         kernel_shape, strides, padding_lower, dilation,
                         num_spatial_dims);
+      break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      nx_c_fold_intnat(&input_cols, &output, output_spatial_shape, kernel_shape,
+                       strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_FLOAT16:
+      nx_c_fold_float16_t(&input_cols, &output, output_spatial_shape,
+                          kernel_shape, strides, padding_lower, dilation,
+                          num_spatial_dims);
+      break;
+    case CAML_BA_FLOAT32:
+      nx_c_fold_float(&input_cols, &output, output_spatial_shape, kernel_shape,
+                      strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_FLOAT64:
+      nx_c_fold_double(&input_cols, &output, output_spatial_shape, kernel_shape,
+                       strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_COMPLEX32:
+      nx_c_fold_c32_t(&input_cols, &output, output_spatial_shape, kernel_shape,
+                      strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case CAML_BA_COMPLEX64:
+      nx_c_fold_c64_t(&input_cols, &output, output_spatial_shape, kernel_shape,
+                      strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case NX_BA_QINT8:
+      nx_c_fold_qint8_t(&input_cols, &output, output_spatial_shape, kernel_shape,
+                        strides, padding_lower, dilation, num_spatial_dims);
+      break;
+    case NX_BA_QUINT8:
+      nx_c_fold_quint8_t(&input_cols, &output, output_spatial_shape,
+                         kernel_shape, strides, padding_lower, dilation,
+                         num_spatial_dims);
       break;
     default:
       caml_leave_blocking_section();

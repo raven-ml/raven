@@ -27,6 +27,26 @@
 typedef float _Complex c32_t;
 typedef double _Complex c64_t;
 
+// Float16 type definition (platform-specific)
+#ifdef __APPLE__
+typedef _Float16 float16_t;
+#else
+// For other platforms, we may need to use __fp16 or a software implementation
+typedef uint16_t float16_t;  // Fallback, may need proper implementation
+#endif
+
+// Quantized types (just aliases for now, actual quantization TBD)
+typedef int8_t qint8_t;
+typedef uint8_t quint8_t;
+
+// Extended types from bigarray_ext
+typedef uint8_t bool_t;  // Boolean type
+typedef uint16_t bfloat16_t;  // Brain floating point 16-bit
+typedef uint8_t fp8_e4m3_t;  // 8-bit float: 1 sign, 4 exponent, 3 mantissa
+typedef uint8_t fp8_e5m2_t;  // 8-bit float: 1 sign, 5 exponent, 2 mantissa
+typedef struct { bfloat16_t real; bfloat16_t imag; } complex16_t;  // Complex bfloat16
+// Note: int4/uint4 are packed, handled specially
+
 // Common struct for passing array info
 typedef struct {
   void *data;
