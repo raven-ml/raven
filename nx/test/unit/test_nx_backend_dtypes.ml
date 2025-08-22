@@ -28,9 +28,9 @@ module Make (Backend : Backend_intf.S) = struct
     | Some shape -> shape
     | None -> failwith "Cannot evaluate symbolic shape"
 
-  (* Helper to check if backend is Metal *)
-  let is_metal_backend () =
-    match Sys.getenv_opt "NX_BACKEND" with Some "metal" -> true | _ -> false
+  (* Helper to check if backend is Metal - check module name *)
+  let is_metal_backend backend_name =
+    String.lowercase_ascii backend_name = "metal"
 
   (* Helper to check if a dtype matches any in a packed list *)
   let dtype_in_list (type a b) (dtype : (a, b) Dtype.t)
@@ -74,10 +74,10 @@ module Make (Backend : Backend_intf.S) = struct
   let bool_dtype = [ Dtype.Pack Dtype.Bool ]
 
   (* Helper to check if dtype is supported on current backend *)
-  let is_dtype_supported (type a b) (dtype : (a, b) Dtype.t) =
-    if is_metal_backend () then
+  let is_dtype_supported (type a b) backend_name (dtype : (a, b) Dtype.t) =
+    if is_metal_backend backend_name then
       match dtype with
-      (* Metal supports these types *)
+      (* Metal hardware supports these types *)
       | Dtype.Float16 -> true
       | Dtype.Float32 -> true
       | Dtype.Int8 -> true
@@ -159,8 +159,8 @@ module Make (Backend : Backend_intf.S) = struct
   let get_zero : type a b. (a, b) Dtype.t -> a = fun dtype -> Dtype.zero dtype
 
   (* Binary operations tests *)
-  let test_binary_op name op_fn dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_binary_op backend_name name op_fn dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
@@ -169,11 +169,11 @@ module Make (Backend : Backend_intf.S) = struct
       (* Just check shape is preserved *)
       check (array int) (name ^ " shape") small_shape (get_shape result)
 
-  let test_add dtype = test_binary_op "add" Backend.op_add dtype
-  let test_mul dtype = test_binary_op "mul" Backend.op_mul dtype
+  let test_add backend_name dtype = test_binary_op backend_name "add" Backend.op_add dtype
+  let test_mul backend_name dtype = test_binary_op backend_name "mul" Backend.op_mul dtype
 
-  let test_sub dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_sub backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
@@ -183,8 +183,8 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_add a neg_b in
       check (array int) "sub shape" small_shape (get_shape result)
 
-  let test_div dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_div backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype bool_dtype then
       skip () (* Division not meaningful for bool *)
     else if dtype_in_list dtype int_dtypes then
@@ -202,9 +202,11 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_fdiv a b in
       check (array int) "fdiv shape" small_shape (get_shape result)
 
-  let test_pow dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_pow backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype (bool_dtype @ complex_dtypes) then skip ()
+    else if is_metal_backend backend_name && dtype_in_list dtype int_dtypes then
+      skip () (* Metal only has pow for float *)
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
@@ -213,8 +215,8 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_pow a b in
       check (array int) "pow shape" small_shape (get_shape result)
 
-  let test_max dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_max backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype complex_dtypes then skip ()
     else
       let values = test_values dtype in
@@ -223,8 +225,8 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_max a b in
       check (array int) "max shape" small_shape (get_shape result)
 
-  let test_mod dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_mod backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype (float_dtypes @ complex_dtypes @ bool_dtype)
     then skip ()
     else
@@ -236,8 +238,8 @@ module Make (Backend : Backend_intf.S) = struct
       check (array int) "mod shape" small_shape (get_shape result)
 
   (* Comparison operations *)
-  let test_cmplt dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_cmplt backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype complex_dtypes then skip ()
     else
       let values = test_values dtype in
@@ -246,8 +248,8 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_cmplt a b in
       check (array int) "cmplt shape" small_shape (get_shape result)
 
-  let test_cmpne dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_cmpne backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
@@ -256,8 +258,8 @@ module Make (Backend : Backend_intf.S) = struct
       check (array int) "cmpne shape" small_shape (get_shape result)
 
   (* Bitwise operations *)
-  let test_bitwise_op name op_fn dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_bitwise_op backend_name name op_fn dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype (float_dtypes @ complex_dtypes) then skip ()
     else
       let values = test_values dtype in
@@ -266,21 +268,21 @@ module Make (Backend : Backend_intf.S) = struct
       let result = op_fn a b in
       check (array int) (name ^ " shape") small_shape (get_shape result)
 
-  let test_xor dtype = test_bitwise_op "xor" Backend.op_xor dtype
-  let test_or dtype = test_bitwise_op "or" Backend.op_or dtype
-  let test_and dtype = test_bitwise_op "and" Backend.op_and dtype
+  let test_xor backend_name dtype = test_bitwise_op backend_name "xor" Backend.op_xor dtype
+  let test_or backend_name dtype = test_bitwise_op backend_name "or" Backend.op_or dtype
+  let test_and backend_name dtype = test_bitwise_op backend_name "and" Backend.op_and dtype
 
   (* Unary operations *)
-  let test_neg dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_neg backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
       let result = Backend.op_neg a in
       check (array int) "neg shape" small_shape (get_shape result)
 
-  let test_log2 dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_log2 backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype (int_dtypes @ bool_dtype @ complex_dtypes) then
       skip ()
     else
@@ -289,8 +291,8 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_log2 a in
       check (array int) "log2 shape" small_shape (get_shape result)
 
-  let test_exp2 dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_exp2 backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype (int_dtypes @ bool_dtype @ complex_dtypes) then
       skip ()
     else
@@ -299,8 +301,8 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_exp2 a in
       check (array int) "exp2 shape" small_shape (get_shape result)
 
-  let test_sin dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_sin backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype (int_dtypes @ bool_dtype @ complex_dtypes) then
       skip ()
     else
@@ -309,8 +311,8 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_sin a in
       check (array int) "sin shape" small_shape (get_shape result)
 
-  let test_sqrt dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_sqrt backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype (int_dtypes @ bool_dtype) then skip ()
     else
       let values = test_values dtype in
@@ -318,8 +320,8 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_sqrt a in
       check (array int) "sqrt shape" small_shape (get_shape result)
 
-  let test_recip dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_recip backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype (int_dtypes @ bool_dtype) then skip ()
     else
       let one = get_one dtype in
@@ -328,16 +330,16 @@ module Make (Backend : Backend_intf.S) = struct
       check (array int) "recip shape" small_shape (get_shape result)
 
   (* Reduction operations *)
-  let test_reduce_sum dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_reduce_sum backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
       let result = Backend.op_reduce_sum ~axes:[| 0 |] ~keepdims:false a in
       check (array int) "reduce_sum shape" [| 3 |] (get_shape result)
 
-  let test_reduce_max dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_reduce_max backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else if dtype_in_list dtype complex_dtypes then skip ()
     else
       let values = test_values dtype in
@@ -345,8 +347,8 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_reduce_max ~axes:[| 0 |] ~keepdims:false a in
       check (array int) "reduce_max shape" [| 3 |] (get_shape result)
 
-  let test_reduce_prod dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_reduce_prod backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
@@ -354,55 +356,55 @@ module Make (Backend : Backend_intf.S) = struct
       check (array int) "reduce_prod shape" [| 3 |] (get_shape result)
 
   (* Movement operations *)
-  let test_expand dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_expand backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let a = Backend.op_const_scalar ctx (get_one dtype) dtype in
       let result = Backend.op_expand a (Symbolic_shape.of_ints [| 2; 3 |]) in
       check (array int) "expand shape" [| 2; 3 |] (get_shape result)
 
-  let test_reshape dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_reshape backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
       let result = Backend.op_reshape a (Symbolic_shape.of_ints [| 3; 2 |]) in
       check (array int) "reshape shape" [| 3; 2 |] (get_shape result)
 
-  let test_permute dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_permute backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
       let result = Backend.op_permute a [| 1; 0 |] in
       check (array int) "permute shape" [| 3; 2 |] (get_shape result)
 
-  let test_pad dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_pad backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype [| 2; 2 |] (Array.sub values 0 4) in
       let result = Backend.op_pad a [| (1, 1); (0, 0) |] (get_zero dtype) in
       check (array int) "pad shape" [| 4; 2 |] (get_shape result)
 
-  let test_shrink dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_shrink backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
       let result = Backend.op_shrink a [| (0, 2); (0, 2) |] in
       check (array int) "shrink shape" [| 2; 2 |] (get_shape result)
 
-  let test_flip dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_flip backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
       let result = Backend.op_flip a [| true; false |] in
       check (array int) "flip shape" small_shape (get_shape result)
 
-  let test_cat dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_cat backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype [| 2; 2 |] (Array.sub values 0 4) in
@@ -411,8 +413,8 @@ module Make (Backend : Backend_intf.S) = struct
       check (array int) "cat shape" [| 4; 2 |] (get_shape result)
 
   (* Other operations *)
-  let test_cast dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_cast backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
@@ -421,8 +423,8 @@ module Make (Backend : Backend_intf.S) = struct
       let back = Backend.op_cast casted dtype in
       check (array int) "cast shape" small_shape (get_shape back)
 
-  let test_contiguous dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_contiguous backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
@@ -430,16 +432,16 @@ module Make (Backend : Backend_intf.S) = struct
       let result = Backend.op_contiguous transposed in
       check (array int) "contiguous shape" [| 3; 2 |] (get_shape result)
 
-  let test_copy dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_copy backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let a = create_tensor ctx dtype small_shape values in
       let result = Backend.op_copy a in
       check (array int) "copy shape" small_shape (get_shape result)
 
-  let test_where dtype ctx () =
-    if not (is_dtype_supported dtype) then skip ()
+  let test_where backend_name dtype ctx () =
+    if not (is_dtype_supported backend_name dtype) then skip ()
     else
       let values = test_values dtype in
       let cond =
@@ -451,48 +453,48 @@ module Make (Backend : Backend_intf.S) = struct
       check (array int) "where shape" small_shape (get_shape result)
 
   (* Generate test suite for a specific dtype *)
-  let dtype_suite _backend_name dtype ctx =
+  let dtype_suite backend_name dtype ctx =
     let dtype_str = Dtype.to_string dtype in
     [
       (* Binary ops *)
-      test_case (dtype_str ^ " add") `Quick (test_add dtype ctx);
-      test_case (dtype_str ^ " mul") `Quick (test_mul dtype ctx);
-      test_case (dtype_str ^ " sub") `Quick (test_sub dtype ctx);
-      test_case (dtype_str ^ " div") `Quick (test_div dtype ctx);
-      test_case (dtype_str ^ " pow") `Quick (test_pow dtype ctx);
-      test_case (dtype_str ^ " max") `Quick (test_max dtype ctx);
-      test_case (dtype_str ^ " mod") `Quick (test_mod dtype ctx);
+      test_case (dtype_str ^ " add") `Quick (test_add backend_name dtype ctx);
+      test_case (dtype_str ^ " mul") `Quick (test_mul backend_name dtype ctx);
+      test_case (dtype_str ^ " sub") `Quick (test_sub backend_name dtype ctx);
+      test_case (dtype_str ^ " div") `Quick (test_div backend_name dtype ctx);
+      test_case (dtype_str ^ " pow") `Quick (test_pow backend_name dtype ctx);
+      test_case (dtype_str ^ " max") `Quick (test_max backend_name dtype ctx);
+      test_case (dtype_str ^ " mod") `Quick (test_mod backend_name dtype ctx);
       (* Comparison ops *)
-      test_case (dtype_str ^ " cmplt") `Quick (test_cmplt dtype ctx);
-      test_case (dtype_str ^ " cmpne") `Quick (test_cmpne dtype ctx);
+      test_case (dtype_str ^ " cmplt") `Quick (test_cmplt backend_name dtype ctx);
+      test_case (dtype_str ^ " cmpne") `Quick (test_cmpne backend_name dtype ctx);
       (* Bitwise ops *)
-      test_case (dtype_str ^ " xor") `Quick (test_xor dtype ctx);
-      test_case (dtype_str ^ " or") `Quick (test_or dtype ctx);
-      test_case (dtype_str ^ " and") `Quick (test_and dtype ctx);
+      test_case (dtype_str ^ " xor") `Quick (test_xor backend_name dtype ctx);
+      test_case (dtype_str ^ " or") `Quick (test_or backend_name dtype ctx);
+      test_case (dtype_str ^ " and") `Quick (test_and backend_name dtype ctx);
       (* Unary ops *)
-      test_case (dtype_str ^ " neg") `Quick (test_neg dtype ctx);
-      test_case (dtype_str ^ " log2") `Quick (test_log2 dtype ctx);
-      test_case (dtype_str ^ " exp2") `Quick (test_exp2 dtype ctx);
-      test_case (dtype_str ^ " sin") `Quick (test_sin dtype ctx);
-      test_case (dtype_str ^ " sqrt") `Quick (test_sqrt dtype ctx);
-      test_case (dtype_str ^ " recip") `Quick (test_recip dtype ctx);
+      test_case (dtype_str ^ " neg") `Quick (test_neg backend_name dtype ctx);
+      test_case (dtype_str ^ " log2") `Quick (test_log2 backend_name dtype ctx);
+      test_case (dtype_str ^ " exp2") `Quick (test_exp2 backend_name dtype ctx);
+      test_case (dtype_str ^ " sin") `Quick (test_sin backend_name dtype ctx);
+      test_case (dtype_str ^ " sqrt") `Quick (test_sqrt backend_name dtype ctx);
+      test_case (dtype_str ^ " recip") `Quick (test_recip backend_name dtype ctx);
       (* Reduction ops *)
-      test_case (dtype_str ^ " reduce_sum") `Quick (test_reduce_sum dtype ctx);
-      test_case (dtype_str ^ " reduce_max") `Quick (test_reduce_max dtype ctx);
-      test_case (dtype_str ^ " reduce_prod") `Quick (test_reduce_prod dtype ctx);
+      test_case (dtype_str ^ " reduce_sum") `Quick (test_reduce_sum backend_name dtype ctx);
+      test_case (dtype_str ^ " reduce_max") `Quick (test_reduce_max backend_name dtype ctx);
+      test_case (dtype_str ^ " reduce_prod") `Quick (test_reduce_prod backend_name dtype ctx);
       (* Movement ops *)
-      test_case (dtype_str ^ " expand") `Quick (test_expand dtype ctx);
-      test_case (dtype_str ^ " reshape") `Quick (test_reshape dtype ctx);
-      test_case (dtype_str ^ " permute") `Quick (test_permute dtype ctx);
-      test_case (dtype_str ^ " pad") `Quick (test_pad dtype ctx);
-      test_case (dtype_str ^ " shrink") `Quick (test_shrink dtype ctx);
-      test_case (dtype_str ^ " flip") `Quick (test_flip dtype ctx);
-      test_case (dtype_str ^ " cat") `Quick (test_cat dtype ctx);
+      test_case (dtype_str ^ " expand") `Quick (test_expand backend_name dtype ctx);
+      test_case (dtype_str ^ " reshape") `Quick (test_reshape backend_name dtype ctx);
+      test_case (dtype_str ^ " permute") `Quick (test_permute backend_name dtype ctx);
+      test_case (dtype_str ^ " pad") `Quick (test_pad backend_name dtype ctx);
+      test_case (dtype_str ^ " shrink") `Quick (test_shrink backend_name dtype ctx);
+      test_case (dtype_str ^ " flip") `Quick (test_flip backend_name dtype ctx);
+      test_case (dtype_str ^ " cat") `Quick (test_cat backend_name dtype ctx);
       (* Other ops *)
-      test_case (dtype_str ^ " cast") `Quick (test_cast dtype ctx);
-      test_case (dtype_str ^ " contiguous") `Quick (test_contiguous dtype ctx);
-      test_case (dtype_str ^ " copy") `Quick (test_copy dtype ctx);
-      test_case (dtype_str ^ " where") `Quick (test_where dtype ctx);
+      test_case (dtype_str ^ " cast") `Quick (test_cast backend_name dtype ctx);
+      test_case (dtype_str ^ " contiguous") `Quick (test_contiguous backend_name dtype ctx);
+      test_case (dtype_str ^ " copy") `Quick (test_copy backend_name dtype ctx);
+      test_case (dtype_str ^ " where") `Quick (test_where backend_name dtype ctx);
     ]
 
   let suite backend_name ctx =

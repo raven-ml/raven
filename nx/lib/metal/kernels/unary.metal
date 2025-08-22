@@ -37,8 +37,62 @@ kernel void name##_##type(device type* out [[buffer(0)]], \
 }
 
 // Negation
+kernel void neg_half(device half* out [[buffer(0)]],
+                    device const half* in [[buffer(1)]],
+                    constant uint* shape [[buffer(2)]],
+                    constant int* strides [[buffer(3)]],
+                    constant uint& ndim [[buffer(4)]],
+                    constant int& offset [[buffer(5)]],
+                    uint gid [[thread_position_in_grid]]) {
+    uint out_idx = gid;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint in_idx = compute_strided_index(out_idx, shape, strides, ndim, offset);
+    out[out_idx] = -in[in_idx];
+}
+
 kernel void neg_float(device float* out [[buffer(0)]],
                      device const float* in [[buffer(1)]],
+                     constant uint* shape [[buffer(2)]],
+                     constant int* strides [[buffer(3)]],
+                     constant uint& ndim [[buffer(4)]],
+                     constant int& offset [[buffer(5)]],
+                     uint gid [[thread_position_in_grid]]) {
+    uint out_idx = gid;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint in_idx = compute_strided_index(out_idx, shape, strides, ndim, offset);
+    out[out_idx] = -in[in_idx];
+}
+
+kernel void neg_char(device char* out [[buffer(0)]],
+                    device const char* in [[buffer(1)]],
+                    constant uint* shape [[buffer(2)]],
+                    constant int* strides [[buffer(3)]],
+                    constant uint& ndim [[buffer(4)]],
+                    constant int& offset [[buffer(5)]],
+                    uint gid [[thread_position_in_grid]]) {
+    uint out_idx = gid;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint in_idx = compute_strided_index(out_idx, shape, strides, ndim, offset);
+    out[out_idx] = -in[in_idx];
+}
+
+kernel void neg_short(device short* out [[buffer(0)]],
+                     device const short* in [[buffer(1)]],
                      constant uint* shape [[buffer(2)]],
                      constant int* strides [[buffer(3)]],
                      constant uint& ndim [[buffer(4)]],
@@ -91,6 +145,25 @@ kernel void neg_long(device long* out [[buffer(0)]],
     out[out_idx] = -in[in_idx];
 }
 
+// Negation for unsigned types (cast to signed)
+kernel void neg_ushort(device ushort* out [[buffer(0)]],
+                      device const ushort* in [[buffer(1)]],
+                      constant uint* shape [[buffer(2)]],
+                      constant int* strides [[buffer(3)]],
+                      constant uint& ndim [[buffer(4)]],
+                      constant int& offset [[buffer(5)]],
+                      uint gid [[thread_position_in_grid]]) {
+    uint out_idx = gid;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint in_idx = compute_strided_index(out_idx, shape, strides, ndim, offset);
+    out[out_idx] = (ushort)(-(short)in[in_idx]);
+}
+
 // Logical negation for bool (uint8)
 kernel void neg_uchar(device uchar* out [[buffer(0)]],
                      device const uchar* in [[buffer(1)]],
@@ -111,18 +184,43 @@ kernel void neg_uchar(device uchar* out [[buffer(0)]],
 }
 
 // Logarithm base 2
+DEFINE_UNARY_OP(log2, log2, half)
 DEFINE_UNARY_OP(log2, log2, float)
 
 // Exponential base 2
+DEFINE_UNARY_OP(exp2, exp2, half)
 DEFINE_UNARY_OP(exp2, exp2, float)
 
 // Sine
+DEFINE_UNARY_OP(sin, sin, half)
 DEFINE_UNARY_OP(sin, sin, float)
 
 // Square root
+DEFINE_UNARY_OP(sqrt, sqrt, half)
 DEFINE_UNARY_OP(sqrt, sqrt, float)
 
-// Reciprocal
+// Reciprocal (using macro for division)
+#define RECIP(x) (1.0f / (x))
+#define RECIP_HALF(x) (half(1.0) / (x))
+
+kernel void recip_half(device half* out [[buffer(0)]],
+                      device const half* in [[buffer(1)]],
+                      constant uint* shape [[buffer(2)]],
+                      constant int* strides [[buffer(3)]],
+                      constant uint& ndim [[buffer(4)]],
+                      constant int& offset [[buffer(5)]],
+                      uint gid [[thread_position_in_grid]]) {
+    uint out_idx = gid;
+    uint total_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        total_size *= shape[i];
+    }
+    if (out_idx >= total_size) return;
+    
+    uint in_idx = compute_strided_index(out_idx, shape, strides, ndim, offset);
+    out[out_idx] = RECIP_HALF(in[in_idx]);
+}
+
 kernel void recip_float(device float* out [[buffer(0)]],
                        device const float* in [[buffer(1)]],
                        constant uint* shape [[buffer(2)]],
@@ -138,5 +236,5 @@ kernel void recip_float(device float* out [[buffer(0)]],
     if (out_idx >= total_size) return;
     
     uint in_idx = compute_strided_index(out_idx, shape, strides, ndim, offset);
-    out[out_idx] = 1.0f / in[in_idx];
+    out[out_idx] = RECIP(in[in_idx]);
 }

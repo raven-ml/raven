@@ -202,10 +202,7 @@ let pad ctx t out padding fill_value =
               ~bytes:Ctypes.(to_voidp v)
               ~length:4 ~index:5
         | Dtype.Float64 ->
-            let v = Ctypes.(allocate double fill_value) in
-            ComputeCommandEncoder.set_bytes encoder
-              ~bytes:Ctypes.(to_voidp v)
-              ~length:8 ~index:5
+            failwith "pad: Float64 dtype not supported by Metal backend"
         | Dtype.Int32 ->
             let v = Ctypes.(allocate int32_t (Int32.of_float fill_value)) in
             ComputeCommandEncoder.set_bytes encoder

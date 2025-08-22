@@ -58,7 +58,9 @@ type dtype_info = {
 let get_dtype_info : type a b. (a, b) Dtype.t -> dtype_info = function
   | Dtype.Float16 -> { metal_name = "half"; size_bytes = 2 }
   | Dtype.Float32 -> { metal_name = "float"; size_bytes = 4 }
-  | Dtype.Float64 -> { metal_name = "double"; size_bytes = 8 }
+  | Dtype.Float64 -> 
+      (* Float64 is not supported for compute but we need size info for linalg buffer allocation *)
+      { metal_name = "double"; size_bytes = 8 }
   | Dtype.Int32 -> { metal_name = "int"; size_bytes = 4 }
   | Dtype.Int64 -> { metal_name = "long"; size_bytes = 8 }
   | Dtype.UInt8 -> { metal_name = "uchar"; size_bytes = 1 }
@@ -66,15 +68,24 @@ let get_dtype_info : type a b. (a, b) Dtype.t -> dtype_info = function
   | Dtype.Int8 -> { metal_name = "char"; size_bytes = 1 }
   | Dtype.Int16 -> { metal_name = "short"; size_bytes = 2 }
   | Dtype.Int ->
+      (* Platform-specific size but use int64 for safety *)
       if Sys.word_size = 64 then { metal_name = "long"; size_bytes = 8 }
       else { metal_name = "int"; size_bytes = 4 }
-  | Dtype.NativeInt -> { metal_name = "long"; size_bytes = Sys.word_size / 8 }
-  | Dtype.Complex32 -> { metal_name = "float2"; size_bytes = 8 }
-  | Dtype.Complex64 -> { metal_name = "float2"; size_bytes = 16 }
+  | Dtype.NativeInt -> 
+      (* Platform-specific size *)
+      { metal_name = "long"; size_bytes = Sys.word_size / 8 }
+  | Dtype.Complex32 ->
+      (* Complex types treated as float2 for storage but not compute *)
+      { metal_name = "float2"; size_bytes = 8 }
+  | Dtype.Complex64 ->
+      (* Complex types treated as float2 for storage but not compute *)
+      { metal_name = "float2"; size_bytes = 16 }
   | Dtype.BFloat16 ->
-      { metal_name = "bfloat"; size_bytes = 2 }
-      (* Metal supports bfloat natively *)
-  | Dtype.Bool -> { metal_name = "bool"; size_bytes = 1 }
+      (* BFloat16 not natively supported by Metal - use half as approximation *)
+      { metal_name = "half"; size_bytes = 2 }
+  | Dtype.Bool -> 
+      (* Bool arrays use uchar for storage *)
+      { metal_name = "uchar"; size_bytes = 1 }
   (* Extended types that Metal can't properly support - will fail at creation *)
   | Dtype.Int4 ->
       invalid_arg
@@ -119,22 +130,10 @@ let copy_from_bigarray : type a b.
   let size = Array1.dim ba in
   let kind = Array1.kind ba in
 
-  (* Special handling for Complex64 - convert from double to float *)
+  (* Special handling for Complex64 which shouldn't happen since complex is unsupported *)
   match kind with
   | Complex64 ->
-      (* Convert Complex64 (double precision) to float2 for Metal *)
-      let float_array = Ctypes.(from_voidp float contents) in
-      for i = 0 to size - 1 do
-        let c = Array1.get ba i in
-        (* Write as float precision to Metal buffer *)
-        let re_val = c.Complex.re in
-        let im_val = c.Complex.im in
-        let re_ptr = Ctypes.(float_array +@ (i * 2)) in
-        let im_ptr = Ctypes.(float_array +@ ((i * 2) + 1)) in
-
-        Ctypes.(re_ptr <-@ re_val);
-        Ctypes.(im_ptr <-@ im_val)
-      done
+      invalid_arg "Metal backend: Complex64 dtype not supported"
   | _ ->
       (* For all other types, create a bigarray view of the Metal buffer *)
       (* This works for both standard and extended types without copying *)
@@ -155,75 +154,10 @@ let copy_to_bigarray : type a b. (a, b) t -> (a, b, c_layout) Array1.t -> unit =
   let contents = Metal.Buffer.contents t.buffer.buffer in
   let kind = Array1.kind ba in
 
-  (* Special handling for Complex64 *)
+  (* Special handling for Complex64 which shouldn't happen since complex is unsupported *)
   match kind with
   | Complex64 ->
-      (* Convert from float2 (Metal) to Complex64 (OCaml) *)
-      let float_ptr = Ctypes.(from_voidp float contents) in
-      let view_size =
-        match Symbolic_shape.eval_dim (Lazy_view.numel view) with
-        | Some n -> n
-        | None ->
-            Error.failed ~op:"copy_from_metal_buffer"
-              ~what:"cannot copy with symbolic size" ()
-      in
-      let offset =
-        match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-        | Some n -> n
-        | None ->
-            Error.failed ~op:"copy_from_metal_buffer"
-              ~what:"cannot copy with symbolic offset" ()
-      in
-
-      if Lazy_view.is_contiguous view then
-        (* For contiguous views, convert directly *)
-        for i = 0 to view_size - 1 do
-          let idx = offset + i in
-          let re_ptr = Ctypes.(float_ptr +@ (idx * 2)) in
-          let im_ptr = Ctypes.(float_ptr +@ ((idx * 2) + 1)) in
-          let re = Ctypes.( !@ ) re_ptr in
-          let im = Ctypes.( !@ ) im_ptr in
-          Array1.set ba i Complex.{ re; im }
-        done
-      else
-        (* For non-contiguous views, handle strides *)
-        let shape =
-          match Symbolic_shape.eval (Lazy_view.shape view) with
-          | Some arr -> arr
-          | None ->
-              Error.failed ~op:"copy_from_metal_buffer"
-                ~what:"cannot copy with symbolic shape" ()
-        in
-        let strides =
-          match Lazy_view.strides view with
-          | Some s -> s
-          | None ->
-              Error.failed ~op:"copy_from_metal_buffer"
-                ~what:"cannot copy non-contiguous symbolic view" ()
-        in
-        let ndim = Array.length shape in
-        let rec copy_elements indices pos dst_idx =
-          if pos = ndim then (
-            let src_idx = ref offset in
-            for d = 0 to ndim - 1 do
-              src_idx := !src_idx + (indices.(d) * strides.(d))
-            done;
-            let re_ptr = Ctypes.(float_ptr +@ (!src_idx * 2)) in
-            let im_ptr = Ctypes.(float_ptr +@ ((!src_idx * 2) + 1)) in
-            let re = Ctypes.( !@ ) re_ptr in
-            let im = Ctypes.( !@ ) im_ptr in
-            Array1.set ba dst_idx Complex.{ re; im })
-          else
-            for i = 0 to shape.(pos) - 1 do
-              indices.(pos) <- i;
-              copy_elements indices (pos + 1)
-                (dst_idx
-                + i
-                  * Array.fold_left ( * ) 1
-                      (Array.sub shape (pos + 1) (ndim - pos - 1)))
-            done
-        in
-        copy_elements (Array.make ndim 0) 0 0
+      invalid_arg "Metal backend: Complex64 dtype not supported"
   | _ ->
       let elem_size = sizeof_dtype t.dtype in
       (* Create a bigarray view of the entire Metal buffer *)

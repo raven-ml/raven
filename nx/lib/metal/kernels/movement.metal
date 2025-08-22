@@ -323,6 +323,272 @@ kernel void concat_axis_uchar(device uchar* out [[buffer(0)]],
     out[out_idx] = in[in_idx];
 }
 
+// Add concat operations for more types
+kernel void concat_half(device half* out [[buffer(0)]],
+                       device const half* in [[buffer(1)]],
+                       constant uint& in_size [[buffer(2)]],
+                       constant uint& out_offset [[buffer(3)]],
+                       uint gid [[thread_position_in_grid]]) {
+    if (gid >= in_size) return;
+    out[out_offset + gid] = in[gid];
+}
+
+kernel void concat_axis_half(device half* out [[buffer(0)]],
+                            device const half* in [[buffer(1)]],
+                            constant uint* out_shape [[buffer(2)]],
+                            constant uint* in_shape [[buffer(3)]],
+                            constant int* in_strides [[buffer(4)]],
+                            constant uint& axis [[buffer(5)]],
+                            constant uint& axis_offset [[buffer(6)]],
+                            constant uint& ndim [[buffer(7)]],
+                            constant uint& in_offset [[buffer(8)]],
+                            uint gid [[thread_position_in_grid]]) {
+    uint in_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        in_size *= in_shape[i];
+    }
+    if (gid >= in_size) return;
+    
+    // Convert linear index to coordinates
+    uint coords[8]; // Max 8 dimensions
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % in_shape[i];
+        temp /= in_shape[i];
+    }
+    
+    // Compute strided input index
+    uint in_idx = in_offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * in_strides[i];
+    }
+    
+    // Adjust coordinate for concatenation axis
+    coords[axis] += axis_offset;
+    
+    // Convert back to linear index in output
+    uint out_idx = 0;
+    uint stride = 1;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_idx += coords[i] * stride;
+        stride *= out_shape[i];
+    }
+    
+    out[out_idx] = in[in_idx];
+}
+
+kernel void concat_char(device char* out [[buffer(0)]],
+                       device const char* in [[buffer(1)]],
+                       constant uint& in_size [[buffer(2)]],
+                       constant uint& out_offset [[buffer(3)]],
+                       uint gid [[thread_position_in_grid]]) {
+    if (gid >= in_size) return;
+    out[out_offset + gid] = in[gid];
+}
+
+kernel void concat_axis_char(device char* out [[buffer(0)]],
+                            device const char* in [[buffer(1)]],
+                            constant uint* out_shape [[buffer(2)]],
+                            constant uint* in_shape [[buffer(3)]],
+                            constant int* in_strides [[buffer(4)]],
+                            constant uint& axis [[buffer(5)]],
+                            constant uint& axis_offset [[buffer(6)]],
+                            constant uint& ndim [[buffer(7)]],
+                            constant uint& in_offset [[buffer(8)]],
+                            uint gid [[thread_position_in_grid]]) {
+    uint in_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        in_size *= in_shape[i];
+    }
+    if (gid >= in_size) return;
+    
+    // Convert linear index to coordinates
+    uint coords[8]; // Max 8 dimensions
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % in_shape[i];
+        temp /= in_shape[i];
+    }
+    
+    // Compute strided input index
+    uint in_idx = in_offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * in_strides[i];
+    }
+    
+    // Adjust coordinate for concatenation axis
+    coords[axis] += axis_offset;
+    
+    // Convert back to linear index in output
+    uint out_idx = 0;
+    uint stride = 1;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_idx += coords[i] * stride;
+        stride *= out_shape[i];
+    }
+    
+    out[out_idx] = in[in_idx];
+}
+
+kernel void concat_short(device short* out [[buffer(0)]],
+                        device const short* in [[buffer(1)]],
+                        constant uint& in_size [[buffer(2)]],
+                        constant uint& out_offset [[buffer(3)]],
+                        uint gid [[thread_position_in_grid]]) {
+    if (gid >= in_size) return;
+    out[out_offset + gid] = in[gid];
+}
+
+kernel void concat_axis_short(device short* out [[buffer(0)]],
+                             device const short* in [[buffer(1)]],
+                             constant uint* out_shape [[buffer(2)]],
+                             constant uint* in_shape [[buffer(3)]],
+                             constant int* in_strides [[buffer(4)]],
+                             constant uint& axis [[buffer(5)]],
+                             constant uint& axis_offset [[buffer(6)]],
+                             constant uint& ndim [[buffer(7)]],
+                             constant uint& in_offset [[buffer(8)]],
+                             uint gid [[thread_position_in_grid]]) {
+    uint in_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        in_size *= in_shape[i];
+    }
+    if (gid >= in_size) return;
+    
+    // Convert linear index to coordinates
+    uint coords[8]; // Max 8 dimensions
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % in_shape[i];
+        temp /= in_shape[i];
+    }
+    
+    // Compute strided input index
+    uint in_idx = in_offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * in_strides[i];
+    }
+    
+    // Adjust coordinate for concatenation axis
+    coords[axis] += axis_offset;
+    
+    // Convert back to linear index in output
+    uint out_idx = 0;
+    uint stride = 1;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_idx += coords[i] * stride;
+        stride *= out_shape[i];
+    }
+    
+    out[out_idx] = in[in_idx];
+}
+
+kernel void concat_ushort(device ushort* out [[buffer(0)]],
+                         device const ushort* in [[buffer(1)]],
+                         constant uint& in_size [[buffer(2)]],
+                         constant uint& out_offset [[buffer(3)]],
+                         uint gid [[thread_position_in_grid]]) {
+    if (gid >= in_size) return;
+    out[out_offset + gid] = in[gid];
+}
+
+kernel void concat_axis_ushort(device ushort* out [[buffer(0)]],
+                              device const ushort* in [[buffer(1)]],
+                              constant uint* out_shape [[buffer(2)]],
+                              constant uint* in_shape [[buffer(3)]],
+                              constant int* in_strides [[buffer(4)]],
+                              constant uint& axis [[buffer(5)]],
+                              constant uint& axis_offset [[buffer(6)]],
+                              constant uint& ndim [[buffer(7)]],
+                              constant uint& in_offset [[buffer(8)]],
+                              uint gid [[thread_position_in_grid]]) {
+    uint in_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        in_size *= in_shape[i];
+    }
+    if (gid >= in_size) return;
+    
+    // Convert linear index to coordinates
+    uint coords[8]; // Max 8 dimensions
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % in_shape[i];
+        temp /= in_shape[i];
+    }
+    
+    // Compute strided input index
+    uint in_idx = in_offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * in_strides[i];
+    }
+    
+    // Adjust coordinate for concatenation axis
+    coords[axis] += axis_offset;
+    
+    // Convert back to linear index in output
+    uint out_idx = 0;
+    uint stride = 1;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_idx += coords[i] * stride;
+        stride *= out_shape[i];
+    }
+    
+    out[out_idx] = in[in_idx];
+}
+
+kernel void concat_long(device long* out [[buffer(0)]],
+                       device const long* in [[buffer(1)]],
+                       constant uint& in_size [[buffer(2)]],
+                       constant uint& out_offset [[buffer(3)]],
+                       uint gid [[thread_position_in_grid]]) {
+    if (gid >= in_size) return;
+    out[out_offset + gid] = in[gid];
+}
+
+kernel void concat_axis_long(device long* out [[buffer(0)]],
+                            device const long* in [[buffer(1)]],
+                            constant uint* out_shape [[buffer(2)]],
+                            constant uint* in_shape [[buffer(3)]],
+                            constant int* in_strides [[buffer(4)]],
+                            constant uint& axis [[buffer(5)]],
+                            constant uint& axis_offset [[buffer(6)]],
+                            constant uint& ndim [[buffer(7)]],
+                            constant uint& in_offset [[buffer(8)]],
+                            uint gid [[thread_position_in_grid]]) {
+    uint in_size = 1;
+    for (uint i = 0; i < ndim; i++) {
+        in_size *= in_shape[i];
+    }
+    if (gid >= in_size) return;
+    
+    // Convert linear index to coordinates
+    uint coords[8]; // Max 8 dimensions
+    uint temp = gid;
+    for (int i = ndim - 1; i >= 0; i--) {
+        coords[i] = temp % in_shape[i];
+        temp /= in_shape[i];
+    }
+    
+    // Compute strided input index
+    uint in_idx = in_offset;
+    for (uint i = 0; i < ndim; i++) {
+        in_idx += coords[i] * in_strides[i];
+    }
+    
+    // Adjust coordinate for concatenation axis
+    coords[axis] += axis_offset;
+    
+    // Convert back to linear index in output
+    uint out_idx = 0;
+    uint stride = 1;
+    for (int i = ndim - 1; i >= 0; i--) {
+        out_idx += coords[i] * stride;
+        stride *= out_shape[i];
+    }
+    
+    out[out_idx] = in[in_idx];
+}
+
 // Padding kernel
 kernel void pad_float(device float* out [[buffer(0)]],
                      device const float* in [[buffer(1)]],

@@ -102,10 +102,7 @@ let op_unfold ctx t ~kernel_size ~stride ~dilation ~padding =
                   ~bytes:Ctypes.(to_voidp v)
                   ~length:4 ~index:5
             | Dtype.Float64 ->
-                let v = Ctypes.(allocate double 0.0) in
-                ComputeCommandEncoder.set_bytes encoder
-                  ~bytes:Ctypes.(to_voidp v)
-                  ~length:8 ~index:5
+                failwith "im2col: Float64 dtype not supported by Metal backend"
             | Dtype.Int32 ->
                 let v = Ctypes.(allocate int32_t Int32.zero) in
                 ComputeCommandEncoder.set_bytes encoder
@@ -397,10 +394,7 @@ let op_fold ctx t ~output_size ~kernel_size ~stride ~dilation ~padding =
               ~bytes:Ctypes.(to_voidp v)
               ~length:4 ~index:1
         | Dtype.Float64 ->
-            let v = Ctypes.(allocate double 0.0) in
-            ComputeCommandEncoder.set_bytes encoder
-              ~bytes:Ctypes.(to_voidp v)
-              ~length:8 ~index:1
+            failwith "col2im: Float64 dtype not supported by Metal backend"
         | Dtype.Int32 ->
             let v = Ctypes.(allocate int32_t Int32.zero) in
             ComputeCommandEncoder.set_bytes encoder

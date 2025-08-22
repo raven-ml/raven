@@ -274,6 +274,440 @@ kernel void cast_uchar_to_float(device float* out [[buffer(0)]],
     out[gid] = float(in[gid]);
 }
 
+// Comprehensive cast operations for all supported type combinations
+
+// Half to other types
+kernel void cast_half_to_float(device float* out [[buffer(0)]],
+                              device const half* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = float(in[gid]);
+}
+
+kernel void cast_half_to_int(device int* out [[buffer(0)]],
+                            device const half* in [[buffer(1)]],
+                            constant uint& size [[buffer(2)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = int(in[gid]);
+}
+
+kernel void cast_half_to_long(device long* out [[buffer(0)]],
+                             device const half* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = long(in[gid]);
+}
+
+kernel void cast_half_to_char(device char* out [[buffer(0)]],
+                             device const half* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = char(in[gid]);
+}
+
+kernel void cast_half_to_uchar(device uchar* out [[buffer(0)]],
+                              device const half* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = uchar(in[gid]);
+}
+
+kernel void cast_half_to_short(device short* out [[buffer(0)]],
+                              device const half* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = short(in[gid]);
+}
+
+kernel void cast_half_to_ushort(device ushort* out [[buffer(0)]],
+                               device const half* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = ushort(in[gid]);
+}
+
+kernel void cast_half_to_half(device half* out [[buffer(0)]],
+                             device const half* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+// Float to other types (add missing ones)
+kernel void cast_float_to_half(device half* out [[buffer(0)]],
+                              device const float* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = half(in[gid]);
+}
+
+kernel void cast_float_to_float(device float* out [[buffer(0)]],
+                               device const float* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+kernel void cast_float_to_char(device char* out [[buffer(0)]],
+                              device const float* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = char(in[gid]);
+}
+
+kernel void cast_float_to_ushort(device ushort* out [[buffer(0)]],
+                                device const float* in [[buffer(1)]],
+                                constant uint& size [[buffer(2)]],
+                                uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = ushort(in[gid]);
+}
+
+// Char to other types
+kernel void cast_char_to_half(device half* out [[buffer(0)]],
+                             device const char* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = half(in[gid]);
+}
+
+kernel void cast_char_to_float(device float* out [[buffer(0)]],
+                              device const char* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = float(in[gid]);
+}
+
+kernel void cast_char_to_int(device int* out [[buffer(0)]],
+                            device const char* in [[buffer(1)]],
+                            constant uint& size [[buffer(2)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = int(in[gid]);
+}
+
+kernel void cast_char_to_long(device long* out [[buffer(0)]],
+                             device const char* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = long(in[gid]);
+}
+
+kernel void cast_char_to_char(device char* out [[buffer(0)]],
+                             device const char* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+kernel void cast_char_to_uchar(device uchar* out [[buffer(0)]],
+                              device const char* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = uchar(in[gid]);
+}
+
+kernel void cast_char_to_short(device short* out [[buffer(0)]],
+                              device const char* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = short(in[gid]);
+}
+
+kernel void cast_char_to_ushort(device ushort* out [[buffer(0)]],
+                               device const char* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = ushort(in[gid]);
+}
+
+// Uchar to other types (add missing ones)
+kernel void cast_uchar_to_half(device half* out [[buffer(0)]],
+                              device const uchar* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = half(in[gid]);
+}
+
+kernel void cast_uchar_to_char(device char* out [[buffer(0)]],
+                              device const uchar* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = char(in[gid]);
+}
+
+kernel void cast_uchar_to_short(device short* out [[buffer(0)]],
+                               device const uchar* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = short(in[gid]);
+}
+
+kernel void cast_uchar_to_ushort(device ushort* out [[buffer(0)]],
+                                device const uchar* in [[buffer(1)]],
+                                constant uint& size [[buffer(2)]],
+                                uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = ushort(in[gid]);
+}
+
+kernel void cast_uchar_to_long(device long* out [[buffer(0)]],
+                              device const uchar* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = long(in[gid]);
+}
+
+kernel void cast_uchar_to_uchar(device uchar* out [[buffer(0)]],
+                               device const uchar* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+// Short to other types
+kernel void cast_short_to_half(device half* out [[buffer(0)]],
+                              device const short* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = half(in[gid]);
+}
+
+kernel void cast_short_to_float(device float* out [[buffer(0)]],
+                               device const short* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = float(in[gid]);
+}
+
+kernel void cast_short_to_int(device int* out [[buffer(0)]],
+                             device const short* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = int(in[gid]);
+}
+
+kernel void cast_short_to_long(device long* out [[buffer(0)]],
+                              device const short* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = long(in[gid]);
+}
+
+kernel void cast_short_to_char(device char* out [[buffer(0)]],
+                              device const short* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = char(in[gid]);
+}
+
+kernel void cast_short_to_uchar(device uchar* out [[buffer(0)]],
+                               device const short* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = uchar(in[gid]);
+}
+
+kernel void cast_short_to_short(device short* out [[buffer(0)]],
+                               device const short* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+kernel void cast_short_to_ushort(device ushort* out [[buffer(0)]],
+                                device const short* in [[buffer(1)]],
+                                constant uint& size [[buffer(2)]],
+                                uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = ushort(in[gid]);
+}
+
+// Ushort to other types
+kernel void cast_ushort_to_half(device half* out [[buffer(0)]],
+                               device const ushort* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = half(in[gid]);
+}
+
+kernel void cast_ushort_to_float(device float* out [[buffer(0)]],
+                                device const ushort* in [[buffer(1)]],
+                                constant uint& size [[buffer(2)]],
+                                uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = float(in[gid]);
+}
+
+kernel void cast_ushort_to_int(device int* out [[buffer(0)]],
+                              device const ushort* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = int(in[gid]);
+}
+
+kernel void cast_ushort_to_long(device long* out [[buffer(0)]],
+                               device const ushort* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = long(in[gid]);
+}
+
+kernel void cast_ushort_to_char(device char* out [[buffer(0)]],
+                               device const ushort* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = char(in[gid]);
+}
+
+kernel void cast_ushort_to_uchar(device uchar* out [[buffer(0)]],
+                                device const ushort* in [[buffer(1)]],
+                                constant uint& size [[buffer(2)]],
+                                uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = uchar(in[gid]);
+}
+
+kernel void cast_ushort_to_short(device short* out [[buffer(0)]],
+                                device const ushort* in [[buffer(1)]],
+                                constant uint& size [[buffer(2)]],
+                                uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = short(in[gid]);
+}
+
+kernel void cast_ushort_to_ushort(device ushort* out [[buffer(0)]],
+                                 device const ushort* in [[buffer(1)]],
+                                 constant uint& size [[buffer(2)]],
+                                 uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+// Int to other types (add missing ones)
+kernel void cast_int_to_half(device half* out [[buffer(0)]],
+                            device const int* in [[buffer(1)]],
+                            constant uint& size [[buffer(2)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = half(in[gid]);
+}
+
+kernel void cast_int_to_char(device char* out [[buffer(0)]],
+                            device const int* in [[buffer(1)]],
+                            constant uint& size [[buffer(2)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = char(in[gid]);
+}
+
+kernel void cast_int_to_short(device short* out [[buffer(0)]],
+                             device const int* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = short(in[gid]);
+}
+
+kernel void cast_int_to_ushort(device ushort* out [[buffer(0)]],
+                              device const int* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = ushort(in[gid]);
+}
+
+kernel void cast_int_to_int(device int* out [[buffer(0)]],
+                           device const int* in [[buffer(1)]],
+                           constant uint& size [[buffer(2)]],
+                           uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
+// Long to other types (add missing ones)
+kernel void cast_long_to_half(device half* out [[buffer(0)]],
+                             device const long* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = half(in[gid]);
+}
+
+kernel void cast_long_to_char(device char* out [[buffer(0)]],
+                             device const long* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = char(in[gid]);
+}
+
+kernel void cast_long_to_uchar(device uchar* out [[buffer(0)]],
+                              device const long* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = uchar(in[gid]);
+}
+
+kernel void cast_long_to_short(device short* out [[buffer(0)]],
+                              device const long* in [[buffer(1)]],
+                              constant uint& size [[buffer(2)]],
+                              uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = short(in[gid]);
+}
+
+kernel void cast_long_to_ushort(device ushort* out [[buffer(0)]],
+                               device const long* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = ushort(in[gid]);
+}
+
+kernel void cast_long_to_long(device long* out [[buffer(0)]],
+                             device const long* in [[buffer(1)]],
+                             constant uint& size [[buffer(2)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid];
+}
+
 // Fill kernel - assigns a constant value
 kernel void fill_float(device float* out [[buffer(0)]],
                       constant float& value [[buffer(1)]],

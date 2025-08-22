@@ -31,22 +31,6 @@ let data : type a b. (a, b) t -> (a, b, c_layout) Array1.t =
   let contents = Metal.Buffer.contents t.buffer.buffer in
 
   match t.dtype with
-  | Dtype.Complex64 ->
-      (* Special handling for Complex64 - Metal uses float2 (8 bytes) but OCaml
-         expects complex64 (16 bytes) *)
-      let num_elements = t.buffer.size_bytes / 8 in
-      (* 8 bytes per float2 in Metal *)
-      (* Create a Complex64 bigarray and convert from float2 *)
-      let ba = Array1.create complex64 c_layout num_elements in
-      let float_ptr = Ctypes.(from_voidp float contents) in
-      for i = 0 to num_elements - 1 do
-        let re_ptr = Ctypes.(float_ptr +@ (i * 2)) in
-        let im_ptr = Ctypes.(float_ptr +@ ((i * 2) + 1)) in
-        let re = Ctypes.( !@ ) re_ptr in
-        let im = Ctypes.( !@ ) im_ptr in
-        Array1.set ba i Complex.{ re; im }
-      done;
-      Obj.magic ba
   | Dtype.BFloat16 | Dtype.Bool ->
       (* For extended types, use the extended kind and our special function *)
       let kind = Dtype.to_bigarray_ext_kind t.dtype in

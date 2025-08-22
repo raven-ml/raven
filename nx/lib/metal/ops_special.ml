@@ -196,15 +196,6 @@ let cast : type a b c d.
       Ops_movement.copy ctx t out;
       out
   | None ->
-      (* Check if source or target types are unsupported *)
-      let is_complex_type : type x y. (x, y) Dtype.t -> bool = function
-        | Dtype.Complex32 -> true
-        | Dtype.Complex64 -> true
-        | _ -> false
-      in
-      if is_complex_type t.Internal.dtype || is_complex_type target_dtype then
-        failwith "Metal backend does not support complex types"
-      else
         let out_size = Internal.numel t in
         let size_bytes = out_size * Internal.sizeof_dtype target_dtype in
         let buffer = Buffer_pool.allocate ctx.Internal.pool size_bytes in
