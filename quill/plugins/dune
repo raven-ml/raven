@@ -38,9 +38,9 @@
   %{lib:kaun:kaun.cma}
   %{lib:kaun.datasets:kaun_datasets.cmi}
   %{lib:kaun.datasets:kaun_datasets.cma}
-  ; nx-text
-  %{lib:nx-text:saga.cmi}
-  %{lib:nx-text:saga.cma}
+  ; saga
+  %{lib:saga:saga.cmi}
+  %{lib:saga:saga.cma}
   %{lib:re:re.cma}
   %{lib:uutf:uutf.cma}
   %{lib:uucp:uucp.cma}
@@ -83,8 +83,8 @@
    (copy %{lib:kaun:kaun.cma} kaun.cma)
    (copy %{lib:kaun.datasets:kaun_datasets.cmi} kaun_datasets.cmi)
    (copy %{lib:kaun.datasets:kaun_datasets.cma} kaun_datasets.cma)
-   (copy %{lib:nx-text:saga.cmi} saga.cmi)
-   (copy %{lib:nx-text:saga.cma} saga.cma)
+   (copy %{lib:saga:saga.cmi} saga.cmi)
+   (copy %{lib:saga:saga.cma} saga.cma)
    (copy %{lib:re:re.cma} re.cma)
    (copy %{lib:uutf:uutf.cma} uutf.cma)
    (copy %{lib:uucp:uucp.cma} uucp.cma)

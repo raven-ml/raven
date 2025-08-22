@@ -1,4 +1,4 @@
-(* Encoding and batch processing tests for nx-text *)
+(* Encoding and batch processing tests for saga *)
 
 open Alcotest
 open Saga
@@ -228,4 +228,4 @@ let encoding_tests =
     test_case "encode batch unicode" `Quick test_encode_batch_unicode;
   ]
 
-let () = Alcotest.run "nx-text encoding" [ ("encoding", encoding_tests) ]
+let () = Alcotest.run "saga encoding" [ ("encoding", encoding_tests) ]

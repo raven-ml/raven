@@ -1,4 +1,4 @@
-(* Unicode processing tests for nx-text *)
+(* Unicode processing tests for saga *)
 
 open Alcotest
 open Saga
@@ -171,4 +171,4 @@ let unicode_tests =
     test_case "malformed unicode" `Quick test_malformed_unicode;
   ]
 
-let () = Alcotest.run "nx-text unicode" [ ("unicode", unicode_tests) ]
+let () = Alcotest.run "saga unicode" [ ("unicode", unicode_tests) ]

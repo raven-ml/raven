@@ -1,4 +1,4 @@
-(* Tokenization tests for nx-text *)
+(* Tokenization tests for saga *)
 
 open Alcotest
 open Saga
@@ -116,4 +116,4 @@ let tokenization_tests =
   ]
 
 let () =
-  Alcotest.run "nx-text tokenization" [ ("tokenization", tokenization_tests) ]
+  Alcotest.run "saga tokenization" [ ("tokenization", tokenization_tests) ]

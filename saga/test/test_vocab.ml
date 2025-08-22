@@ -1,4 +1,4 @@
-(* Vocabulary tests for nx-text *)
+(* Vocabulary tests for saga *)
 
 open Alcotest
 open Saga
@@ -149,4 +149,4 @@ let vocab_tests =
     test_case "large vocab" `Slow test_vocab_large;
   ]
 
-let () = Alcotest.run "nx-text vocabulary" [ ("vocabulary", vocab_tests) ]
+let () = Alcotest.run "saga vocabulary" [ ("vocabulary", vocab_tests) ]

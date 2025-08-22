@@ -28,7 +28,7 @@ depends: [
   "base64"
   "nx" {= version}
   "nx-datasets" {= version}
-  "nx-text" {= version}
+  "saga" {= version}
   "rune" {= version}
   "kaun" {= version}
   "sowilo" {= version}

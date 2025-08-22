@@ -82,11 +82,11 @@ jobs:
           opam exec -- dune build @nx-datasets/runtest
           echo "::endgroup::"
 
-      - name: Build and test nx-text
+      - name: Build and test saga
         run: |
-          echo "::group::nx-text"
-          opam exec -- dune build nx-text
-          opam exec -- dune build @nx-text/runtest
+          echo "::group::saga"
+          opam exec -- dune build saga
+          opam exec -- dune build @saga/runtest
           echo "::endgroup::"
 
       - name: Build and test rune

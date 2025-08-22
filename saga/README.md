@@ -1,4 +1,4 @@
-# nx-text
+# saga
 
 Fast tokenization library for ML in OCaml with comprehensive Unicode support.
 
@@ -14,13 +14,13 @@ Fast tokenization library for ML in OCaml with comprehensive Unicode support.
 ## Installation
 
 ```bash
-dune build dev/nx-text/
+dune build saga/
 ```
 
 ## Quick Start
 
 ```ocaml
-open Nx_text
+open Saga
 
 (* Simple tokenization *)
 let tokens = tokenize "Hello world!"
@@ -75,7 +75,7 @@ let encoded = encode ~vocab:my_vocab "hello unknown world"
 
 ```ocaml
 (* The Unicode module provides advanced text processing *)
-open Nx_text.Unicode
+open Saga.Unicode
 
 (* Split words with Unicode awareness *)
 let words = split_words "Hello世界"

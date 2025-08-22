@@ -32,7 +32,7 @@ Alongside these core layers, Raven includes **supporting tools** for the develop
      ┌──────────────────▼─────────────────────┐
      │         Data & Computation             │
      │  ┌────┐  ┌─────────────┐  ┌─────────┐  │
-     │  │ Nx │  │ Nx_datasets │  │ Nx_text │  │
+     │  │ Nx │  │ Nx_datasets │  │  Saga   │  │
      │  └────┘  └─────────────┘  └─────────┘  │
      └────────────────────────────────────────┘
 

@@ -80,7 +80,7 @@
   (datasets machine-learning data-science image-classification regression)))
 
 (package
- (name nx-text)
+ (name saga)
  (synopsis "Text processing and NLP extensions for Nx")
  (description
   "Text processing library that extends Nx with natural language processing capabilities. Provides tokenization, encoding, and text manipulation functionality compatible with the Nx tensor library.")
@@ -195,7 +195,7 @@
    (= :version))
   (nx-datasets
    (= :version))
-  (nx-text
+  (saga
    (= :version))
   (rune
    (= :version))
@@ -253,7 +253,7 @@
    (= :version))
   (nx-datasets
    (= :version))
-  (nx-text
+  (saga
    (= :version))
   (rune
    (= :version))

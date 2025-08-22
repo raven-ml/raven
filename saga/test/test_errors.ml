@@ -1,4 +1,4 @@
-(* Error handling tests for nx-text *)
+(* Error handling tests for saga *)
 
 open Alcotest
 open Saga
@@ -129,4 +129,4 @@ let error_tests =
     test_case "WordPiece not implemented" `Quick test_wordpiece_not_implemented;
   ]
 
-let () = Alcotest.run "nx-text errors" [ ("errors", error_tests) ]
+let () = Alcotest.run "saga errors" [ ("errors", error_tests) ]
