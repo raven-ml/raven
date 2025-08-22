@@ -360,3 +360,4 @@ end
 module Unicode = Unicode
 module Bpe = Bpe
 module Wordpiece = Wordpiece
+module Ngram = Ngram

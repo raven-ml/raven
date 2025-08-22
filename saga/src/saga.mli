@@ -165,6 +165,7 @@ end
 
 module Bpe = Bpe
 module Wordpiece = Wordpiece
+module Ngram = Ngram
 
 module Unicode : sig
   (** Unicode text processing utilities *)

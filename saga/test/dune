@@ -6,6 +6,7 @@
   test_unicode
   test_errors
   test_bpe
-  test_wordpiece)
+  test_wordpiece
+  test_ngram)
  (package saga)
  (libraries saga nx alcotest unix))
