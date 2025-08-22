@@ -96,6 +96,8 @@ body {
 
 /* Override for library color classes */
 .nav-links a.color-blue { color: var(--color-nx) !important; }    /* nx */
+.nav-links a.color-teal { color: var(--color-saga) !important; }    /* saga */
+.nav-links a.color-pink { color: var(--color-talon) !important; }    /* talon */
 .nav-links a.color-purple { color: var(--color-hugin) !important; }  /* hugin */
 .nav-links a.color-green { color: var(--color-quill) !important; }   /* quill */
 .nav-links a.color-orange { color: var(--color-rune) !important; }  /* rune */

@@ -75,7 +75,4 @@ Use Saga when you need:
 
 ## Next Steps
 
-- [Getting Started](getting-started.md) - Learn the basics
-- [Tokenizers Guide](tokenizers.md) - Deep dive into tokenization
-- [Unicode Processing](unicode.md) - Handle multilingual text
-- [API Reference](/api/saga) - Complete API documentation
+- [Getting Started](/docs/saga/getting-started/) - Learn the basics
