@@ -143,6 +143,7 @@
   dune
   logs
   yojson
+  domainslib
   (rune
    (= :version))
   (nx-datasets
