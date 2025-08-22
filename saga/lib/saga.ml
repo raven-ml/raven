@@ -1,5 +1,6 @@
 (** Saga implementation *)
 
+module Sampler = Sampler
 module Tokenizers = Saga_tokenizers
 module Models = Saga_models
 
@@ -359,18 +360,19 @@ module LM = struct
     let model = Models.Ngram.create ~n ~smoothing (Array.of_list all_tokens) in
     Ngram (n, model, vocab)
 
-  let generate model ?(max_tokens = 100) ?(temperature = 1.0) ?top_k
+  let generate model ?(max_tokens = 100) ?(temperature = 1.0) ?top_k ?top_p
       ?(prompt = "") tokenizer =
     match model with
-    | Ngram (_n, ngram_model, _vocab) ->
-        let prompt_ids =
-          if prompt = "" then [||] else encode tokenizer prompt
+    | Ngram (n, ngram_model, _vocab) ->
+        let logits_fn =
+          if n = 1 then fun _ -> Models.Ngram.logits ngram_model ~context:[||]
+          else fun prev_token ->
+            Models.Ngram.logits ngram_model ~context:[| prev_token |]
         in
-        let _top_k = top_k in
-        (* TODO: implement top_k in ngram *)
+        let start = if prompt = "" then None else Some prompt in
         let generated_ids =
-          Models.Ngram.generate ngram_model ~max_tokens ~temperature ?seed:None
-            ~start:prompt_ids ()
+          Sampler.generate ~max_tokens ~temperature ?top_k ?top_p ?start
+            ~logits_fn ~tokenizer:(encode tokenizer) ()
         in
         decode tokenizer generated_ids
 

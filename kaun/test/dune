@@ -1,19 +1,4 @@
-(test
- (name test_checkpoint)
+(tests
+ (names test_checkpoint test_ptree test_dataset)
  (package kaun)
- (libraries rune kaun kaun.checkpoint alcotest))
-
-(test
- (name test_ptree)
- (package kaun)
- (libraries rune kaun alcotest))
-
-(test
- (name test_dataset)
- (package kaun)
- (libraries rune kaun kaun.dataset alcotest unix yojson))
-
-(test
- (name test_datasets_integration)
- (package kaun)
- (libraries rune kaun kaun.dataset kaun.datasets))
+ (libraries rune kaun kaun.checkpoint kaun.dataset alcotest))

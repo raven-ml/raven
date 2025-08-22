@@ -1,4 +1,4 @@
 (library
  (name kaun)
  (public_name kaun)
- (libraries rune unix kaun.ptree kaun.optim kaun.checkpoint kaun.dataset kaun.sampler sampler))
+ (libraries rune unix kaun.ptree kaun.optim kaun.checkpoint kaun.dataset))

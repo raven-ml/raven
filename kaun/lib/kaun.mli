@@ -367,6 +367,3 @@ module Ptree = Ptree
 
 module Optimizer = Kaun_optim
 (** Optimizer module - gradient processing and optimization *)
-
-module Sampler = Sampler
-(** Sampler module - text generation and sampling utilities *)

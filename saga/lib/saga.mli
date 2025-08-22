@@ -1,5 +1,10 @@
 (** Saga - Fast tokenization and text processing for ML in OCaml *)
 
+(** {1 Modules} *)
+
+module Sampler = Sampler
+(** Text generation and sampling utilities *)
+
 (** {1 Core Types} *)
 
 type tokenizer
@@ -87,10 +92,12 @@ module LM : sig
     ?max_tokens:int ->
     ?temperature:float ->
     ?top_k:int ->
+    ?top_p:float ->
     ?prompt:string ->
     tokenizer ->
     string
-  (** [generate model tokenizer] generates text. Returns decoded string. *)
+  (** [generate model tokenizer] generates text. Returns decoded string. Now
+      supports top-p (nucleus) sampling via the Sampler module. *)
 
   val perplexity : t -> tokenizer -> string -> float
   (** [perplexity model tokenizer text] computes perplexity *)

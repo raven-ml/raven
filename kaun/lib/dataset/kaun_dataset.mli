@@ -110,10 +110,10 @@ val from_csv :
     - [has_header]: Skip first row if true (default: true) *)
 
 val from_text : tokenizer:tokenizer -> string -> int array t
-(** [from_text ~tokenizer path] reads a text file and returns a dataset of token 
-    ID arrays. The file is read as a single document and tokenized.
-    This is useful for language modeling tasks where you want the entire
-    document as a sequence of tokens. *)
+(** [from_text ~tokenizer path] reads a text file and returns a dataset of token
+    ID arrays. The file is read as a single document and tokenized. This is
+    useful for language modeling tasks where you want the entire document as a
+    sequence of tokens. *)
 
 (** {1 Transformations} *)
 

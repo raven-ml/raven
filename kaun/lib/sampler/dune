@@ -1,4 +1,0 @@
-(library
- (name sampler)
- (public_name kaun.sampler)
- (libraries nx saga))

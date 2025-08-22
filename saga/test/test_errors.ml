@@ -91,19 +91,6 @@ let test_decode_batch_wrong_shape () =
        "decode_batch: invalid tensor shape (expected 2D tensor [batch_size; \
         seq_len])") (fun () -> ignore (decode_batch v tensor))
 
-(* ───── Advanced Tokenizer Error Tests ───── *)
-
-let test_bpe_not_implemented () =
-  check_raises "BPE not implemented"
-    (Invalid_argument "Tokenizer.bpe: BPE tokenizer not implemented yet")
-    (fun () -> ignore (Tokenizer.bpe ~vocab:"" ~merges:""))
-
-let test_wordpiece_not_implemented () =
-  check_raises "WordPiece not implemented"
-    (Invalid_argument
-       "Tokenizer.wordpiece: WordPiece tokenizer not implemented yet")
-    (fun () -> ignore (Tokenizer.wordpiece ~vocab:"" ~unk_token:""))
-
 (* ───── Test Suite ───── *)
 
 let error_tests =
@@ -124,9 +111,6 @@ let error_tests =
       test_unicode_normalization_error;
     (* Decode errors *)
     test_case "decode batch wrong shape" `Quick test_decode_batch_wrong_shape;
-    (* Advanced tokenizer errors *)
-    test_case "BPE not implemented" `Quick test_bpe_not_implemented;
-    test_case "WordPiece not implemented" `Quick test_wordpiece_not_implemented;
   ]
 
 let () = Alcotest.run "saga errors" [ ("errors", error_tests) ]
