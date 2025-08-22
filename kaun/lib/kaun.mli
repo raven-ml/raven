@@ -5,7 +5,7 @@ type 'dev device = 'dev Rune.device
 type ('layout, 'dev) params = ('layout, 'dev) Ptree.t =
   | Tensor of ('layout, 'dev) tensor
   | List of ('layout, 'dev) params list
-  | Record of (string * ('layout, 'dev) params) list
+  | Record of ('layout, 'dev) params Ptree.Record.t
 
 type model =
   | Model : {

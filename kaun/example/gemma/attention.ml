@@ -1,4 +1,5 @@
 open Kaun
+open Ptree
 
 (* Rotary Position Embeddings *)
 module RoPE = struct
@@ -118,11 +119,11 @@ let multi_head_attention_with_rope ~embed_dim ~num_heads ~num_kv_heads ~head_dim
             if use_qk_norm then
               let q_norm = Rune.ones dev dtype [| head_dim |] in
               let k_norm = Rune.ones dev dtype [| head_dim |] in
-              Record [ ("q_norm", Tensor q_norm); ("k_norm", Tensor k_norm) ]
+              record_of [ ("q_norm", Tensor q_norm); ("k_norm", Tensor k_norm) ]
             else List []
           in
 
-          Record
+          record_of
             [
               ("q_proj", Tensor q_proj);
               ("k_proj", Tensor k_proj);
@@ -142,8 +143,8 @@ let multi_head_attention_with_rope ~embed_dim ~num_heads ~num_kv_heads ~head_dim
           match params with
           | Record fields ->
               let get_tensor name =
-                match List.assoc name fields with
-                | Tensor t -> t
+                match Ptree.Record.find_opt name fields with
+                | Some (Tensor t) -> t
                 | _ -> failwith (Printf.sprintf "Expected tensor for %s" name)
               in
 
@@ -190,16 +191,16 @@ let multi_head_attention_with_rope ~embed_dim ~num_heads ~num_kv_heads ~head_dim
               (* Apply QK normalization if enabled *)
               let q, k =
                 if use_qk_norm then
-                  match List.assoc "qk_norm" fields with
-                  | Record qk_fields ->
+                  match Ptree.Record.find_opt "qk_norm" fields with
+                  | Some (Record qk_fields) ->
                       let q_norm =
-                        match List.assoc "q_norm" qk_fields with
-                        | Tensor t -> t
+                        match Ptree.Record.find_opt "q_norm" qk_fields with
+                        | Some (Tensor t) -> t
                         | _ -> failwith "Expected q_norm tensor"
                       in
                       let k_norm =
-                        match List.assoc "k_norm" qk_fields with
-                        | Tensor t -> t
+                        match Ptree.Record.find_opt "k_norm" qk_fields with
+                        | Some (Tensor t) -> t
                         | _ -> failwith "Expected k_norm tensor"
                       in
                       let normalize x norm =

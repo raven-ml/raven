@@ -12,7 +12,10 @@ type ('layout, 'dev) gradient_transformation = {
 (* Utility functions - using Kaun_ptree *)
 let map_params params f = Ptree.map f params
 let map_params2 p1 p2 f = Ptree.map2 f p1 p2
-let flatten_params params = Ptree.to_flat_list params
+
+let flatten_params params =
+  let flat_list, _ = Ptree.flatten_with_rebuild params in
+  flat_list
 
 (* Helper functions for parameter tree flattening - removed as not currently
    used *)
@@ -388,40 +391,35 @@ let multi_transform ~transforms ~labels =
                       (a, b) Ptree.t =
                    fun target_idx labels params grads ->
                     match (labels, params, grads) with
-                    | LabelTensor label_idx, Tensor _p, Tensor g ->
-                        if label_idx = target_idx then Tensor g
-                        else Tensor (Rune.zeros_like g)
-                    | LabelList ls, List ps, List gs ->
-                        List
+                    | LabelTensor label_idx, Ptree.Tensor _p, Ptree.Tensor g ->
+                        if label_idx = target_idx then Ptree.tensor g
+                        else Ptree.tensor (Rune.zeros_like g)
+                    | LabelList ls, Ptree.List ps, Ptree.List gs ->
+                        Ptree.List
                           (List.map
                              (fun ((l, p), g) ->
                                filter_by_label target_idx l p g)
                              (List.combine (List.combine ls ps) gs))
-                    | LabelRecord fields_l, Record fields_p, Record fields_g ->
-                        let sorted_l =
-                          List.sort
-                            (fun (k1, _) (k2, _) -> String.compare k1 k2)
-                            fields_l
+                    | ( LabelRecord fields_l,
+                        Ptree.Record fields_p,
+                        Ptree.Record fields_g ) ->
+                        let result_map =
+                          List.fold_left
+                            (fun acc (key, label) ->
+                              match
+                                ( Ptree.Record.find_opt key fields_p,
+                                  Ptree.Record.find_opt key fields_g )
+                              with
+                              | Some p, Some g ->
+                                  Ptree.Record.add key
+                                    (filter_by_label target_idx label p g)
+                                    acc
+                              | _ ->
+                                  failwith
+                                    ("multi_transform: missing field " ^ key))
+                            Ptree.Record.empty fields_l
                         in
-                        let sorted_p =
-                          List.sort
-                            (fun (k1, _) (k2, _) -> String.compare k1 k2)
-                            fields_p
-                        in
-                        let sorted_g =
-                          List.sort
-                            (fun (k1, _) (k2, _) -> String.compare k1 k2)
-                            fields_g
-                        in
-                        Record
-                          (List.map2
-                             (fun (k1, l) (k2, p) ->
-                               let k3, g =
-                                 List.find (fun (k, _) -> k = k1) sorted_g
-                               in
-                               assert (k1 = k2 && k2 = k3);
-                               (k1, filter_by_label target_idx l p g))
-                             sorted_l sorted_p)
+                        Ptree.Record result_map
                     | _ -> failwith "multi_transform: structure mismatch"
                   in
 
@@ -453,32 +451,29 @@ let rec apply_mask : type a b.
     mask_tree -> (a, b) Ptree.t -> (a, b) Ptree.t -> (a, b) Ptree.t =
  fun mask_tree params grads ->
   match (mask_tree, params, grads) with
-  | MaskTensor true, Tensor _, Tensor g -> Tensor g
-  | MaskTensor false, Tensor p, Tensor _ ->
+  | MaskTensor true, Ptree.Tensor _, Ptree.Tensor g -> Ptree.Tensor g
+  | MaskTensor false, Ptree.Tensor p, Ptree.Tensor _ ->
       (* Return zero gradient for masked parameters *)
-      Tensor (Rune.zeros_like p)
-  | MaskList masks, List ps, List gs ->
-      List
+      Ptree.Tensor (Rune.zeros_like p)
+  | MaskList masks, Ptree.List ps, Ptree.List gs ->
+      Ptree.List
         (List.map
            (fun ((m, p), g) -> apply_mask m p g)
            (List.combine (List.combine masks ps) gs))
-  | MaskRecord mask_fields, Record param_fields, Record grad_fields ->
-      let sorted_m =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) mask_fields
+  | MaskRecord mask_fields, Ptree.Record param_fields, Ptree.Record grad_fields
+    ->
+      let result_map =
+        List.fold_left
+          (fun acc (key, mask) ->
+            match
+              ( Ptree.Record.find_opt key param_fields,
+                Ptree.Record.find_opt key grad_fields )
+            with
+            | Some p, Some g -> Ptree.Record.add key (apply_mask mask p g) acc
+            | _ -> failwith ("apply_mask: missing field " ^ key))
+          Ptree.Record.empty mask_fields
       in
-      let sorted_p =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) param_fields
-      in
-      let sorted_g =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) grad_fields
-      in
-      Record
-        (List.map2
-           (fun (k1, m) (k2, p) ->
-             let k3, g = List.find (fun (k, _) -> k = k1) sorted_g in
-             assert (k1 = k2 && k2 = k3);
-             (k1, apply_mask m p g))
-           sorted_m sorted_p)
+      Ptree.Record result_map
   | _ -> failwith "apply_mask: structure mismatch"
 
 let masked ~mask ~inner =
@@ -734,10 +729,14 @@ let rec apply_updates_inplace : type a b.
   | List ps, List us -> List.iter2 apply_updates_inplace ps us
   | Record ps, Record us ->
       let sorted_ps =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) ps
+        List.sort
+          (fun (k1, _) (k2, _) -> String.compare k1 k2)
+          (Ptree.Record.bindings ps)
       in
       let sorted_us =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) us
+        List.sort
+          (fun (k1, _) (k2, _) -> String.compare k1 k2)
+          (Ptree.Record.bindings us)
       in
       List.iter2
         (fun (k1, p) (k2, u) ->

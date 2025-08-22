@@ -1,5 +1,5 @@
-open Kaun.Ptree
 module A = Alcotest
+module Ptree = Kaun.Ptree
 
 let test_save_and_load () =
   let device = Rune.c in
@@ -8,7 +8,9 @@ let test_save_and_load () =
   (* Create some test parameters *)
   let w = Rune.ones device dtype [| 3; 3 |] in
   let b = Rune.zeros device dtype [| 3 |] in
-  let params = Record [ ("weight", Tensor w); ("bias", Tensor b) ] in
+  let params =
+    Ptree.record_of [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ]
+  in
 
   (* Save checkpoint to specific file *)
   let path = "/tmp/test_checkpoint.safetensors" in
@@ -20,21 +22,25 @@ let test_save_and_load () =
   let loaded_params = C.load_params ~path ~device ~dtype in
 
   (* Check parameters *)
-  match loaded_params with
-  | Record fields -> (
-      (match List.assoc_opt "weight" fields with
-      | Some (Tensor loaded_w) ->
+  (match Ptree.find_in_record "weight" loaded_params with
+  | Some weight_tree -> (
+      match Ptree.get_tensor weight_tree with
+      | Some loaded_w ->
           let is_equal = Rune.all (Rune.equal w loaded_w) in
           let is_equal_val = Rune.unsafe_to_array is_equal in
           A.check A.bool "weights match" true (is_equal_val.(0) > 0)
-      | _ -> A.fail "weight not found or wrong type");
-      match List.assoc_opt "bias" fields with
-      | Some (Tensor loaded_b) ->
+      | None -> A.fail "weight is not a tensor")
+  | None -> A.fail "weight not found");
+
+  match Ptree.find_in_record "bias" loaded_params with
+  | Some bias_tree -> (
+      match Ptree.get_tensor bias_tree with
+      | Some loaded_b ->
           let is_equal = Rune.all (Rune.equal b loaded_b) in
           let is_equal_val = Rune.unsafe_to_array is_equal in
           A.check A.bool "bias matches" true (is_equal_val.(0) > 0)
-      | _ -> A.fail "bias not found or wrong type")
-  | _ -> A.fail "loaded params has wrong structure"
+      | None -> A.fail "bias is not a tensor")
+  | None -> A.fail "bias not found"
 
 let test_checkpoint_manager () =
   let device = Rune.c in
@@ -43,7 +49,7 @@ let test_checkpoint_manager () =
   (* Create test parameters *)
   let create_params value =
     let w = Rune.full device dtype [| 2; 2 |] value in
-    Record [ ("weight", Tensor w) ]
+    Ptree.record_of [ ("weight", Ptree.tensor w) ]
   in
 
   (* Create manager *)
@@ -73,14 +79,14 @@ let test_checkpoint_manager () =
   A.check A.int "restored step" 50 info.step;
 
   (* Check restored value *)
-  match restored_params with
-  | Record fields -> (
-      match List.assoc_opt "weight" fields with
-      | Some (Tensor w) ->
+  match Ptree.find_in_record "weight" restored_params with
+  | Some weight_tree -> (
+      match Ptree.get_tensor weight_tree with
+      | Some w ->
           let value = Rune.unsafe_get [ 0; 0 ] w in
           A.check (A.float 0.01) "restored value" 5.0 value
-      | _ -> A.fail "weight not found")
-  | _ -> A.fail "wrong params structure"
+      | None -> A.fail "weight is not a tensor")
+  | None -> A.fail "weight not found"
 
 let () =
   A.run "Kaun.Checkpoint"

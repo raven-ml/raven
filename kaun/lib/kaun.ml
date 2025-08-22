@@ -7,7 +7,7 @@ type 'dev device = 'dev Rune.device
 type ('layout, 'dev) params = ('layout, 'dev) Ptree.t =
   | Tensor of ('layout, 'dev) tensor
   | List of ('layout, 'dev) params list
-  | Record of (string * ('layout, 'dev) params) list
+  | Record of ('layout, 'dev) params Ptree.Record.t
 
 (* Model type - stores the structure and initialization logic *)
 type model =
@@ -69,7 +69,9 @@ let rec flatten_ptree : type layout dev.
   | Record r ->
       (* CRITICAL FIX: Sort record fields to ensure consistent ordering *)
       let sorted_r =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) r
+        List.sort
+          (fun (k1, _) (k2, _) -> String.compare k1 k2)
+          (Ptree.Record.bindings r)
       in
       let pairs = List.map (fun (k, pt) -> (k, flatten_ptree pt)) sorted_r in
       let tensors =
@@ -86,7 +88,7 @@ let rec flatten_ptree : type layout dev.
               let pt' = rebuild_pt tensors_for_pt in
               aux tensors_rest ((k, pt') :: acc) pairs'
         in
-        Record (aux tensors [] pairs)
+        Record (Ptree.Record.of_list (aux tensors [] pairs))
       in
       (tensors, rebuild)
 
@@ -471,7 +473,7 @@ module Layer = struct
                     (Rune.scalar dev dtype limit)
                 in
                 let b = Rune.zeros dev dtype [| out_channels |] in
-                Record [ ("weight", Tensor w); ("bias", Tensor b) ]));
+                Ptree.record_of [ ("weight", Tensor w); ("bias", Tensor b) ]));
         apply =
           (fun (type l d)
             (params : (l, d) params)
@@ -483,12 +485,12 @@ module Layer = struct
             | Record fields ->
                 (* Handle fields in any order *)
                 let w =
-                  match List.assoc_opt "weight" fields with
+                  match Ptree.Record.find_opt "weight" fields with
                   | Some (Tensor t) -> t
                   | _ -> failwith "conv2d: missing or invalid weight parameter"
                 in
                 let b =
-                  match List.assoc_opt "bias" fields with
+                  match Ptree.Record.find_opt "bias" fields with
                   | Some (Tensor t) -> t
                   | _ -> failwith "conv2d: missing or invalid bias parameter"
                 in
@@ -540,7 +542,7 @@ module Layer = struct
                   Initializer.apply bias_init (Rune.Rng.to_int rng2)
                     [| out_features |] dev dtype
                 in
-                Record [ ("weight", Tensor w); ("bias", Tensor b) ]));
+                Ptree.record_of [ ("weight", Tensor w); ("bias", Tensor b) ]));
         apply =
           (fun (type l d)
             (params : (l, d) params)
@@ -554,13 +556,13 @@ module Layer = struct
                 match params with
                 | Record fields ->
                     let w =
-                      match List.assoc_opt "weight" fields with
+                      match Ptree.Record.find_opt "weight" fields with
                       | Some (Tensor t) -> t
                       | _ ->
                           failwith "linear: missing or invalid weight parameter"
                     in
                     let b =
-                      match List.assoc_opt "bias" fields with
+                      match Ptree.Record.find_opt "bias" fields with
                       | Some (Tensor t) -> t
                       | _ ->
                           failwith "linear: missing or invalid bias parameter"
@@ -611,20 +613,21 @@ module Layer = struct
                 let scale = Rune.ones dev dtype [| num_features |] in
                 let bias = Rune.zeros dev dtype [| num_features |] in
                 (* We don't track running stats in this simple implementation *)
-                Record [ ("scale", Tensor scale); ("bias", Tensor bias) ]));
+                Ptree.record_of
+                  [ ("scale", Tensor scale); ("bias", Tensor bias) ]));
         apply =
           (fun params ~training:_ ?rngs:_ x ->
             match params with
             | Record fields ->
                 (* Handle fields in any order *)
                 let scale =
-                  match List.assoc_opt "scale" fields with
+                  match Ptree.Record.find_opt "scale" fields with
                   | Some (Tensor t) -> t
                   | _ ->
                       failwith "batch_norm: missing or invalid scale parameter"
                 in
                 let bias =
-                  match List.assoc_opt "bias" fields with
+                  match Ptree.Record.find_opt "bias" fields with
                   | Some (Tensor t) -> t
                   | _ ->
                       failwith "batch_norm: missing or invalid bias parameter"
@@ -835,7 +838,7 @@ module Layer = struct
               let dtype = Rune.dtype x in
               let gamma = Rune.ones dev dtype [| dim |] in
               let beta = Rune.zeros dev dtype [| dim |] in
-              Record [ ("gamma", Tensor gamma); ("beta", Tensor beta) ]
+              Ptree.record_of [ ("gamma", Tensor gamma); ("beta", Tensor beta) ]
             else List []);
         apply =
           (fun params ~training:_ ?rngs:_ x ->
@@ -849,12 +852,12 @@ module Layer = struct
               match params with
               | Record fields ->
                   let gamma =
-                    match List.assoc_opt "gamma" fields with
+                    match Ptree.Record.find_opt "gamma" fields with
                     | Some (Tensor t) -> t
                     | _ -> failwith "layer_norm: missing gamma"
                   in
                   let beta =
-                    match List.assoc_opt "beta" fields with
+                    match Ptree.Record.find_opt "beta" fields with
                     | Some (Tensor t) -> t
                     | _ -> failwith "layer_norm: missing beta"
                   in

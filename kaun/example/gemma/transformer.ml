@@ -1,4 +1,5 @@
 open Kaun
+open Ptree
 
 (* Feed-forward network with gated activation *)
 let feed_forward_network ~embed_dim ~hidden_dim () =
@@ -36,7 +37,7 @@ let feed_forward_network ~embed_dim ~hidden_dim () =
               dev dtype
           in
 
-          Record
+          Ptree.record_of
             [
               ("gate_proj", Tensor gate_proj);
               ("up_proj", Tensor up_proj);
@@ -47,9 +48,13 @@ let feed_forward_network ~embed_dim ~hidden_dim () =
           match params with
           | Record fields ->
               let get_tensor name =
-                match List.assoc name fields with
-                | Tensor t -> t
-                | _ -> failwith (Printf.sprintf "Expected tensor for %s" name)
+                match Ptree.Record.find_opt name fields with
+                | Some v -> (
+                    match v with
+                    | Tensor t -> t
+                    | _ ->
+                        failwith (Printf.sprintf "Expected tensor for %s" name))
+                | None -> failwith (Printf.sprintf "Missing field %s" name)
               in
 
               let gate_proj = get_tensor "gate_proj" in
@@ -183,7 +188,7 @@ let transformer_block ~config ~layer_idx () =
             else List []
           in
 
-          Record
+          record_of
             [
               ("pre_attn_norm", pre_attn_norm_params);
               ("attention", attention_params);
@@ -198,7 +203,11 @@ let transformer_block ~config ~layer_idx () =
           | Record fields ->
               (* Helper to apply a layer *)
               let apply_layer name model x =
-                let params = List.assoc name fields in
+                let params =
+                  match Ptree.Record.find_opt name fields with
+                  | Some p -> p
+                  | None -> failwith (Printf.sprintf "Missing layer %s" name)
+                in
                 apply model params ~training ?rngs x
               in
 
@@ -330,7 +339,7 @@ let create_gemma_model config =
               dev dtype_float
           in
 
-          Record
+          record_of
             [
               ("embeddings", Tensor embeddings);
               ("blocks", List blocks_params);
@@ -343,8 +352,8 @@ let create_gemma_model config =
           | Record fields -> (
               (* Get embeddings *)
               let embeddings =
-                match List.assoc "embeddings" fields with
-                | Tensor t -> t
+                match Ptree.Record.find_opt "embeddings" fields with
+                | Some (Tensor t) -> t
                 | _ -> failwith "Expected tensor for embeddings"
               in
 
@@ -359,8 +368,8 @@ let create_gemma_model config =
 
               (* Apply transformer blocks *)
               let blocks_params =
-                match List.assoc "blocks" fields with
-                | List l -> l
+                match Ptree.Record.find_opt "blocks" fields with
+                | Some (List l) -> l
                 | _ -> failwith "Expected list for blocks"
               in
               let x =
@@ -377,13 +386,17 @@ let create_gemma_model config =
                 Layer.rms_norm ~dim:config.Config.embed_dim
                   ~eps:config.Config.rms_norm_eps ()
               in
-              let final_norm_params = List.assoc "final_norm" fields in
+              let final_norm_params =
+                match Ptree.Record.find_opt "final_norm" fields with
+                | Some p -> p
+                | None -> failwith "Missing final_norm field"
+              in
               let x = apply final_norm final_norm_params ~training ?rngs x in
 
               (* Language model head *)
               let lm_head =
-                match List.assoc "lm_head" fields with
-                | Tensor t -> t
+                match Ptree.Record.find_opt "lm_head" fields with
+                | Some (Tensor t) -> t
                 | _ -> failwith "Expected tensor for lm_head"
               in
               let logits = Rune.matmul x lm_head in

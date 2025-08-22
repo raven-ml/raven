@@ -1,5 +1,6 @@
 open Kaun
 open Kaun.Optimizer
+open Ptree
 
 (* Training configuration *)
 type train_config = {
@@ -66,7 +67,9 @@ let clip_gradients grads ~max_norm =
           Kaun.Ops.to_float (Rune.sum t_sq)
       | List l -> List.fold_left (fun acc p -> acc +. norm_sq p) 0.0 l
       | Record fields ->
-          List.fold_left (fun acc (_, p) -> acc +. norm_sq p) 0.0 fields
+          List.fold_left
+            (fun acc (_, p) -> acc +. norm_sq p)
+            0.0 (Record.bindings fields)
     in
     sqrt (norm_sq params)
   in
@@ -80,7 +83,12 @@ let clip_gradients grads ~max_norm =
           Tensor (Rune.mul t (Rune.scalar (Rune.device t) (Rune.dtype t) scale))
       | List l -> List (List.map scale_params l)
       | Record fields ->
-          Record (List.map (fun (k, v) -> (k, scale_params v)) fields)
+          let scaled_bindings =
+            List.map
+              (fun (k, v) -> (k, scale_params v))
+              (Record.bindings fields)
+          in
+          record_of scaled_bindings
     in
     scale_params grads
   else grads
@@ -130,7 +138,12 @@ let train_step model params optimizer opt_state batch_inputs batch_targets
               (Rune.mul t (Rune.scalar (Rune.device t) (Rune.dtype t) scale))
         | List l -> List (List.map (scale_params scale) l)
         | Record fields ->
-            Record (List.map (fun (k, v) -> (k, scale_params scale v)) fields)
+            let scaled_bindings =
+              List.map
+                (fun (k, v) -> (k, scale_params scale v))
+                (Record.bindings fields)
+            in
+            record_of scaled_bindings
       in
       scale_params accumulation_scale grads
     else grads
@@ -145,7 +158,12 @@ let train_step model params optimizer opt_state batch_inputs batch_targets
         Tensor (Rune.mul t (Rune.scalar (Rune.device t) (Rune.dtype t) scale))
     | List l -> List (List.map (scale_by_lr scale) l)
     | Record fields ->
-        Record (List.map (fun (k, v) -> (k, scale_by_lr scale v)) fields)
+        let scaled_bindings =
+          List.map
+            (fun (k, v) -> (k, scale_by_lr scale v))
+            (Record.bindings fields)
+        in
+        record_of scaled_bindings
   in
   let grads = scale_by_lr lr_scale grads in
 

@@ -10,157 +10,10 @@ let infer_format_from_path path =
   if Filename.check_suffix path ".safetensors" then Safetensors
   else default_format
 
-(* Helper to flatten parameter trees into named tensors *)
-let rec flatten_params : type layout dev.
-    prefix:string ->
-    (layout, dev) Ptree.t ->
-    (string * (float, layout, dev) t) list =
- fun ~prefix params ->
-  match params with
-  | Tensor t -> [ (prefix, t) ]
-  | List params_list ->
-      List.concat
-        (List.mapi
-           (fun i p ->
-             let new_prefix =
-               if prefix = "" then Printf.sprintf "%d" i
-               else Printf.sprintf "%s.%d" prefix i
-             in
-             flatten_params ~prefix:new_prefix p)
-           params_list)
-  | Record fields ->
-      List.concat
-        (List.map
-           (fun (k, v) ->
-             let new_prefix =
-               if prefix = "" then k else Printf.sprintf "%s.%s" prefix k
-             in
-             flatten_params ~prefix:new_prefix v)
-           fields)
-
-(* Encode parameter tree structure as metadata *)
-let rec params_structure : type layout dev. (layout, dev) Ptree.t -> string =
- fun params ->
-  match params with
-  | Tensor _ -> "tensor"
-  | List items ->
-      let item_structures = List.map params_structure items in
-      Printf.sprintf "list[%s]" (String.concat "," item_structures)
-  | Record fields ->
-      let field_structures =
-        List.map
-          (fun (k, v) -> Printf.sprintf "%s:%s" k (params_structure v))
-          fields
-      in
-      Printf.sprintf "record{%s}" (String.concat "," field_structures)
-
-(* Parse structure string back to guide unflattening *)
-let parse_structure (s : string) :
-    [ `Tensor | `List of string list | `Record of (string * string) list ] =
-  if s = "tensor" then `Tensor
-  else if String.starts_with ~prefix:"list[" s then
-    let content = String.sub s 5 (String.length s - 6) in
-    (* Remove "list[" and "]" *)
-    (* Simple parser for comma-separated items (doesn't handle nested commas
-       properly yet) *)
-    let items =
-      if content = "" then []
-      else
-        (* This is a simplified parser - would need proper nesting-aware
-           parsing *)
-        let rec split_items str depth acc current =
-          if str = "" then
-            if current = "" then List.rev acc else List.rev (current :: acc)
-          else
-            let c = str.[0] in
-            let rest = String.sub str 1 (String.length str - 1) in
-            match c with
-            | ',' when depth = 0 -> split_items rest 0 (current :: acc) ""
-            | '[' | '{' ->
-                split_items rest (depth + 1) acc (current ^ String.make 1 c)
-            | ']' | '}' ->
-                split_items rest (depth - 1) acc (current ^ String.make 1 c)
-            | _ -> split_items rest depth acc (current ^ String.make 1 c)
-        in
-        split_items content 0 [] ""
-    in
-    `List items
-  else if String.starts_with ~prefix:"record{" s then
-    let content = String.sub s 7 (String.length s - 8) in
-    (* Remove "record{" and "}" *)
-    (* Parse field:type pairs *)
-    let rec split_fields str depth acc current_key current_val in_value =
-      if str = "" then
-        if current_key = "" then List.rev acc
-        else List.rev ((current_key, current_val) :: acc)
-      else
-        let c = str.[0] in
-        let rest = String.sub str 1 (String.length str - 1) in
-        match c with
-        | ':' when depth = 0 && not in_value ->
-            split_fields rest 0 acc current_key "" true
-        | ',' when depth = 0 && in_value ->
-            split_fields rest 0 ((current_key, current_val) :: acc) "" "" false
-        | '[' | '{' ->
-            let ch = String.make 1 c in
-            if in_value then
-              split_fields rest (depth + 1) acc current_key (current_val ^ ch)
-                in_value
-            else
-              split_fields rest (depth + 1) acc (current_key ^ ch) current_val
-                in_value
-        | ']' | '}' ->
-            let ch = String.make 1 c in
-            if in_value then
-              split_fields rest (depth - 1) acc current_key (current_val ^ ch)
-                in_value
-            else
-              split_fields rest (depth - 1) acc (current_key ^ ch) current_val
-                in_value
-        | _ ->
-            let ch = String.make 1 c in
-            if in_value then
-              split_fields rest depth acc current_key (current_val ^ ch)
-                in_value
-            else
-              split_fields rest depth acc (current_key ^ ch) current_val
-                in_value
-    in
-    let fields = split_fields content 0 [] "" "" false in
-    `Record fields
-  else failwith ("Unknown structure format: " ^ s)
-
-(* Rebuild parameter tree from flattened tensors using structure metadata *)
-let rec unflatten_with_structure : type layout dev.
-    (string * (float, layout, dev) t) list ->
-    string ->
-    string ->
-    (layout, dev) Ptree.t =
- fun flat_tensors structure prefix ->
-  match parse_structure structure with
-  | `Tensor -> (
-      match List.assoc_opt prefix flat_tensors with
-      | Some t -> Tensor t
-      | None -> failwith (Printf.sprintf "Missing tensor at key: %s" prefix))
-  | `List item_structures ->
-      List
-        (List.mapi
-           (fun i item_structure ->
-             let key =
-               if prefix = "" then Printf.sprintf "%d" i
-               else Printf.sprintf "%s.%d" prefix i
-             in
-             unflatten_with_structure flat_tensors item_structure key)
-           item_structures)
-  | `Record field_structures ->
-      Record
-        (List.map
-           (fun (name, field_structure) ->
-             let key =
-               if prefix = "" then name else Printf.sprintf "%s.%s" prefix name
-             in
-             (name, unflatten_with_structure flat_tensors field_structure key))
-           field_structures)
+(* Helper to get flattened tensors with names *)
+let get_named_tensors : type layout dev.
+    (layout, dev) Ptree.t -> (string * (float, layout, dev) t) list =
+ fun params -> Ptree.flatten_with_paths params
 
 (* Convert Rune tensor to safetensor view *)
 let tensor_to_safetensor_view : type layout dev.
@@ -243,16 +96,14 @@ module Checkpointer = struct
   let create ?(format = default_format) () = { format }
 
   let save_safetensors ~path ~params ~metadata =
-    let flat_tensors = flatten_params ~prefix:"" params in
+    let named_tensors = get_named_tensors params in
     let tensor_views =
       List.map
         (fun (name, tensor) -> (name, tensor_to_safetensor_view tensor))
-        flat_tensors
+        named_tensors
     in
-    (* Add structure metadata *)
-    let structure = params_structure params in
-    let metadata_with_structure = ("__structure__", structure) :: metadata in
-    match Safetensors.serialize tensor_views (Some metadata_with_structure) with
+    (* Path-based keys are self-describing, no need for structure metadata *)
+    match Safetensors.serialize tensor_views (Some metadata) with
     | Ok data ->
         let oc = open_out_bin path in
         output_string oc data;
@@ -271,22 +122,15 @@ module Checkpointer = struct
 
     match Safetensors.deserialize buffer_str with
     | Ok st ->
-        let flat_tensors =
+        (* Get tensors and reconstruct tree from paths *)
+        let tensor_list = Safetensors.tensors st in
+        let path_tensor_pairs =
           List.map
             (fun (name, view) ->
               (name, safetensor_view_to_tensor view ~device ~dtype))
-            (Safetensors.tensors st)
+            tensor_list
         in
-        (* Try to get structure from metadata *)
-        let structure =
-          match st.metadata.metadata_kv with
-          | Some kv_list -> (
-              match List.assoc_opt "__structure__" kv_list with
-              | Some s -> s
-              | None -> failwith "No structure metadata found in checkpoint")
-          | None -> failwith "No metadata found in checkpoint"
-        in
-        unflatten_with_structure flat_tensors structure ""
+        Ptree.unflatten_from_paths path_tensor_pairs
     | Error e ->
         failwith
           ("Failed to deserialize safetensors: " ^ Safetensors.string_of_error e)
