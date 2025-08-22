@@ -1,4 +1,4 @@
-open Saga
+open Saga_tokenizers
 
 let test_bpe_basic () =
   (* Create a simple vocabulary and merges *)

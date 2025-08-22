@@ -1,4 +1,7 @@
-(** Fast tokenization for ML in OCaml *)
+(** Tokenizers library - text tokenization for ML *)
+
+module Unicode = Unicode
+(** Unicode text processing utilities *)
 
 (** {2 Core Types} *)
 
@@ -161,93 +164,10 @@ module Vocab : sig
   val eos_idx : t -> int
 end
 
-(** {2 Unicode Processing} *)
+(** {2 Tokenizers} *)
 
 module Bpe = Bpe
+(** Byte-Pair Encoding tokenizer *)
+
 module Wordpiece = Wordpiece
-module Ngram = Ngram
-
-module Unicode : sig
-  (** Unicode text processing utilities *)
-
-  type normalization =
-    | NFC  (** Canonical Decomposition, followed by Canonical Composition *)
-    | NFD  (** Canonical Decomposition *)
-    | NFKC
-        (** Compatibility Decomposition, followed by Canonical Composition *)
-    | NFKD  (** Compatibility Decomposition *)
-
-  type char_category =
-    | Letter
-    | Number
-    | Punctuation
-    | Symbol
-    | Whitespace
-    | Control
-    | Other
-
-  (** {2 Character Classification} *)
-
-  val categorize_char : Uchar.t -> char_category
-  (** [categorize_char u] returns Unicode category of character *)
-
-  val is_whitespace : Uchar.t -> bool
-  (** [is_whitespace u] checks if character is whitespace *)
-
-  val is_punctuation : Uchar.t -> bool
-  (** [is_punctuation u] checks if character is punctuation *)
-
-  val is_word_char : Uchar.t -> bool
-  (** [is_word_char u] checks if character is letter or number *)
-
-  val is_cjk : Uchar.t -> bool
-  (** [is_cjk u] checks if character is Chinese/Japanese/Korean *)
-
-  (** {2 Text Normalization} *)
-
-  val normalize : normalization -> string -> string
-  (** [normalize form text] applies Unicode normalization.
-
-      @raise Invalid_argument on malformed Unicode *)
-
-  val case_fold : string -> string
-  (** [case_fold text] performs Unicode case folding .
-
-      @raise Invalid_argument on malformed Unicode *)
-
-  val strip_accents : string -> string
-  (** [strip_accents text] removes diacritical marks.
-
-      @raise Invalid_argument on malformed Unicode *)
-
-  val clean_text :
-    ?remove_control:bool -> ?normalize_whitespace:bool -> string -> string
-  (** [clean_text ?remove_control ?normalize_whitespace text] cleans text.
-
-      - [remove_control]: Remove control characters
-      - [normalize_whitespace]: Collapse whitespace
-
-      @raise Invalid_argument on malformed Unicode *)
-
-  (** {2 Text Processing} *)
-
-  val split_words : string -> string list
-  (** [split_words text] splits on Unicode word boundaries.
-
-      Handles CJK text where each character is typically a word.
-
-      @raise Invalid_argument on malformed Unicode *)
-
-  val grapheme_count : string -> int
-  (** [grapheme_count text] counts user-perceived characters.
-
-      @raise Invalid_argument on malformed Unicode *)
-
-  val is_valid_utf8 : string -> bool
-  (** [is_valid_utf8 text] validates UTF-8 encoding *)
-
-  val remove_emoji : string -> string
-  (** [remove_emoji text] removes emoji and symbols.
-
-      @raise Invalid_argument on malformed Unicode *)
-end
+(** WordPiece tokenizer *)

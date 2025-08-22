@@ -1,7 +1,7 @@
 (* Error handling tests for saga *)
 
 open Alcotest
-open Saga
+open Saga_tokenizers
 
 (* Helper to check error messages *)
 let _check_error_msg expected_pattern f =

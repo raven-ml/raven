@@ -1,7 +1,7 @@
 (* Vocabulary tests for saga *)
 
 open Alcotest
-open Saga
+open Saga_tokenizers
 
 (* Basic Vocabulary Tests *)
 

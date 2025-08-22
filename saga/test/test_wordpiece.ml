@@ -1,4 +1,4 @@
-open Saga
+open Saga_tokenizers
 
 let test_wordpiece_basic () =
   (* Create a simple vocabulary *)

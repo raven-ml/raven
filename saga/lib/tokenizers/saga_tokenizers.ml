@@ -1,3 +1,9 @@
+(** Tokenizers library implementation *)
+
+module Bpe = Bpe
+module Wordpiece = Wordpiece
+module Unicode = Unicode
+
 type vocab = {
   token_to_idx : (string, int) Hashtbl.t;
   idx_to_token : (int, string) Hashtbl.t;
@@ -356,8 +362,3 @@ module Tokenizer = struct
   let with_normalizer f t = { t with normalizer = Some f }
   let with_pre_tokenizer f t = { t with pre_tokenizer = Some f }
 end
-
-module Unicode = Unicode
-module Bpe = Bpe
-module Wordpiece = Wordpiece
-module Ngram = Ngram

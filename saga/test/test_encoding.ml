@@ -1,7 +1,7 @@
 (* Encoding and batch processing tests for saga *)
 
 open Alcotest
-open Saga
+open Saga_tokenizers
 
 (* Helper to check tensor shape *)
 let check_shape msg expected tensor =

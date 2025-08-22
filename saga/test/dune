@@ -9,4 +9,4 @@
   test_wordpiece
   test_ngram)
  (package saga)
- (libraries saga nx alcotest unix))
+ (libraries saga saga.tokenizers saga.models nx alcotest unix))

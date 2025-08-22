@@ -1,0 +1,4 @@
+(library
+ (name saga)
+ (public_name saga)
+ (libraries saga.tokenizers saga.models nx nx_core re uutf uucp yojson str))
