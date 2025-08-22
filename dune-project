@@ -142,6 +142,7 @@
    (>= 5.2.0))
   dune
   logs
+  yojson
   (rune
    (= :version))
   (nx-datasets

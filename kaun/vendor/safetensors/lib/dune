@@ -1,0 +1,4 @@
+(library
+ (name safetensors)
+ (public_name kaun.safetensors)
+ (libraries yojson))

@@ -14,6 +14,7 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.19"}
   "logs"
+  "yojson"
   "rune" {= version}
   "nx-datasets" {= version}
   "alcotest" {with-test}
