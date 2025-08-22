@@ -163,6 +163,9 @@ end
 
 (** {2 Unicode Processing} *)
 
+module Bpe = Bpe
+module Wordpiece = Wordpiece
+
 module Unicode : sig
   (** Unicode text processing utilities *)
 

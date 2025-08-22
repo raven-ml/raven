@@ -302,13 +302,35 @@ module Tokenizer = struct
       pre_tokenizer = None;
     }
 
-  let bpe ~vocab:_ ~merges:_ =
-    Nx_core.Error.failed ~op:"Tokenizer.bpe"
-      ~what:"BPE tokenizer not implemented yet" ()
+  let bpe ~vocab ~merges =
+    let bpe_model = Bpe.from_files ~vocab_file:vocab ~merges_file:merges in
+    {
+      tokenize =
+        (fun text ->
+          Bpe.tokenize bpe_model text |> List.map (fun t -> t.Bpe.value));
+      normalizer = None;
+      pre_tokenizer = None;
+    }
 
-  let wordpiece ~vocab:_ ~unk_token:_ =
-    Nx_core.Error.failed ~op:"Tokenizer.wordpiece"
-      ~what:"WordPiece tokenizer not implemented yet" ()
+  let wordpiece ~vocab ~unk_token =
+    let wp_model =
+      let v = Wordpiece.read_file ~vocab_file:vocab in
+      Wordpiece.create
+        {
+          vocab = v;
+          unk_token;
+          continuing_subword_prefix = "##";
+          max_input_chars_per_word = 100;
+        }
+    in
+    {
+      tokenize =
+        (fun text ->
+          Wordpiece.tokenize wp_model text
+          |> List.map (fun t -> t.Wordpiece.value));
+      normalizer = None;
+      pre_tokenizer = None;
+    }
 
   let run t text =
     let text = match t.normalizer with Some f -> f text | None -> text in
@@ -336,3 +358,5 @@ module Tokenizer = struct
 end
 
 module Unicode = Unicode
+module Bpe = Bpe
+module Wordpiece = Wordpiece
