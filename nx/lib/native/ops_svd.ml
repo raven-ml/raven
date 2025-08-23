@@ -156,6 +156,10 @@ end
 (* Bidiagonalize for real *)
 let bidiagonalize_real pool a u v diag superdiag m n =
   let minmn = min m n in
+  (* Debug: check matrix dimensions *)
+  let a_size = Array1.dim a in
+  if a_size < m * n then
+    failwith (Printf.sprintf "bidiagonalize_real: matrix size mismatch, expected %d elements (m=%d, n=%d), got %d" (m*n) m n a_size);
   let init_loop size mat =
     if size > 100 then
       Parallel.parallel_for pool 0 (size - 1) (fun start_i end_i ->
@@ -255,8 +259,15 @@ let bidiagonalize_real pool a u v diag superdiag m n =
           done
         in
         if n > 100 then Parallel.parallel_for pool 0 (n - 1) v_loop
-        else v_loop 0 n);
-      superdiag.(p) <- (if p < minmn - 1 then a.{(p * n) + p + 1} else 0.0))
+        else v_loop 0 n;
+        superdiag.(p) <- 
+          if p < minmn - 1 then 
+            let idx = (p * n) + p + 1 in
+            if idx >= 0 && idx < a_size then
+              Bigarray.Array1.unsafe_get a idx
+            else 0.0
+          else 0.0)
+      else superdiag.(p) <- 0.0)
   done
 
 (* Bidiagonalize for complex *)
@@ -403,9 +414,10 @@ let bidiagonalize_complex pool a u v diag superdiag m n =
           done
         in
         if n > 100 then Parallel.parallel_for pool 0 (n - 1) v_loop
-        else v_loop 0 n);
-      superdiag.(p) <-
-        (if p < minmn - 1 then Complex_ops.norm a.{(p * n) + p + 1} else 0.0);
+        else v_loop 0 n;
+        superdiag.(p) <-
+          if p < minmn - 1 then Complex_ops.norm a.{(p * n) + p + 1} else 0.0)
+      else superdiag.(p) <- 0.0;
       a.{(p * n) + p + 1} <- { re = superdiag.(p); im = 0.0 })
   done
 
@@ -688,7 +700,8 @@ let kernel_svd (type a b) pool (input : (a, b) t) (u : (a, b) t)
   let input_col_stride = input_strides.(ndim - 1) in
   let u_row_stride = u_strides.(ndim - 2) in
   let u_col_stride = u_strides.(ndim - 1) in
-  let s_stride = s_strides.(ndim - 1) in
+  let s_ndim = Array.length (get_shape s.view) in
+  let s_stride = if s_ndim > 0 then s_strides.(s_ndim - 1) else 1 in
   let vt_row_stride = vt_strides.(ndim - 2) in
   let vt_col_stride = vt_strides.(ndim - 1) in
   let u_cols = if full_matrices then m else minmn in
@@ -702,43 +715,88 @@ let kernel_svd (type a b) pool (input : (a, b) t) (u : (a, b) t)
     let off_u = u_offset + batch_offset b (get_shape u.view) u_strides in
     let off_s = s_offset + batch_offset b (get_shape s.view) s_strides in
     let off_vt = vt_offset + batch_offset b (get_shape vt.view) vt_strides in
-    let packed_a = Array1.create kind_a c_layout (m * n) in
-    pack pool packed_a input_buf off_input m n input_row_stride input_col_stride;
-    let packed_u = Array1.create kind_u c_layout (m * m) in
-    let packed_v = Array1.create kind_vt c_layout (n * n) in
-    let packed_s = Array1.create kind_s c_layout minmn in
-    let () =
-      match dtype input with
-      | Dtype.Float32 ->
-          svd_real pool packed_a packed_u packed_s packed_v m n full_matrices
-      | Dtype.Float64 ->
-          svd_real pool packed_a packed_u packed_s packed_v m n full_matrices
-      | Dtype.Complex32 ->
-          svd_complex pool packed_a packed_u packed_s packed_v m n full_matrices
-      | Dtype.Complex64 ->
-          svd_complex pool packed_a packed_u packed_s packed_v m n full_matrices
-      | _ -> Error.failed ~op:"svd" ~what:"unsupported dtype" ()
-    in
-    unpack pool u_buf off_u packed_u m u_cols u_row_stride u_col_stride;
-    for i = 0 to minmn - 1 do
-      s_buf.{off_s + (i * s_stride)} <- packed_s.{i}
-    done;
-    (* For vt, we need to transpose v *)
-    if vt_rows > 100 then
-      Parallel.parallel_for pool 0 (vt_rows - 1) (fun start_ii end_ii ->
-          for ii = start_ii to end_ii - 1 do
-            for jj = 0 to n - 1 do
-              vt_buf.{off_vt + (ii * vt_row_stride) + (jj * vt_col_stride)} <-
-                packed_v.{(jj * n) + ii}
-            done
-          done)
-    else
+    
+    (* Handle m < n case by transposing *)
+    if m < n then
+      (* Transpose the matrix and swap U and V *)
+      let packed_at = Array1.create kind_a c_layout (n * m) in
+      (* Pack transposed: A^T *)
+      for i = 0 to m - 1 do
+        for j = 0 to n - 1 do
+          let src_idx = off_input + i * input_row_stride + j * input_col_stride in
+          let dst_idx = j * m + i in
+          packed_at.{dst_idx} <- input_buf.{src_idx}
+        done
+      done;
+      let packed_u_t = Array1.create kind_u c_layout (n * n) in
+      let packed_vt_t = Array1.create kind_vt c_layout (m * m) in
+      let packed_s = Array1.create kind_s c_layout minmn in
+      let () =
+        match dtype input with
+        | Dtype.Float32 ->
+            svd_real pool packed_at packed_u_t packed_s packed_vt_t n m full_matrices
+        | Dtype.Float64 ->
+            svd_real pool packed_at packed_u_t packed_s packed_vt_t n m full_matrices
+        | Dtype.Complex32 ->
+            svd_complex pool packed_at packed_u_t packed_s packed_vt_t n m full_matrices
+        | Dtype.Complex64 ->
+            svd_complex pool packed_at packed_u_t packed_s packed_vt_t n m full_matrices
+        | _ -> Error.failed ~op:"svd" ~what:"unsupported dtype" ()
+      in
+      (* Copy results, swapping U and V^T *)
+      (* packed_vt_t (m×m) contains V' which becomes U for original matrix *)
+      unpack pool u_buf off_u packed_vt_t m u_cols u_row_stride u_col_stride;
+      for i = 0 to minmn - 1 do
+        let off = off_s + i * s_stride in
+        s_buf.{off} <- packed_s.{i}
+      done;
+      (* packed_u_t (n×n) contains U' which needs to be transposed to become V^T *)
+      (* We need to transpose packed_u_t when copying to vt_buf *)
       for ii = 0 to vt_rows - 1 do
         for jj = 0 to n - 1 do
           vt_buf.{off_vt + (ii * vt_row_stride) + (jj * vt_col_stride)} <-
-            packed_v.{(jj * n) + ii}
+            packed_u_t.{(jj * n) + ii}
         done
       done
+    else
+      (* Original case for m >= n *)
+      let packed_a = Array1.create kind_a c_layout (m * n) in
+      pack pool packed_a input_buf off_input m n input_row_stride input_col_stride;
+      let packed_u = Array1.create kind_u c_layout (m * m) in
+      let packed_v = Array1.create kind_vt c_layout (n * n) in
+      let packed_s = Array1.create kind_s c_layout minmn in
+      let () =
+        match dtype input with
+        | Dtype.Float32 ->
+            svd_real pool packed_a packed_u packed_s packed_v m n full_matrices
+        | Dtype.Float64 ->
+            svd_real pool packed_a packed_u packed_s packed_v m n full_matrices
+        | Dtype.Complex32 ->
+            svd_complex pool packed_a packed_u packed_s packed_v m n full_matrices
+        | Dtype.Complex64 ->
+            svd_complex pool packed_a packed_u packed_s packed_v m n full_matrices
+        | _ -> Error.failed ~op:"svd" ~what:"unsupported dtype" ()
+      in
+      unpack pool u_buf off_u packed_u m u_cols u_row_stride u_col_stride;
+      for i = 0 to minmn - 1 do
+        s_buf.{off_s + (i * s_stride)} <- packed_s.{i}
+      done;
+      (* For vt, we need to transpose v *)
+      if vt_rows > 100 then
+        Parallel.parallel_for pool 0 (vt_rows - 1) (fun start_ii end_ii ->
+            for ii = start_ii to end_ii - 1 do
+              for jj = 0 to n - 1 do
+                vt_buf.{off_vt + (ii * vt_row_stride) + (jj * vt_col_stride)} <-
+                  packed_v.{(jj * n) + ii}
+              done
+            done)
+      else
+        for ii = 0 to vt_rows - 1 do
+          for jj = 0 to n - 1 do
+            vt_buf.{off_vt + (ii * vt_row_stride) + (jj * vt_col_stride)} <-
+              packed_v.{(jj * n) + ii}
+          done
+        done
   done
 
 (* Main svd function *)
@@ -751,6 +809,10 @@ let svd (type a b) (ctx : context) ~full_matrices (input : (a, b) t) =
   let m = shape.(ndim - 2) in
   let n = shape.(ndim - 1) in
   let minmn = min m n in
+  
+  (* Temporarily skip m < n case *)
+  if m < n then
+    Error.failed ~op:"svd" ~what:"m < n case not yet supported" ();
   let u_shape =
     Array.append batch_shape [| m; (if full_matrices then m else minmn) |]
   in

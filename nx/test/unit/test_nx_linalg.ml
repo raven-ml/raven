@@ -524,9 +524,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx.float32 [| 2; 3 |] [| 7.; 8.; 9.; 10.; 11.; 12. |]
     in
     let res = Nx.vecdot a b in
-    check_t "vecdot default axis" [| 2 |] [| 50.; 149. |] res;
+    check_t "vecdot default axis" [| 2 |] [| 50.; 167. |] res;
     let res_axis0 = Nx.vecdot ~axis:0 a b in
-    check_t "vecdot axis 0" [| 3 |] [| 41.; 58.; 75. |] res_axis0
+    check_t "vecdot axis 0" [| 3 |] [| 47.; 71.; 99. |] res_axis0
 
   let test_inner ctx () =
     let a = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in

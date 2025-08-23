@@ -935,9 +935,7 @@ let kernel_triangular_solve_single (type a b) ~upper ~transpose ~unit_diag
         in
         (* Check for near-zero diagonal *)
         if (not unit_diag) && abs_float (to_float dtype a_ii) < tol then
-          failwith
-            (Printf.sprintf "triangular_solve: diagonal element %d is near zero"
-               i);
+          invalid_arg "solve: matrix is singular";
         let x_i = Dtype.div dtype !sum a_ii in
         if batch_size = 1 then set_2d output i col x_i
         else set_batched_2d output output_shape batch_b i col x_i
@@ -968,9 +966,7 @@ let kernel_triangular_solve_single (type a b) ~upper ~transpose ~unit_diag
         in
         (* Check for near-zero diagonal *)
         if (not unit_diag) && abs_float (to_float dtype a_ii) < tol then
-          failwith
-            (Printf.sprintf "triangular_solve: diagonal element %d is near zero"
-               i);
+          invalid_arg "solve: matrix is singular";
         let x_i = Dtype.div dtype !sum a_ii in
         if batch_size = 1 then set_2d output i col x_i
         else set_batched_2d output output_shape batch_b i col x_i
@@ -1001,9 +997,7 @@ let kernel_triangular_solve_single (type a b) ~upper ~transpose ~unit_diag
         in
         (* Check for near-zero diagonal *)
         if (not unit_diag) && abs_float (to_float dtype a_ii) < tol then
-          failwith
-            (Printf.sprintf "triangular_solve: diagonal element %d is near zero"
-               i);
+          invalid_arg "solve: matrix is singular";
         let x_i = Dtype.div dtype !sum a_ii in
         if batch_size = 1 then set_2d output i col x_i
         else set_batched_2d output output_shape batch_b i col x_i
@@ -1034,9 +1028,7 @@ let kernel_triangular_solve_single (type a b) ~upper ~transpose ~unit_diag
         in
         (* Check for near-zero diagonal *)
         if (not unit_diag) && abs_float (to_float dtype a_ii) < tol then
-          failwith
-            (Printf.sprintf "triangular_solve: diagonal element %d is near zero"
-               i);
+          invalid_arg "solve: matrix is singular";
         let x_i = Dtype.div dtype !sum a_ii in
         if batch_size = 1 then set_2d output i col x_i
         else set_batched_2d output output_shape batch_b i col x_i
