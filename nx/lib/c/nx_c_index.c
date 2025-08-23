@@ -23,6 +23,9 @@ static bool same_shape(const ndarray_t *a, const ndarray_t *b) {
   return shape_equal(a->shape, b->shape, a->ndim);
 }
 
+// Forward declaration - implementation after multi_iterator definition
+static void copy_ndarray(const ndarray_t *src, ndarray_t *dst, int kind);
+
 // Type definitions for element-wise in-place operations (for scatter modes)
 typedef void (*elem_op_fn)(void *, long, void *, long);
 
@@ -280,6 +283,68 @@ static void zero_ndarray(ndarray_t *nd, value v_tensor, int kind) {
   memset(ba->data, 0, total_bytes);
 }
 
+// Helper to copy data from one ndarray to another (assuming same shape)
+static void copy_ndarray(const ndarray_t *src, ndarray_t *dst, int kind) {
+  if (!src || !dst) return;
+  if (!same_shape(src, dst)) return;
+  
+  // Get element size based on kind
+  size_t elem_size = 1;
+  switch (kind) {
+    case CAML_BA_SINT8:
+    case CAML_BA_UINT8:
+    case NX_BA_BOOL:
+    case NX_BA_FP8_E4M3:
+    case NX_BA_FP8_E5M2:
+    case NX_BA_QINT8:
+    case NX_BA_QUINT8:
+      elem_size = 1;
+      break;
+    case CAML_BA_SINT16:
+    case CAML_BA_UINT16:
+    case CAML_BA_FLOAT16:
+    case NX_BA_BFLOAT16:
+    case NX_BA_COMPLEX16:
+      elem_size = 2;
+      break;
+    case CAML_BA_INT32:
+    case CAML_BA_FLOAT32:
+      elem_size = 4;
+      break;
+    case CAML_BA_INT64:
+    case CAML_BA_FLOAT64:
+      elem_size = 8;
+      break;
+    case CAML_BA_NATIVE_INT:
+    case CAML_BA_CAML_INT:
+      elem_size = sizeof(intnat);
+      break;
+    case CAML_BA_COMPLEX32:
+      elem_size = 8;  // 2 * float32
+      break;
+    case CAML_BA_COMPLEX64:
+      elem_size = 16;  // 2 * float64
+      break;
+    default:
+      return;  // Unsupported type
+  }
+  
+  // Use multi-iterator to copy elements
+  multi_iterator_t it;
+  multi_iterator_init(&it, src);
+  
+  do {
+    long src_off = compute_offset(src, it.coords);
+    long dst_off = compute_offset(dst, it.coords);
+    
+    memcpy(dst->data + (dst->offset + dst_off) * elem_size,
+           src->data + (src->offset + src_off) * elem_size,
+           elem_size);
+  } while (multi_iterator_next(&it));
+  
+  multi_iterator_destroy(&it);
+}
+
 // Generic gather implementation
 static const char *generic_gather(const ndarray_t *data,
                                   const ndarray_t *indices, ndarray_t *out,
@@ -340,7 +405,7 @@ static const char *generic_scatter(const ndarray_t *template,
                                    const ndarray_t *indices,
                                    const ndarray_t *updates, ndarray_t *out,
                                    value v_out, int axis, elem_op_fn op,
-                                   int unique, int kind) {
+                                   int unique, int kind, int mode) {
   const char *error_msg = NULL;
 
   // NULL checks
@@ -377,8 +442,15 @@ static const char *generic_scatter(const ndarray_t *template,
     return error_msg;
   }
 
-  // Zero the output
-  zero_ndarray(out, v_out, kind);
+  // For Set mode (0), copy template to output first
+  // For Add mode (1), zero the output
+  if (mode == 0) {
+    // Set mode - copy template data to output to preserve existing values
+    copy_ndarray(template, out, kind);
+  } else {
+    // Add mode - zero the output
+    zero_ndarray(out, v_out, kind);
+  }
 
   multi_iterator_t it;
   multi_iterator_init(&it, indices);
@@ -627,7 +699,7 @@ static void dispatch_scatter(value v_template, value v_indices, value v_updates,
   caml_enter_blocking_section();
   value actual_v_out = (v_out == Val_int(0)) ? v_template : v_out;
   const char *error = generic_scatter(&templ, &indices, &updates, &out,
-                                      actual_v_out, axis, op, unique, kind);
+                                      actual_v_out, axis, op, unique, kind, Int_val(v_mode));
   caml_leave_blocking_section();
 
   cleanup_ndarray(&indices);

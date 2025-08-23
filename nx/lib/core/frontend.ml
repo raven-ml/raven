@@ -2986,18 +2986,19 @@ module Make (B : Backend_intf.S) = struct
     if numel = 0 then zeros ctx dtype shape
     else
       (* Generate random int32 values using threefry *)
-      (* Note: Current threefry implementation only returns one value per input,
-         not two as originally expected *)
+      (* Threefry2x32 requires inputs with shape [..., 2] *)
       let num_values = numel in
-
-      (* Create counter tensors for threefry - offset by seed *)
-      let counts0 = arange ctx Dtype.int32 seed (seed + num_values) 1 in
-      let counts1 =
-        arange ctx Dtype.int32 (seed + num_values) (seed + (2 * num_values)) 1
-      in
+      
+      (* Create key and counter tensors for threefry *)
+      (* Each vector needs 2 int32 values, so we create arrays with shape [num_values, 2] *)
+      let key_vals = Array.init (num_values * 2) (fun i -> Int32.of_int (seed + i)) in
+      let key = create ctx Dtype.int32 [| num_values; 2 |] key_vals in
+      
+      let ctr_vals = Array.init (num_values * 2) (fun i -> Int32.of_int i) in
+      let counter = create ctx Dtype.int32 [| num_values; 2 |] ctr_vals in
 
       (* Generate random bits using threefry *)
-      let random_bits = B.op_threefry counts0 counts1 in
+      let random_bits = B.op_threefry key counter in
 
       (* Flatten and take only what we need *)
       let bits_flat = flatten random_bits in
@@ -4436,14 +4437,14 @@ module Make (B : Backend_intf.S) = struct
         (fun i axis ->
           let axis = if axis < 0 then ndim_x + axis else axis in
           if i = Array.length axes_arr - 1 then
-            (* Last axis: check if we're truncating *)
-            let inferred_size = (input_shape.(axis) - 1) * 2 in
+            (* Last axis: use specified size if provided, else infer *)
             match s with
-            | Some sizes when sizes.(i) < inferred_size ->
-                (* Truncating: use output size for normalization *)
+            | Some sizes -> 
+                (* Use the specified output size for normalization *)
                 sizes.(i)
-            | _ ->
-                (* Not truncating: use inferred size *)
+            | None ->
+                (* No size specified: use inferred size *)
+                let inferred_size = (input_shape.(axis) - 1) * 2 in
                 inferred_size
           else
             (* Other axes: use output size if specified, else input size *)

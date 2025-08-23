@@ -4,6 +4,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/threads.h>
+#include <complex.h>
 
 #include "nx_c_shared.h"
 #ifndef M_PI
@@ -67,17 +68,14 @@ static inline size_t bit_reverse(size_t x, int log2n) {
       PREC sum_re = (PREC)0.0;                                                 \
       PREC sum_im = (PREC)0.0;                                                 \
       PREC angle_step = sign * two_pi_n * (PREC)k;                             \
-      PREC cs = COS_FUNC(angle_step);                                          \
-      PREC sn = SIN_FUNC(angle_step);                                          \
-      PREC w_re = (PREC)1.0, w_im = (PREC)0.0;                                 \
       for (size_t j = 0; j < n; j++) {                                         \
+        PREC angle = angle_step * (PREC)j;                                     \
+        PREC w_re = COS_FUNC(angle);                                           \
+        PREC w_im = SIN_FUNC(angle);                                           \
         sum_re += temp_re[j] * w_re - temp_im[j] * w_im;                       \
         sum_im += temp_re[j] * w_im + temp_im[j] * w_re;                       \
-        PREC new_re = w_re * cs - w_im * sn;                                   \
-        PREC new_im = w_re * sn + w_im * cs;                                   \
-        w_re = new_re;                                                         \
-        w_im = new_im;                                                         \
       }                                                                        \
+      /* Normalization is handled by the frontend, not here */                 \
       data_re[offset + k * stride] = sum_re;                                   \
       data_im[offset + k * stride] = sum_im;                                   \
     }                                                                          \
@@ -143,6 +141,7 @@ static inline size_t bit_reverse(size_t x, int log2n) {
         }                                                                \
       }                                                                  \
     }                                                                    \
+    /* Normalization is handled by the frontend, not here */             \
   }
 
 // Macro for generating multi-dimensional FFT for complex types
@@ -189,16 +188,19 @@ static inline size_t bit_reverse(size_t x, int log2n) {
             offset += coord * strides[d];                                  \
           }                                                                \
         }                                                                  \
+        /* Extract complex data properly */                                \
+        PREC _Complex *complex_data = (PREC _Complex *)data->data;         \
         for (size_t i = 0; i < n; i++) {                                   \
-          long idx = offset + (long)i * axis_stride;                       \
-          temp_re[i] = ((PREC *)data->data)[2 * (data->offset + idx)];     \
-          temp_im[i] = ((PREC *)data->data)[2 * (data->offset + idx) + 1]; \
+          long idx = data->offset + offset + (long)i * axis_stride;        \
+          PREC _Complex val = complex_data[idx];                           \
+          temp_re[i] = __real__(val);                                      \
+          temp_im[i] = __imag__(val);                                      \
         }                                                                  \
         fft_1d_##SUFFIX(temp_re, temp_im, n, 1, 0, inverse);               \
+        /* Store complex data properly */                                  \
         for (size_t i = 0; i < n; i++) {                                   \
-          long idx = offset + (long)i * axis_stride;                       \
-          ((PREC *)data->data)[2 * (data->offset + idx)] = temp_re[i];     \
-          ((PREC *)data->data)[2 * (data->offset + idx) + 1] = temp_im[i]; \
+          long idx = data->offset + offset + (long)i * axis_stride;        \
+          complex_data[idx] = temp_re[i] + temp_im[i] * I;                 \
         }                                                                  \
       }                                                                    \
     }                                                                      \
@@ -344,9 +346,9 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
     if (n == 0) return;                                                        \
     size_t n_out = output->shape[rfft_axis];                                   \
     if (n_out != n / 2 + 1) {                                                  \
-      /* Shape check failed - output won't be valid */                        \
-      return;                                                                   \
-    }                                                                           \
+      /* Shape check failed - output won't be valid */                         \
+      return;                                                                  \
+    }                                                                          \
     size_t total_elements = total_elements_safe(input);                        \
     if (num_axes == 1) {                                                       \
       size_t num_ffts = total_elements / n;                                    \
@@ -374,8 +376,9 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
         for (size_t i = 0; i < n_out; i++) {                                   \
           long idx = output->offset + offset_out +                             \
                      (long)i * output->strides[rfft_axis];                     \
-          ((COMP_PREC *)output->data)[2 * idx] = temp_re[i];                   \
-          ((COMP_PREC *)output->data)[2 * idx + 1] = temp_im[i];               \
+          COMP_PREC _Complex *complex_out =                                    \
+              (COMP_PREC _Complex *)output->data;                              \
+          complex_out[idx] = temp_re[i] + temp_im[i] * I;                      \
         }                                                                      \
       }                                                                        \
       free(temp_re);                                                           \
@@ -386,7 +389,7 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
           (COMP_PREC *)calloc(2 * inter_size, sizeof(COMP_PREC));              \
       if (!inter_data) caml_failwith("rfft: allocation failed");               \
       long inter_strides[MAX_NDIM];                                            \
-      inter_strides[ndim - 1] = 2;                                             \
+      inter_strides[ndim - 1] = 2;  /* 2 COMP_PREC per complex number */       \
       for (int d = ndim - 2; d >= 0; d--) {                                    \
         inter_strides[d] = inter_strides[d + 1] * output->shape[d + 1];        \
       }                                                                        \
@@ -425,7 +428,8 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
       free(temp_im);                                                           \
       int inter_strides_int[MAX_NDIM];                                         \
       for (int i = 0; i < ndim; i++) {                                         \
-        inter_strides_int[i] = (int)inter_strides[i];                          \
+        /* Convert strides from COMP_PREC elements to complex elements */      \
+        inter_strides_int[i] = (int)(inter_strides[i] / 2);                    \
       }                                                                        \
       ndarray_t inter_array = {.data = inter_data,                             \
                                .shape = output->shape,                         \
@@ -442,10 +446,11 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
         for (int d = 0; d < ndim; d++) {                                       \
           out_off += it.coords[d] * output->strides[d];                        \
         }                                                                      \
-        ((COMP_PREC *)output->data)[2 * (output->offset + out_off)] =          \
-            inter_data[inter_off];                                             \
-        ((COMP_PREC *)output->data)[2 * (output->offset + out_off) + 1] =      \
-            inter_data[inter_off + 1];                                         \
+        COMP_PREC _Complex *complex_out = (COMP_PREC _Complex *)output->data;  \
+        /* inter_off is in complex units, need to convert to COMP_PREC units */\
+        long data_idx = inter_off * 2;                                         \
+        complex_out[output->offset + out_off] =                                \
+            inter_data[data_idx] + inter_data[data_idx + 1] * I;               \
       } while (nd_single_iterator_next(&it));                                  \
       nd_single_iterator_destroy(&it);                                         \
       free(inter_data);                                                        \
@@ -453,134 +458,140 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
   }
 
 // Macro for IRFFT multi (complex to real)
-#define IRFFT_MULTI_PREC(COMP_PREC, REAL_PREC, COMP_SUFFIX, REAL_SUFFIX)     \
-  static void irfft_multi_##COMP_SUFFIX(const ndarray_t *input,              \
-                                        ndarray_t *output, int *axes,        \
-                                        int num_axes, int last_size) {       \
-    if (num_axes == 0) return;                                               \
-    int ndim = input->ndim;                                                  \
-    int irfft_axis = axes[num_axes - 1];                                     \
-    size_t n_in = input->shape[irfft_axis];                                  \
-    size_t n_out = (size_t)last_size;                                        \
-    if (n_out == 0) return;                                                  \
-    size_t total_elements = total_elements_safe(input);                      \
-    if (num_axes == 1) {                                                     \
-      size_t num_ffts = total_elements / n_in;                               \
-      COMP_PREC *temp_re = (COMP_PREC *)malloc(n_out * sizeof(COMP_PREC));   \
-      COMP_PREC *temp_im = (COMP_PREC *)malloc(n_out * sizeof(COMP_PREC));   \
-      if (!temp_re || !temp_im) caml_failwith("irfft: allocation failed");   \
-      for (size_t fft_idx = 0; fft_idx < num_ffts; fft_idx++) {              \
-        long offset_in = 0, offset_out = 0;                                  \
-        long temp = (long)fft_idx;                                           \
-        for (int d = ndim - 1; d >= 0; d--) {                                \
-          if (d != irfft_axis) {                                             \
-            long coord = temp % input->shape[d];                             \
-            temp /= input->shape[d];                                         \
-            offset_in += coord * input->strides[d];                          \
-            offset_out += coord * output->strides[d];                        \
-          }                                                                  \
-        }                                                                    \
-        for (size_t i = 0; i < n_in; i++) {                                  \
-          long idx = input->offset + offset_in +                             \
-                     (long)i * input->strides[irfft_axis];                   \
-          temp_re[i] = ((COMP_PREC *)input->data)[2 * idx];                  \
-          temp_im[i] = ((COMP_PREC *)input->data)[2 * idx + 1];              \
-        }                                                                    \
-        for (size_t i = n_in; i < n_out; i++) {                              \
-          size_t mirror_idx = n_out - i;                                     \
-          if (mirror_idx > 0 && mirror_idx < n_in) {                         \
-            temp_re[i] = temp_re[mirror_idx];                                \
-            temp_im[i] = -temp_im[mirror_idx];                               \
-          } else {                                                           \
-            temp_re[i] = (COMP_PREC)0.0;                                     \
-            temp_im[i] = (COMP_PREC)0.0;                                     \
-          }                                                                  \
-        }                                                                    \
-        temp_im[0] = (COMP_PREC)0.0;                                         \
-        if ((n_out % 2) == 0 && n_in > n_out / 2)                            \
-          temp_im[n_out / 2] = (COMP_PREC)0.0;                               \
-        fft_1d_##COMP_SUFFIX(temp_re, temp_im, n_out, 1, 0, true);           \
-        for (size_t i = 0; i < n_out; i++) {                                 \
-          long idx = output->offset + offset_out +                           \
-                     (long)i * output->strides[irfft_axis];                  \
-          ((REAL_PREC *)output->data)[idx] = temp_re[i];                     \
-        }                                                                    \
-      }                                                                      \
-      free(temp_re);                                                         \
-      free(temp_im);                                                         \
-    } else {                                                                 \
-      size_t inter_size = total_elements;                                    \
-      COMP_PREC *inter_data =                                                \
-          (COMP_PREC *)malloc(2 * inter_size * sizeof(COMP_PREC));           \
-      if (!inter_data) caml_failwith("irfft: allocation failed");            \
-      nd_single_iterator_t copy_it;                                          \
-      nd_iterator_init(&copy_it, input);                                     \
-      do {                                                                   \
-        long in_off, inter_off;                                              \
-        nd_iterator_get_offset(&copy_it, &in_off);                           \
-        inter_off = 0;                                                       \
-        for (int d = 0; d < ndim; d++) {                                     \
-          inter_off += copy_it.coords[d] * input->strides[d];                \
-        }                                                                    \
-        inter_data[2 * inter_off] =                                          \
-            ((COMP_PREC *)input->data)[2 * (input->offset + in_off)];        \
-        inter_data[2 * inter_off + 1] =                                      \
-            ((COMP_PREC *)input->data)[2 * (input->offset + in_off) + 1];    \
-      } while (nd_single_iterator_next(&copy_it));                           \
-      nd_single_iterator_destroy(&copy_it);                                  \
-      ndarray_t inter_array = {.data = inter_data,                           \
-                               .shape = input->shape,                        \
-                               .strides = input->strides,                    \
-                               .ndim = ndim,                                 \
-                               .offset = 0};                                 \
-      fft_multi_##COMP_SUFFIX(&inter_array, axes, num_axes - 1, true);       \
-      size_t num_1d = inter_size / n_in;                                     \
-      COMP_PREC *temp_re = (COMP_PREC *)malloc(n_out * sizeof(COMP_PREC));   \
-      COMP_PREC *temp_im = (COMP_PREC *)malloc(n_out * sizeof(COMP_PREC));   \
-      if (!temp_re || !temp_im) {                                            \
-        free(inter_data);                                                    \
-        caml_failwith("irfft: allocation failed");                           \
-      }                                                                      \
-      for (size_t idx = 0; idx < num_1d; idx++) {                            \
-        long offset_inter = 0, offset_out = 0;                               \
-        long temp = (long)idx;                                               \
-        for (int d = ndim - 1; d >= 0; d--) {                                \
-          if (d != irfft_axis) {                                             \
-            long coord = temp % output->shape[d];                            \
-            temp /= output->shape[d];                                        \
-            offset_inter += coord * input->strides[d];                       \
-            offset_out += coord * output->strides[d];                        \
-          }                                                                  \
-        }                                                                    \
-        for (size_t i = 0; i < n_in; i++) {                                  \
-          long idx_in = offset_inter + (long)i * input->strides[irfft_axis]; \
-          temp_re[i] = inter_data[2 * idx_in];                               \
-          temp_im[i] = inter_data[2 * idx_in + 1];                           \
-        }                                                                    \
-        for (size_t i = n_in; i < n_out; i++) {                              \
-          size_t mirror_idx = n_out - i;                                     \
-          if (mirror_idx > 0 && mirror_idx < n_in) {                         \
-            temp_re[i] = temp_re[mirror_idx];                                \
-            temp_im[i] = -temp_im[mirror_idx];                               \
-          } else {                                                           \
-            temp_re[i] = (COMP_PREC)0.0;                                     \
-            temp_im[i] = (COMP_PREC)0.0;                                     \
-          }                                                                  \
-        }                                                                    \
-        temp_im[0] = (COMP_PREC)0.0;                                         \
-        if ((n_out % 2) == 0 && n_in > n_out / 2)                            \
-          temp_im[n_out / 2] = (COMP_PREC)0.0;                               \
-        fft_1d_##COMP_SUFFIX(temp_re, temp_im, n_out, 1, 0, true);           \
-        for (size_t i = 0; i < n_out; i++) {                                 \
-          long idx = output->offset + offset_out +                           \
-                     (long)i * output->strides[irfft_axis];                  \
-          ((REAL_PREC *)output->data)[idx] = temp_re[i];                     \
-        }                                                                    \
-      }                                                                      \
-      free(temp_re);                                                         \
-      free(temp_im);                                                         \
-      free(inter_data);                                                      \
-    }                                                                        \
+#define IRFFT_MULTI_PREC(COMP_PREC, REAL_PREC, COMP_SUFFIX, REAL_SUFFIX)       \
+  static void irfft_multi_##COMP_SUFFIX(const ndarray_t *input,                \
+                                        ndarray_t *output, int *axes,          \
+                                        int num_axes, int last_size) {         \
+    if (num_axes == 0) return;                                                 \
+    int ndim = input->ndim;                                                    \
+    int irfft_axis = axes[num_axes - 1];                                       \
+    size_t n_in = input->shape[irfft_axis];                                    \
+    size_t n_out = (size_t)last_size;                                          \
+    /* DEBUG: Check sizes */                                                   \
+    if (0)                                                                     \
+      printf("IRFFT DEBUG: n_in=%zu, n_out=%zu, last_size=%d\\n", n_in, n_out, \
+             last_size);                                                       \
+    if (n_out == 0) return;                                                    \
+    size_t total_elements = total_elements_safe(input);                        \
+    if (num_axes == 1) {                                                       \
+      size_t num_ffts = total_elements / n_in;                                 \
+      COMP_PREC *temp_re = (COMP_PREC *)malloc(n_out * sizeof(COMP_PREC));     \
+      COMP_PREC *temp_im = (COMP_PREC *)malloc(n_out * sizeof(COMP_PREC));     \
+      if (!temp_re || !temp_im) caml_failwith("irfft: allocation failed");     \
+      for (size_t fft_idx = 0; fft_idx < num_ffts; fft_idx++) {                \
+        long offset_in = 0, offset_out = 0;                                    \
+        long temp = (long)fft_idx;                                             \
+        for (int d = ndim - 1; d >= 0; d--) {                                  \
+          if (d != irfft_axis) {                                               \
+            long coord = temp % input->shape[d];                               \
+            temp /= input->shape[d];                                           \
+            offset_in += coord * input->strides[d];                            \
+            offset_out += coord * output->strides[d];                          \
+          }                                                                    \
+        }                                                                      \
+        for (size_t i = 0; i < n_in; i++) {                                    \
+          long idx = input->offset + offset_in +                               \
+                     (long)i * input->strides[irfft_axis];                     \
+          COMP_PREC _Complex *complex_in = (COMP_PREC _Complex *)input->data;  \
+          COMP_PREC _Complex val = complex_in[idx];                            \
+          temp_re[i] = __real__(val);                                          \
+          temp_im[i] = __imag__(val);                                          \
+        }                                                                      \
+        for (size_t i = n_in; i < n_out; i++) {                                \
+          size_t mirror_idx = n_out - i;                                       \
+          if (mirror_idx > 0 && mirror_idx < n_in) {                           \
+            temp_re[i] = temp_re[mirror_idx];                                  \
+            temp_im[i] = -temp_im[mirror_idx];                                 \
+          } else {                                                             \
+            temp_re[i] = (COMP_PREC)0.0;                                       \
+            temp_im[i] = (COMP_PREC)0.0;                                       \
+          }                                                                    \
+        }                                                                      \
+        temp_im[0] = (COMP_PREC)0.0;                                           \
+        if ((n_out % 2) == 0 && n_in > n_out / 2)                              \
+          temp_im[n_out / 2] = (COMP_PREC)0.0;                                 \
+        fft_1d_##COMP_SUFFIX(temp_re, temp_im, n_out, 1, 0, true);             \
+        for (size_t i = 0; i < n_out; i++) {                                   \
+          long idx = output->offset + offset_out +                             \
+                     (long)i * output->strides[irfft_axis];                    \
+          ((REAL_PREC *)output->data)[idx] = temp_re[i];                       \
+        }                                                                      \
+      }                                                                        \
+      free(temp_re);                                                           \
+      free(temp_im);                                                           \
+    } else {                                                                   \
+      size_t inter_size = total_elements;                                      \
+      COMP_PREC *inter_data =                                                  \
+          (COMP_PREC *)malloc(2 * inter_size * sizeof(COMP_PREC));             \
+      if (!inter_data) caml_failwith("irfft: allocation failed");              \
+      nd_single_iterator_t copy_it;                                            \
+      nd_iterator_init(&copy_it, input);                                       \
+      do {                                                                     \
+        long in_off, inter_off;                                                \
+        nd_iterator_get_offset(&copy_it, &in_off);                             \
+        inter_off = 0;                                                         \
+        for (int d = 0; d < ndim; d++) {                                       \
+          inter_off += copy_it.coords[d] * input->strides[d];                  \
+        }                                                                      \
+        COMP_PREC _Complex *complex_in = (COMP_PREC _Complex *)input->data;    \
+        COMP_PREC _Complex val = complex_in[input->offset + in_off];           \
+        inter_data[2 * inter_off] = __real__(val);                             \
+        inter_data[2 * inter_off + 1] = __imag__(val);                         \
+      } while (nd_single_iterator_next(&copy_it));                             \
+      nd_single_iterator_destroy(&copy_it);                                    \
+      ndarray_t inter_array = {.data = inter_data,                             \
+                               .shape = input->shape,                          \
+                               .strides = input->strides,                      \
+                               .ndim = ndim,                                   \
+                               .offset = 0};                                   \
+      fft_multi_##COMP_SUFFIX(&inter_array, axes, num_axes - 1, true);         \
+      size_t num_1d = inter_size / n_in;                                       \
+      COMP_PREC *temp_re = (COMP_PREC *)malloc(n_out * sizeof(COMP_PREC));     \
+      COMP_PREC *temp_im = (COMP_PREC *)malloc(n_out * sizeof(COMP_PREC));     \
+      if (!temp_re || !temp_im) {                                              \
+        free(inter_data);                                                      \
+        caml_failwith("irfft: allocation failed");                             \
+      }                                                                        \
+      for (size_t idx = 0; idx < num_1d; idx++) {                              \
+        long offset_inter = 0, offset_out = 0;                                 \
+        long temp = (long)idx;                                                 \
+        for (int d = ndim - 1; d >= 0; d--) {                                  \
+          if (d != irfft_axis) {                                               \
+            long coord = temp % output->shape[d];                              \
+            temp /= output->shape[d];                                          \
+            offset_inter += coord * input->strides[d];                         \
+            offset_out += coord * output->strides[d];                          \
+          }                                                                    \
+        }                                                                      \
+        for (size_t i = 0; i < n_in; i++) {                                    \
+          long idx_in = offset_inter + (long)i * input->strides[irfft_axis];   \
+          temp_re[i] = inter_data[2 * idx_in];                                 \
+          temp_im[i] = inter_data[2 * idx_in + 1];                             \
+        }                                                                      \
+        for (size_t i = n_in; i < n_out; i++) {                                \
+          size_t mirror_idx = n_out - i;                                       \
+          if (mirror_idx > 0 && mirror_idx < n_in) {                           \
+            temp_re[i] = temp_re[mirror_idx];                                  \
+            temp_im[i] = -temp_im[mirror_idx];                                 \
+          } else {                                                             \
+            temp_re[i] = (COMP_PREC)0.0;                                       \
+            temp_im[i] = (COMP_PREC)0.0;                                       \
+          }                                                                    \
+        }                                                                      \
+        temp_im[0] = (COMP_PREC)0.0;                                           \
+        if ((n_out % 2) == 0 && n_in > n_out / 2)                              \
+          temp_im[n_out / 2] = (COMP_PREC)0.0;                                 \
+        fft_1d_##COMP_SUFFIX(temp_re, temp_im, n_out, 1, 0, true);             \
+        for (size_t i = 0; i < n_out; i++) {                                   \
+          long idx = output->offset + offset_out +                             \
+                     (long)i * output->strides[irfft_axis];                    \
+          ((REAL_PREC *)output->data)[idx] = temp_re[i];                       \
+        }                                                                      \
+      }                                                                        \
+      free(temp_re);                                                           \
+      free(temp_im);                                                           \
+      free(inter_data);                                                        \
+    }                                                                          \
   }
 
 // Instantiate for float64 to complex64
@@ -603,9 +614,9 @@ IRFFT_MULTI_PREC(float, float, complex32, float32)
     if (n == 0) return;                                                        \
     size_t n_out = output->shape[rfft_axis];                                   \
     if (n_out != n / 2 + 1) {                                                  \
-      /* Shape check failed - output won't be valid */                        \
-      return;                                                                   \
-    }                                                                           \
+      /* Shape check failed - output won't be valid */                         \
+      return;                                                                  \
+    }                                                                          \
     size_t total_elements = total_elements_safe(input);                        \
     if (num_axes == 1) {                                                       \
       size_t num_ffts = total_elements / n;                                    \
@@ -692,7 +703,8 @@ IRFFT_MULTI_PREC(float, float, complex32, float32)
       free(temp_im);                                                           \
       int inter_strides_int[MAX_NDIM];                                         \
       for (int i = 0; i < ndim; i++) {                                         \
-        inter_strides_int[i] = (int)inter_strides[i];                          \
+        /* Convert strides from COMP_PREC elements to complex elements */      \
+        inter_strides_int[i] = (int)(inter_strides[i] / 2);                    \
       }                                                                        \
       ndarray_t inter_array = {.data = inter_data,                             \
                                .shape = output->shape,                         \
@@ -892,18 +904,17 @@ static void copy_ndarray_complex64(const ndarray_t *src, ndarray_t *dst) {
   size_t total = total_elements_safe(src);
   if (total == 0) return;
   if (is_contiguous(src) && is_contiguous(dst)) {
-    memcpy((double *)dst->data + 2 * dst->offset,
-           (double *)src->data + 2 * src->offset, total * 2 * sizeof(double));
+    memcpy((complex64 *)dst->data + dst->offset,
+           (complex64 *)src->data + src->offset, total * sizeof(complex64));
   } else {
     nd_copy_iterator_t it;
     nd_copy_iterator_init(&it, src, dst);
     do {
       long src_off, dst_off;
       nd_copy_iterator_get_offsets(&it, &src_off, &dst_off);
-      ((double *)dst->data)[2 * (dst->offset + dst_off)] =
-          ((double *)src->data)[2 * (src->offset + src_off)];
-      ((double *)dst->data)[2 * (dst->offset + dst_off) + 1] =
-          ((double *)src->data)[2 * (src->offset + src_off) + 1];
+      complex64 *src_data = (complex64 *)src->data;
+      complex64 *dst_data = (complex64 *)dst->data;
+      dst_data[dst->offset + dst_off] = src_data[src->offset + src_off];
     } while (nd_copy_iterator_next(&it));
     nd_copy_iterator_destroy(&it);
   }
@@ -914,18 +925,17 @@ static void copy_ndarray_complex32(const ndarray_t *src, ndarray_t *dst) {
   size_t total = total_elements_safe(src);
   if (total == 0) return;
   if (is_contiguous(src) && is_contiguous(dst)) {
-    memcpy((float *)dst->data + 2 * dst->offset,
-           (float *)src->data + 2 * src->offset, total * 2 * sizeof(float));
+    memcpy((complex32 *)dst->data + dst->offset,
+           (complex32 *)src->data + src->offset, total * sizeof(complex32));
   } else {
     nd_copy_iterator_t it;
     nd_copy_iterator_init(&it, src, dst);
     do {
       long src_off, dst_off;
       nd_copy_iterator_get_offsets(&it, &src_off, &dst_off);
-      ((float *)dst->data)[2 * (dst->offset + dst_off)] =
-          ((float *)src->data)[2 * (src->offset + src_off)];
-      ((float *)dst->data)[2 * (dst->offset + dst_off) + 1] =
-          ((float *)src->data)[2 * (src->offset + src_off) + 1];
+      complex32 *src_data = (complex32 *)src->data;
+      complex32 *dst_data = (complex32 *)dst->data;
+      dst_data[dst->offset + dst_off] = src_data[src->offset + src_off];
     } while (nd_copy_iterator_next(&it));
     nd_copy_iterator_destroy(&it);
   }
@@ -1082,7 +1092,7 @@ CAMLprim value caml_nx_op_rfft(value v_input, value v_output, value v_axes) {
       caml_stat_free(axes);
       caml_failwith("rfft: unsupported dtype");
   }
-  
+
   // Validate output shape before entering blocking section
   if (num_axes > 0) {
     int rfft_axis = axes[num_axes - 1];
@@ -1104,7 +1114,7 @@ CAMLprim value caml_nx_op_rfft(value v_input, value v_output, value v_axes) {
       }
     }
   }
-  
+
   caml_enter_blocking_section();
   rfft_multi(&input, &output, axes, num_axes);
   caml_leave_blocking_section();

@@ -610,7 +610,8 @@ BUILD_DISPATCH_TABLE(reduce_sum)
 #define MAX_OP(acc, val) ((acc) > (val) ? (acc) : (val))
 #define MAX_IDENTITY(T) ((T)0)  // unused
 #define MAX_HAS_IDENTITY 0
-#define MAX_OP_FLOAT(acc, val) ((acc) > (val) ? (acc) : (val))
+/* NaN propagation: if either operand is NaN, return NaN */
+#define MAX_OP_FLOAT(acc, val) (isnan(acc) || isnan(val) ? NAN : ((acc) > (val) ? (acc) : (val)))
 #define MAX_IDENTITY_FLOAT 0.0f   // unused
 #define MAX_COMPLEX_IDENTITY (0)  // unused
 #define MAX_COMPLEX_OP(acc, val) complex_max(acc, val)
@@ -631,9 +632,9 @@ REDUCE_OP_FOR_TYPE(reduce_max, int64_t, i64, MAX_IDENTITY(int64_t),
 REDUCE_OP_FOR_TYPE(reduce_max, intnat, inat, MAX_IDENTITY(intnat),
                    MAX_HAS_IDENTITY, MAX_OP)
 REDUCE_OP_FOR_TYPE(reduce_max, float, f32, MAX_IDENTITY(float),
-                   MAX_HAS_IDENTITY, MAX_OP)
+                   MAX_HAS_IDENTITY, MAX_OP_FLOAT)
 REDUCE_OP_FOR_TYPE(reduce_max, double, f64, MAX_IDENTITY(double),
-                   MAX_HAS_IDENTITY, MAX_OP)
+                   MAX_HAS_IDENTITY, MAX_OP_FLOAT)
 REDUCE_OP_FOR_TYPE(reduce_max, complex32, c32, MAX_COMPLEX_IDENTITY,
                    MAX_HAS_IDENTITY, MAX_COMPLEX_OP)
 REDUCE_OP_FOR_TYPE(reduce_max, complex64, c64, MAX_COMPLEX_IDENTITY,

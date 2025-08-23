@@ -6,6 +6,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/threads.h>
+#include <string.h>
 
 #include "nx_c_shared.h"
 
@@ -761,7 +762,80 @@ LOW_PREC_CMP_KERNEL(cmplt, caml_ba_fp8_e5m2, f8e5m2, CMPLT_OP,
                     fp8_e5m2_to_float)
 
 // Complex comparison not well-defined
-// Int4 comparison not yet implemented
+
+// Int4 comparison implementation - unpacks 4-bit values and outputs uint8
+#define INT4_COMPARISON_OP_IMPL(name, signedness, suffix, OP)                  \
+  static void nx_c_##name##_##suffix##_kernel(void *x_data, void *y_data,      \
+                                              void *z_data, long x_off,        \
+                                              long y_off, long z_off) {        \
+    uint8_t *x = (uint8_t *)x_data;                                            \
+    uint8_t *y = (uint8_t *)y_data;                                            \
+    uint8_t *z = (uint8_t *)z_data;                                            \
+    /* Unpack x value */                                                       \
+    long x_byte_off = x_off / 2;                                               \
+    int x_nib_off = x_off % 2;                                                 \
+    int a = x_nib_off ? (signedness ? (int8_t)(x[x_byte_off] >> 4)             \
+                                    : (x[x_byte_off] >> 4) & 0x0F)             \
+                      : (signedness ? (int8_t)((x[x_byte_off] & 0x0F) << 4) >> 4 \
+                                    : x[x_byte_off] & 0x0F);                    \
+    /* Unpack y value */                                                       \
+    long y_byte_off = y_off / 2;                                               \
+    int y_nib_off = y_off % 2;                                                 \
+    int b = y_nib_off ? (signedness ? (int8_t)(y[y_byte_off] >> 4)             \
+                                    : (y[y_byte_off] >> 4) & 0x0F)             \
+                      : (signedness ? (int8_t)((y[y_byte_off] & 0x0F) << 4) >> 4 \
+                                    : y[y_byte_off] & 0x0F);                    \
+    /* Store comparison result as uint8 (0 or 1) */                            \
+    z[z_off] = OP(a, b);                                                       \
+  }                                                                            \
+  static void nx_c_##name##_##suffix(const ndarray_t *x, const ndarray_t *y,   \
+                                     ndarray_t *z) {                           \
+    if (is_fully_contiguous(x, y, z)) {                                        \
+      long total = total_elements_safe(x);                                     \
+      void *x_data = x->data + x->offset;                                      \
+      void *y_data = y->data + y->offset;                                      \
+      void *z_data = z->data + z->offset;                                      \
+      _Pragma("omp parallel for if(total > 10000)") for (long i = 0;           \
+                                                         i < total; i++) {     \
+        nx_c_##name##_##suffix##_kernel(x_data, y_data, z_data, i, i, i);      \
+      }                                                                        \
+    } else {                                                                   \
+      nd_iterator_t it;                                                        \
+      nd_iterator_init_safe(&it, x, y, z);                                     \
+      void *x_data = x->data;                                                  \
+      void *y_data = y->data;                                                  \
+      void *z_data = z->data;                                                  \
+      do {                                                                     \
+        long x_off, y_off, z_off;                                              \
+        nd_iterator_get_offsets(&it, &x_off, &y_off, &z_off);                  \
+        nx_c_##name##_##suffix##_kernel(x_data, y_data, z_data,                \
+                                        x_off + x->offset, y_off + y->offset,  \
+                                        z_off + z->offset);                    \
+      } while (nd_iterator_next(&it));                                         \
+      nd_iterator_destroy(&it);                                                \
+    }                                                                          \
+  }
+
+// Define comparison operators
+#define CMPGT_OP(x, y) ((x) > (y) ? 1 : 0)
+#define CMPLE_OP(x, y) ((x) <= (y) ? 1 : 0)
+#define CMPGE_OP(x, y) ((x) >= (y) ? 1 : 0)
+#define CMPEQ_OP(x, y) ((x) == (y) ? 1 : 0)
+#define CMPNE_OP(x, y) ((x) != (y) ? 1 : 0)
+
+// Generate int4/uint4 comparison operations
+INT4_COMPARISON_OP_IMPL(cmplt, 1, i4, CMPLT_OP)
+INT4_COMPARISON_OP_IMPL(cmplt, 0, u4, CMPLT_OP)
+INT4_COMPARISON_OP_IMPL(cmpgt, 1, i4, CMPGT_OP)
+INT4_COMPARISON_OP_IMPL(cmpgt, 0, u4, CMPGT_OP)
+INT4_COMPARISON_OP_IMPL(cmple, 1, i4, CMPLE_OP)
+INT4_COMPARISON_OP_IMPL(cmple, 0, u4, CMPLE_OP)
+INT4_COMPARISON_OP_IMPL(cmpge, 1, i4, CMPGE_OP)
+INT4_COMPARISON_OP_IMPL(cmpge, 0, u4, CMPGE_OP)
+INT4_COMPARISON_OP_IMPL(cmpeq, 1, i4, CMPEQ_OP)
+INT4_COMPARISON_OP_IMPL(cmpeq, 0, u4, CMPEQ_OP)
+INT4_COMPARISON_OP_IMPL(cmpne, 1, i4, CMPNE_OP)
+INT4_COMPARISON_OP_IMPL(cmpne, 0, u4, CMPNE_OP)
 
 COMPARISON_OP_FOR_TYPE(cmplt, caml_ba_bool, bool_, CMPLT_OP)
 COMPARISON_OP_FOR_TYPE(cmplt, caml_ba_qint8, qi8, CMPLT_OP)
@@ -782,8 +856,8 @@ static const binary_op_table cmplt_table = {.i8 = nx_c_cmplt_i8,
                                             .c64 = NULL,
                                             .bf16 = nx_c_cmplt_bf16,
                                             .bool_ = nx_c_cmplt_bool_,
-                                            .i4 = NULL,
-                                            .u4 = NULL,
+                                            .i4 = nx_c_cmplt_i4,
+                                            .u4 = nx_c_cmplt_u4,
                                             .f8e4m3 = nx_c_cmplt_f8e4m3,
                                             .f8e5m2 = nx_c_cmplt_f8e5m2,
                                             .c16 = NULL,
@@ -791,8 +865,6 @@ static const binary_op_table cmplt_table = {.i8 = nx_c_cmplt_i8,
                                             .qu8 = nx_c_cmplt_qu8};
 
 // =========== COMPARISON - NOT EQUAL ===========
-#define CMPNE_OP(x, y) ((x) != (y) ? 1 : 0)
-
 COMPARISON_OP_FOR_TYPE(cmpne, int8_t, i8, CMPNE_OP)
 COMPARISON_OP_FOR_TYPE(cmpne, uint8_t, u8, CMPNE_OP)
 COMPARISON_OP_FOR_TYPE(cmpne, int16_t, i16, CMPNE_OP)
@@ -1145,6 +1217,152 @@ static void dispatch_binary_op(value v_x, value v_y, value v_z,
   cleanup_ndarray(&z);
 }
 
+// Generic dispatch function for comparison operations (output is always uint8)
+static void dispatch_comparison_op(value v_x, value v_y, value v_z,
+                                   const binary_op_table *table,
+                                   const char *op_name) {
+  // Extract ndarrays from FFI tensors
+  ndarray_t x = extract_ndarray(v_x);
+  ndarray_t y = extract_ndarray(v_y);
+  ndarray_t z = extract_ndarray(v_z);
+
+  // Check shapes match
+  if (x.ndim != y.ndim || x.ndim != z.ndim) {
+    cleanup_ndarray(&x);
+    cleanup_ndarray(&y);
+    cleanup_ndarray(&z);
+    caml_failwith("shape mismatch");
+  }
+  for (int i = 0; i < x.ndim; i++) {
+    if (x.shape[i] != y.shape[i] || x.shape[i] != z.shape[i]) {
+      cleanup_ndarray(&x);
+      cleanup_ndarray(&y);
+      cleanup_ndarray(&z);
+      caml_failwith("shape mismatch");
+    }
+  }
+
+  // Get bigarray kind from the data field
+  value v_x_data = Field(v_x, FFI_TENSOR_DATA);
+  value v_y_data = Field(v_y, FFI_TENSOR_DATA);
+  value v_z_data = Field(v_z, FFI_TENSOR_DATA);
+
+  struct caml_ba_array *ba = Caml_ba_array_val(v_x_data);
+  int kind = ba->flags & CAML_BA_KIND_MASK;
+
+  // Check input kinds match
+  int kind_y = Caml_ba_array_val(v_y_data)->flags & CAML_BA_KIND_MASK;
+  if (kind != kind_y) {
+    cleanup_ndarray(&x);
+    cleanup_ndarray(&y);
+    cleanup_ndarray(&z);
+    caml_failwith("dtype mismatch: comparison inputs must have same dtype");
+  }
+  
+  // Check output is uint8
+  int kind_z = Caml_ba_array_val(v_z_data)->flags & CAML_BA_KIND_MASK;
+  if (kind_z != CAML_BA_UINT8) {
+    cleanup_ndarray(&x);
+    cleanup_ndarray(&y);
+    cleanup_ndarray(&z);
+    caml_failwith("dtype mismatch: comparison output must be uint8");
+  }
+
+  // Select operation based on input dtype
+  binary_op_t op = NULL;
+  switch (kind) {
+    case CAML_BA_SINT8:
+      op = table->i8;
+      break;
+    case CAML_BA_UINT8:
+      op = table->u8;
+      break;
+    case CAML_BA_SINT16:
+      op = table->i16;
+      break;
+    case CAML_BA_UINT16:
+      op = table->u16;
+      break;
+    case CAML_BA_INT32:
+      op = table->i32;
+      break;
+    case CAML_BA_INT64:
+      op = table->i64;
+      break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      op = table->inat;
+      break;
+    case CAML_BA_FLOAT16:
+      op = table->f16;
+      break;
+    case CAML_BA_FLOAT32:
+      op = table->f32;
+      break;
+    case CAML_BA_FLOAT64:
+      op = table->f64;
+      break;
+    case CAML_BA_COMPLEX32:
+      op = table->c32;
+      break;
+    case CAML_BA_COMPLEX64:
+      op = table->c64;
+      break;
+    case NX_BA_BFLOAT16:
+      op = table->bf16;
+      break;
+    case NX_BA_BOOL:
+      op = table->bool_;
+      break;
+    case NX_BA_INT4:
+      op = table->i4;
+      break;
+    case NX_BA_UINT4:
+      op = table->u4;
+      break;
+    case NX_BA_FP8_E4M3:
+      op = table->f8e4m3;
+      break;
+    case NX_BA_FP8_E5M2:
+      op = table->f8e5m2;
+      break;
+    case NX_BA_COMPLEX16:
+      op = table->c16;
+      break;
+    case NX_BA_QINT8:
+      op = table->qi8;
+      break;
+    case NX_BA_QUINT8:
+      op = table->qu8;
+      break;
+    default:
+      cleanup_ndarray(&x);
+      cleanup_ndarray(&y);
+      cleanup_ndarray(&z);
+      caml_failwith("dispatch_comparison_op: unsupported dtype");
+  }
+
+  if (!op) {
+    char msg[256];
+    snprintf(msg, sizeof(msg), "%s: operation not supported for dtype",
+             op_name);
+    cleanup_ndarray(&x);
+    cleanup_ndarray(&y);
+    cleanup_ndarray(&z);
+    caml_failwith(msg);
+  }
+
+  // Enter blocking section for potentially long computation
+  caml_enter_blocking_section();
+  op(&x, &y, &z);
+  caml_leave_blocking_section();
+
+  // Clean up if heap allocated
+  cleanup_ndarray(&x);
+  cleanup_ndarray(&y);
+  cleanup_ndarray(&z);
+}
+
 // ============================================================================
 // OCaml FFI Stubs
 // ============================================================================
@@ -1157,6 +1375,14 @@ static void dispatch_binary_op(value v_x, value v_y, value v_z,
     CAMLreturn(Val_unit);                                          \
   }
 
+// Macro to define FFI stub for comparison operations
+#define DEFINE_CMP_FFI_STUB(name)                                  \
+  CAMLprim value caml_nx_##name(value v_x, value v_y, value v_z) { \
+    CAMLparam3(v_x, v_y, v_z);                                     \
+    dispatch_comparison_op(v_x, v_y, v_z, &name##_table, #name);   \
+    CAMLreturn(Val_unit);                                          \
+  }
+
 DEFINE_FFI_STUB(add)
 DEFINE_FFI_STUB(sub)
 DEFINE_FFI_STUB(mul)
@@ -1166,8 +1392,8 @@ DEFINE_FFI_STUB(max)
 DEFINE_FFI_STUB(min)
 DEFINE_FFI_STUB(mod)
 DEFINE_FFI_STUB(pow)
-DEFINE_FFI_STUB(cmplt)
-DEFINE_FFI_STUB(cmpne)
+DEFINE_CMP_FFI_STUB(cmplt)
+DEFINE_CMP_FFI_STUB(cmpne)
 DEFINE_FFI_STUB(xor)
 DEFINE_FFI_STUB(or)
 DEFINE_FFI_STUB(and)

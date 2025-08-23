@@ -34,9 +34,9 @@ static value create_tensor_value(value v_shape, value v_strides, value v_data,
 }
 
 // Helper to set standard C-contiguous strides
-static void set_standard_strides(long *strides, int *shape, int ndim) {
+static void set_standard_strides(int *strides, int *shape, int ndim) {
   if (ndim == 0) return;
-  long stride = 1;
+  int stride = 1;
   for (int i = ndim - 1; i >= 0; i--) {
     strides[i] = stride;
     stride *= shape[i];
@@ -82,12 +82,14 @@ static long get_element_size(int kind) {
       return 2;
     case CAML_BA_INT32:
     case CAML_BA_FLOAT32:
-    case CAML_BA_COMPLEX32:
       return 4;
+    case CAML_BA_COMPLEX32:
+      return 8;  // 2 * float32
     case CAML_BA_INT64:
     case CAML_BA_FLOAT64:
-    case CAML_BA_COMPLEX64:
       return 8;
+    case CAML_BA_COMPLEX64:
+      return 16;  // 2 * float64
     case CAML_BA_NATIVE_INT:
     case CAML_BA_CAML_INT:
       return sizeof(intnat);
@@ -223,8 +225,15 @@ static value make_contiguous(value v_src, bool force_copy) {
     v_new_data = caml_ba_alloc(flags, 1, NULL, &dim);
     v_new_shape = copy_int_array(Field(v_src, FFI_TENSOR_SHAPE));
     v_new_strides = caml_alloc(src.ndim, 0);
-    long strides[32];  // Stack buffer for strides
-    set_standard_strides(strides, src.shape, src.ndim);
+    int strides[32];  // Stack buffer for strides - use int not long
+    // Calculate C-contiguous strides
+    if (src.ndim > 0) {
+      int stride = 1;
+      for (int i = src.ndim - 1; i >= 0; i--) {
+        strides[i] = stride;
+        stride *= src.shape[i];
+      }
+    }
     for (int i = 0; i < src.ndim; i++) {
       Store_field(v_new_strides, i, Val_long(strides[i]));
     }
@@ -232,8 +241,7 @@ static value make_contiguous(value v_src, bool force_copy) {
     dst.data = Caml_ba_data_val(v_new_data);
     dst.ndim = src.ndim;
     dst.shape = src.shape;  // Can reuse since it's temporary
-    dst.strides = (int *)
-        strides;  // Cast needed since strides are long but ndarray uses int
+    dst.strides = strides;  // Now types match correctly
     dst.offset = 0;
     caml_enter_blocking_section();
     nx_c_copy(&src, &dst, kind);

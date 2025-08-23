@@ -286,17 +286,10 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
     long total = total_elements_safe(src);                                     \
     if (total == 0) return;                                                    \
                                                                                \
-    if (is_contiguous(src) && is_contiguous(dst)) {                            \
-      long start_off = 0;                                                      \
-      for (int d = 0; d < src->ndim; d++) {                                    \
-        start_off += pad_before[d] * dst->strides[d];                          \
-      }                                                                        \
-      T *src_p = (T *)(src->data) + src->offset;                               \
-      T *dst_p = (T *)(dst->data) + dst->offset + start_off;                   \
-      _Pragma("omp parallel for simd if(total > 1000)") for (long i = 0;       \
-                                                             i < total; i++) { \
-        dst_p[i] = src_p[i];                                                   \
-      }                                                                        \
+    /* Even if both are contiguous, we can't do a simple linear copy          \
+       because the destination has different dimensions due to padding */      \
+    if (false) {                                                               \
+      /* Disabled - linear copy doesn't work for padding */                    \
     } else if (src->ndim > 0 && src->shape[0] > 1 &&                           \
                total / src->shape[0] > 50) {                                   \
       _Pragma("omp parallel for if(src->shape[0] > 4)") for (long i = 0;       \
@@ -803,11 +796,70 @@ CAMLprim value caml_nx_cat(value v_inputs, value v_axis, value v_output) {
 
   copy_op_t copy_op = NULL;
   switch (kind) {
-    // Same switch as in pad for copy_op
     case CAML_BA_SINT8:
       copy_op = copy_table.i8;
       break;
-    // ... (omit repetition, same as above switch for copy_op)
+    case CAML_BA_UINT8:
+      copy_op = copy_table.u8;
+      break;
+    case CAML_BA_SINT16:
+      copy_op = copy_table.i16;
+      break;
+    case CAML_BA_UINT16:
+      copy_op = copy_table.u16;
+      break;
+    case CAML_BA_INT32:
+      copy_op = copy_table.i32;
+      break;
+    case CAML_BA_INT64:
+      copy_op = copy_table.i64;
+      break;
+    case CAML_BA_CAML_INT:
+    case CAML_BA_NATIVE_INT:
+      copy_op = copy_table.inat;
+      break;
+    case CAML_BA_FLOAT16:
+      copy_op = copy_table.f16;
+      break;
+    case CAML_BA_FLOAT32:
+      copy_op = copy_table.f32;
+      break;
+    case CAML_BA_FLOAT64:
+      copy_op = copy_table.f64;
+      break;
+    case CAML_BA_COMPLEX32:
+      copy_op = copy_table.c32;
+      break;
+    case CAML_BA_COMPLEX64:
+      copy_op = copy_table.c64;
+      break;
+    case NX_BA_BFLOAT16:
+      copy_op = copy_table.bf16;
+      break;
+    case NX_BA_BOOL:
+      copy_op = copy_table.bool_;
+      break;
+    case NX_BA_INT4:
+      copy_op = copy_table.i4;
+      break;
+    case NX_BA_UINT4:
+      copy_op = copy_table.u4;
+      break;
+    case NX_BA_FP8_E4M3:
+      copy_op = copy_table.f8e4m3;
+      break;
+    case NX_BA_FP8_E5M2:
+      copy_op = copy_table.f8e5m2;
+      break;
+    case NX_BA_COMPLEX16:
+      copy_op = copy_table.c16;
+      break;
+    case NX_BA_QINT8:
+      copy_op = copy_table.qi8;
+      break;
+    case NX_BA_QUINT8:
+      copy_op = copy_table.qu8;
+      break;
     default:
       cleanup_ndarray(&output);
       caml_failwith("cat: unsupported dtype");

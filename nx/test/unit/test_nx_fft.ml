@@ -199,7 +199,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       [| (n_even / 2) + 1 |]
       (Nx.shape rfft_even);
     let irfft_even = Nx.irfft rfft_even ~n:n_even in
-    check_t "rfft even reconstruct" shape_even signal_even irfft_even;
+    check_t ~eps:1e-10 "rfft even reconstruct" shape_even signal_even irfft_even;
 
     (* 1D odd *)
     let n_odd = 7 in
@@ -212,7 +212,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       [| (n_odd / 2) + 1 |]
       (Nx.shape rfft_odd);
     let irfft_odd = Nx.irfft rfft_odd ~n:n_odd in
-    check_t "rfft odd reconstruct" shape_odd signal_odd irfft_odd;
+    check_t ~eps:1e-10 "rfft odd reconstruct" shape_odd signal_odd irfft_odd;
 
     (* 2D *)
     let m, n = (4, 6) in

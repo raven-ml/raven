@@ -2498,7 +2498,9 @@ val det : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
     @raise Invalid_argument if matrix is not square
     @raise Invalid_argument if input is not float or complex *)
 
-val slogdet : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t * ('a, 'b, 'dev) t
+val slogdet :
+  ('a, 'b, 'dev) t ->
+  (float, float32_elt, 'dev) t * (float, float32_elt, 'dev) t
 (** [slogdet a] computes sign and log of determinant.
 
     Returns (sign, logdet) where det(a) = sign * exp(logdet). More stable than

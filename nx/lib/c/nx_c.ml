@@ -701,9 +701,13 @@ let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
   let indices' = ensure_materializable indices in
   let updates' = ensure_materializable updates in
 
-  (* Create output tensor with same shape and dtype as template *)
-  let out_shape = shape data_template in
-  let out = create_tensor data_template.context data_template.dtype out_shape in
+  (* Create output tensor - for Set mode, start with a copy of template *)
+  let out = 
+    if mode = `Set then
+      op_copy data_template  (* Start with copy of template *)
+    else
+      create_tensor data_template.context data_template.dtype (shape data_template)
+  in
 
   (* Convert to FFI tensors *)
   let template_ffi = to_ffi_tensor template' in
@@ -896,6 +900,16 @@ let op_rfft x ~dtype ~axes ~s =
   (* Calculate output shape for rfft *)
   let in_shape = shape x in
   let out_shape = Array.copy in_shape in
+  
+  (* RFFT: last axis becomes n//2 + 1 for the complex output *)
+  let last_axis = Array.length axes - 1 in
+  if last_axis >= 0 then (
+    let axis_idx = if axes.(last_axis) < 0 then 
+      Array.length in_shape + axes.(last_axis) 
+    else 
+      axes.(last_axis) in
+    out_shape.(axis_idx) <- (in_shape.(axis_idx) / 2) + 1
+  );
 
   (* Create output tensor with complex dtype *)
   let out = create_tensor x.context dtype out_shape in
@@ -913,20 +927,41 @@ let op_rfft x ~dtype ~axes ~s =
   out
 
 let op_irfft x ~dtype ~axes ~s =
-  ignore s;
-
-  (* Size parameter not yet supported *)
-
   (* Ensure input is materializable *)
   let x' = ensure_materializable x in
 
   (* Calculate output shape for irfft *)
   let in_shape = shape x in
   let out_shape = Array.copy in_shape in
-  let last_dim_size =
-    match s with
-    | None -> out_shape.(Array.length out_shape - 1) * 2
-    | Some sizes -> sizes.(Array.length sizes - 1)
+  
+  (* IRFFT: transforms complex input to real output *)
+  (* The last axis in axes becomes the full real dimension *)
+  let last_axis = Array.length axes - 1 in
+  let last_dim_size = 
+    if last_axis >= 0 then (
+      let axis_idx = if axes.(last_axis) < 0 then 
+        Array.length in_shape + axes.(last_axis) 
+      else 
+        axes.(last_axis) in
+        
+      (* Determine output size for the real axis *)
+      let size = match s with
+      | None -> 
+          (* Default: for RFFT output of size m, the original size could be:
+             - 2*(m-1) for even original size
+             - 2*(m-1) or 2*(m-1)+1 for odd original size
+             Since we don't know which, default to even case: 2*(m-1) *)
+          (in_shape.(axis_idx) - 1) * 2
+      | Some sizes -> 
+          (* Use the specified size for the last axis *)
+          sizes.(last_axis)
+      in
+      out_shape.(axis_idx) <- size;
+      size
+    ) else (
+      (* No valid axes, shouldn't happen *)
+      out_shape.(Array.length out_shape - 1) * 2
+    )
   in
 
   (* Create output tensor with real dtype *)
