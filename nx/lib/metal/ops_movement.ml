@@ -399,6 +399,27 @@ let cat ctx tensors axis =
                 ~bytes:Ctypes.(to_voidp in_shape_arr)
                 ~length:(ndim * 4) ~index:3;
 
+              (* Set axis, axis_offset, ndim parameters according to kernel order *)
+              let axis_val =
+                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int axis))
+              in
+              let axis_offset_val =
+                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int !axis_offset))
+              in
+              let ndim_val =
+                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int ndim))
+              in
+
+              ComputeCommandEncoder.set_bytes encoder
+                ~bytes:Ctypes.(to_voidp axis_val)
+                ~length:4 ~index:4;
+              ComputeCommandEncoder.set_bytes encoder
+                ~bytes:Ctypes.(to_voidp axis_offset_val)
+                ~length:4 ~index:5;
+              ComputeCommandEncoder.set_bytes encoder
+                ~bytes:Ctypes.(to_voidp ndim_val)
+                ~length:4 ~index:6;
+
               (* Set input strides *)
               let in_strides =
                 match Lazy_view.strides t.Internal.view with
@@ -413,18 +434,9 @@ let cat ctx tensors axis =
               done;
               ComputeCommandEncoder.set_bytes encoder
                 ~bytes:Ctypes.(to_voidp in_strides_arr)
-                ~length:(ndim * 4) ~index:4;
+                ~length:(ndim * 4) ~index:7;
 
-              (* Set axis, axis_offset, ndim, and in_offset *)
-              let axis_val =
-                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int axis))
-              in
-              let axis_offset_val =
-                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int !axis_offset))
-              in
-              let ndim_val =
-                Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int ndim))
-              in
+              (* Set in_offset *)
               let in_offset_val =
                 Ctypes.(
                   allocate uint32_t
@@ -438,16 +450,6 @@ let cat ctx tensors axis =
                            Error.failed ~op:"concat"
                              ~what:"cannot get offset with symbolic value" ())))
               in
-
-              ComputeCommandEncoder.set_bytes encoder
-                ~bytes:Ctypes.(to_voidp axis_val)
-                ~length:4 ~index:5;
-              ComputeCommandEncoder.set_bytes encoder
-                ~bytes:Ctypes.(to_voidp axis_offset_val)
-                ~length:4 ~index:6;
-              ComputeCommandEncoder.set_bytes encoder
-                ~bytes:Ctypes.(to_voidp ndim_val)
-                ~length:4 ~index:7;
               ComputeCommandEncoder.set_bytes encoder
                 ~bytes:Ctypes.(to_voidp in_offset_val)
                 ~length:4 ~index:8;
