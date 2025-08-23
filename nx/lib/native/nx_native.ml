@@ -435,7 +435,7 @@ let op_threefry data seed =
     op_buffer ctx Dtype.int32 out_size |> fun t ->
     with_view t (Lazy_view.create (Symbolic_shape.of_ints out_shape))
   in
-  Ops_threefry.threefry ctx data seed out_tensor;
+  Ops_random.threefry ctx data seed out_tensor;
   out_tensor
 
 (* Element Access Ops *)
@@ -657,10 +657,10 @@ let op_scatter (type a b) ?(mode = `Set) ?(unique_indices = false)
     output_t
 
 let op_unfold x ~kernel_size ~stride ~dilation ~padding =
-  Ops_im2col.unfold x.context x ~kernel_size ~stride ~dilation ~padding
+  Ops_window.unfold x.context x ~kernel_size ~stride ~dilation ~padding
 
 let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
-  Ops_im2col.fold x.context x ~output_size ~kernel_size ~stride ~dilation
+  Ops_window.fold x.context x ~output_size ~kernel_size ~stride ~dilation
     ~padding
 
 let op_matmul a b = Ops_matmul.matmul a.context a b
@@ -675,7 +675,7 @@ let op_irfft x ~dtype ~axes ~s = Ops_fft.irfft x.context x ~dtype ~axes ~s
 
 let op_cholesky ~upper x = Ops_linalg.cholesky ~upper x.context x
 let op_qr ~reduced x = Ops_linalg.qr ~reduced x.context x
-let op_svd ~full_matrices x = Ops_linalg.svd ~full_matrices x.context x
+let op_svd ~full_matrices x = Ops_svd.svd ~full_matrices x.context x
 let op_eig ~vectors x = Ops_linalg.eig ~vectors x.context x
 let op_eigh ~vectors x = Ops_linalg.eigh ~vectors x.context x
 
