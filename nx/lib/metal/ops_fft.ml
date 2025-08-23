@@ -99,16 +99,18 @@ let fft_1d_along_axis ctx input output axis inverse =
   with_command_buffer ctx (fun command_buffer ->
       let encoder = Metal.ComputeCommandEncoder.on_buffer command_buffer in
 
-      (* Get FFT kernel *)
-      let kernel_name = "fft_1d_complex64" in
+      (* Get FFT kernel based on dtype *)
+      let kernel_name = 
+        let dtype_str = Dtype.to_string input.dtype in
+        match dtype_str with
+        | "complex32" -> "fft_1d_float2"
+        | "complex16" -> "fft_1d_half2"
+        | _ -> failwith ("fft_1d_along_axis: unsupported dtype " ^ dtype_str)
+      in
       let kernel = get_kernel ctx kernel_name in
       let pipeline = Kernels.create_compute_pipeline ctx.device kernel in
       Metal.ComputeCommandEncoder.set_compute_pipeline_state encoder pipeline;
 
-      (* Debug print *)
-      Printf.printf
-        "FFT dispatch: size=%d, stride=%d, offset=%d, num_ffts=%d, inverse=%b\n"
-        fft_size stride offset !num_ffts inverse;
 
       (* Set buffers *)
       Metal.ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:0
@@ -158,8 +160,9 @@ let fft_1d_along_axis ctx input output axis inverse =
 
 (* Main FFT operation *)
 let op_fft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t =
-  match input.dtype with
-  | Complex64 ->
+  let dtype_str = Dtype.to_string input.dtype in
+  match dtype_str with
+  | "complex32" | "complex16" ->
       let input_shape = get_shape input.view in
       let output_shape = get_fft_output_shape input_shape axes s in
 
@@ -205,16 +208,17 @@ let op_fft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t =
         axes;
 
       output
-  | Complex32 ->
-      failwith "op_fft: Complex32 FFT not yet implemented in Metal backend"
-  | Complex16 ->
-      failwith "op_fft: Complex16 FFT not yet implemented in Metal backend"
+  | "complex64" ->
+      failwith "op_fft: Complex64 not supported by Metal backend"
+  | _ ->
+      failwith ("op_fft: unsupported dtype " ^ dtype_str)
 
 (* Inverse FFT operation *)
 let op_ifft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t
     =
-  match input.dtype with
-  | Complex64 ->
+  let dtype_str = Dtype.to_string input.dtype in
+  match dtype_str with
+  | "complex32" | "complex16" ->
       let input_shape = get_shape input.view in
       let output_shape = get_fft_output_shape input_shape axes s in
 
@@ -261,10 +265,10 @@ let op_ifft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t
         axes;
 
       output
-  | Complex32 ->
-      failwith "op_ifft: Complex32 IFFT not yet implemented in Metal backend"
-  | Complex16 ->
-      failwith "op_ifft: Complex16 IFFT not yet implemented in Metal backend"
+  | "complex64" ->
+      failwith "op_ifft: Complex64 not supported by Metal backend"
+  | _ ->
+      failwith ("op_ifft: unsupported dtype " ^ dtype_str)
 
 (* Real FFT - not yet implemented *)
 let op_rfft ctx _ ~dtype:_ ~axes:_ ~s:_ =

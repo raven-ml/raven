@@ -403,7 +403,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let unshifted = Nx.ifftshift shifted in
     check_t "ifftshift 1D" x_shape x_data unshifted
 
-  let tests ctx =
+  let suite _backend_name ctx =
     [
       ( "FFT :: fft/ifft",
         [

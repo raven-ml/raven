@@ -28,7 +28,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
            Ops_tests.suite backend_name ctx;
            Sanity_tests.suite backend_name ctx;
            Sorting_tests.suite backend_name ctx;
-           Fft_tests.tests ctx;
+           Fft_tests.suite backend_name ctx;
            Extended_dtypes_tests.suite backend_name ctx;
            Backend_dtypes_tests.suite backend_name ctx;
          ])

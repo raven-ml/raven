@@ -27,15 +27,15 @@ inline uint bit_reverse(uint x, uint bits) {
     return result;
 }
 
-// 1D FFT kernel using Cooley-Tukey algorithm
-kernel void fft_1d_complex64(device float2* data [[buffer(0)]],
-                            constant uint& size [[buffer(1)]],
-                            constant uint& stride [[buffer(2)]],
-                            constant uint& offset [[buffer(3)]],
-                            constant bool& inverse [[buffer(4)]],
-                            uint tid [[thread_position_in_threadgroup]],
-                            uint tg_size [[threads_per_threadgroup]],
-                            uint gid [[threadgroup_position_in_grid]]) {
+// 1D FFT kernel using Cooley-Tukey algorithm for Complex32 (float2)
+kernel void fft_1d_float2(device float2* data [[buffer(0)]],
+                         constant uint& size [[buffer(1)]],
+                         constant uint& stride [[buffer(2)]],
+                         constant uint& offset [[buffer(3)]],
+                         constant bool& inverse [[buffer(4)]],
+                         uint tid [[thread_position_in_threadgroup]],
+                         uint tg_size [[threads_per_threadgroup]],
+                         uint gid [[threadgroup_position_in_grid]]) {
     // Each threadgroup processes one FFT
     uint fft_offset = offset + gid * size * stride;
     
@@ -90,15 +90,86 @@ kernel void fft_1d_complex64(device float2* data [[buffer(0)]],
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     
-    // Write back results
+    // Write back results with normalization for inverse FFT
+    float norm = inverse ? (1.0f / float(size)) : 1.0f;
     for (uint i = tid; i < size; i += tg_size) {
         uint idx = fft_offset + i * stride;
-        data[idx] = shared_data[i];
+        data[idx] = shared_data[i] * norm;
     }
 }
 
-// Multi-dimensional FFT kernel
-kernel void fft_multi_complex64(device float2* output [[buffer(0)]],
+// 1D FFT kernel for Complex16 (half2)
+kernel void fft_1d_half2(device half2* data [[buffer(0)]],
+                        constant uint& size [[buffer(1)]],
+                        constant uint& stride [[buffer(2)]],
+                        constant uint& offset [[buffer(3)]],
+                        constant bool& inverse [[buffer(4)]],
+                        uint tid [[thread_position_in_threadgroup]],
+                        uint tg_size [[threads_per_threadgroup]],
+                        uint gid [[threadgroup_position_in_grid]]) {
+    // Each threadgroup processes one FFT
+    uint fft_offset = offset + gid * size * stride;
+    
+    threadgroup half2 shared_data[1024]; // Max FFT size
+    
+    // Load data with bit reversal
+    uint num_bits = 0;
+    uint temp = size - 1;
+    while (temp > 0) {
+        num_bits++;
+        temp >>= 1;
+    }
+    
+    for (uint i = tid; i < size; i += tg_size) {
+        uint j = bit_reverse(i, num_bits);
+        uint idx = fft_offset + j * stride;
+        shared_data[i] = data[idx];
+    }
+    
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    // FFT computation
+    for (uint stage_size = 2; stage_size <= size; stage_size *= 2) {
+        uint half_stage = stage_size / 2;
+        
+        for (uint butterfly_group = tid; butterfly_group < size / 2; butterfly_group += tg_size) {
+            uint stage_idx = butterfly_group / half_stage;
+            uint butterfly_idx = butterfly_group % half_stage;
+            
+            uint idx1 = stage_idx * stage_size + butterfly_idx;
+            uint idx2 = idx1 + half_stage;
+            
+            if (idx2 < size) {
+                half angle = (inverse ? 2.0h : -2.0h) * half(M_PI_F) * half(butterfly_idx * size / stage_size) / half(size);
+                half2 twiddle = half2(cos(angle), sin(angle));
+                
+                half2 a = shared_data[idx1];
+                half2 b = shared_data[idx2];
+                
+                // Compute b * twiddle
+                half2 b_twiddle;
+                b_twiddle.x = b.x * twiddle.x - b.y * twiddle.y;
+                b_twiddle.y = b.x * twiddle.y + b.y * twiddle.x;
+                
+                // Compute butterfly
+                shared_data[idx1] = half2(a.x + b_twiddle.x, a.y + b_twiddle.y);
+                shared_data[idx2] = half2(a.x - b_twiddle.x, a.y - b_twiddle.y);
+            }
+        }
+        
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    // Write back results with normalization for inverse FFT
+    half norm = inverse ? (half(1.0) / half(size)) : half(1.0);
+    for (uint i = tid; i < size; i += tg_size) {
+        uint idx = fft_offset + i * stride;
+        data[idx] = shared_data[i] * norm;
+    }
+}
+
+// Multi-dimensional FFT kernel for float2
+kernel void fft_multi_float2(device float2* output [[buffer(0)]],
                                device const float2* input [[buffer(1)]],
                                constant uint* shape [[buffer(2)]],
                                constant int* in_strides [[buffer(3)]],
