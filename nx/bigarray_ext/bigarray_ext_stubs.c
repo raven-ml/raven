@@ -306,8 +306,10 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
       break;
     case NX_BA_INT4: {
       int val = Int_val(newval);
-      if (val < -8 || val > 7)
-        caml_invalid_argument("Bigarray.set: int4 value out of range [-8, 7]");
+      /* Wrap to 4 bits for proper signed arithmetic */
+      /* For signed 4-bit: wrap to [-8, 7] range */
+      val = ((val + 8) & 0x0F) - 8;
+      if (val < 0) val = val + 16;  /* Convert to unsigned representation */
       uint8_t *byte_ptr = &((uint8_t *)b->data)[offset / 2];
       if (offset % 2 == 0) {
         *byte_ptr = (*byte_ptr & 0xF0) | (val & 0x0F); /* Set lower 4 bits */
@@ -319,8 +321,8 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
     }
     case NX_BA_UINT4: {
       int val = Int_val(newval);
-      if (val < 0 || val > 15)
-        caml_invalid_argument("Bigarray.set: uint4 value out of range [0, 15]");
+      /* Wrap to 4 bits for proper unsigned arithmetic */
+      val = val & 0x0F;
       uint8_t *byte_ptr = &((uint8_t *)b->data)[offset / 2];
       if (offset % 2 == 0) {
         *byte_ptr = (*byte_ptr & 0xF0) | (val & 0x0F); /* Set lower 4 bits */
