@@ -300,24 +300,24 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
 
   let test_svd_shape ctx () =
     let a = Nx.create ctx Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
-    let u, s, v = Nx.svd a in
+    let u, s, vt = Nx.svd a in
     check_shape "svd u shape" [| 3; 3 |] u;
     check_shape "svd s shape" [| 3 |] s;
-    check_shape "svd v shape" [| 4; 4 |] v
+    check_shape "svd vt shape (V^H)" [| 3; 4 |] vt
 
   let test_svd_property ctx () =
     let a =
       Nx.create ctx Nx.float32 [| 3; 3 |]
         [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |]
     in
-    let u, s, v = Nx.svd a in
+    let u, s, vh = Nx.svd a in
     let s_diag = Nx.zeros ctx Nx.float32 [| 3; 3 |] in
     let s_float32 = Nx.cast Nx.float32 s in
     for i = 0 to 2 do
       let s_val = Nx.unsafe_get [ i ] s_float32 in
       Nx.unsafe_set [ i; i ] s_val s_diag
     done;
-    let reconstructed = Nx.matmul u (Nx.matmul s_diag (Nx.transpose v)) in
+    let reconstructed = Nx.matmul u (Nx.matmul s_diag vh) in
     check_nx "svd property" a reconstructed
 
   let test_cholesky_posdef ctx () =

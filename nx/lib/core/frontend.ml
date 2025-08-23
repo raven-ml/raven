@@ -3536,18 +3536,19 @@ module Make (B : Backend_intf.S) = struct
       (* Slice the matrix to get the region containing the diagonal *)
       let sliced = 
         if row_start > 0 || col_start > 0 || row_start + diag_len < m || col_start + diag_len < n then
+          (* shrink uses exclusive upper bounds *)
           let slice_spec = Array.init ndim_a (fun i ->
-            if i = ndim_a - 2 then (row_start, row_start + diag_len - 1)
-            else if i = ndim_a - 1 then (col_start, col_start + diag_len - 1)
-            else (0, shape_a.(i) - 1)
+            if i = ndim_a - 2 then (row_start, row_start + diag_len)
+            else if i = ndim_a - 1 then (col_start, col_start + diag_len)
+            else (0, shape_a.(i))
           ) in
           shrink slice_spec a
         else if diag_len < m || diag_len < n then
-          (* Need to shrink to square *)
+          (* Need to shrink to square - shrink uses exclusive upper bounds *)
           let slice_spec = Array.init ndim_a (fun i ->
-            if i = ndim_a - 2 then (0, diag_len - 1)
-            else if i = ndim_a - 1 then (0, diag_len - 1)
-            else (0, shape_a.(i) - 1)
+            if i = ndim_a - 2 then (0, diag_len)
+            else if i = ndim_a - 1 then (0, diag_len)
+            else (0, shape_a.(i))
           ) in
           shrink slice_spec a
         else
@@ -3597,11 +3598,7 @@ module Make (B : Backend_intf.S) = struct
     let flat_a = flatten a' in
     let flat_b = flatten b' in
     if numel flat_a <> numel flat_b then
-      Error.invalid ~op:"vdot" ~what:"shapes"
-        ~reason:
-          (Printf.sprintf "different number of elements: %d vs %d"
-             (numel flat_a) (numel flat_b))
-        ();
+      Error.invalid ~op:"vdot" ~what:"different number of elements" ();
 
     (* For complex types, conjugate first vector *)
     match dtype a with

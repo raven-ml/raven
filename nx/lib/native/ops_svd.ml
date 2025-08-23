@@ -159,7 +159,11 @@ let bidiagonalize_real pool a u v diag superdiag m n =
   (* Debug: check matrix dimensions *)
   let a_size = Array1.dim a in
   if a_size < m * n then
-    failwith (Printf.sprintf "bidiagonalize_real: matrix size mismatch, expected %d elements (m=%d, n=%d), got %d" (m*n) m n a_size);
+    failwith
+      (Printf.sprintf
+         "bidiagonalize_real: matrix size mismatch, expected %d elements \
+          (m=%d, n=%d), got %d"
+         (m * n) m n a_size);
   let init_loop size mat =
     if size > 100 then
       Parallel.parallel_for pool 0 (size - 1) (fun start_i end_i ->
@@ -178,17 +182,22 @@ let bidiagonalize_real pool a u v diag superdiag m n =
   init_loop m u;
   init_loop n v;
   for p = 0 to minmn - 1 do
+    (* if m = 2 && n = 2 then Printf.printf "=== Processing column p=%d
+       (minmn=%d) ===\n" p minmn; *)
     let norm2 = ref 0.0 in
     for i = p to m - 1 do
       let x = a.{(i * n) + p} in
       norm2 := !norm2 +. (x *. x)
     done;
+    (* if m = 2 && n = 2 && p = 1 then Printf.printf " p=%d, loop from %d to
+       %d\n" p p (m-1); *)
     let norm = sqrt !norm2 in
-    if norm > 0.0 then (
+    (* Only apply column Householder if there are elements below diagonal to zero out *)
+    if norm > 0.0 && p < m - 1 then (
       let sign = Float_ops.sign a.{(p * n) + p} in
       let alpha = -.sign *. norm in
       a.{(p * n) + p} <- a.{(p * n) + p} -. alpha;
-      let beta = 1.0 /. (alpha *. a.{(p * n) + p}) in
+      let beta = -1.0 /. (alpha *. a.{(p * n) + p}) in
       let col_loop start_j end_j =
         for j = start_j to end_j - 1 do
           let gamma = ref 0.0 in
@@ -204,21 +213,26 @@ let bidiagonalize_real pool a u v diag superdiag m n =
       if n - p - 1 > 100 then
         Parallel.parallel_for pool (p + 1) (n - 1) col_loop
       else col_loop (p + 1) n;
-      let u_loop start_j end_j =
-        for j = start_j to end_j - 1 do
-          let gamma = ref 0.0 in
-          for i = p to m - 1 do
-            gamma := !gamma +. (a.{(i * n) + p} *. u.{(i * m) + j})
-          done;
-          let gamma = !gamma *. beta in
-          for i = p to m - 1 do
-            u.{(i * m) + j} <- u.{(i * m) + j} -. (gamma *. a.{(i * n) + p})
-          done
+      (* Apply Householder from right: U = U * H 
+         H = I - beta * v * v^T
+         U * H = U - beta * (U * v) * v^T
+         For each row i: U[i,:] = U[i,:] - beta * (U[i,:] · v) * v^T *)
+      for i = 0 to m - 1 do
+        let dot_prod = ref 0.0 in
+        for k = p to m - 1 do
+          dot_prod := !dot_prod +. (u.{(i * m) + k} *. a.{(k * n) + p})
+        done;
+        let gamma = !dot_prod *. beta in
+        for k = p to m - 1 do
+          u.{(i * m) + k} <- u.{(i * m) + k} -. (gamma *. a.{(k * n) + p})
         done
-      in
-      if m > 100 then Parallel.parallel_for pool 0 (m - 1) u_loop
-      else u_loop 0 m);
-    diag.(p) <- a.{(p * n) + p};
+      done;
+      (* Store alpha as the diagonal element (the reduced value) *)
+      diag.(p) <- alpha;
+      a.{(p * n) + p} <- alpha)
+    else
+      (* No Householder needed, just store the diagonal element *)
+      diag.(p) <- a.{(p * n) + p};
     if p < n - 1 then (
       let norm2r = ref 0.0 in
       for j = p + 1 to n - 1 do
@@ -228,9 +242,9 @@ let bidiagonalize_real pool a u v diag superdiag m n =
       let normr = sqrt !norm2r in
       if normr > 0.0 then (
         let sign = Float_ops.sign a.{(p * n) + p + 1} in
-        let alpha = -.sign *. normr in
-        a.{(p * n) + p + 1} <- a.{(p * n) + p + 1} -. alpha;
-        let beta = 1.0 /. (alpha *. a.{(p * n) + p + 1}) in
+        let alphar = -.sign *. normr in
+        a.{(p * n) + p + 1} <- a.{(p * n) + p + 1} -. alphar;
+        let beta = -1.0 /. (alphar *. a.{(p * n) + p + 1}) in
         let row_loop start_i end_i =
           for i = start_i to end_i - 1 do
             let gamma = ref 0.0 in
@@ -246,27 +260,25 @@ let bidiagonalize_real pool a u v diag superdiag m n =
         if m - p - 1 > 100 then
           Parallel.parallel_for pool (p + 1) (m - 1) row_loop
         else row_loop (p + 1) m;
-        let v_loop start_j end_j =
-          for j = start_j to end_j - 1 do
-            let gamma = ref 0.0 in
-            for t = p + 1 to n - 1 do
-              gamma := !gamma +. (v.{(t * n) + j} *. a.{(p * n) + t})
+        (* Apply Householder from right to V: V = V * H For each row i: V[i,:] =
+           V[i,:] - beta * (V[i,:] · v) * v^T *)
+        let v_loop start_i end_i =
+          for i = start_i to end_i - 1 do
+            let dot_prod = ref 0.0 in
+            for k = p + 1 to n - 1 do
+              dot_prod := !dot_prod +. (v.{(i * n) + k} *. a.{(p * n) + k})
             done;
-            let gamma = !gamma *. beta in
-            for t = p + 1 to n - 1 do
-              v.{(t * n) + j} <- v.{(t * n) + j} -. (gamma *. a.{(p * n) + t})
+            let gamma = !dot_prod *. beta in
+            for k = p + 1 to n - 1 do
+              v.{(i * n) + k} <- v.{(i * n) + k} -. (gamma *. a.{(p * n) + k})
             done
           done
         in
         if n > 100 then Parallel.parallel_for pool 0 (n - 1) v_loop
         else v_loop 0 n;
-        superdiag.(p) <- 
-          if p < minmn - 1 then 
-            let idx = (p * n) + p + 1 in
-            if idx >= 0 && idx < a_size then
-              Bigarray.Array1.unsafe_get a idx
-            else 0.0
-          else 0.0)
+        (* Store alphar as the superdiagonal element (the reduced value) *)
+        superdiag.(p) <- (if p < minmn - 1 then alphar else 0.0);
+        a.{(p * n) + p + 1} <- (if p < minmn - 1 then alphar else 0.0))
       else superdiag.(p) <- 0.0)
   done
 
@@ -307,7 +319,7 @@ let bidiagonalize_complex pool a u v diag superdiag m n =
       a.{(p * n) + p} <- Complex_ops.sub a_pp alpha;
       let a_pp_new = a.{(p * n) + p} in
       let beta =
-        1.0 /. ((Complex_ops.mul (Complex_ops.conj alpha) a_pp_new).re /. norm)
+        -1.0 /. ((Complex_ops.mul (Complex_ops.conj alpha) a_pp_new).re /. norm)
       in
       let col_loop start_j end_j =
         for j = start_j to end_j - 1 do
@@ -351,8 +363,12 @@ let bidiagonalize_complex pool a u v diag superdiag m n =
         done
       in
       if m > 100 then Parallel.parallel_for pool 0 (m - 1) u_loop
-      else u_loop 0 m);
-    diag.(p) <- Complex_ops.norm a.{(p * n) + p};
+      else u_loop 0 m;
+      (* Store the norm as the diagonal element *)
+      diag.(p) <- norm)
+    else
+      (* No Householder needed, just store the diagonal element *)
+      diag.(p) <- (if norm > 0.0 then norm else 0.0);
     a.{(p * n) + p} <- { re = diag.(p); im = 0.0 };
     if p < n - 1 then (
       let norm2r = ref 0.0 in
@@ -369,7 +385,7 @@ let bidiagonalize_complex pool a u v diag superdiag m n =
         a.{(p * n) + p + 1} <- Complex_ops.sub a_pq alpha;
         let a_pq_new = a.{(p * n) + p + 1} in
         let beta =
-          1.0
+          -1.0
           /. ((Complex_ops.mul a_pq_new (Complex_ops.conj alpha)).re /. normr)
         in
         let row_loop start_i end_i =
@@ -415,10 +431,13 @@ let bidiagonalize_complex pool a u v diag superdiag m n =
         in
         if n > 100 then Parallel.parallel_for pool 0 (n - 1) v_loop
         else v_loop 0 n;
-        superdiag.(p) <-
-          if p < minmn - 1 then Complex_ops.norm a.{(p * n) + p + 1} else 0.0)
-      else superdiag.(p) <- 0.0;
-      a.{(p * n) + p + 1} <- { re = superdiag.(p); im = 0.0 })
+        (* Store the norm as the superdiagonal element *)
+        superdiag.(p) <- (if p < minmn - 1 then normr else 0.0);
+        a.{(p * n) + p + 1} <- { re = superdiag.(p); im = 0.0 })
+      else (
+        superdiag.(p) <- 0.0;
+        a.{(p * n) + p + 1} <- { re = 0.0; im = 0.0 }))
+    else ()
   done
 
 (* SVD QR iteration for real *)
@@ -568,10 +587,28 @@ let svd_real pool a u s v m n _full_matrices =
   let diag = Array.make minmn 0.0 in
   let superdiag = Array.make (minmn - 1) 0.0 in
   bidiagonalize_real pool a u v diag superdiag m n;
+  (* Debug: print U after bidiagonalization for 2x2 case if m = 2 && n = 2 then
+     begin Printf.printf "After bidiagonalization:\n"; Printf.printf " U =
+     [[%.6f, %.6f], [%.6f, %.6f]]\n" u.{0} u.{1} u.{2} u.{3}; Printf.printf " V
+     = [[%.6f, %.6f], [%.6f, %.6f]]\n" v.{0} v.{1} v.{2} v.{3}; Printf.printf "
+     diag = [%.6f, %.6f]\n" diag.(0) diag.(1); Printf.printf " superdiag =
+     [%.6f]\n" superdiag.(0) end; *)
   svd_iterate_real pool diag superdiag u v m n;
+  (* if m = 2 && n = 2 then begin Printf.printf "After QR iteration:\n";
+     Printf.printf " U = [[%.6f, %.6f], [%.6f, %.6f]]\n" u.{0} u.{1} u.{2}
+     u.{3}; Printf.printf " V = [[%.6f, %.6f], [%.6f, %.6f]]\n" v.{0} v.{1}
+     v.{2} v.{3}; Printf.printf " diag = [%.6f, %.6f]\n" diag.(0) diag.(1)
+     end; *)
   let s_arr = Array1.of_array float64 c_layout diag in
   for i = 0 to minmn - 1 do
-    s.{i} <- abs_float s_arr.{i}
+    if s_arr.{i} < 0.0 then (
+      (* If singular value is negative, make it positive and negate
+         corresponding column in U *)
+      s.{i} <- -.s_arr.{i};
+      for j = 0 to m - 1 do
+        u.{(j * m) + i} <- -.u.{(j * m) + i}
+      done)
+    else s.{i} <- s_arr.{i}
   done;
   for i = 0 to minmn - 2 do
     let max_idx = ref i in
@@ -715,16 +752,18 @@ let kernel_svd (type a b) pool (input : (a, b) t) (u : (a, b) t)
     let off_u = u_offset + batch_offset b (get_shape u.view) u_strides in
     let off_s = s_offset + batch_offset b (get_shape s.view) s_strides in
     let off_vt = vt_offset + batch_offset b (get_shape vt.view) vt_strides in
-    
+
     (* Handle m < n case by transposing *)
-    if m < n then
+    if m < n then (
       (* Transpose the matrix and swap U and V *)
       let packed_at = Array1.create kind_a c_layout (n * m) in
       (* Pack transposed: A^T *)
       for i = 0 to m - 1 do
         for j = 0 to n - 1 do
-          let src_idx = off_input + i * input_row_stride + j * input_col_stride in
-          let dst_idx = j * m + i in
+          let src_idx =
+            off_input + (i * input_row_stride) + (j * input_col_stride)
+          in
+          let dst_idx = (j * m) + i in
           packed_at.{dst_idx} <- input_buf.{src_idx}
         done
       done;
@@ -734,20 +773,24 @@ let kernel_svd (type a b) pool (input : (a, b) t) (u : (a, b) t)
       let () =
         match dtype input with
         | Dtype.Float32 ->
-            svd_real pool packed_at packed_u_t packed_s packed_vt_t n m full_matrices
+            svd_real pool packed_at packed_u_t packed_s packed_vt_t n m
+              full_matrices
         | Dtype.Float64 ->
-            svd_real pool packed_at packed_u_t packed_s packed_vt_t n m full_matrices
+            svd_real pool packed_at packed_u_t packed_s packed_vt_t n m
+              full_matrices
         | Dtype.Complex32 ->
-            svd_complex pool packed_at packed_u_t packed_s packed_vt_t n m full_matrices
+            svd_complex pool packed_at packed_u_t packed_s packed_vt_t n m
+              full_matrices
         | Dtype.Complex64 ->
-            svd_complex pool packed_at packed_u_t packed_s packed_vt_t n m full_matrices
+            svd_complex pool packed_at packed_u_t packed_s packed_vt_t n m
+              full_matrices
         | _ -> Error.failed ~op:"svd" ~what:"unsupported dtype" ()
       in
       (* Copy results, swapping U and V^T *)
       (* packed_vt_t (m×m) contains V' which becomes U for original matrix *)
       unpack pool u_buf off_u packed_vt_t m u_cols u_row_stride u_col_stride;
       for i = 0 to minmn - 1 do
-        let off = off_s + i * s_stride in
+        let off = off_s + (i * s_stride) in
         s_buf.{off} <- packed_s.{i}
       done;
       (* packed_u_t (n×n) contains U' which needs to be transposed to become V^T *)
@@ -757,11 +800,12 @@ let kernel_svd (type a b) pool (input : (a, b) t) (u : (a, b) t)
           vt_buf.{off_vt + (ii * vt_row_stride) + (jj * vt_col_stride)} <-
             packed_u_t.{(jj * n) + ii}
         done
-      done
+      done)
     else
       (* Original case for m >= n *)
       let packed_a = Array1.create kind_a c_layout (m * n) in
-      pack pool packed_a input_buf off_input m n input_row_stride input_col_stride;
+      pack pool packed_a input_buf off_input m n input_row_stride
+        input_col_stride;
       let packed_u = Array1.create kind_u c_layout (m * m) in
       let packed_v = Array1.create kind_vt c_layout (n * n) in
       let packed_s = Array1.create kind_s c_layout minmn in
@@ -772,9 +816,11 @@ let kernel_svd (type a b) pool (input : (a, b) t) (u : (a, b) t)
         | Dtype.Float64 ->
             svd_real pool packed_a packed_u packed_s packed_v m n full_matrices
         | Dtype.Complex32 ->
-            svd_complex pool packed_a packed_u packed_s packed_v m n full_matrices
+            svd_complex pool packed_a packed_u packed_s packed_v m n
+              full_matrices
         | Dtype.Complex64 ->
-            svd_complex pool packed_a packed_u packed_s packed_v m n full_matrices
+            svd_complex pool packed_a packed_u packed_s packed_v m n
+              full_matrices
         | _ -> Error.failed ~op:"svd" ~what:"unsupported dtype" ()
       in
       unpack pool u_buf off_u packed_u m u_cols u_row_stride u_col_stride;
@@ -809,21 +855,36 @@ let svd (type a b) (ctx : context) ~full_matrices (input : (a, b) t) =
   let m = shape.(ndim - 2) in
   let n = shape.(ndim - 1) in
   let minmn = min m n in
-  
-  (* Temporarily skip m < n case *)
-  if m < n then
-    Error.failed ~op:"svd" ~what:"m < n case not yet supported" ();
-  let u_shape =
-    Array.append batch_shape [| m; (if full_matrices then m else minmn) |]
-  in
-  let s_shape = Array.append batch_shape [| minmn |] in
-  let vt_shape =
-    Array.append batch_shape [| (if full_matrices then n else minmn); n |]
-  in
-  let input_dtype = dtype input in
-  let s_dtype = Dtype.Float64 in
-  let u = empty ctx input_dtype u_shape in
-  let s = empty ctx s_dtype s_shape in
-  let vt = empty ctx input_dtype vt_shape in
-  kernel_svd ctx.pool input u s vt full_matrices;
-  (u, s, vt)
+
+  (* For m < n, we need to handle the case specially *)
+  if m < n then (
+    (* The kernel_svd already handles m < n case internally by transposing *)
+    let u_shape =
+      Array.append batch_shape [| m; (if full_matrices then m else m) |]
+    in
+    let s_shape = Array.append batch_shape [| m |] in
+    let vt_shape =
+      Array.append batch_shape [| (if full_matrices then n else m); n |]
+    in
+    let input_dtype = dtype input in
+    let s_dtype = Dtype.Float64 in
+    let u = empty ctx input_dtype u_shape in
+    let s = empty ctx s_dtype s_shape in
+    let vt = empty ctx input_dtype vt_shape in
+    kernel_svd ctx.pool input u s vt full_matrices;
+    (u, s, vt))
+  else
+    let u_shape =
+      Array.append batch_shape [| m; (if full_matrices then m else minmn) |]
+    in
+    let s_shape = Array.append batch_shape [| minmn |] in
+    let vt_shape =
+      Array.append batch_shape [| (if full_matrices then n else minmn); n |]
+    in
+    let input_dtype = dtype input in
+    let s_dtype = Dtype.Float64 in
+    let u = empty ctx input_dtype u_shape in
+    let s = empty ctx s_dtype s_shape in
+    let vt = empty ctx input_dtype vt_shape in
+    kernel_svd ctx.pool input u s vt full_matrices;
+    (u, s, vt)
