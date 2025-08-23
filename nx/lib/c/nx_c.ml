@@ -1,434 +1,6 @@
 open Nx_core
 open Bigarray_ext
 
-external assign :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_assign_bc" "caml_nx_assign"
-
-external copy :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_copy_bc" "caml_nx_copy"
-
-external cast :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('d, 'e, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_cast_bc" "caml_nx_cast"
-
-external neg :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_neg_bc" "caml_nx_neg"
-
-external sqrt :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_sqrt_bc" "caml_nx_sqrt"
-
-external sin :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_sin_bc" "caml_nx_sin"
-
-external exp2 :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_exp2_bc" "caml_nx_exp2"
-
-external log2 :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_log2_bc" "caml_nx_log2"
-
-external recip :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_recip_bc" "caml_nx_recip"
-
-external add :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_add_bc" "caml_nx_add"
-
-external sub :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_sub_bc" "caml_nx_sub"
-
-external mul :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_mul_bc" "caml_nx_mul"
-
-external fdiv :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_fdiv_bc" "caml_nx_fdiv"
-
-external max :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_max_bc" "caml_nx_max"
-
-external mod_ :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_mod_bc" "caml_nx_mod"
-
-external pow :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_pow_bc" "caml_nx_pow"
-
-external idiv :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_idiv_bc" "caml_nx_idiv"
-
-external xor :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_xor_bc" "caml_nx_xor"
-
-external or_ :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_or_bc" "caml_nx_or"
-
-external and_ :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_and_bc" "caml_nx_and"
-
-external cmplt :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  (int, int8_unsigned_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_cmplt_bc" "caml_nx_cmplt"
-
-external cmpne :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  (int, int8_unsigned_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_cmpne_bc" "caml_nx_cmpne"
-
-external reduce_sum :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  int ->
-  unit = "caml_nx_reduce_sum_bc" "caml_nx_reduce_sum"
-
-external reduce_max :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  int ->
-  unit = "caml_nx_reduce_max_bc" "caml_nx_reduce_max"
-
-external reduce_prod :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  int ->
-  unit = "caml_nx_reduce_prod_bc" "caml_nx_reduce_prod"
-
-external where :
-  int ->
-  int array ->
-  (int, int8_unsigned_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_where_bc" "caml_nx_where"
-
-external pad :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  'a ->
-  unit = "caml_nx_pad_bc" "caml_nx_pad"
-
-external cat :
-  (('a, 'b, 'c) Array1.t * View.t) array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  unit = "caml_nx_cat_bc" "caml_nx_cat"
-
-external threefry :
-  int ->
-  int array ->
-  (int32, int32_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  (int32, int32_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  (int32, int32_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_threefry_bc" "caml_nx_threefry"
-
-external gather :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  (int32, int32_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  unit = "caml_nx_gather_bc" "caml_nx_gather"
-
-external scatter :
-  int ->
-  (* template_ndim *)
-  int array ->
-  (* template_shape *)
-  int ->
-  (* indices_ndim *)
-  int array ->
-  (* indices_shape *)
-  ('a, 'b, 'c) Array1.t ->
-  (* template buffer *)
-  int array ->
-  (* template strides *)
-  int ->
-  (* template offset *)
-  (int32, int32_elt, 'c) Array1.t ->
-  (* indices buffer *)
-  int array ->
-  (* indices strides *)
-  int ->
-  (* indices offset *)
-  ('a, 'b, 'c) Array1.t ->
-  (* updates buffer *)
-  int array ->
-  (* updates strides *)
-  int ->
-  (* updates offset *)
-  int ->
-  (* axis *)
-  ('a, 'b, 'c) Array1.t ->
-  (* output buffer *)
-  int array ->
-  (* output strides *)
-  int ->
-  (* output offset *)
-  int ->
-  (* computation mode *)
-  unit = "caml_nx_scatter_bc" "caml_nx_scatter"
-
 type ('a, 'b) buffer = ('a, 'b, c_layout) Array1.t
 type context = unit
 
@@ -441,181 +13,482 @@ type ('a, 'b) t = {
   view : Lazy_view.t;
 }
 
+type ('a, 'b) ffi_tensor = {
+  data : ('a, 'b) buffer;
+  shape : int array;
+  strides : int array;
+  offset : int;
+}
+[@@warning "-69"]
+
+(* External FFI declarations *)
+external caml_add :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_add"
+
+external caml_mul :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_mul"
+
+external caml_idiv :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_idiv"
+
+external caml_fdiv :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_fdiv"
+
+external caml_max :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_max"
+
+external caml_mod :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_mod"
+
+external caml_pow :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_pow"
+
+external caml_cmplt :
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  (int, Dtype.uint8_elt) ffi_tensor ->
+  unit = "caml_nx_cmplt"
+
+external caml_cmpne :
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  (int, Dtype.uint8_elt) ffi_tensor ->
+  unit = "caml_nx_cmpne"
+
+external caml_xor :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_xor"
+
+external caml_or :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_or"
+
+external caml_and :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_and"
+
+(* Unary operation FFI declarations *)
+external caml_neg : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_neg"
+
+external caml_log2 : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_log2"
+
+external caml_exp2 : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_exp2"
+
+external caml_sin : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_sin"
+
+external caml_sqrt : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_sqrt"
+
+external caml_recip : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_recip"
+
+(* Ternary operation FFI declarations *)
+external caml_where :
+  (int, Dtype.uint8_elt) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  unit = "caml_nx_where"
+
+(* Reduction operation FFI declarations *)
+external caml_reduce_sum :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int array -> bool -> unit
+  = "caml_nx_reduce_sum"
+
+external caml_reduce_max :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int array -> bool -> unit
+  = "caml_nx_reduce_max"
+
+external caml_reduce_prod :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int array -> bool -> unit
+  = "caml_nx_reduce_prod"
+
+(* Cast operation FFI declaration *)
+external caml_cast : ('a, 'b) ffi_tensor -> ('c, 'd) ffi_tensor -> unit
+  = "caml_nx_cast"
+
+(* Memory operation FFI declarations *)
+external caml_copy : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor = "caml_nx_copy"
+
+external caml_contiguous : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor
+  = "caml_nx_contiguous"
+
+external caml_assign : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_assign"
+
+(* Index operation FFI declarations *)
+external caml_gather :
+  ('a, 'b) ffi_tensor ->
+  (int32, Dtype.int32_elt) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  int ->
+  unit = "caml_nx_op_gather"
+
+external caml_scatter :
+  ('a, 'b) ffi_tensor ->
+  (int32, Dtype.int32_elt) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  int ->
+  ('a, 'b) ffi_tensor ->
+  int ->
+  bool ->
+  unit = "caml_nx_op_scatter_bc" "caml_nx_op_scatter"
+
+(* Linear algebra operation FFI declarations *)
+external caml_cholesky :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> bool -> unit
+  = "caml_nx_op_cholesky"
+
+external caml_matmul :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_matmul"
+
+external caml_triangular_solve :
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  bool ->
+  bool ->
+  bool ->
+  unit = "caml_nx_op_triangular_solve_bc" "caml_nx_op_triangular_solve"
+
+external caml_qr :
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  bool ->
+  unit = "caml_nx_op_qr"
+
+external caml_eig :
+  ('a, 'b) ffi_tensor ->
+  ('c, 'd) ffi_tensor ->
+  ('e, 'f) ffi_tensor ->
+  bool ->
+  bool ->
+  unit = "caml_nx_op_eig"
+
+external caml_svd :
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  ('c, 'd) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  bool ->
+  unit = "caml_nx_op_svd"
+
+(* FFT operation FFI declarations *)
+external caml_fft :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int list -> bool -> unit
+  = "caml_nx_op_fft"
+
+external caml_rfft :
+  ('a, 'b) ffi_tensor -> ('c, 'd) ffi_tensor -> int list -> unit
+  = "caml_nx_op_rfft"
+
+external caml_irfft :
+  ('a, 'b) ffi_tensor -> ('c, 'd) ffi_tensor -> int list -> int -> unit
+  = "caml_nx_op_irfft"
+
+(* Shape operation FFI declarations *)
+external caml_cat :
+  ('a, 'b) ffi_tensor list -> int -> ('a, 'b) ffi_tensor -> unit = "caml_nx_cat"
+
+external caml_pad :
+  ('a, 'b) ffi_tensor -> int array -> 'a -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_pad"
+
+(* Window operation FFI declarations *)
+external caml_unfold :
+  ('a, 'b) ffi_tensor ->
+  int array ->
+  int array ->
+  int array ->
+  int array ->
+  ('a, 'b) ffi_tensor ->
+  unit = "caml_nx_op_unfold_bc" "caml_nx_op_unfold"
+
+external caml_fold :
+  ('a, 'b) ffi_tensor ->
+  int array ->
+  int array ->
+  int array ->
+  int array ->
+  int array ->
+  ('a, 'b) ffi_tensor ->
+  unit = "caml_nx_op_fold_bc" "caml_nx_op_fold"
+
+(* Random operation FFI declarations *)
+external caml_threefry :
+  (int32, Dtype.int32_elt) ffi_tensor ->
+  (int32, Dtype.int32_elt) ffi_tensor ->
+  (int32, Dtype.int32_elt) ffi_tensor ->
+  unit = "caml_nx_threefry"
+
+(* Helper functions *)
+
 let view t = t.view
 let dtype t = t.dtype
-let context t = t.context
 let data t = t.buffer
-let create ctx dtype buffer view = { context = ctx; dtype; buffer; view }
+let context t = t.context
 
-let make_buffer (type a b) (dtype : (a, b) Dtype.t) size =
-  Array1.create (Dtype.to_bigarray_ext_kind dtype) c_layout size
+let shape t =
+  let s = Lazy_view.shape t.view in
+  match Symbolic_shape.eval s with
+  | Some arr -> arr
+  | None -> Error.failed ~op:"shape" ~what:"symbolic shape not evaluable" ()
 
-let make_tensor x shape =
-  let numel = Array.fold_left ( * ) 1 shape in
-  create x.context x.dtype
-    (make_buffer x.dtype numel)
-    (Lazy_view.create (Symbolic_shape.of_ints shape))
+let strides t =
+  match Lazy_view.strides t.view with
+  | Some s -> s
+  | None -> Error.failed ~op:"strides" ~what:"cannot get strides for view" ()
 
-let op_buffer ctx dtype size =
-  create ctx dtype (make_buffer dtype size)
-    (Lazy_view.create (Symbolic_shape.of_ints [| size |]))
+let offset t =
+  let off = Lazy_view.offset t.view in
+  match Symbolic_shape.eval_dim off with
+  | Some n -> n
+  | None -> Error.failed ~op:"offset" ~what:"symbolic offset not evaluable" ()
 
+let is_contiguous t = Lazy_view.is_contiguous t.view
+
+(* Check if a tensor can be efficiently operated on *)
+let can_get_strides t = Lazy_view.can_get_strides t.view
+
+(* Convert tensor to FFI representation if possible *)
+let to_ffi_tensor t =
+  if not (can_get_strides t) then
+    Error.failed ~op:"to_ffi_tensor" ~what:"tensor has non-materializable view"
+      ()
+  else
+    { data = t.buffer; shape = shape t; strides = strides t; offset = offset t }
+
+(* Create a new tensor with given shape *)
+let create_tensor ctx dtype shape_arr =
+  let size = Array.fold_left ( * ) 1 shape_arr in
+  let kind = Dtype.to_bigarray_ext_kind dtype in
+  let buffer = Array1.create kind c_layout size in
+  let shape = Symbolic_shape.of_ints shape_arr in
+  let view = Lazy_view.create shape in
+  { context = ctx; dtype; buffer; view }
+
+(* Materialize a tensor to contiguous layout if needed *)
+let materialize t =
+  (* Check if it has broadcast dimensions (zero strides) *)
+  let strides_arr = strides t in
+  let has_broadcast = Array.exists (( = ) 0) strides_arr in
+  
+  if is_contiguous t && offset t = 0 && not has_broadcast then t
+  else
+    (* Create a contiguous copy *)
+    let out_shape = shape t in
+    let out = create_tensor t.context t.dtype out_shape in
+    let t_ffi = to_ffi_tensor t in
+    let out_ffi = to_ffi_tensor out in
+    caml_assign t_ffi out_ffi;
+    out
+
+(* Ensure tensor is materializable for C operations *)
+let ensure_materializable t =
+  if not (can_get_strides t) then
+    (* Broadcast views or complex chains need materialization *)
+    materialize t
+  else
+    (* Check for zero strides (broadcast dimensions) *)
+    let strides_arr = strides t in
+    if Array.exists (( = ) 0) strides_arr then
+      (* Has broadcast dimensions - need to materialize *)
+      materialize t
+    else t
+
+(* Generic binary operation *)
+let binary_op op_name ffi_op x y =
+  (* Ensure both inputs have the same shape *)
+  let x_shape = shape x in
+  let y_shape = shape y in
+  if x_shape <> y_shape then
+    Error.invalid ~op:op_name ~what:"shape mismatch"
+      ~reason:
+        (Printf.sprintf "x: %s, y: %s"
+           (Array.to_list x_shape |> List.map string_of_int |> String.concat "x")
+           (Array.to_list y_shape |> List.map string_of_int |> String.concat "x"))
+      ()
+  else
+    (* Ensure inputs are materializable *)
+    let x' = ensure_materializable x in
+    let y' = ensure_materializable y in
+
+    (* Create output tensor *)
+    let out = create_tensor x.context x.dtype x_shape in
+
+    (* Convert to FFI tensors *)
+    let x_ffi = to_ffi_tensor x' in
+    let y_ffi = to_ffi_tensor y' in
+    let out_ffi = to_ffi_tensor out in
+
+    (* Call C implementation *)
+    ffi_op x_ffi y_ffi out_ffi;
+
+    out
+
+(* Comparison operation that returns uint8 *)
+let comparison_op op_name ffi_op x y =
+  (* Ensure both inputs have the same shape *)
+  let x_shape = shape x in
+  let y_shape = shape y in
+  if x_shape <> y_shape then
+    Error.invalid ~op:op_name ~what:"shape mismatch"
+      ~reason:
+        (Printf.sprintf "x: %s, y: %s"
+           (Array.to_list x_shape |> List.map string_of_int |> String.concat "x")
+           (Array.to_list y_shape |> List.map string_of_int |> String.concat "x"))
+      ()
+  else
+    (* Ensure inputs are materializable *)
+    let x' = ensure_materializable x in
+    let y' = ensure_materializable y in
+
+    (* Create output tensor with uint8 dtype *)
+    let out = create_tensor x.context Dtype.uint8 x_shape in
+
+    (* Convert to FFI tensors *)
+    let x_ffi = to_ffi_tensor x' in
+    let y_ffi = to_ffi_tensor y' in
+    let out_ffi = to_ffi_tensor out in
+
+    (* Call C implementation *)
+    ffi_op x_ffi y_ffi out_ffi;
+
+    out
+
+(* Buffer allocation *)
+let op_buffer ctx dtype size_in_elements =
+  let kind = Dtype.to_bigarray_ext_kind dtype in
+  let buffer = Array1.create kind c_layout size_in_elements in
+  (* Create a flat view for the buffer *)
+  let shape = Symbolic_shape.of_ints [| size_in_elements |] in
+  let view = Lazy_view.create shape in
+  { context = ctx; dtype; buffer; view }
+
+(* Constant creation ops *)
 let op_const_scalar ctx value dtype =
-  let buffer = make_buffer dtype 1 in
+  let kind = Dtype.to_bigarray_ext_kind dtype in
+  let buffer = Array1.create kind c_layout 1 in
   Array1.set buffer 0 value;
-  create ctx dtype buffer (Lazy_view.create (Symbolic_shape.of_ints [||]))
+  (* Create a scalar view (0-dimensional) *)
+  let shape = Symbolic_shape.of_ints [||] in
+  let view = Lazy_view.create shape in
+  { context = ctx; dtype; buffer; view }
 
 let op_const_array ctx array =
   let dtype = Dtype.of_bigarray_ext_kind (Array1.kind array) in
   let size = Array1.dim array in
-  let buffer = make_buffer dtype size in
-  Array1.blit array buffer;
-  create ctx dtype buffer (Lazy_view.create (Symbolic_shape.of_ints [| size |]))
+  (* Create a view for the 1D array *)
+  let shape = Symbolic_shape.of_ints [| size |] in
+  let view = Lazy_view.create shape in
+  (* Note: We're sharing the buffer directly, assuming it's contiguous *)
+  { context = ctx; dtype; buffer = array; view }
 
-(* op_copy always creates a fresh tensor with a new buffer and copies the
-   data. *)
-(* Helper to get concrete shape from view *)
-let get_shape view =
-  match Symbolic_shape.eval (Lazy_view.shape view) with
-  | Some arr -> arr
-  | None ->
-      Error.failed ~op:"get_shape" ~what:"cannot evaluate symbolic shape" ()
+(* Generic unary operation *)
+let unary_op _op_name ffi_op x =
+  (* Ensure input is materializable *)
+  let x' = ensure_materializable x in
 
-(* Helper to get strides from view *)
-let get_strides view =
-  match Lazy_view.strides view with
-  | Some s -> s
-  | None ->
-      Error.failed ~op:"get_strides"
-        ~what:"cannot get strides for non-contiguous view" ()
+  (* Create output tensor with same shape *)
+  let x_shape = shape x in
+  let out = create_tensor x.context x.dtype x_shape in
 
-(* Helper to get offset from view *)
-let get_offset view =
-  match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-  | Some n -> n
-  | None ->
-      Error.failed ~op:"get_offset" ~what:"cannot evaluate symbolic offset" ()
+  (* Convert to FFI tensors *)
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
 
-(* Helper to get numel from view *)
-let get_numel view =
-  match Symbolic_shape.eval_dim (Lazy_view.numel view) with
-  | Some n -> n
-  | None ->
-      Error.failed ~op:"get_numel" ~what:"cannot evaluate symbolic numel" ()
+  (* Call C implementation *)
+  ffi_op x_ffi out_ffi;
 
-let op_copy x =
-  let shape = get_shape x.view in
-  let result = make_tensor x shape in
-  copy (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
-    (get_offset x.view) result.buffer (get_strides result.view)
-    (get_offset result.view);
-  let _ = x.view in
-  (* FIX: Keep input tensor alive during C call. *)
-  result
+  out
 
-(* op_contiguous is a smart copy. It returns the original tensor if it's already
-   contiguous, otherwise it behaves like op_copy. *)
-let op_contiguous x = if Lazy_view.is_contiguous x.view then x else op_copy x
+(* Binary operations *)
+let op_add x y = binary_op "add" caml_add x y
+let op_mul x y = binary_op "mul" caml_mul x y
+let op_idiv x y = binary_op "idiv" caml_idiv x y
+let op_fdiv x y = binary_op "fdiv" caml_fdiv x y
+let op_max x y = binary_op "max" caml_max x y
+let op_mod x y = binary_op "mod" caml_mod x y
+let op_pow x y = binary_op "pow" caml_pow x y
+let op_xor x y = binary_op "xor" caml_xor x y
+let op_or x y = binary_op "or" caml_or x y
+let op_and x y = binary_op "and" caml_and x y
 
-(* op_assign copies data from a source tensor into an existing destination
-   tensor. *)
-let op_assign dst src =
-  let dst_shape = get_shape dst.view in
-  let src_shape = get_shape src.view in
-  if dst_shape <> src_shape then
-    failwith "op_assign: source and destination shapes must match";
+(* Comparison operations *)
+let op_cmplt x y = comparison_op "cmplt" caml_cmplt x y
+let op_cmpne x y = comparison_op "cmpne" caml_cmpne x y
 
-  assign (Lazy_view.ndim src.view) src_shape src.buffer (get_strides src.view)
-    (get_offset src.view) dst.buffer (get_strides dst.view)
-    (get_offset dst.view);
-  let _ = (dst.view, src.view) in
-  (* FIX: Keep input tensors alive during C call. *)
-  ()
+(* Unary operations *)
+let op_neg x = unary_op "neg" caml_neg x
+let op_log2 x = unary_op "log2" caml_log2 x
+let op_exp2 x = unary_op "exp2" caml_exp2 x
+let op_sin x = unary_op "sin" caml_sin x
+let op_sqrt x = unary_op "sqrt" caml_sqrt x
+let op_recip x = unary_op "recip" caml_recip x
 
-(* op_cast creates a new tensor of a different dtype and copies the data,
-   converting type. *)
-let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
-    (c, d) t =
-  match Dtype.equal_witness x.dtype target_dtype with
-  | Some Equal -> op_copy x
-  | None ->
-      let result =
-        create x.context target_dtype
-          (make_buffer target_dtype (get_numel x.view))
-          x.view
-      in
-      let shape = get_shape x.view in
-      cast (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
-        (get_offset x.view) result.buffer (get_strides result.view)
-        (get_offset result.view);
-      let _ = x.view in
-      (* FIX: Keep input tensor alive during C call. *)
-      result
+(* Ternary Op *)
+let op_where cond if_true if_false =
+  (* Ensure all inputs have the same shape *)
+  let cond_shape = shape cond in
+  let if_true_shape = shape if_true in
+  let if_false_shape = shape if_false in
 
-let unop op x =
-  let shape = get_shape x.view in
-  let result = make_tensor x shape in
-  op (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
-    (get_offset x.view) result.buffer (get_strides result.view)
-    (get_offset result.view);
-  let _ = x.view in
-  (* FIX: Keep input tensor alive during C call. *)
-  result
+  if cond_shape <> if_true_shape || if_true_shape <> if_false_shape then
+    Error.invalid ~op:"op_where" ~what:"shape mismatch"
+      ~reason:
+        (Printf.sprintf "cond: %s, if_true: %s, if_false: %s"
+           (Array.to_list cond_shape |> List.map string_of_int
+          |> String.concat "x")
+           (Array.to_list if_true_shape
+           |> List.map string_of_int |> String.concat "x")
+           (Array.to_list if_false_shape
+           |> List.map string_of_int |> String.concat "x"))
+      ()
+  else
+    (* Ensure inputs are materializable *)
+    let cond' = ensure_materializable cond in
+    let if_true' = ensure_materializable if_true in
+    let if_false' = ensure_materializable if_false in
 
-let binop op x y =
-  let shape = get_shape x.view in
-  let result = make_tensor x shape in
-  op (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
-    (get_offset x.view) y.buffer (get_strides y.view) (get_offset y.view)
-    result.buffer (get_strides result.view) (get_offset result.view);
-  let _ = (x.view, y.view) in
-  (* FIX: Keep input tensors alive during C call. *)
-  result
+    (* Create output tensor with same dtype as if_true/if_false *)
+    let out = create_tensor if_true.context if_true.dtype if_true_shape in
 
-let op_neg x = unop neg x
-let op_sqrt x = unop sqrt x
-let op_sin x = unop sin x
-let op_exp2 x = unop exp2 x
-let op_log2 x = unop log2 x
-let op_recip x = unop recip x
-let op_add a b = binop add a b
-let op_sub a b = binop sub a b
-let op_mul a b = binop mul a b
-let op_fdiv a b = binop fdiv a b
-let op_max a b = binop max a b
-let op_mod a b = binop mod_ a b
-let op_pow a b = binop pow a b
-let op_idiv a b = binop idiv a b
-let op_xor a b = binop xor a b
-let op_or a b = binop or_ a b
-let op_and a b = binop and_ a b
+    (* Convert to FFI tensors *)
+    let cond_ffi = to_ffi_tensor cond' in
+    let if_true_ffi = to_ffi_tensor if_true' in
+    let if_false_ffi = to_ffi_tensor if_false' in
+    let out_ffi = to_ffi_tensor out in
 
-let binop_cmp op x y =
-  (* Comparison ops return uint8 *)
-  let result_dtype = Dtype.uint8 in
-  let shape = get_shape x.view in
-  let result =
-    create x.context result_dtype
-      (make_buffer result_dtype (get_numel x.view))
-      (Lazy_view.create (Symbolic_shape.of_ints shape))
-  in
-  op (Lazy_view.ndim x.view) shape x.buffer (get_strides x.view)
-    (get_offset x.view) y.buffer (get_strides y.view) (get_offset y.view)
-    result.buffer (get_strides result.view) (get_offset result.view);
-  let _ = (x.view, y.view) in
-  (* FIX: Keep input tensors alive during C call. *)
-  result
+    (* Call C implementation *)
+    caml_where cond_ffi if_true_ffi if_false_ffi out_ffi;
 
-let op_cmplt a b = binop_cmp cmplt a b
-let op_cmpne a b = binop_cmp cmpne a b
+    out
 
-let reduce_op op ~axes ~keepdims x =
-  let input_shape = get_shape x.view in
+(* Reduction Ops *)
+let reduce_op _op_name ffi_op ~axes ~keepdims x =
+  let input_shape = shape x in
   let ndim = Array.length input_shape in
 
-  (* Special case: if input is already a scalar (0-dimensional), just return
-     it *)
-  if ndim = 0 then op_copy x (* FIX: Return a copy to maintain semantics. *)
+  (* Special case: if input is already a scalar (0-dimensional), just return a
+     copy *)
+  if ndim = 0 then (
+    let out = create_tensor x.context x.dtype [||] in
+    (* Copy the scalar value *)
+    Array1.set out.buffer 0 (Array1.get x.buffer 0);
+    out)
   else
     (* Normalize axes *)
     let normalized_axes =
@@ -638,1165 +511,576 @@ let reduce_op op ~axes ~keepdims x =
         Array.of_list (List.rev !filtered)
     in
 
-    (* Create result tensor *)
-    let result_numel = Array.fold_left ( * ) 1 output_shape in
-    let result =
-      create x.context x.dtype
-        (make_buffer x.dtype result_numel)
-        (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+    (* Handle empty output shape (full reduction) *)
+    let output_shape =
+      if Array.length output_shape = 0 then [||] else output_shape
     in
 
-    (* Call the C implementation *)
-    op (Lazy_view.ndim x.view) (get_shape x.view) x.buffer (get_strides x.view)
-      (get_offset x.view) result.buffer (get_strides result.view)
-      (get_offset result.view) normalized_axes
-      (if keepdims then 1 else 0);
-    let _ = x.view in
-    (* FIX: Keep input tensor alive during C call. *)
-    result
+    (* Ensure input is materializable *)
+    let x' = ensure_materializable x in
 
-let op_reduce_sum ~axes ~keepdims x = reduce_op reduce_sum ~axes ~keepdims x
-let op_reduce_max ~axes ~keepdims x = reduce_op reduce_max ~axes ~keepdims x
-let op_reduce_prod ~axes ~keepdims x = reduce_op reduce_prod ~axes ~keepdims x
-let op_reshape x shape = { x with view = Lazy_view.reshape shape x.view }
+    (* Create output tensor *)
+    let out = create_tensor x.context x.dtype output_shape in
+
+    (* Convert to FFI tensors *)
+    let x_ffi = to_ffi_tensor x' in
+    let out_ffi = to_ffi_tensor out in
+
+    (* Call C implementation *)
+    ffi_op x_ffi out_ffi normalized_axes keepdims;
+
+    out
+
+let op_reduce_sum ~axes ~keepdims x =
+  reduce_op "reduce_sum" caml_reduce_sum ~axes ~keepdims x
+
+let op_reduce_max ~axes ~keepdims x =
+  reduce_op "reduce_max" caml_reduce_max ~axes ~keepdims x
+
+let op_reduce_prod ~axes ~keepdims x =
+  reduce_op "reduce_prod" caml_reduce_prod ~axes ~keepdims x
+
+(* Movement Ops - These are view-only operations *)
 let op_expand x shape = { x with view = Lazy_view.expand shape x.view }
+let op_reshape x shape = { x with view = Lazy_view.reshape shape x.view }
 let op_permute x axes = { x with view = Lazy_view.permute axes x.view }
+
+let op_pad x padding fill_value =
+  let x' = ensure_materializable x in
+
+  (* Calculate output shape *)
+  let in_shape = shape x in
+  let ndim = Array.length in_shape in
+
+  (* Convert pairs to flat array for C interface *)
+  let padding_flat =
+    Array.init (2 * ndim) (fun i ->
+        let dim = i / 2 in
+        if i mod 2 = 0 then fst padding.(dim) else snd padding.(dim))
+  in
+
+  (* Calculate output shape *)
+  let out_shape =
+    Array.init ndim (fun i ->
+        let before, after = padding.(i) in
+        in_shape.(i) + before + after)
+  in
+
+  let out = create_tensor x.context x.dtype out_shape in
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
+  caml_pad x_ffi padding_flat fill_value out_ffi;
+  out
+
 let op_shrink x bounds = { x with view = Lazy_view.shrink bounds x.view }
 let op_flip x axes = { x with view = Lazy_view.flip axes x.view }
 
-let op_where cond x y =
-  (* All inputs must have the same shape *)
-  let cond_shape = get_shape cond.view in
-  let x_shape = get_shape x.view in
-  let y_shape = get_shape y.view in
-  if cond_shape <> x_shape || x_shape <> y_shape then
-    failwith "op_where: all inputs must have the same shape";
+let op_cat tensors axis =
+  match tensors with
+  | [] -> Error.failed ~op:"op_cat" ~what:"empty tensor list" ()
+  | first :: _ ->
+      let tensors' = List.map ensure_materializable tensors in
 
-  let result = make_tensor x x_shape in
-  where (Lazy_view.ndim x.view) x_shape cond.buffer (get_strides cond.view)
-    (get_offset cond.view) x.buffer (get_strides x.view) (get_offset x.view)
-    y.buffer (get_strides y.view) (get_offset y.view) result.buffer
-    (get_strides result.view) (get_offset result.view);
-  let _ = (cond.view, x.view, y.view) in
-  (* FIX: Keep input tensors alive during C call. *)
-  result
+      (* Calculate output shape *)
+      let first_shape = shape first in
+      let ndim = Array.length first_shape in
+      let norm_axis = if axis < 0 then ndim + axis else axis in
 
-let op_cat inputs axis =
-  if List.length inputs = 0 then failwith "op_cat: need at least one input";
+      (* Sum up dimensions along concatenation axis *)
+      let total_axis_size =
+        List.fold_left
+          (fun acc t ->
+            let s = shape t in
+            acc + s.(norm_axis))
+          0 tensors
+      in
 
-  let first = List.hd inputs in
-  let ndim = Lazy_view.ndim first.view in
-  let axis = if axis < 0 then axis + ndim else axis in
+      let out_shape =
+        Array.mapi
+          (fun i dim -> if i = norm_axis then total_axis_size else dim)
+          first_shape
+      in
 
-  (* Verify all inputs have same shape except along concat axis *)
-  let first_shape = get_shape first.view in
-  List.iter
-    (fun input ->
-      let shape = get_shape input.view in
-      if Array.length shape <> ndim then
-        failwith "op_cat: all inputs must have same number of dimensions";
-      Array.iteri
-        (fun i dim ->
-          if i <> axis && dim <> first_shape.(i) then
-            failwith
-              "op_cat: all inputs must have same shape except along concat axis")
-        shape)
-    inputs;
+      let out = create_tensor first.context first.dtype out_shape in
+      let tensors_ffi = List.map to_ffi_tensor tensors' in
+      let out_ffi = to_ffi_tensor out in
+      caml_cat tensors_ffi norm_axis out_ffi;
+      out
 
-  (* Compute output shape *)
-  let output_shape = Array.copy first_shape in
-  output_shape.(axis) <-
-    List.fold_left
-      (fun sum input -> sum + (get_shape input.view).(axis))
-      0 inputs;
+(* Other Ops *)
+let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
+    (c, d) t =
+  (* Ensure input is materializable *)
+  let x' = ensure_materializable x in
 
-  (* Create result tensor *)
-  let result = make_tensor first output_shape in
+  (* Get input shape *)
+  let x_shape = shape x in
 
-  (* TODO: Fix this - need to convert Lazy_view to View for C function *)
-  let _ = failwith "op_cat: not yet implemented with Lazy_view" in
-  (* The following is unreachable but prevents type errors *)
-  result
+  (* Create output tensor with target dtype *)
+  let out = create_tensor x.context target_dtype x_shape in
 
-let op_threefry data seed =
-  (* Inputs must have same shape *)
-  let data_shape = get_shape data.view in
-  let seed_shape = get_shape seed.view in
-  if data_shape <> seed_shape then
-    failwith "op_threefry: data and seed must have same shape";
+  (* Convert to FFI tensors *)
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
 
-  let result = make_tensor data data_shape in
-  threefry (Lazy_view.ndim data.view) data_shape data.buffer
-    (get_strides data.view) (get_offset data.view) seed.buffer
-    (get_strides seed.view) (get_offset seed.view) result.buffer
-    (get_strides result.view) (get_offset result.view);
-  let _ = (data.view, seed.view) in
-  (* FIX: Keep input tensors alive during C call. *)
-  result
+  (* Call C implementation *)
+  caml_cast x_ffi out_ffi;
 
+  out
+
+let op_contiguous x =
+  if is_contiguous x && offset x = 0 then x
+  else
+    let x' = ensure_materializable x in
+    let x_ffi = to_ffi_tensor x' in
+    let out_ffi = caml_contiguous x_ffi in
+    (* Create tensor from FFI result - it's contiguous so simple view *)
+    let shape_sym = Symbolic_shape.of_ints out_ffi.shape in
+    let view = Lazy_view.create shape_sym in
+    { context = x.context; dtype = x.dtype; buffer = out_ffi.data; view }
+
+let op_copy x =
+  let x' = ensure_materializable x in
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = caml_copy x_ffi in
+  (* Create tensor from FFI result - it's contiguous so simple view *)
+  let shape_sym = Symbolic_shape.of_ints out_ffi.shape in
+  let view = Lazy_view.create shape_sym in
+  { context = x.context; dtype = x.dtype; buffer = out_ffi.data; view }
+
+let op_assign dst src =
+  let src' = ensure_materializable src in
+  (* dst doesn't need materialization - we're writing to it *)
+  let src_ffi = to_ffi_tensor src' in
+  let dst_ffi = to_ffi_tensor dst in
+  caml_assign src_ffi dst_ffi
+
+let op_threefry key counter =
+  let key' = ensure_materializable key in
+  let counter' = ensure_materializable counter in
+
+  (* Output has same shape as counter *)
+  let out_shape = shape counter in
+  let out = create_tensor counter.context counter.dtype out_shape in
+
+  let key_ffi = to_ffi_tensor key' in
+  let counter_ffi = to_ffi_tensor counter' in
+  let out_ffi = to_ffi_tensor out in
+  caml_threefry key_ffi counter_ffi out_ffi;
+  out
+
+(* Element Access Ops *)
 let op_gather data indices axis =
-  (* Validate axis *)
-  let data_ndim = Lazy_view.ndim data.view in
-  let axis = if axis < 0 then axis + data_ndim else axis in
-  if axis < 0 || axis >= data_ndim then failwith "op_gather: axis out of bounds";
+  (* Ensure inputs are materializable *)
+  let data' = ensure_materializable data in
+  let indices' = ensure_materializable indices in
 
-  (* Check rank compatibility *)
-  let indices_ndim = Lazy_view.ndim indices.view in
-  if data_ndim <> indices_ndim then
-    failwith "op_gather: data and indices must have same rank";
+  (* Get shapes *)
+  let indices_shape = shape indices in
 
-  (* Check shape compatibility *)
-  let data_shape = get_shape data.view in
-  let indices_shape = get_shape indices.view in
-  Array.iteri
-    (fun i dim ->
-      if i <> axis && dim > data_shape.(i) then
-        failwith "op_gather: indices shape incompatible with data shape")
-    indices_shape;
+  (* Calculate output shape: indices shape *)
+  let out_shape = indices_shape in
 
-  (* Output has shape of indices *)
-  let result = make_tensor data indices_shape in
-  gather data_ndim data_shape data.buffer (get_strides data.view)
-    (get_offset data.view) indices.buffer (get_strides indices.view)
-    (get_offset indices.view) axis result.buffer (get_strides result.view)
-    (get_offset result.view);
-  let _ = (data.view, indices.view) in
-  (* FIX: Keep input tensors alive during C call. *)
-  result
+  (* Create output tensor with same dtype as data *)
+  let out = create_tensor data.context data.dtype out_shape in
+
+  (* Convert to FFI tensors *)
+  let data_ffi = to_ffi_tensor data' in
+  let indices_ffi = to_ffi_tensor indices' in
+  let out_ffi = to_ffi_tensor out in
+
+  (* Call FFI function *)
+  caml_gather data_ffi indices_ffi out_ffi axis;
+
+  out
 
 let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
     updates axis =
-  let _ = unique_indices in
-  (* TODO: use this hint for optimization *)
-  (* Validate axis *)
-  let template_ndim = Lazy_view.ndim data_template.view in
-  let axis = if axis < 0 then axis + template_ndim else axis in
-  if axis < 0 || axis >= template_ndim then
-    failwith "op_scatter: axis out of bounds";
+  (* Ensure inputs are materializable *)
+  let template' = ensure_materializable data_template in
+  let indices' = ensure_materializable indices in
+  let updates' = ensure_materializable updates in
 
-  (* Shape checks *)
-  let indices_shape = get_shape indices.view in
-  let updates_shape = get_shape updates.view in
-  if indices_shape <> updates_shape then
-    failwith "op_scatter: indices and updates must have same shape";
+  (* Create output tensor with same shape and dtype as template *)
+  let out_shape = shape data_template in
+  let out = create_tensor data_template.context data_template.dtype out_shape in
 
-  let template_shape = get_shape data_template.view in
-  Array.iteri
-    (fun i dim ->
-      if i <> axis && dim > template_shape.(i) then
-        failwith "op_scatter: updates shape incompatible with template shape")
-    updates_shape;
+  (* Convert to FFI tensors *)
+  let template_ffi = to_ffi_tensor template' in
+  let indices_ffi = to_ffi_tensor indices' in
+  let updates_ffi = to_ffi_tensor updates' in
+  let out_ffi = to_ffi_tensor out in
 
-  (* Convert mode to integer *)
-  let computation_mode =
-    match mode with
-    | `Set -> 0 (* SCATTER_REPLACE *)
-    | `Add -> 1 (* SCATTER_ADD *)
-  in
+  (* Convert mode to integer: 0 for Set, 1 for Add *)
+  let mode_int = match mode with `Set -> 0 | `Add -> 1 in
 
-  (* Create output as copy of template *)
-  let result = op_copy data_template in
-  let indices_ndim = Lazy_view.ndim indices.view in
-  scatter template_ndim template_shape indices_ndim indices_shape
-    data_template.buffer
-    (get_strides data_template.view)
-    (get_offset data_template.view)
-    indices.buffer (get_strides indices.view) (get_offset indices.view)
-    updates.buffer (get_strides updates.view) (get_offset updates.view) axis
-    result.buffer (get_strides result.view) (get_offset result.view)
-    computation_mode;
-  let _ = (data_template.view, indices.view, updates.view) in
-  (* FIX: Keep input tensors alive during C call. *)
-  result
+  (* Call FFI function *)
+  caml_scatter template_ffi indices_ffi updates_ffi axis out_ffi mode_int
+    unique_indices;
 
-external matmul :
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int array ->
-  int ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int array ->
-  int ->
-  unit = "caml_nx_matmul_bc" "caml_nx_matmul"
-
-external unfold :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  int array ->
-  int array ->
-  int array ->
-  int array ->
-  unit = "caml_nx_unfold_bc" "caml_nx_unfold"
-
-external fold :
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int ->
-  int array ->
-  ('a, 'b, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  int array ->
-  int array ->
-  int array ->
-  int array ->
-  unit = "caml_nx_fold_bc" "caml_nx_fold"
-
-let op_matmul a b =
-  (* Check dimensions compatibility *)
-  let a_shape = get_shape a.view in
-  let b_shape = get_shape b.view in
-  let a_ndim = Array.length a_shape in
-  let b_ndim = Array.length b_shape in
-
-  if a_ndim < 2 || b_ndim < 2 then
-    failwith "op_matmul: inputs must have at least 2 dimensions";
-
-  (* Check inner dimensions match *)
-  (if a_shape.(a_ndim - 1) <> b_shape.(b_ndim - 2) then
-     let a_last = a_shape.(a_ndim - 1) in
-     let b_first = b_shape.(b_ndim - 2) in
-     let msg =
-       Printf.sprintf
-         "dot: cannot contract %s (last axis: %d) to %s (axis 0: %d) (size \
-          %d≠%d)"
-         (Shape.to_string a_shape) a_last (Shape.to_string b_shape) b_first
-         a_last b_first
-     in
-     invalid_arg msg);
-
-  (* Check dtypes match *)
-  if a.dtype <> b.dtype then failwith "op_matmul: inputs must have same dtype";
-
-  (* Compute output shape *)
-  let output_shape =
-    if a_ndim = 2 && b_ndim = 2 then [| a_shape.(0); b_shape.(1) |]
-    else
-      (* Handle broadcasting for batch dimensions *)
-      let max_ndim = Stdlib.max a_ndim b_ndim in
-      let result_shape = Array.make max_ndim 1 in
-      (* Copy batch dimensions *)
-      for i = 0 to max_ndim - 3 do
-        let a_idx = if i < a_ndim - 2 then i else -1 in
-        let b_idx = if i < b_ndim - 2 then i else -1 in
-        let a_dim = if a_idx >= 0 then a_shape.(a_idx) else 1 in
-        let b_dim = if b_idx >= 0 then b_shape.(b_idx) else 1 in
-        if a_dim <> b_dim && a_dim <> 1 && b_dim <> 1 then
-          failwith "op_matmul: batch dimensions are not compatible";
-        result_shape.(i) <- Stdlib.max a_dim b_dim
-      done;
-      result_shape.(max_ndim - 2) <- a_shape.(a_ndim - 2);
-      result_shape.(max_ndim - 1) <- b_shape.(b_ndim - 1);
-      result_shape
-  in
-
-  let result = make_tensor a output_shape in
-
-  matmul a.buffer a_shape (get_strides a.view) (get_offset a.view) b.buffer
-    b_shape (get_strides b.view) (get_offset b.view) result.buffer output_shape
-    (get_strides result.view) (get_offset result.view);
-
-  let _ = (a.view, b.view) in
-  (* FIX: Keep input tensors alive during C call. *)
-  result
+  out
 
 let op_unfold x ~kernel_size ~stride ~dilation ~padding =
-  let x_shape = get_shape x.view in
-  let ndim = Array.length x_shape in
-  let num_spatial_dims = Array.length kernel_size in
+  let x' = ensure_materializable x in
 
-  (* Batch dimensions are all dimensions before channels and spatial dims *)
-  let batch_dims = ndim - num_spatial_dims - 1 in
-  if batch_dims < 0 then
-    failwith
-      "op_unfold: input must have at least one channel and one spatial \
-       dimension";
+  let in_shape = shape x in
+  let batch_size = in_shape.(0) in
+  let in_channels = in_shape.(1) in
+  let spatial_dims = Array.sub in_shape 2 (Array.length in_shape - 2) in
 
-  (* Validate parameters have correct number of dimensions *)
-  if Array.length stride <> num_spatial_dims then
-    failwith "op_unfold: stride must match number of spatial dimensions";
-  if Array.length dilation <> num_spatial_dims then
-    failwith "op_unfold: dilation must match number of spatial dimensions";
-  if Array.length padding <> num_spatial_dims then
-    failwith "op_unfold: padding must match number of spatial dimensions";
-
-  (* Extract batch shape and channels *)
-  let batch_shape = Array.sub x_shape 0 batch_dims in
-  let channels = x_shape.(batch_dims) in
-
-  (* Compute the shape of the grid of patches (output_spatial_shape) *)
-  let output_spatial_shape = Array.make num_spatial_dims 0 in
-  for i = 0 to num_spatial_dims - 1 do
-    let pad_before, pad_after = padding.(i) in
-    let dilated_kernel_size = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
-    let input_spatial_dim = x_shape.(batch_dims + 1 + i) in
-    let padded_size = input_spatial_dim + pad_before + pad_after in
-    output_spatial_shape.(i) <-
-      ((padded_size - dilated_kernel_size) / stride.(i)) + 1;
-    if output_spatial_shape.(i) <= 0 then
-      failwith
-        (Printf.sprintf
-           "op_unfold: output spatial dimension %d is non-positive (%d)" i
-           output_spatial_shape.(i))
-  done;
-
-  (* Calculate total number of patches and the size of each patch column *)
-  let num_patches = Array.fold_left ( * ) 1 output_spatial_shape in
-  let kernel_elements = Array.fold_left ( * ) 1 kernel_size in
-  let patch_size = channels * kernel_elements in
-
-  (* Create the output tensor with shape [batch..., patch_size, num_patches] *)
-  let output_shape =
-    Array.concat [ batch_shape; [| patch_size; num_patches |] ]
+  let padding_flat =
+    Array.init
+      (Array.length padding * 2)
+      (fun i ->
+        let dim = i / 2 in
+        if i mod 2 = 0 then fst padding.(dim) else snd padding.(dim))
   in
-  let result = make_tensor x output_shape in
 
-  (* The C function needs the 'lower' (before) padding values as a simple
-     array *)
-  let padding_lower = Array.map fst padding in
+  let out_spatial =
+    Array.init (Array.length spatial_dims) (fun i ->
+        let pad_before, pad_after = padding.(i) in
+        let padded = spatial_dims.(i) + pad_before + pad_after in
+        let kernel_extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+        let diff = padded - kernel_extent in
+        if diff < 0 then
+          Error.invalid ~op:"unfold"
+            ~what:"kernel size larger than padded input" ()
+        else (diff / stride.(i)) + 1)
+  in
 
-  (* Call the C implementation with all required parameters *)
-  unfold (Lazy_view.ndim x.view) x_shape x.buffer (get_strides x.view)
-    (get_offset x.view)
-    (Lazy_view.ndim result.view)
-    output_shape result.buffer (get_strides result.view)
-    (get_offset result.view) output_spatial_shape kernel_size stride
-    padding_lower dilation;
-  let _ = x.view in
-  (* FIX: Keep input tensor alive during C call. *)
-  result
+  let kernel_prod = Array.fold_left ( * ) 1 kernel_size in
+  let spatial_prod = Array.fold_left ( * ) 1 out_spatial in
+  let out_shape = [| batch_size; in_channels * kernel_prod; spatial_prod |] in
+
+  let out = create_tensor x.context x.dtype out_shape in
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
+  caml_unfold x_ffi kernel_size stride dilation padding_flat out_ffi;
+  out
 
 let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
-  let x_shape = get_shape x.view in
-  let ndim = Array.length x_shape in
+  let x' = ensure_materializable x in
 
-  (* Input has shape [...batch, patch_size, num_patches] *)
-  if ndim < 2 then failwith "op_fold: input must have at least 2 dimensions";
+  let in_shape = shape x in
+  let batch_size = in_shape.(0) in
+  let kernel_prod = Array.fold_left ( * ) 1 kernel_size in
+  let channels = in_shape.(1) / kernel_prod in
 
-  let num_spatial_dims = Array.length output_size in
-  let batch_dims = ndim - 2 in
-  let batch_shape = Array.sub x_shape 0 batch_dims in
-
-  let patch_size = x_shape.(batch_dims) in
-  let num_patches_in = x_shape.(batch_dims + 1) in
-
-  (* Infer channels from patch_size and kernel_size *)
-  let kernel_elements = Array.fold_left ( * ) 1 kernel_size in
-  if patch_size mod kernel_elements <> 0 then
-    failwith "op_fold: patch_size must be divisible by product of kernel_size";
-  let channels = patch_size / kernel_elements in
-
-  (* Validate parameters *)
-  if Array.length kernel_size <> num_spatial_dims then
-    failwith "op_fold: kernel_size must match number of spatial dimensions";
-  if Array.length stride <> num_spatial_dims then
-    failwith "op_fold: stride must match number of spatial dimensions";
-  if Array.length dilation <> num_spatial_dims then
-    failwith "op_fold: dilation must match number of spatial dimensions";
-  if Array.length padding <> num_spatial_dims then
-    failwith "op_fold: padding must match number of spatial dimensions";
-
-  (* Calculate the expected number of patches from the output geometry *)
-  let output_spatial_shape = Array.make num_spatial_dims 0 in
-  for i = 0 to num_spatial_dims - 1 do
-    let pad_before, pad_after = padding.(i) in
-    let dilated_kernel_size = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
-    let padded_size = output_size.(i) + pad_before + pad_after in
-    output_spatial_shape.(i) <-
-      ((padded_size - dilated_kernel_size) / stride.(i)) + 1
-  done;
-
-  (* Verify that the input number of patches matches the expectation *)
-  let num_patches_expected = Array.fold_left ( * ) 1 output_spatial_shape in
-  if num_patches_in <> num_patches_expected then
-    failwith
-      (Printf.sprintf
-         "op_fold: input has %d patches but output geometry implies %d"
-         num_patches_in num_patches_expected);
-
-  (* Create the output tensor with shape [batch..., channels, ...output_size] *)
-  let full_output_shape =
-    Array.concat [ batch_shape; [| channels |]; output_size ]
-  in
-  let result = make_tensor x full_output_shape in
-
-  let padding_lower = Array.map fst padding in
-
-  (* Call the C implementation *)
-  fold (Lazy_view.ndim x.view) x_shape x.buffer (get_strides x.view)
-    (get_offset x.view)
-    (Lazy_view.ndim result.view)
-    full_output_shape result.buffer (get_strides result.view)
-    (get_offset result.view) output_spatial_shape kernel_size stride
-    padding_lower dilation;
-  let _ = x.view in
-  (* FIX: Keep input tensor alive during C call. *)
-  result
-
-let op_pad x padding value =
-  (* padding is a list of (before, after) pairs for each dimension *)
-  let ndim = Lazy_view.ndim x.view in
-  if Array.length padding <> ndim then
-    failwith "op_pad: padding list must have one pair per dimension";
-
-  (* Compute output shape *)
-  let input_shape = get_shape x.view in
-  let output_shape =
-    Array.mapi
-      (fun i dim ->
-        let before, after = Array.get padding i in
-        dim + before + after)
-      input_shape
+  let padding_flat =
+    Array.init
+      (Array.length padding * 2)
+      (fun i ->
+        let dim = i / 2 in
+        if i mod 2 = 0 then fst padding.(dim) else snd padding.(dim))
   in
 
-  (* Create flat padding array for C function *)
-  let padding_array = Array.make (ndim * 2) 0 in
-  Array.iteri
-    (fun i (before, after) ->
-      padding_array.(i * 2) <- before;
-      padding_array.((i * 2) + 1) <- after)
-    padding;
-
-  (* Create result tensor *)
-  let result =
-    create x.context x.dtype
-      (make_buffer x.dtype (Array.fold_left ( * ) 1 output_shape))
-      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
+  let _ =
+    Array.init (Array.length output_size) (fun i ->
+        let pad_before, pad_after = padding.(i) in
+        let padded = output_size.(i) + pad_before + pad_after in
+        let kernel_extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+        let diff = padded - kernel_extent in
+        if diff < 0 then
+          Error.invalid ~op:"fold" ~what:"kernel size larger than padded output"
+            ()
+        else (diff / stride.(i)) + 1)
   in
 
-  (* Call C implementation *)
-  pad ndim input_shape x.buffer (get_strides x.view) (get_offset x.view)
-    output_shape result.buffer (get_strides result.view)
-    (get_offset result.view) padding_array value;
-  let _ = x.view in
-  (* FIX: Keep input tensor alive during C call. *)
-  result
+  let out_shape = Array.concat [ [| batch_size; channels |]; output_size ] in
 
-(* FFT operations *)
-external fft_complex64 :
-  int ->
-  int array ->
-  (Complex.t, complex64_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  (Complex.t, complex64_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  int ->
-  bool ->
-  unit = "caml_nx_fft_complex64_bc" "caml_nx_fft_complex64"
+  let out = create_tensor x.context x.dtype out_shape in
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
+  caml_fold x_ffi output_size kernel_size stride dilation padding_flat out_ffi;
+  out
 
-external fft_complex32 :
-  int ->
-  int array ->
-  (Complex.t, complex32_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  (Complex.t, complex32_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  int ->
-  bool ->
-  unit = "caml_nx_fft_complex32_bc" "caml_nx_fft_complex32"
+let op_matmul x y =
+  let x' = ensure_materializable x in
+  let y' = ensure_materializable y in
 
-external rfft_float64 :
-  int ->
-  int array ->
-  (float, float64_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  (Complex.t, complex64_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  int ->
-  unit = "caml_nx_rfft_float64_bc" "caml_nx_rfft_float64"
+  (* Calculate output shape for matrix multiplication *)
+  let x_shape = shape x in
+  let y_shape = shape y in
+  let x_ndim = Array.length x_shape in
+  let y_ndim = Array.length y_shape in
 
-external irfft_complex64 :
-  int ->
-  int array ->
-  (Complex.t, complex64_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  (float, float64_elt, 'c) Array1.t ->
-  int array ->
-  int ->
-  int array ->
-  int ->
-  int ->
-  unit = "caml_nx_irfft_complex64_bc" "caml_nx_irfft_complex64"
+  (* For matmul: [..., m, k] @ [..., k, n] -> [..., m, n] *)
+  let out_shape =
+    if x_ndim = 1 && y_ndim = 1 then [||] (* dot product produces scalar *)
+    else if x_ndim = 1 then
+      (* [k] @ [..., k, n] -> [..., n] *)
+      Array.init (y_ndim - 1) (fun i ->
+          if i < y_ndim - 2 then y_shape.(i) else y_shape.(y_ndim - 1))
+    else if y_ndim = 1 then
+      (* [..., m, k] @ [k] -> [..., m] *)
+      Array.init (x_ndim - 1) (fun i -> x_shape.(i))
+    else
+      (* [..., m, k] @ [..., k, n] -> [..., m, n] *)
+      let broadcast_ndim = max x_ndim y_ndim in
+      Array.init broadcast_ndim (fun i ->
+          let i_from_end = broadcast_ndim - 1 - i in
+          if i_from_end = 0 then y_shape.(y_ndim - 1)
+          else if i_from_end = 1 then x_shape.(x_ndim - 2)
+          else
+            let x_idx = i - (broadcast_ndim - x_ndim) in
+            let y_idx = i - (broadcast_ndim - y_ndim) in
+            if x_idx < 0 && y_idx >= 0 then y_shape.(y_idx)
+            else if y_idx < 0 && x_idx >= 0 then x_shape.(x_idx)
+            else max x_shape.(x_idx) y_shape.(y_idx))
+  in
 
-let op_fft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
-  let input_shape = get_shape x.view in
-  let ndim = Array.length input_shape in
+  let out = create_tensor x.context x.dtype out_shape in
+  let x_ffi = to_ffi_tensor x' in
+  let y_ffi = to_ffi_tensor y' in
+  let out_ffi = to_ffi_tensor out in
+  caml_matmul x_ffi y_ffi out_ffi;
+  out
 
-  (* Compute output shape *)
-  let output_shape =
+(* Fourier transforms *)
+let op_fft x ~axes ~s =
+  ignore s;
+
+  (* Size parameter not yet supported *)
+
+  (* Ensure input is materializable *)
+  let x' = ensure_materializable x in
+
+  (* Create output tensor with same shape and dtype *)
+  let out_shape = shape x in
+  let out = create_tensor x.context x.dtype out_shape in
+
+  (* Convert to FFI tensors *)
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
+
+  (* Convert axes to list *)
+  let axes_list = Array.to_list axes in
+
+  (* Call FFI function *)
+  caml_fft x_ffi out_ffi axes_list false;
+
+  out
+
+let op_ifft x ~axes ~s =
+  ignore s;
+
+  (* Size parameter not yet supported *)
+
+  (* Ensure input is materializable *)
+  let x' = ensure_materializable x in
+
+  (* Create output tensor with same shape and dtype *)
+  let out_shape = shape x in
+  let out = create_tensor x.context x.dtype out_shape in
+
+  (* Convert to FFI tensors *)
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
+
+  (* Convert axes to list *)
+  let axes_list = Array.to_list axes in
+
+  (* Call FFI function (inverse=true) *)
+  caml_fft x_ffi out_ffi axes_list true;
+
+  out
+
+let op_rfft x ~dtype ~axes ~s =
+  ignore s;
+
+  (* Size parameter not yet supported *)
+
+  (* Ensure input is materializable *)
+  let x' = ensure_materializable x in
+
+  (* Calculate output shape for rfft *)
+  let in_shape = shape x in
+  let out_shape = Array.copy in_shape in
+
+  (* Create output tensor with complex dtype *)
+  let out = create_tensor x.context dtype out_shape in
+
+  (* Convert to FFI tensors *)
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
+
+  (* Convert axes to list *)
+  let axes_list = Array.to_list axes in
+
+  (* Call FFI function *)
+  caml_rfft x_ffi out_ffi axes_list;
+
+  out
+
+let op_irfft x ~dtype ~axes ~s =
+  ignore s;
+
+  (* Size parameter not yet supported *)
+
+  (* Ensure input is materializable *)
+  let x' = ensure_materializable x in
+
+  (* Calculate output shape for irfft *)
+  let in_shape = shape x in
+  let out_shape = Array.copy in_shape in
+  let last_dim_size =
     match s with
-    | None -> Array.copy input_shape
-    | Some sizes ->
-        let out_shape = Array.copy input_shape in
-        Array.iteri
-          (fun i axis ->
-            let axis = if axis < 0 then ndim + axis else axis in
-            out_shape.(axis) <- sizes.(i))
-          axes;
-        out_shape
+    | None -> out_shape.(Array.length out_shape - 1) * 2
+    | Some sizes -> sizes.(Array.length sizes - 1)
   in
 
-  let result = make_tensor x output_shape in
+  (* Create output tensor with real dtype *)
+  let out = create_tensor x.context dtype out_shape in
 
-  (* Copy input to output first *)
-  copy (Lazy_view.ndim x.view) input_shape x.buffer (get_strides x.view)
-    (get_offset x.view) result.buffer (get_strides result.view)
-    (get_offset result.view);
+  (* Convert to FFI tensors *)
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
 
-  (* Call appropriate FFT function based on dtype *)
-  (match x.dtype with
-  | Dtype.Complex64 ->
-      fft_complex64 ndim output_shape result.buffer (get_strides result.view)
-        (get_offset result.view) result.buffer (get_strides result.view)
-        (get_offset result.view) axes (Array.length axes) false
-  | Dtype.Complex32 ->
-      fft_complex32 ndim output_shape result.buffer (get_strides result.view)
-        (get_offset result.view) result.buffer (get_strides result.view)
-        (get_offset result.view) axes (Array.length axes) false
-  | _ -> failwith "op_fft: input must be complex");
+  (* Convert axes to list *)
+  let axes_list = Array.to_list axes in
 
-  let _ = x.view in
-  result
+  (* Call FFI function *)
+  caml_irfft x_ffi out_ffi axes_list last_dim_size;
 
-let op_ifft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
-  let input_shape = get_shape x.view in
-  let ndim = Array.length input_shape in
-
-  (* Compute output shape *)
-  let output_shape =
-    match s with
-    | None -> Array.copy input_shape
-    | Some sizes ->
-        let out_shape = Array.copy input_shape in
-        Array.iteri
-          (fun i axis ->
-            let axis = if axis < 0 then ndim + axis else axis in
-            out_shape.(axis) <- sizes.(i))
-          axes;
-        out_shape
-  in
-
-  let result = make_tensor x output_shape in
-
-  (* Copy input to output first *)
-  copy (Lazy_view.ndim x.view) input_shape x.buffer (get_strides x.view)
-    (get_offset x.view) result.buffer (get_strides result.view)
-    (get_offset result.view);
-
-  (* Call appropriate IFFT function based on dtype *)
-  (match x.dtype with
-  | Dtype.Complex64 ->
-      fft_complex64 ndim output_shape result.buffer (get_strides result.view)
-        (get_offset result.view) result.buffer (get_strides result.view)
-        (get_offset result.view) axes (Array.length axes) true
-  | Dtype.Complex32 ->
-      fft_complex32 ndim output_shape result.buffer (get_strides result.view)
-        (get_offset result.view) result.buffer (get_strides result.view)
-        (get_offset result.view) axes (Array.length axes) true
-  | _ -> failwith "op_ifft: input must be complex");
-
-  let _ = x.view in
-  result
-
-let op_rfft (type a b c) (x : (a, b) t) ~(dtype : (Complex.t, c) Dtype.t) ~axes
-    ~s : (Complex.t, c) t =
-  let input_shape = get_shape x.view in
-  let ndim = Array.length input_shape in
-
-  (* For rfft, the last axis in the transform is halved + 1 *)
-  let output_shape =
-    let shape =
-      match s with
-      | None -> Array.copy input_shape
-      | Some sizes ->
-          let out_shape = Array.copy input_shape in
-          Array.iteri
-            (fun i axis ->
-              let axis = if axis < 0 then ndim + axis else axis in
-              out_shape.(axis) <- sizes.(i))
-            axes;
-          out_shape
-    in
-    (* Adjust last axis for rfft *)
-    let last_axis_idx = Array.length axes - 1 in
-    let last_axis = axes.(last_axis_idx) in
-    let last_axis = if last_axis < 0 then ndim + last_axis else last_axis in
-    shape.(last_axis) <- (shape.(last_axis) / 2) + 1;
-    shape
-  in
-
-  (* We need to handle different float types separately due to OCaml's type system *)
-  (* For simplicity, always work with float64 internally *)
-  let float64_x : (float, Dtype.float64_elt) t =
-    match Dtype.equal_witness x.dtype Dtype.Float64 with
-    | Some Equal -> x
-    | None -> (
-        (* Cast to float64 *)
-        match x.dtype with
-        | Dtype.Float32 | Dtype.Float16 | Dtype.BFloat16 | Dtype.Float8_e4m3
-        | Dtype.Float8_e5m2 ->
-            let result =
-              create x.context Dtype.Float64
-                (make_buffer Dtype.Float64 (get_numel x.view))
-                x.view
-            in
-            cast (Lazy_view.ndim x.view) (get_shape x.view) x.buffer
-              (get_strides x.view) (get_offset x.view) result.buffer
-              (get_strides result.view) (get_offset result.view);
-            result
-        | _ -> failwith "op_rfft: input must be real")
-  in
-
-  (* Always compute FFT as Complex64 internally *)
-  let complex64_result =
-    create x.context Dtype.Complex64
-      (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 output_shape))
-      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-  in
-
-  rfft_float64 ndim (get_shape float64_x.view) float64_x.buffer
-    (get_strides float64_x.view)
-    (get_offset float64_x.view)
-    complex64_result.buffer
-    (get_strides complex64_result.view)
-    (get_offset complex64_result.view)
-    axes (Array.length axes);
-
-  (* Cast to requested output dtype if needed *)
-  match dtype with
-  | Dtype.Complex64 ->
-      let _ = x.view in
-      complex64_result
-  | Dtype.Complex32 ->
-      let result =
-        create x.context Dtype.Complex32
-          (make_buffer Dtype.Complex32 (Array.fold_left ( * ) 1 output_shape))
-          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-      in
-      cast ndim output_shape complex64_result.buffer
-        (get_strides complex64_result.view)
-        (get_offset complex64_result.view)
-        result.buffer (get_strides result.view) (get_offset result.view);
-      let _ = x.view in
-      result
-  | Dtype.Complex16 ->
-      (* Cast from Complex64 to Complex16 *)
-      let result =
-        create x.context Dtype.Complex16
-          (make_buffer Dtype.Complex16 (Array.fold_left ( * ) 1 output_shape))
-          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-      in
-      cast ndim output_shape complex64_result.buffer
-        (get_strides complex64_result.view)
-        (get_offset complex64_result.view)
-        result.buffer (get_strides result.view) (get_offset result.view);
-      let _ = x.view in
-      result
-
-let op_irfft (type a b c) (x : (a, b) t) ~(dtype : (float, c) Dtype.t) ~axes ~s
-    : (float, c) t =
-  let input_shape = get_shape x.view in
-  let ndim = Array.length input_shape in
-
-  (* For irfft, restore full size for last axis *)
-  let last_axis_idx = Array.length axes - 1 in
-  let last_axis = axes.(last_axis_idx) in
-  let last_axis = if last_axis < 0 then ndim + last_axis else last_axis in
-
-  let output_shape =
-    let shape = Array.copy input_shape in
-    (* Restore full size for last axis *)
-    shape.(last_axis) <-
-      (match s with
-      | None -> (shape.(last_axis) - 1) * 2
-      | Some sizes -> sizes.(Array.length sizes - 1));
-
-    match s with
-    | None -> shape
-    | Some sizes ->
-        Array.iteri
-          (fun i axis ->
-            let axis = if axis < 0 then ndim + axis else axis in
-            shape.(axis) <- sizes.(i))
-          axes;
-        shape
-  in
-
-  (* For simplicity, always work with complex64 internally *)
-  let complex64_x : (Complex.t, Dtype.complex64_elt) t =
-    match Dtype.equal_witness x.dtype Dtype.Complex64 with
-    | Some Equal -> x
-    | None -> (
-        (* Cast to complex64 *)
-        match x.dtype with
-        | Dtype.Complex32 | Dtype.Complex16 ->
-            let result =
-              create x.context Dtype.Complex64
-                (make_buffer Dtype.Complex64 (get_numel x.view))
-                x.view
-            in
-            cast (Lazy_view.ndim x.view) (get_shape x.view) x.buffer
-              (get_strides x.view) (get_offset x.view) result.buffer
-              (get_strides result.view) (get_offset result.view);
-            result
-        | _ -> failwith "op_irfft: input must be complex")
-  in
-
-  (* Always compute IRFFT as Float64 internally *)
-  let float64_result =
-    create x.context Dtype.Float64
-      (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 output_shape))
-      (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-  in
-
-  irfft_complex64 ndim input_shape complex64_x.buffer
-    (get_strides complex64_x.view)
-    (get_offset complex64_x.view)
-    float64_result.buffer
-    (get_strides float64_result.view)
-    (get_offset float64_result.view)
-    axes (Array.length axes) output_shape.(last_axis);
-
-  (* Cast to requested output dtype if needed *)
-  match dtype with
-  | Dtype.Float64 ->
-      let _ = x.view in
-      float64_result
-  | Dtype.Float32 ->
-      let result =
-        create x.context Dtype.Float32
-          (make_buffer Dtype.Float32 (Array.fold_left ( * ) 1 output_shape))
-          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-      in
-      cast ndim output_shape float64_result.buffer
-        (get_strides float64_result.view)
-        (get_offset float64_result.view)
-        result.buffer (get_strides result.view) (get_offset result.view);
-      let _ = x.view in
-      result
-  | Dtype.Float16 ->
-      (* Cast from Float64 to Float16 *)
-      let result =
-        create x.context Dtype.Float16
-          (make_buffer Dtype.Float16 (Array.fold_left ( * ) 1 output_shape))
-          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-      in
-      cast ndim output_shape float64_result.buffer
-        (get_strides float64_result.view)
-        (get_offset float64_result.view)
-        result.buffer (get_strides result.view) (get_offset result.view);
-      let _ = x.view in
-      result
-  | Dtype.BFloat16 ->
-      (* Cast from Float64 to BFloat16 *)
-      let result =
-        create x.context Dtype.BFloat16
-          (make_buffer Dtype.BFloat16 (Array.fold_left ( * ) 1 output_shape))
-          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-      in
-      cast ndim output_shape float64_result.buffer
-        (get_strides float64_result.view)
-        (get_offset float64_result.view)
-        result.buffer (get_strides result.view) (get_offset result.view);
-      let _ = x.view in
-      result
-  | Dtype.Float8_e4m3 ->
-      (* Cast from Float64 to Float8_e4m3 *)
-      let result =
-        create x.context Dtype.Float8_e4m3
-          (make_buffer Dtype.Float8_e4m3 (Array.fold_left ( * ) 1 output_shape))
-          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-      in
-      cast ndim output_shape float64_result.buffer
-        (get_strides float64_result.view)
-        (get_offset float64_result.view)
-        result.buffer (get_strides result.view) (get_offset result.view);
-      let _ = x.view in
-      result
-  | Dtype.Float8_e5m2 ->
-      (* Cast from Float64 to Float8_e5m2 *)
-      let result =
-        create x.context Dtype.Float8_e5m2
-          (make_buffer Dtype.Float8_e5m2 (Array.fold_left ( * ) 1 output_shape))
-          (Lazy_view.create (Symbolic_shape.of_ints output_shape))
-      in
-      cast ndim output_shape float64_result.buffer
-        (get_strides float64_result.view)
-        (get_offset float64_result.view)
-        result.buffer (get_strides result.view) (get_offset result.view);
-      let _ = x.view in
-      result
+  out
 
 (* Linear algebra operations *)
-
-external cholesky :
-  int ->
-  (* upper *)
-  ('a, 'b, 'c) Array1.t ->
-  (* input buffer *)
-  int array ->
-  (* input shape *)
-  int array ->
-  (* input strides *)
-  int ->
-  (* input offset *)
-  ('a, 'b, 'c) Array1.t ->
-  (* output buffer *)
-  int array ->
-  (* output strides *)
-  int ->
-  (* output offset *)
-  unit = "caml_nx_cholesky_bc" "caml_nx_cholesky"
-
-external triangular_solve :
-  int ->
-  (* upper *)
-  int ->
-  (* transpose *)
-  int ->
-  (* unit_diag *)
-  ('a, 'b, 'c) Array1.t ->
-  (* A buffer *)
-  int array ->
-  (* A shape *)
-  int array ->
-  (* A strides *)
-  int ->
-  (* A offset *)
-  ('a, 'b, 'c) Array1.t ->
-  (* B buffer *)
-  int array ->
-  (* B shape *)
-  int array ->
-  (* B strides *)
-  int ->
-  (* B offset *)
-  ('a, 'b, 'c) Array1.t ->
-  (* output buffer *)
-  int array ->
-  (* output strides *)
-  int ->
-  (* output offset *)
-  unit = "caml_nx_triangular_solve_bc" "caml_nx_triangular_solve"
-
 let op_cholesky ~upper x =
-  let result = make_tensor x (get_shape x.view) in
-  cholesky
-    (if upper then 1 else 0)
-    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
-    result.buffer (get_strides result.view) (get_offset result.view);
-  let _ = x.view in
-  (* Keep input tensor alive during C call *)
-  result
+  (* Ensure input is materializable *)
+  let x' = ensure_materializable x in
 
-let op_triangular_solve ~upper ~transpose ~unit_diag a b =
-  let result = make_tensor b (get_shape b.view) in
-  triangular_solve
-    (if upper then 1 else 0)
-    (if transpose then 1 else 0)
-    (if unit_diag then 1 else 0)
-    a.buffer (get_shape a.view) (get_strides a.view) (get_offset a.view)
-    b.buffer (get_shape b.view) (get_strides b.view) (get_offset b.view)
-    result.buffer (get_strides result.view) (get_offset result.view);
-  let _ = (a.view, b.view) in
-  (* Keep input tensors alive during C call *)
-  result
+  (* Create output tensor with same shape and dtype *)
+  let out_shape = shape x in
+  let out = create_tensor x.context x.dtype out_shape in
 
-external qr :
-  int ->
-  (* reduced *)
-  ('a, 'b, 'c) Array1.t ->
-  (* input buffer *)
-  int array ->
-  (* input shape *)
-  int array ->
-  (* input strides *)
-  int ->
-  (* input offset *)
-  ('a, 'b, 'c) Array1.t ->
-  (* Q buffer *)
-  int array ->
-  (* Q shape *)
-  int array ->
-  (* Q strides *)
-  int ->
-  (* Q offset *)
-  ('a, 'b, 'c) Array1.t ->
-  (* R buffer *)
-  int array ->
-  (* R shape *)
-  int array ->
-  (* R strides *)
-  int ->
-  (* R offset *)
-  unit = "caml_nx_qr_bc" "caml_nx_qr"
+  (* Convert to FFI tensors *)
+  let x_ffi = to_ffi_tensor x' in
+  let out_ffi = to_ffi_tensor out in
+
+  (* Call FFI function *)
+  caml_cholesky x_ffi out_ffi upper;
+
+  out
 
 let op_qr ~reduced x =
-  let shape_x = get_shape x.view in
-  let ndim = Array.length shape_x in
-  if ndim < 2 then failwith "op_qr: input must have at least 2 dimensions";
+  let x' = ensure_materializable x in
+  let x_shape = shape x in
+  let m = x_shape.(Array.length x_shape - 2) in
+  let n = x_shape.(Array.length x_shape - 1) in
+  let k = min m n in
 
-  let m = shape_x.(ndim - 2) in
-  let n = shape_x.(ndim - 1) in
+  (* Calculate Q and R shapes *)
+  let q_shape = Array.copy x_shape in
+  let r_shape = Array.copy x_shape in
 
-  (* Determine output shapes *)
-  let shape_q =
-    let s = Array.copy shape_x in
-    s.(ndim - 1) <- (if reduced then min m n else m);
-    s
-  in
-  let shape_r =
-    let s = Array.copy shape_x in
-    s.(ndim - 2) <- (if reduced then min m n else m);
-    s
-  in
+  if reduced then (
+    q_shape.(Array.length q_shape - 1) <- k;
+    r_shape.(Array.length r_shape - 2) <- k);
 
-  let q = make_tensor x shape_q in
-  let r = make_tensor x shape_r in
+  let q = create_tensor x.context x.dtype q_shape in
+  let r = create_tensor x.context x.dtype r_shape in
 
-  qr
-    (if reduced then 1 else 0)
-    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
-    q.buffer (get_shape q.view) (get_strides q.view) (get_offset q.view)
-    r.buffer (get_shape r.view) (get_strides r.view) (get_offset r.view);
+  let x_ffi = to_ffi_tensor x' in
+  let q_ffi = to_ffi_tensor q in
+  let r_ffi = to_ffi_tensor r in
 
-  let _ = x.view in
+  caml_qr x_ffi q_ffi r_ffi reduced;
   (q, r)
 
-external svd :
-  int ->
-  (* full_matrices *)
-  ('a, 'b, 'c) Array1.t ->
-  (* input buffer *)
-  int array ->
-  (* input shape *)
-  int array ->
-  (* input strides *)
-  int ->
-  (* input offset *)
-  ('a, 'b, 'c) Array1.t ->
-  (* U buffer *)
-  int array ->
-  (* U shape *)
-  int array ->
-  (* U strides *)
-  int ->
-  (* U offset *)
-  ('d, 'e, 'c) Array1.t ->
-  (* S buffer *)
-  int array ->
-  (* S shape *)
-  int array ->
-  (* S strides *)
-  int ->
-  (* S offset *)
-  ('a, 'b, 'c) Array1.t ->
-  (* VT buffer *)
-  int array ->
-  (* VT shape *)
-  int array ->
-  (* VT strides *)
-  int ->
-  (* VT offset *)
-  unit = "caml_nx_svd_bc" "caml_nx_svd"
-
-let op_svd (type a b) ~(full_matrices : bool) (x : (a, b) t) :
+let op_svd (type a b) ~full_matrices (x : (a, b) t) :
     (a, b) t * (float, Dtype.float64_elt) t * (a, b) t =
-  let shape_x = get_shape x.view in
-  let ndim = Array.length shape_x in
-  if ndim < 2 then failwith "op_svd: input must have at least 2 dimensions";
+  let x' = ensure_materializable x in
+  let x_shape = shape x in
+  let m = x_shape.(Array.length x_shape - 2) in
+  let n = x_shape.(Array.length x_shape - 1) in
+  let k = min m n in
 
-  let m = shape_x.(ndim - 2) in
-  let n = shape_x.(ndim - 1) in
-  let min_mn = min m n in
+  (* Calculate U, S, Vt shapes *)
+  let batch_shape = Array.sub x_shape 0 (Array.length x_shape - 2) in
 
-  (* Determine output shapes *)
-  let shape_u =
-    let s = Array.copy shape_x in
-    s.(ndim - 1) <- (if full_matrices then m else min_mn);
-    s
+  let u_shape =
+    Array.append batch_shape (if full_matrices then [| m; m |] else [| m; k |])
   in
-  let shape_s =
-    let s = Array.sub shape_x 0 (ndim - 1) in
-    s.(ndim - 2) <- min_mn;
-    s
-  in
-  let shape_vt =
-    let s = Array.copy shape_x in
-    s.(ndim - 2) <- (if full_matrices then n else min_mn);
-    s
+  let s_shape = Array.append batch_shape [| k |] in
+  let vt_shape =
+    Array.append batch_shape (if full_matrices then [| n; n |] else [| k; n |])
   in
 
-  let u = make_tensor x shape_u in
-  let vt = make_tensor x shape_vt in
+  let u = create_tensor x.context x.dtype u_shape in
+  let s = create_tensor x.context Dtype.Float64 s_shape in
+  let vt = create_tensor x.context x.dtype vt_shape in
 
-  (* S is always float64 *)
-  let s =
-    create x.context Dtype.Float64
-      (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 shape_s))
-      (Lazy_view.create (Symbolic_shape.of_ints shape_s))
-  in
+  let x_ffi = to_ffi_tensor x' in
+  let u_ffi = to_ffi_tensor u in
+  let s_ffi = to_ffi_tensor s in
+  let vt_ffi = to_ffi_tensor vt in
 
-  svd
-    (if full_matrices then 1 else 0)
-    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
-    u.buffer (get_shape u.view) (get_strides u.view) (get_offset u.view)
-    s.buffer (get_shape s.view) (get_strides s.view) (get_offset s.view)
-    vt.buffer (get_shape vt.view) (get_strides vt.view) (get_offset vt.view);
-  let _ = x.view in
+  caml_svd x_ffi u_ffi s_ffi vt_ffi full_matrices;
   (u, s, vt)
-
-external eig :
-  int ->
-  (* symmetric *)
-  int ->
-  (* compute_vectors *)
-  ('a, 'b, 'c) Array1.t ->
-  (* input buffer *)
-  int array ->
-  (* input shape *)
-  int array ->
-  (* input strides *)
-  int ->
-  (* input offset *)
-  ('d, 'e, 'c) Array1.t ->
-  (* eigenvalues buffer *)
-  int array ->
-  (* eigenvalues shape *)
-  int array ->
-  (* eigenvalues strides *)
-  int ->
-  (* eigenvalues offset *)
-  ('f, 'g, 'c) Array1.t ->
-  (* eigenvectors buffer *)
-  int array ->
-  (* eigenvectors shape *)
-  int array ->
-  (* eigenvectors strides *)
-  int ->
-  (* eigenvectors offset *)
-  unit = "caml_nx_eig_bc" "caml_nx_eig"
 
 let op_eig (type a b) ~vectors (x : (a, b) t) :
     (Complex.t, Dtype.complex64_elt) t
     * (Complex.t, Dtype.complex64_elt) t option =
-  let shape_x = get_shape x.view in
-  let ndim = Array.length shape_x in
-  if ndim < 2 then failwith "op_eig: input must have at least 2 dimensions";
+  let x' = ensure_materializable x in
+  let x_shape = shape x in
+  let n = x_shape.(Array.length x_shape - 1) in
 
-  let n = shape_x.(ndim - 1) in
-  let m = shape_x.(ndim - 2) in
-  if n != m then failwith "op_eig: input must be square matrix";
+  (* Eigenvalues and eigenvectors are always complex64 *)
+  let batch_shape = Array.sub x_shape 0 (Array.length x_shape - 2) in
+  let vals_shape = Array.append batch_shape [| n |] in
+  let vecs_shape = x_shape in
 
-  let shape_vals =
-    let s = Array.sub shape_x 0 (ndim - 1) in
-    s.(ndim - 2) <- n;
-    s
-  in
-
-  (* Always output complex64 *)
-  let vals =
-    create x.context Dtype.Complex64
-      (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 shape_vals))
-      (Lazy_view.create (Symbolic_shape.of_ints shape_vals))
-  in
-
-  let vecs_opt =
-    if vectors then
-      Some
-        (create x.context Dtype.Complex64
-           (make_buffer Dtype.Complex64 (Array.fold_left ( * ) 1 shape_x))
-           (Lazy_view.create (Symbolic_shape.of_ints shape_x)))
-    else None
-  in
-
-  let dummy =
-    if vectors then None
+  let vals = create_tensor x.context Dtype.Complex64 vals_shape in
+  let vecs =
+    if vectors then create_tensor x.context Dtype.Complex64 vecs_shape
     else
-      Some
-        (create x.context Dtype.Complex64
-           (make_buffer Dtype.Complex64 1)
-           (Lazy_view.create (Symbolic_shape.of_ints [| 1 |])))
+      (* Create dummy tensor for C interface *)
+      create_tensor x.context Dtype.Complex64 [| 1 |]
   in
 
-  eig 0
-    (if vectors then 1 else 0)
-    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
-    vals.buffer (get_shape vals.view) (get_strides vals.view)
-    (get_offset vals.view)
-    (match vecs_opt with
-    | Some v -> v.buffer
-    | None -> (Option.get dummy).buffer)
-    (match vecs_opt with Some v -> get_shape v.view | None -> [| 1 |])
-    (match vecs_opt with Some v -> get_strides v.view | None -> [| 1 |])
-    (match vecs_opt with Some v -> get_offset v.view | None -> 0);
-  let _ = x.view in
-  (vals, vecs_opt)
+  let x_ffi = to_ffi_tensor x' in
+  let vals_ffi = to_ffi_tensor vals in
+  let vecs_ffi = to_ffi_tensor vecs in
+
+  caml_eig x_ffi vals_ffi vecs_ffi false vectors;
+  if vectors then (vals, Some vecs) else (vals, None)
 
 let op_eigh (type a b) ~vectors (x : (a, b) t) :
     (float, Dtype.float64_elt) t * (a, b) t option =
-  let shape_x = get_shape x.view in
-  let ndim = Array.length shape_x in
-  if ndim < 2 then failwith "op_eigh: input must have at least 2 dimensions";
+  let x' = ensure_materializable x in
+  let x_shape = shape x in
 
-  let n = shape_x.(ndim - 1) in
-  let m = shape_x.(ndim - 2) in
-  if n != m then failwith "op_eigh: input must be square matrix";
+  (* For symmetric/hermitian matrices, eigenvalues are always float64 *)
+  let batch_shape = Array.sub x_shape 0 (Array.length x_shape - 2) in
+  let n = x_shape.(Array.length x_shape - 1) in
+  let vals_shape = Array.append batch_shape [| n |] in
 
-  let shape_vals =
-    let s = Array.sub shape_x 0 (ndim - 1) in
-    s.(ndim - 2) <- n;
-    s
+  let vals = create_tensor x.context Dtype.Float64 vals_shape in
+  let vecs =
+    if vectors then create_tensor x.context x.dtype x_shape
+    else
+      (* Create dummy tensor for C interface *)
+      create_tensor x.context x.dtype [| 1 |]
   in
 
-  (* Eigenvalues are always float64 *)
-  let vals =
-    create x.context Dtype.Float64
-      (make_buffer Dtype.Float64 (Array.fold_left ( * ) 1 shape_vals))
-      (Lazy_view.create (Symbolic_shape.of_ints shape_vals))
-  in
+  let x_ffi = to_ffi_tensor x' in
+  let vals_ffi = to_ffi_tensor vals in
+  let vecs_ffi = to_ffi_tensor vecs in
 
-  let vecs_opt = if vectors then Some (make_tensor x shape_x) else None in
-  let dummy = if vectors then None else Some (make_tensor x [| 1 |]) in
+  caml_eig x_ffi vals_ffi vecs_ffi true vectors;
+  if vectors then (vals, Some vecs) else (vals, None)
 
-  eig 1
-    (if vectors then 1 else 0)
-    x.buffer (get_shape x.view) (get_strides x.view) (get_offset x.view)
-    vals.buffer (get_shape vals.view) (get_strides vals.view)
-    (get_offset vals.view)
-    (match vecs_opt with
-    | Some v -> v.buffer
-    | None -> (Option.get dummy).buffer)
-    (match vecs_opt with Some v -> get_shape v.view | None -> [| 1 |])
-    (match vecs_opt with Some v -> get_strides v.view | None -> [| 1 |])
-    (match vecs_opt with Some v -> get_offset v.view | None -> 0);
-  let _ = x.view in
-  (vals, vecs_opt)
+let op_triangular_solve ~upper ~transpose ~unit_diag a b =
+  let a' = ensure_materializable a in
+  let b' = ensure_materializable b in
+
+  (* Output has same shape as b *)
+  let out_shape = shape b in
+  let out = create_tensor b.context b.dtype out_shape in
+
+  let a_ffi = to_ffi_tensor a' in
+  let b_ffi = to_ffi_tensor b' in
+  let out_ffi = to_ffi_tensor out in
+
+  caml_triangular_solve a_ffi b_ffi out_ffi upper transpose unit_diag;
+  out

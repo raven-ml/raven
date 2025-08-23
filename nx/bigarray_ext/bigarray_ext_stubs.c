@@ -1,5 +1,4 @@
 #include "bigarray_ext_stubs.h"
-
 #include <caml/fail.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,16 +10,16 @@ extern value caml_ba_blit(value vsrc, value vdst);
 
 /* OCaml kind value constructors - mapping to our extended kind type */
 static const int nx_ba_kind_ocaml_constructors[] = {
-    0,  /* Float32 */
-    1,  /* Float64 */
-    2,  /* Int8_signed */
-    3,  /* Int8_unsigned */
-    4,  /* Int16_signed */
-    5,  /* Int16_unsigned */
-    6,  /* Int32 */
-    7,  /* Int64 */
-    8,  /* Int */
-    9,  /* Nativeint */
+    0, /* Float32 */
+    1, /* Float64 */
+    2, /* Int8_signed */
+    3, /* Int8_unsigned */
+    4, /* Int16_signed */
+    5, /* Int16_unsigned */
+    6, /* Int32 */
+    7, /* Int64 */
+    8, /* Int */
+    9, /* Nativeint */
     10, /* Complex32 */
     11, /* Complex64 */
     12, /* Char */
@@ -33,62 +32,70 @@ static const int nx_ba_kind_ocaml_constructors[] = {
     19, /* Float8_e5m2 - our extension */
     20, /* Complex16 - our extension */
     21, /* Qint8 - our extension */
-    22  /* Quint8 - our extension */
+    22 /* Quint8 - our extension */
 };
 
-/* Element sizes for our extended types - kept for reference */
-__attribute__((unused)) static const int nx_ba_extended_element_size[] = {
+/* Element sizes for our extended types, aligning with stdlib caml_ba_element_size[] */
+int caml_ba_extended_element_size[] = {
     [NX_BA_BFLOAT16 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 2, /* bfloat16 */
-    [NX_BA_BOOL - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1,     /* bool */
-    [NX_BA_INT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1,     /* int4 - packed */
-    [NX_BA_UINT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* uint4 - packed */
-    [NX_BA_FP8_E4M3 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1,  /* fp8_e4m3 */
-    [NX_BA_FP8_E5M2 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1,  /* fp8_e5m2 */
+    [NX_BA_BOOL - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* bool */
+    [NX_BA_INT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 0, /* int4_signed - packed, effective 0.5, but 0 to indicate special handling */
+    [NX_BA_UINT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 0, /* int4_unsigned - packed */
+    [NX_BA_FP8_E4M3 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* fp8_e4m3 */
+    [NX_BA_FP8_E5M2 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* fp8_e5m2 */
     [NX_BA_COMPLEX16 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 4, /* complex16 */
-    [NX_BA_QINT8 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1,     /* qint8 */
-    [NX_BA_QUINT8 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1,    /* quint8 */
+    [NX_BA_QINT8 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* qint8 */
+    [NX_BA_QUINT8 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* quint8 */
 };
+
+/* Helper for overflow-safe multiplication */
+static int umul_overflow(uintnat a, uintnat b, uintnat *res) {
+  if (b != 0 && a > (uintnat)(-1) / b) return 1;
+  *res = a * b;
+  return 0;
+}
 
 /* Calculate total number of elements from dimensions */
 static uintnat nx_ba_num_elts_from_dims(int num_dims, intnat *dim) {
   uintnat num_elts = 1;
   for (int i = 0; i < num_dims; i++) {
-    num_elts *= dim[i];
+    if (umul_overflow(num_elts, dim[i], &num_elts))
+      caml_raise_out_of_memory();
   }
   return num_elts;
 }
 
 /* Helper macro to create bigarray creation functions */
-#define CREATE_BA_FUNCTION(name, type_enum, bytes_per_elem)            \
+#define CREATE_BA_FUNCTION(name, type_enum, bytes_per_elem) \
   CAMLprim value caml_nx_ba_create_##name(value vlayout, value vdim) { \
-    CAMLparam2(vlayout, vdim);                                         \
-    CAMLlocal1(res);                                                   \
+    CAMLparam2(vlayout, vdim); \
+    CAMLlocal1(res); \
                                                                        \
-    int num_dims = Wosize_val(vdim);                                   \
-    intnat dim[CAML_BA_MAX_NUM_DIMS];                                  \
+    int num_dims = Wosize_val(vdim); \
+    intnat dim[CAML_BA_MAX_NUM_DIMS]; \
                                                                        \
-    for (int i = 0; i < num_dims; i++) {                               \
-      dim[i] = Long_val(Field(vdim, i));                               \
-    }                                                                  \
+    for (int i = 0; i < num_dims; i++) { \
+      dim[i] = Long_val(Field(vdim, i)); \
+    } \
                                                                        \
-    uintnat num_elts = nx_ba_num_elts_from_dims(num_dims, dim);        \
-    uintnat size = num_elts * (bytes_per_elem);                        \
+    uintnat num_elts = nx_ba_num_elts_from_dims(num_dims, dim); \
+    uintnat size; \
+    if (umul_overflow(num_elts, (bytes_per_elem), &size)) \
+      caml_raise_out_of_memory(); \
                                                                        \
-    void *data = calloc(1, size);                                      \
-    if (data == NULL) caml_raise_out_of_memory();                      \
+    void *data = calloc(1, size); \
+    if (data == NULL && size != 0) caml_raise_out_of_memory(); \
                                                                        \
-    int layout_flag = Caml_ba_layout_val(vlayout);                     \
-    int flags = (type_enum) | layout_flag | CAML_BA_MANAGED;           \
-    res = caml_ba_alloc(flags, num_dims, data, dim);                   \
+    int layout_flag = Caml_ba_layout_val(vlayout); \
+    int flags = (type_enum) | layout_flag | CAML_BA_MANAGED; \
+    res = caml_ba_alloc(flags, num_dims, data, dim); \
                                                                        \
-    CAMLreturn(res);                                                   \
+    CAMLreturn(res); \
   }
 
 /* Create functions for each new type */
 CREATE_BA_FUNCTION(bfloat16, NX_BA_BFLOAT16, 2)
 CREATE_BA_FUNCTION(bool, NX_BA_BOOL, 1)
-CREATE_BA_FUNCTION(int4_signed, NX_BA_INT4, 1)    /* Note: packed 2 per byte */
-CREATE_BA_FUNCTION(int4_unsigned, NX_BA_UINT4, 1) /* Note: packed 2 per byte */
 CREATE_BA_FUNCTION(float8_e4m3, NX_BA_FP8_E4M3, 1)
 CREATE_BA_FUNCTION(float8_e5m2, NX_BA_FP8_E5M2, 1)
 CREATE_BA_FUNCTION(complex16, NX_BA_COMPLEX16, 4) /* 2 x float16 */
@@ -96,53 +103,41 @@ CREATE_BA_FUNCTION(qint8, NX_BA_QINT8, 1)
 CREATE_BA_FUNCTION(quint8, NX_BA_QUINT8, 1)
 
 /* Special handling for int4/uint4 which pack 2 values per byte */
-CAMLprim value caml_nx_ba_create_int4_packed(value vlayout, value vdim) {
+CAMLprim value caml_nx_ba_create_int4_signed(value vlayout, value vdim) {
   CAMLparam2(vlayout, vdim);
   CAMLlocal1(res);
-
   int num_dims = Wosize_val(vdim);
   intnat dim[CAML_BA_MAX_NUM_DIMS];
-
   for (int i = 0; i < num_dims; i++) {
     dim[i] = Long_val(Field(vdim, i));
   }
-
   uintnat num_elts = nx_ba_num_elts_from_dims(num_dims, dim);
   /* For int4, we pack 2 values per byte, so divide by 2 (round up) */
   uintnat size = (num_elts + 1) / 2;
-
   void *data = calloc(1, size);
-  if (data == NULL) caml_raise_out_of_memory();
-
+  if (data == NULL && size != 0) caml_raise_out_of_memory();
   int layout_flag = Caml_ba_layout_val(vlayout);
   int flags = NX_BA_INT4 | layout_flag | CAML_BA_MANAGED;
   res = caml_ba_alloc(flags, num_dims, data, dim);
-
   CAMLreturn(res);
 }
 
-CAMLprim value caml_nx_ba_create_uint4_packed(value vlayout, value vdim) {
+CAMLprim value caml_nx_ba_create_int4_unsigned(value vlayout, value vdim) {
   CAMLparam2(vlayout, vdim);
   CAMLlocal1(res);
-
   int num_dims = Wosize_val(vdim);
   intnat dim[CAML_BA_MAX_NUM_DIMS];
-
   for (int i = 0; i < num_dims; i++) {
     dim[i] = Long_val(Field(vdim, i));
   }
-
   uintnat num_elts = nx_ba_num_elts_from_dims(num_dims, dim);
   /* For uint4, we pack 2 values per byte, so divide by 2 (round up) */
   uintnat size = (num_elts + 1) / 2;
-
   void *data = calloc(1, size);
-  if (data == NULL) caml_raise_out_of_memory();
-
+  if (data == NULL && size != 0) caml_raise_out_of_memory();
   int layout_flag = Caml_ba_layout_val(vlayout);
   int flags = NX_BA_UINT4 | layout_flag | CAML_BA_MANAGED;
   res = caml_ba_alloc(flags, num_dims, data, dim);
-
   CAMLreturn(res);
 }
 
@@ -169,8 +164,6 @@ static intnat nx_ba_offset(struct caml_ba_array *b, intnat *index) {
   return offset;
 }
 
-/* Conversion functions are now in bigarray_ext_stubs.h */
-
 /* Generic get function for extended types */
 CAMLprim value caml_nx_ba_get_generic(value vb, value vind) {
   CAMLparam2(vb, vind);
@@ -179,18 +172,14 @@ CAMLprim value caml_nx_ba_get_generic(value vb, value vind) {
   intnat index[CAML_BA_MAX_NUM_DIMS];
   intnat offset;
   int num_dims = Wosize_val(vind);
-
   /* Check number of indices = number of dimensions of array */
   if (num_dims != b->num_dims)
     caml_invalid_argument("Bigarray.get: wrong number of indices");
-
   /* Compute offset and check bounds */
   for (int i = 0; i < b->num_dims; i++) index[i] = Long_val(Field(vind, i));
   offset = nx_ba_offset(b, index);
-
   /* Perform read based on kind */
   int kind = b->flags & CAML_BA_KIND_MASK;
-
   /* Handle standard types first */
   if (kind < CAML_BA_FIRST_UNIMPLEMENTED_KIND) {
     /* Use standard bigarray get - we need to build the arguments */
@@ -201,7 +190,6 @@ CAMLprim value caml_nx_ba_get_generic(value vb, value vind) {
     }
     CAMLreturn(caml_ba_get_N(vb, args + 1, num_dims));
   }
-
   /* Handle extended types */
   switch (kind) {
     case NX_BA_BFLOAT16:
@@ -243,8 +231,8 @@ CAMLprim value caml_nx_ba_get_generic(value vb, value vind) {
       break;
     case NX_BA_COMPLEX16: {
       uint16_t *p = ((uint16_t *)b->data) + offset * 2;
-      float real = bfloat16_to_float(p[0]);
-      float imag = bfloat16_to_float(p[1]);
+      float real = half_to_float(p[0]);
+      float imag = half_to_float(p[1]);
       res = caml_alloc_small(2 * Double_wosize, Double_array_tag);
       Store_double_flat_field(res, 0, (double)real);
       Store_double_flat_field(res, 1, (double)imag);
@@ -259,7 +247,6 @@ CAMLprim value caml_nx_ba_get_generic(value vb, value vind) {
     default:
       caml_failwith("Unsupported bigarray kind");
   }
-
   CAMLreturn(res);
 }
 
@@ -270,18 +257,14 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
   intnat index[CAML_BA_MAX_NUM_DIMS];
   intnat offset;
   int num_dims = Wosize_val(vind);
-
   /* Check number of indices = number of dimensions of array */
   if (num_dims != b->num_dims)
     caml_invalid_argument("Bigarray.set: wrong number of indices");
-
   /* Compute offset and check bounds */
   for (int i = 0; i < b->num_dims; i++) index[i] = Long_val(Field(vind, i));
   offset = nx_ba_offset(b, index);
-
   /* Perform write based on kind */
   int kind = b->flags & CAML_BA_KIND_MASK;
-
   /* Handle standard types first */
   if (kind < CAML_BA_FIRST_UNIMPLEMENTED_KIND) {
     /* Use standard bigarray set */
@@ -294,7 +277,6 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
     caml_ba_set_N(vb, args + 1, num_dims + 1);
     CAMLreturn(Val_unit);
   }
-
   /* Handle extended types */
   switch (kind) {
     case NX_BA_BFLOAT16:
@@ -306,29 +288,29 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
       break;
     case NX_BA_INT4: {
       int val = Int_val(newval);
-      /* Wrap to 4 bits for proper signed arithmetic */
-      /* For signed 4-bit: wrap to [-8, 7] range */
-      val = ((val + 8) & 0x0F) - 8;
-      if (val < 0) val = val + 16;  /* Convert to unsigned representation */
+      /* Clamp to [-8, 7] for signed 4-bit */
+      if (val > 7) val = 7;
+      if (val < -8) val = -8;
+      uint8_t nibble = val & 0x0F;  /* Two's complement representation */
       uint8_t *byte_ptr = &((uint8_t *)b->data)[offset / 2];
       if (offset % 2 == 0) {
-        *byte_ptr = (*byte_ptr & 0xF0) | (val & 0x0F); /* Set lower 4 bits */
+        *byte_ptr = (*byte_ptr & 0xF0) | nibble; /* Set lower 4 bits */
       } else {
-        *byte_ptr =
-            (*byte_ptr & 0x0F) | ((val & 0x0F) << 4); /* Set upper 4 bits */
+        *byte_ptr = (*byte_ptr & 0x0F) | (nibble << 4); /* Set upper 4 bits */
       }
       break;
     }
     case NX_BA_UINT4: {
       int val = Int_val(newval);
-      /* Wrap to 4 bits for proper unsigned arithmetic */
-      val = val & 0x0F;
+      /* Clamp to [0, 15] for unsigned 4-bit */
+      if (val > 15) val = 15;
+      if (val < 0) val = 0;
+      uint8_t nibble = val & 0x0F;
       uint8_t *byte_ptr = &((uint8_t *)b->data)[offset / 2];
       if (offset % 2 == 0) {
-        *byte_ptr = (*byte_ptr & 0xF0) | (val & 0x0F); /* Set lower 4 bits */
+        *byte_ptr = (*byte_ptr & 0xF0) | nibble; /* Set lower 4 bits */
       } else {
-        *byte_ptr =
-            (*byte_ptr & 0x0F) | ((val & 0x0F) << 4); /* Set upper 4 bits */
+        *byte_ptr = (*byte_ptr & 0x0F) | (nibble << 4); /* Set upper 4 bits */
       }
       break;
     }
@@ -342,8 +324,8 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
       break;
     case NX_BA_COMPLEX16: {
       uint16_t *p = ((uint16_t *)b->data) + offset * 2;
-      p[0] = float_to_bfloat16((float)Double_flat_field(newval, 0));
-      p[1] = float_to_bfloat16((float)Double_flat_field(newval, 1));
+      p[0] = float_to_half((float)Double_flat_field(newval, 0));
+      p[1] = float_to_half((float)Double_flat_field(newval, 1));
       break;
     }
     case NX_BA_QINT8:
@@ -355,7 +337,6 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
     default:
       caml_failwith("Unsupported bigarray kind");
   }
-
   CAMLreturn(Val_unit);
 }
 
@@ -363,32 +344,32 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
 CAMLprim value caml_nx_ba_kind(value vb) {
   struct caml_ba_array *b = Caml_ba_array_val(vb);
   int kind = b->flags & CAML_BA_KIND_MASK;
-  
+ 
   /* Map standard kinds to our extended kind values */
   switch (kind) {
-    case CAML_BA_FLOAT32:         return Val_int(0);  /* Float32 */
-    case CAML_BA_FLOAT64:         return Val_int(1);  /* Float64 */
-    case CAML_BA_SINT8:           return Val_int(2);  /* Int8_signed */
-    case CAML_BA_UINT8:           return Val_int(3);  /* Int8_unsigned */
-    case CAML_BA_SINT16:          return Val_int(4);  /* Int16_signed */
-    case CAML_BA_UINT16:          return Val_int(5);  /* Int16_unsigned */
-    case CAML_BA_INT32:           return Val_int(6);  /* Int32 */
-    case CAML_BA_INT64:           return Val_int(7);  /* Int64 */
-    case CAML_BA_CAML_INT:        return Val_int(8);  /* Int */
-    case CAML_BA_NATIVE_INT:      return Val_int(9);  /* Nativeint */
-    case CAML_BA_COMPLEX32:       return Val_int(10); /* Complex32 */
-    case CAML_BA_COMPLEX64:       return Val_int(11); /* Complex64 */
-    case CAML_BA_CHAR:            return Val_int(12); /* Char */
-    case CAML_BA_FLOAT16:         return Val_int(13); /* Float16 */
-    case NX_BA_BFLOAT16:          return Val_int(14); /* Bfloat16 */
-    case NX_BA_BOOL:              return Val_int(15); /* Bool */
-    case NX_BA_INT4:              return Val_int(16); /* Int4_signed */
-    case NX_BA_UINT4:             return Val_int(17); /* Int4_unsigned */
-    case NX_BA_FP8_E4M3:          return Val_int(18); /* Float8_e4m3 */
-    case NX_BA_FP8_E5M2:          return Val_int(19); /* Float8_e5m2 */
-    case NX_BA_COMPLEX16:         return Val_int(20); /* Complex16 */
-    case NX_BA_QINT8:             return Val_int(21); /* Qint8 */
-    case NX_BA_QUINT8:            return Val_int(22); /* Quint8 */
+    case CAML_BA_FLOAT32: return Val_int(0); /* Float32 */
+    case CAML_BA_FLOAT64: return Val_int(1); /* Float64 */
+    case CAML_BA_SINT8: return Val_int(2); /* Int8_signed */
+    case CAML_BA_UINT8: return Val_int(3); /* Int8_unsigned */
+    case CAML_BA_SINT16: return Val_int(4); /* Int16_signed */
+    case CAML_BA_UINT16: return Val_int(5); /* Int16_unsigned */
+    case CAML_BA_INT32: return Val_int(6); /* Int32 */
+    case CAML_BA_INT64: return Val_int(7); /* Int64 */
+    case CAML_BA_CAML_INT: return Val_int(8); /* Int */
+    case CAML_BA_NATIVE_INT: return Val_int(9); /* Nativeint */
+    case CAML_BA_COMPLEX32: return Val_int(10); /* Complex32 */
+    case CAML_BA_COMPLEX64: return Val_int(11); /* Complex64 */
+    case CAML_BA_CHAR: return Val_int(12); /* Char */
+    case CAML_BA_FLOAT16: return Val_int(13); /* Float16 */
+    case NX_BA_BFLOAT16: return Val_int(14); /* Bfloat16 */
+    case NX_BA_BOOL: return Val_int(15); /* Bool */
+    case NX_BA_INT4: return Val_int(16); /* Int4_signed */
+    case NX_BA_UINT4: return Val_int(17); /* Int4_unsigned */
+    case NX_BA_FP8_E4M3: return Val_int(18); /* Float8_e4m3 */
+    case NX_BA_FP8_E5M2: return Val_int(19); /* Float8_e5m2 */
+    case NX_BA_COMPLEX16: return Val_int(20); /* Complex16 */
+    case NX_BA_QINT8: return Val_int(21); /* Qint8 */
+    case NX_BA_QUINT8: return Val_int(22); /* Quint8 */
     default:
       caml_failwith("Unknown bigarray kind");
   }
@@ -399,19 +380,19 @@ CAMLprim value caml_nx_ba_blit(value vsrc, value vdst) {
   CAMLparam2(vsrc, vdst);
   struct caml_ba_array *src = Caml_ba_array_val(vsrc);
   struct caml_ba_array *dst = Caml_ba_array_val(vdst);
-  
+ 
   /* Check that kinds match */
   int src_kind = src->flags & CAML_BA_KIND_MASK;
   int dst_kind = dst->flags & CAML_BA_KIND_MASK;
   if (src_kind != dst_kind) {
     caml_invalid_argument("caml_nx_ba_blit: arrays have different kinds");
   }
-  
+ 
   /* Check that dimensions match */
   if (src->num_dims != dst->num_dims) {
     caml_invalid_argument("caml_nx_ba_blit: arrays have different dimensions");
   }
-  
+ 
   /* Get total number of elements */
   uintnat num_elts = 1;
   for (int i = 0; i < src->num_dims; i++) {
@@ -420,30 +401,33 @@ CAMLprim value caml_nx_ba_blit(value vsrc, value vdst) {
     }
     num_elts *= src->dim[i];
   }
-  
+ 
   /* Check if this is an extended type */
   if (src_kind >= CAML_BA_FIRST_UNIMPLEMENTED_KIND) {
     /* For extended types, get element size and use memcpy */
-    size_t elt_size;
+    size_t byte_size;
     switch (src_kind) {
-      case NX_BA_BFLOAT16:  elt_size = 2; break;
-      case NX_BA_BOOL:      elt_size = 1; break;
-      case NX_BA_INT4:      elt_size = 1; break;
-      case NX_BA_UINT4:     elt_size = 1; break;
-      case NX_BA_FP8_E4M3:  elt_size = 1; break;
-      case NX_BA_FP8_E5M2:  elt_size = 1; break;
-      case NX_BA_COMPLEX16: elt_size = 4; break;
-      case NX_BA_QINT8:     elt_size = 1; break;
-      case NX_BA_QUINT8:    elt_size = 1; break;
+      case NX_BA_BFLOAT16: byte_size = num_elts * 2; break;
+      case NX_BA_BOOL: byte_size = num_elts; break;
+      case NX_BA_INT4:
+      case NX_BA_UINT4: 
+        /* int4/uint4 pack 2 elements per byte */
+        byte_size = (num_elts + 1) / 2; 
+        break;
+      case NX_BA_FP8_E4M3: byte_size = num_elts; break;
+      case NX_BA_FP8_E5M2: byte_size = num_elts; break;
+      case NX_BA_COMPLEX16: byte_size = num_elts * 4; break;
+      case NX_BA_QINT8: byte_size = num_elts; break;
+      case NX_BA_QUINT8: byte_size = num_elts; break;
       default:
         caml_failwith("Unknown extended bigarray kind in blit");
     }
-    memcpy(dst->data, src->data, num_elts * elt_size);
+    memcpy(dst->data, src->data, byte_size);
   } else {
     /* For standard types, use the standard blit */
     caml_ba_blit(vsrc, vdst);
   }
-  
+ 
   CAMLreturn(Val_unit);
 }
 
@@ -461,11 +445,11 @@ CAMLprim value caml_nx_ba_fill(value vb, value vinit) {
   CAMLparam2(vb, vinit);
   struct caml_ba_array * b = Caml_ba_array_val(vb);
   int kind = b->flags & CAML_BA_KIND_MASK;
-  
+ 
   /* Check if this is an extended type */
   if (kind >= CAML_BA_FIRST_UNIMPLEMENTED_KIND) {
     uintnat num_elts = nx_ba_num_elts(b);
-    
+   
     switch (kind) {
       case NX_BA_BFLOAT16: {
         float fval = (float)Double_val(vinit);
@@ -486,8 +470,11 @@ CAMLprim value caml_nx_ba_fill(value vb, value vinit) {
       }
       case NX_BA_INT4: {
         /* Int4 needs special handling as 2 values are packed per byte */
-        int8_t init = Int_val(vinit) & 0xF;
-        uint8_t packed = (init << 4) | init;
+        int val = Int_val(vinit);
+        /* Clamp to [-8, 7] */
+        val = val < -8 ? -8 : val > 7 ? 7 : val;
+        uint8_t nibble = (uint8_t)val & 0x0F; /* Two's complement */
+        uint8_t packed = (nibble << 4) | nibble;
         uint8_t *p = (uint8_t *)b->data;
         uintnat bytes = (num_elts + 1) / 2;
         for (uintnat i = 0; i < bytes; i++) {
@@ -497,8 +484,11 @@ CAMLprim value caml_nx_ba_fill(value vb, value vinit) {
       }
       case NX_BA_UINT4: {
         /* UInt4 needs special handling as 2 values are packed per byte */
-        uint8_t init = Int_val(vinit) & 0xF;
-        uint8_t packed = (init << 4) | init;
+        int val = Int_val(vinit);
+        /* Clamp to [0, 15] */
+        val = val < 0 ? 0 : val > 15 ? 15 : val;
+        uint8_t nibble = (uint8_t)val & 0x0F;
+        uint8_t packed = (nibble << 4) | nibble;
         uint8_t *p = (uint8_t *)b->data;
         uintnat bytes = (num_elts + 1) / 2;
         for (uintnat i = 0; i < bytes; i++) {
@@ -523,9 +513,8 @@ CAMLprim value caml_nx_ba_fill(value vb, value vinit) {
         break;
       }
       case NX_BA_COMPLEX16: {
-        /* Complex16 is 2 bfloat16 values */
-        uint16_t re = float_to_bfloat16((float)Double_flat_field(vinit, 0));
-        uint16_t im = float_to_bfloat16((float)Double_flat_field(vinit, 1));
+        uint16_t re = float_to_half((float)Double_flat_field(vinit, 0));
+        uint16_t im = float_to_half((float)Double_flat_field(vinit, 1));
         uint16_t *p = (uint16_t *)b->data;
         for (uintnat i = 0; i < num_elts; i++) {
           p[2*i] = re;
@@ -557,6 +546,6 @@ CAMLprim value caml_nx_ba_fill(value vb, value vinit) {
     extern CAMLprim value caml_ba_fill(value vb, value vinit);
     caml_ba_fill(vb, vinit);
   }
-  
+ 
   CAMLreturn(Val_unit);
 }

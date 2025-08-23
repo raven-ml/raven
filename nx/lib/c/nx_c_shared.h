@@ -1,311 +1,362 @@
-// nx_c_shared.h
-
 #ifndef NX_C_SHARED_H
 #define NX_C_SHARED_H
 
-#include <bigarray_ext_stubs.h>
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/threads.h>
 #include <complex.h>
-#include <limits.h>
 #include <math.h>
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+
+#include "bigarray_ext_stubs.h"  // For extended kinds, caml_ba_* typedefs, and conversions
 
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
-// Common complex types
-typedef float _Complex c32_t;
-typedef double _Complex c64_t;
+// Maximum number of dimensions supported
+#define MAX_NDIM 32
 
-// Float16 type definition (platform-specific)
-#ifdef __APPLE__
-typedef _Float16 float16_t;
-#else
-// For other platforms, we may need to use __fp16 or a software implementation
-typedef uint16_t float16_t;  // Fallback, may need proper implementation
-#endif
+// FFI tensor field indices (matches OCaml record)
+// type ffi_tensor = {
+//   data : buffer;       (* Field 0 *)
+//   shape : int array;   (* Field 1 *)
+//   strides : int array; (* Field 2 *)
+//   offset : int;        (* Field 3 *)
+// }
+#define FFI_TENSOR_DATA 0
+#define FFI_TENSOR_SHAPE 1
+#define FFI_TENSOR_STRIDES 2
+#define FFI_TENSOR_OFFSET 3
 
-// Quantized types (just aliases for now, actual quantization TBD)
-typedef int8_t qint8_t;
-typedef uint8_t quint8_t;
+typedef float _Complex complex32;
+typedef double _Complex complex64;
 
-// Extended types from bigarray_ext
-typedef uint8_t bool_t;  // Boolean type
-typedef uint16_t bfloat16_t;  // Brain floating point 16-bit
-typedef uint8_t fp8_e4m3_t;  // 8-bit float: 1 sign, 4 exponent, 3 mantissa
-typedef uint8_t fp8_e5m2_t;  // 8-bit float: 1 sign, 5 exponent, 2 mantissa
-typedef struct { bfloat16_t real; bfloat16_t imag; } complex16_t;  // Complex bfloat16
-// Note: int4/uint4 are packed, handled specially
+// Complex16 conversions (complex with half-precision components)
+static inline complex32 complex16_to_complex32(caml_ba_complex16 c16) {
+  float re = half_to_float(c16.re);
+  float im = half_to_float(c16.im);
+  return re + im * I;
+}
 
-// Common struct for passing array info
+static inline caml_ba_complex16 complex32_to_complex16(complex32 c32) {
+  caml_ba_complex16 result;
+  result.re = float_to_half(crealf(c32));
+  result.im = float_to_half(cimagf(c32));
+  return result;
+}
+
+// Int4/uint4 clamping macros for saturation
+#define CLAMP_I4(x) ((x) < -8 ? -8 : ((x) > 7 ? 7 : (x)))
+#define CLAMP_U4(x) ((x) < 0 ? 0 : ((x) > 15 ? 15 : (x)))
+
+// Complex arithmetic operations
+#define COMPLEX_ADD(a, b) ((a) + (b))
+#define COMPLEX_MUL(a, b) ((a) * (b))
+
+// Complex comparison operations (lexicographic order)
+static inline complex32 complex_max(complex32 a, complex32 b) {
+  float a_real = crealf(a), a_imag = cimagf(a);
+  float b_real = crealf(b), b_imag = cimagf(b);
+  if (a_real > b_real) return a;
+  if (a_real < b_real) return b;
+  return (a_imag >= b_imag) ? a : b;
+}
+
+static inline complex64 complex64_max(complex64 a, complex64 b) {
+  double a_real = creal(a), a_imag = cimag(a);
+  double b_real = creal(b), b_imag = cimag(b);
+  if (a_real > b_real) return a;
+  if (a_real < b_real) return b;
+  return (a_imag >= b_imag) ? a : b;
+}
+
+// Core ndarray structure for strided array operations
 typedef struct {
   void *data;
   int ndim;
-  const int *shape;
-  const int *strides;
+  int *shape;
+  int *strides;
   int offset;
 } ndarray_t;
 
-// Define INTNAT_MIN based on word size
-#if SIZEOF_PTR == 8
-#define INTNAT_MIN INT64_MIN
-#else
-#define INTNAT_MIN INT32_MIN
-#endif
-
-// Math constant fallback
-#ifndef M_LN2
-#define M_LN2 0.69314718055994530942
-#endif
-
-// Native wrapper macros for bytecode/native code compatibility
-#define NATIVE_WRAPPER_6(name)                                          \
-  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4, \
-                                value v5, value v6) {                   \
-    value argv[6] = {v1, v2, v3, v4, v5, v6};                           \
-    return caml_nx_##name##_bc(argv, 6);                                \
-  }
-
-#define NATIVE_WRAPPER_8(name)                                            \
-  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4,   \
-                                value v5, value v6, value v7, value v8) { \
-    value argv[8] = {v1, v2, v3, v4, v5, v6, v7, v8};                     \
-    return caml_nx_##name##_bc(argv, 8);                                  \
-  }
-
-#define NATIVE_WRAPPER_9(name)                                          \
-  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4, \
-                                value v5, value v6, value v7, value v8, \
-                                value v9) {                             \
-    value argv[9] = {v1, v2, v3, v4, v5, v6, v7, v8, v9};               \
-    return caml_nx_##name##_bc(argv, 9);                                \
-  }
-
-#define NATIVE_WRAPPER_10(name)                                         \
-  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4, \
-                                value v5, value v6, value v7, value v8, \
-                                value v9, value v10) {                  \
-    value argv[10] = {v1, v2, v3, v4, v5, v6, v7, v8, v9, v10};         \
-    return caml_nx_##name##_bc(argv, 10);                               \
-  }
-
-#define REDUCE_NATIVE_WRAPPER_10(name)                                         \
-  CAMLprim value caml_nx_reduce_##name(value v1, value v2, value v3, value v4, \
-                                       value v5, value v6, value v7, value v8, \
-                                       value v9, value v10) {                  \
-    value argv[10] = {v1, v2, v3, v4, v5, v6, v7, v8, v9, v10};                \
-    return caml_nx_reduce_##name##_bc(argv, 10);                               \
-  }
-
-#define NATIVE_WRAPPER_11(name)                                         \
-  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4, \
-                                value v5, value v6, value v7, value v8, \
-                                value v9, value v10, value v11) {       \
-    value argv[11] = {v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11};    \
-    return caml_nx_##name##_bc(argv, 11);                               \
-  }
-
-#define NATIVE_WRAPPER_12(name)                                              \
-  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4,      \
-                                value v5, value v6, value v7, value v8,      \
-                                value v9, value v10, value v11, value v12) { \
-    value argv[12] = {v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12};    \
-    return caml_nx_##name##_bc(argv, 12);                                    \
-  }
-
-#define NATIVE_WRAPPER_13(name)                                               \
-  CAMLprim value caml_nx_##name(                                              \
-      value arg1, value arg2, value arg3, value arg4, value arg5, value arg6, \
-      value arg7, value arg8, value arg9, value arg10, value arg11,           \
-      value arg12, value arg13) {                                             \
-    value argv[13] = {arg1, arg2, arg3,  arg4,  arg5,  arg6, arg7,            \
-                      arg8, arg9, arg10, arg11, arg12, arg13};                \
-    return caml_nx_##name##_bc(argv, 13);                                     \
-  }
-
-#define NATIVE_WRAPPER_14(name)                                            \
-  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4,    \
-                                value v5, value v6, value v7, value v8,    \
-                                value v9, value v10, value v11, value v12, \
-                                value v13, value v14) {                    \
-    value argv[14] = {v1, v2, v3,  v4,  v5,  v6,  v7,                      \
-                      v8, v9, v10, v11, v12, v13, v14};                    \
-    return caml_nx_##name##_bc(argv, 14);                                  \
-  }
-
-#define NATIVE_WRAPPER_15(name)                                            \
-  CAMLprim value caml_nx_##name(value v1, value v2, value v3, value v4,    \
-                                value v5, value v6, value v7, value v8,    \
-                                value v9, value v10, value v11, value v12, \
-                                value v13, value v14, value v15) {         \
-    value argv[15] = {v1, v2,  v3,  v4,  v5,  v6,  v7, v8,                 \
-                      v9, v10, v11, v12, v13, v14, v15};                   \
-    return caml_nx_##name##_bc(argv, 15);                                  \
-  }
-
-#define NATIVE_WRAPPER_17(name)                                             \
-  CAMLprim value caml_nx_##name(                                            \
-      value v1, value v2, value v3, value v4, value v5, value v6, value v7, \
-      value v8, value v9, value v10, value v11, value v12, value v13,       \
-      value v14, value v15, value v16, value v17) {                         \
-    value argv[17] = {v1,  v2,  v3,  v4,  v5,  v6,  v7,  v8, v9,            \
-                      v10, v11, v12, v13, v14, v15, v16, v17};              \
-    return caml_nx_##name##_bc(argv, 17);                                   \
-  }
-
-// N-dimensional iterator for efficient array traversal
+// Iterator for n-dimensional arrays (binary operations)
 typedef struct {
   int ndim;
-  const int *shape;
-  const int *x_strides;
-  const int *y_strides;  // May be NULL for unary ops
-  const int *z_strides;
-  long x_offset;
-  long y_offset;  // May be unused for unary ops
-  long z_offset;
-  long indices[16];    // Stack allocation for common cases (ndim <= 16)
-  long *heap_indices;  // Heap allocation for larger ndim
+  int *shape;
+  int *coords;
+  int *x_strides;
+  int *y_strides;
+  int *z_strides;
 } nd_iterator_t;
 
-// Inline helper functions
-static inline size_t get_element_size(int kind) {
-  switch (kind) {
-    case CAML_BA_FLOAT32:
-      return sizeof(float);
-    case CAML_BA_FLOAT64:
-      return sizeof(double);
-    case CAML_BA_SINT8:
-      return sizeof(int8_t);
-    case CAML_BA_UINT8:
-      return sizeof(uint8_t);
-    case CAML_BA_SINT16:
-      return sizeof(int16_t);
-    case CAML_BA_UINT16:
-      return sizeof(uint16_t);
-    case CAML_BA_INT32:
-      return sizeof(int32_t);
-    case CAML_BA_INT64:
-      return sizeof(int64_t);
-    case CAML_BA_CAML_INT:
-      return sizeof(intnat);
-    case CAML_BA_NATIVE_INT:
-      return sizeof(intnat);
-    case CAML_BA_COMPLEX32:
-      return sizeof(c32_t);
-    case CAML_BA_COMPLEX64:
-      return sizeof(c64_t);
-    case CAML_BA_FLOAT16:
-      return sizeof(uint16_t);  // Float16
-    case NX_BA_BFLOAT16:
-      return sizeof(uint16_t);  // BFloat16
-    case NX_BA_BOOL:
-      return sizeof(uint8_t);  // Bool
-    case NX_BA_INT4:
-      return 1;  // Int4 (2 values packed per byte)
-    case NX_BA_UINT4:
-      return 1;  // UInt4 (2 values packed per byte)
-    case NX_BA_FP8_E4M3:
-      return sizeof(uint8_t);  // Float8_e4m3
-    case NX_BA_FP8_E5M2:
-      return sizeof(uint8_t);  // Float8_e5m2
-    case NX_BA_COMPLEX16:
-      return 4;  // Complex16 (2 x bfloat16)
-    case NX_BA_QINT8:
-      return sizeof(int8_t);  // QInt8
-    case NX_BA_QUINT8:
-      return sizeof(uint8_t);  // QUInt8
-    default:
-      return 0;  // Should not happen with supported types
-  }
-}
+// Iterator for copying between two arrays
+typedef struct {
+  int ndim;
+  int *shape;
+  int *coords;
+  int *src_strides;
+  int *dst_strides;
+} nd_copy_iterator_t;
 
-static inline long total_elements(const ndarray_t *arr) {
-  if (arr->ndim == 0) return 1;
+// Single array iterator for unary operations
+typedef struct {
+  int ndim;
+  int *shape;
+  int *coords;
+  int *strides;
+} nd_single_iterator_t;
+
+// Macro to iterate over all types (extended to include bigarray_ext types)
+// Note: int4/uint4 need special handling (2 values per byte)
+// Note: float16 uses caml_ba_uint16 like the standard library
+#define FOR_EACH_TYPE(MACRO)                      \
+  MACRO(int8_t, i8, CAML_BA_SINT8)                \
+  MACRO(uint8_t, u8, CAML_BA_UINT8)               \
+  MACRO(int16_t, i16, CAML_BA_SINT16)             \
+  MACRO(uint16_t, u16, CAML_BA_UINT16)            \
+  MACRO(int32_t, i32, CAML_BA_INT32)              \
+  MACRO(int64_t, i64, CAML_BA_INT64)              \
+  MACRO(intnat, inat, CAML_BA_NATIVE_INT)         \
+  MACRO(uint16_t, f16, CAML_BA_FLOAT16)           \
+  MACRO(float, f32, CAML_BA_FLOAT32)              \
+  MACRO(double, f64, CAML_BA_FLOAT64)             \
+  MACRO(complex32, c32, CAML_BA_COMPLEX32)        \
+  MACRO(complex64, c64, CAML_BA_COMPLEX64)        \
+  MACRO(caml_ba_bfloat16, bf16, NX_BA_BFLOAT16)   \
+  MACRO(caml_ba_bool, bool_, NX_BA_BOOL)          \
+  MACRO(uint8_t, i4, NX_BA_INT4)                  \
+  MACRO(uint8_t, u4, NX_BA_UINT4)                 \
+  MACRO(caml_ba_fp8_e4m3, f8e4m3, NX_BA_FP8_E4M3) \
+  MACRO(caml_ba_fp8_e5m2, f8e5m2, NX_BA_FP8_E5M2) \
+  MACRO(caml_ba_complex16, c16, NX_BA_COMPLEX16)  \
+  MACRO(caml_ba_qint8, qi8, NX_BA_QINT8)          \
+  MACRO(caml_ba_quint8, qu8, NX_BA_QUINT8)
+
+// Helper functions for safe operations
+static inline long total_elements_safe(const ndarray_t *arr) {
+  if (!arr || arr->ndim == 0) return 1;
   long total = 1;
-  for (int i = 0; i < arr->ndim; i++) total *= arr->shape[i];
+  for (int i = 0; i < arr->ndim; i++) {
+    long dim = arr->shape[i];
+    if (dim <= 0) return 0;
+    if (total > LONG_MAX / dim) {
+      caml_failwith("total_elements_safe: integer overflow");
+    }
+    total *= dim;
+  }
   return total;
 }
 
-static inline int is_c_contiguous(const ndarray_t *arr) {
-  long expected_stride = 1;
-  for (int i = arr->ndim - 1; i >= 0; i--) {
-    if (arr->shape[i] > 1 && arr->strides[i] != expected_stride) return 0;
-    expected_stride *= arr->shape[i];
+static inline bool is_fully_contiguous(const ndarray_t *x, const ndarray_t *y,
+                                       const ndarray_t *z) {
+  if (!x || !y || !z || x->ndim != y->ndim || x->ndim != z->ndim) return false;
+  if (x->ndim == 0) return true;
+
+  // Check C-contiguous layout
+  int expected_stride = 1;
+  for (int i = x->ndim - 1; i >= 0; i--) {
+    if (x->strides[i] != expected_stride || y->strides[i] != expected_stride ||
+        z->strides[i] != expected_stride) {
+      return false;
+    }
+    expected_stride *= x->shape[i];
   }
-  return 1;
+  return true;
 }
 
-// N-dimensional iterator initialization and management
-static inline void nd_iterator_init(nd_iterator_t *it, const ndarray_t *x,
-                                    const ndarray_t *y, const ndarray_t *z) {
+static inline bool is_contiguous(const ndarray_t *x) {
+  if (!x || x->ndim == 0) return true;
+  
+  // Check C-contiguous layout
+  int expected_stride = 1;
+  for (int i = x->ndim - 1; i >= 0; i--) {
+    if (x->strides[i] != expected_stride) {
+      return false;
+    }
+    expected_stride *= x->shape[i];
+  }
+  return true;
+}
+
+static inline void nd_iterator_init_safe(nd_iterator_t *it, const ndarray_t *x,
+                                         const ndarray_t *y,
+                                         const ndarray_t *z) {
+  if (!it || !x || !y || !z) {
+    caml_failwith("nd_iterator_init_safe: null pointer");
+  }
+  if (x->ndim != y->ndim || x->ndim != z->ndim) {
+    caml_failwith("nd_iterator_init_safe: dimension mismatch");
+  }
   it->ndim = x->ndim;
   it->shape = x->shape;
+  it->coords = (int *)calloc(x->ndim, sizeof(int));
   it->x_strides = x->strides;
-  it->y_strides = y ? y->strides : NULL;
+  it->y_strides = y->strides;
   it->z_strides = z->strides;
-  it->x_offset = x->offset;
-  it->y_offset = y ? y->offset : 0;
-  it->z_offset = z->offset;
-
-  // Initialize indices to 0
-  if (it->ndim <= 16) {
-    it->heap_indices = NULL;
-    for (int i = 0; i < it->ndim; i++) it->indices[i] = 0;
-  } else {
-    it->heap_indices = calloc(it->ndim, sizeof(long));
-    if (it->heap_indices == NULL) {
-      caml_failwith("nd_iterator_init: failed to allocate memory for indices");
-    }
+  if (!it->coords) {
+    caml_failwith("nd_iterator_init_safe: allocation failed");
   }
-}
-
-static inline void nd_iterator_destroy(nd_iterator_t *it) {
-  if (it->heap_indices) {
-    free(it->heap_indices);
-    it->heap_indices = NULL;
-  }
-}
-
-static inline int nd_iterator_next(nd_iterator_t *it) {
-  long *indices = it->heap_indices ? it->heap_indices : it->indices;
-
-  // Increment indices from innermost dimension
-  for (int d = it->ndim - 1; d >= 0; d--) {
-    indices[d]++;
-    if (indices[d] < it->shape[d]) {
-      return 1;  // More elements to process
-    }
-    // Reset this dimension and continue to next
-    indices[d] = 0;
-  }
-
-  // All indices have wrapped around - we're done
-  return 0;
 }
 
 static inline void nd_iterator_get_offsets(const nd_iterator_t *it, long *x_off,
                                            long *y_off, long *z_off) {
-  const long *indices = it->heap_indices ? it->heap_indices : it->indices;
-
-  *x_off = it->x_offset;
-  if (y_off) *y_off = it->y_offset;
-  *z_off = it->z_offset;
-
-  for (int d = 0; d < it->ndim; d++) {
-    *x_off += indices[d] * it->x_strides[d];
-    if (y_off && it->y_strides) *y_off += indices[d] * it->y_strides[d];
-    *z_off += indices[d] * it->z_strides[d];
+  *x_off = 0;
+  *y_off = 0;
+  *z_off = 0;
+  for (int i = 0; i < it->ndim; i++) {
+    *x_off += it->coords[i] * it->x_strides[i];
+    *y_off += it->coords[i] * it->y_strides[i];
+    *z_off += it->coords[i] * it->z_strides[i];
   }
+}
+
+static inline bool nd_iterator_next(nd_iterator_t *it) {
+  for (int i = it->ndim - 1; i >= 0; i--) {
+    it->coords[i]++;
+    if (it->coords[i] < it->shape[i]) {
+      return true;
+    }
+    it->coords[i] = 0;
+  }
+  return false;
+}
+
+static inline void nd_iterator_destroy(nd_iterator_t *it) {
+  if (it && it->coords) {
+    free(it->coords);
+    it->coords = NULL;
+  }
+}
+
+// Single array iterator functions
+static inline void nd_iterator_init(nd_single_iterator_t *it, const ndarray_t *arr) {
+  if (!it || !arr) {
+    caml_failwith("nd_iterator_init: null pointer");
+  }
+  it->ndim = arr->ndim;
+  it->shape = arr->shape;
+  it->coords = (int *)calloc(arr->ndim, sizeof(int));
+  it->strides = arr->strides;
+  if (!it->coords) {
+    caml_failwith("nd_iterator_init: allocation failed");
+  }
+}
+
+static inline void nd_iterator_get_offset(const nd_single_iterator_t *it, long *offset) {
+  *offset = 0;
+  for (int i = 0; i < it->ndim; i++) {
+    *offset += it->coords[i] * it->strides[i];
+  }
+}
+
+static inline bool nd_single_iterator_next(nd_single_iterator_t *it) {
+  for (int i = it->ndim - 1; i >= 0; i--) {
+    it->coords[i]++;
+    if (it->coords[i] < it->shape[i]) {
+      return true;
+    }
+    it->coords[i] = 0;
+  }
+  return false;
+}
+
+static inline void nd_single_iterator_destroy(nd_single_iterator_t *it) {
+  if (it && it->coords) {
+    free(it->coords);
+    it->coords = NULL;
+  }
+}
+
+// Copy iterator functions
+static inline void nd_copy_iterator_init(nd_copy_iterator_t *it, const ndarray_t *src, const ndarray_t *dst) {
+  if (!it || !src || !dst) {
+    caml_failwith("nd_copy_iterator_init: null pointer");
+  }
+  if (src->ndim != dst->ndim) {
+    caml_failwith("nd_copy_iterator_init: dimension mismatch");
+  }
+  it->ndim = src->ndim;
+  it->shape = src->shape;
+  it->coords = (int *)calloc(src->ndim, sizeof(int));
+  it->src_strides = src->strides;
+  it->dst_strides = dst->strides;
+  if (!it->coords) {
+    caml_failwith("nd_copy_iterator_init: allocation failed");
+  }
+}
+
+static inline void nd_copy_iterator_get_offsets(const nd_copy_iterator_t *it, long *src_off, long *dst_off) {
+  *src_off = 0;
+  *dst_off = 0;
+  for (int i = 0; i < it->ndim; i++) {
+    *src_off += it->coords[i] * it->src_strides[i];
+    *dst_off += it->coords[i] * it->dst_strides[i];
+  }
+}
+
+static inline bool nd_copy_iterator_next(nd_copy_iterator_t *it) {
+  for (int i = it->ndim - 1; i >= 0; i--) {
+    it->coords[i]++;
+    if (it->coords[i] < it->shape[i]) {
+      return true;
+    }
+    it->coords[i] = 0;
+  }
+  return false;
+}
+
+static inline void nd_copy_iterator_destroy(nd_copy_iterator_t *it) {
+  if (it && it->coords) {
+    free(it->coords);
+    it->coords = NULL;
+  }
+}
+
+// Helper to extract ndarray from FFI tensor
+static inline ndarray_t extract_ndarray(value v_ffi_tensor) {
+  value v_data = Field(v_ffi_tensor, FFI_TENSOR_DATA);
+  value v_shape = Field(v_ffi_tensor, FFI_TENSOR_SHAPE);
+  value v_strides = Field(v_ffi_tensor, FFI_TENSOR_STRIDES);
+  int offset = Int_val(Field(v_ffi_tensor, FFI_TENSOR_OFFSET));
+
+  struct caml_ba_array *ba = Caml_ba_array_val(v_data);
+  void *data = ba->data;
+
+  int ndim = Wosize_val(v_shape);
+
+  // Always allocate on heap to avoid stack corruption
+  int *shape = (int *)malloc(ndim * sizeof(int));
+  int *strides = (int *)malloc(ndim * sizeof(int));
+
+  if (!shape || !strides) {
+    if (shape) free(shape);
+    if (strides) free(strides);
+    caml_failwith("extract_ndarray: allocation failed");
+  }
+
+  // Extract shape and strides
+  for (int i = 0; i < ndim; i++) {
+    shape[i] = Int_val(Field(v_shape, i));
+    strides[i] = Int_val(Field(v_strides, i));
+  }
+
+  ndarray_t arr = {data, ndim, shape, strides, offset};
+  return arr;
+}
+
+// Clean up heap-allocated arrays if needed
+static inline void cleanup_ndarray(ndarray_t *arr) {
+  // Always free since we always allocate on heap now
+  if (arr->shape) free(arr->shape);
+  if (arr->strides) free(arr->strides);
 }
 
 #endif  // NX_C_SHARED_H

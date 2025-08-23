@@ -138,14 +138,14 @@ module type S = sig
   val op_permute : ('a, 'b) t -> int array -> ('a, 'b) t
   (** Reorder dimensions according to [axes]. *)
 
-  val op_pad : ('a, 'b) t -> (int * int) array -> 'a -> ('a, 'b) t
-  (** Pad with [fill_value] using the given configuration. *)
-
   val op_shrink : ('a, 'b) t -> (int * int) array -> ('a, 'b) t
   (** Slice according to the given start/stop pairs. *)
 
   val op_flip : ('a, 'b) t -> bool array -> ('a, 'b) t
   (** Flip dimensions where the boolean array is [true]. *)
+
+  val op_pad : ('a, 'b) t -> (int * int) array -> 'a -> ('a, 'b) t
+  (** Pad with [fill_value] using the given configuration. *)
 
   val op_cat : ('a, 'b) t list -> int -> ('a, 'b) t
   (** Concatenate tensors along [axis]. *)
