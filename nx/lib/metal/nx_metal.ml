@@ -31,7 +31,7 @@ let data : type a b. (a, b) t -> (a, b, c_layout) Array1.t =
   let contents = Metal.Buffer.contents t.buffer.buffer in
 
   match t.dtype with
-  | Dtype.BFloat16 | Dtype.Bool ->
+  | Dtype.BFloat16 | Dtype.Bool | Dtype.Complex16 ->
       (* For extended types, use the extended kind and our special function *)
       let kind = Dtype.to_bigarray_ext_kind t.dtype in
       let elem_size = Internal.sizeof_dtype t.dtype in

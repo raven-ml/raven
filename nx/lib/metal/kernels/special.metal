@@ -285,6 +285,112 @@ DEFINE_CAST(ushort, uchar)
 DEFINE_CAST(ushort, short)
 DEFINE_CAST(ushort, ushort)
 
+// Complex cast operations
+// Cast between complex types
+kernel void cast_float2_to_half2(device half2* out [[buffer(0)]],
+                                 device const float2* in [[buffer(1)]],
+                                 constant uint& size [[buffer(2)]],
+                                 uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    float2 val = in[gid];
+    out[gid] = half2(half(val.x), half(val.y));
+}
+
+kernel void cast_half2_to_float2(device float2* out [[buffer(0)]],
+                                 device const half2* in [[buffer(1)]],
+                                 constant uint& size [[buffer(2)]],
+                                 uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    half2 val = in[gid];
+    out[gid] = float2(float(val.x), float(val.y));
+}
+
+// Cast from real to complex (imaginary part becomes 0)
+kernel void cast_float_to_float2(device float2* out [[buffer(0)]],
+                                 device const float* in [[buffer(1)]],
+                                 constant uint& size [[buffer(2)]],
+                                 uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = float2(in[gid], 0.0f);
+}
+
+kernel void cast_half_to_half2(device half2* out [[buffer(0)]],
+                               device const half* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = half2(in[gid], half(0.0));
+}
+
+// Cast from complex to real (take real part)
+kernel void cast_float2_to_float(device float* out [[buffer(0)]],
+                                 device const float2* in [[buffer(1)]],
+                                 constant uint& size [[buffer(2)]],
+                                 uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid].x;
+}
+
+kernel void cast_half2_to_half(device half* out [[buffer(0)]],
+                               device const half2* in [[buffer(1)]],
+                               constant uint& size [[buffer(2)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid].x;
+}
+
+// Special complex operations: make complex from real and imaginary parts
+kernel void make_complex_float2(device float2* out [[buffer(0)]],
+                                device const float* real [[buffer(1)]],
+                                device const float* imag [[buffer(2)]],
+                                constant uint& size [[buffer(3)]],
+                                uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = float2(real[gid], imag[gid]);
+}
+
+kernel void make_complex_half2(device half2* out [[buffer(0)]],
+                               device const half* real [[buffer(1)]],
+                               device const half* imag [[buffer(2)]],
+                               constant uint& size [[buffer(3)]],
+                               uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = half2(real[gid], imag[gid]);
+}
+
+// Extract real and imaginary parts
+kernel void get_real_float2(device float* out [[buffer(0)]],
+                            device const float2* in [[buffer(1)]],
+                            constant uint& size [[buffer(2)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid].x;
+}
+
+kernel void get_imag_float2(device float* out [[buffer(0)]],
+                            device const float2* in [[buffer(1)]],
+                            constant uint& size [[buffer(2)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid].y;
+}
+
+kernel void get_real_half2(device half* out [[buffer(0)]],
+                           device const half2* in [[buffer(1)]],
+                           constant uint& size [[buffer(2)]],
+                           uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid].x;
+}
+
+kernel void get_imag_half2(device half* out [[buffer(0)]],
+                           device const half2* in [[buffer(1)]],
+                           constant uint& size [[buffer(2)]],
+                           uint gid [[thread_position_in_grid]]) {
+    if (gid >= size) return;
+    out[gid] = in[gid].y;
+}
+
 // Instantiate FILL operations
 DEFINE_FILL(float)
 DEFINE_FILL(half)
@@ -294,6 +400,8 @@ DEFINE_FILL(char)
 DEFINE_FILL(uchar)
 DEFINE_FILL(short)
 DEFINE_FILL(ushort)
+DEFINE_FILL(float2)
+DEFINE_FILL(half2)
 
 // Instantiate GATHER operations
 DEFINE_GATHER(float)

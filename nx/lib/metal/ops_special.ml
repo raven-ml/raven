@@ -261,11 +261,25 @@ let assign ctx dst src =
             =
          fun t ->
           let contents = Metal.Buffer.contents t.buffer.buffer in
-          let kind = Dtype.to_bigarray_kind t.dtype in
           let elem_size = Internal.sizeof_dtype t.dtype in
           let buffer_size = t.buffer.size_bytes / elem_size in
-          Ctypes.bigarray_of_ptr Ctypes.array1 buffer_size kind
-            (Obj.magic contents)
+          match t.dtype with
+          | Dtype.BFloat16 | Dtype.Bool | Dtype.Complex16 ->
+              (* For extended types, use the extended kind and our special function *)
+              let kind = Dtype.to_bigarray_ext_kind t.dtype in
+              let ptr_as_nativeint = Ctypes.raw_address_of_ptr contents in
+              let genarray =
+                Internal.ba_from_ptr
+                  (Internal.kind_to_int kind)
+                  (Internal.layout_to_int Bigarray_ext.c_layout)
+                  buffer_size ptr_as_nativeint
+              in
+              Bigarray_ext.array1_of_genarray genarray
+          | _ ->
+              (* Standard bigarray types *)
+              let kind = Dtype.to_bigarray_kind t.dtype in
+              Ctypes.bigarray_of_ptr Ctypes.array1 buffer_size kind
+                (Obj.magic contents)
         in
 
         let src_arr = get_data src in

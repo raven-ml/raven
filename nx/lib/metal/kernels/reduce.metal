@@ -92,6 +92,23 @@ kernel void reduce_sum_##type(device type* out [[buffer(0)]], \
     } \
 }
 
+// Helper for NaN-aware max - returns true if a is greater or if b is NaN
+template<typename T>
+inline T nan_max(T a, T b) {
+    // If either is NaN, return NaN
+    if (isnan(a)) return a;
+    if (isnan(b)) return b;
+    return max(a, b);
+}
+
+// Specialization for integer types (no NaN)
+inline int nan_max(int a, int b) { return max(a, b); }
+inline long nan_max(long a, long b) { return max(a, b); }
+inline char nan_max(char a, char b) { return max(a, b); }
+inline uchar nan_max(uchar a, uchar b) { return max(a, b); }
+inline short nan_max(short a, short b) { return max(a, b); }
+inline ushort nan_max(ushort a, ushort b) { return max(a, b); }
+
 // Macro for max reduction
 #define DEFINE_REDUCE_MAX(type, min_val) \
 kernel void reduce_max_##type(device type* out [[buffer(0)]], \
@@ -118,7 +135,7 @@ kernel void reduce_max_##type(device type* out [[buffer(0)]], \
     for (uint i = tid; i < reduction_size; i += REDUCE_THREADS) { \
         uint idx = compute_strided_index(reduction_id, i, shape, axes, in_strides, in_offset, ndim, naxes); \
         if (idx < in_size) { \
-            max_val = max(max_val, in[idx]); \
+            max_val = nan_max(max_val, in[idx]); \
         } \
     } \
     \
@@ -127,7 +144,7 @@ kernel void reduce_max_##type(device type* out [[buffer(0)]], \
     \
     for (uint s = REDUCE_THREADS / 2; s > 0; s >>= 1) { \
         if (tid < s && tid + s < REDUCE_THREADS) { \
-            shared[tid] = max(shared[tid], shared[tid + s]); \
+            shared[tid] = nan_max(shared[tid], shared[tid + s]); \
         } \
         threadgroup_barrier(mem_flags::mem_threadgroup); \
     } \
