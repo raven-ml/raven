@@ -106,8 +106,16 @@ let parallel_execute pool tasks =
       Condition.broadcast pool.work_available;
       Mutex.unlock pool.mutex;
       let main_task = tasks.(pool.num_workers) in
-      main_task.compute main_task.start_idx main_task.end_idx;
-      Effect.perform (WaitCompletion pool.num_workers))
+      (* Wrap main task execution to ensure WaitCompletion is always
+         performed *)
+      let main_exception = ref None in
+      (try main_task.compute main_task.start_idx main_task.end_idx
+       with exn -> main_exception := Some exn);
+      Effect.perform (WaitCompletion pool.num_workers);
+      (* Re-raise exception after synchronization *)
+      match !main_exception with
+      | Some exn -> raise exn
+      | None -> ())
 
 let parallel_for pool start end_ compute_chunk =
   let total_iterations = end_ - start + 1 in

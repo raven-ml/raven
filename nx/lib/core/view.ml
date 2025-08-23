@@ -191,12 +191,17 @@ let can_be_strided view =
 let expand view new_shape =
   let old_ndim = Symbolic_shape.rank view.shape in
   let new_ndim = Symbolic_shape.rank new_shape in
-  if new_ndim <> old_ndim then
+  (* Allow expanding a scalar to any shape *)
+  if old_ndim = 0 then
+    (* Scalar case: broadcast to any shape *)
+    let strides = Array.make new_ndim 0 in
+    { view with shape = new_shape; strides }
+  else if new_ndim <> old_ndim then
     Error.invalid ~op:"expand" ~what:"shape dimensions"
       ~reason:(Printf.sprintf "rank mismatch: %d vs %d" new_ndim old_ndim)
-      ();
-
-  match (Symbolic_shape.eval view.shape, Symbolic_shape.eval new_shape) with
+      ()
+  else
+    match (Symbolic_shape.eval view.shape, Symbolic_shape.eval new_shape) with
   | Some old_arr, Some new_arr ->
       if Array.exists (( = ) 0) old_arr then create new_shape
       else

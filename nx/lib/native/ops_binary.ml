@@ -8410,6 +8410,446 @@ let kernel_cmplt_complex64 (a : (Complex.t, complex64_elt) t)
       Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val < b_val))
     done
 
+(* Extended dtypes for kernel_cmplt *)
+let kernel_cmplt_bfloat16 (a : (float, bfloat16_elt) t)
+    (b : (float, bfloat16_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val < b_val))
+    done
+
+let kernel_cmplt_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val < b_val))
+    done
+
+let kernel_cmplt_int4 (a : (int, int4_elt) t) (b : (int, int4_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val < b_val))
+    done
+
+let kernel_cmplt_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val < b_val))
+    done
+
+let kernel_cmplt_float8_e4m3 (a : (float, float8_e4m3_elt) t)
+    (b : (float, float8_e4m3_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val < b_val))
+    done
+
+let kernel_cmplt_float8_e5m2 (a : (float, float8_e5m2_elt) t)
+    (b : (float, float8_e5m2_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val < b_val))
+    done
+
+(* Note: Complex16 doesn't support < comparison, only equality *)
+let kernel_cmplt_complex16 (a : (Complex.t, complex16_elt) t)
+    (b : (Complex.t, complex16_elt) t) (out : (int, uint8_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (a_val0.re < b_val0.re));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (a_val1.re < b_val1.re));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (a_val2.re < b_val2.re));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (a_val3.re < b_val3.re));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (a_val.re < b_val.re));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val.re < b_val.re))
+    done
+
+let kernel_cmplt_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val < b_val))
+    done
+
+let kernel_cmplt_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 < b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 < b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 < b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 < b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val < b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val < b_val))
+    done
+
 let kernel_cmpne_float16 (a : (float, float16_elt) t)
     (b : (float, float16_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
@@ -9127,6 +9567,447 @@ let kernel_cmpne_complex64 (a : (Complex.t, complex64_elt) t)
         (bool_to_int (not (a_val = b_val)))
     done
 
+(* Extended dtypes for kernel_cmpne *)
+let kernel_cmpne_bfloat16 (a : (float, bfloat16_elt) t)
+    (b : (float, bfloat16_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 <> b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 <> b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 <> b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 <> b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val <> b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val <> b_val))
+    done
+
+let kernel_cmpne_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 <> b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 <> b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 <> b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 <> b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val <> b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val <> b_val))
+    done
+
+let kernel_cmpne_int4 (a : (int, int4_elt) t) (b : (int, int4_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 <> b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 <> b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 <> b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 <> b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val <> b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val <> b_val))
+    done
+
+let kernel_cmpne_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 <> b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 <> b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 <> b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 <> b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val <> b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val <> b_val))
+    done
+
+let kernel_cmpne_float8_e4m3 (a : (float, float8_e4m3_elt) t)
+    (b : (float, float8_e4m3_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 <> b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 <> b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 <> b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 <> b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val <> b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val <> b_val))
+    done
+
+let kernel_cmpne_float8_e5m2 (a : (float, float8_e5m2_elt) t)
+    (b : (float, float8_e5m2_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 <> b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 <> b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 <> b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 <> b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val <> b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val <> b_val))
+    done
+
+let kernel_cmpne_complex16 (a : (Complex.t, complex16_elt) t)
+    (b : (Complex.t, complex16_elt) t) (out : (int, uint8_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0)
+        (bool_to_int (not (a_val0 = b_val0)));
+      Array1.unsafe_set out_buf (out_base + i1)
+        (bool_to_int (not (a_val1 = b_val1)));
+      Array1.unsafe_set out_buf (out_base + i2)
+        (bool_to_int (not (a_val2 = b_val2)));
+      Array1.unsafe_set out_buf (out_base + i3)
+        (bool_to_int (not (a_val3 = b_val3)));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx)
+        (bool_to_int (not (a_val = b_val)));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (not (a_val = b_val)))
+    done
+
+let kernel_cmpne_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 <> b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 <> b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 <> b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 <> b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val <> b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val <> b_val))
+    done
+
+let kernel_cmpne_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
+    (out : (int, uint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (bool_to_int (a_val0 <> b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (bool_to_int (a_val1 <> b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (bool_to_int (a_val2 <> b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (bool_to_int (a_val3 <> b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (bool_to_int (a_val <> b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val <> b_val))
+    done
+
 let kernel_bit_and_float16 (a : (float, float16_elt) t)
     (b : (float, float16_elt) t) (out : (float, float16_elt) t) start_idx
     end_idx =
@@ -9755,6 +10636,443 @@ let kernel_bit_and_complex64 (a : (Complex.t, complex64_elt) t)
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
       Array1.unsafe_set out_buf (offset out + k) (logand_complex a_val b_val)
+    done
+
+(* Extended dtypes for kernel_bit_and *)
+let kernel_bit_and_bfloat16 (a : (float, bfloat16_elt) t)
+    (b : (float, bfloat16_elt) t) (out : (float, bfloat16_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logand_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logand_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logand_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logand_float a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logand_float a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logand_float a_val b_val)
+    done
+
+let kernel_bit_and_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
+    (out : (bool, bool_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (a_val0 && b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (a_val1 && b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (a_val2 && b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (a_val3 && b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (a_val && b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (a_val && b_val)
+    done
+
+let kernel_bit_and_int4 (a : (int, int4_elt) t) (b : (int, int4_elt) t)
+    (out : (int, int4_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logand a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logand a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logand a_val b_val)
+    done
+
+let kernel_bit_and_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
+    (out : (int, uint4_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logand a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logand a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logand a_val b_val)
+    done
+
+let kernel_bit_and_float8_e4m3 (a : (float, float8_e4m3_elt) t)
+    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logand_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logand_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logand_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logand_float a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logand_float a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logand_float a_val b_val)
+    done
+
+let kernel_bit_and_float8_e5m2 (a : (float, float8_e5m2_elt) t)
+    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logand_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logand_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logand_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logand_float a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logand_float a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logand_float a_val b_val)
+    done
+
+let kernel_bit_and_complex16 (a : (Complex.t, complex16_elt) t)
+    (b : (Complex.t, complex16_elt) t) (out : (Complex.t, complex16_elt) t)
+    start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logand_complex a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logand_complex a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logand_complex a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logand_complex a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logand_complex a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logand_complex a_val b_val)
+    done
+
+let kernel_bit_and_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
+    (out : (int, qint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logand a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logand a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logand a_val b_val)
+    done
+
+let kernel_bit_and_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
+    (out : (int, quint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logand a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logand a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logand a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logand a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logand a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logand a_val b_val)
     done
 
 let kernel_bit_or_float16 (a : (float, float16_elt) t)
@@ -10387,6 +11705,443 @@ let kernel_bit_or_complex64 (a : (Complex.t, complex64_elt) t)
       Array1.unsafe_set out_buf (offset out + k) (logor_complex a_val b_val)
     done
 
+(* Extended dtypes for kernel_bit_or *)
+let kernel_bit_or_bfloat16 (a : (float, bfloat16_elt) t)
+    (b : (float, bfloat16_elt) t) (out : (float, bfloat16_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logor_float a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logor_float a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logor_float a_val b_val)
+    done
+
+let kernel_bit_or_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
+    (out : (bool, bool_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (a_val0 || b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (a_val1 || b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (a_val2 || b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (a_val3 || b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (a_val || b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (a_val || b_val)
+    done
+
+let kernel_bit_or_int4 (a : (int, int4_elt) t) (b : (int, int4_elt) t)
+    (out : (int, int4_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logor a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logor a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logor a_val b_val)
+    done
+
+let kernel_bit_or_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
+    (out : (int, uint4_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logor a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logor a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logor a_val b_val)
+    done
+
+let kernel_bit_or_float8_e4m3 (a : (float, float8_e4m3_elt) t)
+    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logor_float a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logor_float a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logor_float a_val b_val)
+    done
+
+let kernel_bit_or_float8_e5m2 (a : (float, float8_e5m2_elt) t)
+    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logor_float a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logor_float a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logor_float a_val b_val)
+    done
+
+let kernel_bit_or_complex16 (a : (Complex.t, complex16_elt) t)
+    (b : (Complex.t, complex16_elt) t) (out : (Complex.t, complex16_elt) t)
+    start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logor_complex a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logor_complex a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logor_complex a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logor_complex a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logor_complex a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logor_complex a_val b_val)
+    done
+
+let kernel_bit_or_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
+    (out : (int, qint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logor a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logor a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logor a_val b_val)
+    done
+
+let kernel_bit_or_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
+    (out : (int, quint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logor a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logor a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logor a_val b_val)
+    done
+
 let kernel_bit_xor_float16 (a : (float, float16_elt) t)
     (b : (float, float16_elt) t) (out : (float, float16_elt) t) start_idx
     end_idx =
@@ -11017,6 +12772,443 @@ let kernel_bit_xor_complex64 (a : (Complex.t, complex64_elt) t)
       Array1.unsafe_set out_buf (offset out + k) (logxor_complex a_val b_val)
     done
 
+(* Extended dtypes for kernel_bit_xor *)
+let kernel_bit_xor_bfloat16 (a : (float, bfloat16_elt) t)
+    (b : (float, bfloat16_elt) t) (out : (float, bfloat16_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logxor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logxor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logxor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logxor_float a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logxor_float a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logxor_float a_val b_val)
+    done
+
+let kernel_bit_xor_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
+    (out : (bool, bool_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (not (a_val0 = b_val0));
+      Array1.unsafe_set out_buf (out_base + i1) (not (a_val1 = b_val1));
+      Array1.unsafe_set out_buf (out_base + i2) (not (a_val2 = b_val2));
+      Array1.unsafe_set out_buf (out_base + i3) (not (a_val3 = b_val3));
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (not (a_val = b_val));
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (not (a_val = b_val))
+    done
+
+let kernel_bit_xor_int4 (a : (int, int4_elt) t) (b : (int, int4_elt) t)
+    (out : (int, int4_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logxor a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logxor a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logxor a_val b_val)
+    done
+
+let kernel_bit_xor_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
+    (out : (int, uint4_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logxor a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logxor a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logxor a_val b_val)
+    done
+
+let kernel_bit_xor_float8_e4m3 (a : (float, float8_e4m3_elt) t)
+    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logxor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logxor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logxor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logxor_float a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logxor_float a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logxor_float a_val b_val)
+    done
+
+let kernel_bit_xor_float8_e5m2 (a : (float, float8_e5m2_elt) t)
+    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t) start_idx
+    end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logxor_float a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logxor_float a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logxor_float a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logxor_float a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logxor_float a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logxor_float a_val b_val)
+    done
+
+let kernel_bit_xor_complex16 (a : (Complex.t, complex16_elt) t)
+    (b : (Complex.t, complex16_elt) t) (out : (Complex.t, complex16_elt) t)
+    start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (logxor_complex a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (logxor_complex a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (logxor_complex a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (logxor_complex a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (logxor_complex a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (logxor_complex a_val b_val)
+    done
+
+let kernel_bit_xor_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
+    (out : (int, qint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logxor a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logxor a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logxor a_val b_val)
+    done
+
+let kernel_bit_xor_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
+    (out : (int, quint8_elt) t) start_idx end_idx =
+  let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
+  if is_c_contiguous a && is_c_contiguous b then (
+    let a_base = offset a + start_idx in
+    let b_base = offset b + start_idx in
+    let out_base = offset out + start_idx in
+    let i = ref 0 in
+    let n = end_idx - start_idx in
+    while !i + 3 < n do
+      let i0 = !i + 0 and i1 = !i + 1 and i2 = !i + 2 and i3 = !i + 3 in
+      let a_val0 = Array1.unsafe_get a_buf (a_base + i0) in
+      let b_val0 = Array1.unsafe_get b_buf (b_base + i0) in
+      let a_val1 = Array1.unsafe_get a_buf (a_base + i1) in
+      let b_val1 = Array1.unsafe_get b_buf (b_base + i1) in
+      let a_val2 = Array1.unsafe_get a_buf (a_base + i2) in
+      let b_val2 = Array1.unsafe_get b_buf (b_base + i2) in
+      let a_val3 = Array1.unsafe_get a_buf (a_base + i3) in
+      let b_val3 = Array1.unsafe_get b_buf (b_base + i3) in
+      Array1.unsafe_set out_buf (out_base + i0) (Int.logxor a_val0 b_val0);
+      Array1.unsafe_set out_buf (out_base + i1) (Int.logxor a_val1 b_val1);
+      Array1.unsafe_set out_buf (out_base + i2) (Int.logxor a_val2 b_val2);
+      Array1.unsafe_set out_buf (out_base + i3) (Int.logxor a_val3 b_val3);
+      i := !i + 4
+    done;
+    while !i < n do
+      let idx = !i in
+      let a_val = Array1.unsafe_get a_buf (a_base + idx) in
+      let b_val = Array1.unsafe_get b_buf (b_base + idx) in
+      Array1.unsafe_set out_buf (out_base + idx) (Int.logxor a_val b_val);
+      incr i
+    done)
+  else
+    (* Pre-allocate work array to avoid allocations in loop *)
+    let md_index = Array.make (Array.length (shape out)) 0 in
+    let a_idx = Array.make (Array.length (shape a)) 0 in
+    let b_idx = Array.make (Array.length (shape b)) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k (shape out) md_index;
+      Shape.broadcast_index_into md_index (shape a) a_idx;
+      let a_lin = Shape.ravel_index a_idx (strides a) in
+      Shape.broadcast_index_into md_index (shape b) b_idx;
+      let b_lin = Shape.ravel_index b_idx (strides b) in
+      let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
+      let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
+      Array1.unsafe_set out_buf (offset out + k) (Int.logxor a_val b_val)
+    done
+
 let kernel_add (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
     start_idx end_idx =
   match Array1.kind (buffer a) with
@@ -11114,6 +13306,10 @@ let kernel_fdiv (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
   | Nativeint -> kernel_fdiv_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_fdiv_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_fdiv_complex64 a b out start_idx end_idx
+  | Bfloat16 -> kernel_fdiv_bfloat16 a b out start_idx end_idx
+  | Float8_e4m3 -> kernel_fdiv_float8_e4m3 a b out start_idx end_idx
+  | Float8_e5m2 -> kernel_fdiv_float8_e5m2 a b out start_idx end_idx
+  | Complex16 -> kernel_fdiv_complex16 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_fdiv: unsupported type"
 
 let kernel_idiv (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
@@ -11235,6 +13431,15 @@ let kernel_cmplt (type a b) (a : (a, b) t) (b : (a, b) t)
   | Nativeint -> kernel_cmplt_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_cmplt_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_cmplt_complex64 a b out start_idx end_idx
+  | Bfloat16 -> kernel_cmplt_bfloat16 a b out start_idx end_idx
+  | Bool -> kernel_cmplt_bool a b out start_idx end_idx
+  | Int4_signed -> kernel_cmplt_int4 a b out start_idx end_idx
+  | Int4_unsigned -> kernel_cmplt_uint4 a b out start_idx end_idx
+  | Float8_e4m3 -> kernel_cmplt_float8_e4m3 a b out start_idx end_idx
+  | Float8_e5m2 -> kernel_cmplt_float8_e5m2 a b out start_idx end_idx
+  | Complex16 -> kernel_cmplt_complex16 a b out start_idx end_idx
+  | Qint8 -> kernel_cmplt_qint8 a b out start_idx end_idx
+  | Quint8 -> kernel_cmplt_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_cmplt: unsupported type"
 
 let kernel_cmpne (type a b) (a : (a, b) t) (b : (a, b) t)
@@ -11253,6 +13458,15 @@ let kernel_cmpne (type a b) (a : (a, b) t) (b : (a, b) t)
   | Nativeint -> kernel_cmpne_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_cmpne_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_cmpne_complex64 a b out start_idx end_idx
+  | Bfloat16 -> kernel_cmpne_bfloat16 a b out start_idx end_idx
+  | Bool -> kernel_cmpne_bool a b out start_idx end_idx
+  | Int4_signed -> kernel_cmpne_int4 a b out start_idx end_idx
+  | Int4_unsigned -> kernel_cmpne_uint4 a b out start_idx end_idx
+  | Float8_e4m3 -> kernel_cmpne_float8_e4m3 a b out start_idx end_idx
+  | Float8_e5m2 -> kernel_cmpne_float8_e5m2 a b out start_idx end_idx
+  | Complex16 -> kernel_cmpne_complex16 a b out start_idx end_idx
+  | Qint8 -> kernel_cmpne_qint8 a b out start_idx end_idx
+  | Quint8 -> kernel_cmpne_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_cmpne: unsupported type"
 
 let kernel_bit_and (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
@@ -11271,6 +13485,15 @@ let kernel_bit_and (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
   | Nativeint -> kernel_bit_and_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_bit_and_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_bit_and_complex64 a b out start_idx end_idx
+  | Bfloat16 -> kernel_bit_and_bfloat16 a b out start_idx end_idx
+  | Bool -> kernel_bit_and_bool a b out start_idx end_idx
+  | Int4_signed -> kernel_bit_and_int4 a b out start_idx end_idx
+  | Int4_unsigned -> kernel_bit_and_uint4 a b out start_idx end_idx
+  | Float8_e4m3 -> kernel_bit_and_float8_e4m3 a b out start_idx end_idx
+  | Float8_e5m2 -> kernel_bit_and_float8_e5m2 a b out start_idx end_idx
+  | Complex16 -> kernel_bit_and_complex16 a b out start_idx end_idx
+  | Qint8 -> kernel_bit_and_qint8 a b out start_idx end_idx
+  | Quint8 -> kernel_bit_and_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_bit_and: unsupported type"
 
 let kernel_bit_or (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
@@ -11289,6 +13512,15 @@ let kernel_bit_or (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
   | Nativeint -> kernel_bit_or_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_bit_or_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_bit_or_complex64 a b out start_idx end_idx
+  | Bfloat16 -> kernel_bit_or_bfloat16 a b out start_idx end_idx
+  | Bool -> kernel_bit_or_bool a b out start_idx end_idx
+  | Int4_signed -> kernel_bit_or_int4 a b out start_idx end_idx
+  | Int4_unsigned -> kernel_bit_or_uint4 a b out start_idx end_idx
+  | Float8_e4m3 -> kernel_bit_or_float8_e4m3 a b out start_idx end_idx
+  | Float8_e5m2 -> kernel_bit_or_float8_e5m2 a b out start_idx end_idx
+  | Complex16 -> kernel_bit_or_complex16 a b out start_idx end_idx
+  | Qint8 -> kernel_bit_or_qint8 a b out start_idx end_idx
+  | Quint8 -> kernel_bit_or_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_bit_or: unsupported type"
 
 let kernel_bit_xor (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
@@ -11307,6 +13539,15 @@ let kernel_bit_xor (type a b) (a : (a, b) t) (b : (a, b) t) (out : (a, b) t)
   | Nativeint -> kernel_bit_xor_nativeint a b out start_idx end_idx
   | Complex32 -> kernel_bit_xor_complex32 a b out start_idx end_idx
   | Complex64 -> kernel_bit_xor_complex64 a b out start_idx end_idx
+  | Bfloat16 -> kernel_bit_xor_bfloat16 a b out start_idx end_idx
+  | Bool -> kernel_bit_xor_bool a b out start_idx end_idx
+  | Int4_signed -> kernel_bit_xor_int4 a b out start_idx end_idx
+  | Int4_unsigned -> kernel_bit_xor_uint4 a b out start_idx end_idx
+  | Float8_e4m3 -> kernel_bit_xor_float8_e4m3 a b out start_idx end_idx
+  | Float8_e5m2 -> kernel_bit_xor_float8_e5m2 a b out start_idx end_idx
+  | Complex16 -> kernel_bit_xor_complex16 a b out start_idx end_idx
+  | Qint8 -> kernel_bit_xor_qint8 a b out start_idx end_idx
+  | Quint8 -> kernel_bit_xor_quint8 a b out start_idx end_idx
   | _ -> invalid_arg "kernel_bit_xor: unsupported type"
 
 let add (type a b) context (a : (a, b) t) (b : (a, b) t) (out : (a, b) t) =
