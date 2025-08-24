@@ -681,3 +681,30 @@ let op_eigh ~vectors x = Ops_linalg.eigh ~vectors x.context x
 
 let op_triangular_solve ~upper ~transpose ~unit_diag a b =
   Ops_linalg.triangular_solve ~upper ~transpose ~unit_diag a.context a b
+
+let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
+  (* Native backend can implement this as zero-copy by manipulating the view *)
+  
+  (* Validate that the new view doesn't access out-of-bounds memory *)
+  let buffer_size = Array1.dim t.buffer in
+  let new_shape_arr = match Symbolic_shape.eval new_shape with
+    | Some arr -> arr
+    | None -> Error.failed ~op:"op_as_strided" ~what:"symbolic shapes not supported" ()
+  in
+  
+  (* Calculate the maximum element accessed *)
+  let max_element_accessed = ref offset_in_elements in
+  Array.iteri (fun i dim ->
+    if dim > 0 then
+      max_element_accessed := max !max_element_accessed 
+        (offset_in_elements + (dim - 1) * new_strides_in_elements.(i))
+  ) new_shape_arr;
+  
+  if !max_element_accessed >= buffer_size then
+    Error.failed ~op:"op_as_strided" ~what:"view would access out-of-bounds memory" ();
+  
+  (* Create a new view with custom strides and offset *)
+  let new_view = Lazy_view.create_strided new_shape ~strides:new_strides_in_elements ~offset:offset_in_elements in
+  
+  (* Return tensor with the same buffer but new view *)
+  { t with view = new_view }

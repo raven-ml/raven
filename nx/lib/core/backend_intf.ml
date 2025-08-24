@@ -327,4 +327,16 @@ module type S = sig
       - [unit_diag]: If true, assume diagonal of A is all 1s.
       - Input: Triangular matrix A, right-hand side b (batched).
       - Output: Solution x. *)
+
+  val op_as_strided :
+    ('a, 'b) t ->
+    Symbolic_shape.t ->
+    int array ->
+    int ->
+    ('a, 'b) t
+  (** Create a strided view of the input tensor with the given shape, strides
+      (in elements), and offset (in elements). Backends that support arbitrary
+      strided views (e.g., native with Bigarray) can implement this as
+      zero-copy. Other backends may fall back to copying data if necessary.
+      Raises if the view would access out-of-bounds memory. *)
 end

@@ -12,6 +12,11 @@ type t
 val create : Symbolic_shape.t -> t
 (** [create shape] creates a view tracker with initial contiguous view. *)
 
+val create_strided : Symbolic_shape.t -> strides:int array -> offset:int -> t
+(** [create_strided shape ~strides ~offset] creates a view tracker with custom
+    strides (in elements) and offset (in elements). This is used for advanced
+    indexing operations like as_strided. *)
+
 (** {2 Properties} *)
 
 val shape : t -> Symbolic_shape.t

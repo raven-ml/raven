@@ -221,6 +221,13 @@ type _ Effect.t +=
       limits : (int * int) array;
     }
       -> ('a, 'b) t Effect.t
+  | E_as_strided : {
+      t_in : ('a, 'b) t;
+      new_shape : int array;
+      new_strides : int array;
+      offset : int;
+    }
+      -> ('a, 'b) t Effect.t
   | E_flip : {
       t_in : ('a, 'b) t;
       dims_to_flip : bool array;
@@ -824,3 +831,29 @@ let op_eigh ~vectors:_ _ = failwith "op_eigh: not implemented in Rune backend"
 
 let op_triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
   failwith "op_triangular_solve: not implemented in Rune backend"
+
+let op_as_strided t_in new_shape new_strides_in_elements offset_in_elements =
+  (* Rune backend implementation of as_strided *)
+  
+  let new_shape_arr = match Symbolic_shape.eval new_shape with
+    | Some arr -> arr
+    | None -> failwith "op_as_strided: symbolic shapes not supported in Rune backend"
+  in
+  
+  (* Use the as_strided effect for autodiff tracking *)
+  try Effect.perform (E_as_strided { 
+    t_in; 
+    new_shape = new_shape_arr; 
+    new_strides = new_strides_in_elements;
+    offset = offset_in_elements 
+  })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Ocaml_tensor t ->
+        Ocaml_tensor (Nx_native.op_as_strided t new_shape new_strides_in_elements offset_in_elements)
+    | Metal_tensor t ->
+        Metal_tensor (Rune_metal.op_as_strided t new_shape new_strides_in_elements offset_in_elements)
+    | C_tensor t ->
+        C_tensor (Nx_c.op_as_strided t new_shape new_strides_in_elements offset_in_elements)
+    | Symbolic_tensor _ ->
+        failwith "op_as_strided: cannot operate on symbolic tensor")

@@ -661,6 +661,91 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       "concatenate: invalid dimension 1 (size 3\226\137\1602)" (fun () ->
         Nx.dstack [ t1; t2 ])
 
+  (* ───── as_strided Tests ───── *)
+
+  let test_as_strided_basic ctx () =
+    (* Create a simple 1D array and view it as 2D with overlapping windows *)
+    let x = Nx.create ctx Nx_core.Dtype.float32 [| 8 |] 
+      [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
+    (* Create overlapping windows of size 3 with stride 2 *)
+    let result = Nx.as_strided [| 3; 3 |] [| 2; 1 |] ~offset:0 x in
+    check_t "as_strided overlapping windows" [| 3; 3 |]
+      [| 0.; 1.; 2.; 
+         2.; 3.; 4.; 
+         4.; 5.; 6. |] result
+
+  let test_as_strided_2d_transpose ctx () =
+    (* Use as_strided to implement a transpose *)
+    let x = Nx.create ctx Nx_core.Dtype.float32 [| 2; 3 |] 
+      [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    (* Transpose by swapping strides: original strides are [3, 1], transposed are [1, 3] *)
+    let result = Nx.as_strided [| 3; 2 |] [| 1; 3 |] ~offset:0 x in
+    check_t "as_strided transpose" [| 3; 2 |]
+      [| 1.; 4.; 
+         2.; 5.; 
+         3.; 6. |] result
+
+  let test_as_strided_diagonal ctx () =
+    (* Extract diagonal using as_strided *)
+    let x = Nx.create ctx Nx_core.Dtype.float32 [| 3; 3 |] 
+      [| 1.; 2.; 3.; 
+         4.; 5.; 6.; 
+         7.; 8.; 9. |] in
+    (* Diagonal has stride of 4 (3+1) to skip to next diagonal element *)
+    let result = Nx.as_strided [| 3 |] [| 4 |] ~offset:0 x in
+    check_t "as_strided diagonal" [| 3 |]
+      [| 1.; 5.; 9. |] result
+
+  let test_as_strided_sliding_window ctx () =
+    (* Create sliding windows over a 1D array *)
+    let x = Nx.create ctx Nx_core.Dtype.float32 [| 6 |] 
+      [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    (* Windows of size 3 with stride 1 *)
+    let result = Nx.as_strided [| 4; 3 |] [| 1; 1 |] ~offset:0 x in
+    check_t "as_strided sliding window" [| 4; 3 |]
+      [| 1.; 2.; 3.;
+         2.; 3.; 4.;
+         3.; 4.; 5.;
+         4.; 5.; 6. |] result
+
+  let test_as_strided_with_offset ctx () =
+    (* Test as_strided with non-zero offset *)
+    let x = Nx.create ctx Nx_core.Dtype.float32 [| 10 |] 
+      [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
+    (* Start from offset 2, create a 2x3 view *)
+    let result = Nx.as_strided [| 2; 3 |] [| 3; 1 |] ~offset:2 x in
+    check_t "as_strided with offset" [| 2; 3 |]
+      [| 2.; 3.; 4.;
+         5.; 6.; 7. |] result
+
+  let test_as_strided_scalar_broadcast ctx () =
+    (* Use as_strided to broadcast a scalar *)
+    let x = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 42. |] in
+    (* Broadcast to 3x3 using zero strides *)
+    let result = Nx.as_strided [| 3; 3 |] [| 0; 0 |] ~offset:0 x in
+    check_t "as_strided scalar broadcast" [| 3; 3 |]
+      [| 42.; 42.; 42.;
+         42.; 42.; 42.;
+         42.; 42.; 42. |] result
+
+  let test_as_strided_skip_elements ctx () =
+    (* Test skipping elements using strides *)
+    let x = Nx.create ctx Nx_core.Dtype.float32 [| 5 |] 
+      [| 1.; 2.; 3.; 4.; 5. |] in
+    (* Skip every other element *)
+    let result = Nx.as_strided [| 3 |] [| 2 |] ~offset:0 x in
+    check_t "as_strided skip elements" [| 3 |]
+      [| 1.; 3.; 5. |] result
+
+  let test_as_strided_int_dtype ctx () =
+    (* Test as_strided with integer dtype *)
+    let x = Nx.create ctx Nx_core.Dtype.int32 [| 6 |] 
+      [| 10l; 20l; 30l; 40l; 50l; 60l |] in
+    let result = Nx.as_strided [| 2; 2 |] [| 2; 1 |] ~offset:1 x in
+    check_t "as_strided int32" [| 2; 2 |]
+      [| 20l; 30l;
+         40l; 50l |] result
+
   (* Test Suite Organization *)
 
   let reshape_tests ctx =
@@ -773,6 +858,15 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       ("vstack invalid", `Quick, test_vstack_invalid ctx);
       ("hstack invalid", `Quick, test_hstack_invalid ctx);
       ("dstack invalid", `Quick, test_dstack_invalid ctx);
+      (* as_strided tests *)
+      ("as_strided basic", `Quick, test_as_strided_basic ctx);
+      ("as_strided 2d transpose", `Quick, test_as_strided_2d_transpose ctx);
+      ("as_strided diagonal", `Quick, test_as_strided_diagonal ctx);
+      ("as_strided sliding window", `Quick, test_as_strided_sliding_window ctx);
+      ("as_strided with offset", `Quick, test_as_strided_with_offset ctx);
+      ("as_strided scalar broadcast", `Quick, test_as_strided_scalar_broadcast ctx);
+      ("as_strided skip elements", `Quick, test_as_strided_skip_elements ctx);
+      ("as_strided int dtype", `Quick, test_as_strided_int_dtype ctx);
     ]
 
   let suite backend_name ctx =

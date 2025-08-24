@@ -41,6 +41,10 @@ let create shape =
   let view = View.create shape in
   { views = [ view ] }
 
+let create_strided shape ~strides ~offset =
+  let view = View.create ~strides ~offset shape in
+  { views = [ view ] }
+
 let shape t =
   match t.views with
   | [] -> Error.failed ~op:"view_tracker.shape" ~what:"empty views list" ()

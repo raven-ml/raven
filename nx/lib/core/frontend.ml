@@ -1642,6 +1642,11 @@ module Make (B : Backend_intf.S) = struct
           ax_arr);
     B.op_flip x flip_bools
 
+  let as_strided shape strides ~offset x =
+    (* Create a strided view of the tensor with custom shape, strides, and offset *)
+    let shape_sym = Symbolic_shape.of_ints shape in
+    B.op_as_strided x shape_sym strides offset
+
   let moveaxis src dst x =
     let r = ndim x in
     let norm_src = if src < 0 then src + r else src in

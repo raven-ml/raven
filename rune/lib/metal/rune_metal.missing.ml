@@ -50,6 +50,7 @@ let op_svd ~full_matrices:_ _t = not_available ()
 let op_eig ~vectors:_ _t = not_available ()
 let op_eigh ~vectors:_ _t = not_available ()
 let op_triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _t = not_available ()
+let op_as_strided _t _new_shape _new_strides _offset = not_available ()
 
 let op_unfold _t ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
   not_available ()
