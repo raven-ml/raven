@@ -349,9 +349,10 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
       for (long kf = 0; kf < kernel_prod; kf++) {
         long k_temp = kf;
         long k_pos[MAX_SPATIAL_DIMS];
-        for (int d = 0; d < K; d++) {
-          k_pos[d] = k_temp / kernel_cumprod[d];
-          k_temp %= kernel_cumprod[d];
+        // Fix: Reverse the order for kernel traversal to match row-major reshape
+        for (int d = K - 1; d >= 0; d--) {
+          k_pos[d] = k_temp % kernel_size[d];
+          k_temp /= kernel_size[d];
         }
         for (long c = 0; c < channels; c++) {
           long m = c * kernel_prod + kf;
@@ -461,9 +462,10 @@ static void nx_c_fold_impl(const ndarray_t *in, ndarray_t *out,
       for (long kf = 0; kf < kernel_prod; kf++) {
         long k_temp = kf;
         long k_pos[MAX_SPATIAL_DIMS];
-        for (int d = 0; d < K; d++) {
-          k_pos[d] = k_temp / kernel_cumprod[d];
-          k_temp %= kernel_cumprod[d];
+        // Fix: Reverse the order for kernel traversal to match row-major reshape
+        for (int d = K - 1; d >= 0; d--) {
+          k_pos[d] = k_temp % kernel_size[d];
+          k_temp /= kernel_size[d];
         }
         for (long c = 0; c < channels; c++) {
           long m = c * kernel_prod + kf;

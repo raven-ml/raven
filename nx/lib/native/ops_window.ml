@@ -103,7 +103,12 @@ let kernel_unfold_float32 (input : (float, float32_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding input coordinates *)
         let valid = ref true in
@@ -213,7 +218,12 @@ let kernel_unfold_uint8 (input : (int, int8_unsigned_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding input coordinates *)
         let valid = ref true in
@@ -323,7 +333,12 @@ let kernel_unfold_float64 (input : (float, float64_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding input coordinates *)
         let valid = ref true in
@@ -433,7 +448,12 @@ let kernel_unfold_int32 (input : (int32, int32_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding input coordinates *)
         let valid = ref true in
@@ -543,7 +563,12 @@ let kernel_unfold_int64 (input : (int64, int64_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding input coordinates *)
         let valid = ref true in
@@ -656,7 +681,12 @@ let kernel_fold_float32 (input : (float, float32_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding output coordinates *)
         let valid = ref true in
@@ -769,7 +799,12 @@ let kernel_fold_float64 (input : (float, float64_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding output coordinates *)
         let valid = ref true in
@@ -877,7 +912,12 @@ let kernel_fold_uint8 (input : (int, int8_unsigned_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding output coordinates *)
         let valid = ref true in
@@ -987,7 +1027,12 @@ let kernel_fold_int32 (input : (int32, int32_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding output coordinates *)
         let valid = ref true in
@@ -1096,7 +1141,12 @@ let kernel_fold_int64 (input : (int64, int64_elt) t)
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
         (* Convert kernel index to kernel coordinates *)
-        unravel_spatial_inplace kernel_idx kernel_size kernel_coords;
+        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        let idx = ref kernel_idx in
+        for i = 0 to num_spatial_dims - 1 do
+          kernel_coords.(i) <- !idx mod kernel_size.(i);
+          idx := !idx / kernel_size.(i)
+        done;
 
         (* Calculate corresponding output coordinates *)
         let valid = ref true in
