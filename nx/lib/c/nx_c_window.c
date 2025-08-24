@@ -347,10 +347,11 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
         temp %= out_cumprod[d];
       }
       for (long kf = 0; kf < kernel_prod; kf++) {
+        // Reverse the kernel index for row-major layout
         long k_temp = kf;
         long k_pos[MAX_SPATIAL_DIMS];
-        // Fix: Reverse the order for kernel traversal to match row-major reshape
-        for (int d = K - 1; d >= 0; d--) {
+        // Extract position with reversed order to match row-major reshape
+        for (int d = 0; d < K; d++) {
           k_pos[d] = k_temp % kernel_size[d];
           k_temp /= kernel_size[d];
         }
@@ -460,10 +461,11 @@ static void nx_c_fold_impl(const ndarray_t *in, ndarray_t *out,
         temp %= out_cumprod[d];
       }
       for (long kf = 0; kf < kernel_prod; kf++) {
+        // Reverse the kernel index for row-major layout
         long k_temp = kf;
         long k_pos[MAX_SPATIAL_DIMS];
-        // Fix: Reverse the order for kernel traversal to match row-major reshape
-        for (int d = K - 1; d >= 0; d--) {
+        // Extract position with reversed order to match row-major reshape
+        for (int d = 0; d < K; d++) {
           k_pos[d] = k_temp % kernel_size[d];
           k_temp /= kernel_size[d];
         }
