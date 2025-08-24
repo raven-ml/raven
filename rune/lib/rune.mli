@@ -2450,7 +2450,15 @@ val eigvalsh :
 
 val norm :
   ?ord:
-    [ `Fro | `Nuc | `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf | `P of 'a ] ->
+    [ `Fro
+    | `Nuc
+    | `One
+    | `Two
+    | `Inf
+    | `NegOne
+    | `NegTwo
+    | `NegInf
+    | `P of float ] ->
   ?axes:int array ->
   ?keepdims:bool ->
   ('a, 'b, 'dev) t ->
