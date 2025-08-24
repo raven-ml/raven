@@ -2349,7 +2349,7 @@ val eigvalsh : ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t
 
 val norm :
   ?ord:
-    [ `Fro | `Nuc | `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf | `P of 'a ] ->
+    [ `Fro | `Nuc | `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf | `P of float ] ->
   ?axes:int array ->
   ?keepdims:bool ->
   ('a, 'b) t ->

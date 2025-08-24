@@ -156,14 +156,6 @@ end
 (* Bidiagonalize for real *)
 let bidiagonalize_real pool a u v diag superdiag m n =
   let minmn = min m n in
-  (* Debug: check matrix dimensions *)
-  let a_size = Array1.dim a in
-  if a_size < m * n then
-    failwith
-      (Printf.sprintf
-         "bidiagonalize_real: matrix size mismatch, expected %d elements \
-          (m=%d, n=%d), got %d"
-         (m * n) m n a_size);
   let init_loop size mat =
     if size > 100 then
       Parallel.parallel_for pool 0 (size - 1) (fun start_i end_i ->
@@ -182,17 +174,14 @@ let bidiagonalize_real pool a u v diag superdiag m n =
   init_loop m u;
   init_loop n v;
   for p = 0 to minmn - 1 do
-    (* if m = 2 && n = 2 then Printf.printf "=== Processing column p=%d
-       (minmn=%d) ===\n" p minmn; *)
     let norm2 = ref 0.0 in
     for i = p to m - 1 do
       let x = a.{(i * n) + p} in
       norm2 := !norm2 +. (x *. x)
     done;
-    (* if m = 2 && n = 2 && p = 1 then Printf.printf " p=%d, loop from %d to
-       %d\n" p p (m-1); *)
     let norm = sqrt !norm2 in
-    (* Only apply column Householder if there are elements below diagonal to zero out *)
+    (* Only apply column Householder if there are elements below diagonal to
+       zero out *)
     if norm > 0.0 && p < m - 1 then (
       let sign = Float_ops.sign a.{(p * n) + p} in
       let alpha = -.sign *. norm in
@@ -213,10 +202,9 @@ let bidiagonalize_real pool a u v diag superdiag m n =
       if n - p - 1 > 100 then
         Parallel.parallel_for pool (p + 1) (n - 1) col_loop
       else col_loop (p + 1) n;
-      (* Apply Householder from right: U = U * H 
-         H = I - beta * v * v^T
-         U * H = U - beta * (U * v) * v^T
-         For each row i: U[i,:] = U[i,:] - beta * (U[i,:] · v) * v^T *)
+      (* Apply Householder from right: U = U * H H = I - beta * v * v^T U * H =
+         U - beta * (U * v) * v^T For each row i: U[i,:] = U[i,:] - beta *
+         (U[i,:] · v) * v^T *)
       for i = 0 to m - 1 do
         let dot_prod = ref 0.0 in
         for k = p to m - 1 do
@@ -229,7 +217,11 @@ let bidiagonalize_real pool a u v diag superdiag m n =
       done;
       (* Store alpha as the diagonal element (the reduced value) *)
       diag.(p) <- alpha;
-      a.{(p * n) + p} <- alpha)
+      a.{(p * n) + p} <- alpha;
+      (* Zero out the eliminated elements below the diagonal *)
+      for i = p + 1 to m - 1 do
+        a.{(i * n) + p} <- 0.0
+      done)
     else
       (* No Householder needed, just store the diagonal element *)
       diag.(p) <- a.{(p * n) + p};
@@ -278,7 +270,11 @@ let bidiagonalize_real pool a u v diag superdiag m n =
         else v_loop 0 n;
         (* Store alphar as the superdiagonal element (the reduced value) *)
         superdiag.(p) <- (if p < minmn - 1 then alphar else 0.0);
-        a.{(p * n) + p + 1} <- (if p < minmn - 1 then alphar else 0.0))
+        a.{(p * n) + p + 1} <- (if p < minmn - 1 then alphar else 0.0);
+        (* Zero out the eliminated elements to the right of the superdiagonal *)
+        for j = p + 2 to n - 1 do
+          a.{(p * n) + j} <- 0.0
+        done)
       else superdiag.(p) <- 0.0)
   done
 
@@ -365,7 +361,11 @@ let bidiagonalize_complex pool a u v diag superdiag m n =
       if m > 100 then Parallel.parallel_for pool 0 (m - 1) u_loop
       else u_loop 0 m;
       (* Store the norm as the diagonal element *)
-      diag.(p) <- norm)
+      diag.(p) <- norm;
+      (* Zero out the eliminated elements below the diagonal *)
+      for i = p + 1 to m - 1 do
+        a.{(i * n) + p} <- Complex.zero
+      done)
     else
       (* No Householder needed, just store the diagonal element *)
       diag.(p) <- (if norm > 0.0 then norm else 0.0);
@@ -433,7 +433,11 @@ let bidiagonalize_complex pool a u v diag superdiag m n =
         else v_loop 0 n;
         (* Store the norm as the superdiagonal element *)
         superdiag.(p) <- (if p < minmn - 1 then normr else 0.0);
-        a.{(p * n) + p + 1} <- { re = superdiag.(p); im = 0.0 })
+        a.{(p * n) + p + 1} <- { re = superdiag.(p); im = 0.0 };
+        (* Zero out the eliminated elements to the right of the superdiagonal *)
+        for j = p + 2 to n - 1 do
+          a.{(p * n) + j} <- Complex.zero
+        done)
       else (
         superdiag.(p) <- 0.0;
         a.{(p * n) + p + 1} <- { re = 0.0; im = 0.0 }))
@@ -442,15 +446,26 @@ let bidiagonalize_complex pool a u v diag superdiag m n =
 
 (* SVD QR iteration for real *)
 let svd_qr_iteration_real pool diag superdiag u v m n p q =
-  let d = (diag.(q - 1) -. diag.(q)) /. 2.0 in
+  (* Compute Wilkinson shift from trailing 2x2 of B^T*B *)
+  let d1 = diag.(q - 1) in
+  let d2 = diag.(q) in
+  let e = superdiag.(q - 1) in
+  let prev_e_sq = if q - 1 > p then superdiag.(q - 2) ** 2.0 else 0.0 in
+  (* Trailing 2x2 of B^T*B: [a b] [b c] *)
+  let a = (d1 ** 2.0) +. prev_e_sq in
+  let b = d1 *. e in
+  let c = (e ** 2.0) +. (d2 ** 2.0) in
+  let d = (a -. c) /. 2.0 in
   let shift =
-    diag.(q)
-    -. superdiag.(q - 1)
-       *. superdiag.(q - 1)
-       /. (d +. (Float_ops.sign d *. Float_ops.hypot d superdiag.(q - 1)))
+    if abs_float d < Float_ops.epsilon64 *. (abs_float a +. abs_float c) then c
+    else
+      c
+      -. (b ** 2.0)
+         /. (d +. (Float_ops.sign d *. Float_ops.hypot d (abs_float b)))
   in
-  let f = ref (diag.(p) -. shift) in
-  let g = ref superdiag.(p) in
+  (* Start with B^T*B's first row affected by shift *)
+  let f = ref ((diag.(p) ** 2.0) -. shift) in
+  let g = ref (diag.(p) *. superdiag.(p)) in
   for k = p to q - 1 do
     let c, s = Float_ops.givens !f !g in
     if k > p then superdiag.(k - 1) <- Float_ops.hypot !f !g;
@@ -472,15 +487,26 @@ let svd_qr_iteration_real pool diag superdiag u v m n p q =
 
 (* SVD QR iteration for complex *)
 let svd_qr_iteration_complex pool diag superdiag u v m n p q =
-  let d = (diag.(q - 1) -. diag.(q)) /. 2.0 in
+  (* Compute Wilkinson shift from trailing 2x2 of B^T*B *)
+  let d1 = diag.(q - 1) in
+  let d2 = diag.(q) in
+  let e = superdiag.(q - 1) in
+  let prev_e_sq = if q - 1 > p then superdiag.(q - 2) ** 2.0 else 0.0 in
+  (* Trailing 2x2 of B^T*B: [a b] [b c] *)
+  let a = (d1 ** 2.0) +. prev_e_sq in
+  let b = d1 *. e in
+  let c = (e ** 2.0) +. (d2 ** 2.0) in
+  let d = (a -. c) /. 2.0 in
   let shift =
-    diag.(q)
-    -. superdiag.(q - 1)
-       *. superdiag.(q - 1)
-       /. (d +. (Float_ops.sign d *. Float_ops.hypot d superdiag.(q - 1)))
+    if abs_float d < Float_ops.epsilon64 *. (abs_float a +. abs_float c) then c
+    else
+      c
+      -. (b ** 2.0)
+         /. (d +. (Float_ops.sign d *. Float_ops.hypot d (abs_float b)))
   in
-  let f = ref (diag.(p) -. shift) in
-  let g = ref superdiag.(p) in
+  (* Start with B^T*B's first row affected by shift *)
+  let f = ref ((diag.(p) ** 2.0) -. shift) in
+  let g = ref (diag.(p) *. superdiag.(p)) in
   for k = p to q - 1 do
     let c, s = Complex_ops.givens { re = !f; im = 0.0 } { re = !g; im = 0.0 } in
     if k > p then superdiag.(k - 1) <- Float_ops.hypot !f !g;
@@ -587,23 +613,10 @@ let svd_real pool a u s v m n _full_matrices =
   let diag = Array.make minmn 0.0 in
   let superdiag = Array.make (minmn - 1) 0.0 in
   bidiagonalize_real pool a u v diag superdiag m n;
-  (* Debug: print U after bidiagonalization for 2x2 case if m = 2 && n = 2 then
-     begin Printf.printf "After bidiagonalization:\n"; Printf.printf " U =
-     [[%.6f, %.6f], [%.6f, %.6f]]\n" u.{0} u.{1} u.{2} u.{3}; Printf.printf " V
-     = [[%.6f, %.6f], [%.6f, %.6f]]\n" v.{0} v.{1} v.{2} v.{3}; Printf.printf "
-     diag = [%.6f, %.6f]\n" diag.(0) diag.(1); Printf.printf " superdiag =
-     [%.6f]\n" superdiag.(0) end; *)
   svd_iterate_real pool diag superdiag u v m n;
-  (* if m = 2 && n = 2 then begin Printf.printf "After QR iteration:\n";
-     Printf.printf " U = [[%.6f, %.6f], [%.6f, %.6f]]\n" u.{0} u.{1} u.{2}
-     u.{3}; Printf.printf " V = [[%.6f, %.6f], [%.6f, %.6f]]\n" v.{0} v.{1}
-     v.{2} v.{3}; Printf.printf " diag = [%.6f, %.6f]\n" diag.(0) diag.(1)
-     end; *)
   let s_arr = Array1.of_array float64 c_layout diag in
   for i = 0 to minmn - 1 do
     if s_arr.{i} < 0.0 then (
-      (* If singular value is negative, make it positive and negate
-         corresponding column in U *)
       s.{i} <- -.s_arr.{i};
       for j = 0 to m - 1 do
         u.{(j * m) + i} <- -.u.{(j * m) + i}

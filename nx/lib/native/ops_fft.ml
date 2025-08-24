@@ -279,6 +279,13 @@ let kernel_rfft (type b c) context (input : (float, b) t)
   (* Require at least one axis *)
   if Array.length axes = 0 then invalid_arg "rfft requires at least one axis";
 
+  (* Check for empty arrays on FFT axes *)
+  Array.iter (fun axis ->
+    let axis = if axis < 0 then ndim + axis else axis in
+    if input_shape.(axis) = 0 then
+      invalid_arg (Printf.sprintf "Invalid number of FFT data points (0) on axis %d" axis)
+  ) axes;
+
   (* For rfft, we only transform the last axis to half size *)
   (* All other axes are transformed normally *)
   let last_axis_idx = Array.length axes - 1 in

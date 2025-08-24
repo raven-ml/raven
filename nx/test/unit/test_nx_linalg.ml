@@ -460,7 +460,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
         [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
     in
     let tr_offset = Nx.trace ~offset:1 a in
-    check_t "trace offset 1" [||] [| 11. |] tr_offset
+    check_t "trace offset 1" [||] [| 8. |] tr_offset
 
   let test_det_batch ctx () =
     let a =
@@ -487,7 +487,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
   let test_matrix_rank ctx () =
     let a = Nx.create ctx Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int) in
     let r = Nx.matrix_rank a in
-    check int "matrix rank full" 3 r;
+    check int "matrix rank full" 2 r;
     let a_low =
       Nx.create ctx Nx.float32 [| 3; 3 |]
         [| 1.; 2.; 3.; 2.; 4.; 6.; 3.; 6.; 9. |]
@@ -560,7 +560,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     in
     let res = Nx.tensordot a b in
     check_t "tensordot default" [| 2; 2 |] [| 58.; 64.; 139.; 154. |] res;
-    let res_axes = Nx.tensordot ~axes:([ 0 ], [ 1 ]) a b in
+    let res_axes = Nx.tensordot ~axes:([| 0 |], [| 1 |]) a b in
     check_shape "tensordot custom axes" [| 3; 3 |] res_axes
 
   let test_tensordot_mismatch ctx () =
@@ -568,7 +568,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let b = Nx.create ctx Nx.float32 [| 4; 2 |] (Array.init 8 float_of_int) in
     check_raises "tensordot mismatch"
       (Invalid_argument "tensordot: axes have different sizes") (fun () ->
-        ignore (Nx.tensordot ~axes:([ 1 ], [ 0 ]) a b))
+        ignore (Nx.tensordot ~axes:([| 1 |], [| 0 |]) a b))
 
   let test_einsum ctx () =
     let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -800,7 +800,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let b = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
     let x = Nx.tensorsolve a b in
     check_shape "tensorsolve shape" [| 2; 2 |] x;
-    let recon = Nx.tensordot a x ~axes:([ 2; 3 ], [ 0; 1 ]) in
+    let recon = Nx.tensordot a x ~axes:([| 2; 3 |], [| 0; 1 |]) in
     check_nx "tensorsolve recon" b recon
 
   let test_tensorsolve_axes ctx () =
@@ -818,7 +818,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     in
     let inv = Nx.tensorinv ~ind:2 a in
     check_shape "tensorinv shape" [| 2; 2; 2; 2 |] inv;
-    let recon = Nx.tensordot a inv ~axes:([ 2; 3 ], [ 0; 1 ]) in
+    let recon = Nx.tensordot a inv ~axes:([| 2; 3 |], [| 0; 1 |]) in
     let id = Nx.eye ctx Nx.float32 4 |> Nx.reshape [| 2; 2; 2; 2 |] in
     check_nx "tensorinv recon" id recon
 
