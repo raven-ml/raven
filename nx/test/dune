@@ -18,3 +18,9 @@
  (libraries nx_metal alcotest test_nx_unit)
  (build_if
   (= %{system} "macosx")))
+
+(test
+ (name test_nx_io_hdf5)
+ (package nx)
+ (modules test_nx_io_hdf5)
+ (libraries nx nx_io alcotest))

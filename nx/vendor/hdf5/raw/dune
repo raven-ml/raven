@@ -1,0 +1,32 @@
+(library
+ (name hdf5_raw)
+ (public_name nx.hdf5_raw)
+ (optional)
+ (foreign_stubs
+  (language c)
+  (names
+   c_string_stubs
+   h5a_stubs
+   h5d_stubs
+   h5f_stubs
+   h5g_stubs
+   h5i_stubs
+   h5l_stubs
+   h5lt_stubs
+   h5o_stubs
+   h5p_stubs
+   h5r_stubs
+   h5s_stubs
+   h5_stubs
+   h5tb_stubs
+   h5t_stubs
+   h5z_stubs
+   hid_stubs)
+  (flags (:include c_flags.sexp)))
+ (c_library_flags (:include c_library_flags.sexp))
+ (libraries bigarray))
+
+(rule
+ (targets c_flags.sexp c_library_flags.sexp)
+ (deps (:discover config/discover.exe))
+ (action (run %{discover})))

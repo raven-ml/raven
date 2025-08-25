@@ -218,3 +218,12 @@ let to_uint8 = convert "to_uint8" Nx.uint8
 let to_uint16 = convert "to_uint16" Nx.uint16
 let to_complex32 = convert "to_complex32" Nx.complex32
 let to_complex64 = convert "to_complex64" Nx.complex64
+
+(* HDF5 support *)
+type h5_archive = Hdf5_support.h5_archive
+
+let hdf5_available = Hdf5_support.hdf5_available
+let load_h5 = Hdf5_support.load_h5_dataset
+let save_h5 = Hdf5_support.save_h5_dataset
+let load_h5_all = Hdf5_support.load_h5_all
+let save_h5_all = Hdf5_support.save_h5_all

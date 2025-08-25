@@ -226,3 +226,116 @@ val to_complex32 : packed_nx -> Nx.complex32_t
 
 val to_complex64 : packed_nx -> Nx.complex64_t
 (** [to_complex64 packed_nx] converts a packed Nx to a [Nx.complex64_t]. *)
+
+(** {1 HDF5 Format (.h5, .hdf5)} *)
+
+val hdf5_available : bool
+(** [hdf5_available] indicates whether HDF5 support is available. This is [true]
+    when the HDF5 library is installed and nx was built with HDF5 support. *)
+
+val load_h5 : path:string -> dataset:string -> packed_nx
+(** [load_h5 ~path ~dataset]
+
+    Load a single dataset from an HDF5 file.
+
+    {2 Parameters}
+    - path: path to the HDF5 file.
+    - dataset: name/path of the dataset within the file (e.g., "data" or
+      "/group/data").
+
+    {2 Returns}
+    - [packed_nx] wrapping the loaded array with its runtime-detected dtype.
+
+    {2 Raises}
+    - [Failure] if HDF5 support is not available.
+    - [Failure] if file I/O fails or dataset is not found.
+
+    {2 Examples}
+    {[
+      (* Load a specific dataset *)
+      let arr = load_h5 ~path:"data.h5" ~dataset:"measurements" |> to_float32 in
+
+      (* Load from nested group *)
+      let weights = load_h5 ~path:"model.h5" ~dataset:"/layers/conv1/weights"
+    ]} *)
+
+val save_h5 : ('a, 'b) Nx.t -> path:string -> dataset:string -> unit
+(** [save_h5 arr ~path ~dataset]
+
+    Save a single nx as a dataset in an HDF5 file.
+
+    {2 Parameters}
+    - arr: nx to save (any supported dtype).
+    - path: destination path for the HDF5 file.
+    - dataset: name/path for the dataset within the file.
+
+    {2 Raises}
+    - [Failure] if HDF5 support is not available.
+    - [Failure] on I/O error or unsupported dtype.
+
+    {2 Notes}
+    - If the file exists, the dataset will be added or replaced.
+    - If the file doesn't exist, it will be created.
+    - Complex types are not supported.
+
+    {2 Examples}
+    {[
+      let data = Nx.randn Nx.float32 [| 100; 50 |] in
+      save_h5 data ~path:"results.h5" ~dataset:"predictions"
+    ]} *)
+
+type h5_archive = (string, packed_nx) Hashtbl.t
+(** Map from dataset paths to [packed_nx] values for an HDF5 file. *)
+
+val load_h5_all : string -> h5_archive
+(** [load_h5_all path]
+
+    Load all datasets from an HDF5 file into a hash table.
+
+    {2 Parameters}
+    - path: path to the HDF5 file.
+
+    {2 Returns}
+    - [h5_archive] mapping each dataset path to its [packed_nx].
+
+    {2 Raises}
+    - [Failure] if HDF5 support is not available.
+    - [Failure] on I/O error.
+
+    {2 Notes}
+    - Recursively loads all datasets from all groups in the file.
+    - Dataset paths include group hierarchy (e.g., "group/subgroup/data").
+
+    {2 Examples}
+    {[
+      let archive = load_h5_all "model.h5" in
+      Hashtbl.iter
+        (fun name _ -> Printf.printf "Found dataset: %s\n" name)
+        archive
+    ]} *)
+
+val save_h5_all : (string * packed_nx) list -> string -> unit
+(** [save_h5_all items path]
+
+    Save multiple named nxs to an HDF5 file.
+
+    {2 Parameters}
+    - items: list of (dataset_path, array) pairs to save.
+    - path: destination path for the HDF5 file.
+
+    {2 Raises}
+    - [Failure] if HDF5 support is not available.
+    - [Failure] on I/O error.
+
+    {2 Notes}
+    - Creates a new file, replacing any existing file.
+    - Dataset paths can include groups (e.g., "group/data").
+
+    {2 Examples}
+    {[
+      let weights = Nx.randn Nx.float32 [| 784; 128 |] in
+      let bias = Nx.zeros Nx.float32 [| 128 |] in
+      save_h5_all
+        [ ("model/weights", P weights); ("model/bias", P bias) ]
+        "checkpoint.h5"
+    ]} *)

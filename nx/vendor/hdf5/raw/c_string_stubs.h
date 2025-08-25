@@ -1,0 +1,1 @@
+#define MAX_BIGSTRING_LEN (1024 * 1024 * 1024)

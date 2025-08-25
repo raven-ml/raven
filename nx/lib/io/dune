@@ -1,4 +1,16 @@
 (library
  (name nx_io)
  (public_name nx.io)
- (libraries bigarray_ext nx unix zip npy stb_image stb_image_write))
+ (libraries
+  bigarray_ext
+  nx
+  unix
+  zip
+  npy
+  stb_image
+  stb_image_write
+  (select
+   hdf5_support.ml
+   from
+   (hdf5_raw hdf5_caml -> hdf5_support.available.ml)
+   (-> hdf5_support.unavailable.ml))))
