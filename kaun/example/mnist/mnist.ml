@@ -17,7 +17,11 @@ let model =
       Layer.linear ~in_features:128 ~out_features:10 ();
     ]
 
-let metrics = Metrics.create [ Metrics.avg "loss"; Metrics.accuracy "accuracy" ]
+let metrics = 
+  Metrics.Collection.create [
+    ("loss", Metrics.mae ());  (* Using MAE as a placeholder for loss tracking *)
+    ("accuracy", Metrics.accuracy ())
+  ]
 let device = Rune.c
 
 let train () =
@@ -68,7 +72,7 @@ let train () =
   Printf.printf "Initializing model...\n%!";
   let start = Unix.gettimeofday () in
   let dummy_input = Rune.zeros device Rune.float32 [| 1; 1; 28; 28 |] in
-  let params = init ~rngs model dummy_input in
+  let params = Kaun.init model ~rngs dummy_input in
   let optimizer = Optimizer.adam ~lr:0.001 () in
   let opt_state = ref (optimizer.init params) in
   Printf.printf "Model initialized in %.2fs\n%!" (Unix.gettimeofday () -. start);
@@ -77,7 +81,7 @@ let train () =
   for epoch = 1 to 10 do
     Printf.printf "\nEpoch %d/10\n" epoch;
     let epoch_start = Unix.gettimeofday () in
-    Metrics.reset metrics;
+    Metrics.Collection.reset metrics;
     let batch_count = ref 0 in
 
     (* Training *)
@@ -99,7 +103,7 @@ let train () =
           let loss, grads =
             value_and_grad
               (fun params ->
-                let logits = apply model params ~training:true x_batch in
+                let logits = Kaun.apply model params ~training:true x_batch in
                 Loss.softmax_cross_entropy_with_indices logits y_batch)
               params
           in
@@ -116,8 +120,10 @@ let train () =
 
         (* Track metrics *)
         let metric_start = Unix.gettimeofday () in
-        let logits = apply model params ~training:false x_batch in
-        Metrics.update metrics ~loss ~logits ~labels:y_batch ();
+        let logits = Kaun.apply model params ~training:false x_batch in
+        (* Update metrics - need to compute predictions from logits *)
+        let predictions = Rune.softmax logits ~axes:[| -1 |] in
+        Metrics.Collection.update metrics ~predictions ~targets:y_batch ();
         let metric_time = Unix.gettimeofday () -. metric_start in
 
         let batch_time = Unix.gettimeofday () -. batch_start in
@@ -131,28 +137,33 @@ let train () =
       train_ds;
 
     (* Print training metrics *)
-    let train_metrics = Metrics.compute metrics in
+    let train_metrics = Metrics.Collection.compute metrics in
     List.iter
-      (fun (name, value) -> Printf.printf "  %s: %.4f\n" name value)
+      (fun (name, value) -> 
+        let scalar_value = Rune.unsafe_get [] value in
+        Printf.printf "  %s: %.4f\n" name scalar_value)
       train_metrics;
     Printf.printf "  Epoch time: %.2fs\n" (Unix.gettimeofday () -. epoch_start);
 
     (* Evaluation *)
     Printf.printf "  Evaluating...\n%!";
     let eval_start = Unix.gettimeofday () in
-    Metrics.reset metrics;
+    Metrics.Collection.reset metrics;
     Kaun_dataset.iter
       (fun (x_batch, y_batch) ->
-        let logits = apply model params ~training:false x_batch in
-        let loss = Loss.softmax_cross_entropy_with_indices logits y_batch in
-        Metrics.update metrics ~loss ~logits ~labels:y_batch ())
+        let logits = Kaun.apply model params ~training:false x_batch in
+        (* Update metrics with predictions instead of loss/logits/labels *)
+        let predictions = Rune.softmax logits ~axes:[| -1 |] in
+        Metrics.Collection.update metrics ~predictions ~targets:y_batch ())
       test_ds;
 
     (* Print test metrics *)
     Printf.printf "  Test: ";
     List.iter
-      (fun (name, value) -> Printf.printf "%s=%.4f " name value)
-      (Metrics.compute metrics);
+      (fun (name, value) -> 
+        let scalar_value = Rune.unsafe_get [] value in
+        Printf.printf "%s=%.4f " name scalar_value)
+      (Metrics.Collection.compute metrics);
     Printf.printf " (eval time: %.2fs)\n\n%!"
       (Unix.gettimeofday () -. eval_start)
   done

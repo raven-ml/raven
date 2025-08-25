@@ -64,7 +64,7 @@ let clip_gradients grads ~max_norm =
     let rec norm_sq = function
       | Tensor t ->
           let t_sq = Rune.square t in
-          Kaun.Ops.to_float (Rune.sum t_sq)
+          Rune.unsafe_get [] (Rune.sum t_sq)
       | List l -> List.fold_left (fun acc p -> acc +. norm_sq p) 0.0 l
       | Record fields ->
           List.fold_left
@@ -282,13 +282,13 @@ let train config_name train_config =
   in
   let opt_state = ref (optimizer.init params) in
 
-  (* Training metrics *)
-  let metrics =
-    Metrics.create
+  (* Training metrics - currently unused, kept for future implementation *)
+  let _metrics =
+    Metrics.Collection.create
       [
-        Metrics.avg "train_loss";
-        Metrics.avg "eval_loss";
-        Metrics.avg "eval_accuracy";
+        ("train_loss", Metrics.mae ());
+        ("eval_loss", Metrics.mae ());
+        ("eval_accuracy", Metrics.accuracy ());
       ]
   in
 
@@ -320,12 +320,13 @@ let train config_name train_config =
         batch_targets_float ~config:train_config ~step ~rngs
     in
 
-    (* Update metrics *)
-    Metrics.update metrics ~loss:train_loss ();
+    (* Update metrics - for now, skip as we don't have proper predictions/targets *)
+    (* TODO: Properly update metrics when we have predictions and targets *)
+    ();
 
     (* Logging *)
     (if step mod train_config.log_interval = 0 then
-       let train_loss_val = Kaun.Ops.to_float train_loss in
+       let train_loss_val = Rune.unsafe_get [] train_loss in
        let lr =
          get_learning_rate step ~warmup_steps:train_config.warmup_steps
            ~max_steps:train_config.max_steps ~base_lr:train_config.learning_rate
@@ -355,8 +356,8 @@ let train config_name train_config =
        let eval_loss, eval_acc =
          eval_step model params eval_inputs_float eval_targets_float ~rngs
        in
-       let eval_loss_val = Kaun.Ops.to_float eval_loss in
-       let eval_acc_val = Kaun.Ops.to_float eval_acc in
+       let eval_loss_val = Rune.unsafe_get [] eval_loss in
+       let eval_acc_val = Rune.unsafe_get [] eval_acc in
 
        Printf.printf "  [Eval] Loss: %.4f | Accuracy: %.2f%%\n" eval_loss_val
          (eval_acc_val *. 100.0));

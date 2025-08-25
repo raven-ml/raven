@@ -25,7 +25,7 @@ let train_xor () =
   let y = Rune.create device Rune.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
   (* Initialize model parameters *)
-  let params = init model ~rngs x in
+  let params = Kaun.init model ~rngs x in
 
   (* Create optimizer - using new Optax-style API *)
   let optimizer = Optimizer.adam ~lr:0.1 () in
@@ -38,7 +38,7 @@ let train_xor () =
     let loss, grads =
       value_and_grad
         (fun params ->
-          let predictions = apply model params ~training:true x in
+          let predictions = Kaun.apply model params ~training:true x in
           Loss.binary_cross_entropy predictions y)
         params
     in
@@ -55,7 +55,7 @@ let train_xor () =
   done;
 
   (* Final predictions *)
-  let predictions = apply model params ~training:false x in
+  let predictions = Kaun.apply model params ~training:false x in
   print_endline "\nFinal predictions (should be close to [0; 1; 1; 0]):";
   Rune.print predictions
 

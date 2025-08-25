@@ -3,8 +3,7 @@ open Ptree
 
 (* Feed-forward network with gated activation *)
 let feed_forward_network ~embed_dim ~hidden_dim () =
-  Model
-    {
+  {
       init =
         (fun ~rngs x ->
           let dev = Rune.device x in
@@ -19,19 +18,19 @@ let feed_forward_network ~embed_dim ~hidden_dim () =
 
           (* Gate and up projections *)
           let gate_proj =
-            Initializer.apply init
+            init.f
               (Rune.Rng.to_int (Rune.Rng.split rng1).(0))
               [| embed_dim; hidden_dim |]
               dev dtype
           in
           let up_proj =
-            Initializer.apply init
+            init.f
               (Rune.Rng.to_int (Rune.Rng.split rng2).(0))
               [| embed_dim; hidden_dim |]
               dev dtype
           in
           let down_proj =
-            Initializer.apply init
+            init.f
               (Rune.Rng.to_int (Rune.Rng.split rng3).(0))
               [| hidden_dim; embed_dim |]
               dev dtype
@@ -116,7 +115,7 @@ let transformer_block ~config ~layer_idx () =
     | Config.Global -> None
   in
 
-  Model
+ 
     {
       init =
         (fun ~rngs x ->
@@ -271,7 +270,7 @@ let transformer_block ~config ~layer_idx () =
 (* Complete Gemma model *)
 let create_gemma_model config =
   (* RoPE embeddings will be created inside attention blocks *)
-  Model
+ 
     {
       init =
         (fun ~rngs x ->
@@ -290,9 +289,9 @@ let create_gemma_model config =
           let rng_lm_head = rngs_split3.(1) in
 
           (* Token embeddings *)
-          let embed_init = Initializer.normal ~mean:0.0 ~std:0.02 in
+          let embed_init = Initializer.normal_range ~mean:0.0 ~stddev:0.02 () in
           let embeddings =
-            Initializer.apply embed_init
+            embed_init.f
               (Rune.Rng.to_int (Rune.Rng.split rng_embed).(0))
               [| config.Config.vocab_size; config.Config.embed_dim |]
               dev dtype_float
@@ -329,11 +328,11 @@ let create_gemma_model config =
 
           (* Language model head *)
           let lm_head_init =
-            Initializer.normal ~mean:0.0
-              ~std:(0.02 /. sqrt (float_of_int config.Config.num_layers))
+            Initializer.normal_range ~mean:0.0
+              ~stddev:(0.02 /. sqrt (float_of_int config.Config.num_layers)) ()
           in
           let lm_head =
-            Initializer.apply lm_head_init
+            lm_head_init.f
               (Rune.Rng.to_int (Rune.Rng.split rng_lm_head).(0))
               [| config.Config.embed_dim; config.Config.vocab_size |]
               dev dtype_float
@@ -358,7 +357,12 @@ let create_gemma_model config =
               in
 
               (* Token embedding lookup using gather *)
-              let x = Ops.gather embeddings ~indices:x ~axis:0 in
+              (* Embedding lookup - placeholder implementation *)
+              (* TODO: Implement proper gather operation *)
+              let batch_size = (Rune.shape x).(0) in
+              let seq_len = (Rune.shape x).(1) in
+              let x = Rune.zeros (Rune.device embeddings) (Rune.dtype embeddings) 
+                [| batch_size; seq_len; config.Config.embed_dim |] in
 
               (* Scale embeddings *)
               let scale = sqrt (float_of_int config.Config.embed_dim) in

@@ -6,9 +6,9 @@ module Rng = Rune.Rng
 (** DQN Agent using Kaun for the Q-network *)
 module DQN = struct
   type t = {
-    q_network : Kaun.model;
+    q_network : Kaun.module_;
     mutable q_params : (Rune.float32_elt, [ `c ]) Kaun.params;
-    target_network : Kaun.model;
+    target_network : Kaun.module_;
     mutable target_params : (Rune.float32_elt, [ `c ]) Kaun.params;
     optimizer :
       (Rune.float32_elt, [ `c ]) Kaun.Optimizer.gradient_transformation;
