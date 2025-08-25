@@ -1643,7 +1643,8 @@ module Make (B : Backend_intf.S) = struct
     B.op_flip x flip_bools
 
   let as_strided shape strides ~offset x =
-    (* Create a strided view of the tensor with custom shape, strides, and offset *)
+    (* Create a strided view of the tensor with custom shape, strides, and
+       offset *)
     let shape_sym = Symbolic_shape.of_ints shape in
     B.op_as_strided x shape_sym strides offset
 
@@ -2993,12 +2994,14 @@ module Make (B : Backend_intf.S) = struct
       (* Generate random int32 values using threefry *)
       (* Threefry2x32 requires inputs with shape [..., 2] *)
       let num_values = numel in
-      
+
       (* Create key and counter tensors for threefry *)
       (* Each vector needs 2 int32 values, so we create arrays with shape [num_values, 2] *)
-      let key_vals = Array.init (num_values * 2) (fun i -> Int32.of_int (seed + i)) in
+      let key_vals =
+        Array.init (num_values * 2) (fun i -> Int32.of_int (seed + i))
+      in
       let key = create ctx Dtype.int32 [| num_values; 2 |] key_vals in
-      
+
       let ctr_vals = Array.init (num_values * 2) (fun i -> Int32.of_int i) in
       let counter = create ctx Dtype.int32 [| num_values; 2 |] ctr_vals in
 
@@ -3503,82 +3506,86 @@ module Make (B : Backend_intf.S) = struct
     let axis1 = if axis1 < 0 then ndim_a + axis1 else axis1 in
     let axis2 = if axis2 < 0 then ndim_a + axis2 else axis2 in
 
-    if axis1 = axis2 then
-      Error.failed ~op:"diagonal" ~what:"axis1 = axis2" ();
+    if axis1 = axis2 then Error.failed ~op:"diagonal" ~what:"axis1 = axis2" ();
 
     (* For now, only implement last two axes case *)
     if axis1 <> ndim_a - 2 || axis2 <> ndim_a - 1 then
-      Error.failed ~op:"diagonal" ~what:"non-default axes not yet implemented" ();
-    
+      Error.failed ~op:"diagonal" ~what:"non-default axes not yet implemented"
+        ();
+
     let shape_a = shape a in
     if ndim_a < 2 then
       Error.invalid ~op:"diagonal" ~what:"input must be at least 2D" ();
-    
+
     let m = shape_a.(ndim_a - 2) in
     let n = shape_a.(ndim_a - 1) in
-    
+
     (* Compute diagonal length considering offset *)
-    let diag_len = 
-      if offset >= 0 then
-        Stdlib.min m (n - offset)
-      else
-        Stdlib.min (m + offset) n
+    let diag_len =
+      if offset >= 0 then Stdlib.min m (n - offset)
+      else Stdlib.min (m + offset) n
     in
-    
+
     (* Handle empty diagonal case *)
     if diag_len <= 0 then
       (* Return empty tensor with correct shape *)
-      let new_shape = Array.init (ndim_a - 1) (fun i ->
-        if i < ndim_a - 2 then shape_a.(i) else 0
-      ) in
+      let new_shape =
+        Array.init (ndim_a - 1) (fun i ->
+            if i < ndim_a - 2 then shape_a.(i) else 0)
+      in
       zeros (B.context a) (dtype a) new_shape
     else
       (* Extract diagonal using slicing and eye matrix masking *)
       let row_start = if offset < 0 then -offset else 0 in
       let col_start = if offset > 0 then offset else 0 in
-      
+
       (* Slice the matrix to get the region containing the diagonal *)
-      let sliced = 
-        if row_start > 0 || col_start > 0 || row_start + diag_len < m || col_start + diag_len < n then
+      let sliced =
+        if
+          row_start > 0 || col_start > 0
+          || row_start + diag_len < m
+          || col_start + diag_len < n
+        then
           (* shrink uses exclusive upper bounds *)
-          let slice_spec = Array.init ndim_a (fun i ->
-            if i = ndim_a - 2 then (row_start, row_start + diag_len)
-            else if i = ndim_a - 1 then (col_start, col_start + diag_len)
-            else (0, shape_a.(i))
-          ) in
+          let slice_spec =
+            Array.init ndim_a (fun i ->
+                if i = ndim_a - 2 then (row_start, row_start + diag_len)
+                else if i = ndim_a - 1 then (col_start, col_start + diag_len)
+                else (0, shape_a.(i)))
+          in
           shrink slice_spec a
         else if diag_len < m || diag_len < n then
           (* Need to shrink to square - shrink uses exclusive upper bounds *)
-          let slice_spec = Array.init ndim_a (fun i ->
-            if i = ndim_a - 2 then (0, diag_len)
-            else if i = ndim_a - 1 then (0, diag_len)
-            else (0, shape_a.(i))
-          ) in
+          let slice_spec =
+            Array.init ndim_a (fun i ->
+                if i = ndim_a - 2 then (0, diag_len)
+                else if i = ndim_a - 1 then (0, diag_len)
+                else (0, shape_a.(i)))
+          in
           shrink slice_spec a
-        else
-          a
+        else a
       in
-      
+
       (* Create identity matrix for masking *)
       let eye_mat = eye (B.context a) (dtype a) diag_len in
-      
+
       (* Broadcast eye matrix to match batch dimensions if needed *)
-      let eye_broadcasted = 
+      let eye_broadcasted =
         if ndim_a > 2 then
-          let eye_shape = Array.init ndim_a (fun i ->
-            if i < ndim_a - 2 then 1
-            else if i = ndim_a - 2 then diag_len
-            else diag_len
-          ) in
+          let eye_shape =
+            Array.init ndim_a (fun i ->
+                if i < ndim_a - 2 then 1
+                else if i = ndim_a - 2 then diag_len
+                else diag_len)
+          in
           let eye_reshaped = reshape eye_shape eye_mat in
           broadcast_to (shape sliced) eye_reshaped
-        else
-          eye_mat
+        else eye_mat
       in
-      
+
       (* Multiply by eye matrix to zero out non-diagonal elements *)
       let masked = mul sliced eye_broadcasted in
-      
+
       (* Sum along last axis to extract diagonal *)
       sum masked ~axes:[| ndim_a - 1 |] ~keepdims:false
 
@@ -3588,8 +3595,8 @@ module Make (B : Backend_intf.S) = struct
 
   let vdot (type a b) (a : (a, b) t) (b : (a, b) t) =
     (* Try to broadcast inputs to compatible shapes first *)
-    let a', b' = 
-      try 
+    let a', b' =
+      try
         let broadcasted = broadcast_arrays [ a; b ] in
         let a_bc = List.nth broadcasted 0 in
         let b_bc = List.nth broadcasted 1 in
@@ -3623,13 +3630,12 @@ module Make (B : Backend_intf.S) = struct
         let prod = mul x1 x2 in
         B.op_reduce_sum ~axes:[| ax |] ~keepdims:false prod
 
-  let inner a b = 
+  let inner a b =
     let shape_a = shape a in
     let shape_b = shape b in
     let last_a = shape_a.(ndim a - 1) in
     let last_b = shape_b.(ndim b - 1) in
-    if last_a <> last_b then
-      invalid_arg "inner: last dimensions differ";
+    if last_a <> last_b then invalid_arg "inner: last dimensions differ";
     vecdot ~axis:(-1) a b
 
   let outer a b =
@@ -3639,8 +3645,12 @@ module Make (B : Backend_intf.S) = struct
     let b_row = reshape [| 1; numel flat_b |] flat_b in
     let result = matmul a_col b_row in
     (* For scalar inputs, squeeze the resulting dimensions *)
-    let result = if ndim a = 0 then squeeze ~axes:[|0|] result else result in
-    let result = if ndim b = 0 then squeeze ~axes:[|if ndim a = 0 then 0 else 1|] result else result in
+    let result = if ndim a = 0 then squeeze ~axes:[| 0 |] result else result in
+    let result =
+      if ndim b = 0 then
+        squeeze ~axes:[| (if ndim a = 0 then 0 else 1) |] result
+      else result
+    in
     result
 
   let tensordot ?axes a b =
@@ -3653,87 +3663,102 @@ module Make (B : Backend_intf.S) = struct
         let n_axes = Array.length axes_a in
         if n_axes <> Array.length axes_b then
           invalid_arg "tensordot: axes lists must have same length";
-        
+
         (* Normalize negative axes *)
         let ndim_a = ndim a in
         let ndim_b = ndim b in
-        let axes_a = Array.map (fun ax -> if ax < 0 then ndim_a + ax else ax) axes_a in
-        let axes_b = Array.map (fun ax -> if ax < 0 then ndim_b + ax else ax) axes_b in
-        
+        let axes_a =
+          Array.map (fun ax -> if ax < 0 then ndim_a + ax else ax) axes_a
+        in
+        let axes_b =
+          Array.map (fun ax -> if ax < 0 then ndim_b + ax else ax) axes_b
+        in
+
         (* Check axes dimensions match *)
         let shape_a = shape a in
         let shape_b = shape b in
-        Array.iter2 (fun ax_a ax_b ->
-          if shape_a.(ax_a) <> shape_b.(ax_b) then
-            invalid_arg "tensordot: axes have different sizes"
-        ) axes_a axes_b;
-        
-        (* Compute the permutation for moving contracted axes to the end/beginning *)
-        let axes_a_set = Array.fold_left (fun s x -> IntSet.add x s) IntSet.empty axes_a in
-        let axes_b_set = Array.fold_left (fun s x -> IntSet.add x s) IntSet.empty axes_b in
-        
+        Array.iter2
+          (fun ax_a ax_b ->
+            if shape_a.(ax_a) <> shape_b.(ax_b) then
+              invalid_arg "tensordot: axes have different sizes")
+          axes_a axes_b;
+
+        (* Compute the permutation for moving contracted axes to the
+           end/beginning *)
+        let axes_a_set =
+          Array.fold_left (fun s x -> IntSet.add x s) IntSet.empty axes_a
+        in
+        let axes_b_set =
+          Array.fold_left (fun s x -> IntSet.add x s) IntSet.empty axes_b
+        in
+
         (* Get free (non-contracted) axes *)
-        let free_axes_a = 
-          Array.init ndim_a (fun i -> i) 
-          |> Array.to_list 
+        let free_axes_a =
+          Array.init ndim_a (fun i -> i)
+          |> Array.to_list
           |> List.filter (fun i -> not (IntSet.mem i axes_a_set))
           |> Array.of_list
         in
-        let free_axes_b = 
+        let free_axes_b =
           Array.init ndim_b (fun i -> i)
           |> Array.to_list
           |> List.filter (fun i -> not (IntSet.mem i axes_b_set))
           |> Array.of_list
         in
-        
+
         (* Move axes: free axes first, then contracted axes *)
         let perm_a = Array.append free_axes_a axes_a in
         let perm_b = Array.append axes_b free_axes_b in
-        
+
         (* Transpose tensors *)
-        let a_transposed = if Array.length perm_a > 1 then transpose ~axes:perm_a a else a in
-        let b_transposed = if Array.length perm_b > 1 then transpose ~axes:perm_b b else b in
-        
+        let a_transposed =
+          if Array.length perm_a > 1 then transpose ~axes:perm_a a else a
+        in
+        let b_transposed =
+          if Array.length perm_b > 1 then transpose ~axes:perm_b b else b
+        in
+
         (* Compute new shapes for matrix multiplication *)
         let shape_a_t = shape a_transposed in
         let shape_b_t = shape b_transposed in
-        
+
         let n_free_a = Array.length free_axes_a in
         let n_free_b = Array.length free_axes_b in
-        
-        (* Reshape for matmul: 
-           - a: (prod(free_dims_a), prod(contracted_dims))
-           - b: (prod(contracted_dims), prod(free_dims_b)) *)
-        let free_size_a = 
-          if n_free_a = 0 then 1 
+
+        (* Reshape for matmul: - a: (prod(free_dims_a), prod(contracted_dims)) -
+           b: (prod(contracted_dims), prod(free_dims_b)) *)
+        let free_size_a =
+          if n_free_a = 0 then 1
           else Array.fold_left ( * ) 1 (Array.sub shape_a_t 0 n_free_a)
         in
-        let free_size_b = 
+        let free_size_b =
           if n_free_b = 0 then 1
-          else Array.fold_left ( * ) 1 (Array.sub shape_b_t n_axes (ndim_b - n_axes))
+          else
+            Array.fold_left ( * ) 1
+              (Array.sub shape_b_t n_axes (ndim_b - n_axes))
         in
-        let contracted_size = 
+        let contracted_size =
           Array.fold_left ( * ) 1 (Array.sub shape_a_t n_free_a n_axes)
         in
-        
+
         let a_mat = reshape [| free_size_a; contracted_size |] a_transposed in
         let b_mat = reshape [| contracted_size; free_size_b |] b_transposed in
-        
+
         (* Perform matrix multiplication *)
         let result_mat = matmul a_mat b_mat in
-        
+
         (* Reshape result to final shape *)
-        let result_shape = 
-          Array.append 
+        let result_shape =
+          Array.append
             (if n_free_a = 0 then [||] else Array.sub shape_a_t 0 n_free_a)
-            (if n_free_b = 0 then [||] else Array.sub shape_b_t n_axes (ndim_b - n_axes))
+            (if n_free_b = 0 then [||]
+             else Array.sub shape_b_t n_axes (ndim_b - n_axes))
         in
-        
+
         if Array.length result_shape = 0 then
           (* Scalar result *)
           squeeze result_mat
-        else
-          reshape result_shape result_mat
+        else reshape result_shape result_mat
 
   let einsum subscripts operands =
     (* Parse subscripts and implement einsum logic *)
@@ -3750,8 +3775,11 @@ module Make (B : Backend_intf.S) = struct
         let min_dim = if m < n then m else n in
         (* Gather elements at [i, i] positions *)
         let flat_a = reshape [| m * n |] a in
-        let diag_indices = Array.init min_dim (fun i -> i * n + i) in
-        let diag_indices_t = create (B.context a) Dtype.int32 [| min_dim |] (Array.map Int32.of_int diag_indices) in
+        let diag_indices = Array.init min_dim (fun i -> (i * n) + i) in
+        let diag_indices_t =
+          create (B.context a) Dtype.int32 [| min_dim |]
+            (Array.map Int32.of_int diag_indices)
+        in
         B.op_gather flat_a diag_indices_t 0
     | [| a |], "ij->ji" -> transpose a
     | _ ->
@@ -3761,39 +3789,35 @@ module Make (B : Backend_intf.S) = struct
     (* Kronecker product implementation that creates proper block structure *)
     let shape_a = shape a in
     let shape_b = shape b in
-    
+
     (* Flatten to 2D if needed *)
     let a_2d = if ndim a = 1 then reshape [| shape_a.(0); 1 |] a else a in
     let b_2d = if ndim b = 1 then reshape [| shape_b.(0); 1 |] b else b in
-    
+
     let a_shape = shape a_2d in
     let b_shape = shape b_2d in
     let m_a = a_shape.(0) in
     let n_a = if Array.length a_shape > 1 then a_shape.(1) else 1 in
     let m_b = b_shape.(0) in
     let n_b = if Array.length b_shape > 1 then b_shape.(1) else 1 in
-    
+
     (* Expand dimensions for broadcasting *)
     let a_expanded = reshape [| m_a; 1; n_a; 1 |] a_2d in
     let b_expanded = reshape [| 1; m_b; 1; n_b |] b_2d in
-    
+
     (* Multiply with broadcasting *)
     let result = mul a_expanded b_expanded in
-    
+
     (* Reshape directly to final shape - no transpose needed *)
     let final_shape = [| m_a * m_b; n_a * n_b |] in
     let result_flat = reshape final_shape result in
-    
+
     (* Return to original dimensionality if input was 1D *)
-    if ndim a = 1 && ndim b = 1 then
-      flatten result_flat
-    else
-      result_flat
+    if ndim a = 1 && ndim b = 1 then flatten result_flat else result_flat
 
   let multi_dot arrays =
     match arrays with
-    | [||] ->
-        invalid_arg "multi_dot: empty array"
+    | [||] -> invalid_arg "multi_dot: empty array"
     | [| arr |] -> arr
     | _ ->
         (* Simple left-to-right multiplication for now *)
@@ -3836,8 +3860,11 @@ module Make (B : Backend_intf.S) = struct
         (* Solve a * inv_a = i to get inv_a *)
         let q, r = B.op_qr ~reduced:true a in
         let y = matmul (matrix_transpose q) i in
-        let inv_a = B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r y in
-        
+        let inv_a =
+          B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r
+            y
+        in
+
         let pos_n = -n in
         if pos_n = 1 then inv_a
         else
@@ -3847,8 +3874,7 @@ module Make (B : Backend_intf.S) = struct
             else power (matmul acc base) (matmul base base) (exp / 2)
           in
           power inv_a inv_a (pos_n - 1)
-      with _ ->
-        invalid_arg "matrix_power: singular for negative exponent"
+      with _ -> invalid_arg "matrix_power: singular for negative exponent"
 
   let cross ?axis a b =
     let axis = Option.value axis ~default:(-1) in
@@ -3856,41 +3882,39 @@ module Make (B : Backend_intf.S) = struct
 
     let shape_a = shape a in
     let shape_b = shape b in
-    
+
     if axis >= ndim a then
       Error.invalid ~op:"cross" ~what:"axis" ~reason:"out of bounds" ();
 
-    if shape_a.(axis) <> 3 then
-      invalid_arg "cross: axis dim not 3";
-      
-    if shape_b.(axis) <> 3 then
-      invalid_arg "cross: axis dim not 3";
+    if shape_a.(axis) <> 3 then invalid_arg "cross: axis dim not 3";
+
+    if shape_b.(axis) <> 3 then invalid_arg "cross: axis dim not 3";
 
     (* Get indices for the three components *)
     let slice_at_index tensor ax idx =
-      let slices = Array.init (ndim tensor) (fun i ->
-        if i = ax then R [idx; idx + 1]
-        else R []
-      ) in
+      let slices =
+        Array.init (ndim tensor) (fun i ->
+            if i = ax then R [ idx; idx + 1 ] else R [])
+      in
       squeeze ~axes:[| ax |] (slice (Array.to_list slices) tensor)
     in
-    
+
     (* Extract components *)
     let a1 = slice_at_index a axis 0 in
     let a2 = slice_at_index a axis 1 in
     let a3 = slice_at_index a axis 2 in
-    
+
     let b1 = slice_at_index b axis 0 in
     let b2 = slice_at_index b axis 1 in
     let b3 = slice_at_index b axis 2 in
-    
+
     (* Compute cross product components *)
     let c1 = sub (mul a2 b3) (mul a3 b2) in
     let c2 = sub (mul a3 b1) (mul a1 b3) in
     let c3 = sub (mul a1 b2) (mul a2 b1) in
-    
+
     (* Stack along the axis *)
-    stack ~axis [c1; c2; c3]
+    stack ~axis [ c1; c2; c3 ]
 
   (* Matrix Decompositions *)
 
@@ -4000,7 +4024,8 @@ module Make (B : Backend_intf.S) = struct
         if ndim x = 1 then max (abs x) ~keepdims
         else max (sum (abs x) ~axes:[| ndim x - 1 |] ~keepdims) ~keepdims
     | Some `NegOne, _ | Some `NegTwo, _ | Some `NegInf, _ | Some `Nuc, _ ->
-        Error.failed ~op:"norm" ~what:"negative and nuclear norms not yet implemented" ()
+        Error.failed ~op:"norm"
+          ~what:"negative and nuclear norms not yet implemented" ()
     | Some (`P p), _ ->
         (* General p-norm *)
         (* Special case for matrix 1-norm when axes is None *)
@@ -4035,23 +4060,22 @@ module Make (B : Backend_intf.S) = struct
   let det a =
     check_square ~op:"det" a;
     check_float_or_complex ~op:"det" a;
-    
+
     (* Use QR decomposition to compute determinant *)
     (* For A = QR, det(A) = det(Q) * det(R) *)
     (* Since Q is orthogonal, |det(Q)| = 1 *)
     (* det(R) is the product of diagonal elements *)
     let _q, r = B.op_qr ~reduced:false a in
-    
+
     (* Get the diagonal of R *)
     let r_diag = diagonal r in
-    
+
     (* Product of diagonal elements along the last axis for batched inputs *)
-    let det_r = 
-      if ndim r_diag > 1 then
-        prod r_diag ~axes:[| -1 |] ~keepdims:false
-      else
-        prod r_diag in
-    
+    let det_r =
+      if ndim r_diag > 1 then prod r_diag ~axes:[| -1 |] ~keepdims:false
+      else prod r_diag
+    in
+
     (* Determine sign from Q *)
     (* For an orthogonal matrix Q, det(Q) = ±1 *)
     (* We can compute det(Q) by checking if it's a proper rotation (det = 1) *)
@@ -4060,7 +4084,7 @@ module Make (B : Backend_intf.S) = struct
     (* Simpler: since A = QR, if we computed det(A) via another method, *)
     (* we could get the sign. But for now, use the fact that *)
     (* det(Q) = 1 if Q is from QR of a matrix with positive determinant *)
-    
+
     (* Actually, the sign of det(R) already gives us the sign of det(A) *)
     (* because QR decomposition preserves the sign when properly implemented *)
     det_r
@@ -4068,27 +4092,27 @@ module Make (B : Backend_intf.S) = struct
   let slogdet a =
     check_square ~op:"slogdet" a;
     check_float_or_complex ~op:"slogdet" a;
-    
+
     (* Use QR decomposition similar to det *)
     let _q, r = B.op_qr ~reduced:false a in
-    
+
     (* Get the diagonal of R *)
     let r_diag = diagonal r in
-    
+
     (* Compute sign as product of signs of diagonal elements *)
     (* For real matrices, sign is -1 if odd number of negative diagonal elements *)
     let signs = sign r_diag in
     let sign_det = prod signs in
-    
+
     (* Convert to float32 for output - we could make this configurable later *)
     let sign_float = cast Dtype.float32 sign_det in
-    
+
     (* For log computation, handle abs and cast to float *)
     let abs_diag = abs r_diag in
     let abs_float = cast Dtype.float32 abs_diag in
     let log_abs_diag = log abs_float in
     let logdet = sum log_abs_diag in
-    
+
     (sign_float, logdet)
 
   let matrix_rank ?tol ?rtol ?hermitian a =
@@ -4101,13 +4125,12 @@ module Make (B : Backend_intf.S) = struct
       shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
     in
     (* Use appropriate epsilon for the dtype *)
-    let eps = 
-      if Dtype.equal (dtype a) Dtype.float32 then
-        1.2e-7  (* Machine epsilon for float32 *)
-      else if Dtype.equal (dtype a) Dtype.float64 then
-        2.2e-16  (* Machine epsilon for float64 *)
-      else
-        1e-15  (* Default for other types *)
+    let eps =
+      if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
+        (* Machine epsilon for float32 *)
+      else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
+        (* Machine epsilon for float64 *)
+      else 1e-15 (* Default for other types *)
     in
     let tol =
       match (tol, rtol) with
@@ -4241,13 +4264,12 @@ module Make (B : Backend_intf.S) = struct
         shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
       in
       (* Use appropriate epsilon for the dtype *)
-      let eps = 
-        if Dtype.equal (dtype a) Dtype.float32 then
-          1.2e-7  (* Machine epsilon for float32 *)
-        else if Dtype.equal (dtype a) Dtype.float64 then
-          2.2e-16  (* Machine epsilon for float64 *)
-        else
-          1e-15  (* Default for other types *)
+      let eps =
+        if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
+          (* Machine epsilon for float32 *)
+        else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
+          (* Machine epsilon for float64 *)
+        else 1e-15 (* Default for other types *)
       in
       float_of_int (Stdlib.max m n) *. eps *. max_s
     in
@@ -4266,7 +4288,8 @@ module Make (B : Backend_intf.S) = struct
     (* We need to multiply each column of vh.T by corresponding s_inv element *)
     (* vh.T has shape [n, k], s_inv has shape [k] *)
     (* We want broadcasting [n, k] * [1, k] -> [n, k] *)
-    let s_inv_expanded = unsqueeze ~axes:[| 0 |] s_inv in  (* Shape [1, k] *)
+    let s_inv_expanded = unsqueeze ~axes:[| 0 |] s_inv in
+    (* Shape [1, k] *)
     let vs = mul (matrix_transpose vh) s_inv_expanded in
     matmul vs (matrix_transpose u)
 
@@ -4508,14 +4531,12 @@ module Make (B : Backend_intf.S) = struct
             | `Backward ->
                 (* Use the OUTPUT size for normalization (after truncation) *)
                 let n = ref 1 in
-                Array.iteri (fun i _ ->
-                  n := !n * sizes.(i)) axes_arr;
+                Array.iteri (fun i _ -> n := !n * sizes.(i)) axes_arr;
                 1.0 /. float_of_int !n
             | `Forward -> 1.0
             | `Ortho ->
                 let n = ref 1 in
-                Array.iteri (fun i _ ->
-                  n := !n * sizes.(i)) axes_arr;
+                Array.iteri (fun i _ -> n := !n * sizes.(i)) axes_arr;
                 1.0 /. Stdlib.sqrt (float_of_int !n)
           in
           let result = B.op_ifft x_padded ~axes:axes_arr ~s:None in
@@ -4608,7 +4629,7 @@ module Make (B : Backend_intf.S) = struct
           if i = Array.length axes_arr - 1 then
             (* Last axis: use specified size if provided, else infer *)
             match s with
-            | Some sizes -> 
+            | Some sizes ->
                 (* Use the specified output size for normalization *)
                 sizes.(i)
             | None ->

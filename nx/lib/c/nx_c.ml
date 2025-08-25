@@ -285,7 +285,7 @@ let materialize t =
   (* Check if it has broadcast dimensions (zero strides) *)
   let strides_arr = strides t in
   let has_broadcast = Array.exists (( = ) 0) strides_arr in
-  
+
   if is_contiguous t && offset t = 0 && not has_broadcast then t
   else
     (* Create a contiguous copy *)
@@ -702,11 +702,11 @@ let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
   let updates' = ensure_materializable updates in
 
   (* Create output tensor - for Set mode, start with a copy of template *)
-  let out = 
-    if mode = `Set then
-      op_copy data_template  (* Start with copy of template *)
+  let out =
+    if mode = `Set then op_copy data_template (* Start with copy of template *)
     else
-      create_tensor data_template.context data_template.dtype (shape data_template)
+      create_tensor data_template.context data_template.dtype
+        (shape data_template)
   in
 
   (* Convert to FFI tensors *)
@@ -900,16 +900,15 @@ let op_rfft x ~dtype ~axes ~s =
   (* Calculate output shape for rfft *)
   let in_shape = shape x in
   let out_shape = Array.copy in_shape in
-  
+
   (* RFFT: last axis becomes n//2 + 1 for the complex output *)
   let last_axis = Array.length axes - 1 in
-  if last_axis >= 0 then (
-    let axis_idx = if axes.(last_axis) < 0 then 
-      Array.length in_shape + axes.(last_axis) 
-    else 
-      axes.(last_axis) in
-    out_shape.(axis_idx) <- (in_shape.(axis_idx) / 2) + 1
-  );
+  (if last_axis >= 0 then
+     let axis_idx =
+       if axes.(last_axis) < 0 then Array.length in_shape + axes.(last_axis)
+       else axes.(last_axis)
+     in
+     out_shape.(axis_idx) <- (in_shape.(axis_idx) / 2) + 1);
 
   (* Create output tensor with complex dtype *)
   let out = create_tensor x.context dtype out_shape in
@@ -933,35 +932,35 @@ let op_irfft x ~dtype ~axes ~s =
   (* Calculate output shape for irfft *)
   let in_shape = shape x in
   let out_shape = Array.copy in_shape in
-  
+
   (* IRFFT: transforms complex input to real output *)
   (* The last axis in axes becomes the full real dimension *)
   let last_axis = Array.length axes - 1 in
-  let last_dim_size = 
+  let last_dim_size =
     if last_axis >= 0 then (
-      let axis_idx = if axes.(last_axis) < 0 then 
-        Array.length in_shape + axes.(last_axis) 
-      else 
-        axes.(last_axis) in
-        
+      let axis_idx =
+        if axes.(last_axis) < 0 then Array.length in_shape + axes.(last_axis)
+        else axes.(last_axis)
+      in
+
       (* Determine output size for the real axis *)
-      let size = match s with
-      | None -> 
-          (* Default: for RFFT output of size m, the original size could be:
-             - 2*(m-1) for even original size
-             - 2*(m-1) or 2*(m-1)+1 for odd original size
-             Since we don't know which, default to even case: 2*(m-1) *)
-          (in_shape.(axis_idx) - 1) * 2
-      | Some sizes -> 
-          (* Use the specified size for the last axis *)
-          sizes.(last_axis)
+      let size =
+        match s with
+        | None ->
+            (* Default: for RFFT output of size m, the original size could be: -
+               2*(m-1) for even original size - 2*(m-1) or 2*(m-1)+1 for odd
+               original size Since we don't know which, default to even case:
+               2*(m-1) *)
+            (in_shape.(axis_idx) - 1) * 2
+        | Some sizes ->
+            (* Use the specified size for the last axis *)
+            sizes.(last_axis)
       in
       out_shape.(axis_idx) <- size;
-      size
-    ) else (
+      size)
+    else
       (* No valid axes, shouldn't happen *)
       out_shape.(Array.length out_shape - 1) * 2
-    )
   in
 
   (* Create output tensor with real dtype *)
@@ -1122,27 +1121,36 @@ let op_triangular_solve ~upper ~transpose ~unit_diag a b =
 
 let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
   (* C backend implementation: production-grade with zero-copy support *)
-  
+
   (* Validate that the new view doesn't access out-of-bounds memory *)
   let buffer_size = Array1.dim t.buffer in
-  let new_shape_arr = match Symbolic_shape.eval new_shape with
+  let new_shape_arr =
+    match Symbolic_shape.eval new_shape with
     | Some arr -> arr
-    | None -> Error.failed ~op:"op_as_strided" ~what:"symbolic shapes not supported" ()
+    | None ->
+        Error.failed ~op:"op_as_strided" ~what:"symbolic shapes not supported"
+          ()
   in
-  
+
   (* Calculate the maximum element accessed to ensure we stay within bounds *)
   let max_element_accessed = ref offset_in_elements in
-  Array.iteri (fun i dim ->
-    if dim > 0 then
-      max_element_accessed := max !max_element_accessed 
-        (offset_in_elements + (dim - 1) * new_strides_in_elements.(i))
-  ) new_shape_arr;
-  
+  Array.iteri
+    (fun i dim ->
+      if dim > 0 then
+        max_element_accessed :=
+          max !max_element_accessed
+            (offset_in_elements + ((dim - 1) * new_strides_in_elements.(i))))
+    new_shape_arr;
+
   if !max_element_accessed >= buffer_size then
-    Error.failed ~op:"op_as_strided" ~what:"view would access out-of-bounds memory" ();
-  
+    Error.failed ~op:"op_as_strided"
+      ~what:"view would access out-of-bounds memory" ();
+
   (* Create a new view with custom strides and offset - zero-copy operation *)
-  let new_view = Lazy_view.create_strided new_shape ~strides:new_strides_in_elements ~offset:offset_in_elements in
-  
+  let new_view =
+    Lazy_view.create_strided new_shape ~strides:new_strides_in_elements
+      ~offset:offset_in_elements
+  in
+
   (* Return tensor with the same buffer but new view - no data copying *)
   { t with view = new_view }

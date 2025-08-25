@@ -58,8 +58,10 @@ type dtype_info = {
 let get_dtype_info : type a b. (a, b) Dtype.t -> dtype_info = function
   | Dtype.Float16 -> { metal_name = "half"; size_bytes = 2 }
   | Dtype.Float32 -> { metal_name = "float"; size_bytes = 4 }
-  | Dtype.Float64 -> 
-      invalid_arg "Metal backend: Float64 dtype not supported (Metal doesn't support double precision compute)"
+  | Dtype.Float64 ->
+      invalid_arg
+        "Metal backend: Float64 dtype not supported (Metal doesn't support \
+         double precision compute)"
   | Dtype.Int32 -> { metal_name = "int"; size_bytes = 4 }
   | Dtype.Int64 -> { metal_name = "long"; size_bytes = 8 }
   | Dtype.UInt8 -> { metal_name = "uchar"; size_bytes = 1 }
@@ -70,7 +72,7 @@ let get_dtype_info : type a b. (a, b) Dtype.t -> dtype_info = function
       (* Platform-specific size but use int64 for safety *)
       if Sys.word_size = 64 then { metal_name = "long"; size_bytes = 8 }
       else { metal_name = "int"; size_bytes = 4 }
-  | Dtype.NativeInt -> 
+  | Dtype.NativeInt ->
       (* Platform-specific size *)
       { metal_name = "long"; size_bytes = Sys.word_size / 8 }
   | Dtype.Complex16 ->
@@ -80,11 +82,13 @@ let get_dtype_info : type a b. (a, b) Dtype.t -> dtype_info = function
       (* Complex32 uses float2 (2 x float32) *)
       { metal_name = "float2"; size_bytes = 8 }
   | Dtype.Complex64 ->
-      invalid_arg "Metal backend: Complex64 dtype not supported (Metal doesn't support double precision compute)"
+      invalid_arg
+        "Metal backend: Complex64 dtype not supported (Metal doesn't support \
+         double precision compute)"
   | Dtype.BFloat16 ->
       (* BFloat16 not natively supported by Metal - use half as approximation *)
       { metal_name = "half"; size_bytes = 2 }
-  | Dtype.Bool -> 
+  | Dtype.Bool ->
       (* Bool arrays use uchar for storage *)
       { metal_name = "uchar"; size_bytes = 1 }
   (* Extended types that Metal can't properly support - will fail at creation *)
@@ -230,14 +234,12 @@ let copy_to_bigarray : type a b. (a, b) t -> (a, b, c_layout) Array1.t -> unit =
         (* Copy the element *)
         if !src_idx >= buffer_size then
           failwith
-            (Printf.sprintf
-               "Source index %d out of bounds (buffer size: %d)" !src_idx
-               buffer_size)
+            (Printf.sprintf "Source index %d out of bounds (buffer size: %d)"
+               !src_idx buffer_size)
         else if !dst_idx >= Array1.dim ba then
           failwith
-            (Printf.sprintf
-               "Destination index %d out of bounds (ba size: %d)" !dst_idx
-               (Array1.dim ba))
+            (Printf.sprintf "Destination index %d out of bounds (ba size: %d)"
+               !dst_idx (Array1.dim ba))
         else Array1.set ba !dst_idx (Array1.get metal_ba !src_idx))
       else
         for

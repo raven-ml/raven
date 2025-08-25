@@ -668,14 +668,14 @@ val as_strided :
   int array -> int array -> offset:int -> ('a, 'b) t -> ('a, 'b) t
 (** [as_strided shape strides ~offset t] creates a strided view of the tensor
     with custom shape, strides (in elements), and offset (in elements).
-    
-    This is a low-level operation that allows arbitrary memory layouts.
-    Backends that support arbitrary strides (e.g., native) implement this as
-    zero-copy. Other backends may need to materialize the data.
-    
-    Warning: This function can create views that access out-of-bounds memory
-    if used incorrectly. Use with caution.
-    
+
+    This is a low-level operation that allows arbitrary memory layouts. Backends
+    that support arbitrary strides (e.g., native) implement this as zero-copy.
+    Other backends may need to materialize the data.
+
+    Warning: This function can create views that access out-of-bounds memory if
+    used incorrectly. Use with caution.
+
     {@ocaml[
       # let x = create float32 [| 8 |] [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
         as_strided [| 3; 3 |] [| 2; 1 |] ~offset:0 x
@@ -2349,7 +2349,15 @@ val eigvalsh : ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t
 
 val norm :
   ?ord:
-    [ `Fro | `Nuc | `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf | `P of float ] ->
+    [ `Fro
+    | `Nuc
+    | `One
+    | `Two
+    | `Inf
+    | `NegOne
+    | `NegTwo
+    | `NegInf
+    | `P of float ] ->
   ?axes:int array ->
   ?keepdims:bool ->
   ('a, 'b) t ->

@@ -1,1 +1,1 @@
-(vendored_dirs hdf5 camlzip npy stb_image stb_image_write metal objc)
+(vendored_dirs *)

@@ -1958,7 +1958,7 @@ let kernel_sub_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
     (out : (bool, bool_elt) t) start_idx end_idx =
   (* Boolean subtraction is not well-defined, but we can treat it as XOR *)
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -1966,7 +1966,7 @@ let kernel_sub_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
       let a_val = Array1.unsafe_get a_buf (a_base + i) in
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (a_val <> b_val)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -3608,10 +3608,11 @@ let kernel_fdiv_bfloat16 (a : (float, bfloat16_elt) t)
       Array1.unsafe_set out_buf (offset out + k) (Float.div a_val b_val)
     done
 
-let kernel_fdiv_float8_e4m3 (a : (float, float8_e4m3_elt) t) (b : (float, float8_e4m3_elt) t)
-    (out : (float, float8_e4m3_elt) t) start_idx end_idx =
+let kernel_fdiv_float8_e4m3 (a : (float, float8_e4m3_elt) t)
+    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -3619,7 +3620,7 @@ let kernel_fdiv_float8_e4m3 (a : (float, float8_e4m3_elt) t) (b : (float, float8
       let a_val = Array1.unsafe_get a_buf (a_base + i) in
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Float.div a_val b_val)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -3635,10 +3636,11 @@ let kernel_fdiv_float8_e4m3 (a : (float, float8_e4m3_elt) t) (b : (float, float8
       Array1.unsafe_set out_buf (offset out + k) (Float.div a_val b_val)
     done
 
-let kernel_fdiv_float8_e5m2 (a : (float, float8_e5m2_elt) t) (b : (float, float8_e5m2_elt) t)
-    (out : (float, float8_e5m2_elt) t) start_idx end_idx =
+let kernel_fdiv_float8_e5m2 (a : (float, float8_e5m2_elt) t)
+    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -3646,7 +3648,7 @@ let kernel_fdiv_float8_e5m2 (a : (float, float8_e5m2_elt) t) (b : (float, float8
       let a_val = Array1.unsafe_get a_buf (a_base + i) in
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Float.div a_val b_val)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -3662,10 +3664,11 @@ let kernel_fdiv_float8_e5m2 (a : (float, float8_e5m2_elt) t) (b : (float, float8
       Array1.unsafe_set out_buf (offset out + k) (Float.div a_val b_val)
     done
 
-let kernel_fdiv_complex16 (a : (Complex.t, complex16_elt) t) (b : (Complex.t, complex16_elt) t)
-    (out : (Complex.t, complex16_elt) t) start_idx end_idx =
+let kernel_fdiv_complex16 (a : (Complex.t, complex16_elt) t)
+    (b : (Complex.t, complex16_elt) t) (out : (Complex.t, complex16_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -3673,7 +3676,7 @@ let kernel_fdiv_complex16 (a : (Complex.t, complex16_elt) t) (b : (Complex.t, co
       let a_val = Array1.unsafe_get a_buf (a_base + i) in
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Complex.div a_val b_val)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -4508,8 +4511,9 @@ let kernel_idiv_nativeint (a : (nativeint, nativeint_elt) t)
     done
 
 (* Extended dtype kernel functions for idiv *)
-let kernel_idiv_int4 (a : (int, int4_signed_elt) t) (b : (int, int4_signed_elt) t)
-    (out : (int, int4_signed_elt) t) start_idx end_idx =
+let kernel_idiv_int4 (a : (int, int4_signed_elt) t)
+    (b : (int, int4_signed_elt) t) (out : (int, int4_signed_elt) t) start_idx
+    end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -4557,8 +4561,9 @@ let kernel_idiv_int4 (a : (int, int4_signed_elt) t) (b : (int, int4_signed_elt) 
       Array1.unsafe_set out_buf (offset out + k) (a_val / b_val)
     done
 
-let kernel_idiv_uint4 (a : (int, int4_unsigned_elt) t) (b : (int, int4_unsigned_elt) t)
-    (out : (int, int4_unsigned_elt) t) start_idx end_idx =
+let kernel_idiv_uint4 (a : (int, int4_unsigned_elt) t)
+    (b : (int, int4_unsigned_elt) t) (out : (int, int4_unsigned_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -4609,7 +4614,7 @@ let kernel_idiv_uint4 (a : (int, int4_unsigned_elt) t) (b : (int, int4_unsigned_
 let kernel_idiv_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
     (out : (int, qint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -4617,7 +4622,7 @@ let kernel_idiv_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
       let a_val = Array1.unsafe_get a_buf (a_base + i) in
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (a_val / b_val)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -4636,7 +4641,7 @@ let kernel_idiv_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
 let kernel_idiv_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
     (out : (int, quint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -4644,7 +4649,7 @@ let kernel_idiv_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
       let a_val = Array1.unsafe_get a_buf (a_base + i) in
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (a_val / b_val)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -4660,8 +4665,9 @@ let kernel_idiv_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
       Array1.unsafe_set out_buf (offset out + k) (a_val / b_val)
     done
 
-let kernel_idiv_bfloat16 (a : (float, bfloat16_elt) t) (b : (float, bfloat16_elt) t)
-    (out : (float, bfloat16_elt) t) start_idx end_idx =
+let kernel_idiv_bfloat16 (a : (float, bfloat16_elt) t)
+    (b : (float, bfloat16_elt) t) (out : (float, bfloat16_elt) t) start_idx
+    end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -4709,14 +4715,16 @@ let kernel_idiv_bfloat16 (a : (float, bfloat16_elt) t) (b : (float, bfloat16_elt
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k)
+      Array1.unsafe_set out_buf
+        (offset out + k)
         (Float.trunc (Float.div a_val b_val))
     done
 
-let kernel_idiv_float8_e4m3 (a : (float, float8_e4m3_elt) t) (b : (float, float8_e4m3_elt) t)
-    (out : (float, float8_e4m3_elt) t) start_idx end_idx =
+let kernel_idiv_float8_e4m3 (a : (float, float8_e4m3_elt) t)
+    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -4725,7 +4733,7 @@ let kernel_idiv_float8_e4m3 (a : (float, float8_e4m3_elt) t) (b : (float, float8
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i)
         (Float.trunc (Float.div a_val b_val))
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -4738,14 +4746,16 @@ let kernel_idiv_float8_e4m3 (a : (float, float8_e4m3_elt) t) (b : (float, float8
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k)
+      Array1.unsafe_set out_buf
+        (offset out + k)
         (Float.trunc (Float.div a_val b_val))
     done
 
-let kernel_idiv_float8_e5m2 (a : (float, float8_e5m2_elt) t) (b : (float, float8_e5m2_elt) t)
-    (out : (float, float8_e5m2_elt) t) start_idx end_idx =
+let kernel_idiv_float8_e5m2 (a : (float, float8_e5m2_elt) t)
+    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -4754,7 +4764,7 @@ let kernel_idiv_float8_e5m2 (a : (float, float8_e5m2_elt) t) (b : (float, float8
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i)
         (Float.trunc (Float.div a_val b_val))
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -4767,14 +4777,16 @@ let kernel_idiv_float8_e5m2 (a : (float, float8_e5m2_elt) t) (b : (float, float8
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k)
+      Array1.unsafe_set out_buf
+        (offset out + k)
         (Float.trunc (Float.div a_val b_val))
     done
 
-let kernel_idiv_complex16 (a : (Complex.t, complex16_elt) t) (b : (Complex.t, complex16_elt) t)
-    (out : (Complex.t, complex16_elt) t) start_idx end_idx =
+let kernel_idiv_complex16 (a : (Complex.t, complex16_elt) t)
+    (b : (Complex.t, complex16_elt) t) (out : (Complex.t, complex16_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -4782,7 +4794,7 @@ let kernel_idiv_complex16 (a : (Complex.t, complex16_elt) t) (b : (Complex.t, co
       let a_val = Array1.unsafe_get a_buf (a_base + i) in
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (complex_idiv a_val b_val)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -4801,7 +4813,7 @@ let kernel_idiv_complex16 (a : (Complex.t, complex16_elt) t) (b : (Complex.t, co
 let kernel_idiv_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
     (out : (bool, bool_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -4811,7 +4823,7 @@ let kernel_idiv_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
       (* Bool idiv: true/true = true, false/true = false, x/false = error *)
       let result = if b_val then a_val else failwith "Division by zero" in
       Array1.unsafe_set out_buf (out_base + i) result
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -6556,8 +6568,9 @@ let kernel_modulo_complex64 (a : (Complex.t, complex64_elt) t)
     done
 
 (* Extended dtype kernel functions for modulo *)
-let kernel_modulo_int4 (a : (int, int4_signed_elt) t) (b : (int, int4_signed_elt) t)
-    (out : (int, int4_signed_elt) t) start_idx end_idx =
+let kernel_modulo_int4 (a : (int, int4_signed_elt) t)
+    (b : (int, int4_signed_elt) t) (out : (int, int4_signed_elt) t) start_idx
+    end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -6605,8 +6618,9 @@ let kernel_modulo_int4 (a : (int, int4_signed_elt) t) (b : (int, int4_signed_elt
       Array1.unsafe_set out_buf (offset out + k) (a_val mod b_val)
     done
 
-let kernel_modulo_uint4 (a : (int, int4_unsigned_elt) t) (b : (int, int4_unsigned_elt) t)
-    (out : (int, int4_unsigned_elt) t) start_idx end_idx =
+let kernel_modulo_uint4 (a : (int, int4_unsigned_elt) t)
+    (b : (int, int4_unsigned_elt) t) (out : (int, int4_unsigned_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -6657,7 +6671,7 @@ let kernel_modulo_uint4 (a : (int, int4_unsigned_elt) t) (b : (int, int4_unsigne
 let kernel_modulo_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
     (out : (int, qint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -6665,7 +6679,7 @@ let kernel_modulo_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
       let a_val = Array1.unsafe_get a_buf (a_base + i) in
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (a_val mod b_val)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -6684,7 +6698,7 @@ let kernel_modulo_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
 let kernel_modulo_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
     (out : (int, quint8_elt) t) start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
-  if is_c_contiguous a && is_c_contiguous b then (
+  if is_c_contiguous a && is_c_contiguous b then
     let a_base = offset a + start_idx in
     let b_base = offset b + start_idx in
     let out_base = offset out + start_idx in
@@ -6692,7 +6706,7 @@ let kernel_modulo_quint8 (a : (int, quint8_elt) t) (b : (int, quint8_elt) t)
       let a_val = Array1.unsafe_get a_buf (a_base + i) in
       let b_val = Array1.unsafe_get b_buf (b_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (a_val mod b_val)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     let a_idx = Array.make (Array.length (shape a)) 0 in
@@ -7432,8 +7446,9 @@ let kernel_max_bool (a : (bool, bool_elt) t) (b : (bool, bool_elt) t)
       Array1.unsafe_set out_buf (offset out + k) (a_val || b_val)
     done
 
-let kernel_max_int4 (a : (int, int4_signed_elt) t) (b : (int, int4_signed_elt) t)
-    (out : (int, int4_signed_elt) t) start_idx end_idx =
+let kernel_max_int4 (a : (int, int4_signed_elt) t)
+    (b : (int, int4_signed_elt) t) (out : (int, int4_signed_elt) t) start_idx
+    end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -7480,8 +7495,9 @@ let kernel_max_int4 (a : (int, int4_signed_elt) t) (b : (int, int4_signed_elt) t
       Array1.unsafe_set out_buf (offset out + k) (Int.max a_val b_val)
     done
 
-let kernel_max_uint4 (a : (int, int4_unsigned_elt) t) (b : (int, int4_unsigned_elt) t)
-    (out : (int, int4_unsigned_elt) t) start_idx end_idx =
+let kernel_max_uint4 (a : (int, int4_unsigned_elt) t)
+    (b : (int, int4_unsigned_elt) t) (out : (int, int4_unsigned_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -7529,8 +7545,8 @@ let kernel_max_uint4 (a : (int, int4_unsigned_elt) t) (b : (int, int4_unsigned_e
     done
 
 let kernel_max_float8_e4m3 (a : (float, float8_e4m3_elt) t)
-    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t) start_idx
-    end_idx =
+    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -7578,8 +7594,8 @@ let kernel_max_float8_e4m3 (a : (float, float8_e4m3_elt) t)
     done
 
 let kernel_max_float8_e5m2 (a : (float, float8_e5m2_elt) t)
-    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t) start_idx
-    end_idx =
+    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -8604,7 +8620,8 @@ let kernel_cmplt_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
     done
 
 let kernel_cmplt_float8_e4m3 (a : (float, float8_e4m3_elt) t)
-    (b : (float, float8_e4m3_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+    (b : (float, float8_e4m3_elt) t) (out : (int, uint8_elt) t) start_idx
+    end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -8652,7 +8669,8 @@ let kernel_cmplt_float8_e4m3 (a : (float, float8_e4m3_elt) t)
     done
 
 let kernel_cmplt_float8_e5m2 (a : (float, float8_e5m2_elt) t)
-    (b : (float, float8_e5m2_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+    (b : (float, float8_e5m2_elt) t) (out : (int, uint8_elt) t) start_idx
+    end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -8751,7 +8769,9 @@ let kernel_cmplt_complex16 (a : (Complex.t, complex16_elt) t)
       let b_lin = Shape.ravel_index b_idx (strides b) in
       let a_val = Array1.unsafe_get a_buf (offset a + a_lin) in
       let b_val = Array1.unsafe_get b_buf (offset b + b_lin) in
-      Array1.unsafe_set out_buf (offset out + k) (bool_to_int (a_val.re < b_val.re))
+      Array1.unsafe_set out_buf
+        (offset out + k)
+        (bool_to_int (a_val.re < b_val.re))
     done
 
 let kernel_cmplt_qint8 (a : (int, qint8_elt) t) (b : (int, qint8_elt) t)
@@ -9761,7 +9781,8 @@ let kernel_cmpne_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
     done
 
 let kernel_cmpne_float8_e4m3 (a : (float, float8_e4m3_elt) t)
-    (b : (float, float8_e4m3_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+    (b : (float, float8_e4m3_elt) t) (out : (int, uint8_elt) t) start_idx
+    end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -9809,7 +9830,8 @@ let kernel_cmpne_float8_e4m3 (a : (float, float8_e4m3_elt) t)
     done
 
 let kernel_cmpne_float8_e5m2 (a : (float, float8_e5m2_elt) t)
-    (b : (float, float8_e5m2_elt) t) (out : (int, uint8_elt) t) start_idx end_idx =
+    (b : (float, float8_e5m2_elt) t) (out : (int, uint8_elt) t) start_idx
+    end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -10833,8 +10855,8 @@ let kernel_bit_and_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
     done
 
 let kernel_bit_and_float8_e4m3 (a : (float, float8_e4m3_elt) t)
-    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t) start_idx
-    end_idx =
+    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -10882,8 +10904,8 @@ let kernel_bit_and_float8_e4m3 (a : (float, float8_e4m3_elt) t)
     done
 
 let kernel_bit_and_float8_e5m2 (a : (float, float8_e5m2_elt) t)
-    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t) start_idx
-    end_idx =
+    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -11900,8 +11922,8 @@ let kernel_bit_or_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
     done
 
 let kernel_bit_or_float8_e4m3 (a : (float, float8_e4m3_elt) t)
-    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t) start_idx
-    end_idx =
+    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -11949,8 +11971,8 @@ let kernel_bit_or_float8_e4m3 (a : (float, float8_e4m3_elt) t)
     done
 
 let kernel_bit_or_float8_e5m2 (a : (float, float8_e5m2_elt) t)
-    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t) start_idx
-    end_idx =
+    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -12967,8 +12989,8 @@ let kernel_bit_xor_uint4 (a : (int, uint4_elt) t) (b : (int, uint4_elt) t)
     done
 
 let kernel_bit_xor_float8_e4m3 (a : (float, float8_e4m3_elt) t)
-    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t) start_idx
-    end_idx =
+    (b : (float, float8_e4m3_elt) t) (out : (float, float8_e4m3_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in
@@ -13016,8 +13038,8 @@ let kernel_bit_xor_float8_e4m3 (a : (float, float8_e4m3_elt) t)
     done
 
 let kernel_bit_xor_float8_e5m2 (a : (float, float8_e5m2_elt) t)
-    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t) start_idx
-    end_idx =
+    (b : (float, float8_e5m2_elt) t) (out : (float, float8_e5m2_elt) t)
+    start_idx end_idx =
   let a_buf, b_buf, out_buf = (buffer a, buffer b, buffer out) in
   if is_c_contiguous a && is_c_contiguous b then (
     let a_base = offset a + start_idx in

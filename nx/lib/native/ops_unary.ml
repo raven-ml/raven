@@ -551,16 +551,16 @@ let kernel_neg_bfloat16 (a : (float, bfloat16_elt) t)
       Array1.unsafe_set out_buf (offset out + k) (Float.neg v)
     done
 
-let kernel_neg_bool (a : (bool, bool_elt) t)
-    (out : (bool, bool_elt) t) start_idx end_idx =
+let kernel_neg_bool (a : (bool, bool_elt) t) (out : (bool, bool_elt) t)
+    start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (not v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -643,13 +643,13 @@ let kernel_neg_uint4 (a : (int, int4_unsigned_elt) t)
 let kernel_neg_float8_e4m3 (a : (float, float8_e4m3_elt) t)
     (out : (float, float8_e4m3_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Float.neg v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -662,13 +662,13 @@ let kernel_neg_float8_e4m3 (a : (float, float8_e4m3_elt) t)
 let kernel_neg_float8_e5m2 (a : (float, float8_e5m2_elt) t)
     (out : (float, float8_e5m2_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Float.neg v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -681,13 +681,13 @@ let kernel_neg_float8_e5m2 (a : (float, float8_e5m2_elt) t)
 let kernel_neg_complex16 (a : (Complex.t, complex16_elt) t)
     (out : (Complex.t, complex16_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Complex.neg v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -697,16 +697,16 @@ let kernel_neg_complex16 (a : (Complex.t, complex16_elt) t)
       Array1.unsafe_set out_buf (offset out + k) (Complex.neg v)
     done
 
-let kernel_neg_qint8 (a : (int, qint8_elt) t)
-    (out : (int, qint8_elt) t) start_idx end_idx =
+let kernel_neg_qint8 (a : (int, qint8_elt) t) (out : (int, qint8_elt) t)
+    start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (-v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -716,16 +716,16 @@ let kernel_neg_qint8 (a : (int, qint8_elt) t)
       Array1.unsafe_set out_buf (offset out + k) (-v)
     done
 
-let kernel_neg_quint8 (a : (int, quint8_elt) t)
-    (out : (int, quint8_elt) t) start_idx end_idx =
+let kernel_neg_quint8 (a : (int, quint8_elt) t) (out : (int, quint8_elt) t)
+    start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (-v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -964,13 +964,13 @@ let kernel_sqrt_bfloat16 (a : (float, bfloat16_elt) t)
 let kernel_sqrt_float8_e4m3 (a : (float, float8_e4m3_elt) t)
     (out : (float, float8_e4m3_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Float.sqrt v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -983,13 +983,13 @@ let kernel_sqrt_float8_e4m3 (a : (float, float8_e4m3_elt) t)
 let kernel_sqrt_float8_e5m2 (a : (float, float8_e5m2_elt) t)
     (out : (float, float8_e5m2_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Float.sqrt v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -1002,13 +1002,13 @@ let kernel_sqrt_float8_e5m2 (a : (float, float8_e5m2_elt) t)
 let kernel_sqrt_complex16 (a : (Complex.t, complex16_elt) t)
     (out : (Complex.t, complex16_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Complex.sqrt v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -1247,13 +1247,13 @@ let kernel_recip_bfloat16 (a : (float, bfloat16_elt) t)
 let kernel_recip_float8_e4m3 (a : (float, float8_e4m3_elt) t)
     (out : (float, float8_e4m3_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (1.0 /. v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -1266,13 +1266,13 @@ let kernel_recip_float8_e4m3 (a : (float, float8_e4m3_elt) t)
 let kernel_recip_float8_e5m2 (a : (float, float8_e5m2_elt) t)
     (out : (float, float8_e5m2_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (1.0 /. v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do
@@ -1285,13 +1285,13 @@ let kernel_recip_float8_e5m2 (a : (float, float8_e5m2_elt) t)
 let kernel_recip_complex16 (a : (Complex.t, complex16_elt) t)
     (out : (Complex.t, complex16_elt) t) start_idx end_idx =
   let a_buf, out_buf = (buffer a, buffer out) in
-  if is_c_contiguous a && is_c_contiguous out then (
+  if is_c_contiguous a && is_c_contiguous out then
     let arg_base = offset a + start_idx in
     let out_base = offset out + start_idx in
     for i = 0 to end_idx - start_idx - 1 do
       let v = Array1.unsafe_get a_buf (arg_base + i) in
       Array1.unsafe_set out_buf (out_base + i) (Complex.inv v)
-    done)
+    done
   else
     let md_index = Array.make (Array.length (shape out)) 0 in
     for k = start_idx to end_idx - 1 do

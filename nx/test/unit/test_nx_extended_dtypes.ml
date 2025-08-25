@@ -114,7 +114,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
 
   let test_ones_float8_e4m3 ctx () =
     let t = Nx.ones ctx Nx_core.Dtype.float8_e4m3 [| 2; 2 |] in
-    check_t ~eps:0.1 "ones float8_e4m3" [| 2; 2 |] [| 0.25; 0.25; 0.25; 0.25 |] t
+    check_t ~eps:0.1 "ones float8_e4m3" [| 2; 2 |]
+      [| 0.25; 0.25; 0.25; 0.25 |]
+      t
 
   (* ───── Float8_e5m2 Tests ───── *)
 

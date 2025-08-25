@@ -327,8 +327,8 @@ let test_grad_concatenate () =
   (* Concatenate gradient *)
   let x = T.create ctx T.float32 [| 2 |] [| 1.; 2. |] in
   let y = T.create ctx T.float32 [| 3 |] [| 3.; 4.; 5. |] in
-  let grad_x = T.grad (fun x -> T.sum (T.concatenate [x; y])) x in
-  let grad_y = T.grad (fun y -> T.sum (T.concatenate [x; y])) y in
+  let grad_x = T.grad (fun x -> T.sum (T.concatenate [ x; y ])) x in
+  let grad_y = T.grad (fun y -> T.sum (T.concatenate [ x; y ])) y in
   check_rune ~eps "concatenate grad x" (T.ones_like x) grad_x;
   check_rune ~eps "concatenate grad y" (T.ones_like y) grad_y
 
@@ -336,7 +336,7 @@ let test_grad_stack () =
   (* Stack gradient *)
   let x = T.create ctx T.float32 [| 2 |] [| 1.; 2. |] in
   let y = T.create ctx T.float32 [| 2 |] [| 3.; 4. |] in
-  let grad_x = T.grad (fun x -> T.sum (T.stack [x; y])) x in
+  let grad_x = T.grad (fun x -> T.sum (T.stack [ x; y ])) x in
   check_rune ~eps "stack gradient" (T.ones_like x) grad_x
 
 let test_grad_leaky_relu () =
@@ -361,7 +361,7 @@ let test_grad_selu () =
   (* SELU has specific scale and alpha values *)
   let scale = 1.0507009873554804934193349852946 in
   let alpha = 1.6732632423543772848170429916717 in
-  let neg_grad = scale *. alpha *. exp(-1.0) in
+  let neg_grad = scale *. alpha *. exp (-1.0) in
   let expected = T.create ctx T.float32 [| 2 |] [| neg_grad; scale |] in
   check_rune ~eps:1e-5 "selu gradient" expected grad
 
@@ -378,8 +378,9 @@ let test_grad_dot () =
 
 let test_grad_trace () =
   (* Trace gradient: identity matrix *)
-  let x = T.create ctx T.float32 [| 3; 3 |] 
-    [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
+  let x =
+    T.create ctx T.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+  in
   let grad = T.grad T.trace x in
   let expected = T.eye ctx T.float32 3 in
   check_rune ~eps "trace gradient" expected grad
@@ -702,7 +703,8 @@ let test_grad_zero () =
 let test_grad_nan_propagation () =
   (* NaN propagation in gradients *)
   let x = T.scalar ctx T.float32 1.0 in
-  let grad = T.grad (fun x -> T.div x (T.sub x x)) x in (* x / (x - x) = x / 0 *)
+  let grad = T.grad (fun x -> T.div x (T.sub x x)) x in
+  (* x / (x - x) = x / 0 *)
   let grad_val = scalar_value grad in
   let is_nan = Float.is_nan grad_val || Float.is_infinite grad_val in
   Alcotest.(check bool) "NaN/Inf gradient" true is_nan

@@ -100,7 +100,7 @@ let fft_1d_along_axis ctx input output axis inverse =
       let encoder = Metal.ComputeCommandEncoder.on_buffer command_buffer in
 
       (* Get FFT kernel based on dtype *)
-      let kernel_name = 
+      let kernel_name =
         let dtype_str = Dtype.to_string input.dtype in
         match dtype_str with
         | "complex32" -> "fft_1d_float2"
@@ -110,7 +110,6 @@ let fft_1d_along_axis ctx input output axis inverse =
       let kernel = get_kernel ctx kernel_name in
       let pipeline = Kernels.create_compute_pipeline ctx.device kernel in
       Metal.ComputeCommandEncoder.set_compute_pipeline_state encoder pipeline;
-
 
       (* Set buffers *)
       Metal.ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:0
@@ -208,10 +207,8 @@ let op_fft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t =
         axes;
 
       output
-  | "complex64" ->
-      failwith "op_fft: Complex64 not supported by Metal backend"
-  | _ ->
-      failwith ("op_fft: unsupported dtype " ^ dtype_str)
+  | "complex64" -> failwith "op_fft: Complex64 not supported by Metal backend"
+  | _ -> failwith ("op_fft: unsupported dtype " ^ dtype_str)
 
 (* Inverse FFT operation *)
 let op_ifft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t
@@ -265,10 +262,8 @@ let op_ifft (type b) ctx (input : (Complex.t, b) t) ~axes ~s : (Complex.t, b) t
         axes;
 
       output
-  | "complex64" ->
-      failwith "op_ifft: Complex64 not supported by Metal backend"
-  | _ ->
-      failwith ("op_ifft: unsupported dtype " ^ dtype_str)
+  | "complex64" -> failwith "op_ifft: Complex64 not supported by Metal backend"
+  | _ -> failwith ("op_ifft: unsupported dtype " ^ dtype_str)
 
 (* Real FFT - not yet implemented *)
 let op_rfft ctx _ ~dtype:_ ~axes:_ ~s:_ =

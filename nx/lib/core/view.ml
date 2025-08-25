@@ -202,46 +202,48 @@ let expand view new_shape =
       ()
   else
     match (Symbolic_shape.eval view.shape, Symbolic_shape.eval new_shape) with
-  | Some old_arr, Some new_arr ->
-      if Array.exists (( = ) 0) old_arr then create new_shape
-      else
-        let strides =
-          Array.mapi
-            (fun i ns ->
-              let s = old_arr.(i) in
-              if s = ns then view.strides.(i)
-              else if s = 1 then 0
-              else
-                Error.cannot ~op:"expand" ~what:"expand"
-                  ~from:(Printf.sprintf "dimension %d (size %d)" i s)
-                  ~to_:(Printf.sprintf "size %d" ns)
-                  ~reason:"can only expand singleton dimensions" ())
-            new_arr
-        in
-        let mask =
-          match view.mask with
-          | None -> None
-          | Some m ->
-              Some
-                (Array.mapi
-                   (fun i (b, e) ->
-                     if old_arr.(i) = 1 && new_arr.(i) <> 1 then
-                       if b = 0 && e = 1 then (0, new_arr.(i))
-                       else
-                         Error.invalid ~op:"expand"
-                           ~what:"masked singleton dimension"
-                           ~reason:
-                             (Printf.sprintf
-                                "bounds [%d,%d] incompatible with expansion" b e)
-                           ()
-                     else (b, e))
-                   m)
-        in
-        create ~offset:view.offset ?mask ~strides new_shape
-  | _, _ ->
-      (* At least one shape is symbolic - create view with appropriate
-         strides *)
-      create ~offset:view.offset ?mask:view.mask ~strides:view.strides new_shape
+    | Some old_arr, Some new_arr ->
+        if Array.exists (( = ) 0) old_arr then create new_shape
+        else
+          let strides =
+            Array.mapi
+              (fun i ns ->
+                let s = old_arr.(i) in
+                if s = ns then view.strides.(i)
+                else if s = 1 then 0
+                else
+                  Error.cannot ~op:"expand" ~what:"expand"
+                    ~from:(Printf.sprintf "dimension %d (size %d)" i s)
+                    ~to_:(Printf.sprintf "size %d" ns)
+                    ~reason:"can only expand singleton dimensions" ())
+              new_arr
+          in
+          let mask =
+            match view.mask with
+            | None -> None
+            | Some m ->
+                Some
+                  (Array.mapi
+                     (fun i (b, e) ->
+                       if old_arr.(i) = 1 && new_arr.(i) <> 1 then
+                         if b = 0 && e = 1 then (0, new_arr.(i))
+                         else
+                           Error.invalid ~op:"expand"
+                             ~what:"masked singleton dimension"
+                             ~reason:
+                               (Printf.sprintf
+                                  "bounds [%d,%d] incompatible with expansion" b
+                                  e)
+                             ()
+                       else (b, e))
+                     m)
+          in
+          create ~offset:view.offset ?mask ~strides new_shape
+    | _, _ ->
+        (* At least one shape is symbolic - create view with appropriate
+           strides *)
+        create ~offset:view.offset ?mask:view.mask ~strides:view.strides
+          new_shape
 
 let permute view axes =
   let n = ndim view in

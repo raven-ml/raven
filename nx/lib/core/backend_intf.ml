@@ -329,11 +329,7 @@ module type S = sig
       - Output: Solution x. *)
 
   val op_as_strided :
-    ('a, 'b) t ->
-    Symbolic_shape.t ->
-    int array ->
-    int ->
-    ('a, 'b) t
+    ('a, 'b) t -> Symbolic_shape.t -> int array -> int -> ('a, 'b) t
   (** Create a strided view of the input tensor with the given shape, strides
       (in elements), and offset (in elements). Backends that support arbitrary
       strided views (e.g., native with Bigarray) can implement this as

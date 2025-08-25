@@ -169,8 +169,11 @@ module Make (Backend : Backend_intf.S) = struct
       (* Just check shape is preserved *)
       check (array int) (name ^ " shape") small_shape (get_shape result)
 
-  let test_add backend_name dtype = test_binary_op backend_name "add" Backend.op_add dtype
-  let test_mul backend_name dtype = test_binary_op backend_name "mul" Backend.op_mul dtype
+  let test_add backend_name dtype =
+    test_binary_op backend_name "add" Backend.op_add dtype
+
+  let test_mul backend_name dtype =
+    test_binary_op backend_name "mul" Backend.op_mul dtype
 
   let test_sub backend_name dtype ctx () =
     if not (is_dtype_supported backend_name dtype) then skip ()
@@ -268,9 +271,14 @@ module Make (Backend : Backend_intf.S) = struct
       let result = op_fn a b in
       check (array int) (name ^ " shape") small_shape (get_shape result)
 
-  let test_xor backend_name dtype = test_bitwise_op backend_name "xor" Backend.op_xor dtype
-  let test_or backend_name dtype = test_bitwise_op backend_name "or" Backend.op_or dtype
-  let test_and backend_name dtype = test_bitwise_op backend_name "and" Backend.op_and dtype
+  let test_xor backend_name dtype =
+    test_bitwise_op backend_name "xor" Backend.op_xor dtype
+
+  let test_or backend_name dtype =
+    test_bitwise_op backend_name "or" Backend.op_or dtype
+
+  let test_and backend_name dtype =
+    test_bitwise_op backend_name "and" Backend.op_and dtype
 
   (* Unary operations *)
   let test_neg backend_name dtype ctx () =
@@ -465,8 +473,10 @@ module Make (Backend : Backend_intf.S) = struct
       test_case (dtype_str ^ " max") `Quick (test_max backend_name dtype ctx);
       test_case (dtype_str ^ " mod") `Quick (test_mod backend_name dtype ctx);
       (* Comparison ops *)
-      test_case (dtype_str ^ " cmplt") `Quick (test_cmplt backend_name dtype ctx);
-      test_case (dtype_str ^ " cmpne") `Quick (test_cmpne backend_name dtype ctx);
+      test_case (dtype_str ^ " cmplt") `Quick
+        (test_cmplt backend_name dtype ctx);
+      test_case (dtype_str ^ " cmpne") `Quick
+        (test_cmpne backend_name dtype ctx);
       (* Bitwise ops *)
       test_case (dtype_str ^ " xor") `Quick (test_xor backend_name dtype ctx);
       test_case (dtype_str ^ " or") `Quick (test_or backend_name dtype ctx);
@@ -477,24 +487,42 @@ module Make (Backend : Backend_intf.S) = struct
       test_case (dtype_str ^ " exp2") `Quick (test_exp2 backend_name dtype ctx);
       test_case (dtype_str ^ " sin") `Quick (test_sin backend_name dtype ctx);
       test_case (dtype_str ^ " sqrt") `Quick (test_sqrt backend_name dtype ctx);
-      test_case (dtype_str ^ " recip") `Quick (test_recip backend_name dtype ctx);
+      test_case (dtype_str ^ " recip") `Quick
+        (test_recip backend_name dtype ctx);
       (* Reduction ops *)
-      test_case (dtype_str ^ " reduce_sum") `Quick (test_reduce_sum backend_name dtype ctx);
-      test_case (dtype_str ^ " reduce_max") `Quick (test_reduce_max backend_name dtype ctx);
-      test_case (dtype_str ^ " reduce_prod") `Quick (test_reduce_prod backend_name dtype ctx);
+      test_case
+        (dtype_str ^ " reduce_sum")
+        `Quick
+        (test_reduce_sum backend_name dtype ctx);
+      test_case
+        (dtype_str ^ " reduce_max")
+        `Quick
+        (test_reduce_max backend_name dtype ctx);
+      test_case
+        (dtype_str ^ " reduce_prod")
+        `Quick
+        (test_reduce_prod backend_name dtype ctx);
       (* Movement ops *)
-      test_case (dtype_str ^ " expand") `Quick (test_expand backend_name dtype ctx);
-      test_case (dtype_str ^ " reshape") `Quick (test_reshape backend_name dtype ctx);
-      test_case (dtype_str ^ " permute") `Quick (test_permute backend_name dtype ctx);
+      test_case (dtype_str ^ " expand") `Quick
+        (test_expand backend_name dtype ctx);
+      test_case (dtype_str ^ " reshape") `Quick
+        (test_reshape backend_name dtype ctx);
+      test_case (dtype_str ^ " permute") `Quick
+        (test_permute backend_name dtype ctx);
       test_case (dtype_str ^ " pad") `Quick (test_pad backend_name dtype ctx);
-      test_case (dtype_str ^ " shrink") `Quick (test_shrink backend_name dtype ctx);
+      test_case (dtype_str ^ " shrink") `Quick
+        (test_shrink backend_name dtype ctx);
       test_case (dtype_str ^ " flip") `Quick (test_flip backend_name dtype ctx);
       test_case (dtype_str ^ " cat") `Quick (test_cat backend_name dtype ctx);
       (* Other ops *)
       test_case (dtype_str ^ " cast") `Quick (test_cast backend_name dtype ctx);
-      test_case (dtype_str ^ " contiguous") `Quick (test_contiguous backend_name dtype ctx);
+      test_case
+        (dtype_str ^ " contiguous")
+        `Quick
+        (test_contiguous backend_name dtype ctx);
       test_case (dtype_str ^ " copy") `Quick (test_copy backend_name dtype ctx);
-      test_case (dtype_str ^ " where") `Quick (test_where backend_name dtype ctx);
+      test_case (dtype_str ^ " where") `Quick
+        (test_where backend_name dtype ctx);
     ]
 
   let suite backend_name ctx =

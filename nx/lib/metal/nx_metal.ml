@@ -123,15 +123,19 @@ let op_expand t new_shape =
   let current_shape = Lazy_view.shape t.view in
   let current_rank = Symbolic_shape.rank current_shape in
   let new_rank = Symbolic_shape.rank new_shape in
-  
+
   if current_rank = 0 && new_rank > 0 then
     (* Special case: expanding a scalar to a higher rank *)
     (* First reshape scalar to have the right number of dimensions with size 1 *)
     let ones_shape = Array.make new_rank 1 in
-    let reshaped = { t with view = Lazy_view.reshape (Symbolic_shape.of_ints ones_shape) t.view } in
+    let reshaped =
+      {
+        t with
+        view = Lazy_view.reshape (Symbolic_shape.of_ints ones_shape) t.view;
+      }
+    in
     { reshaped with view = Lazy_view.expand new_shape reshaped.view }
-  else
-    { t with view = Lazy_view.expand new_shape t.view }
+  else { t with view = Lazy_view.expand new_shape t.view }
 
 let op_reshape t new_shape =
   (* Reshape changes the view metadata *)
@@ -292,11 +296,15 @@ let op_triangular_solve ~upper ~transpose ~unit_diag a b =
 
 let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
   (* Metal backend may need to copy for non-trivial strides *)
-  
-  (* First check if this is essentially a contiguous view - in that case we can do zero-copy *)
-  let new_shape_arr = match Symbolic_shape.eval new_shape with
+
+  (* First check if this is essentially a contiguous view - in that case we can
+     do zero-copy *)
+  let new_shape_arr =
+    match Symbolic_shape.eval new_shape with
     | Some arr -> arr
-    | None -> Error.failed ~op:"op_as_strided" ~what:"symbolic shapes not supported" ()
+    | None ->
+        Error.failed ~op:"op_as_strided" ~what:"symbolic shapes not supported"
+          ()
   in
   (* Compute C-contiguous strides for the shape *)
   let compute_strides shape_array =
@@ -313,50 +321,56 @@ let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
       strides
   in
   let expected_strides = compute_strides new_shape_arr in
-  let is_contiguous = 
-    offset_in_elements = 0 && 
-    Array.length new_strides_in_elements = Array.length expected_strides &&
-    Array.for_all2 (=) new_strides_in_elements expected_strides
+  let is_contiguous =
+    offset_in_elements = 0
+    && Array.length new_strides_in_elements = Array.length expected_strides
+    && Array.for_all2 ( = ) new_strides_in_elements expected_strides
   in
-  
+
   if is_contiguous then
     (* Zero-copy case: just update the view *)
-    let new_view = Lazy_view.create_strided new_shape ~strides:new_strides_in_elements ~offset:offset_in_elements in
+    let new_view =
+      Lazy_view.create_strided new_shape ~strides:new_strides_in_elements
+        ~offset:offset_in_elements
+    in
     { t with view = new_view }
   else
     (* Non-contiguous case: need to materialize *)
     (* Validate bounds first *)
     let buffer_size = t.buffer.size_bytes / Internal.sizeof_dtype t.dtype in
     let max_element_accessed = ref offset_in_elements in
-    Array.iteri (fun i dim ->
-      if dim > 0 then
-        max_element_accessed := max !max_element_accessed 
-          (offset_in_elements + (dim - 1) * new_strides_in_elements.(i))
-    ) new_shape_arr;
-    
+    Array.iteri
+      (fun i dim ->
+        if dim > 0 then
+          max_element_accessed :=
+            max !max_element_accessed
+              (offset_in_elements + ((dim - 1) * new_strides_in_elements.(i))))
+      new_shape_arr;
+
     if !max_element_accessed >= buffer_size then
-      Error.failed ~op:"op_as_strided" ~what:"view would access out-of-bounds memory" ();
-    
+      Error.failed ~op:"op_as_strided"
+        ~what:"view would access out-of-bounds memory" ();
+
     (* Create new contiguous buffer and copy strided data *)
     let numel = Array.fold_left ( * ) 1 new_shape_arr in
     let result = op_buffer t.context t.dtype numel in
-    
+
     (* Copy elements according to the strided view *)
     (* This requires CPU-side copying for now *)
     let src_data = data t in
     let dst_data = data result in
-    
+
     let rec copy_recursive indices dim_idx flat_idx =
-      if dim_idx = Array.length new_shape_arr then
+      if dim_idx = Array.length new_shape_arr then (
         (* Compute source offset from indices and strides *)
         let src_offset = ref offset_in_elements in
         for i = 0 to Array.length indices - 1 do
-          src_offset := !src_offset + indices.(i) * new_strides_in_elements.(i)
+          src_offset := !src_offset + (indices.(i) * new_strides_in_elements.(i))
         done;
         (* Copy the element *)
         let value = Bigarray_ext.Array1.get src_data !src_offset in
         Bigarray_ext.Array1.set dst_data flat_idx value;
-        flat_idx + 1
+        flat_idx + 1)
       else
         let dim_size = new_shape_arr.(dim_idx) in
         let next_flat_idx = ref flat_idx in
@@ -366,13 +380,12 @@ let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
         done;
         !next_flat_idx
     in
-    
-    if numel > 0 then begin
-      let indices = Array.make (Array.length new_shape_arr) 0 in
-      let _ = copy_recursive indices 0 0 in
-      ()
-    end;
-    
+
+    (if numel > 0 then
+       let indices = Array.make (Array.length new_shape_arr) 0 in
+       let _ = copy_recursive indices 0 0 in
+       ());
+
     (* Update result's view to match the requested shape *)
     let result_view = Lazy_view.reshape new_shape result.view in
     { result with view = result_view }

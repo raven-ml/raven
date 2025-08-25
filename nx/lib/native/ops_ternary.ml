@@ -1185,17 +1185,27 @@ let kernel_where_bfloat16 (cond : (int, uint8_elt) t)
       let y1 = Array1.unsafe_get y_buf (y_off + k1) in
       let y2 = Array1.unsafe_get y_buf (y_off + k2) in
       let y3 = Array1.unsafe_get y_buf (y_off + k3) in
-      Array1.unsafe_set out_buf (offset out + k0) (if cond0 <> 0 then x0 else y0);
-      Array1.unsafe_set out_buf (offset out + k1) (if cond1 <> 0 then x1 else y1);
-      Array1.unsafe_set out_buf (offset out + k2) (if cond2 <> 0 then x2 else y2);
-      Array1.unsafe_set out_buf (offset out + k3) (if cond3 <> 0 then x3 else y3);
+      Array1.unsafe_set out_buf
+        (offset out + k0)
+        (if cond0 <> 0 then x0 else y0);
+      Array1.unsafe_set out_buf
+        (offset out + k1)
+        (if cond1 <> 0 then x1 else y1);
+      Array1.unsafe_set out_buf
+        (offset out + k2)
+        (if cond2 <> 0 then x2 else y2);
+      Array1.unsafe_set out_buf
+        (offset out + k3)
+        (if cond3 <> 0 then x3 else y3);
       k := !k + 4
     done;
     while !k < end_idx do
       let cond_val = Array1.unsafe_get cond_buf (cond_off + !k) in
       let x_val = Array1.unsafe_get x_buf (x_off + !k) in
       let y_val = Array1.unsafe_get y_buf (y_off + !k) in
-      Array1.unsafe_set out_buf (offset out + !k) (if cond_val <> 0 then x_val else y_val);
+      Array1.unsafe_set out_buf
+        (offset out + !k)
+        (if cond_val <> 0 then x_val else y_val);
       incr k
     done)
   else
@@ -1222,9 +1232,8 @@ let kernel_where_bfloat16 (cond : (int, uint8_elt) t)
         (if cond_val <> 0 then x_val else y_val)
     done
 
-let kernel_where_bool (cond : (int, uint8_elt) t)
-    (x : (bool, bool_elt) t) (y : (bool, bool_elt) t)
-    (out : (bool, bool_elt) t) start_idx end_idx =
+let kernel_where_bool (cond : (int, uint8_elt) t) (x : (bool, bool_elt) t)
+    (y : (bool, bool_elt) t) (out : (bool, bool_elt) t) start_idx end_idx =
   let cond_buf = buffer cond in
   let x_buf = buffer x in
   let y_buf = buffer y in
@@ -1265,17 +1274,27 @@ let kernel_where_bool (cond : (int, uint8_elt) t)
       let y1 = Array1.unsafe_get y_buf (y_off + k1) in
       let y2 = Array1.unsafe_get y_buf (y_off + k2) in
       let y3 = Array1.unsafe_get y_buf (y_off + k3) in
-      Array1.unsafe_set out_buf (offset out + k0) (if cond0 <> 0 then x0 else y0);
-      Array1.unsafe_set out_buf (offset out + k1) (if cond1 <> 0 then x1 else y1);
-      Array1.unsafe_set out_buf (offset out + k2) (if cond2 <> 0 then x2 else y2);
-      Array1.unsafe_set out_buf (offset out + k3) (if cond3 <> 0 then x3 else y3);
+      Array1.unsafe_set out_buf
+        (offset out + k0)
+        (if cond0 <> 0 then x0 else y0);
+      Array1.unsafe_set out_buf
+        (offset out + k1)
+        (if cond1 <> 0 then x1 else y1);
+      Array1.unsafe_set out_buf
+        (offset out + k2)
+        (if cond2 <> 0 then x2 else y2);
+      Array1.unsafe_set out_buf
+        (offset out + k3)
+        (if cond3 <> 0 then x3 else y3);
       k := !k + 4
     done;
     while !k < end_idx do
       let cond_val = Array1.unsafe_get cond_buf (cond_off + !k) in
       let x_val = Array1.unsafe_get x_buf (x_off + !k) in
       let y_val = Array1.unsafe_get y_buf (y_off + !k) in
-      Array1.unsafe_set out_buf (offset out + !k) (if cond_val <> 0 then x_val else y_val);
+      Array1.unsafe_set out_buf
+        (offset out + !k)
+        (if cond_val <> 0 then x_val else y_val);
       incr k
     done)
   else
@@ -1302,9 +1321,8 @@ let kernel_where_bool (cond : (int, uint8_elt) t)
         (if cond_val <> 0 then x_val else y_val)
     done
 
-let kernel_where_int4 (cond : (int, uint8_elt) t)
-    (x : (int, int4_elt) t) (y : (int, int4_elt) t)
-    (out : (int, int4_elt) t) start_idx end_idx =
+let kernel_where_int4 (cond : (int, uint8_elt) t) (x : (int, int4_elt) t)
+    (y : (int, int4_elt) t) (out : (int, int4_elt) t) start_idx end_idx =
   let cond_buf = buffer cond in
   let x_buf = buffer x in
   let y_buf = buffer y in
@@ -1345,17 +1363,27 @@ let kernel_where_int4 (cond : (int, uint8_elt) t)
       let y1 = Array1.unsafe_get y_buf (y_off + k1) in
       let y2 = Array1.unsafe_get y_buf (y_off + k2) in
       let y3 = Array1.unsafe_get y_buf (y_off + k3) in
-      Array1.unsafe_set out_buf (offset out + k0) (if cond0 <> 0 then x0 else y0);
-      Array1.unsafe_set out_buf (offset out + k1) (if cond1 <> 0 then x1 else y1);
-      Array1.unsafe_set out_buf (offset out + k2) (if cond2 <> 0 then x2 else y2);
-      Array1.unsafe_set out_buf (offset out + k3) (if cond3 <> 0 then x3 else y3);
+      Array1.unsafe_set out_buf
+        (offset out + k0)
+        (if cond0 <> 0 then x0 else y0);
+      Array1.unsafe_set out_buf
+        (offset out + k1)
+        (if cond1 <> 0 then x1 else y1);
+      Array1.unsafe_set out_buf
+        (offset out + k2)
+        (if cond2 <> 0 then x2 else y2);
+      Array1.unsafe_set out_buf
+        (offset out + k3)
+        (if cond3 <> 0 then x3 else y3);
       k := !k + 4
     done;
     while !k < end_idx do
       let cond_val = Array1.unsafe_get cond_buf (cond_off + !k) in
       let x_val = Array1.unsafe_get x_buf (x_off + !k) in
       let y_val = Array1.unsafe_get y_buf (y_off + !k) in
-      Array1.unsafe_set out_buf (offset out + !k) (if cond_val <> 0 then x_val else y_val);
+      Array1.unsafe_set out_buf
+        (offset out + !k)
+        (if cond_val <> 0 then x_val else y_val);
       incr k
     done)
   else
@@ -1382,9 +1410,8 @@ let kernel_where_int4 (cond : (int, uint8_elt) t)
         (if cond_val <> 0 then x_val else y_val)
     done
 
-let kernel_where_uint4 (cond : (int, uint8_elt) t)
-    (x : (int, uint4_elt) t) (y : (int, uint4_elt) t)
-    (out : (int, uint4_elt) t) start_idx end_idx =
+let kernel_where_uint4 (cond : (int, uint8_elt) t) (x : (int, uint4_elt) t)
+    (y : (int, uint4_elt) t) (out : (int, uint4_elt) t) start_idx end_idx =
   let cond_buf = buffer cond in
   let x_buf = buffer x in
   let y_buf = buffer y in
@@ -1425,17 +1452,27 @@ let kernel_where_uint4 (cond : (int, uint8_elt) t)
       let y1 = Array1.unsafe_get y_buf (y_off + k1) in
       let y2 = Array1.unsafe_get y_buf (y_off + k2) in
       let y3 = Array1.unsafe_get y_buf (y_off + k3) in
-      Array1.unsafe_set out_buf (offset out + k0) (if cond0 <> 0 then x0 else y0);
-      Array1.unsafe_set out_buf (offset out + k1) (if cond1 <> 0 then x1 else y1);
-      Array1.unsafe_set out_buf (offset out + k2) (if cond2 <> 0 then x2 else y2);
-      Array1.unsafe_set out_buf (offset out + k3) (if cond3 <> 0 then x3 else y3);
+      Array1.unsafe_set out_buf
+        (offset out + k0)
+        (if cond0 <> 0 then x0 else y0);
+      Array1.unsafe_set out_buf
+        (offset out + k1)
+        (if cond1 <> 0 then x1 else y1);
+      Array1.unsafe_set out_buf
+        (offset out + k2)
+        (if cond2 <> 0 then x2 else y2);
+      Array1.unsafe_set out_buf
+        (offset out + k3)
+        (if cond3 <> 0 then x3 else y3);
       k := !k + 4
     done;
     while !k < end_idx do
       let cond_val = Array1.unsafe_get cond_buf (cond_off + !k) in
       let x_val = Array1.unsafe_get x_buf (x_off + !k) in
       let y_val = Array1.unsafe_get y_buf (y_off + !k) in
-      Array1.unsafe_set out_buf (offset out + !k) (if cond_val <> 0 then x_val else y_val);
+      Array1.unsafe_set out_buf
+        (offset out + !k)
+        (if cond_val <> 0 then x_val else y_val);
       incr k
     done)
   else
@@ -1505,17 +1542,27 @@ let kernel_where_float8_e4m3 (cond : (int, uint8_elt) t)
       let y1 = Array1.unsafe_get y_buf (y_off + k1) in
       let y2 = Array1.unsafe_get y_buf (y_off + k2) in
       let y3 = Array1.unsafe_get y_buf (y_off + k3) in
-      Array1.unsafe_set out_buf (offset out + k0) (if cond0 <> 0 then x0 else y0);
-      Array1.unsafe_set out_buf (offset out + k1) (if cond1 <> 0 then x1 else y1);
-      Array1.unsafe_set out_buf (offset out + k2) (if cond2 <> 0 then x2 else y2);
-      Array1.unsafe_set out_buf (offset out + k3) (if cond3 <> 0 then x3 else y3);
+      Array1.unsafe_set out_buf
+        (offset out + k0)
+        (if cond0 <> 0 then x0 else y0);
+      Array1.unsafe_set out_buf
+        (offset out + k1)
+        (if cond1 <> 0 then x1 else y1);
+      Array1.unsafe_set out_buf
+        (offset out + k2)
+        (if cond2 <> 0 then x2 else y2);
+      Array1.unsafe_set out_buf
+        (offset out + k3)
+        (if cond3 <> 0 then x3 else y3);
       k := !k + 4
     done;
     while !k < end_idx do
       let cond_val = Array1.unsafe_get cond_buf (cond_off + !k) in
       let x_val = Array1.unsafe_get x_buf (x_off + !k) in
       let y_val = Array1.unsafe_get y_buf (y_off + !k) in
-      Array1.unsafe_set out_buf (offset out + !k) (if cond_val <> 0 then x_val else y_val);
+      Array1.unsafe_set out_buf
+        (offset out + !k)
+        (if cond_val <> 0 then x_val else y_val);
       incr k
     done)
   else
@@ -1585,17 +1632,27 @@ let kernel_where_float8_e5m2 (cond : (int, uint8_elt) t)
       let y1 = Array1.unsafe_get y_buf (y_off + k1) in
       let y2 = Array1.unsafe_get y_buf (y_off + k2) in
       let y3 = Array1.unsafe_get y_buf (y_off + k3) in
-      Array1.unsafe_set out_buf (offset out + k0) (if cond0 <> 0 then x0 else y0);
-      Array1.unsafe_set out_buf (offset out + k1) (if cond1 <> 0 then x1 else y1);
-      Array1.unsafe_set out_buf (offset out + k2) (if cond2 <> 0 then x2 else y2);
-      Array1.unsafe_set out_buf (offset out + k3) (if cond3 <> 0 then x3 else y3);
+      Array1.unsafe_set out_buf
+        (offset out + k0)
+        (if cond0 <> 0 then x0 else y0);
+      Array1.unsafe_set out_buf
+        (offset out + k1)
+        (if cond1 <> 0 then x1 else y1);
+      Array1.unsafe_set out_buf
+        (offset out + k2)
+        (if cond2 <> 0 then x2 else y2);
+      Array1.unsafe_set out_buf
+        (offset out + k3)
+        (if cond3 <> 0 then x3 else y3);
       k := !k + 4
     done;
     while !k < end_idx do
       let cond_val = Array1.unsafe_get cond_buf (cond_off + !k) in
       let x_val = Array1.unsafe_get x_buf (x_off + !k) in
       let y_val = Array1.unsafe_get y_buf (y_off + !k) in
-      Array1.unsafe_set out_buf (offset out + !k) (if cond_val <> 0 then x_val else y_val);
+      Array1.unsafe_set out_buf
+        (offset out + !k)
+        (if cond_val <> 0 then x_val else y_val);
       incr k
     done)
   else
@@ -1665,17 +1722,27 @@ let kernel_where_complex16 (cond : (int, uint8_elt) t)
       let y1 = Array1.unsafe_get y_buf (y_off + k1) in
       let y2 = Array1.unsafe_get y_buf (y_off + k2) in
       let y3 = Array1.unsafe_get y_buf (y_off + k3) in
-      Array1.unsafe_set out_buf (offset out + k0) (if cond0 <> 0 then x0 else y0);
-      Array1.unsafe_set out_buf (offset out + k1) (if cond1 <> 0 then x1 else y1);
-      Array1.unsafe_set out_buf (offset out + k2) (if cond2 <> 0 then x2 else y2);
-      Array1.unsafe_set out_buf (offset out + k3) (if cond3 <> 0 then x3 else y3);
+      Array1.unsafe_set out_buf
+        (offset out + k0)
+        (if cond0 <> 0 then x0 else y0);
+      Array1.unsafe_set out_buf
+        (offset out + k1)
+        (if cond1 <> 0 then x1 else y1);
+      Array1.unsafe_set out_buf
+        (offset out + k2)
+        (if cond2 <> 0 then x2 else y2);
+      Array1.unsafe_set out_buf
+        (offset out + k3)
+        (if cond3 <> 0 then x3 else y3);
       k := !k + 4
     done;
     while !k < end_idx do
       let cond_val = Array1.unsafe_get cond_buf (cond_off + !k) in
       let x_val = Array1.unsafe_get x_buf (x_off + !k) in
       let y_val = Array1.unsafe_get y_buf (y_off + !k) in
-      Array1.unsafe_set out_buf (offset out + !k) (if cond_val <> 0 then x_val else y_val);
+      Array1.unsafe_set out_buf
+        (offset out + !k)
+        (if cond_val <> 0 then x_val else y_val);
       incr k
     done)
   else
@@ -1702,9 +1769,8 @@ let kernel_where_complex16 (cond : (int, uint8_elt) t)
         (if cond_val <> 0 then x_val else y_val)
     done
 
-let kernel_where_qint8 (cond : (int, uint8_elt) t)
-    (x : (int, qint8_elt) t) (y : (int, qint8_elt) t)
-    (out : (int, qint8_elt) t) start_idx end_idx =
+let kernel_where_qint8 (cond : (int, uint8_elt) t) (x : (int, qint8_elt) t)
+    (y : (int, qint8_elt) t) (out : (int, qint8_elt) t) start_idx end_idx =
   let cond_buf = buffer cond in
   let x_buf = buffer x in
   let y_buf = buffer y in
@@ -1745,17 +1811,27 @@ let kernel_where_qint8 (cond : (int, uint8_elt) t)
       let y1 = Array1.unsafe_get y_buf (y_off + k1) in
       let y2 = Array1.unsafe_get y_buf (y_off + k2) in
       let y3 = Array1.unsafe_get y_buf (y_off + k3) in
-      Array1.unsafe_set out_buf (offset out + k0) (if cond0 <> 0 then x0 else y0);
-      Array1.unsafe_set out_buf (offset out + k1) (if cond1 <> 0 then x1 else y1);
-      Array1.unsafe_set out_buf (offset out + k2) (if cond2 <> 0 then x2 else y2);
-      Array1.unsafe_set out_buf (offset out + k3) (if cond3 <> 0 then x3 else y3);
+      Array1.unsafe_set out_buf
+        (offset out + k0)
+        (if cond0 <> 0 then x0 else y0);
+      Array1.unsafe_set out_buf
+        (offset out + k1)
+        (if cond1 <> 0 then x1 else y1);
+      Array1.unsafe_set out_buf
+        (offset out + k2)
+        (if cond2 <> 0 then x2 else y2);
+      Array1.unsafe_set out_buf
+        (offset out + k3)
+        (if cond3 <> 0 then x3 else y3);
       k := !k + 4
     done;
     while !k < end_idx do
       let cond_val = Array1.unsafe_get cond_buf (cond_off + !k) in
       let x_val = Array1.unsafe_get x_buf (x_off + !k) in
       let y_val = Array1.unsafe_get y_buf (y_off + !k) in
-      Array1.unsafe_set out_buf (offset out + !k) (if cond_val <> 0 then x_val else y_val);
+      Array1.unsafe_set out_buf
+        (offset out + !k)
+        (if cond_val <> 0 then x_val else y_val);
       incr k
     done)
   else
@@ -1782,9 +1858,8 @@ let kernel_where_qint8 (cond : (int, uint8_elt) t)
         (if cond_val <> 0 then x_val else y_val)
     done
 
-let kernel_where_quint8 (cond : (int, uint8_elt) t)
-    (x : (int, quint8_elt) t) (y : (int, quint8_elt) t)
-    (out : (int, quint8_elt) t) start_idx end_idx =
+let kernel_where_quint8 (cond : (int, uint8_elt) t) (x : (int, quint8_elt) t)
+    (y : (int, quint8_elt) t) (out : (int, quint8_elt) t) start_idx end_idx =
   let cond_buf = buffer cond in
   let x_buf = buffer x in
   let y_buf = buffer y in
@@ -1825,17 +1900,27 @@ let kernel_where_quint8 (cond : (int, uint8_elt) t)
       let y1 = Array1.unsafe_get y_buf (y_off + k1) in
       let y2 = Array1.unsafe_get y_buf (y_off + k2) in
       let y3 = Array1.unsafe_get y_buf (y_off + k3) in
-      Array1.unsafe_set out_buf (offset out + k0) (if cond0 <> 0 then x0 else y0);
-      Array1.unsafe_set out_buf (offset out + k1) (if cond1 <> 0 then x1 else y1);
-      Array1.unsafe_set out_buf (offset out + k2) (if cond2 <> 0 then x2 else y2);
-      Array1.unsafe_set out_buf (offset out + k3) (if cond3 <> 0 then x3 else y3);
+      Array1.unsafe_set out_buf
+        (offset out + k0)
+        (if cond0 <> 0 then x0 else y0);
+      Array1.unsafe_set out_buf
+        (offset out + k1)
+        (if cond1 <> 0 then x1 else y1);
+      Array1.unsafe_set out_buf
+        (offset out + k2)
+        (if cond2 <> 0 then x2 else y2);
+      Array1.unsafe_set out_buf
+        (offset out + k3)
+        (if cond3 <> 0 then x3 else y3);
       k := !k + 4
     done;
     while !k < end_idx do
       let cond_val = Array1.unsafe_get cond_buf (cond_off + !k) in
       let x_val = Array1.unsafe_get x_buf (x_off + !k) in
       let y_val = Array1.unsafe_get y_buf (y_off + !k) in
-      Array1.unsafe_set out_buf (offset out + !k) (if cond_val <> 0 then x_val else y_val);
+      Array1.unsafe_set out_buf
+        (offset out + !k)
+        (if cond_val <> 0 then x_val else y_val);
       incr k
     done)
   else
@@ -1884,13 +1969,18 @@ let kernel_where (type a b) (cond : (int, uint8_elt) t) (if_true : (a, b) t)
       kernel_where_complex32 cond if_true if_false out start_idx end_idx
   | Complex64 ->
       kernel_where_complex64 cond if_true if_false out start_idx end_idx
-  | Bfloat16 -> kernel_where_bfloat16 cond if_true if_false out start_idx end_idx
+  | Bfloat16 ->
+      kernel_where_bfloat16 cond if_true if_false out start_idx end_idx
   | Bool -> kernel_where_bool cond if_true if_false out start_idx end_idx
   | Int4_signed -> kernel_where_int4 cond if_true if_false out start_idx end_idx
-  | Int4_unsigned -> kernel_where_uint4 cond if_true if_false out start_idx end_idx
-  | Float8_e4m3 -> kernel_where_float8_e4m3 cond if_true if_false out start_idx end_idx
-  | Float8_e5m2 -> kernel_where_float8_e5m2 cond if_true if_false out start_idx end_idx
-  | Complex16 -> kernel_where_complex16 cond if_true if_false out start_idx end_idx
+  | Int4_unsigned ->
+      kernel_where_uint4 cond if_true if_false out start_idx end_idx
+  | Float8_e4m3 ->
+      kernel_where_float8_e4m3 cond if_true if_false out start_idx end_idx
+  | Float8_e5m2 ->
+      kernel_where_float8_e5m2 cond if_true if_false out start_idx end_idx
+  | Complex16 ->
+      kernel_where_complex16 cond if_true if_false out start_idx end_idx
   | Qint8 -> kernel_where_qint8 cond if_true if_false out start_idx end_idx
   | Quint8 -> kernel_where_quint8 cond if_true if_false out start_idx end_idx
   | _ -> invalid_arg "kernel_where: unsupported type"

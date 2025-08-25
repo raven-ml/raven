@@ -608,19 +608,26 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
     | E_as_strided { t_in = t_in_val; new_shape; new_strides; offset } ->
         Some
           (fun k ->
-            let result_val = op_as_strided t_in_val 
-              (Nx_core.Symbolic_shape.of_ints new_shape) new_strides offset in
+            let result_val =
+              op_as_strided t_in_val
+                (Nx_core.Symbolic_shape.of_ints new_shape)
+                new_strides offset
+            in
             let forward_val = continue k result_val in
             Debug.with_context "∇as_strided" (fun () ->
                 let _twg_in = get_or_init_twg t_in_val in
                 let twg_res = get_or_init_twg result_val in
                 let _d_loss_d_result = grad_of twg_res in
-                
+
                 (* For as_strided, gradients need to be accumulated back to the original
                    tensor following the strided access pattern. For now, we'll raise an
                    error for non-contiguous strides during autodiff. *)
                 (* TODO: Implement proper gradient accumulation for strided views *)
-                let () = failwith "as_strided gradient not yet implemented - use contiguous tensors in autodiff" in
+                let () =
+                  failwith
+                    "as_strided gradient not yet implemented - use contiguous \
+                     tensors in autodiff"
+                in
                 ());
             forward_val)
     | E_flip { t_in = t_in_val; dims_to_flip } ->
@@ -1488,8 +1495,11 @@ let make_forward_handler primal_to_dual_map =
     | E_as_strided { t_in; new_shape; new_strides; offset } ->
         Some
           (fun k ->
-            let result_val = op_as_strided t_in 
-              (Nx_core.Symbolic_shape.of_ints new_shape) new_strides offset in
+            let result_val =
+              op_as_strided t_in
+                (Nx_core.Symbolic_shape.of_ints new_shape)
+                new_strides offset
+            in
             let forward_val = continue k result_val in
             (* For JVP, as_strided applies the same transformation to the tangent *)
             (* TODO: This needs proper implementation for strided tangent propagation *)

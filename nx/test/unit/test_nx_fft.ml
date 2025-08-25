@@ -325,11 +325,10 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     check_t "rfft ortho" shape signal irfft_ortho
 
   let test_rfft_edge_cases ctx () =
-    (* Empty - NumPy raises an error for empty arrays, so we skip this test
-    let empty = Nx.empty ctx Nx.float64 [| 0 |] in
-    let rfft_empty = Nx.rfft empty in
-    Alcotest.(check (array int)) "rfft empty" [| 1 |] (Nx.shape rfft_empty);
-    *)
+    (* Empty - NumPy raises an error for empty arrays, so we skip this test let
+       empty = Nx.empty ctx Nx.float64 [| 0 |] in let rfft_empty = Nx.rfft empty
+       in Alcotest.(check (array int)) "rfft empty" [| 1 |] (Nx.shape
+       rfft_empty); *)
 
     (* Size 1 *)
     let shape = [| 1 |] in
