@@ -166,6 +166,14 @@ val mae : ?reduction:reduction -> unit -> ('layout, 'dev) t
 
     MAE = mean(|predictions - targets|) *)
 
+val loss : unit -> ('layout, 'dev) t
+(** [loss ()] creates a loss metric that tracks the running average of loss
+    values.
+
+    This metric is designed to track training/validation loss alongside other
+    metrics. The loss value should be passed via the weights parameter in
+    update. *)
+
 val mape : ?eps:float -> unit -> ('layout, 'dev) t
 (** [mape ?eps ()] creates a Mean Absolute Percentage Error metric.
 
@@ -359,6 +367,17 @@ module Collection : sig
     unit
   (** [update collection ~predictions ~targets ?weights ()] updates all metrics.
   *)
+
+  val update_with_loss :
+    ('layout, 'dev) t ->
+    loss:('layout, 'dev) tensor ->
+    predictions:('layout, 'dev) tensor ->
+    targets:('layout, 'dev) tensor ->
+    unit ->
+    unit
+  (** [update_with_loss collection ~loss ~predictions ~targets ()] updates all
+      metrics including loss tracking. The loss value is automatically passed to
+      the loss metric if present in the collection. *)
 
   val compute : ('layout, 'dev) t -> (string * ('layout, 'dev) tensor) list
   (** [compute collection] computes all metric values. *)

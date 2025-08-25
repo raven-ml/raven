@@ -17,11 +17,10 @@ let model =
       Layer.linear ~in_features:128 ~out_features:10 ();
     ]
 
-let metrics = 
-  Metrics.Collection.create [
-    ("loss", Metrics.mae ());  (* Using MAE as a placeholder for loss tracking *)
-    ("accuracy", Metrics.accuracy ())
-  ]
+let metrics =
+  Metrics.Collection.create
+    [ ("loss", Metrics.loss ()); ("accuracy", Metrics.accuracy ()) ]
+
 let device = Rune.c
 
 let train () =
@@ -71,8 +70,7 @@ let train () =
   (* Initialize model with dummy input to get params *)
   Printf.printf "Initializing model...\n%!";
   let start = Unix.gettimeofday () in
-  let dummy_input = Rune.zeros device Rune.float32 [| 1; 1; 28; 28 |] in
-  let params = Kaun.init model ~rngs dummy_input in
+  let params = Kaun.init model ~rngs ~device ~dtype:Rune.float32 in
   let optimizer = Optimizer.adam ~lr:0.001 () in
   let opt_state = ref (optimizer.init params) in
   Printf.printf "Model initialized in %.2fs\n%!" (Unix.gettimeofday () -. start);
@@ -139,7 +137,7 @@ let train () =
     (* Print training metrics *)
     let train_metrics = Metrics.Collection.compute metrics in
     List.iter
-      (fun (name, value) -> 
+      (fun (name, value) ->
         let scalar_value = Rune.unsafe_get [] value in
         Printf.printf "  %s: %.4f\n" name scalar_value)
       train_metrics;
@@ -160,7 +158,7 @@ let train () =
     (* Print test metrics *)
     Printf.printf "  Test: ";
     List.iter
-      (fun (name, value) -> 
+      (fun (name, value) ->
         let scalar_value = Rune.unsafe_get [] value in
         Printf.printf "%s=%.4f " name scalar_value)
       (Metrics.Collection.compute metrics);

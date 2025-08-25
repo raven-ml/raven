@@ -25,7 +25,7 @@ let train_xor () =
   let y = Rune.create device Rune.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
   (* Initialize model parameters *)
-  let params = Kaun.init model ~rngs x in
+  let params = Kaun.init model ~rngs ~device ~dtype:Rune.float32 in
 
   (* Create optimizer - using new Optax-style API *)
   let optimizer = Optimizer.adam ~lr:0.1 () in

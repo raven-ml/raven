@@ -4,14 +4,16 @@ let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
   let kh, kw = kernel_size in
   {
     init =
-      (fun (type l d) ~rngs (x : (l, d) tensor) ->
+      (fun (type l d)
+        ~rngs
+        ~device:(dev : d Rune.device)
+        ~(dtype : (float, l) Rune.dtype)
+      ->
         Rune.debug_with_context
           (Printf.sprintf "conv2d_%dx%d_%dx%d_init" in_channels out_channels kh
              kw) (fun () ->
             let rngs_split = Rune.Rng.split rngs in
             let rng1 = rngs_split.(0) in
-            let dev = Rune.device x in
-            let dtype = Rune.dtype x in
             let fan_in = in_channels * kh * kw in
             let fan_out = out_channels * kh * kw in
             let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
@@ -58,7 +60,7 @@ let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
 let linear ~in_features ~out_features ?weight_init ?bias_init () =
   {
     init =
-      (fun (type l d) ~rngs (x : (l, d) tensor) ->
+      (fun ~rngs ~device ~dtype ->
         Rune.debug_with_context
           (Printf.sprintf "linear_%dx%d_init" in_features out_features)
           (fun () ->
@@ -77,16 +79,14 @@ let linear ~in_features ~out_features ?weight_init ?bias_init () =
             let rngs_split = Rune.Rng.split rngs in
             let rng1 = rngs_split.(0) in
             let rng2 = rngs_split.(1) in
-            let dev = Rune.device x in
-            let dtype = Rune.dtype x in
 
             let w =
               weight_init_f (Rune.Rng.to_int rng1)
                 [| in_features; out_features |]
-                dev dtype
+                device dtype
             in
             let b =
-              bias_init_f (Rune.Rng.to_int rng2) [| out_features |] dev dtype
+              bias_init_f (Rune.Rng.to_int rng2) [| out_features |] device dtype
             in
             Ptree.record_of [ ("weight", Tensor w); ("bias", Tensor b) ]));
     apply =
@@ -117,7 +117,7 @@ let linear ~in_features ~out_features ?weight_init ?bias_init () =
 
 let dropout ~rate () =
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     (* No params needed *)
     apply =
       (fun _params ~training ?rngs x ->
@@ -144,15 +144,13 @@ let dropout ~rate () =
 let batch_norm ~num_features () =
   {
     init =
-      (fun ~rngs x ->
+      (fun ~rngs ~device ~dtype ->
         Rune.debug_with_context
           (Printf.sprintf "batch_norm_%d_init" num_features) (fun () ->
             let _rngs_split = Rune.Rng.split rngs in
-            let dev = Rune.device x in
-            let dtype = Rune.dtype x in
             (* Initialize scale (gamma) to 1 and bias (beta) to 0 *)
-            let scale = Rune.ones dev dtype [| num_features |] in
-            let bias = Rune.zeros dev dtype [| num_features |] in
+            let scale = Rune.ones device dtype [| num_features |] in
+            let bias = Rune.zeros device dtype [| num_features |] in
             (* We don't track running stats in this simple implementation *)
             Ptree.record_of [ ("scale", Tensor scale); ("bias", Tensor bias) ]));
     apply =
@@ -208,7 +206,7 @@ let batch_norm ~num_features () =
 let max_pool2d ~kernel_size ?stride () =
   let stride = match stride with Some s -> s | None -> kernel_size in
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply =
       (fun _params ~training:_ ?rngs:_ x ->
         let pooled, _ = Rune.max_pool2d x ~kernel_size ~stride in
@@ -218,7 +216,7 @@ let max_pool2d ~kernel_size ?stride () =
 let avg_pool2d ~kernel_size ?stride () =
   let stride = match stride with Some s -> s | None -> kernel_size in
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply =
       (fun _params ~training:_ ?rngs:_ x ->
         Rune.avg_pool2d x ~kernel_size ~stride);
@@ -226,7 +224,7 @@ let avg_pool2d ~kernel_size ?stride () =
 
 let flatten () =
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply =
       (fun _params ~training:_ ?rngs:_ x ->
         let shape = Rune.shape x in
@@ -241,38 +239,37 @@ let flatten () =
 
 let relu () =
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply = (fun _params ~training:_ ?rngs:_ x -> Rune.relu x);
   }
 
 let sigmoid () =
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply = (fun _params ~training:_ ?rngs:_ x -> Rune.sigmoid x);
   }
 
 let tanh () =
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply = (fun _params ~training:_ ?rngs:_ x -> Rune.tanh x);
   }
 
 let sequential models =
   {
     init =
-      (fun ~rngs x ->
-        let rec init_layers models x acc rngs_current layer_idx =
+      (fun ~rngs ~device ~dtype ->
+        let rec init_layers models acc rngs_current =
           match models with
           | [] -> Ptree.List (List.rev acc)
           | m :: rest ->
               let rngs_split = Rune.Rng.split rngs_current in
               let rngs_layer = rngs_split.(0) in
               let rngs_rest = rngs_split.(1) in
-              let params = m.init ~rngs:rngs_layer x in
-              let x' = m.apply params ~training:false x in
-              init_layers rest x' (params :: acc) rngs_rest (layer_idx + 1)
+              let params = m.init ~rngs:rngs_layer ~device ~dtype in
+              init_layers rest (params :: acc) rngs_rest
         in
-        init_layers models x [] rngs 1);
+        init_layers models [] rngs);
     apply =
       (fun params ~training ?rngs:_ x ->
         match params with
@@ -292,16 +289,14 @@ let sequential models =
 let einsum ~einsum_str ~shape ?kernel_init () =
   {
     init =
-      (fun (type l d) ~rngs (_x : (l, d) tensor) ->
+      (fun ~rngs ~device ~dtype ->
         let kernel_init_f =
           match kernel_init with
           | Some init -> init.Initializers.f
           | None -> (Initializers.glorot_uniform ()).f
         in
-        let dev = Rune.device _x in
-        let dtype = Rune.dtype _x in
         let key = (Rune.Rng.split rngs).(0) in
-        let w = kernel_init_f (Rune.Rng.to_int key) shape dev dtype in
+        let w = kernel_init_f (Rune.Rng.to_int key) shape device dtype in
         Ptree.Tensor w);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
@@ -315,16 +310,14 @@ let einsum ~einsum_str ~shape ?kernel_init () =
 let rms_norm ~dim ?(eps = 1e-6) ?scale_init () =
   {
     init =
-      (fun (type l d) ~rngs (x : (l, d) tensor) ->
+      (fun ~rngs ~device ~dtype ->
         let scale_init_f =
           match scale_init with
           | Some init -> init.Initializers.f
           | None -> (Initializers.ones ()).f
         in
-        let dev = Rune.device x in
-        let dtype = Rune.dtype x in
         let key = (Rune.Rng.split rngs).(0) in
-        let scale = scale_init_f (Rune.Rng.to_int key) [| dim |] dev dtype in
+        let scale = scale_init_f (Rune.Rng.to_int key) [| dim |] device dtype in
         Ptree.Tensor scale);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
@@ -353,12 +346,10 @@ let rms_norm ~dim ?(eps = 1e-6) ?scale_init () =
 let layer_norm ~dim ?(eps = 1e-5) ?(elementwise_affine = true) () =
   {
     init =
-      (fun ~rngs:_ x ->
+      (fun ~rngs:_ ~device ~dtype ->
         if elementwise_affine then
-          let dev = Rune.device x in
-          let dtype = Rune.dtype x in
-          let gamma = Rune.ones dev dtype [| dim |] in
-          let beta = Rune.zeros dev dtype [| dim |] in
+          let gamma = Rune.ones device dtype [| dim |] in
+          let beta = Rune.zeros device dtype [| dim |] in
           Ptree.record_of [ ("gamma", Tensor gamma); ("beta", Tensor beta) ]
         else List []);
     apply =
@@ -395,19 +386,17 @@ let layer_norm ~dim ?(eps = 1e-5) ?(elementwise_affine = true) () =
 let embedding ~vocab_size ~embed_dim ?(scale = true) ?embedding_init () =
   {
     init =
-      (fun (type l d) ~rngs (_x : (l, d) tensor) ->
+      (fun ~rngs ~device ~dtype ->
         let embedding_init_f =
           match embedding_init with
           | Some init -> init.Initializers.f
           | None -> (Initializers.normal_range ~mean:0.0 ~stddev:0.02 ()).f
         in
-        let dev = Rune.device _x in
-        let dtype = Rune.dtype _x in
         let key = (Rune.Rng.split rngs).(0) in
         let embedding =
           embedding_init_f (Rune.Rng.to_int key)
             [| vocab_size; embed_dim |]
-            dev dtype
+            device dtype
         in
         Ptree.Tensor embedding);
     apply =
@@ -436,7 +425,7 @@ let embedding ~vocab_size ~embed_dim ?(scale = true) ?embedding_init () =
 
 let gelu () =
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply =
       (fun _params ~training:_ ?rngs:_ x ->
         (* GELU(x) = x * Φ(x) where Φ is the CDF of standard normal distribution *)
@@ -464,7 +453,7 @@ let gelu () =
 
 let swish () =
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply =
       (fun _params ~training:_ ?rngs:_ x ->
         (* Swish(x) = x * sigmoid(x) *)
@@ -477,7 +466,7 @@ let multi_head_attention ~embed_dim ~num_heads ?num_kv_heads:_ ?head_dim:_
   let _ = embed_dim in
   let _ = num_heads in
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply =
       (fun _params ~training:_ ?rngs:_ _x ->
         failwith
@@ -488,7 +477,7 @@ let multi_head_attention ~embed_dim ~num_heads ?num_kv_heads:_ ?head_dim:_
 let rope_embedding ~dim ?max_seq_len:_ ?base_frequency:_ ?scale_factor:_ () =
   let _ = dim in
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply =
       (fun _params ~training:_ ?rngs:_ _x ->
         failwith
@@ -499,7 +488,7 @@ let sinusoidal_pos_embedding ~max_len ~embed_dim () =
   let _ = max_len in
   let _ = embed_dim in
   {
-    init = (fun ~rngs:_ _x -> List []);
+    init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
     apply =
       (fun _params ~training:_ ?rngs:_ _x ->
         failwith

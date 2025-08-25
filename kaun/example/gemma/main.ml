@@ -249,9 +249,6 @@ let train config_name train_config =
   let device = Rune.c in
   let dtype_float = Rune.float32 in
 
-  (* Create dummy input for initialization *)
-  let dummy_input = Rune.zeros device dtype_float [| 1; 1 |] in
-
   (* Initialize or load model parameters *)
   let params =
     match train_config.checkpoint_path with
@@ -265,12 +262,12 @@ let train config_name train_config =
     | Some path ->
         Printf.printf "Checkpoint path specified but file not found: %s\n" path;
         Printf.printf "Initializing model parameters from scratch...\n";
-        let params = init model ~rngs dummy_input in
+        let params = init model ~rngs ~device ~dtype:dtype_float in
         Printf.printf "Model initialized!\n\n";
         params
     | None ->
         Printf.printf "Initializing model parameters from scratch...\n";
-        let params = init model ~rngs dummy_input in
+        let params = init model ~rngs ~device ~dtype:dtype_float in
         Printf.printf "Model initialized!\n\n";
         params
   in

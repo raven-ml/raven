@@ -70,9 +70,7 @@ let multi_head_attention_with_rope ~embed_dim ~num_heads ~num_kv_heads ~head_dim
     ~sliding_window_size ?(_use_cache = false) () =
   {
     init =
-      (fun ~rngs x ->
-        let dev = Rune.device x in
-        let dtype = Rune.dtype x in
+      (fun ~rngs ~device ~dtype ->
         let rngs_split = Rune.Rng.split rngs in
         let rng1 = rngs_split.(0) in
         let rng2 = rngs_split.(1) in
@@ -90,19 +88,19 @@ let multi_head_attention_with_rope ~embed_dim ~num_heads ~num_kv_heads ~head_dim
           init.f
             (Rune.Rng.to_int (Rune.Rng.split rng1).(0))
             [| embed_dim; num_heads * head_dim |]
-            dev dtype
+            device dtype
         in
         let k_proj =
           init.f
             (Rune.Rng.to_int (Rune.Rng.split rng3).(0))
             [| embed_dim; num_kv_heads * head_dim |]
-            dev dtype
+            device dtype
         in
         let v_proj =
           init.f
             (Rune.Rng.to_int (Rune.Rng.split rng5).(0))
             [| embed_dim; num_kv_heads * head_dim |]
-            dev dtype
+            device dtype
         in
 
         (* Output projection *)
@@ -110,14 +108,14 @@ let multi_head_attention_with_rope ~embed_dim ~num_heads ~num_kv_heads ~head_dim
           init.f
             (Rune.Rng.to_int (Rune.Rng.split rng6).(0))
             [| num_heads * head_dim; embed_dim |]
-            dev dtype
+            device dtype
         in
 
         (* QK normalization if enabled *)
         let qk_norm_params =
           if use_qk_norm then
-            let q_norm = Rune.ones dev dtype [| head_dim |] in
-            let k_norm = Rune.ones dev dtype [| head_dim |] in
+            let q_norm = Rune.ones device dtype [| head_dim |] in
+            let k_norm = Rune.ones device dtype [| head_dim |] in
             record_of [ ("q_norm", Tensor q_norm); ("k_norm", Tensor k_norm) ]
           else List []
         in
@@ -274,12 +272,14 @@ let multi_head_attention_with_rope ~embed_dim ~num_heads ~num_kv_heads ~head_dim
             (* Apply causal mask - create lower triangular mask *)
             let mask =
               (* Create lower triangular mask manually *)
-              let mask_data = Array.init (seq_len * seq_len) (fun idx ->
-                let i = idx / seq_len in
-                let j = idx mod seq_len in
-                if j <= i then 1.0 else 0.0
-              ) in
-              Rune.create (Rune.device scores) (Rune.dtype scores) [| seq_len; seq_len |] mask_data
+              let mask_data =
+                Array.init (seq_len * seq_len) (fun idx ->
+                    let i = idx / seq_len in
+                    let j = idx mod seq_len in
+                    if j <= i then 1.0 else 0.0)
+              in
+              Rune.create (Rune.device scores) (Rune.dtype scores)
+                [| seq_len; seq_len |] mask_data
             in
             let mask = Rune.reshape [| 1; 1; seq_len; seq_len |] mask in
             let mask =

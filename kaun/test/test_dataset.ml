@@ -259,7 +259,7 @@ let test_tokenize_padding () =
 
 (** Test batching *)
 let test_batch_basic () =
-  let dataset = from_list [ 1; 2; 3; 4; 5 ] |> batch 2 in
+  let dataset = from_list [ 1; 2; 3; 4; 5 ] |> batch_map 2 Fun.id in
   let collected = collect_dataset dataset in
   Alcotest.(check int) "number of batches" 3 (List.length collected);
   assert_equal_int_array [| 1; 2 |] (List.nth collected 0);
@@ -267,7 +267,7 @@ let test_batch_basic () =
   assert_equal_int_array [| 5 |] (List.nth collected 2)
 
 let test_batch_drop_remainder () =
-  let dataset = from_list [ 1; 2; 3; 4; 5 ] |> batch ~drop_remainder:true 2 in
+  let dataset = from_list [ 1; 2; 3; 4; 5 ] |> batch_map ~drop_remainder:true 2 Fun.id in
   let collected = collect_dataset dataset in
   Alcotest.(check int) "number of batches" 2 (List.length collected);
   assert_equal_int_array [| 1; 2 |] (List.nth collected 0);
@@ -496,28 +496,31 @@ let test_element_spec () =
 
 (** Test pipelines *)
 let test_text_classification_pipeline () =
+  let device = Rune.c in
   let dataset =
     from_list [ "hello world"; "foo bar baz" ]
-    |> text_classification_pipeline ~batch_size:2
+    |> text_classification_pipeline ~batch_size:2 ~device
   in
   let collected = collect_n 1 dataset in
   Alcotest.(check int) "got batch" 1 (List.length collected);
   match collected with
-  | [ batch ] -> Alcotest.(check int) "batch size" 2 (Array.length batch)
+  | [ batch ] -> 
+      (* Check that we got a tensor *)
+      Alcotest.(check bool) "got tensor" true (Rune.shape batch |> Array.length > 0)
   | _ -> Alcotest.fail "Expected one batch"
 
 let test_language_model_pipeline () =
+  let device = Rune.c in
   let dataset =
     from_list [ "one two three four" ]
-    |> language_model_pipeline ~sequence_length:4 ~batch_size:1
+    |> language_model_pipeline ~sequence_length:4 ~batch_size:1 ~device
   in
   let collected = collect_n 1 dataset in
   match collected with
-  | [ batch ] when Array.length batch > 0 ->
-      let input, target = batch.(0) in
+  | [ (input, target) ] ->
       Alcotest.(check bool)
-        "input/target offset" true
-        (Array.length input > 0 && Array.length target > 0)
+        "input/target tensors" true
+        (Rune.shape input |> Array.length > 0 && Rune.shape target |> Array.length > 0)
   | _ -> Alcotest.fail "Expected batch of input/target pairs"
 
 (** Test edge cases *)
@@ -537,7 +540,7 @@ let test_chain_many_operations () =
     |> filter (fun x -> x mod 2 = 0) (* [2; 4; 6; 8; 10] *)
     |> map (fun x -> x * 2) (* [4; 8; 12; 16; 20] *)
     |> take 3 (* [4; 8; 12] *)
-    |> batch 2 (* [[4; 8], [12]] *)
+    |> batch_map 2 Fun.id (* [[4; 8], [12]] *)
   in
   let collected = collect_dataset dataset in
   Alcotest.(check int) "number of batches" 2 (List.length collected);

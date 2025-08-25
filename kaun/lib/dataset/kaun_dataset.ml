@@ -555,12 +555,12 @@ let normalize ?lowercase ?remove_punctuation ?collapse_whitespace text_dataset =
 
 (* Batching *)
 
-(* Split into two functions for type safety *)
-let batch ?(drop_remainder = false) size dataset =
+(* Internal helper for generic batching *)
+let batch_generic ?(drop_remainder = false) size dataset =
   if size <= 0 then
     raise
       (Invalid_parameter
-         ("batch: size must be positive, got " ^ string_of_int size));
+         ("batch_generic: size must be positive, got " ^ string_of_int size));
 
   let buffer = ref [] in
   let next () =
@@ -588,8 +588,17 @@ let batch ?(drop_remainder = false) size dataset =
     spec = (fun () -> Array (dataset.spec ()));
   }
 
+(* Tensor-aware batch that automatically stacks tensor pairs *)
+let batch ?(drop_remainder = false) size dataset =
+  batch_generic ~drop_remainder size dataset
+  |> map (fun batch_arr ->
+         (* Stack the batch of tensor pairs into batched tensors *)
+         let images, labels = Array.split batch_arr in
+         ( Rune.stack ~axis:0 (Array.to_list images),
+           Rune.stack ~axis:0 (Array.to_list labels) ))
+
 let batch_map ?(drop_remainder = false) size f dataset =
-  let batched = batch ~drop_remainder size dataset in
+  let batched = batch_generic ~drop_remainder size dataset in
   map f batched
 
 let bucket_by_length ?boundaries ?batch_sizes length_fn dataset =
@@ -1393,20 +1402,51 @@ let element_spec dataset = dataset.spec ()
 (** {1 Common Pipelines} *)
 
 let text_classification_pipeline ?tokenizer ?max_length ?(batch_size = 32)
-    ?(shuffle_buffer = 10000) ?num_workers text_dataset =
+    ?(shuffle_buffer = 10000) ?num_workers ~device text_dataset =
   let tok = Option.value tokenizer ~default:whitespace_tokenizer in
-  let tokenized = tokenize tok ?max_length text_dataset in
+  (* Use Dynamic padding when batching to ensure all sequences in a batch have
+     same length *)
+  let tokenized = tokenize tok ?max_length ~padding:`Dynamic text_dataset in
   let shuffled = shuffle ~buffer_size:shuffle_buffer tokenized in
-  let batched = batch batch_size shuffled in
-  let prefetched = prefetch ~buffer_size:2 batched in
+  let batched = batch_generic batch_size shuffled in
+  (* Convert int arrays to int32 tensors *)
+  let tensor_batched =
+    map
+      (fun batch ->
+        (* Find max length in this batch for padding *)
+        let max_len =
+          Array.fold_left (fun acc arr -> max acc (Array.length arr)) 0 batch
+        in
+        let tensors =
+          Array.map
+            (fun arr ->
+              (* Pad to max length if needed *)
+              let padded_arr =
+                if Array.length arr < max_len then
+                  Array.append arr (Array.make (max_len - Array.length arr) 0)
+                else arr
+              in
+              let int32_arr = Array.map Int32.of_int padded_arr in
+              Rune.create device Rune.int32 [| max_len |] int32_arr)
+            batch
+        in
+        Rune.stack ~axis:0 (Array.to_list tensors))
+      batched
+  in
+  let prefetched = prefetch ~buffer_size:2 tensor_batched in
   match num_workers with
   | None -> prefetched
   | Some n -> parallel_map ~num_workers:n (fun x -> x) prefetched
 
 let language_model_pipeline ?tokenizer ?(sequence_length = 512)
-    ?(batch_size = 32) ?(shuffle_buffer = 10000) ?num_workers text_dataset =
+    ?(batch_size = 32) ?(shuffle_buffer = 10000) ?num_workers ~device
+    text_dataset =
   let tok = Option.value tokenizer ~default:whitespace_tokenizer in
-  let tokenized = tokenize tok ~max_length:sequence_length text_dataset in
+  (* Use padding to ensure consistent length *)
+  let tokenized =
+    tokenize tok ~max_length:sequence_length ~padding:(`Max sequence_length)
+      text_dataset
+  in
   let paired =
     map
       (fun tokens ->
@@ -1419,8 +1459,69 @@ let language_model_pipeline ?tokenizer ?(sequence_length = 512)
       tokenized
   in
   let shuffled = shuffle ~buffer_size:shuffle_buffer paired in
-  let batched = batch batch_size shuffled in
-  let prefetched = prefetch ~buffer_size:2 batched in
+  let batched = batch_generic batch_size shuffled in
+  (* Convert int array pairs to int32 tensor pairs *)
+  let tensor_batched =
+    map
+      (fun batch ->
+        let inputs, targets = Array.split batch in
+        (* All sequences should have same length due to padding, but let's be
+           safe *)
+        let max_len =
+          Array.fold_left (fun acc arr -> max acc (Array.length arr)) 0 inputs
+        in
+        let input_tensors =
+          Array.map
+            (fun arr ->
+              let padded_arr =
+                if Array.length arr < max_len then
+                  Array.append arr (Array.make (max_len - Array.length arr) 0)
+                else arr
+              in
+              let int32_arr = Array.map Int32.of_int padded_arr in
+              Rune.create device Rune.int32 [| max_len |] int32_arr)
+            inputs
+        in
+        let target_tensors =
+          Array.map
+            (fun arr ->
+              let padded_arr =
+                if Array.length arr < max_len then
+                  Array.append arr (Array.make (max_len - Array.length arr) 0)
+                else arr
+              in
+              let int32_arr = Array.map Int32.of_int padded_arr in
+              Rune.create device Rune.int32 [| max_len |] int32_arr)
+            targets
+        in
+        ( Rune.stack ~axis:0 (Array.to_list input_tensors),
+          Rune.stack ~axis:0 (Array.to_list target_tensors) ))
+      batched
+  in
+  let prefetched = prefetch ~buffer_size:2 tensor_batched in
   match num_workers with
   | None -> prefetched
   | Some n -> parallel_map ~num_workers:n (fun x -> x) prefetched
+
+(* High-level pipeline function for tensor datasets *)
+let prepare ?shuffle_buffer ?batch_size ?prefetch:prefetch_count
+    ?cache:cache_enabled ?drop_remainder dataset =
+  let dataset =
+    match cache_enabled with Some true -> cache dataset | _ -> dataset
+  in
+  let dataset =
+    match shuffle_buffer with
+    | Some buffer_size -> shuffle ~buffer_size dataset
+    | None -> dataset
+  in
+  let dataset =
+    match batch_size with
+    | Some size -> batch ?drop_remainder size dataset
+    | None -> dataset
+  in
+  let dataset =
+    match prefetch_count with
+    | Some buffer_size -> prefetch ~buffer_size dataset
+    | None -> dataset
+  in
+  dataset

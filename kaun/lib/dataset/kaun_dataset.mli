@@ -166,14 +166,25 @@ val normalize :
 
 (** {2 Batching} *)
 
-val batch : ?drop_remainder:bool -> int -> 'a t -> 'a array t
-(** [batch ?drop_remainder size dataset] groups elements into batches of arrays.
-    - [drop_remainder]: Drop final batch if incomplete (default: false) *)
+val batch :
+  ?drop_remainder:bool ->
+  int ->
+  ((float, 'layout, 'dev) Rune.t * (float, 'layout, 'dev) Rune.t) t ->
+  ((float, 'layout, 'dev) Rune.t * (float, 'layout, 'dev) Rune.t) t
+(** [batch ?drop_remainder size dataset] groups tensor pairs into batches and
+    automatically stacks them along the batch dimension.
+    - [drop_remainder]: Drop final batch if incomplete (default: false)
+
+    This is the primary batching function for ML workflows where datasets
+    contain (input, target) tensor pairs. The tensors are automatically stacked
+    using [Rune.stack ~axis:0]. *)
 
 val batch_map : ?drop_remainder:bool -> int -> ('a array -> 'b) -> 'a t -> 'b t
 (** [batch_map ?drop_remainder size f dataset] groups elements into batches and
-    applies function [f] to each batch. Useful for tensor stacking, etc.
-    Example: [batch_map 32 (Rune.stack ~axis:0) tensor_dataset] *)
+    applies function [f] to each batch.
+
+    This is useful for custom batching logic that can't be handled by [batch] or
+    [batch_array]. *)
 
 val bucket_by_length :
   ?boundaries:int list ->
@@ -246,6 +257,24 @@ val parallel_interleave :
 (** [parallel_interleave ?num_workers ?block_length f dataset] applies f in
     parallel and interleaves results *)
 
+(** {2 High-level Pipeline} *)
+
+val prepare :
+  ?shuffle_buffer:int ->
+  ?batch_size:int ->
+  ?prefetch:int ->
+  ?cache:bool ->
+  ?drop_remainder:bool ->
+  ((float, 'layout, 'dev) Rune.t * (float, 'layout, 'dev) Rune.t) t ->
+  ((float, 'layout, 'dev) Rune.t * (float, 'layout, 'dev) Rune.t) t
+(** [prepare ?shuffle_buffer ?batch_size ?prefetch ?cache ?drop_remainder
+     dataset] applies common preprocessing pipeline for tensor datasets: 1.
+    Cache (if enabled) 2. Shuffle (if buffer size provided) 3. Batch with
+    automatic tensor stacking (if batch size provided) 4. Prefetch (if prefetch
+    count provided)
+
+    This is the primary pipeline function for ML training data. *)
+
 (** {1 Iteration} *)
 
 val iter : ('a -> unit) -> 'a t -> unit
@@ -282,9 +311,11 @@ val text_classification_pipeline :
   ?batch_size:int ->
   ?shuffle_buffer:int ->
   ?num_workers:int ->
+  device:'dev Rune.device ->
   string t ->
-  int array array t
-(** Pre-configured pipeline for text classification tasks *)
+  (int32, Rune.int32_elt, 'dev) Rune.t t
+(** Pre-configured pipeline for text classification tasks. Returns batched token
+    tensors ready for embedding layers. *)
 
 val language_model_pipeline :
   ?tokenizer:tokenizer ->
@@ -292,10 +323,12 @@ val language_model_pipeline :
   ?batch_size:int ->
   ?shuffle_buffer:int ->
   ?num_workers:int ->
+  device:'dev Rune.device ->
   string t ->
-  (int array * int array) array t
-(** Pre-configured pipeline for language modeling (returns batches of input,
-    target pairs) *)
+  ((int32, Rune.int32_elt, 'dev) Rune.t * (int32, Rune.int32_elt, 'dev) Rune.t)
+  t
+(** Pre-configured pipeline for language modeling. Returns batched (input,
+    target) tensor pairs ready for training. *)
 
 (** {1 Examples}
     {[

@@ -10,10 +10,13 @@ type ('layout, 'dev) params = ('layout, 'dev) Ptree.t =
 type module_ = Module.t = {
   init :
     'layout 'dev.
-    rngs:Rune.Rng.key -> ('layout, 'dev) tensor -> ('layout, 'dev) params;
+    rngs:Rune.Rng.key ->
+    device:'dev Rune.device ->
+    dtype:(float, 'layout) Rune.dtype ->
+    ('layout, 'dev) Ptree.t;
   apply :
     'layout 'dev.
-    ('layout, 'dev) params ->
+    ('layout, 'dev) Ptree.t ->
     training:bool ->
     ?rngs:Rune.Rng.key ->
     ('layout, 'dev) tensor ->
@@ -23,7 +26,8 @@ type module_ = Module.t = {
 val init :
   module_ ->
   rngs:Rune.Rng.key ->
-  ('layout, 'dev) tensor ->
+  device:'dev device ->
+  dtype:'layout dtype ->
   ('layout, 'dev) params
 
 val apply :
@@ -75,4 +79,7 @@ module Activations = Activations
 (** @inline *)
 
 module Transformers = Kaun_transformers
+(** @inline *)
+
+module Training = Training
 (** @inline *)

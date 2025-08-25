@@ -41,7 +41,7 @@ val relu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 
     {4 Properties}
 
-    - Range: [0, +∞)
+    - Range: \[0, +∞)
     - Non-saturating for positive inputs
     - Sparse activation (many zeros)
     - Can suffer from dying ReLU problem

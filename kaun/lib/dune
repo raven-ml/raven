@@ -4,6 +4,7 @@
  (libraries
   rune
   unix
+  str
   kaun.ptree
   kaun.optim
   kaun.checkpoint

@@ -414,6 +414,39 @@ let mae ?(reduction = Mean) () =
       | _ -> failwith "Invalid mae state")
     ~reset:(fun _ -> [])
 
+(** Loss Metric - tracks running average of loss values *)
+
+let loss () =
+  create_custom ~name:"loss"
+    ~init:(fun () -> [])
+    ~update:(fun state ~predictions:_ ~targets:_ ?weights () ->
+      (* The loss value should be passed via weights parameter *)
+      let dev, dtype =
+        match weights with
+        | Some w -> (Rune.device w, Rune.dtype w)
+        | None ->
+            failwith "loss metric requires loss value in weights parameter"
+      in
+
+      let sum_loss, count =
+        match state with
+        | [ s; c ] -> (s, c)
+        | _ -> (scalar_tensor dev dtype 0.0, scalar_tensor dev dtype 0.0)
+      in
+
+      match weights with
+      | Some loss_value ->
+          (* Accumulate loss value *)
+          let new_sum = Rune.add sum_loss loss_value in
+          let new_count = Rune.add count (scalar_tensor dev dtype 1.0) in
+          [ new_sum; new_count ]
+      | None -> state)
+    ~compute:(fun state ->
+      match state with
+      | [ sum_loss; count ] -> Rune.div sum_loss count
+      | _ -> failwith "Invalid loss state")
+    ~reset:(fun _ -> [])
+
 (* Placeholder implementations for remaining metrics *)
 
 let mape ?(eps = 1e-7) () =
@@ -670,6 +703,15 @@ module Collection = struct
   let update collection ~predictions ~targets ?weights () =
     List.iter
       (fun (_, m) -> outer_update m ~predictions ~targets ?weights ())
+      collection.metrics
+
+  let update_with_loss collection ~loss ~predictions ~targets () =
+    List.iter
+      (fun (name, m) ->
+        if name = "loss" then
+          (* Pass loss value as weights for the loss metric *)
+          outer_update m ~predictions ~targets ~weights:loss ()
+        else outer_update m ~predictions ~targets ())
       collection.metrics
 
   let compute collection =

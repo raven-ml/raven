@@ -46,9 +46,12 @@ module DQN = struct
     let target_network = create_q_network obs_dim n_actions in
 
     (* Initialize parameters *)
-    let dummy_input = Rune.zeros Rune.c Rune.float32 [| obs_dim |] in
-    let q_params = Kaun.init q_network ~rngs:keys.(0) dummy_input in
-    let target_params = Kaun.init target_network ~rngs:keys.(1) dummy_input in
+    let device = Rune.c in
+    let dtype = Rune.float32 in
+    let q_params = Kaun.init q_network ~rngs:keys.(0) ~device ~dtype in
+    let target_params =
+      Kaun.init target_network ~rngs:keys.(1) ~device ~dtype
+    in
 
     (* Create optimizer *)
     let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in

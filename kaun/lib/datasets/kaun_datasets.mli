@@ -134,37 +134,6 @@ val train_test_split :
   'a Kaun_dataset.t * 'a Kaun_dataset.t
 (** Split a dataset into training and test sets *)
 
-(** {1 Pre-configured Pipelines} *)
-
-val vision_pipeline :
-  ?batch_size:int ->
-  (* default: 32 *)
-  ?shuffle_buffer:int ->
-  (* default: 10000 *)
-  ?prefetch_buffer:int ->
-  (* default: 2 *)
-  ?num_workers:int ->
-  (* default: 4 *)
-  ((Bigarray.float32_elt, 'dev) Kaun.tensor
-  * (Bigarray.float32_elt, 'dev) Kaun.tensor)
-  Kaun_dataset.t ->
-  ((Bigarray.float32_elt, 'dev) Kaun.tensor
-  * (Bigarray.float32_elt, 'dev) Kaun.tensor)
-  Kaun_dataset.t
-(** Standard vision dataset pipeline with batching, shuffling, and prefetching
-*)
-
-val text_pipeline :
-  ?batch_size:int ->
-  ?shuffle_buffer:int ->
-  ?bucket_boundaries:int list ->
-  (* For dynamic batching by length *)
-  ?prefetch_buffer:int ->
-  ?num_workers:int ->
-  (int array * 'label) Kaun_dataset.t ->
-  (int array array * 'label array) Kaun_dataset.t
-(** Standard text dataset pipeline with bucketing for efficient padding *)
-
 (** {1 Examples}
 
     {[
