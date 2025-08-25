@@ -267,7 +267,9 @@ let test_batch_basic () =
   assert_equal_int_array [| 5 |] (List.nth collected 2)
 
 let test_batch_drop_remainder () =
-  let dataset = from_list [ 1; 2; 3; 4; 5 ] |> batch_map ~drop_remainder:true 2 Fun.id in
+  let dataset =
+    from_list [ 1; 2; 3; 4; 5 ] |> batch_map ~drop_remainder:true 2 Fun.id
+  in
   let collected = collect_dataset dataset in
   Alcotest.(check int) "number of batches" 2 (List.length collected);
   assert_equal_int_array [| 1; 2 |] (List.nth collected 0);
@@ -504,9 +506,11 @@ let test_text_classification_pipeline () =
   let collected = collect_n 1 dataset in
   Alcotest.(check int) "got batch" 1 (List.length collected);
   match collected with
-  | [ batch ] -> 
+  | [ batch ] ->
       (* Check that we got a tensor *)
-      Alcotest.(check bool) "got tensor" true (Rune.shape batch |> Array.length > 0)
+      Alcotest.(check bool)
+        "got tensor" true
+        (Rune.shape batch |> Array.length > 0)
   | _ -> Alcotest.fail "Expected one batch"
 
 let test_language_model_pipeline () =
@@ -520,7 +524,8 @@ let test_language_model_pipeline () =
   | [ (input, target) ] ->
       Alcotest.(check bool)
         "input/target tensors" true
-        (Rune.shape input |> Array.length > 0 && Rune.shape target |> Array.length > 0)
+        (Rune.shape input |> Array.length > 0
+        && Rune.shape target |> Array.length > 0)
   | _ -> Alcotest.fail "Expected batch of input/target pairs"
 
 (** Test edge cases *)
