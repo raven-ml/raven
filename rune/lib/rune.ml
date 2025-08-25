@@ -95,3 +95,8 @@ let debug = Debug.debug
 let debug_with_context = Debug.with_context
 let debug_push_context = Debug.push_context
 let debug_pop_context = Debug.pop_context
+
+(* ───── Nx Interop ───── *)
+
+let of_nx dev nx_tensor = 
+  of_bigarray dev (Nx.to_bigarray nx_tensor)

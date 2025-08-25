@@ -460,6 +460,26 @@ val meshgrid :
                      [1, 1, 1]])
     ]} *)
 
+val tril : ?k:int -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+(** [tril ?k x] returns lower triangular part of matrix.
+    
+    Elements above the k-th diagonal are zeroed.
+    - [k = 0] (default): main diagonal
+    - [k > 0]: include k diagonals above main
+    - [k < 0]: exclude |k| diagonals below main
+    
+    @raise Invalid_argument if x has less than 2 dimensions *)
+
+val triu : ?k:int -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+(** [triu ?k x] returns upper triangular part of matrix.
+    
+    Elements below the k-th diagonal are zeroed.
+    - [k = 0] (default): main diagonal
+    - [k > 0]: exclude k diagonals above main  
+    - [k < 0]: include |k| diagonals below main
+    
+    @raise Invalid_argument if x has less than 2 dimensions *)
+
 val of_bigarray :
   'dev device ->
   ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t ->
@@ -475,6 +495,19 @@ val of_bigarray :
         t
       - : (float, float32_elt) t = [[0, 0, 0],
                                     [0, 0, 0]]
+    ]} *)
+
+val of_nx : 'dev device -> ('a, 'b) Nx.t -> ('a, 'b, 'dev) t
+(** [of_nx dev nx_tensor] creates a Rune tensor from an Nx tensor.
+    
+    Converts an Nx tensor to a Rune tensor on the specified device.
+    The underlying bigarray is shared when possible (zero-copy).
+    
+    {@ocaml[
+      # let nx_arr = Nx.randn Nx.float32 [| 2; 3 |] in
+        let rune_arr = of_nx c nx_arr in
+        rune_arr
+      - : (float, float32_elt, [`c]) t
     ]} *)
 
 (** {2 Random Number Generation}

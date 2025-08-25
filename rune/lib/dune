@@ -8,6 +8,7 @@
   nx_c
   rune_metal
   nx_core
+  nx
   bigarray_ext
   (select
    jit_xla.ml

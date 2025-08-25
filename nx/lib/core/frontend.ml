@@ -2268,6 +2268,78 @@ module Make (B : Backend_intf.S) = struct
 
         (x_grid, y_grid)
 
+          let tril ?k x =
+    (* Lower triangular part of matrix *)
+    let k_val = match k with Some v -> v | None -> 0 in
+    let shape = shape x in
+    let ndim = Array.length shape in
+    
+    if ndim < 2 then
+      Error.invalid ~op:"tril" ~what:"input" ~reason:"requires at least 2D tensor" ()
+    else
+      let rows = shape.(ndim - 2) in
+      let cols = shape.(ndim - 1) in
+      
+      (* Create mask for lower triangular part *)
+      let row_idx = arange (B.context x) int32 0 rows 1 in
+      let col_idx = arange (B.context x) int32 0 cols 1 in
+      
+      (* Reshape for broadcasting: rows -> [rows, 1], cols -> [1, cols] *)
+      let row_idx = reshape [| rows; 1 |] row_idx in
+      let col_idx = reshape [| 1; cols |] col_idx in
+      
+      (* Create mask: row_idx >= col_idx - k *)
+      let mask = greater_equal row_idx (sub col_idx (scalar (B.context x) int32 (Int32.of_int k_val))) in
+      
+      (* Broadcast mask to match input shape if needed *)
+      let mask = 
+        if ndim > 2 then
+          let batch_shape = Array.sub shape 0 (ndim - 2) in
+          let full_shape = Array.concat [batch_shape; [| rows; cols |]] in
+          broadcast_to full_shape mask
+        else
+          mask
+      in
+      
+      (* Apply mask using where operation *)
+      where mask x (zeros_like x)
+
+  let triu ?k x =
+    (* Upper triangular part of matrix *)
+    let k_val = match k with Some v -> v | None -> 0 in
+    let shape = shape x in
+    let ndim = Array.length shape in
+    
+    if ndim < 2 then
+      Error.invalid ~op:"triu" ~what:"input" ~reason:"requires at least 2D tensor" ()
+    else
+      let rows = shape.(ndim - 2) in
+      let cols = shape.(ndim - 1) in
+      
+      (* Create mask for upper triangular part *)
+      let row_idx = arange (B.context x) int32 0 rows 1 in
+      let col_idx = arange (B.context x) int32 0 cols 1 in
+      
+      (* Reshape for broadcasting: rows -> [rows, 1], cols -> [1, cols] *)
+      let row_idx = reshape [| rows; 1 |] row_idx in
+      let col_idx = reshape [| 1; cols |] col_idx in
+      
+      (* Create mask: row_idx <= col_idx - k *)
+      let mask = less_equal row_idx (sub col_idx (scalar (B.context x) int32 (Int32.of_int k_val))) in
+      
+      (* Broadcast mask to match input shape if needed *)
+      let mask = 
+        if ndim > 2 then
+          let batch_shape = Array.sub shape 0 (ndim - 2) in
+          let full_shape = Array.concat [batch_shape; [| rows; cols |]] in
+          broadcast_to full_shape mask
+        else
+          mask
+      in
+      
+      (* Apply mask using where operation *)
+      where mask x (zeros_like x)
+
   (* ───── Indexing and Slicing ───── *)
 
   (* Helper to normalize negative indices *)
