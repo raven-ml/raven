@@ -62,6 +62,17 @@ let () =
           |> List.filter (fun s -> String.length s > 0)
         in
         
+        (* Add -fPIC on Linux and BSD systems for position-independent code.
+           This is required when building shared libraries on x86-64 Linux to avoid
+           relocation errors like "relocation R_X86_64_32 against `.data' can not be 
+           used when making a shared object" *)
+        let cflags = 
+          match C.ocaml_config_var c "system" with
+          | Some "linux" | Some "freebsd" | Some "netbsd" | Some "openbsd" 
+          | Some "dragonfly" | Some "gnu" -> "-fPIC" :: cflags
+          | _ -> cflags
+        in
+        
         (* Get linker flags *)
         let ldflags = 
           C.Process.run_capture_exn c llvm_config ["--ldflags"]
