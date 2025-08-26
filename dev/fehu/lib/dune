@@ -1,4 +1,4 @@
 (library
  (name fehu)
  (public_name fehu)
- (libraries rune yojson))
+ (libraries rune yojson unix))
