@@ -277,7 +277,7 @@ let metadata_to_json (m : metadata) : string =
         let md_obj = `Assoc (List.map (fun (k, v) -> (k, `String v)) md) in
         ("__metadata__", md_obj) :: base
   in
-  Yojson.Basic.to_string (`Assoc kv)
+  Json_minimal.to_string (`Assoc kv)
 
 type hash_metadata = {
   hm_meta : (string * string) list option;
@@ -285,23 +285,33 @@ type hash_metadata = {
 }
 
 let json_to_string_map json =
-  let open Yojson.Basic.Util in
   try
-    let obj = to_assoc json in
-    Ok (List.map (fun (k, v) -> (k, to_string v)) obj)
+    let obj = Json_minimal.to_assoc json in
+    Ok (List.map (fun (k, v) -> (k, Json_minimal.to_string_exn v)) obj)
   with _ -> Error "metadata values must be strings"
 
 let parse_tensor_info (name, j) : (string * tensor_info, string) result =
-  let open Yojson.Basic.Util in
   try
-    let dt_str = j |> member "dtype" |> to_string in
+    let dt_str =
+      j |> Json_minimal.member "dtype" |> Json_minimal.to_string_exn
+    in
     let dt =
       match dtype_of_string dt_str with
       | Some d -> d
       | None -> raise (Failure "bad dtype")
     in
-    let shape = j |> member "shape" |> to_list |> List.map to_int in
-    let offs = j |> member "data_offsets" |> to_list |> List.map to_int in
+    let shape =
+      j
+      |> Json_minimal.member "shape"
+      |> Json_minimal.to_list_exn
+      |> List.map Json_minimal.to_int_exn
+    in
+    let offs =
+      j
+      |> Json_minimal.member "data_offsets"
+      |> Json_minimal.to_list_exn
+      |> List.map Json_minimal.to_int_exn
+    in
     let s, e =
       match offs with [ s; e ] -> (s, e) | _ -> raise (Failure "bad offsets")
     in
@@ -309,9 +319,8 @@ let parse_tensor_info (name, j) : (string * tensor_info, string) result =
   with e -> Error (Printexc.to_string e)
 
 let json_to_hashmetadata j : (hash_metadata, string) result =
-  let open Yojson.Basic.Util in
   try
-    let obj = to_assoc j in
+    let obj = Json_minimal.to_assoc j in
     let md =
       match List.assoc_opt "__metadata__" obj with
       | None -> Ok None
@@ -447,7 +456,7 @@ let read_metadata (buffer : string) : (int * metadata, safetensor_error) result
         if not (is_valid_utf8 header) then Error (Invalid_header "bad utf8")
         else
           try
-            let j = Yojson.Basic.from_string header in
+            let j = Json_minimal.from_string header in
             let* h =
               match json_to_hashmetadata j with
               | Ok v -> Ok v
@@ -458,7 +467,8 @@ let read_metadata (buffer : string) : (int * metadata, safetensor_error) result
             if buffer_end + n_len + n_int <> len then
               Error Metadata_incomplete_buffer
             else Ok (n_int, m)
-          with Yojson.Json_error e -> Error (Invalid_header_deserialization e)
+          with Json_minimal.Parse_error e ->
+            Error (Invalid_header_deserialization e)
 
 let deserialize (buffer : string) : (safetensors, safetensor_error) result =
   let* n, metadata = read_metadata buffer in

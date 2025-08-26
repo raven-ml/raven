@@ -20,7 +20,7 @@
   (= %{system} "macosx")))
 
 (test
- (name test_nx_io_hdf5)
+ (name test_nx_io)
  (package nx)
- (modules test_nx_io_hdf5)
+ (modules test_nx_io)
  (libraries nx nx_io alcotest))

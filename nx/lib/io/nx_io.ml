@@ -1,229 +1,187 @@
 open Bigarray_ext
-open Utils
+open Error
 
-type packed_nx = Utils.packed_nx = P : ('a, 'b) Nx.t -> packed_nx
-type nx_dims = [ `Gray of int * int | `Color of int * int * int ]
+(* Type definitions *)
 
-let get_nx_dims arr : nx_dims =
-  match Nx.shape arr with
-  | [| h; w |] -> `Gray (h, w)
-  | [| h; w; c |] -> `Color (h, w, c)
-  | s ->
-      fail_msg "Invalid nx dimensions: expected 2 or 3, got %d (%s)"
-        (Array.length s)
-        (Array.to_list s |> List.map string_of_int |> String.concat "x")
+type packed_nx = Packed_nx.t = P : ('a, 'b) Nx.t -> packed_nx
+type archive = (string, packed_nx) Hashtbl.t
 
-let load_image ?(grayscale = false) path =
-  try
-    let desired_channels = if grayscale then 1 else 3 in
-    match Stb_image.load ~channels:desired_channels path with
-    | Ok img ->
-        let h = Stb_image.height img in
-        let w = Stb_image.width img in
-        let c = Stb_image.channels img in
-        let buffer = Stb_image.data img in
-        let nd = Nx.of_bigarray (genarray_of_array1 buffer) in
-        let shape = if c = 1 then [| h; w |] else [| h; w; c |] in
-        Nx.reshape shape nd
-    | Error (`Msg msg) -> fail_msg "STB Load Error (%s): %s" path msg
-  with
-  | Sys_error msg -> fail_msg "System error loading image '%s': %s" path msg
-  | ex ->
-      let err_msg = Printexc.to_string ex in
-      let backtrace = Printexc.get_backtrace () in
-      fail_msg "Unexpected error loading image '%s': %s\n%s" path err_msg
-        backtrace
+module Safe = struct
+  type error = Error.t =
+    | Io_error of string
+    | Format_error of string
+    | Unsupported_dtype
+    | Unsupported_shape
+    | Missing_entry of string
+    | Other of string
 
-let save_image nd_img path =
-  try
-    let h, w, c =
-      match get_nx_dims nd_img with
-      | `Gray (h, w) -> (h, w, 1)
-      | `Color (h, w, c) -> (h, w, c)
-    in
+  (* Image dimensions *)
 
-    (* Ensure the input array is uint8 *)
-    let data_gen = Nx.to_bigarray nd_img in
-    let data =
-      match Bigarray.Genarray.kind data_gen with
-      | Bigarray.Int8_unsigned -> array1_of_genarray data_gen
-    in
+  type nx_dims = [ `Gray of int * int | `Color of int * int * int ]
 
-    let extension = Filename.extension path |> String.lowercase_ascii in
-    match extension with
-    | ".png" -> Stb_image_write.png path ~w ~h ~c data
-    | ".bmp" -> Stb_image_write.bmp path ~w ~h ~c data
-    | ".tga" -> Stb_image_write.tga path ~w ~h ~c data
-    | ".jpg" | ".jpeg" -> Stb_image_write.jpg path ~w ~h ~c ~quality:90 data
-    (* Note: Stb_image_write.hdr requires float32 data, not handled here *)
-    | _ ->
-        fail_msg
-          "Unsupported image format for saving: '%s'. Use .png, .bmp, .tga, \
-           .jpg"
-          extension
-  with
-  | Sys_error msg -> fail_msg "System error saving image to '%s': %s" path msg
-  | Invalid_argument msg ->
-      (* Can be raised by Stb_image_write for bad dims/channels *)
-      fail_msg "Invalid argument during saving '%s': %s" path msg
-  | Failure msg ->
-      (* Can be raised by Stb_image_write *)
-      fail_msg "Failure during saving image to '%s': %s" path msg
-  | ex ->
-      let err_msg = Printexc.to_string ex in
-      let backtrace = Printexc.get_backtrace () in
-      fail_msg "Unexpected error saving image to '%s': %s\n%s" path err_msg
-        backtrace
+  let get_nx_dims arr : nx_dims =
+    match Nx.shape arr with
+    | [| h; w |] -> `Gray (h, w)
+    | [| h; w; c |] -> `Color (h, w, c)
+    | s ->
+        fail_msg "Invalid nx dimensions: expected 2 or 3, got %d (%s)"
+          (Array.length s)
+          (Array.to_list s |> List.map string_of_int |> String.concat "x")
 
-let load_npy path =
-  try
-    match Npy.read_copy path with
-    | P genarray ->
-        let genarray = Genarray.change_layout genarray Bigarray.c_layout in
-        P (Nx.of_bigarray genarray)
-  with
-  | Unix.Unix_error (e, _, _) ->
-      fail_msg "NPY Load Error (%s): %s" path (Unix.error_message e)
-  | Sys_error msg -> fail_msg "NPY Load System Error (%s): %s" path msg
-  | Failure msg -> fail_msg "NPY Load Failure (%s): %s" path msg
-  | ex ->
-      let err_msg = Printexc.to_string ex in
-      fail_msg "Unexpected NPY Load Error (%s): %s" path err_msg
+  let load_image ?grayscale path =
+    let grayscale = Option.value grayscale ~default:false in
+    try
+      let desired_channels = if grayscale then 1 else 3 in
+      match Stb_image.load ~channels:desired_channels path with
+      | Ok img ->
+          let h = Stb_image.height img in
+          let w = Stb_image.width img in
+          let c = Stb_image.channels img in
+          let buffer = Stb_image.data img in
+          let nd = Nx.of_bigarray (genarray_of_array1 buffer) in
+          let shape = if c = 1 then [| h; w |] else [| h; w; c |] in
+          Ok (Nx.reshape shape nd)
+      | Error (`Msg msg) -> Error (Format_error msg)
+    with
+    | Sys_error msg -> Error (Io_error msg)
+    | ex -> Error (Other (Printexc.to_string ex))
 
-let save_npy nx path =
-  try
-    let genarray = Nx.to_bigarray nx in
-    Npy.write genarray path
-  with
-  | Unix.Unix_error (e, _, _) ->
-      fail_msg "NPY Save Error (%s): %s" path (Unix.error_message e)
-  | Sys_error msg -> fail_msg "NPY Save System Error (%s): %s" path msg
-  | Failure msg ->
-      fail_msg "NPY Save Failure (%s): %s - Likely unsupported dtype" path msg
-  | ex ->
-      let err_msg = Printexc.to_string ex in
-      fail_msg "Unexpected NPY Save Error (%s): %s" path err_msg
+  let save_image ?(overwrite = true) path img =
+    try
+      (* Check if file exists and overwrite is false *)
+      if (not overwrite) && Sys.file_exists path then
+        Error (Io_error (Printf.sprintf "File '%s' already exists" path))
+      else
+        let h, w, c =
+          match get_nx_dims img with
+          | `Gray (h, w) -> (h, w, 1)
+          | `Color (h, w, c) -> (h, w, c)
+        in
+        (* Ensure the input array is uint8 *)
+        let data_gen = Nx.to_bigarray img in
+        let data =
+          match Genarray.kind data_gen with
+          | Int8_unsigned -> array1_of_genarray data_gen
+        in
+        let extension = Filename.extension path |> String.lowercase_ascii in
+        match extension with
+        | ".png" ->
+            Stb_image_write.png path ~w ~h ~c data;
+            Ok ()
+        | ".bmp" ->
+            Stb_image_write.bmp path ~w ~h ~c data;
+            Ok ()
+        | ".tga" ->
+            Stb_image_write.tga path ~w ~h ~c data;
+            Ok ()
+        | ".jpg" | ".jpeg" ->
+            Stb_image_write.jpg path ~w ~h ~c ~quality:90 data;
+            Ok ()
+        | _ ->
+            Error
+              (Format_error
+                 (Printf.sprintf
+                    "Unsupported image format: '%s'. Use .png, .bmp, .tga, .jpg"
+                    extension))
+    with
+    | Sys_error msg -> Error (Io_error msg)
+    | Invalid_argument msg -> Error (Other msg)
+    | Failure msg -> Error (Other msg)
+    | ex -> Error (Other (Printexc.to_string ex))
 
-type npz_archive = (string, packed_nx) Hashtbl.t
+  let load_npy path = Nx_npy.load_npy path
 
-let load_npz path =
-  let archive = Hashtbl.create 16 in
-  let zip_in = ref None in
-  try
-    let zi = Npy.Npz.open_in path in
-    zip_in := Some zi;
-    let entries = Npy.Npz.entries zi in
-    List.iter
-      (fun name ->
-        match Npy.Npz.read zi name with
-        | Npy.P genarray ->
-            let genarray = Genarray.change_layout genarray Bigarray.c_layout in
-            Hashtbl.add archive name (P (Nx.of_bigarray genarray)))
-      entries;
-    Npy.Npz.close_in zi;
-    archive
-  with
-  | Zip.Error (name, func, msg) ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      fail_msg "NPZ Load Zip Error (%s): %s in %s: %s" path name func msg
-  | Unix.Unix_error (e, _, _) ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      fail_msg "NPZ Load Error (%s): %s" path (Unix.error_message e)
-  | Sys_error msg ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      fail_msg "NPZ Load System Error (%s): %s" path msg
-  | Failure msg ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      fail_msg "NPZ Load Failure (%s): %s" path msg
-  | ex ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      let err_msg = Printexc.to_string ex in
-      fail_msg "Unexpected NPZ Load Error (%s): %s" path err_msg
+  let save_npy ?(overwrite = true) path arr =
+    Nx_npy.save_npy ~overwrite path arr
 
-let load_npz_member ~path ~name =
-  let zip_in = ref None in
-  try
-    let zi = Npy.Npz.open_in path in
-    zip_in := Some zi;
-    let packed_npy =
-      try Npy.Npz.read zi name
-      with Not_found ->
-        fail_msg "NPZ Load Error (%s): Member '%s' not found" path name
-    in
-    let result =
-      match packed_npy with
-      | Npy.P genarray ->
-          let genarray = Genarray.change_layout genarray Bigarray.c_layout in
-          P (Nx.of_bigarray genarray)
-    in
-    Npy.Npz.close_in zi;
-    result
-  with
-  | Zip.Error (zip_name, func, msg) ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      fail_msg "NPZ Load Zip Error (%s): %s in %s: %s" path zip_name func msg
-  | Unix.Unix_error (e, _, _) ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      fail_msg "NPZ Load Error (%s): %s" path (Unix.error_message e)
-  | Sys_error msg ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      fail_msg "NPZ Load System Error (%s): %s" path msg
-  | Failure msg ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      fail_msg "NPZ Load Failure (%s, member %s): %s" path name msg
-  | ex ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      let err_msg = Printexc.to_string ex in
-      fail_msg "Unexpected NPZ Load Error (%s, member %s): %s" path name err_msg
+  let load_npz path = Nx_npy.load_npz path
+  let load_npz_member ~name path = Nx_npy.load_npz_member ~name path
 
-let save_npz items path =
-  let zip_out = ref None in
-  try
-    let zo = Npy.Npz.open_out path in
-    zip_out := Some zo;
-    List.iter
-      (fun (name, P nx) ->
-        let genarray = Nx.to_bigarray nx in
-        Npy.Npz.write zo name genarray)
-      items;
-    Npy.Npz.close_out zo
-  with
-  | Zip.Error (name, func, msg) ->
-      (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-      fail_msg "NPZ Save Zip Error (%s): %s in %s: %s" path name func msg
-  | Unix.Unix_error (e, _, _) ->
-      (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-      fail_msg "NPZ Save Error (%s): %s" path (Unix.error_message e)
-  | Sys_error msg ->
-      (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-      fail_msg "NPZ Save System Error (%s): %s" path msg
-  | Failure msg ->
-      (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-      fail_msg "NPZ Save Failure (%s): %s - Likely unsupported dtype" path msg
-  | ex ->
-      (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-      let err_msg = Printexc.to_string ex in
-      fail_msg "Unexpected NPZ Save Error (%s): %s" path err_msg
+  let save_npz ?(overwrite = true) path items =
+    Nx_npy.save_npz ~overwrite path items
 
-(* Conversions from packed arrays *)
+  (* Conversions from packed arrays *)
 
-let to_float16 = convert "to_float16" Nx.float16
-let to_float32 = convert "to_float32" Nx.float32
-let to_float64 = convert "to_float64" Nx.float64
-let to_int8 = convert "to_int8" Nx.int8
-let to_int16 = convert "to_int16" Nx.int16
-let to_int32 = convert "to_int32" Nx.int32
-let to_int64 = convert "to_int64" Nx.int64
-let to_uint8 = convert "to_uint8" Nx.uint8
-let to_uint16 = convert "to_uint16" Nx.uint16
-let to_complex32 = convert "to_complex32" Nx.complex32
-let to_complex64 = convert "to_complex64" Nx.complex64
+  let as_float16 = Packed_nx.as_float16
+  let as_float32 = Packed_nx.as_float32
+  let as_float64 = Packed_nx.as_float64
+  let as_int8 = Packed_nx.as_int8
+  let as_int16 = Packed_nx.as_int16
+  let as_int32 = Packed_nx.as_int32
+  let as_int64 = Packed_nx.as_int64
+  let as_uint8 = Packed_nx.as_uint8
+  let as_uint16 = Packed_nx.as_uint16
+  let as_complex32 = Packed_nx.as_complex32
+  let as_complex64 = Packed_nx.as_complex64
 
-(* HDF5 support *)
-type h5_archive = Hdf5_support.h5_archive
+  (* HDF5 support *)
+  let load_h5 ~dataset path = Nx_hdf5.load_h5_dataset ~dataset path
 
-let hdf5_available = Hdf5_support.hdf5_available
-let load_h5 = Hdf5_support.load_h5_dataset
-let save_h5 = Hdf5_support.save_h5_dataset
-let load_h5_all = Hdf5_support.load_h5_all
-let save_h5_all = Hdf5_support.save_h5_all
+  let save_h5 ~dataset ?overwrite path arr =
+    Nx_hdf5.save_h5_dataset ~dataset ?overwrite path arr
+
+  let load_h5_all = Nx_hdf5.load_h5_all
+
+  let save_h5_all ?overwrite path items =
+    Nx_hdf5.save_h5_all ?overwrite path items
+
+  (* SafeTensors support *)
+  let load_safetensor path = Nx_safetensors.load_safetensor path
+
+  let save_safetensor ?overwrite path items =
+    Nx_safetensors.save_safetensor ?overwrite path items
+end
+
+(* Main module functions - these fail directly instead of returning results *)
+
+let hdf5_available = Nx_hdf5.hdf5_available
+
+let unwrap_result = function
+  | Ok v -> v
+  | Error err -> failwith (Error.to_string err)
+
+let as_float16 packed = Packed_nx.as_float16 packed |> unwrap_result
+let as_float32 packed = Packed_nx.as_float32 packed |> unwrap_result
+let as_float64 packed = Packed_nx.as_float64 packed |> unwrap_result
+let as_int8 packed = Packed_nx.as_int8 packed |> unwrap_result
+let as_int16 packed = Packed_nx.as_int16 packed |> unwrap_result
+let as_int32 packed = Packed_nx.as_int32 packed |> unwrap_result
+let as_int64 packed = Packed_nx.as_int64 packed |> unwrap_result
+let as_uint8 packed = Packed_nx.as_uint8 packed |> unwrap_result
+let as_uint16 packed = Packed_nx.as_uint16 packed |> unwrap_result
+let as_complex32 packed = Packed_nx.as_complex32 packed |> unwrap_result
+let as_complex64 packed = Packed_nx.as_complex64 packed |> unwrap_result
+
+let load_image ?grayscale path =
+  Safe.load_image ?grayscale path |> unwrap_result
+
+let save_image ?overwrite path img =
+  Safe.save_image ?overwrite path img |> unwrap_result
+
+let load_npy path = Safe.load_npy path |> unwrap_result
+
+let save_npy ?overwrite path arr =
+  Safe.save_npy ?overwrite path arr |> unwrap_result
+
+let load_npz path = Safe.load_npz path |> unwrap_result
+
+let load_npz_member ~name path =
+  Safe.load_npz_member ~name path |> unwrap_result
+
+let save_npz ?overwrite path items =
+  Safe.save_npz ?overwrite path items |> unwrap_result
+
+let load_h5 ~dataset path = Safe.load_h5 ~dataset path |> unwrap_result
+
+let save_h5 ~dataset ?overwrite path arr =
+  Safe.save_h5 ~dataset ?overwrite path arr |> unwrap_result
+
+let load_h5_all path = Safe.load_h5_all path |> unwrap_result
+
+let save_h5_all ?overwrite path items =
+  Safe.save_h5_all ?overwrite path items |> unwrap_result
+
+let load_safetensor path = Safe.load_safetensor path |> unwrap_result
+
+let save_safetensor ?overwrite path items =
+  Safe.save_safetensor ?overwrite path items |> unwrap_result

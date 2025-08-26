@@ -15,12 +15,12 @@ let () =
   (* Save a float32 array *)
   let arr_f32 = arange Float32 0 12 1 |> reshape [| 3; 4 |] in
   let npy_path = Filename.concat test_dir "example.npy" in
-  save_npy arr_f32 npy_path;
+  save_npy npy_path arr_f32;
   Printf.printf "   Saved array to %s\n" npy_path;
 
   (* Load it back *)
   let loaded = load_npy npy_path in
-  let arr_loaded = to_float32 loaded in
+  let arr_loaded = as_float32 loaded in
   Format.printf "   Loaded array (shape: %a):\n%a\n\n" pp_shape
     (shape arr_loaded) pp arr_loaded;
 
@@ -33,7 +33,7 @@ let () =
 
   (* Save as NPZ *)
   let npz_path = Filename.concat test_dir "archive.npz" in
-  save_npz [ ("counts", P counts); ("matrix", P matrix) ] npz_path;
+  save_npz npz_path [ ("counts", P counts); ("matrix", P matrix) ];
   Printf.printf "   Saved archive to %s\n" npz_path;
 
   (* Load entire archive *)
@@ -46,8 +46,8 @@ let () =
     archive;
 
   (* Load single member *)
-  let (P matrix_loaded) = load_npz_member ~path:npz_path ~name:"matrix" in
-  let matrix_f64 = to_float64 (P matrix_loaded) in
+  let (P matrix_loaded) = load_npz_member ~name:"matrix" npz_path in
+  let matrix_f64 = as_float64 (P matrix_loaded) in
   Format.printf "   Loaded 'matrix':\n%a\n\n" pp matrix_f64;
 
   (* 3. Image files *)
@@ -59,7 +59,7 @@ let () =
     create UInt8 [| 100; 100 |] (Array.init 10000 (fun i -> i mod 256))
   in
   let img_path = Filename.concat test_dir "gradient.png" in
-  save_image img_gray img_path;
+  save_image img_path img_gray;
   Printf.printf "   Saved grayscale gradient to %s\n" img_path;
 
   (* Create a simple color image (RGB) *)
@@ -72,7 +72,7 @@ let () =
     done
   done;
   let color_path = Filename.concat test_dir "red_square.png" in
-  save_image img_color color_path;
+  save_image color_path img_color;
   Printf.printf "   Saved color image to %s\n" color_path;
 
   Printf.printf "\nAll test files saved to '%s/'\n" test_dir

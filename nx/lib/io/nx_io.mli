@@ -1,13 +1,66 @@
 (** Nx_io: Nx input/output for common file formats.
 
-    Provide functions to load and save [Nx.t] arrays in image formats, NumPy
-    formats (.npy, .npz), and HDF5 archives. *)
+    Provides functions to load and save [Nx.t] arrays in image formats, NumPy
+    formats (.npy, .npz), HDF5 archives, and SafeTensors. Emphasizes safety with
+    result types for error handling and labeled arguments for clarity. *)
+
+(** {1 Types} *)
 
 (** Existential container for an [Nx.t] of any dtype and dimensionality.
 
-    Wrap arrays whose element type and layout are determined at runtime, such as
-    those loaded from .npy or .npz files. *)
+    Wraps arrays whose element type and layout are determined at runtime, such
+    as those loaded from files. *)
 type packed_nx = P : ('a, 'b) Nx.t -> packed_nx
+
+type archive = (string, packed_nx) Hashtbl.t
+(** Generic archive type for mappings from names/paths to packed arrays, used
+    across NPZ, HDF5, and SafeTensors. *)
+
+(** {1 Conversions from Packed Arrays} *)
+
+val as_float16 : packed_nx -> Nx.float16_t
+(** [as_float16 packed] converts a packed Nx to a [Nx.float16_t], or [Error] if
+    dtype mismatch. *)
+
+val as_float32 : packed_nx -> Nx.float32_t
+(** [as_float32 packed] converts a packed Nx to a [Nx.float32_t], or [Error] if
+    dtype mismatch. *)
+
+val as_float64 : packed_nx -> Nx.float64_t
+(** [as_float64 packed] converts a packed Nx to a [Nx.float64_t], or [Error] if
+    dtype mismatch. *)
+
+val as_int8 : packed_nx -> Nx.int8_t
+(** [as_int8 packed] converts a packed Nx to a [Nx.int8_t], or [Error] if dtype
+    mismatch. *)
+
+val as_int16 : packed_nx -> Nx.int16_t
+(** [as_int16 packed] converts a packed Nx to a [Nx.int16_t], or [Error] if
+    dtype mismatch. *)
+
+val as_int32 : packed_nx -> Nx.int32_t
+(** [as_int32 packed] converts a packed Nx to a [Nx.int32_t], or [Error] if
+    dtype mismatch. *)
+
+val as_int64 : packed_nx -> Nx.int64_t
+(** [as_int64 packed] converts a packed Nx to a [Nx.int64_t], or [Error] if
+    dtype mismatch. *)
+
+val as_uint8 : packed_nx -> Nx.uint8_t
+(** [as_uint8 packed] converts a packed Nx to a [Nx.uint8_t], or [Error] if
+    dtype mismatch. *)
+
+val as_uint16 : packed_nx -> Nx.uint16_t
+(** [as_uint16 packed] converts a packed Nx to a [Nx.uint16_t], or [Error] if
+    dtype mismatch. *)
+
+val as_complex32 : packed_nx -> Nx.complex32_t
+(** [as_complex32 packed] converts a packed Nx to a [Nx.complex32_t], or [Error]
+    if dtype mismatch. *)
+
+val as_complex64 : packed_nx -> Nx.complex64_t
+(** [as_complex64 packed] converts a packed Nx to a [Nx.complex64_t], or [Error]
+    if dtype mismatch. *)
 
 (** {1 Image Loading and Saving} *)
 
@@ -22,11 +75,9 @@ val load_image : ?grayscale:bool -> string -> (int, Nx.uint8_elt) Nx.t
     - path: path to the image file.
 
     {2 Returns}
-    - uint8 nx of shape [|height; width|] if grayscale, or [|height; width; 3|]
-      for RGB color images.
-
-    {2 Raises}
-    - [Failure] if file I/O fails or format is unsupported.
+    - [Ok] with uint8 nx of shape [|height; width|] if grayscale, or
+      [|height; width; 3|] for RGB color images.
+    - [Error] on failure (e.g., I/O or unsupported format).
 
     {2 Notes}
     - Supported formats depend on stb_image (PNG, JPEG, BMP, TGA, GIF).
@@ -36,29 +87,29 @@ val load_image : ?grayscale:bool -> string -> (int, Nx.uint8_elt) Nx.t
     {2 Examples}
     {[
       (* Load color image *)
-      let img = load_image "photo.png" in
-      (* img : (int, Nx.uint8_elt) Nx.t with shape [|H; W; 3|] *)
+      match load_image "photo.png" with
+      | Ok img -> (* img : (int, Nx.uint8_elt) Nx.t with shape [|H; W; 3|] *)
+      | Error e -> failwith (string_of_error e)
 
       (* Load as grayscale *)
-      let gray = load_image ~grayscale:true "photo.png" in
-      (* gray : (int, Nx.uint8_elt) Nx.t with shape [|H; W|] *)
+      let gray = load_image ~grayscale:true "photo.png"
     ]} *)
 
-val save_image : (int, Nx.uint8_elt) Nx.t -> string -> unit
-(** [save_image img path]
+val save_image : ?overwrite:bool -> string -> (int, Nx.uint8_elt) Nx.t -> unit
+(** [save_image ?overwrite path img]
 
     Save a uint8 nx as an image file.
 
     {2 Parameters}
+    - ?overwrite: if [false], fail if file exists; default [true].
+    - path: destination file path; extension determines format (e.g. .png,
+      .jpg).
     - img: uint8 nx of shape [|height; width|] (grayscale),
       [|height; width; 1|], [|height; width; 3|] (RGB), or [|height; width; 4|]
       (RGBA).
-    - path: destination file path; extension determines format (e.g. .png,
-      .jpg).
 
-    {2 Raises}
-    - [Failure] if nx is not uint8 kind or has unsupported dimensions.
-    - [Failure] on I/O error.
+    {2 Returns}
+    - [Ok ()] on success, [Error] on failure (e.g., unsupported shape or I/O).
 
     {2 Notes}
     - Supported formats depend on stb_image_write library.
@@ -68,11 +119,11 @@ val save_image : (int, Nx.uint8_elt) Nx.t -> string -> unit
     {[
       (* Save a grayscale image *)
       let gray = Nx.create Nx.uint8 [|100; 200|] data in
-      save_image gray "output.png"
+      ignore (save_image ~img:gray "output.png")
 
-      (* Save an RGB image *)
+      (* Save an RGB image without overwriting *)
       let rgb = Nx.create Nx.uint8 [|100; 200; 3|] data in
-      save_image rgb "output.jpg"
+      save_image ~img:rgb "output.jpg" ~overwrite:false
     ]} *)
 
 (** {1 NumPy Format (.npy)} *)
@@ -86,256 +137,218 @@ val load_npy : string -> packed_nx
     - path: path to the `.npy` file.
 
     {2 Returns}
-    - [packed_nx] wrapping the loaded array with its runtime-detected dtype.
-
-    {2 Raises}
-    - [Failure] if file I/O fails or format is invalid.
+    - [Ok] with [packed_nx] wrapping the loaded array.
+    - [Error] on failure.
 
     {2 Examples}
     {[
       (* Load and convert to specific type *)
-      let arr = load_npy "data.npy" |> to_float32 in
-
-      (* Pattern match to unpack *)
-      let P arr = load_npy "data.npy" in
-      (* arr : ('a, 'b) Nx.t *)
+      match load_npy "data.npy" with
+      | Ok packed -> let arr = as_float32 packed in ...
+      | Error _ -> ...
     ]} *)
 
-val save_npy : ('a, 'b) Nx.t -> string -> unit
-(** [save_npy arr path]
+val save_npy : ?overwrite:bool -> string -> ('a, 'b) Nx.t -> unit
+(** [save_npy ~arr path ?overwrite]
 
     Save a single nx to a NumPy `.npy` file.
 
     {2 Parameters}
-    - arr: nx to save (any supported dtype).
+    - ~arr: nx to save (any supported dtype).
     - path: destination path for the `.npy` file.
+    - ?overwrite: if [false], fail if file exists; default [true].
 
-    {2 Raises}
-    - [Failure] on I/O error or unsupported dtype.
+    {2 Returns}
+    - [Ok ()] on success, [Error] on failure.
 
     {2 Notes}
-    - The file encodes dtype, shape, and raw data in little-endian order.
-
-    {2 Examples}
-    {[
-      let arr = Nx.arange Nx.float32 0.0 10.0 1.0 in
-      save_npy arr "array.npy"
-    ]} *)
+    - The file encodes dtype, shape, and raw data in little-endian order. *)
 
 (** {1 NumPy Archive Format (.npz)} *)
 
-type npz_archive = (string, packed_nx) Hashtbl.t
-(** Map from array names to [packed_nx] values for a NumPy `.npz` archive. *)
-
-val load_npz : string -> npz_archive
+val load_npz : string -> archive
 (** [load_npz path]
 
     Load all arrays from a NumPy `.npz` archive into a hash table.
 
-    {2 Parameters}
-    - path: path to the `.npz` file.
-
     {2 Returns}
-    - [npz_archive] mapping each array name to its [packed_nx].
+    - [Ok] with [archive] mapping each array name to its [packed_nx]. *)
 
-    {2 Raises}
-    - [Failure] on I/O error or invalid archive format.
-
-    {2 Examples}
-    {[
-      let archive = load_npz "bundle.npz" in
-      match Hashtbl.find_opt archive "weights" with
-      | Some (P weights) ->
-          let w = to_float32 (P weights) in
-          (* use weights *)
-      | None -> failwith "weights not found"
-    ]} *)
-
-val load_npz_member : path:string -> name:string -> packed_nx
-(** [load_npz_member ~path ~name]
+val load_npz_member : name:string -> string -> packed_nx
+(** [load_npz_member ~name path]
 
     Load a single named array from a NumPy `.npz` archive.
 
-    {2 Parameters}
-    - path: path to the `.npz` file.
-    - name: name of the array entry in the archive.
-
     {2 Returns}
-    - [packed_nx] containing the loaded array.
+    - [Ok] with [packed_nx] or [Error] (e.g., [Missing_entry]). *)
 
-    {2 Raises}
-    - [Failure] if entry [name] is not found or on I/O error.
+val save_npz : ?overwrite:bool -> string -> (string * packed_nx) list -> unit
+(** [save_npz ?overwrite path items]
 
-    {2 Examples}
-    {[
-      (* Load specific array without loading entire archive *)
-      let (P data) = load_npz_member ~path:"model.npz" ~name:"embeddings"
-    ]} *)
-
-val save_npz : (string * packed_nx) list -> string -> unit
-(** [save_npz items path]
-
-    Save multiple named nxs to a NumPy `.npz` archive.
-
-    {2 Parameters}
-    - items: list of (name, array) pairs to include in the archive.
-    - path: destination path for the `.npz` file.
-
-    {2 Raises}
-    - [Failure] on I/O error or archive creation failure.
-
-    {2 Examples}
-    {[
-      (* Save multiple arrays *)
-      let weights = Nx.randn Nx.float32 [| 784; 128 |] in
-      let bias = Nx.zeros Nx.float32 [| 128 |] in
-      save_npz [ ("weights", P weights); ("bias", P bias) ] "model.npz"
-    ]} *)
-
-(** {1 Conversions from Packed Arrays} *)
-
-val to_float16 : packed_nx -> Nx.float16_t
-(** [to_float16 packed_nx] converts a packed Nx to a [Nx.float16_t]. *)
-
-val to_float32 : packed_nx -> Nx.float32_t
-(** [to_float32 packed_nx] converts a packed Nx to a [Nx.float32_t]. *)
-
-val to_float64 : packed_nx -> Nx.float64_t
-(** [to_float64 packed_nx] converts a packed Nx to a [Nx.float64_t]. *)
-
-val to_int8 : packed_nx -> Nx.int8_t
-(** [to_int8 packed_nx] converts a packed Nx to a [Nx.int8_t]. *)
-
-val to_int16 : packed_nx -> Nx.int16_t
-(** [to_int16 packed_nx] converts a packed Nx to a [Nx.int16_t]. *)
-
-val to_int32 : packed_nx -> Nx.int32_t
-(** [to_int32 packed_nx] converts a packed Nx to a [Nx.int32_t]. *)
-
-val to_int64 : packed_nx -> Nx.int64_t
-(** [to_int64 packed_nx] converts a packed Nx to a [Nx.int64_t]. *)
-
-val to_uint8 : packed_nx -> Nx.uint8_t
-(** [to_uint8 packed_nx] converts a packed Nx to a [Nx.uint8_t]. *)
-
-val to_uint16 : packed_nx -> Nx.uint16_t
-(** [to_uint16 packed_nx] converts a packed Nx to a [Nx.uint16_t]. *)
-
-val to_complex32 : packed_nx -> Nx.complex32_t
-(** [to_complex32 packed_nx] converts a packed Nx to a [Nx.complex32_t]. *)
-
-val to_complex64 : packed_nx -> Nx.complex64_t
-(** [to_complex64 packed_nx] converts a packed Nx to a [Nx.complex64_t]. *)
+    Save multiple named nxs to a NumPy `.npz` archive. *)
 
 (** {1 HDF5 Format (.h5, .hdf5)} *)
 
 val hdf5_available : bool
-(** [hdf5_available] indicates whether HDF5 support is available. This is [true]
-    when the HDF5 library is installed and nx was built with HDF5 support. *)
+(** [hdf5_available] indicates whether HDF5 support is available. *)
 
-val load_h5 : path:string -> dataset:string -> packed_nx
-(** [load_h5 ~path ~dataset]
+val load_h5 : dataset:string -> string -> packed_nx
+(** [load_h5 ~dataset path]
 
-    Load a single dataset from an HDF5 file.
+    Load a single dataset from an HDF5 file. *)
 
-    {2 Parameters}
-    - path: path to the HDF5 file.
-    - dataset: name/path of the dataset within the file (e.g., "data" or
-      "/group/data").
-
-    {2 Returns}
-    - [packed_nx] wrapping the loaded array with its runtime-detected dtype.
-
-    {2 Raises}
-    - [Failure] if HDF5 support is not available.
-    - [Failure] if file I/O fails or dataset is not found.
-
-    {2 Examples}
-    {[
-      (* Load a specific dataset *)
-      let arr = load_h5 ~path:"data.h5" ~dataset:"measurements" |> to_float32 in
-
-      (* Load from nested group *)
-      let weights = load_h5 ~path:"model.h5" ~dataset:"/layers/conv1/weights"
-    ]} *)
-
-val save_h5 : ('a, 'b) Nx.t -> path:string -> dataset:string -> unit
-(** [save_h5 arr ~path ~dataset]
+val save_h5 :
+  dataset:string -> ?overwrite:bool -> string -> ('a, 'b) Nx.t -> unit
+(** [save_h5 ~dataset ?overwrite path arr]
 
     Save a single nx as a dataset in an HDF5 file.
 
-    {2 Parameters}
-    - arr: nx to save (any supported dtype).
-    - path: destination path for the HDF5 file.
-    - dataset: name/path for the dataset within the file.
-
-    {2 Raises}
-    - [Failure] if HDF5 support is not available.
-    - [Failure] on I/O error or unsupported dtype.
-
     {2 Notes}
     - If the file exists, the dataset will be added or replaced.
-    - If the file doesn't exist, it will be created.
-    - Complex types are not supported.
+    - Complex types are not supported. *)
 
-    {2 Examples}
-    {[
-      let data = Nx.randn Nx.float32 [| 100; 50 |] in
-      save_h5 data ~path:"results.h5" ~dataset:"predictions"
-    ]} *)
-
-type h5_archive = (string, packed_nx) Hashtbl.t
-(** Map from dataset paths to [packed_nx] values for an HDF5 file. *)
-
-val load_h5_all : string -> h5_archive
+val load_h5_all : string -> archive
 (** [load_h5_all path]
 
     Load all datasets from an HDF5 file into a hash table.
 
-    {2 Parameters}
-    - path: path to the HDF5 file.
-
-    {2 Returns}
-    - [h5_archive] mapping each dataset path to its [packed_nx].
-
-    {2 Raises}
-    - [Failure] if HDF5 support is not available.
-    - [Failure] on I/O error.
-
     {2 Notes}
-    - Recursively loads all datasets from all groups in the file.
-    - Dataset paths include group hierarchy (e.g., "group/subgroup/data").
+    - Recursively loads all datasets from all groups. *)
 
-    {2 Examples}
-    {[
-      let archive = load_h5_all "model.h5" in
-      Hashtbl.iter
-        (fun name _ -> Printf.printf "Found dataset: %s\n" name)
-        archive
-    ]} *)
-
-val save_h5_all : (string * packed_nx) list -> string -> unit
-(** [save_h5_all items path]
+val save_h5_all : ?overwrite:bool -> string -> (string * packed_nx) list -> unit
+(** [save_h5_all ?overwrite path items]
 
     Save multiple named nxs to an HDF5 file.
 
-    {2 Parameters}
-    - items: list of (dataset_path, array) pairs to save.
-    - path: destination path for the HDF5 file.
-
-    {2 Raises}
-    - [Failure] if HDF5 support is not available.
-    - [Failure] on I/O error.
-
     {2 Notes}
-    - Creates a new file, replacing any existing file.
-    - Dataset paths can include groups (e.g., "group/data").
+    - Dataset paths can include groups (e.g., "group/data"). *)
 
-    {2 Examples}
-    {[
-      let weights = Nx.randn Nx.float32 [| 784; 128 |] in
-      let bias = Nx.zeros Nx.float32 [| 128 |] in
-      save_h5_all
-        [ ("model/weights", P weights); ("model/bias", P bias) ]
-        "checkpoint.h5"
-    ]} *)
+(** {1 SafeTensors Format} *)
+
+val load_safetensor : string -> archive
+(** [load_safetensor path]
+
+    Load all tensors from a SafeTensors file into a hash table.. *)
+
+val save_safetensor :
+  ?overwrite:bool -> string -> (string * packed_nx) list -> unit
+(** [save_safetensor ?overwrite path items]
+
+    Save multiple named nxs to a SafeTensors file. *)
+
+module Safe : sig
+  type error =
+    | Io_error of string
+    | Format_error of string
+    | Unsupported_dtype
+    | Unsupported_shape
+    | Missing_entry of string
+    | Other of string  (** Custom error variants for I/O operations. *)
+
+  (** {2 Conversions from Packed Arrays} *)
+
+  val as_float16 : packed_nx -> (Nx.float16_t, error) result
+  (** Safe alias for [as_float16] *)
+
+  val as_float32 : packed_nx -> (Nx.float32_t, error) result
+  (** Safe alias for [as_float32] *)
+
+  val as_float64 : packed_nx -> (Nx.float64_t, error) result
+  (** Safe alias for [as_float64] *)
+
+  val as_int8 : packed_nx -> (Nx.int8_t, error) result
+  (** Safe alias for [as_int8] *)
+
+  val as_int16 : packed_nx -> (Nx.int16_t, error) result
+  (** Safe alias for [as_int16] *)
+
+  val as_int32 : packed_nx -> (Nx.int32_t, error) result
+  (** Safe alias for [as_int32] *)
+
+  val as_int64 : packed_nx -> (Nx.int64_t, error) result
+  (** Safe alias for [as_int64] *)
+
+  val as_uint8 : packed_nx -> (Nx.uint8_t, error) result
+  (** Safe alias for [as_uint8] *)
+
+  val as_uint16 : packed_nx -> (Nx.uint16_t, error) result
+  (** Safe alias for [as_uint16] *)
+
+  val as_complex32 : packed_nx -> (Nx.complex32_t, error) result
+  (** Safe alias for [as_complex32] *)
+
+  val as_complex64 : packed_nx -> (Nx.complex64_t, error) result
+  (** Safe alias for [as_complex64] *)
+
+  (** {2 Image Loading and Saving} *)
+
+  val load_image :
+    ?grayscale:bool -> string -> ((int, Nx.uint8_elt) Nx.t, error) result
+  (** Safe alias for [load_image] *)
+
+  val save_image :
+    ?overwrite:bool ->
+    string ->
+    (int, Nx.uint8_elt) Nx.t ->
+    (unit, error) result
+  (** Safe alias for [save_image] *)
+
+  (** {2 NumPy Format (.npy)} *)
+
+  val load_npy : string -> (packed_nx, error) result
+  (** Safe alias for [load_npy] *)
+
+  val save_npy :
+    ?overwrite:bool -> string -> ('a, 'b) Nx.t -> (unit, error) result
+  (** Safe alias for [save_npy] *)
+
+  (** {2 NumPy Archive Format (.npz)} *)
+
+  val load_npz : string -> (archive, error) result
+  (** Safe alias for [load_npz] *)
+
+  val load_npz_member : name:string -> string -> (packed_nx, error) result
+  (** Safe alias for [load_npz_member] *)
+
+  val save_npz :
+    ?overwrite:bool ->
+    string ->
+    (string * packed_nx) list ->
+    (unit, error) result
+  (** Safe alias for [save_npz] *)
+
+  (** {2 HDF5 Format (.h5, .hdf5)} *)
+
+  val load_h5 : dataset:string -> string -> (packed_nx, error) result
+  (** Safe alias for [load_h5] *)
+
+  val save_h5 :
+    dataset:string ->
+    ?overwrite:bool ->
+    string ->
+    ('a, 'b) Nx.t ->
+    (unit, error) result
+  (** Safe alias for [save_h5] *)
+
+  val load_h5_all : string -> (archive, error) result
+  (** Safe alias for [load_h5_all] *)
+
+  val save_h5_all :
+    ?overwrite:bool ->
+    string ->
+    (string * packed_nx) list ->
+    (unit, error) result
+  (** Safe alias for [save_h5_all] *)
+
+  (** {2 SafeTensors Format} *)
+
+  val load_safetensor : string -> (archive, error) result
+  (** Safe alias for [load_safetensor] *)
+
+  val save_safetensor :
+    ?overwrite:bool ->
+    string ->
+    (string * packed_nx) list ->
+    (unit, error) result
+  (** Safe alias for [save_safetensor] *)
+end

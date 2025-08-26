@@ -1,0 +1,3 @@
+(library
+ (name safetensors)
+ (public_name nx.safetensors))
