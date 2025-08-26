@@ -171,3 +171,6 @@ module Bpe = Bpe
 
 module Wordpiece = Wordpiece
 (** WordPiece tokenizer *)
+
+module Pre_tokenizer = Pre_tokenizer
+(** Pre-tokenizers for splitting text before tokenization *)

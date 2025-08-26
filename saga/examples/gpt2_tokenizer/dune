@@ -1,0 +1,3 @@
+(executable
+ (name gpt2_tokenizer)
+ (libraries saga nx unix))

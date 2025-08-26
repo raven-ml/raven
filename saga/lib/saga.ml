@@ -145,7 +145,7 @@ let get_or_build_vocab tokenizer_impl tokens =
           vocab_ref := v;
           v)
 
-let tokenizer config =
+let tokenizer ?pre_tokenizer config =
   let impl =
     match config with
     | `BPE (vocab_file, merges_file) ->
@@ -167,7 +167,7 @@ let tokenizer config =
     | `Chars -> Chars (ref (Vocab.create ()))
     | `Regex pattern -> Regex (pattern, ref (Vocab.create ()))
   in
-  { impl; normalizer = None; pre_tokenizer = None }
+  { impl; normalizer = None; pre_tokenizer }
 
 let tokenize_with tok text =
   let text = match tok.normalizer with Some f -> f text | None -> text in
@@ -192,29 +192,82 @@ let tokenize_with tok text =
   tokens
 
 let encode tokenizer text =
-  let tokens = tokenize_with tokenizer text in
-  let vocab = get_or_build_vocab tokenizer.impl tokens in
-  let unk_id = Vocab.unk_id vocab in
-  Array.of_list
-    (List.map
-       (fun token ->
-         match Vocab.token_to_id vocab token with
-         | Some id -> id
-         | None -> unk_id)
-       tokens)
+  match tokenizer.impl with
+  | BPE (bpe, _) ->
+      (* BPE has its own vocabulary, use token IDs directly *)
+      let text =
+        match tokenizer.normalizer with Some f -> f text | None -> text
+      in
+      let texts =
+        match tokenizer.pre_tokenizer with Some f -> f text | None -> [ text ]
+      in
+      let token_objs = List.concat_map (Tokenizers.Bpe.tokenize bpe) texts in
+      Array.of_list (List.map (fun t -> t.Tokenizers.Bpe.id) token_objs)
+  | WordPiece (wp, _) ->
+      (* WordPiece has its own vocabulary, use token IDs directly *)
+      let text =
+        match tokenizer.normalizer with Some f -> f text | None -> text
+      in
+      let texts =
+        match tokenizer.pre_tokenizer with Some f -> f text | None -> [ text ]
+      in
+      let token_objs =
+        List.concat_map (Tokenizers.Wordpiece.tokenize wp) texts
+      in
+      Array.of_list (List.map (fun t -> t.Tokenizers.Wordpiece.id) token_objs)
+  | _ ->
+      (* For Words/Chars/Regex, build vocab dynamically *)
+      let tokens = tokenize_with tokenizer text in
+      let vocab = get_or_build_vocab tokenizer.impl tokens in
+      let unk_id = Vocab.unk_id vocab in
+      Array.of_list
+        (List.map
+           (fun token ->
+             match Vocab.token_to_id vocab token with
+             | Some id -> id
+             | None -> unk_id)
+           tokens)
 
 let decode tokenizer ids =
-  let vocab =
-    match tokenizer.impl with
-    | BPE (_, vref)
-    | WordPiece (_, vref)
-    | Words vref
-    | Chars vref
-    | Regex (_, vref) ->
-        !vref
-  in
-  let tokens = Array.to_list ids |> List.filter_map (Vocab.id_to_token vocab) in
-  String.concat " " tokens
+  match tokenizer.impl with
+  | BPE (bpe, _) ->
+      (* BPE decoding - tokens already include spaces and punctuation *)
+      let tokens =
+        Array.to_list ids |> List.filter_map (Tokenizers.Bpe.id_to_token bpe)
+      in
+      (* BPE tokens are meant to be concatenated directly *)
+      String.concat "" tokens
+  | WordPiece (wp, _) ->
+      (* WordPiece decoding *)
+      let tokens =
+        Array.to_list ids
+        |> List.filter_map (Tokenizers.Wordpiece.id_to_token wp)
+      in
+      (* Handle ## continuation tokens *)
+      let rec concat_tokens acc = function
+        | [] -> List.rev acc
+        | token :: rest when String.starts_with ~prefix:"##" token -> (
+            match acc with
+            | prev :: acc_rest ->
+                concat_tokens
+                  ((prev ^ String.sub token 2 (String.length token - 2))
+                  :: acc_rest)
+                  rest
+            | [] -> concat_tokens [ token ] rest)
+        | token :: rest -> concat_tokens (token :: acc) rest
+      in
+      String.concat " " (concat_tokens [] tokens)
+  | _ ->
+      (* For Words/Chars/Regex, use the vocab reference *)
+      let vocab =
+        match tokenizer.impl with
+        | Words vref | Chars vref | Regex (_, vref) -> !vref
+        | _ -> assert false
+      in
+      let tokens =
+        Array.to_list ids |> List.filter_map (Vocab.id_to_token vocab)
+      in
+      String.concat " " tokens
 
 let encode_batch tokenizer ?(max_length = 512) ?(padding = true)
     ?(truncation = false) texts =
@@ -226,16 +279,20 @@ let encode_batch tokenizer ?(max_length = 512) ?(padding = true)
     else min max_length (List.fold_left max 0 (List.map Array.length encoded))
   in
 
-  let vocab =
+  let pad_id =
     match tokenizer.impl with
-    | BPE (_, vref)
-    | WordPiece (_, vref)
-    | Words vref
-    | Chars vref
-    | Regex (_, vref) ->
-        !vref
+    | BPE (bpe, _) -> (
+        (* Use 0 as default padding for BPE, or find pad token if exists *)
+        match Tokenizers.Bpe.token_to_id bpe "<pad>" with
+        | Some id -> id
+        | None -> 0 (* GPT-2 uses 0 for padding *))
+    | WordPiece (wp, _) -> (
+        (* Use 0 as default padding for WordPiece *)
+        match Tokenizers.Wordpiece.token_to_id wp "[PAD]" with
+        | Some id -> id
+        | None -> 0)
+    | Words vref | Chars vref | Regex (_, vref) -> Vocab.pad_id !vref
   in
-  let pad_id = Vocab.pad_id vocab in
 
   let arr = Nx.zeros Nx.int32 [| batch_size; actual_max_len |] in
   if padding then ignore (Nx.fill (Int32.of_int pad_id) arr);

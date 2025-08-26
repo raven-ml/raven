@@ -18,15 +18,24 @@ type vocab
 (** {2 Tokenizers} *)
 
 val tokenizer :
+  ?pre_tokenizer:(string -> string list) ->
   [ `BPE of string * string  (** vocab_file, merges_file *)
   | `WordPiece of string * string  (** vocab_file, unk_token *)
   | `Words  (** Whitespace tokenization *)
   | `Chars  (** Character-level tokenization *)
   | `Regex of string  (** Custom regex pattern *) ] ->
   tokenizer
-(** Create a tokenizer. Examples:
+(** Create a tokenizer with optional pre-tokenizer.
+
+    Examples:
     {[
-      let tok = tokenizer (`BPE ("vocab.json", "merges.txt"))
+      (* GPT-2 style BPE with ByteLevel pre-tokenizer *)
+      let tok =
+        tokenizer
+          ~pre_tokenizer:(Saga.Tokenizers.Pre_tokenizer.byte_level ())
+          (`BPE ("vocab.json", "merges.txt"))
+
+      (* Simple word tokenizer *)
       let tok = tokenizer `Words
     ]} *)
 
