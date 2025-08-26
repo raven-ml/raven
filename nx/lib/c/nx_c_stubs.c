@@ -2319,7 +2319,101 @@ static void nx_c_threefry(const ndarray_t *data, const ndarray_t *seed,
     }                                                                          \
   }
 
-DEFINE_GATHER_OP(float, int32_t)
+// DEFINE_GATHER_OP(float, int32_t)
+
+  static void nx_c_gather_float(const ndarray_t *data,                       
+                                  const ndarray_t *indices,                    
+                                  const ndarray_t *out, int axis) {            
+    // Sanity check: ranks must match
+if (data->ndim != indices->ndim) {
+  fprintf(stderr,
+          "nx_c_gather_float: rank mismatch (data->ndim=%d, indices->ndim=%d)\n",
+          data->ndim, indices->ndim);
+  abort();
+}
+
+// Sanity check: shapes must be compatible
+for (int d = 0; d < data->ndim; d++) {
+  if (d != axis && indices->shape[d] > data->shape[d]) {
+    fprintf(stderr,
+            "nx_c_gather_float: shape mismatch at dim %d "
+            "(indices=%d > data=%d)\n",
+            d, indices->shape[d], data->shape[d]);
+    static char err_buf[100];
+    snprintf(err_buf,
+            sizeof(err_buf),
+            "nx_c_gather_float: shape mismatch at dim %d "
+            "(indices=%d > data=%d)\n",
+            d, indices->shape[d], data->shape[d]);
+    caml_failwith(err_buf);
+  }
+}
+
+    long total_size = 1;                                                       
+    for (int i = 0; i < out->ndim; i++) {                                      
+      total_size *= out->shape[i];                                             
+    }                                                                          
+    if (total_size == 0) return;                                               
+                                                                               
+    const float *data_ptr = (const float *)data->data;                         
+    const int32_t *indices_ptr = (const int32_t *)indices->data;                   
+    float *out_ptr = (float *)out->data;                                       
+                                                                               
+    int data_size_at_axis = data->shape[axis];                                 
+                                                                               
+    _Pragma("omp parallel if(total_size > 10000)") {                           
+      /* Stack allocation for thread-local index arrays */                     
+      int md_idx[out->ndim > 0 ? out->ndim : 1];                               
+      int src_idx[data->ndim > 0 ? data->ndim : 1];                            
+                                                                               
+      _Pragma("omp for") for (long linear_idx = 0; linear_idx < total_size;    
+                              linear_idx++) {                                  
+        /* Unravel linear index to multi-dimensional index */                  
+        long temp = linear_idx;                                                
+        for (int d = out->ndim - 1; d >= 0; d--) {                             
+          md_idx[d] = temp % out->shape[d];                                    
+          temp /= out->shape[d];                                               
+        }                                                                      
+                                                                               
+        /* Get index value from indices tensor */                              
+        long indices_offset = indices->offset;                                 
+        for (int d = 0; d < indices->ndim; d++) {                              
+          indices_offset += md_idx[d] * indices->strides[d];                   
+        }                                                                      
+        int idx_value = (int)indices_ptr[indices_offset];                      
+                                                                               
+        /* Handle negative indices and clamp */                                
+        int normalized_idx =                                                   
+            idx_value < 0 ? idx_value + data_size_at_axis : idx_value;         
+        int clamped_idx =                                                      
+            normalized_idx < 0                                                 
+                ? 0                                                            
+                : (normalized_idx >= data_size_at_axis ? data_size_at_axis - 1 
+                                                       : normalized_idx);      
+                                                                               
+        /* Build source index */                                               
+        for (int d = 0; d < out->ndim; d++) {                                  
+          src_idx[d] = md_idx[d];                                              
+        }                                                                      
+        src_idx[axis] = clamped_idx;                                           
+                                                                               
+        /* Calculate data offset and copy value */                             
+        long data_offset = data->offset;                                       
+        for (int d = 0; d < data->ndim; d++) {                                 
+          data_offset += src_idx[d] * data->strides[d];                        
+        }                                                                      
+                                                                               
+        /* Calculate output offset and write */                                
+        long out_offset = out->offset;                                         
+        for (int d = 0; d < out->ndim; d++) {                                  
+          out_offset += md_idx[d] * out->strides[d];                           
+        }                                                                      
+                                                                               
+        out_ptr[out_offset] = data_ptr[data_offset];                           
+      }                                                                        
+    }                                                                          
+  }
+
 DEFINE_GATHER_OP(double, int32_t)
 DEFINE_GATHER_OP(uint8_t, int32_t)
 DEFINE_GATHER_OP(int32_t, int32_t)
@@ -2497,10 +2591,11 @@ CAMLprim value caml_nx_gather_bc(value *argv, int argn) {
   int ndim = Int_val(argv[0]);
   value v_data_shape = argv[1];
   value v_data = argv[2], v_data_strides = argv[3], v_data_offset = argv[4];
-  value v_indices = argv[5], v_indices_strides = argv[6],
-        v_indices_offset = argv[7];
-  int axis = Int_val(argv[8]);
-  value v_z = argv[9], v_zstrides = argv[10], v_zoffset = argv[11];
+  value v_indices_shape = argv[5];
+  value v_indices = argv[6], v_indices_strides = argv[7],
+        v_indices_offset = argv[8];
+  int axis = Int_val(argv[9]);
+  value v_z = argv[10], v_zstrides = argv[11], v_zoffset = argv[12];
 
   if (ndim < 1) {
     caml_failwith("gather: ndim must be at least 1");
@@ -2512,20 +2607,41 @@ CAMLprim value caml_nx_gather_bc(value *argv, int argn) {
   for (int i = 0; i < ndim; ++i)
     data_shape[i] = Int_val(Field(v_data_shape, i));
 
-  // For gather, the output shape is the indices shape, get it from z's bigarray
+  struct caml_ba_array *ba_data = Caml_ba_array_val(v_data);
+  struct caml_ba_array *ba_indices = Caml_ba_array_val(v_indices);
   struct caml_ba_array *ba_z = Caml_ba_array_val(v_z);
-  for (int i = 0; i < ndim; ++i) {
-    indices_shape[i] = ba_z->dim[i];
-  }
+
+  /* compact debug dump */
+fprintf(stderr, "--- gather debug --- argv indices idx_obj=%p ba_indices=%p ba_data=%p ba_z=%p\n",
+        (void*)v_indices, (void*)ba_indices, (void*)ba_data, (void*)ba_z);
+fprintf(stderr, "ba_indices->flags=0x%lx  kind=%ld\n", ba_indices->flags, ba_indices->flags & CAML_BA_KIND_MASK);
+for (int i = 0; i < ndim; ++i) {
+  fprintf(stderr, "axis %d: data.logical=%d data.ba_dim=%ld indices.ba_dim=%ld z.ba_dim=%ld data.offset=%ld indices.offset=%ld z.offset=%ld\n",
+          i,
+          data_shape[i],
+          (long)ba_data->dim[i],
+          (long)ba_indices->dim[i],
+          (long)ba_z->dim[i],
+          (long)Int_val(v_data_offset),   /* if you don't have such field, print data.offset var instead */
+          (long)Int_val(v_indices_offset),/* same remark; else print indices.offset var */
+          (long)Int_val(v_zoffset));
+}
+
+/* Print first few index values to see what the indices array actually contains */
+int32_t *iptr = (int32_t*)ba_indices->data;
+fprintf(stderr, "indices ptr=%p first32=[", (void*)iptr);
+for (int j = 0; j < 8; ++j) fprintf(stderr, "%d%s", (int)iptr[j], j==7? "": ", ");
+fprintf(stderr, "]\n");
+
+  // Use the indices bigarray dims for indices_shape
+  for (int i = 0; i < ndim; ++i)
+    indices_shape[i] = Int_val(Field(v_indices_shape, i));
 
   for (int i = 0; i < ndim; ++i)
     data_strides[i] = Int_val(Field(v_data_strides, i));
   for (int i = 0; i < ndim; ++i)
     indices_strides[i] = Int_val(Field(v_indices_strides, i));
   for (int i = 0; i < ndim; ++i) z_strides[i] = Int_val(Field(v_zstrides, i));
-
-  struct caml_ba_array *ba_data = Caml_ba_array_val(v_data);
-  struct caml_ba_array *ba_indices = Caml_ba_array_val(v_indices);
 
   ndarray_t data, indices, z;
   data.data = ba_data->data;
@@ -2548,6 +2664,16 @@ CAMLprim value caml_nx_gather_bc(value *argv, int argn) {
 
   int kind = ba_data->flags & CAML_BA_KIND_MASK;
 
+fprintf(stderr, "ndim=%d axis=%d\n", ndim, axis);
+for (int i = 0; i < ndim; ++i) {
+  fprintf(stderr,
+    "dim %d: data(logical=%d ba=%ld)  indices=%d  z=%ld\n",
+    i,
+    data_shape[i], ba_data->dim[i],
+    indices_shape[i],
+    ba_z->dim[i]
+  );
+}
   caml_enter_blocking_section();
   switch (kind) {
     case CAML_BA_FLOAT32:

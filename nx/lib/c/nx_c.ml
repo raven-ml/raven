@@ -381,6 +381,7 @@ external gather :
   ('a, 'b, 'c) Array1.t ->
   int array ->
   int ->
+  int array ->
   (int32, int32_elt, 'c) Array1.t ->
   int array ->
   int ->
@@ -756,8 +757,9 @@ let op_gather data indices axis =
 
   (* Output has shape of indices *)
   let result = make_tensor data indices_shape in
+
   gather data_ndim data_shape data.buffer (get_strides data.view)
-    (get_offset data.view) indices.buffer (get_strides indices.view)
+    (get_offset data.view) indices_shape indices.buffer (get_strides indices.view)
     (get_offset indices.view) axis result.buffer (get_strides result.view)
     (get_offset result.view);
   let _ = (data.view, indices.view) in
