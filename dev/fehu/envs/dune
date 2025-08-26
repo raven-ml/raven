@@ -1,0 +1,11 @@
+(library
+ (name classic)
+ (public_name fehu.envs.classic)
+ (modules classic)
+ (libraries fehu rune))
+
+(library
+ (name sokoban)
+ (public_name fehu.envs.sokoban)
+ (modules sokoban)
+ (libraries fehu rune))
