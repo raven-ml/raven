@@ -114,17 +114,6 @@ module Safe = struct
   let as_complex32 = Packed_nx.as_complex32
   let as_complex64 = Packed_nx.as_complex64
 
-  (* HDF5 support *)
-  let load_h5 ~dataset path = Nx_hdf5.load_h5_dataset ~dataset path
-
-  let save_h5 ~dataset ?overwrite path arr =
-    Nx_hdf5.save_h5_dataset ~dataset ?overwrite path arr
-
-  let load_h5_all = Nx_hdf5.load_h5_all
-
-  let save_h5_all ?overwrite path items =
-    Nx_hdf5.save_h5_all ?overwrite path items
-
   (* SafeTensors support *)
   let load_safetensor path = Nx_safetensors.load_safetensor path
 
@@ -133,8 +122,6 @@ module Safe = struct
 end
 
 (* Main module functions - these fail directly instead of returning results *)
-
-let hdf5_available = Nx_hdf5.hdf5_available
 
 let unwrap_result = function
   | Ok v -> v
@@ -170,16 +157,6 @@ let load_npz_member ~name path =
 
 let save_npz ?overwrite path items =
   Safe.save_npz ?overwrite path items |> unwrap_result
-
-let load_h5 ~dataset path = Safe.load_h5 ~dataset path |> unwrap_result
-
-let save_h5 ~dataset ?overwrite path arr =
-  Safe.save_h5 ~dataset ?overwrite path arr |> unwrap_result
-
-let load_h5_all path = Safe.load_h5_all path |> unwrap_result
-
-let save_h5_all ?overwrite path items =
-  Safe.save_h5_all ?overwrite path items |> unwrap_result
 
 let load_safetensor path = Safe.load_safetensor path |> unwrap_result
 

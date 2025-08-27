@@ -1,5 +1,0 @@
-type t =
-| COMPACT
-| CONTIGUOUS
-| CHUNKED
-| NLAYOUTS

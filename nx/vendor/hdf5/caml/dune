@@ -1,9 +1,0 @@
-(library
- (name hdf5_caml)
- (public_name nx.hdf5_caml)
- (optional)
- (foreign_stubs
-  (language c)
-  (names struct_stubs)
-  (flags (:standard -Wall -pedantic -Wextra -Wunused -Werror -Wno-long-long) (:include ../raw/c_flags.sexp)))
- (libraries bigarray hdf5_raw))

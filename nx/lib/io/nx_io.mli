@@ -187,42 +187,6 @@ val save_npz : ?overwrite:bool -> string -> (string * packed_nx) list -> unit
 
     Save multiple named nxs to a NumPy `.npz` archive. *)
 
-(** {1 HDF5 Format (.h5, .hdf5)} *)
-
-val hdf5_available : bool
-(** [hdf5_available] indicates whether HDF5 support is available. *)
-
-val load_h5 : dataset:string -> string -> packed_nx
-(** [load_h5 ~dataset path]
-
-    Load a single dataset from an HDF5 file. *)
-
-val save_h5 :
-  dataset:string -> ?overwrite:bool -> string -> ('a, 'b) Nx.t -> unit
-(** [save_h5 ~dataset ?overwrite path arr]
-
-    Save a single nx as a dataset in an HDF5 file.
-
-    {2 Notes}
-    - If the file exists, the dataset will be added or replaced.
-    - Complex types are not supported. *)
-
-val load_h5_all : string -> archive
-(** [load_h5_all path]
-
-    Load all datasets from an HDF5 file into a hash table.
-
-    {2 Notes}
-    - Recursively loads all datasets from all groups. *)
-
-val save_h5_all : ?overwrite:bool -> string -> (string * packed_nx) list -> unit
-(** [save_h5_all ?overwrite path items]
-
-    Save multiple named nxs to an HDF5 file.
-
-    {2 Notes}
-    - Dataset paths can include groups (e.g., "group/data"). *)
-
 (** {1 SafeTensors Format} *)
 
 val load_safetensor : string -> archive
@@ -316,29 +280,6 @@ module Safe : sig
     (string * packed_nx) list ->
     (unit, error) result
   (** Safe alias for [save_npz] *)
-
-  (** {2 HDF5 Format (.h5, .hdf5)} *)
-
-  val load_h5 : dataset:string -> string -> (packed_nx, error) result
-  (** Safe alias for [load_h5] *)
-
-  val save_h5 :
-    dataset:string ->
-    ?overwrite:bool ->
-    string ->
-    ('a, 'b) Nx.t ->
-    (unit, error) result
-  (** Safe alias for [save_h5] *)
-
-  val load_h5_all : string -> (archive, error) result
-  (** Safe alias for [load_h5_all] *)
-
-  val save_h5_all :
-    ?overwrite:bool ->
-    string ->
-    (string * packed_nx) list ->
-    (unit, error) result
-  (** Safe alias for [save_h5_all] *)
 
   (** {2 SafeTensors Format} *)
 
