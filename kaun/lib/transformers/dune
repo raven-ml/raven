@@ -1,4 +1,0 @@
-(library
- (name kaun_transformers)
- (public_name kaun.transformers)
- (libraries bigarray_ext rune))

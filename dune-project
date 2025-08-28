@@ -36,15 +36,6 @@
  (depends odoc odoc-driver soupault lambdasoup landmarks landmarks-ppx))
 
 (package
- (name conf-hdf5)
- (allow_empty)
- (synopsis "Virtual package relying on an HDF5 system installation")
- (description
-  "This package can only install if the HDF5 library is installed on the system.")
- (depends
-  (conf-pkg-config :build)))
-
-(package
  (name nx)
  (synopsis "High-performance N-dimensional array library for OCaml")
  (description
@@ -67,7 +58,6 @@
   ; tests
   (alcotest :with-test)
   (mdx :with-test))
- (depopts conf-hdf5)
  (tags
   (numerical-computation tensor-library machine-learning)))
 

@@ -418,22 +418,22 @@ val meshgrid :
 
 val tril : ?k:int -> ('a, 'b) t -> ('a, 'b) t
 (** [tril ?k x] returns lower triangular part of matrix.
-    
+
     Elements above the k-th diagonal are zeroed.
     - [k = 0] (default): main diagonal
     - [k > 0]: include k diagonals above main
     - [k < 0]: exclude |k| diagonals below main
-    
+
     @raise Invalid_argument if x has less than 2 dimensions *)
 
 val triu : ?k:int -> ('a, 'b) t -> ('a, 'b) t
 (** [triu ?k x] returns upper triangular part of matrix.
-    
+
     Elements below the k-th diagonal are zeroed.
     - [k = 0] (default): main diagonal
     - [k > 0]: exclude k diagonals above main
     - [k < 0]: include |k| diagonals below main
-    
+
     @raise Invalid_argument if x has less than 2 dimensions *)
 
 val of_bigarray :

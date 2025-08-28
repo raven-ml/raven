@@ -372,16 +372,19 @@ let reshape view new_shape =
                         Some ((new_size, old_stride) :: rest_strides)
                     | None -> None
                   else if old_size > new_size && old_size mod new_size = 0 then
-                    (* Split dimension - this works even for non-contiguous
-                       dims *)
+                    (* Split dimension - for C-contiguous layout: When splitting
+                       old_size into new_size * remaining_size: - First
+                       dimension (new_size) gets stride = old_stride *
+                       remaining_size - Remaining dimension keeps stride =
+                       old_stride *)
                     let remaining_size = old_size / new_size in
-                    let remaining_stride = old_stride * new_size in
+                    let first_stride = old_stride * remaining_size in
                     let remaining_dims =
-                      (remaining_size, remaining_stride) :: old_rest
+                      (remaining_size, old_stride) :: old_rest
                     in
                     match match_dims remaining_dims new_rest with
                     | Some rest_strides ->
-                        Some ((new_size, old_stride) :: rest_strides)
+                        Some ((new_size, first_stride) :: rest_strides)
                     | None -> None
                   else if new_size > old_size then
                     (* Try merging dimensions - they must be contiguous *)

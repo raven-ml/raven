@@ -20,7 +20,6 @@ depends: [
   "mdx" {with-test}
   "odoc" {with-doc}
 ]
-depopts: ["conf-hdf5"]
 build: [
   ["dune" "subst"] {dev}
   [

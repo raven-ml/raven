@@ -51,10 +51,12 @@ let load_h5_weights path =
 
   (* Convert to our parameter structure *)
   let params = Hashtbl.fold (fun k v acc -> (k, v) :: acc) archive [] in
-  
+
   (* Debug: print parameter names *)
   Printf.printf "Found %d parameters:\n" (List.length params);
-  List.iter (fun (name, _) -> Printf.printf "  %s\n" name) (List.sort compare params);
+  List.iter
+    (fun (name, _) -> Printf.printf "  %s\n" name)
+    (List.sort compare params);
 
   (* Map parameter names and create Ptree *)
   let build_ptree params_list =

@@ -1,6 +1,0 @@
-(library
- (name ptree)
- (public_name kaun.ptree)
- (libraries rune yojson)
- (preprocess
-  (pps ppx_deriving_yojson)))

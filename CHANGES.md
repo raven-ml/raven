@@ -2,7 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.0~alpha0] - 2025-06-29
+## [1.0.0~alpha1] - TBD
+
+- Support for FFT operations in Nx
+- Support for symbolic shapes in Nx
+- Support for lazy views in Nx, views now only materialize when needed (strides need memory re-ordering)
+- Add a complete linear algebra suite to Nx, matching NumPy
+- New Talon package that provides an equivalent for Pandas/Polars to work with dataframes
+- New Saga package providing tokenizers and NLP functionnalities (e.g. Ngram models)
+- Support for symbolic shapes and lazy views in Nx
+- Support for new and machine-learning-specific data types, including boolean, bfloat16, complex16, float8, etc.
+- Support for forward mode differenciation through Rune.jvp
+- Support for automatic vectorization through Rune.vmap
+- Add a checkpoint API to Kaun to load and save weights
+- Add a data pipeline API to Kaun, equivalent to tensorflow's dataset
+- Add a Metrics API to Kaun for automatic metrics collection
+- Add a high-level Training API to Kaun, mimicing Keras' training API
+- Add a HuggingFace integration library to Kaun, kaun.huggingface
+- Add a datasets library to Kaun to load common machine learning datasets
+- Add a model zoo to Kaun with standard deep learning models: kaun.models (for now, LeNet5 and BERT)
+- Add transformers block in Kaun with a working Bert demonstration
+
+## [1.0.0~alpha0] - 2025-07-05
 
 ### Initial Alpha Release
 

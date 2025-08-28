@@ -1,4 +1,0 @@
-(library
- (public_name kaun.checkpoint)
- (name kaun_checkpoint)
- (libraries rune yojson unix threads kaun.ptree nx.io))

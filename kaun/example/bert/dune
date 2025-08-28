@@ -1,0 +1,3 @@
+(executables
+ (names bert test_matches_hf)
+ (libraries kaun kaun.models rune))

@@ -1,4 +1,4 @@
-open Kaun_dataset
+open Kaun.Dataset
 
 (* Test helpers *)
 let assert_equal_int_array expected actual =

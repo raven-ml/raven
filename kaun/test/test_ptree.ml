@@ -65,7 +65,7 @@ let test_flat_list () =
       ]
   in
 
-  let flat, rebuild = Ptree.flatten_with_rebuild tree in
+  let flat, rebuild = Ptree.flatten tree in
   check int "flat list length" 2 (List.length flat);
 
   (* Modify the flat list *)

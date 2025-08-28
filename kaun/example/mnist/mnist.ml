@@ -34,14 +34,14 @@ let train () =
   let shuffle_start = Unix.gettimeofday () in
   let rng = Rune.Rng.key 42 in
   let train_data_shuffled =
-    Kaun_dataset.shuffle ~rng ~buffer_size:60000 train_data
+    Kaun.Dataset.shuffle ~rng ~buffer_size:60000 train_data
   in
   Printf.printf "  Shuffle done in %.2fs\n%!"
     (Unix.gettimeofday () -. shuffle_start);
 
   let batch_start = Unix.gettimeofday () in
   let train_ds =
-    Kaun_dataset.batch_map 32
+    Kaun.Dataset.batch_map 32
       (fun batch ->
         let images, labels = Array.split batch in
         let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
@@ -58,7 +58,7 @@ let train () =
   let start = Unix.gettimeofday () in
   let test_ds =
     Kaun_datasets.mnist ~train:false ~flatten:false ~device ()
-    |> Kaun_dataset.batch_map 100 (fun batch ->
+    |> Kaun.Dataset.batch_map 100 (fun batch ->
            let images, labels = Array.split batch in
            let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
            let batched_labels = Rune.stack ~axis:0 (Array.to_list labels) in
@@ -84,7 +84,7 @@ let train () =
 
     (* Training *)
     Printf.printf "Starting training iteration...\n%!";
-    Kaun_dataset.iter
+    Kaun.Dataset.iter
       (fun (x_batch, y_batch) ->
         incr batch_count;
         if !batch_count = 1 then
@@ -147,7 +147,7 @@ let train () =
     Printf.printf "  Evaluating...\n%!";
     let eval_start = Unix.gettimeofday () in
     Metrics.Collection.reset metrics;
-    Kaun_dataset.iter
+    Kaun.Dataset.iter
       (fun (x_batch, y_batch) ->
         let logits = Kaun.apply model params ~training:false x_batch in
         (* Update metrics with predictions instead of loss/logits/labels *)

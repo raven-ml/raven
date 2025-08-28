@@ -1,4 +1,0 @@
-(library
- (name kaun_dataset)
- (public_name kaun.dataset)
- (libraries rune unix bigarray_ext yojson domainslib))
