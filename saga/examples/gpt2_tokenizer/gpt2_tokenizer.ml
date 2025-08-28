@@ -29,7 +29,7 @@ let () =
 
   (* Create GPT-2 tokenizer with ByteLevel pre-tokenizer *)
   let pre_tokenizer =
-    Tokenizers.Pre_tokenizer.byte_level ~add_prefix_space:false ()
+    Tokenizers.Pre_tokenizers.byte_level ~add_prefix_space:false ()
   in
   let tokenizer = tokenizer ~pre_tokenizer (`BPE (vocab_file, merges_file)) in
 

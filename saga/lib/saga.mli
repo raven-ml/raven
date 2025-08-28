@@ -18,7 +18,7 @@ type vocab
 (** {2 Tokenizers} *)
 
 val tokenizer :
-  ?pre_tokenizer:(string -> string list) ->
+  ?pre_tokenizer:(string -> (string * (int * int)) list) ->
   [ `BPE of string * string  (** vocab_file, merges_file *)
   | `WordPiece of string * string  (** vocab_file, unk_token *)
   | `Words  (** Whitespace tokenization *)
@@ -32,7 +32,7 @@ val tokenizer :
       (* GPT-2 style BPE with ByteLevel pre-tokenizer *)
       let tok =
         tokenizer
-          ~pre_tokenizer:(Saga.Tokenizers.Pre_tokenizer.byte_level ())
+          ~pre_tokenizer:(Saga.Tokenizers.Pre_tokenizers.byte_level ())
           (`BPE ("vocab.json", "merges.txt"))
 
       (* Simple word tokenizer *)
@@ -148,7 +148,8 @@ module Tokenizer : sig
   val with_normalizer : (string -> string) -> tokenizer -> tokenizer
   (** Add normalization step *)
 
-  val with_pre_tokenizer : (string -> string list) -> tokenizer -> tokenizer
+  val with_pre_tokenizer :
+    (string -> (string * (int * int)) list) -> tokenizer -> tokenizer
   (** Add pre-tokenization step *)
 
   val encode_with_offsets : tokenizer -> string -> (int * int * int) array

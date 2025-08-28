@@ -26,7 +26,18 @@ val create : config -> t
 *)
 
 val from_file : vocab_file:string -> t
-(** [from_file ~vocab_file] loads a WordPiece model from a vocab.txt file *)
+(** [from_file ~vocab_file] loads a WordPiece model from a vocab.txt file with
+    default settings *)
+
+val from_file_with_config :
+  vocab_file:string ->
+  unk_token:string ->
+  continuing_subword_prefix:string ->
+  max_input_chars_per_word:int ->
+  t
+(** [from_file_with_config ~vocab_file ~unk_token ~continuing_subword_prefix
+     ~max_input_chars_per_word] loads a WordPiece model from a vocab.txt file
+    with custom configuration *)
 
 val default : unit -> t
 (** [default ()] creates a WordPiece model with default configuration *)
@@ -39,8 +50,11 @@ module Builder : sig
   val create : unit -> builder
   (** Create a new builder with default settings *)
 
+  val files : builder -> string -> builder
+  (** Set vocabulary file path *)
+
   val vocab : builder -> vocab -> builder
-  (** Set vocabulary *)
+  (** Set vocabulary directly *)
 
   val unk_token : builder -> string -> builder
   (** Set unknown token (default: "[UNK]") *)
@@ -78,13 +92,37 @@ val get_vocab : t -> (string * int) list
 val get_vocab_size : t -> int
 (** [get_vocab_size model] returns the size of the vocabulary *)
 
+val get_unk_token : t -> string
+(** [get_unk_token model] returns the unknown token *)
+
+val get_continuing_subword_prefix : t -> string
+(** [get_continuing_subword_prefix model] returns the continuing subword prefix
+*)
+
+val get_max_input_chars_per_word : t -> int
+(** [get_max_input_chars_per_word model] returns the maximum input characters
+    per word *)
+
 (** {2 Serialization} *)
 
-val save : t -> path:string -> ?name:string -> unit -> unit
-(** [save model ~path ?name ()] saves the model to vocab.txt file *)
+val save : t -> path:string -> ?name:string -> unit -> string
+(** [save model ~path ?name ()] saves the model to vocab.txt file and returns
+    the filepath *)
 
 val read_file : vocab_file:string -> vocab
 (** [read_file ~vocab_file] reads vocabulary from file *)
+
+val read_bytes : bytes -> vocab
+(** [read_bytes bytes] reads vocabulary from bytes *)
+
+val to_yojson : t -> Yojson.Basic.t
+(** [to_yojson model] converts model to JSON *)
+
+val of_yojson : Yojson.Basic.t -> t
+(** [of_yojson json] creates model from JSON *)
+
+val from_bytes : bytes -> t
+(** [from_bytes bytes] creates model from serialized bytes *)
 
 (** {2 Training} *)
 

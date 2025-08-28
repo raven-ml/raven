@@ -119,7 +119,7 @@ let test_wordpiece_save_load () =
 
   (* Save the model *)
   let temp_dir = Filename.temp_dir "wordpiece_test" "" in
-  Wordpiece.save model ~path:temp_dir ();
+  let _fp = Wordpiece.save model ~path:temp_dir () in
 
   (* Load the model *)
   let vocab_file = Filename.concat temp_dir "vocab.txt" in

@@ -13,3 +13,9 @@ module LeNet = Lenet
 (** {1 Language Models} *)
 
 module Bert = Bert
+(** BERT: Bidirectional Encoder Representations from Transformers.
+    @inline *)
+
+module GPT2 = Gpt2
+(** GPT-2: Generative Pre-trained Transformer 2 for causal language modeling.
+    @inline *)

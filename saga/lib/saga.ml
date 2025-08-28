@@ -22,7 +22,7 @@ type tokenizer_impl =
 type tokenizer = {
   impl : tokenizer_impl;
   normalizer : (string -> string) option;
-  pre_tokenizer : (string -> string list) option;
+  pre_tokenizer : (string -> (string * (int * int)) list) option;
 }
 
 (** {1 Internal helpers} *)
@@ -172,7 +172,9 @@ let tokenizer ?pre_tokenizer config =
 let tokenize_with tok text =
   let text = match tok.normalizer with Some f -> f text | None -> text in
   let texts =
-    match tok.pre_tokenizer with Some f -> f text | None -> [ text ]
+    match tok.pre_tokenizer with
+    | Some f -> List.map fst (f text)
+    | None -> [ text ]
   in
   let tokens =
     List.concat_map
@@ -199,7 +201,9 @@ let encode tokenizer text =
         match tokenizer.normalizer with Some f -> f text | None -> text
       in
       let texts =
-        match tokenizer.pre_tokenizer with Some f -> f text | None -> [ text ]
+        match tokenizer.pre_tokenizer with
+        | Some f -> List.map fst (f text)
+        | None -> [ text ]
       in
       let token_objs = List.concat_map (Tokenizers.Bpe.tokenize bpe) texts in
       Array.of_list (List.map (fun t -> t.Tokenizers.Bpe.id) token_objs)
@@ -209,7 +213,9 @@ let encode tokenizer text =
         match tokenizer.normalizer with Some f -> f text | None -> text
       in
       let texts =
-        match tokenizer.pre_tokenizer with Some f -> f text | None -> [ text ]
+        match tokenizer.pre_tokenizer with
+        | Some f -> List.map fst (f text)
+        | None -> [ text ]
       in
       let token_objs =
         List.concat_map (Tokenizers.Wordpiece.tokenize wp) texts
@@ -230,13 +236,22 @@ let encode tokenizer text =
 
 let decode tokenizer ids =
   match tokenizer.impl with
-  | BPE (bpe, _) ->
+  | BPE (bpe, _) -> (
       (* BPE decoding - tokens already include spaces and punctuation *)
       let tokens =
         Array.to_list ids |> List.filter_map (Tokenizers.Bpe.id_to_token bpe)
       in
-      (* BPE tokens are meant to be concatenated directly *)
-      String.concat "" tokens
+      (* Concatenate tokens *)
+      let decoded = String.concat "" tokens in
+      (* If using ByteLevel pre-tokenizer, decode the byte representation *)
+      match tokenizer.pre_tokenizer with
+      | Some pre_tok
+        when (* Check if this is a ByteLevel pre-tokenizer by testing if it
+                encodes spaces as Ġ *)
+             let test = pre_tok " " in
+             List.length test > 0 && fst (List.hd test) = "Ġ" ->
+          Tokenizers.Pre_tokenizers.byte_level_decode decoded
+      | _ -> decoded)
   | WordPiece (wp, _) ->
       (* WordPiece decoding *)
       let tokens =

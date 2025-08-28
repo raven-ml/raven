@@ -1,5 +1,4 @@
 (library
  (public_name kaun.models)
  (name kaun_models)
- (modules kaun_models lenet bert)
- (libraries rune kaun kaun.huggingface nx yojson))
+ (libraries rune kaun kaun.huggingface nx yojson saga))

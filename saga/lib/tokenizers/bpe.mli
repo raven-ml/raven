@@ -98,6 +98,17 @@ val get_vocab : t -> (string * int) list
 val get_vocab_size : t -> int
 (** [get_vocab_size model] returns the size of the vocabulary *)
 
+val get_unk_token : t -> string option
+(** [get_unk_token model] returns the unknown token if configured *)
+
+val get_continuing_subword_prefix : t -> string option
+(** [get_continuing_subword_prefix model] returns the continuing subword prefix
+    if configured *)
+
+val get_end_of_word_suffix : t -> string option
+(** [get_end_of_word_suffix model] returns the end-of-word suffix if configured
+*)
+
 (** {2 Cache Management} *)
 
 val clear_cache : t -> unit

@@ -1,0 +1,81 @@
+open Rune
+module GPT2 = Kaun_models.GPT2
+module Sampler = Saga.Sampler
+
+let () =
+  Printf.printf "Loading GPT-2 model...\n";
+  let gpt2 = GPT2.from_pretrained ~device:c ~dtype:Float32 () in
+  let tokenizer = GPT2.Tokenizer.create () in
+
+  let prompts =
+    [
+      ("The future of artificial intelligence", 1.0, Some 50);
+      ("Once upon a time", 0.8, Some 40);
+      ("In a groundbreaking discovery", 0.9, Some 30);
+    ]
+  in
+
+  List.iter
+    (fun (prompt, temperature, top_k) ->
+      Printf.printf "\n=== Generation ===\n";
+      Printf.printf "Prompt: %s\n" prompt;
+      Printf.printf "Settings: temp=%.1f, top_k=%s\n" temperature
+        (match top_k with Some k -> string_of_int k | None -> "all");
+
+      (* Generate just a few tokens for demonstration *)
+      let tokens = ref (GPT2.Tokenizer.encode_to_array tokenizer prompt) in
+      let max_new_tokens = 10 in
+      (* Only generate 10 new tokens *)
+
+      for i = 1 to max_new_tokens do
+        (* Convert current tokens to tensor *)
+        let ba =
+          Bigarray.Array2.of_array Bigarray.int32 Bigarray.c_layout
+            [| Array.map Int32.of_int !tokens |]
+        in
+        let input_ids = of_bigarray c (Bigarray.genarray_of_array2 ba) in
+
+        (* Run forward pass *)
+        let logits, _ =
+          GPT2.For_causal_lm.forward ~model:gpt2.GPT2.model
+            ~params:gpt2.GPT2.params ~input_ids ~training:false ()
+        in
+
+        (* Get logits for the last token *)
+        let seq_len = shape input_ids |> fun s -> s.(1) in
+        let last_logits = slice [ R []; I (seq_len - 1); R [] ] logits in
+
+        (* Convert to float array *)
+        let vocab_size = shape last_logits |> fun s -> s.(1) in
+        let logits_array = Array.make vocab_size 0.0 in
+        for j = 0 to vocab_size - 1 do
+          logits_array.(j) <- unsafe_get [ 0; j ] last_logits
+        done;
+
+        (* Sample next token *)
+        let next_token =
+          match top_k with
+          | Some k -> Sampler.sample_token ~temperature ~top_k:k logits_array
+          | None -> Sampler.sample_token ~temperature logits_array
+        in
+
+        (* Add to tokens *)
+        tokens := Array.append !tokens [| next_token |];
+
+        (* Optional: print progress *)
+        if i mod 5 = 0 then Printf.printf "  Generated %d tokens...\n" i
+      done;
+
+      (* Decode and display *)
+      let generated_text = GPT2.Tokenizer.decode tokenizer !tokens in
+      Printf.printf "Generated: %s\n" generated_text;
+
+      (* Show new tokens count *)
+      let prompt_tokens = GPT2.Tokenizer.encode_to_array tokenizer prompt in
+      let new_tokens_count =
+        Array.length !tokens - Array.length prompt_tokens
+      in
+      Printf.printf "New tokens generated: %d\n" new_tokens_count)
+    prompts;
+
+  Printf.printf "\n✓ Generation complete!\n"

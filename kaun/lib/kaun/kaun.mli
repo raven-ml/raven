@@ -48,6 +48,9 @@ val grad :
   ('layout, 'dev) params ->
   ('layout, 'dev) params
 
+module Ops = Ops
+(** @inline *)
+
 module Metrics = Metrics
 (** @inline *)
 

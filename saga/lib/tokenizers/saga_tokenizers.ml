@@ -3,7 +3,7 @@
 module Bpe = Bpe
 module Wordpiece = Wordpiece
 module Unicode = Unicode
-module Pre_tokenizer = Pre_tokenizer
+module Pre_tokenizers = Pre_tokenizers
 
 type vocab = {
   token_to_idx : (string, int) Hashtbl.t;
