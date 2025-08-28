@@ -2264,11 +2264,11 @@ val multi_dot : ('a, 'b) t array -> ('a, 'b) t
 
 val matrix_power : ('a, 'b) t -> int -> ('a, 'b) t
 (** [matrix_power a n] raises square matrix to integer power.
-    
-    - n > 0: a @ a @ ... @ a (n times)
+
+    - n > 0: a \@ a \@ ... \@ a (n times)
     - n = 0: identity matrix
-    - n < 0: inv(a) @ inv(a) @ ... @ inv(a) (|n| times)
-    
+    - n < 0: inv(a) \@ inv(a) \@ ... \@ inv(a) (|n| times)
+
     @raise Invalid_argument if matrix is not square
     @raise Invalid_argument if input is not float or complex
     @raise Invalid_argument if n < 0 and matrix is singular *)
@@ -2284,21 +2284,21 @@ val cross : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
 val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [cholesky ?upper a] computes Cholesky decomposition.
-    
+
     - [upper]: return upper triangular if true (default: false)
-    
-    Returns L (or U) such that a = L @ L.T (or U.T @ U).
-    
+
+    Returns L (or U) such that a = L \@ L.T (or U.T \@ U).
+
     @raise Invalid_argument if matrix is not positive-definite
     @raise Invalid_argument if input is not float or complex *)
 
 val qr : ?mode:[ `Complete | `Reduced ] -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
 (** [qr ?mode a] computes QR decomposition.
-    
+
     - [mode]: [`Reduced] for economy mode (default), [`Complete] for full
-    
-    Returns (Q, R) where a = Q @ R, Q is orthogonal, R is upper triangular.
-    
+
+    Returns (Q, R) where a = Q \@ R, Q is orthogonal, R is upper triangular.
+
     @raise Invalid_argument if input is not float or complex *)
 
 val svd :
@@ -2306,12 +2306,12 @@ val svd :
   ('a, 'b) t ->
   ('a, 'b) t * (float, float64_elt) t * ('a, 'b) t
 (** [svd ?full_matrices a] computes singular value decomposition.
-    
+
     - [full_matrices]: compute full U, V matrices (default: false)
-    
-    Returns (U, S, Vh) where a = U @ diag(S) @ Vh.
-    S is 1-D array of singular values in descending order.
-    
+
+    Returns (U, S, Vh) where a = U \@ diag(S) \@ Vh. S is 1-D array of singular
+    values in descending order.
+
     @raise Invalid_argument if input is not float or complex *)
 
 val svdvals : ('a, 'b) t -> (float, float64_elt) t
@@ -2455,10 +2455,10 @@ val trace : ?offset:int -> ('a, 'b) t -> ('a, 'b) t
 (** {3 Solving Linear Systems} *)
 
 val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [solve a b] solves linear system a @ x = b for x.
-    
+(** [solve a b] solves linear system a \@ x = b for x.
+
     Supports batched operations when a, b have compatible batch dimensions.
-    
+
     @raise Invalid_argument if a is singular
     @raise Invalid_argument if input is not float or complex *)
 
@@ -2467,13 +2467,13 @@ val lstsq :
   ('a, 'b) t ->
   ('a, 'b) t ->
   ('a, 'b) t * ('a, 'b) t * int * (float, float64_elt) t
-(** [lstsq ?rcond a b] computes least-squares solution to a @ x = b.
-    
+(** [lstsq ?rcond a b] computes least-squares solution to a \@ x = b.
+
     - [rcond]: cutoff for small singular values (default: machine precision)
-    
-    Returns (solution, residuals, rank, singular_values).
-    Handles over/under-determined systems.
-    
+
+    Returns (solution, residuals, rank, singular_values). Handles
+    over/under-determined systems.
+
     @raise Invalid_argument if input is not float or complex *)
 
 val inv : ('a, 'b) t -> ('a, 'b) t
