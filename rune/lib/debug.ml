@@ -32,13 +32,13 @@ let with_context name f =
 let compute_stats (Tensor_ref t) =
   try
     let t_f32 = T.cast T.float32 t in
-    let mean = T.unsafe_get [] (T.mean t_f32) in
-    let std = T.unsafe_get [] (T.std t_f32) in
-    let min_val = T.unsafe_get [] (T.min t_f32) in
-    let max_val = T.unsafe_get [] (T.max t_f32) in
+    let mean = T.item [] (T.mean t_f32) in
+    let std = T.item [] (T.std t_f32) in
+    let min_val = T.item [] (T.min t_f32) in
+    let max_val = T.item [] (T.max t_f32) in
     let is_nan = T.isnan t_f32 in
     let nan_count =
-      int_of_float (T.unsafe_get [] (T.sum (T.cast T.float32 is_nan)))
+      int_of_float (T.item [] (T.sum (T.cast T.float32 is_nan)))
     in
     { mean; std; min_val; max_val; nan_count }
   with _ ->

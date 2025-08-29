@@ -34,7 +34,7 @@ let crop ~y ~x ~height ~width img =
           (Printf.sprintf
              "Invalid crop parameters: y=%d, x=%d, h=%d, w=%d for image [%dx%d]"
              y x height width h w)
-      else Rune.slice_ranges [ y; x ] [ y + height; x + width ] img
+      else Rune.slice [ Rune.R (y, y + height); Rune.R (x, x + width) ] img
   | `Color (h, w, c) ->
       if
         y < 0 || x < 0 || height <= 0 || width <= 0
@@ -46,7 +46,10 @@ let crop ~y ~x ~height ~width img =
              "Invalid crop parameters: y=%d, x=%d, h=%d, w=%d for image \
               [%dx%dx%d]"
              y x height width h w c)
-      else Rune.slice_ranges [ y; x; 0 ] [ y + height; x + width; c ] img
+      else
+        Rune.slice
+          [ Rune.R (y, y + height); Rune.R (x, x + width); Rune.R (0, c) ]
+          img
 
 let to_grayscale img =
   match get_dims img with
@@ -56,9 +59,9 @@ let to_grayscale img =
         failwith "to_grayscale requires 3-channel (RGB) input image"
       else
         let img_f = Rune.astype Rune.float32 img in
-        let r = Rune.slice [ Rune.R []; Rune.R []; Rune.I 0 ] img_f in
-        let g = Rune.slice [ Rune.R []; Rune.R []; Rune.I 1 ] img_f in
-        let b = Rune.slice [ Rune.R []; Rune.R []; Rune.I 2 ] img_f in
+        let r = Rune.slice [ A; A; Rune.I 0 ] img_f in
+        let g = Rune.slice [ A; A; Rune.I 1 ] img_f in
+        let b = Rune.slice [ A; A; Rune.I 2 ] img_f in
         let gray_f =
           Rune.add
             (Rune.add (Rune.mul_s r 0.299) (Rune.mul_s g 0.587))
@@ -74,13 +77,11 @@ let swap_channels img =
       else
         (* Use concatenation instead of element-wise operations *)
         (* Use R[i; i+1] to keep the dimension (end is exclusive) *)
-        let chan0 = Rune.slice [ Rune.R []; Rune.R []; Rune.R [ 0; 1 ] ] img in
-        let chan1 = Rune.slice [ Rune.R []; Rune.R []; Rune.R [ 1; 2 ] ] img in
-        let chan2 = Rune.slice [ Rune.R []; Rune.R []; Rune.R [ 2; 3 ] ] img in
+        let chan0 = Rune.slice [ A; A; R (0, 1) ] img in
+        let chan1 = Rune.slice [ A; A; R (1, 2) ] img in
+        let chan2 = Rune.slice [ A; A; R (2, 3) ] img in
         let chans_rest =
-          if c > 3 then
-            Some (Rune.slice [ Rune.R []; Rune.R []; Rune.R [ 3; c ] ] img)
-          else None
+          if c > 3 then Some (Rune.slice [ A; A; R (3, c) ] img) else None
         in
 
         let swapped_chans =
@@ -310,9 +311,7 @@ let box_filter : type a b.
       let result = ref (Rune.zeros_like img_f32) in
       for i = 0 to kh - 1 do
         for j = 0 to kw - 1 do
-          let shifted =
-            Rune.slice [ Rune.R [ i; i + h ]; Rune.R [ j; j + w ] ] padded
-          in
+          let shifted = Rune.slice [ R (i, i + h); R (j, j + w) ] padded in
           result := Rune.add !result shifted
         done
       done;
@@ -336,11 +335,7 @@ let box_filter : type a b.
       let result = ref (Rune.zeros_like img_f32) in
       for i = 0 to kh - 1 do
         for j = 0 to kw - 1 do
-          let shifted =
-            Rune.slice
-              [ Rune.R [ i; i + h ]; Rune.R [ j; j + w ]; Rune.R [] ]
-              padded
-          in
+          let shifted = Rune.slice [ R (i, i + h); R (j, j + w); A ] padded in
           result := Rune.add !result shifted
         done
       done;
@@ -457,14 +452,14 @@ let sobel : dx:int -> dy:int -> ?ksize:int -> 'dev uint8_t -> 'dev int16_t =
       let img_padded = Rune.pad [| (1, 1); (1, 1) |] 0.0 img_f32 in
 
       (* Extract shifted versions for manual convolution *)
-      let tl = Rune.slice_ranges [ 0; 0 ] [ h; w ] img_padded in
-      let tc = Rune.slice_ranges [ 0; 1 ] [ h; w + 1 ] img_padded in
-      let tr = Rune.slice_ranges [ 0; 2 ] [ h; w + 2 ] img_padded in
-      let ml = Rune.slice_ranges [ 1; 0 ] [ h + 1; w ] img_padded in
-      let mr = Rune.slice_ranges [ 1; 2 ] [ h + 1; w + 2 ] img_padded in
-      let bl = Rune.slice_ranges [ 2; 0 ] [ h + 2; w ] img_padded in
-      let bc = Rune.slice_ranges [ 2; 1 ] [ h + 2; w + 1 ] img_padded in
-      let br = Rune.slice_ranges [ 2; 2 ] [ h + 2; w + 2 ] img_padded in
+      let tl = Rune.slice [ R (0, h); R (0, w) ] img_padded in
+      let tc = Rune.slice [ R (0, h); R (1, w + 1) ] img_padded in
+      let tr = Rune.slice [ R (0, h); R (2, w + 2) ] img_padded in
+      let ml = Rune.slice [ R (1, h + 1); R (0, w) ] img_padded in
+      let mr = Rune.slice [ R (1, h + 1); R (2, w + 2) ] img_padded in
+      let bl = Rune.slice [ R (2, h + 2); R (0, w) ] img_padded in
+      let bc = Rune.slice [ R (2, h + 2); R (1, w + 1) ] img_padded in
+      let br = Rune.slice [ R (2, h + 2); R (2, w + 2) ] img_padded in
 
       (* Apply Sobel kernels manually *)
       let result_f32 =
@@ -563,21 +558,21 @@ let canny ~threshold1 ~threshold2 ?(ksize = 3) (img : 'dev uint8_t) :
 
   (* Extract neighbors for each direction *)
   (* Horizontal: left and right neighbors *)
-  let left = Rune.slice_ranges [ 1; 0 ] [ h + 1; w ] mag_padded in
-  let right = Rune.slice_ranges [ 1; 2 ] [ h + 1; w + 2 ] mag_padded in
-  let center = Rune.slice_ranges [ 1; 1 ] [ h + 1; w + 1 ] mag_padded in
+  let left = Rune.slice [ R (1, h + 1); R (0, w) ] mag_padded in
+  let right = Rune.slice [ R (1, h + 1); R (2, w + 2) ] mag_padded in
+  let center = Rune.slice [ R (1, h + 1); R (1, w + 1) ] mag_padded in
 
   (* Vertical: top and bottom neighbors *)
-  let top = Rune.slice_ranges [ 0; 1 ] [ h; w + 1 ] mag_padded in
-  let bottom = Rune.slice_ranges [ 2; 1 ] [ h + 2; w + 1 ] mag_padded in
+  let top = Rune.slice [ R (0, h); R (1, w + 1) ] mag_padded in
+  let bottom = Rune.slice [ R (2, h + 2); R (1, w + 1) ] mag_padded in
 
   (* Diagonal 1: top-right and bottom-left *)
-  let top_right = Rune.slice_ranges [ 0; 2 ] [ h; w + 2 ] mag_padded in
-  let bottom_left = Rune.slice_ranges [ 2; 0 ] [ h + 2; w ] mag_padded in
+  let top_right = Rune.slice [ R (0, h); R (2, w + 2) ] mag_padded in
+  let bottom_left = Rune.slice [ R (2, h + 2); R (0, w) ] mag_padded in
 
   (* Diagonal 2: top-left and bottom-right *)
-  let top_left = Rune.slice_ranges [ 0; 0 ] [ h; w ] mag_padded in
-  let bottom_right = Rune.slice_ranges [ 2; 2 ] [ h + 2; w + 2 ] mag_padded in
+  let top_left = Rune.slice [ R (0, h); R (0, w) ] mag_padded in
+  let bottom_right = Rune.slice [ R (2, h + 2); R (2, w + 2) ] mag_padded in
 
   (* Check if center is maximum in its direction *)
   let is_max_horizontal =

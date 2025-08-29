@@ -105,12 +105,6 @@ val nativeint : (nativeint, nativeint_elt) dtype
 val complex32 : (Complex.t, complex32_elt) dtype
 val complex64 : (Complex.t, complex64_elt) dtype
 
-(** Index specification for slicing *)
-type index =
-  | I of int  (** Single index *)
-  | L of int list  (** List of indices *)
-  | R of int list  (** Range [start; stop; step] where stop is exclusive *)
-
 (** {2 Device Management}
 
     Functions to manage tensor devices and contexts. *)
@@ -145,9 +139,9 @@ val is_device_available : [< `ocaml | `c | `metal ] -> bool
 
     Functions to inspect array dimensions, memory layout, and data access. *)
 
-val unsafe_data :
+val data :
   ('a, 'b, 'dev) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t
-(** [unsafe_data t] returns underlying bigarray buffer.
+(** [data t] returns underlying bigarray buffer.
 
     Buffer may contain data beyond tensor bounds for strided views. Direct
     access requires careful index computation using strides and offset.
@@ -197,9 +191,9 @@ val offset : ('a, 'b, 'dev) t -> int
 val is_c_contiguous : ('a, 'b, 'dev) t -> bool
 (** [is_c_contiguous t] returns true if elements are contiguous in C order. *)
 
-val unsafe_to_bigarray :
+val to_bigarray :
   ('a, 'b, 'dev) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t
-(** [unsafe_to_bigarray t] converts to bigarray_ext.
+(** [to_bigarray t] converts to bigarray_ext.
 
     Always returns contiguous copy with same shape. Use for interop with
     libraries expecting bigarrays.
@@ -208,12 +202,12 @@ val unsafe_to_bigarray :
       # let t = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
       val t : (float, float32_elt) t = [[1, 2, 3],
                                         [4, 5, 6]]
-      # Bigarray_ext.Genarray.dims (unsafe_to_bigarray t) = shape t
+      # Bigarray_ext.Genarray.dims (to_bigarray t) = shape t
       - : bool = true
     ]} *)
 
-val unsafe_to_array : ('a, 'b, 'dev) t -> 'a array
-(** [unsafe_to_array t] converts to OCaml array.
+val to_array : ('a, 'b, 'dev) t -> 'a array
+(** [to_array t] converts to OCaml array.
 
     Flattens tensor to 1-D array in row-major (C) order. Always copies.
 
@@ -221,7 +215,7 @@ val unsafe_to_array : ('a, 'b, 'dev) t -> 'a array
       # let t = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |]
       val t : (int32, int32_elt, 'dev) t = [[1, 2],
                                       [3, 4]]
-      # unsafe_to_array t
+      # to_array t
       - : int32 array = [|1l; 2l; 3l; 4l|]
     ]} *)
 
@@ -1078,7 +1072,7 @@ val copy : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
         let y = copy x in
-        unsafe_set [ 0 ] 999. y;
+        set_item [ 0 ] 999. y;
         x, y
       - : (float, float32_elt) t * (float, float32_elt) t =
       ([1, 2, 3], [999, 2, 3])
@@ -1114,76 +1108,6 @@ val fill : 'a -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 
     Functions to access and modify array elements. *)
 
-val slice : index list -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-(** [slice indices t] extracts subtensor.
-
-    - [I n]: select index n (reduces dimension)
-    - [L [i;j;k]]: fancy indexing - select indices i, j, k
-    - [R [start;stop;step]]: range [\[start, stop)] with step
-
-    Stop is exclusive. Negative indices count from end. Missing indices select
-    all. Returns view when possible.
-
-    @raise Invalid_argument if indices out of bounds
-
-    {@ocaml[
-      # let x = create int32 [| 2; 4 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l |] in
-        slice [ I 1 ] x
-      - : (int32, int32_elt, 'dev) t = [5, 6, 7, 8]
-      # let x = create int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
-        slice [ R [ 1; 3 ] ] x
-      - : (int32, int32_elt, 'dev) t = [1, 2]
-    ]} *)
-
-val set_slice : index list -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> unit
-(** [set_slice indices t value] assigns [value] to slice.
-
-    @raise Invalid_argument if shapes incompatible *)
-
-val slice_ranges :
-  ?steps:int list ->
-  int list ->
-  int list ->
-  ('a, 'b, 'dev) t ->
-  ('a, 'b, 'dev) t
-(** [slice_ranges ?steps starts stops t] extracts ranges.
-
-    Equivalent to [slice [R[s0;e0;st0]; R[s1;e1;st1]; ...] t]. Lists must have
-    same length ≤ ndim. Default step is 1. Missing dimensions select all.
-
-    @raise Invalid_argument if list lengths differ or indices out of bounds
-
-    {@ocaml[
-      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        slice_ranges [ 0; 1 ] [ 2; 3 ] x
-      - : (int32, int32_elt, 'dev) t = [[2, 3],
-                                  [5, 6]]
-      # slice_ranges ~steps:[ 2; 1 ] [ 0; 0 ] [ 4; 2 ] (eye int32 4)
-      - : (int32, int32_elt, 'dev) t = [[1, 0],
-                                  [0, 0]]
-    ]} *)
-
-val set_slice_ranges :
-  ?steps:int list ->
-  int list ->
-  int list ->
-  ('a, 'b, 'dev) t ->
-  ('a, 'b, 'dev) t ->
-  unit
-(** [set_slice_ranges ?steps starts stops t value] assigns to ranges.
-
-    Like {!slice_ranges} but assigns [value] to selected region. Value is
-    broadcast to target shape if needed.
-
-    @raise Invalid_argument if shapes incompatible after slicing
-
-    {@ocaml[
-      # let x = zeros float32 [| 3; 3 |] in
-        set_slice_ranges [ 1; 2 ] [ 2; 3 ] x (ones float32 [| 1; 1 |]);
-        unsafe_get [ 1; 2 ] x
-      - : float = 1.
-    ]} *)
-
 val get : int list -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
 (** [get indices t] returns subtensor at indices.
 
@@ -1206,19 +1130,264 @@ val set : int list -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> unit
 
     @raise Invalid_argument if indices out of bounds *)
 
-val unsafe_get : int list -> ('a, 'b, 'dev) t -> 'a
-(** [unsafe_get indices t] returns scalar value at indices.
+type index =
+  | I of int (* Single index *)
+  | L of int list (* List of indices *)
+  | R of int * int (* Range [start, stop) *)
+  | Rs of int * int * int (* Range with step *)
+  | A (* All indices *)
+  | M of (int, uint8_elt, [ `ocaml | `c | `metal ]) t (* Boolean mask *)
+  | N (* New axis *)
+
+val slice : index list -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+(** [slice specs t] extracts subtensor using advanced indexing.
+
+    Use for mixed indexing types beyond simple ranges:
+    - [A]: full axis
+    - [I i]: single index (reduces dimension; negative from end)
+    - [R (start, stop)]: range [start, stop) with step 1
+    - [Rs (start, stop, step)]: range with step
+    - [L [i1;i2;...]]: fancy indexing with list of indices
+    - [M bool_tensor]: boolean mask (shape must match axis)
+    - [N]: insert new dimension of size 1
+
+    Specs list corresponds to axes from left. Missing specs = [A].
+    Returns view when possible.
+
+    @raise Invalid_argument if specs out of bounds or incompatible
+
+    {@ocaml[
+      # let x = create int32 [| 2; 4 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l |] in
+        slice [ I 1 ] x
+      - : (int32, int32_elt, 'dev) t = [5, 6, 7, 8]
+      # let x = create int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
+        slice [ R (1, 3) ] x
+      - : (int32, int32_elt, 'dev) t = [1, 2]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        slice [ R (0, 2); L [0; 2] ] x
+      - : (int32, int32_elt, 'dev) t = [[1, 3],
+                                  [4, 6]]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        slice [ M (greater_s x 5l) ] x  (* Elements >5 *)
+      - : (int32, int32_elt, 'dev) t = [6, 7, 8, 9]
+      # slice [ A; N ] x  (* Add new axis *)
+      - : (int32, int32_elt, 'dev) t = [[[1, 2, 3],
+                                   [4, 5, 6],
+                                   [7, 8, 9]]]
+    ]} *)
+
+val set_slice : index list -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> unit
+(** [set_slice specs t value] assigns [value] to indexed region.
+
+    Like {!index} but modifies t in-place. Value is broadcast if needed.
+
+    @raise Invalid_argument if specs incompatible *)
+
+val item : int list -> ('a, 'b, 'dev) t -> 'a
+(** [item indices t] returns scalar value at indices.
 
     Must provide indices for all dimensions.
 
     @raise Invalid_argument if wrong number of indices or out of bounds *)
 
-val unsafe_set : int list -> 'a -> ('a, 'b, 'dev) t -> unit
-(** [unsafe_set indices value t] sets scalar value at indices.
+val set_item : int list -> 'a -> ('a, 'b, 'dev) t -> unit
+(** [set_item indices value t] sets scalar value at indices.
 
     Must provide indices for all dimensions. Modifies tensor in-place.
 
     @raise Invalid_argument if wrong number of indices or out of bounds *)
+
+val take :
+  ?axis:int ->
+  ?mode:[ `raise | `wrap | `clip ] ->
+  (int32, int32_elt, 'dev) t ->
+  ('a, 'b, 'dev) t ->
+  ('a, 'b, 'dev) t
+(** [take ?axis ?mode indices  t] takes elements from t using indices.
+
+    Equivalent to t[indices] in NumPy along the specified axis. If [axis] is
+    None, flattens t first. [indices] is an integer tensor of indices to take.
+    [mode] handles out-of-bounds indices: `raise (default), `wrap (modulo),
+    `clip (clamp to bounds).
+
+    Returns a new tensor with shape based on indices and t's shape.
+
+    @raise Invalid_argument if indices out of bounds and mode=`raise
+
+    {@ocaml[
+      # let x = create int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
+        take (create int32 [| 3 |] [| 1l; 3l; 0l |]) x
+      - : (int32, int32_elt, 'dev) t = [1, 3, 0]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        take ~axis:1 (create int32 [| 3 |] [| 0l; 2l; 1l |]) x
+      - : (int32, int32_elt, 'dev) t = [[1, 3, 2],
+                                  [4, 6, 5],
+                                  [7, 9, 8]]
+      # take ~mode:`clip (create int32 [| 2 |] [| -1l; 5l |]) x  (* Clamps to [0,4] *)
+      - : (int32, int32_elt, 'dev) t = [0, 4]
+    ]} *)
+
+val take_along_axis :
+  axis:int -> (int32, int32_elt, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+(** [take_along_axis ~axis indices t] takes values along the specified axis
+    using indices.
+
+    Equivalent to NumPy's take_along_axis. [indices] must have the same shape as
+    t except along the specified axis, where it matches the output size. Useful
+    for gathering from argmax/argmin results.
+
+    @raise Invalid_argument if shapes incompatible
+
+    {@ocaml[
+      # let x = create float32 [| 2; 3 |] [| 4.; 1.; 2.; 3.; 5.; 6. |] in
+        let indices = create int32 [| 2; 1 |] [| 1l; 0l |] in  (* Per row max indices *)
+        take_along_axis ~axis:1 indices x
+      - : (float, float32_elt) t = [[1, 4],
+                                    [5, 3]]
+      # let x = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
+        let indices = argmax ~axis:0 x in
+        take_along_axis ~axis:0 indices x  (* Max per column *)
+      - : (float, float32_elt) t = [7, 8, 9]
+    ]} *)
+
+val put :
+  ?axis:int ->
+  indices:(int32, int32_elt, 'dev) t ->
+  values:('a, 'b, 'dev) t ->
+  ?mode:[ `raise | `wrap | `clip ] ->
+  ('a, 'b, 'dev) t ->
+  unit
+(** [put ?axis indices values ?mode t] sets elements in t at positions specified
+    by indices to values.
+
+    Equivalent to NumPy's put (in-place version of take for setting). If [axis]
+    is None, flattens t first. [indices] is an integer tensor of positions to
+    set. [values] must match the number of indices (broadcasted if needed).
+    [mode] handles out-of-bounds indices: `raise (default), `wrap (modulo),
+    `clip (clamp).
+
+    Modifies t in-place.
+
+    @raise Invalid_argument
+      if shapes incompatible or indices out of bounds with mode=`raise
+
+    {@ocaml[
+      # let x = zeros int32 [| 5 |] in
+        put (create int32 [| 3 |] [| 1l; 3l; 0l |]) (create int32 [| 3 |] [| 10l; 20l; 30l |]) x;
+        x
+      - : (int32, int32_elt, 'dev) t = [30, 10, 0, 20, 0]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        put ~axis:1 (create int32 [| 3 |] [| 0l; 2l; 1l |]) (create int32 [| 3 |] [| 10l; 20l; 30l |]) x;
+        x
+      - : (int32, int32_elt, 'dev) t = [[10, 2, 3],
+                                  [4, 30, 6],
+                                  [7, 8, 20]]
+      # put ~mode:`clip (create int32 [| 2 |] [| -1l; 5l |]) (create int32 [| 2 |] [| 99l; 99l |]) x  (* Clamps to [0,4] *)
+    ]} *)
+
+val put_along_axis :
+  axis:int ->
+  indices:(int32, int32_elt, 'dev) t ->
+  values:('a, 'b, 'dev) t ->
+  ('a, 'b, 'dev) t ->
+  unit
+(** [put_along_axis ~axis indices values t] sets values along the specified axis
+    using indices.
+
+    Equivalent to NumPy's put_along_axis. [indices] must have the same shape as
+    t except along the axis (where it matches values' size along that axis).
+    [values] is broadcasted to match the selection shape. Useful for scattering
+    to argmax/argmin positions.
+
+    Modifies t in-place.
+
+    @raise Invalid_argument if shapes incompatible
+
+    {@ocaml[
+      # let x = zeros float32 [| 2; 3 |] in
+        let indices = create int32 [| 2; 1 |] [| 1l; 0l |] in  (* Per row positions *)
+        put_along_axis ~axis:1 indices (create float32 [| 2; 1 |] [| 10.; 20. |]) x;
+        x
+      - : (float, float32_elt) t = [[0, 10, 0],
+                                    [20, 0, 0]]
+      # let x = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
+        let indices = argmax ~axis:0 x in  (* Max positions per column *)
+        put_along_axis ~axis:0 indices (ones float32 [| 3 |]) x  (* Set max per column to 1 *)
+    ]} *)
+
+val compress :
+  ?axis:int ->
+  condition:(int, uint8_elt, 'dev) t ->
+  ('a, 'b, 'dev) t ->
+  ('a, 'b, 'dev) t
+(** [compress ?axis condition t] selects elements where condition is true.
+
+    Equivalent to NumPy's compress. [condition] is a 1D boolean array. If [axis]
+    is None, flattens t first. Otherwise, compresses along the specified axis
+    (condition length must match t's dim along axis).
+
+    Returns a new tensor with reduced size along the axis/flattened.
+
+    @raise Invalid_argument if condition length incompatible
+
+    {@ocaml[
+      # let x = create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |] in
+        compress (create bool [| 5 |] [| true; false; true; false; true |]) x
+      - : (int32, int32_elt, 'dev) t = [1, 3, 5]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        compress ~axis:0 (create bool [| 3 |] [| false; true; true |]) x
+      - : (int32, int32_elt, 'dev) t = [[4, 5, 6],
+                                  [7, 8, 9]]
+    ]} *)
+
+val extract :
+  condition:(int, uint8_elt, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+(** [extract condition t] flattens and selects elements where condition is true.
+
+    Equivalent to NumPy's extract (1D compress after flatten). [condition] must
+    have the same shape and size as t (element-wise).
+
+    Returns a 1D tensor with selected elements.
+
+    @raise Invalid_argument if shapes incompatible
+
+    {@ocaml[
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        extract (greater_s x 5l) x
+      - : (int32, int32_elt, 'dev) t = [6, 7, 8, 9]
+    ]} *)
+
+val nonzero : ('a, 'b, 'dev) t -> (int32, int32_elt, 'dev) t array
+(** [nonzero t] returns indices of non-zero elements.
+
+    Equivalent to NumPy's nonzero. Treats non-zero as true for bool tensors.
+    Returns an array of 1D tensors, one per dimension, with coordinates of
+    non-zeros.
+
+    For example, for a 2D tensor, returns [| rows; cols |] where rows[i],
+    cols[i] is the position of the i-th non-zero.
+
+    {@ocaml[
+      # let x = create int32 [| 3; 3 |] [| 0l; 1l; 0l; 2l; 0l; 3l; 0l; 0l; 4l |] in
+        let rows, cols = nonzero x in
+        rows, cols
+      - : (int32, int32_elt, 'dev) t * (int32, int32_elt, 'dev) t = ([0, 1, 1, 2], [1, 0, 2, 2])
+    ]} *)
+
+val argwhere : ('a, 'b, 'dev) t -> (int32, int32_elt, 'dev) t
+(** [argwhere t] returns indices of non-zero elements as a 2D tensor.
+
+    Equivalent to NumPy's argwhere. Each row is a coordinate [dim0; dim1; ...]
+    of a non-zero element. Shape is [num_nonzeros; ndim].
+
+    {@ocaml[
+      # let x = create int32 [| 3; 3 |] [| 0l; 1l; 0l; 2l; 0l; 3l; 0l; 0l; 4l |] in
+        argwhere x
+      - : (int32, int32_elt, 'dev) t = [[0, 1],
+                                  [1, 0],
+                                  [1, 2],
+                                  [2, 2]]
+    ]} *)
 
 (** {2 Basic Arithmetic Operations}
 
@@ -1407,15 +1576,15 @@ val atan2 : (float, 'a, 'dev) t -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     {@ocaml[
       # let y = scalar float32 1. in
         let x = scalar float32 1. in
-        atan2 y x |> unsafe_get [] |> Float.round
+        atan2 y x |> item [] |> Float.round
       - : float = 1.
       # let y = scalar float32 1. in
         let x = scalar float32 0. in
-        atan2 y x |> unsafe_get [] |> Float.round
+        atan2 y x |> item [] |> Float.round
       - : float = 2.
       # let y = scalar float32 0. in
         let x = scalar float32 0. in
-        atan2 y x |> unsafe_get []
+        atan2 y x |> item []
       - : float = 0.
     ]} *)
 
@@ -1445,11 +1614,11 @@ val hypot : ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
     {@ocaml[
       # let x = scalar float32 3. in
         let y = scalar float32 4. in
-        hypot x y |> unsafe_get []
+        hypot x y |> item []
       - : float = 5.
       # let x = scalar float64 1e200 in
         let y = scalar float64 1e200 in
-        hypot x y |> unsafe_get [] < Float.infinity
+        hypot x y |> item [] < Float.infinity
       - : bool = true
     ]} *)
 
@@ -1507,7 +1676,7 @@ val lerp :
       # let start = scalar float32 0. in
         let end_ = scalar float32 10. in
         let weight = scalar float32 0.3 in
-        lerp start end_ weight |> unsafe_get []
+        lerp start end_ weight |> item []
       - : float = 3.
       # let start = create float32 [| 2 |] [| 1.; 2. |] in
         let end_ = create float32 [| 2 |] [| 5.; 8. |] in
@@ -1591,11 +1760,11 @@ val array_equal :
     {@ocaml[
       # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         let y = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        array_equal x y |> unsafe_get []
+        array_equal x y |> item []
       - : int = 1
       # let x = create int32 [| 2 |] [| 1l; 2l |] in
         let y = create int32 [| 2 |] [| 1l; 3l |] in
-        array_equal x y |> unsafe_get []
+        array_equal x y |> item []
       - : int = 0
     ]} *)
 
@@ -1926,7 +2095,7 @@ val sum :
 
     {@ocaml[
       # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        sum x |> unsafe_get []
+        sum x |> item []
       - : float = 10.
       # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         sum ~axes:[| 0 |] x
@@ -1947,7 +2116,7 @@ val max :
 
     {@ocaml[
       # let x = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        max x |> unsafe_get []
+        max x |> item []
       - : float = 6.
       # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         max ~axes:[| 0 |] x
@@ -1965,7 +2134,7 @@ val min :
 
     {@ocaml[
       # let x = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        min x |> unsafe_get []
+        min x |> item []
       - : float = 1.
       # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         min ~axes:[| 0 |] x
@@ -1980,7 +2149,7 @@ val prod :
 
     {@ocaml[
       # let x = create int32 [| 3 |] [| 2l; 3l; 4l |] in
-        prod x |> unsafe_get []
+        prod x |> item []
       - : int32 = 24l
       # let x = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
         prod ~axes:[| 0 |] x
@@ -1995,7 +2164,7 @@ val mean :
 
     {@ocaml[
       # let x = create float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
-        mean x |> unsafe_get []
+        mean x |> item []
       - : float = 2.5
       # let x = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
         mean ~axes:[| 1 |] x
@@ -2017,10 +2186,10 @@ val var :
 
     {@ocaml[
       # let x = create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-        var x |> unsafe_get []
+        var x |> item []
       - : float = 2.
       # let x = create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-        var ~ddof:1 x |> unsafe_get []
+        var ~ddof:1 x |> item []
       - : float = 2.5
     ]} *)
 
@@ -2036,10 +2205,10 @@ val std :
 
     {@ocaml[
       # let x = create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-        std x |> unsafe_get [] |> Float.round
+        std x |> item [] |> Float.round
       - : float = 1.
       # let x = create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-        std ~ddof:1 x |> unsafe_get [] |> Float.round
+        std ~ddof:1 x |> item [] |> Float.round
       - : float = 2.
     ]} *)
 
@@ -2054,10 +2223,10 @@ val all :
 
     {@ocaml[
       # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        all x |> unsafe_get []
+        all x |> item []
       - : int = 1
       # let x = create int32 [| 3 |] [| 1l; 0l; 3l |] in
-        all x |> unsafe_get []
+        all x |> item []
       - : int = 0
       # let x = create int32 [| 2; 2 |] [| 1l; 0l; 1l; 1l |] in
         all ~axes:[| 1 |] x
@@ -2075,10 +2244,10 @@ val any :
 
     {@ocaml[
       # let x = create int32 [| 3 |] [| 0l; 0l; 1l |] in
-        any x |> unsafe_get []
+        any x |> item []
       - : int = 1
       # let x = create int32 [| 3 |] [| 0l; 0l; 0l |] in
-        any x |> unsafe_get []
+        any x |> item []
       - : int = 0
       # let x = create int32 [| 2; 2 |] [| 0l; 0l; 0l; 1l |] in
         any ~axes:[| 1 |] x
@@ -2094,7 +2263,7 @@ val argmax :
 
     {@ocaml[
       # let x = create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |] in
-        argmax x |> unsafe_get []
+        argmax x |> item []
       - : int32 = 4l
       # let x = create int32 [| 2; 3 |] [| 1l; 5l; 3l; 2l; 4l; 6l |] in
         argmax ~axis:1 x
@@ -2110,7 +2279,7 @@ val argmin :
 
     {@ocaml[
       # let x = create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |] in
-        argmin x |> unsafe_get []
+        argmin x |> item []
       - : int32 = 1l
       # let x = create int32 [| 2; 3 |] [| 5l; 2l; 3l; 1l; 4l; 0l |] in
         argmin ~axis:1 x
@@ -2881,11 +3050,11 @@ val sigmoid : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     Output in range (0, 1). Symmetric around x=0 where sigmoid(0) = 0.5.
 
     {@ocaml[
-      # sigmoid (scalar float32 0.) |> unsafe_get []
+      # sigmoid (scalar float32 0.) |> item []
       - : float = 0.5
-      # sigmoid (scalar float32 10.) |> unsafe_get [] |> Float.round
+      # sigmoid (scalar float32 10.) |> item [] |> Float.round
       - : float = 1.
-      # sigmoid (scalar float32 (-10.)) |> unsafe_get [] |> Float.round
+      # sigmoid (scalar float32 (-10.)) |> item [] |> Float.round
       - : float = 0.
     ]} *)
 
@@ -2902,9 +3071,9 @@ val softplus : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     Smooth approximation to ReLU. Always positive, differentiable everywhere.
 
     {@ocaml[
-      # softplus (scalar float32 0.) |> unsafe_get [] |> Float.round
+      # softplus (scalar float32 0.) |> item [] |> Float.round
       - : float = 1.
-      # softplus (scalar float32 100.) |> unsafe_get [] |> Float.round
+      # softplus (scalar float32 100.) |> item [] |> Float.round
       - : float = infinity
     ]} *)
 
@@ -2914,11 +3083,11 @@ val silu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     Also called Swish. Smooth, non-monotonic activation.
 
     {@ocaml[
-      # silu (scalar float32 0.) |> unsafe_get []
+      # silu (scalar float32 0.) |> item []
       - : float = 0.
-      # silu (scalar float32 1.) |> unsafe_get [] |> Float.round
+      # silu (scalar float32 1.) |> item [] |> Float.round
       - : float = 1.
-      # silu (scalar float32 (-1.)) |> unsafe_get [] |> Float.round
+      # silu (scalar float32 (-1.)) |> item [] |> Float.round
       - : float = -0.
     ]} *)
 
@@ -2939,9 +3108,9 @@ val log_sigmoid : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     Numerically stable version of log(1/(1+exp(-x))). Always negative.
 
     {@ocaml[
-      # log_sigmoid (scalar float32 0.) |> unsafe_get [] |> Float.round
+      # log_sigmoid (scalar float32 0.) |> item [] |> Float.round
       - : float = -1.
-      # log_sigmoid (scalar float32 100.) |> unsafe_get [] |> Float.abs |> (fun x -> x < 0.001)
+      # log_sigmoid (scalar float32 100.) |> item [] |> Float.abs |> (fun x -> x < 0.001)
       - : bool = true
     ]} *)
 
@@ -2970,11 +3139,11 @@ val elu : ?alpha:float -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     for x < 0, helps with vanishing gradients.
 
     {@ocaml[
-      # elu (scalar float32 1.) |> unsafe_get []
+      # elu (scalar float32 1.) |> item []
       - : float = 1.
-      # elu (scalar float32 0.) |> unsafe_get []
+      # elu (scalar float32 0.) |> item []
       - : float = 0.
-      # elu (scalar float32 (-1.)) |> unsafe_get [] |> Float.round
+      # elu (scalar float32 (-1.)) |> item [] |> Float.round
       - : float = -1.
     ]} *)
 
@@ -2985,9 +3154,9 @@ val selu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     networks under certain conditions.
 
     {@ocaml[
-      # selu (scalar float32 0.) |> unsafe_get []
+      # selu (scalar float32 0.) |> item []
       - : float = 0.
-      # selu (scalar float32 1.) |> unsafe_get [] |> Float.round
+      # selu (scalar float32 1.) |> item [] |> Float.round
       - : float = 1.
     ]} *)
 
@@ -2999,10 +3168,10 @@ val softmax : ?axes:int array -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
-        softmax x |> unsafe_to_array |> Array.map Float.round
+        softmax x |> to_array |> Array.map Float.round
       - : float array = [|0.; 0.; 1.|]
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
-        sum (softmax x) |> unsafe_get []
+        sum (softmax x) |> item []
       - : float = 1.
     ]} *)
 
@@ -3013,9 +3182,9 @@ val gelu_approx : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     approximation for efficiency.
 
     {@ocaml[
-      # gelu_approx (scalar float32 0.) |> unsafe_get []
+      # gelu_approx (scalar float32 0.) |> item []
       - : float = 0.
-      # gelu_approx (scalar float32 1.) |> unsafe_get [] |> Float.round
+      # gelu_approx (scalar float32 1.) |> item [] |> Float.round
       - : float = 1.
     ]} *)
 
@@ -3036,9 +3205,9 @@ val mish : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     Self-regularizing non-monotonic activation. Smoother than ReLU.
 
     {@ocaml[
-      # mish (scalar float32 0.) |> unsafe_get [] |> Float.abs |> (fun x -> x < 0.001)
+      # mish (scalar float32 0.) |> item [] |> Float.abs |> (fun x -> x < 0.001)
       - : bool = true
-      # mish (scalar float32 (-10.)) |> unsafe_get [] |> Float.round
+      # mish (scalar float32 (-10.)) |> item [] |> Float.round
       - : float = -0.
     ]} *)
 
@@ -3458,16 +3627,16 @@ val one_hot : num_classes:int -> ('a, 'b, 'dev) t -> (int, uint8_elt, 'dev) t
 
     Functions to iterate over and transform arrays. *)
 
-val unsafe_map : ('a -> 'a) -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
-(** [unsafe_map f t] applies [f] to each element.
+val map_item : ('a -> 'a) -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
+(** [map_item f t] applies [f] to each element.
 
     Operates on contiguous data directly. Type-preserving only. *)
 
-val unsafe_iter : ('a -> unit) -> ('a, 'b, 'dev) t -> unit
-(** [unsafe_iter f t] applies [f] to each element for side effects. *)
+val iter_item : ('a -> unit) -> ('a, 'b, 'dev) t -> unit
+(** [iter_item f t] applies [f] to each element for side effects. *)
 
-val unsafe_fold : ('a -> 'b -> 'a) -> 'a -> ('b, 'c, 'dev) t -> 'a
-(** [unsafe_fold f init t] folds [f] over elements. *)
+val fold_item : ('a -> 'b -> 'a) -> 'a -> ('b, 'c, 'dev) t -> 'a
+(** [fold_item f init t] folds [f] over elements. *)
 
 val map :
   (('a, 'b, 'dev) t -> ('a, 'b, 'dev) t) -> ('a, 'b, 'dev) t -> ('a, 'b, 'dev) t
@@ -3532,7 +3701,7 @@ val grad :
     {@ocaml[
       # let x = create float32 [| 2 |] [| 3.; 4. |] in
         let f t = sum (mul_s t 2.) in
-        grad f x |> unsafe_get []
+        grad f x |> item []
       - : float = 2.
     ]} *)
 
@@ -3547,7 +3716,7 @@ val grads :
     {@ocaml[
       # let xs = [create float32 [| 2 |] [| 3. |]; create float32 [| 2 |] [| 4. |]] in
         let f ts = sum (mul_s (List.hd ts) 2.) +. sum (mul_s (List.nth ts 1) 3.) in
-        grads f xs |> List.map (fun t -> unsafe_get t [])
+        grads f xs |> List.map (fun t -> item t [])
       - : float list = [6.; 12.]
     ]} *)
 
@@ -3563,7 +3732,7 @@ val value_and_grad :
     {@ocaml[
       # let x = create float32 [| 2 |] [| 3. |] in
         let f t = sum (mul_s t 2.) in
-        value_and_grad f x |> (fun (v, g) -> (unsafe_get v [], unsafe_get g []))
+        value_and_grad f x |> (fun (v, g) -> (item v [], item g []))
       - : float * float = (6., 2.)
     ]} *)
 
@@ -3579,7 +3748,7 @@ val value_and_grads :
     {@ocaml[
       # let xs = [create float32 [| 2 |] [| 3. |]; create float32 [| 2 |] [| 4. |]] in
         let f ts = sum (mul_s (List.hd ts) 2.) +. sum (mul_s (List.nth ts 1) 3.) in
-        value_and_grads f xs |> (fun (v, gs) -> (unsafe_get v [], List.map (fun g -> unsafe_get g []) gs))
+        value_and_grads f xs |> (fun (v, gs) -> (item v [], List.map (fun g -> item g []) gs))
       - : float * float list = (18., [6.; 12.])
     ]} *)
 
@@ -3599,7 +3768,7 @@ val jvp :
       # let x = scalar float32 2. in
         let v = scalar float32 1. in
         let f x = mul x x in
-        jvp f x v |> (fun (p, t) -> (unsafe_get p [], unsafe_get t []))
+        jvp f x v |> (fun (p, t) -> (item p [], item t []))
       - : float * float = (4., 4.)
     ]} *)
 
@@ -3618,7 +3787,7 @@ val jvp_aux :
       # let x = scalar float32 2. in
         let v = scalar float32 1. in
         let f x = (mul x x, shape x) in
-        jvp_aux f x v |> (fun (p, t, aux) -> (unsafe_get p [], unsafe_get t [], aux))
+        jvp_aux f x v |> (fun (p, t, aux) -> (item p [], item t [], aux))
       - : float * float * int array = (4., 4., [||])
     ]} *)
 
@@ -3635,7 +3804,7 @@ val jvps :
       # let xs = [scalar float32 3.; scalar float32 2.] in
         let vs = [scalar float32 1.; scalar float32 0.5] in
         let f inputs = mul (List.hd inputs) (List.nth inputs 1) in
-        jvps f xs vs |> (fun (p, t) -> (unsafe_get p [], unsafe_get t []))
+        jvps f xs vs |> (fun (p, t) -> (item p [], item t []))
       - : float * float = (6., 3.5)
     ]} *)
 
@@ -4010,7 +4179,7 @@ val jit :
       # let x = create float32 [| 2 |] [| 3. |] in
         let f t = sum (mul_s t 2.) in
         let compiled_f = jit f x in
-        compiled_f x |> unsafe_get []
+        compiled_f x |> item []
       - : float = 6.
     ]} *)
 

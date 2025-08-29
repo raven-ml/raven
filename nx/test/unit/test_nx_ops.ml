@@ -67,11 +67,11 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     check bool
       (Printf.sprintf "%s nan[0]" op_name)
       true
-      (Float.is_nan (Nx.unsafe_get [ 0 ] result));
+      (Float.is_nan (Nx.item [ 0 ] result));
     check bool
       (Printf.sprintf "%s nan[1]" op_name)
       true
-      (Float.is_nan (Nx.unsafe_get [ 1 ] result))
+      (Float.is_nan (Nx.item [ 1 ] result))
 
   let test_inplace ~iop ~op_name ~dtype ~shape ~a_data ~b_data ~expected ctx ()
       =
@@ -160,10 +160,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
               Nx.create ctx Nx_core.Dtype.float32 [| 2 |] [| 5.0; 10.0 |]
             in
             let result = Nx.add a b in
-            check (float 1e-6) "inf + 5" Float.infinity
-              (Nx.unsafe_get [ 0 ] result);
+            check (float 1e-6) "inf + 5" Float.infinity (Nx.item [ 0 ] result);
             check (float 1e-6) "-inf + 10" Float.neg_infinity
-              (Nx.unsafe_get [ 1 ] result) );
+              (Nx.item [ 1 ] result) );
         ( "inf + inf",
           `Quick,
           fun () ->
@@ -176,10 +175,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
                 [| Float.infinity; Float.neg_infinity |]
             in
             let result = Nx.add a b in
-            check (float 1e-6) "inf + inf" Float.infinity
-              (Nx.unsafe_get [ 0 ] result);
-            check bool "inf + -inf" true
-              (Float.is_nan (Nx.unsafe_get [ 1 ] result)) );
+            check (float 1e-6) "inf + inf" Float.infinity (Nx.item [ 0 ] result);
+            check bool "inf + -inf" true (Float.is_nan (Nx.item [ 1 ] result))
+        );
         ( "iadd",
           `Quick,
           test_inplace ~iop:Nx.iadd ~op_name ~dtype:Nx_core.Dtype.float32
@@ -216,10 +214,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
                 [| Float.infinity; Float.neg_infinity |]
             in
             let result = Nx.sub a b in
-            check bool "inf - inf" true
-              (Float.is_nan (Nx.unsafe_get [ 0 ] result));
+            check bool "inf - inf" true (Float.is_nan (Nx.item [ 0 ] result));
             check (float 1e-6) "inf - -inf" Float.infinity
-              (Nx.unsafe_get [ 1 ] result) );
+              (Nx.item [ 1 ] result) );
         ( "isub",
           `Quick,
           test_inplace ~iop:Nx.isub ~op_name ~dtype:Nx_core.Dtype.float32
@@ -285,10 +282,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
               Nx.create ctx Nx_core.Dtype.float32 [| 3 |] [| 0.0; 0.0; 0.0 |]
             in
             let result = Nx.div a b in
-            check (float 1e-6) "1/0" Float.infinity (Nx.unsafe_get [ 0 ] result);
-            check (float 1e-6) "-1/0" Float.neg_infinity
-              (Nx.unsafe_get [ 1 ] result);
-            check bool "0/0" true (Float.is_nan (Nx.unsafe_get [ 2 ] result)) );
+            check (float 1e-6) "1/0" Float.infinity (Nx.item [ 0 ] result);
+            check (float 1e-6) "-1/0" Float.neg_infinity (Nx.item [ 1 ] result);
+            check bool "0/0" true (Float.is_nan (Nx.item [ 2 ] result)) );
         ( "idiv",
           `Quick,
           test_inplace ~iop:Nx.idiv ~op_name ~dtype:Nx_core.Dtype.float32
@@ -319,23 +315,21 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
             let a = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 0.0 |] in
             let b = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 0.0 |] in
             let result = Nx.pow a b in
-            check (float 1e-6) "0^0" 1.0 (Nx.unsafe_get [ 0 ] result) );
+            check (float 1e-6) "0^0" 1.0 (Nx.item [ 0 ] result) );
         ( "negative base fractional exp",
           `Quick,
           fun () ->
             let a = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| -2.0 |] in
             let b = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 0.5 |] in
             let result = Nx.pow a b in
-            check bool "(-2)^0.5" true
-              (Float.is_nan (Nx.unsafe_get [ 0 ] result)) );
+            check bool "(-2)^0.5" true (Float.is_nan (Nx.item [ 0 ] result)) );
         ( "pow overflow",
           `Quick,
           fun () ->
             let a = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 10.0 |] in
             let b = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 100.0 |] in
             let result = Nx.pow a b in
-            check (float 1e-6) "10^100" Float.infinity
-              (Nx.unsafe_get [ 0 ] result) );
+            check (float 1e-6) "10^100" Float.infinity (Nx.item [ 0 ] result) );
         ( "ipow",
           `Quick,
           fun () ->
@@ -398,14 +392,14 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           fun () ->
             let t = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 1000.0 |] in
             let result = Nx.exp t in
-            check (float 1e-6) "exp(1000)" Float.infinity
-              (Nx.unsafe_get [ 0 ] result) );
+            check (float 1e-6) "exp(1000)" Float.infinity (Nx.item [ 0 ] result)
+        );
         ( "exp underflow",
           `Quick,
           fun () ->
             let t = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| -1000.0 |] in
             let result = Nx.exp t in
-            check (float 1e-6) "exp(-1000)" 0.0 (Nx.unsafe_get [ 0 ] result) );
+            check (float 1e-6) "exp(-1000)" 0.0 (Nx.item [ 0 ] result) );
       ]
 
     let test_log ctx =
@@ -420,15 +414,14 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           fun () ->
             let t = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| -1.0 |] in
             let result = Nx.log t in
-            check bool "log(-1)" true
-              (Float.is_nan (Nx.unsafe_get [ 0 ] result)) );
+            check bool "log(-1)" true (Float.is_nan (Nx.item [ 0 ] result)) );
         ( "log zero",
           `Quick,
           fun () ->
             let t = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 0.0 |] in
             let result = Nx.log t in
             check (float 1e-6) "log(0)" Float.neg_infinity
-              (Nx.unsafe_get [ 0 ] result) );
+              (Nx.item [ 0 ] result) );
       ]
 
     let test_sqrt ctx =
@@ -443,8 +436,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           fun () ->
             let t = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| -1.0 |] in
             let result = Nx.sqrt t in
-            check bool "sqrt(-1)" true
-              (Float.is_nan (Nx.unsafe_get [ 0 ] result)) );
+            check bool "sqrt(-1)" true (Float.is_nan (Nx.item [ 0 ] result)) );
       ]
 
     let test_abs ctx =
@@ -529,8 +521,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           fun () ->
             let t = Nx.create ctx Nx_core.Dtype.float32 [| 1 |] [| 2.0 |] in
             let result = Nx.asin t in
-            check bool "asin(2)" true
-              (Float.is_nan (Nx.unsafe_get [ 0 ] result)) );
+            check bool "asin(2)" true (Float.is_nan (Nx.item [ 0 ] result)) );
         ( "sinh",
           `Quick,
           test_unary_op_float ~eps:1e-5 ~op:Nx.sinh ~op_name:"sinh"
@@ -711,9 +702,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
             let min_result = Nx.min t in
             let max_result = Nx.max t in
             check bool "min with nan" true
-              (Float.is_nan (Nx.unsafe_get [] min_result));
+              (Float.is_nan (Nx.item [] min_result));
             check bool "max with nan" true
-              (Float.is_nan (Nx.unsafe_get [] max_result)) );
+              (Float.is_nan (Nx.item [] max_result)) );
       ]
   end
 

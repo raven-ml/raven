@@ -142,10 +142,10 @@ let backward v =
 let zero_grad values = List.iter (fun v -> v.grad := zeros_like v.data) values
 
 (** Helper function to get scalar value from tensor *)
-let item v = get_item [] v.data
+let item v = Nx.item [] v.data
 
 (** Helper function to get scalar gradient from tensor *)
-let grad_item v = get_item [] !(v.grad)
+let grad_item v = Nx.item [] !(v.grad)
 
 (** Pretty print a value *)
 let pp_value v =

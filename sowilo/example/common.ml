@@ -16,7 +16,7 @@ let load_image_rune path =
 
 (* Helper to convert Rune tensor to Nx tensor for plotting *)
 let rune_to_nx (rune_tensor : ('a, 'b, 'dev) Rune.t) : ('a, 'b) Nx.t =
-  let data = Rune.unsafe_to_bigarray rune_tensor in
+  let data = Rune.to_bigarray rune_tensor in
   let nx_tensor = Nx.of_bigarray data in
   let shape = Rune.shape rune_tensor in
   Nx.reshape shape nx_tensor
@@ -33,11 +33,11 @@ let visualize_sobel (sobel_img : 'dev int16_t) : 'dev uint8_t =
 
   (* Check if tensors are actually scalars before getting item *)
   let min_val =
-    if Rune.ndim min_val_t = 0 then Rune.unsafe_get [] min_val_t else 0.0
+    if Rune.ndim min_val_t = 0 then Rune.item [] min_val_t else 0.0
     (* Default or error *)
   in
   let max_val =
-    if Rune.ndim max_val_t = 0 then Rune.unsafe_get [] max_val_t else 255.0
+    if Rune.ndim max_val_t = 0 then Rune.item [] max_val_t else 255.0
     (* Default or error *)
   in
 

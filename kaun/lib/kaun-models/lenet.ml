@@ -200,7 +200,7 @@ let accuracy ~predictions ~labels =
     match shape num_correct with
     | [||] ->
         (* It's already a scalar, extract the value *)
-        let arr = unsafe_to_array num_correct in
+        let arr = to_array num_correct in
         arr.(0)
     | _ -> failwith "Expected scalar result from sum"
   in

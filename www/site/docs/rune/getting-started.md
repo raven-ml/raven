@@ -78,8 +78,8 @@ let linear_model w b x =
 
 (* Mean squared error loss *)
 let loss_fn params x_batch y_batch =
-  let w = slice_ranges params [R [0; 1]] in
-  let b = slice_ranges params [R [1; 2]] in
+  let w = slice params [R (0, 1)] in
+  let b = slice params [R (1, 2)] in
   let predictions = linear_model w b x_batch in
   let errors = sub predictions y_batch in
   mean (mul errors errors)

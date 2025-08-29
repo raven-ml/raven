@@ -25,7 +25,7 @@ module Space = struct
               let action_tensor =
                 Rune.Rng.randint key device ~min:0 ~max:d [| 1 |]
               in
-              let action_array = Rune.unsafe_to_array action_tensor in
+              let action_array = Rune.to_array action_tensor in
               Int32.to_float action_array.(0))
             dims
         in
@@ -34,17 +34,17 @@ module Space = struct
   let contains space x =
     match space with
     | Discrete n ->
-        let v = Rune.unsafe_to_array x in
+        let v = Rune.to_array x in
         let v_int = int_of_float v.(0) in
         v_int >= 0 && v_int < n
     | Box { low; high; _ } ->
         let ge_low = Rune.all (Rune.greater_equal x low) in
         let le_high = Rune.all (Rune.less_equal x high) in
-        let ge_low_val = Rune.unsafe_to_array ge_low in
-        let le_high_val = Rune.unsafe_to_array le_high in
+        let ge_low_val = Rune.to_array ge_low in
+        let le_high_val = Rune.to_array le_high in
         ge_low_val.(0) > 0 && le_high_val.(0) > 0
     | Multi_discrete dims ->
-        let values = Rune.unsafe_to_array x |> Array.map int_of_float in
+        let values = Rune.to_array x |> Array.map int_of_float in
         Array.for_all2 (fun v d -> v >= 0 && v < d) values dims
 
   let shape = function
@@ -102,9 +102,7 @@ module Buffer = struct
     let indices =
       Rune.Rng.randint rng Rune.c ~min:0 ~max:t.size [| batch_size |]
     in
-    let indices_array =
-      Rune.unsafe_to_array indices |> Array.map Int32.to_int
-    in
+    let indices_array = Rune.to_array indices |> Array.map Int32.to_int in
     Array.map (fun idx -> t.buffer.(idx)) indices_array
 
   let size t = t.size
@@ -240,11 +238,11 @@ module Envs = struct
     in
 
     let step action =
-      let action_array = Rune.unsafe_to_array action in
+      let action_array = Rune.to_array action in
       let action_val = int_of_float action_array.(0) in
       let force = if action_val = 1 then force_mag else -.force_mag in
 
-      let s = Rune.unsafe_to_array !state in
+      let s = Rune.to_array !state in
       let x = s.(0) in
       let x_dot = s.(1) in
       let theta = s.(2) in
@@ -317,9 +315,9 @@ module Envs = struct
     in
 
     let step action =
-      let action_array = Rune.unsafe_to_array action in
+      let action_array = Rune.to_array action in
       let action_val = int_of_float action_array.(0) in
-      let s = Rune.unsafe_to_array !state in
+      let s = Rune.to_array !state in
       let position = s.(0) in
       let velocity = s.(1) in
 
@@ -393,11 +391,11 @@ module Envs = struct
     in
 
     let step action =
-      let action_array = Rune.unsafe_to_array action in
+      let action_array = Rune.to_array action in
       let u = action_array.(0) in
       let u = max (-.max_torque) (min max_torque u) in
 
-      let s = Rune.unsafe_to_array !state in
+      let s = Rune.to_array !state in
       let theta = s.(0) in
       let theta_dot = s.(1) in
 

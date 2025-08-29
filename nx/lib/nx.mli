@@ -122,11 +122,17 @@ val complex16 : (Complex.t, complex16_elt) dtype
 val qint8 : (int, qint8_elt) dtype
 val quint8 : (int, quint8_elt) dtype
 
-(** Index specification for slicing *)
+(** Index specification for tensor slicing *)
 type index =
-  | I of int  (** Single index *)
-  | L of int list  (** List of indices *)
-  | R of int list  (** Range [start; stop; step] where stop is exclusive *)
+  | I of int  (** Single index: [I 2] selects index 2 *)
+  | L of int list  (** List of indices: [L [0; 2; 5]] selects indices 0, 2, 5 *)
+  | R of int * int  (** Range [start, stop): [R (1, 4)] selects 1, 2, 3 *)
+  | Rs of int * int * int
+      (** Range with step: [Rs (0, 10, 2)] selects 0, 2, 4, 6, 8 *)
+  | A  (** All indices: [A] selects entire axis *)
+  | M of (int, uint8_elt) t
+      (** Boolean mask: [M mask] selects where mask is true *)
+  | N  (** New axis: [N] inserts dimension of size 1 *)
 
 (** {2 Array Properties}
 
@@ -1050,67 +1056,6 @@ val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
 
     Functions to access and modify array elements. *)
 
-val slice : index list -> ('a, 'b) t -> ('a, 'b) t
-(** [slice indices t] extracts subtensor.
-
-    - [I n]: select index n (reduces dimension)
-    - [L [i;j;k]]: fancy indexing - select indices i, j, k
-    - [R [start;stop;step]]: range [\[start, stop)] with step
-
-    Stop is exclusive. Negative indices count from end. Missing indices select
-    all. Returns view when possible.
-
-    @raise Invalid_argument if indices out of bounds
-
-    {@ocaml[
-      # let x = create int32 [| 2; 4 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l |] in
-        slice [ I 1 ] x
-      - : (int32, int32_elt) t = [5, 6, 7, 8]
-      # let x = create int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
-        slice [ R [ 1; 3 ] ] x
-      - : (int32, int32_elt) t = [1, 2]
-    ]} *)
-
-val set_slice : index list -> ('a, 'b) t -> ('a, 'b) t -> unit
-(** [set_slice indices t value] assigns [value] to slice.
-
-    @raise Invalid_argument if shapes incompatible *)
-
-val slice_ranges :
-  ?steps:int list -> int list -> int list -> ('a, 'b) t -> ('a, 'b) t
-(** [slice_ranges ?steps starts stops t] extracts ranges.
-
-    Equivalent to [slice [R[s0;e0;st0]; R[s1;e1;st1]; ...] t]. Lists must have
-    same length ≤ ndim. Default step is 1. Missing dimensions select all.
-
-    @raise Invalid_argument if list lengths differ or indices out of bounds
-
-    {@ocaml[
-      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        slice_ranges [ 0; 1 ] [ 2; 3 ] x
-      - : (int32, int32_elt) t = [[2, 3],
-                                  [5, 6]]
-      # slice_ranges ~steps:[ 2; 1 ] [ 0; 0 ] [ 4; 2 ] (eye int32 4)
-      - : (int32, int32_elt) t = [[1, 0],
-                                  [0, 0]]
-    ]} *)
-
-val set_slice_ranges :
-  ?steps:int list -> int list -> int list -> ('a, 'b) t -> ('a, 'b) t -> unit
-(** [set_slice_ranges ?steps starts stops t value] assigns to ranges.
-
-    Like {!slice_ranges} but assigns [value] to selected region. Value is
-    broadcast to target shape if needed.
-
-    @raise Invalid_argument if shapes incompatible after slicing
-
-    {@ocaml[
-      # let x = zeros float32 [| 3; 3 |] in
-        set_slice_ranges [ 1; 2 ] [ 2; 3 ] x (ones float32 [| 1; 1 |]);
-        get_item [ 1; 2 ] x
-      - : float = 1.
-    ]} *)
-
 val get : int list -> ('a, 'b) t -> ('a, 'b) t
 (** [get indices t] returns subtensor at indices.
 
@@ -1133,8 +1078,51 @@ val set : int list -> ('a, 'b) t -> ('a, 'b) t -> unit
 
     @raise Invalid_argument if indices out of bounds *)
 
-val get_item : int list -> ('a, 'b) t -> 'a
-(** [get_item indices t] returns scalar value at indices.
+val slice : index list -> ('a, 'b) t -> ('a, 'b) t
+(** [slice specs t] extracts subtensor using advanced indexing.
+
+    Each element in specs corresponds to an axis from left to right:
+    - [I i]: single index (reduces dimension; negative from end)
+    - [L [i1;i2;...]]: fancy indexing with list of indices
+    - [R (start, stop)]: range [start, stop) with step 1
+    - [Rs (start, stop, step)]: range with step
+    - [A]: full axis (default for missing specs)
+    - [M mask]: boolean mask (shape must match axis)
+    - [N]: insert new dimension of size 1
+
+    Missing specs default to [A]. Returns view when possible.
+
+    @raise Invalid_argument if specs out of bounds or incompatible
+
+    {@ocaml[
+      # let x = create int32 [| 2; 4 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l |] in
+        slice [ I 1 ] x
+      - : (int32, int32_elt) t = [5, 6, 7, 8]
+      # let x = create int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
+        slice [ R (1, 3) ] x
+      - : (int32, int32_elt) t = [1, 2]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        slice [ R (0, 2); L [0; 2] ] x
+      - : (int32, int32_elt) t = [[1, 3],
+                                  [4, 6]]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        slice [ M (greater_s x 5l) ] x  (* Elements >5 *)
+      - : (int32, int32_elt) t = [6, 7, 8, 9]
+      # slice [ A; N ] x  (* Add new axis *)
+      - : (int32, int32_elt) t = [[[1, 2, 3],
+                                   [4, 5, 6],
+                                   [7, 8, 9]]]
+    ]} *)
+
+val set_slice : index list -> ('a, 'b) t -> ('a, 'b) t -> unit
+(** [set_slice specs t value] assigns [value] to indexed region.
+
+    Like {!slice} but modifies t in-place. Value is broadcast if needed.
+
+    @raise Invalid_argument if specs incompatible *)
+
+val item : int list -> ('a, 'b) t -> 'a
+(** [item indices t] returns scalar value at indices.
 
     Must provide indices for all dimensions.
 
@@ -1146,6 +1134,194 @@ val set_item : int list -> 'a -> ('a, 'b) t -> unit
     Must provide indices for all dimensions. Modifies tensor in-place.
 
     @raise Invalid_argument if wrong number of indices or out of bounds *)
+
+val take :
+  ?axis:int ->
+  ?mode:[ `raise | `wrap | `clip ] ->
+  (int32, int32_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [take ?axis ?mode indices  t] takes elements from t using indices.
+
+    Equivalent to t[indices] in NumPy along the specified axis. If [axis] is
+    None, flattens t first. [indices] is an integer tensor of indices to take.
+    [mode] handles out-of-bounds indices: `raise (default), `wrap (modulo),
+    `clip (clamp to bounds).
+
+    Returns a new tensor with shape based on indices and t's shape.
+
+    @raise Invalid_argument if indices out of bounds and mode=`raise
+
+    {@ocaml[
+      # let x = create int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
+        take (create int32 [| 3 |] [| 1l; 3l; 0l |]) x
+      - : (int32, int32_elt) t = [1, 3, 0]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        take ~axis:1 (create int32 [| 3 |] [| 0l; 2l; 1l |]) x
+      - : (int32, int32_elt) t = [[1, 3, 2],
+                                  [4, 6, 5],
+                                  [7, 9, 8]]
+      # take ~mode:`clip (create int32 [| 2 |] [| -1l; 5l |]) x  (* Clamps to [0,4] *)
+      - : (int32, int32_elt) t = [0, 4]
+    ]} *)
+
+val take_along_axis :
+  axis:int -> (int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
+(** [take_along_axis ~axis indices t] takes values along the specified axis
+    using indices.
+
+    Equivalent to NumPy's take_along_axis. [indices] must have the same shape as
+    t except along the specified axis, where it matches the output size. Useful
+    for gathering from argmax/argmin results.
+
+    @raise Invalid_argument if shapes incompatible
+
+    {@ocaml[
+      # let x = create float32 [| 2; 3 |] [| 4.; 1.; 2.; 3.; 5.; 6. |] in
+        let indices = create int32 [| 2; 1 |] [| 1l; 0l |] in  (* Per row max indices *)
+        take_along_axis ~axis:1 indices x
+      - : (float, float32_elt) t = [[1, 4],
+                                    [5, 3]]
+      # let x = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
+        let indices = argmax ~axis:0 x in
+        take_along_axis ~axis:0 indices x  (* Max per column *)
+      - : (float, float32_elt) t = [7, 8, 9]
+    ]} *)
+
+val put :
+  ?axis:int ->
+  indices:(int32, int32_elt) t ->
+  values:('a, 'b) t ->
+  ?mode:[ `raise | `wrap | `clip ] ->
+  ('a, 'b) t ->
+  unit
+(** [put ?axis indices values ?mode t] sets elements in t at positions specified
+    by indices to values.
+
+    Equivalent to NumPy's put (in-place version of take for setting). If [axis]
+    is None, flattens t first. [indices] is an integer tensor of positions to
+    set. [values] must match the number of indices (broadcasted if needed).
+    [mode] handles out-of-bounds indices: `raise (default), `wrap (modulo),
+    `clip (clamp).
+
+    Modifies t in-place.
+
+    @raise Invalid_argument
+      if shapes incompatible or indices out of bounds with mode=`raise
+
+    {@ocaml[
+      # let x = zeros int32 [| 5 |] in
+        put (create int32 [| 3 |] [| 1l; 3l; 0l |]) (create int32 [| 3 |] [| 10l; 20l; 30l |]) x;
+        x
+      - : (int32, int32_elt) t = [30, 10, 0, 20, 0]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        put ~axis:1 (create int32 [| 3 |] [| 0l; 2l; 1l |]) (create int32 [| 3 |] [| 10l; 20l; 30l |]) x;
+        x
+      - : (int32, int32_elt) t = [[10, 2, 3],
+                                  [4, 30, 6],
+                                  [7, 8, 20]]
+      # put ~mode:`clip (create int32 [| 2 |] [| -1l; 5l |]) (create int32 [| 2 |] [| 99l; 99l |]) x  (* Clamps to [0,4] *)
+    ]} *)
+
+val put_along_axis :
+  axis:int ->
+  indices:(int32, int32_elt) t ->
+  values:('a, 'b) t ->
+  ('a, 'b) t ->
+  unit
+(** [put_along_axis ~axis indices values t] sets values along the specified axis
+    using indices.
+
+    Equivalent to NumPy's put_along_axis. [indices] must have the same shape as
+    t except along the axis (where it matches values' size along that axis).
+    [values] is broadcasted to match the selection shape. Useful for scattering
+    to argmax/argmin positions.
+
+    Modifies t in-place.
+
+    @raise Invalid_argument if shapes incompatible
+
+    {@ocaml[
+      # let x = zeros float32 [| 2; 3 |] in
+        let indices = create int32 [| 2; 1 |] [| 1l; 0l |] in  (* Per row positions *)
+        put_along_axis ~axis:1 indices (create float32 [| 2; 1 |] [| 10.; 20. |]) x;
+        x
+      - : (float, float32_elt) t = [[0, 10, 0],
+                                    [20, 0, 0]]
+      # let x = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
+        let indices = argmax ~axis:0 x in  (* Max positions per column *)
+        put_along_axis ~axis:0 indices (ones float32 [| 3 |]) x  (* Set max per column to 1 *)
+    ]} *)
+
+val compress :
+  ?axis:int -> condition:(int, uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t
+(** [compress ?axis condition t] selects elements where condition is true.
+
+    Equivalent to NumPy's compress. [condition] is a 1D boolean array. If [axis]
+    is None, flattens t first. Otherwise, compresses along the specified axis
+    (condition length must match t's dim along axis).
+
+    Returns a new tensor with reduced size along the axis/flattened.
+
+    @raise Invalid_argument if condition length incompatible
+
+    {@ocaml[
+      # let x = create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |] in
+        compress (create bool [| 5 |] [| true; false; true; false; true |]) x
+      - : (int32, int32_elt) t = [1, 3, 5]
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        compress ~axis:0 (create bool [| 3 |] [| false; true; true |]) x
+      - : (int32, int32_elt) t = [[4, 5, 6],
+                                  [7, 8, 9]]
+    ]} *)
+
+val extract : condition:(int, uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t
+(** [extract condition t] flattens and selects elements where condition is true.
+
+    Equivalent to NumPy's extract (1D compress after flatten). [condition] must
+    have the same shape and size as t (element-wise).
+
+    Returns a 1D tensor with selected elements.
+
+    @raise Invalid_argument if shapes incompatible
+
+    {@ocaml[
+      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
+        extract (greater_s x 5l) x
+      - : (int32, int32_elt) t = [6, 7, 8, 9]
+    ]} *)
+
+val nonzero : ('a, 'b) t -> (int32, int32_elt) t array
+(** [nonzero t] returns indices of non-zero elements.
+
+    Equivalent to NumPy's nonzero. Treats non-zero as true for bool tensors.
+    Returns an array of 1D tensors, one per dimension, with coordinates of
+    non-zeros.
+
+    For example, for a 2D tensor, returns [| rows; cols |] where rows[i],
+    cols[i] is the position of the i-th non-zero.
+
+    {@ocaml[
+      # let x = create int32 [| 3; 3 |] [| 0l; 1l; 0l; 2l; 0l; 3l; 0l; 0l; 4l |] in
+        let rows, cols = nonzero x in
+        rows, cols
+      - : (int32, int32_elt) t * (int32, int32_elt) t = ([0, 1, 1, 2], [1, 0, 2, 2])
+    ]} *)
+
+val argwhere : ('a, 'b) t -> (int32, int32_elt) t
+(** [argwhere t] returns indices of non-zero elements as a 2D tensor.
+
+    Equivalent to NumPy's argwhere. Each row is a coordinate [dim0; dim1; ...]
+    of a non-zero element. Shape is [num_nonzeros; ndim].
+
+    {@ocaml[
+      # let x = create int32 [| 3; 3 |] [| 0l; 1l; 0l; 2l; 0l; 3l; 0l; 0l; 4l |] in
+        argwhere x
+      - : (int32, int32_elt) t = [[0, 1],
+                                  [1, 0],
+                                  [1, 2],
+                                  [2, 2]]
+    ]} *)
 
 (** {2 Basic Arithmetic Operations}
 

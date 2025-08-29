@@ -99,4 +99,4 @@ let debug_pop_context = Debug.pop_context
 (* ───── Nx Interop ───── *)
 
 let of_nx dev nx_tensor = of_bigarray dev (Nx.to_bigarray nx_tensor)
-let to_nx t = Nx.of_bigarray (unsafe_to_bigarray t)
+let to_nx t = Nx.of_bigarray (to_bigarray t)

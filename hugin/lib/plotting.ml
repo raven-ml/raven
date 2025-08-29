@@ -42,8 +42,8 @@ let hist ?(bins = `Num 10) ?range ?(density = false) ?color ?label ~x ax =
     match range with
     | Some (min_val, max_val) -> (min_val, max_val)
     | None ->
-        let min_val = Nx.min x |> Nx.get_item [] in
-        let max_val = Nx.max x |> Nx.get_item [] in
+        let min_val = Nx.min x |> Nx.item [] in
+        let max_val = Nx.max x |> Nx.item [] in
         (min_val, max_val)
   in
   let edges =

@@ -84,13 +84,13 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t = Nx.create ctx Nx.float32 [| 5 |] [| 3.; nan; 1.; 2.; nan |] in
     let result, _ = Nx.sort t in
     (* NaN values should be sorted to the end *)
-    let first_three = Nx.slice [ R [ 0; 3 ] ] result in
+    let first_three = Nx.slice [ Nx.R (0, 3) ] result in
     check_t "sort NaN handling - non-NaN values" [| 3 |] [| 1.; 2.; 3. |]
       first_three;
     (* Check that last two values are NaN *)
     check bool "sort NaN handling - NaN at end" true
-      (Float.is_nan (Nx.unsafe_get [ 3 ] result)
-      && Float.is_nan (Nx.unsafe_get [ 4 ] result))
+      (Float.is_nan (Nx.item [ 3 ] result)
+      && Float.is_nan (Nx.item [ 4 ] result))
 
   let test_sort_stable ctx () =
     (* Test sort stability with repeated values *)

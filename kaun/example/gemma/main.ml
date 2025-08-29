@@ -64,7 +64,7 @@ let clip_gradients grads ~max_norm =
     let rec norm_sq = function
       | Tensor t ->
           let t_sq = Rune.square t in
-          Rune.unsafe_get [] (Rune.sum t_sq)
+          Rune.item [] (Rune.sum t_sq)
       | List l -> List.fold_left (fun acc p -> acc +. norm_sq p) 0.0 l
       | Record fields ->
           List.fold_left
@@ -323,7 +323,7 @@ let train config_name train_config =
 
     (* Logging *)
     (if step mod train_config.log_interval = 0 then
-       let train_loss_val = Rune.unsafe_get [] train_loss in
+       let train_loss_val = Rune.item [] train_loss in
        let lr =
          get_learning_rate step ~warmup_steps:train_config.warmup_steps
            ~max_steps:train_config.max_steps ~base_lr:train_config.learning_rate
@@ -353,8 +353,8 @@ let train config_name train_config =
        let eval_loss, eval_acc =
          eval_step model params eval_inputs_float eval_targets_float ~rngs
        in
-       let eval_loss_val = Rune.unsafe_get [] eval_loss in
-       let eval_acc_val = Rune.unsafe_get [] eval_acc in
+       let eval_loss_val = Rune.item [] eval_loss in
+       let eval_acc_val = Rune.item [] eval_acc in
 
        Printf.printf "  [Eval] Loss: %.4f | Accuracy: %.2f%%\n" eval_loss_val
          (eval_acc_val *. 100.0));

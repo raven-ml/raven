@@ -79,7 +79,7 @@ dune build nx/test/test_foo.exe &&  _build/default/nx/test/test_foo.exe
 - **Dtype pattern matching**: Need locally abstract types: `let f (type a b) (x : (a, b) t) = match dtype x with ...`
 
 ### Nx Conventions
-- **Slicing**: `R [1; 4]` = indices 1,2,3 (exclusive end like Python)
+- **Slicing**: `R (1, 4)` = indices 1,2,3 (exclusive end like Python)
 - **Single index**: `get [0]` on `[2; 3]` → shape `[3]` (dimension squeezed)
 - **Creation funcs**: Return contiguous arrays (use `init` not `broadcast_to`)
 - **NumPy compatibility**: Follows NumPy API and conventions closely

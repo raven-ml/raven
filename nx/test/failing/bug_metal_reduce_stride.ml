@@ -31,8 +31,8 @@ let test_metal_reduce_stride () =
   (* Check if the result is correct *)
   let correct = ref true in
   for i = 0 to 2 do
-    let expected_val = unsafe_get [ i ] expected in
-    let actual_val = unsafe_get [ i ] sum_result in
+    let expected_val = item [ i ] expected in
+    let actual_val = item [ i ] sum_result in
     if abs_float (expected_val -. actual_val) > 0.001 then (
       Printf.printf "FAIL: Index %d: expected %.1f, got %.1f\n" i expected_val
         actual_val;

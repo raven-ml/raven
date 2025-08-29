@@ -235,7 +235,7 @@ let decode_batch vocab tensor =
       for i = 0 to batch_size - 1 do
         let indices = ref [] in
         for j = 0 to seq_len - 1 do
-          let idx = Nx.get_item [ i; j ] tensor |> Int32.to_int in
+          let idx = Nx.item [ i; j ] tensor |> Int32.to_int in
           if idx <> Vocab.pad_idx vocab then indices := idx :: !indices
         done;
         let text = decode vocab (List.rev !indices) in

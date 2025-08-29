@@ -209,8 +209,8 @@ let () =
   let ax = Hugin.Figure.add_subplot fig in
 
   (* Plot data points *)
-  let x_coords = Nx.slice [ R []; I 0 ] x in
-  let y_coords = Nx.slice [ R []; I 1 ] x in
+  let x_coords = Nx.slice [ Nx.A; Nx.I 0 ] x in
+  let y_coords = Nx.slice [ Nx.A; Nx.I 1 ] x in
 
   (* Separate positive and negative classes *)
   let pos_mask = Array.mapi (fun _i label -> label > 0.0) y_labels in

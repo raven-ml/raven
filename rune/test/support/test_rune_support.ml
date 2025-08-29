@@ -16,14 +16,14 @@ let check_rune ?eps msg expected actual =
               let eq_tensor = Rune.array_equal a b in
               (* array_equal returns a scalar uint8 tensor with 1 for true, 0
                  for false *)
-              let result = Rune.unsafe_get [] eq_tensor in
+              let result = Rune.item [] eq_tensor in
               equal_int result 1)
     | Some eps ->
         Alcotest.testable Rune.pp (fun a b ->
             let diff = Rune.sub a b in
             let abs_diff = Rune.abs diff in
             let max_diff = Rune.max abs_diff in
-            let max_diff_val = Rune.unsafe_get [] max_diff in
+            let max_diff_val = Rune.item [] max_diff in
             Float.compare max_diff_val eps < 0)
   in
   check testable msg expected actual
@@ -34,7 +34,7 @@ let check_scalar ?eps msg expected actual =
   check (float eps) msg expected actual
 
 (* Extract scalar from Rune tensor *)
-let scalar_value t = Rune.unsafe_get [] t
+let scalar_value t = Rune.item [] t
 
 (* Check shape of Rune tensor *)
 let check_shape msg expected_shape tensor =

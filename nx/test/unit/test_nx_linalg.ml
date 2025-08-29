@@ -214,7 +214,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let b = Nx.create ctx Nx.float32 [| 3 |] [| 4.; 5.; 6. |] in
     let result = Nx.dot a b in
     check_shape "dot scalar shape" [||] result;
-    check (float 1e-6) "dot scalar value" 32.0 (Nx.unsafe_get [] result)
+    check (float 1e-6) "dot scalar value" 32.0 (Nx.item [] result)
 
   (* ───── Solve Inverse Tests ───── *)
 
@@ -351,7 +351,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     (* Cast to float32 to match a's type *)
     let eigenvalues_f32 = Nx.cast Nx.float32 eigenvalues in
     let eigenvectors_f32 = Nx.cast Nx.float32 eigenvectors in
-    let v1 = Nx.slice [ R [ 0; 2 ]; I 0 ] eigenvectors_f32 in
+    let v1 = Nx.slice [ Nx.R (0, 2); Nx.I 0 ] eigenvectors_f32 in
     let lambda1 = Nx.unsafe_get [ 0 ] eigenvalues_f32 in
     let av1 = Nx.dot a v1 in
     let lambda1_scalar = Nx.scalar ctx Nx.float32 lambda1 in
@@ -475,14 +475,14 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 3.; 8.; 4.; 6. |] in
     let sign, logdet = Nx.slogdet a in
     check_t "slogdet sign" [||] [| -1. |] sign;
-    check (float 1e-5) "slogdet logdet" (log 14.) (Nx.unsafe_get [] logdet)
+    check (float 1e-5) "slogdet logdet" (log 14.) (Nx.item [] logdet)
 
   let test_slogdet_singular ctx () =
     let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
     let sign, logdet = Nx.slogdet a in
     check_t "slogdet singular sign" [||] [| 0. |] sign;
     check (float 1e-5) "slogdet singular logdet" neg_infinity
-      (Nx.unsafe_get [] logdet)
+      (Nx.item [] logdet)
 
   let test_matrix_rank ctx () =
     let a = Nx.create ctx Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int) in
@@ -744,11 +744,11 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
   let test_norm_ord ctx () =
     let m = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |] in
     let n_nuc = Nx.norm ~ord:`Nuc m in
-    check (float 1e-5) "norm nuclear" 5.477 (Nx.unsafe_get [] n_nuc);
+    check (float 1e-5) "norm nuclear" 5.477 (Nx.item [] n_nuc);
     let n_two = Nx.norm ~ord:`Two m in
-    check (float 1e-5) "norm two" 5.477 (Nx.unsafe_get [] n_two);
+    check (float 1e-5) "norm two" 5.477 (Nx.item [] n_two);
     let n_neg_two = Nx.norm ~ord:`NegTwo m in
-    check (float 1e-5) "norm neg two" 0.366 (Nx.unsafe_get [] n_neg_two)
+    check (float 1e-5) "norm neg two" 0.366 (Nx.item [] n_neg_two)
 
   let test_norm_keepdims ctx () =
     let v = Nx.create ctx Nx.float32 [| 3 |] [| 3.; 4.; 0. |] in

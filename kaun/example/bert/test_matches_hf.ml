@@ -25,7 +25,7 @@ let test_bert_matches_hf () =
   let token_ids =
     let flat = Rune.reshape [| -1 |] inputs.input_ids in
     let len = Rune.numel flat in
-    List.init len (fun i -> Rune.unsafe_get [ i ] flat |> Int32.to_int)
+    List.init len (fun i -> Rune.item [ i ] flat |> Int32.to_int)
   in
   Printf.printf "Token IDs: [%s]\n"
     (String.concat ", " (List.map string_of_int token_ids));
@@ -75,7 +75,7 @@ let test_bert_matches_hf () =
   let cls_diffs =
     List.mapi
       (fun i expected ->
-        let actual = Rune.unsafe_get [ i ] cls_token in
+        let actual = Rune.item [ i ] cls_token in
         let diff = abs_float (actual -. expected) in
         Printf.printf "  [%d] Kaun: %8.6f, HF: %8.6f, Diff: %.9f %s\n" i actual
           expected diff
@@ -102,7 +102,7 @@ let test_bert_matches_hf () =
       let pooler_diffs =
         List.mapi
           (fun i expected ->
-            let actual = Rune.unsafe_get [ 0; i ] p in
+            let actual = Rune.item [ 0; i ] p in
             let diff = abs_float (actual -. expected) in
             Printf.printf "  [%d] Kaun: %8.6f, HF: %8.6f, Diff: %.9f %s\n" i
               actual expected diff
@@ -134,8 +134,7 @@ let test_bert_matches_hf () =
         in
         List.mapi
           (fun i exp ->
-            abs_float
-              (Rune.unsafe_get [ 0; i ] (Option.get pooler_output) -. exp))
+            abs_float (Rune.item [ 0; i ] (Option.get pooler_output) -. exp))
           expected_pooler
         |> List.fold_left Float.max 0.0
       in

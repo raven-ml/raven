@@ -131,14 +131,14 @@ let train () =
            Loss: %.4f\n\
            %!"
           !batch_count batch_time fwd_bwd_time opt_time metric_time
-          (Rune.unsafe_get [] loss))
+          (Rune.item [] loss))
       train_ds;
 
     (* Print training metrics *)
     let train_metrics = Metrics.Collection.compute metrics in
     List.iter
       (fun (name, value) ->
-        let scalar_value = Rune.unsafe_get [] value in
+        let scalar_value = Rune.item [] value in
         Printf.printf "  %s: %.4f\n" name scalar_value)
       train_metrics;
     Printf.printf "  Epoch time: %.2fs\n" (Unix.gettimeofday () -. epoch_start);
@@ -159,7 +159,7 @@ let train () =
     Printf.printf "  Test: ";
     List.iter
       (fun (name, value) ->
-        let scalar_value = Rune.unsafe_get [] value in
+        let scalar_value = Rune.item [] value in
         Printf.printf "%s=%.4f " name scalar_value)
       (Metrics.Collection.compute metrics);
     Printf.printf " (eval time: %.2fs)\n\n%!"

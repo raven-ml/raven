@@ -49,8 +49,8 @@ let check_tensor msg expected actual =
     let expected_flat = Rune.reshape [| total_elements |] expected in
     let actual_flat = Rune.reshape [| total_elements |] actual in
     for i = 0 to total_elements - 1 do
-      let e = Rune.unsafe_get [ i ] expected_flat in
-      let a = Rune.unsafe_get [ i ] actual_flat in
+      let e = Rune.item [ i ] expected_flat in
+      let a = Rune.item [ i ] actual_flat in
       if e <> a then
         failf "%s: values differ at flat index %d - expected %d, got %d" msg i e
           a
@@ -60,7 +60,7 @@ let check_shape msg expected_shape tensor =
   check (array int) msg expected_shape (Rune.shape tensor)
 
 let check_pixel msg expected tensor indices =
-  let actual = Rune.unsafe_get indices tensor in
+  let actual = Rune.item indices tensor in
   check int msg expected actual
 
 (* ───── Basic Image Manipulation Tests ───── *)
@@ -70,12 +70,8 @@ let test_flip_vertical () =
   let flipped = flip_vertical img in
 
   (* Check that first row becomes last row *)
-  check_pixel "top-left after flip"
-    (Rune.unsafe_get [ 3; 0 ] img)
-    flipped [ 0; 0 ];
-  check_pixel "top-right after flip"
-    (Rune.unsafe_get [ 3; 3 ] img)
-    flipped [ 0; 3 ];
+  check_pixel "top-left after flip" (Rune.item [ 3; 0 ] img) flipped [ 0; 0 ];
+  check_pixel "top-right after flip" (Rune.item [ 3; 3 ] img) flipped [ 0; 3 ];
   check_shape "flip preserves shape" (Rune.shape img) flipped
 
 let test_flip_horizontal () =
@@ -83,12 +79,8 @@ let test_flip_horizontal () =
   let flipped = flip_horizontal img in
 
   (* Check that first column becomes last column *)
-  check_pixel "top-left after flip"
-    (Rune.unsafe_get [ 0; 3 ] img)
-    flipped [ 0; 0 ];
-  check_pixel "bottom-left after flip"
-    (Rune.unsafe_get [ 3; 3 ] img)
-    flipped [ 3; 0 ];
+  check_pixel "top-left after flip" (Rune.item [ 0; 3 ] img) flipped [ 0; 0 ];
+  check_pixel "bottom-left after flip" (Rune.item [ 3; 3 ] img) flipped [ 3; 0 ];
   check_shape "flip preserves shape" (Rune.shape img) flipped
 
 let test_crop () =
@@ -96,7 +88,7 @@ let test_crop () =
   let cropped = crop ~y:2 ~x:3 ~height:5 ~width:4 img in
 
   check_shape "crop shape" [| 5; 4 |] cropped;
-  check_pixel "crop content" (Rune.unsafe_get [ 2; 3 ] img) cropped [ 0; 0 ];
+  check_pixel "crop content" (Rune.item [ 2; 3 ] img) cropped [ 0; 0 ];
 
   (* Test invalid crop *)
   check_raises "crop out of bounds"
@@ -138,10 +130,10 @@ let test_to_grayscale () =
     if diff > 1 then failf "%s: expected ~%d, got %d" msg expected actual
   in
 
-  check_gray_value "red to gray" 76 (Rune.unsafe_get [ 0; 0 ] gray);
-  check_gray_value "green to gray" 150 (Rune.unsafe_get [ 0; 1 ] gray);
-  check_gray_value "blue to gray" 29 (Rune.unsafe_get [ 1; 0 ] gray);
-  check_gray_value "white to gray" 255 (Rune.unsafe_get [ 1; 1 ] gray);
+  check_gray_value "red to gray" 76 (Rune.item [ 0; 0 ] gray);
+  check_gray_value "green to gray" 150 (Rune.item [ 0; 1 ] gray);
+  check_gray_value "blue to gray" 29 (Rune.item [ 1; 0 ] gray);
+  check_gray_value "white to gray" 255 (Rune.item [ 1; 1 ] gray);
 
   (* Test grayscale passthrough *)
   let gray_img = create_test_image_gray 5 5 128 in
@@ -169,7 +161,7 @@ let test_float_conversions () =
   let float_img = to_float uint8_img in
 
   (* Check normalized to [0, 1] *)
-  let float_val = Rune.unsafe_get [ 0; 0 ] float_img in
+  let float_val = Rune.item [ 0; 0 ] float_img in
   check (float 0.001) "to_float normalization" 1.0 float_val;
 
   (* Convert back *)
@@ -197,7 +189,7 @@ let test_gaussian_blur () =
   check_shape "blur preserves shape" (Rune.shape img) blurred;
 
   (* Check that edges are smoothed (values between 0 and 255) *)
-  let edge_val = Rune.unsafe_get [ 3; 3 ] blurred in
+  let edge_val = Rune.item [ 3; 3 ] blurred in
   if edge_val = 0 || edge_val = 255 then
     failf "Edge not smoothed: got %d" edge_val;
 
@@ -213,7 +205,7 @@ let test_box_filter () =
   let filtered = box_filter ~ksize:(3, 3) img in
 
   (* Center pixel should be average of 9 pixels = 255/9 ≈ 28 *)
-  let center = Rune.unsafe_get [ 1; 1 ] filtered in
+  let center = Rune.item [ 1; 1 ] filtered in
   let expected = 255 / 9 in
   if abs (center - expected) > 1 then
     failf "Box filter center: expected ~%d, got %d" expected center
@@ -278,7 +270,7 @@ let test_erosion () =
   let white_count = ref 0 in
   for i = 0 to 9 do
     for j = 0 to 9 do
-      if Rune.unsafe_get [ i; j ] eroded = 255 then incr white_count
+      if Rune.item [ i; j ] eroded = 255 then incr white_count
     done
   done;
   check int "erosion reduces white area" 4 !white_count;
@@ -296,7 +288,7 @@ let test_dilation () =
   let white_count = ref 0 in
   for i = 0 to 9 do
     for j = 0 to 9 do
-      if Rune.unsafe_get [ i; j ] dilated = 255 then incr white_count
+      if Rune.item [ i; j ] dilated = 255 then incr white_count
     done
   done;
   check int "dilation expands white area" 36 !white_count
@@ -317,7 +309,7 @@ let test_sobel () =
   check_shape "sobel shape" (Rune.shape img) sobel_x;
 
   (* Check edge detection at boundary *)
-  let edge_response = abs (Rune.unsafe_get [ 2; 2 ] sobel_x) in
+  let edge_response = abs (Rune.item [ 2; 2 ] sobel_x) in
   if edge_response < 100 then
     failf "Sobel X edge response too weak: %d" edge_response;
 
@@ -331,7 +323,7 @@ let test_sobel () =
   let img_h = Rune.create device Rune.uint8 [| 5; 5 |] img_h_data in
 
   let sobel_y = sobel ~dx:0 ~dy:1 img_h in
-  let edge_response_y = abs (Rune.unsafe_get [ 2; 2 ] sobel_y) in
+  let edge_response_y = abs (Rune.item [ 2; 2 ] sobel_y) in
   if edge_response_y < 100 then
     failf "Sobel Y edge response too weak: %d" edge_response_y
 
@@ -346,7 +338,7 @@ let test_canny () =
   let edge_count = ref 0 in
   for i = 0 to 19 do
     for j = 0 to 19 do
-      if Rune.unsafe_get [ i; j ] edges = 255 then incr edge_count
+      if Rune.item [ i; j ] edges = 255 then incr edge_count
     done
   done;
 
@@ -377,7 +369,7 @@ let test_pipeline () =
   let white_count = ref 0 in
   for i = 0 to 19 do
     for j = 0 to 19 do
-      if Rune.unsafe_get [ i; j ] final = 255 then incr white_count
+      if Rune.item [ i; j ] final = 255 then incr white_count
     done
   done;
 

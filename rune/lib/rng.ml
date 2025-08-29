@@ -80,7 +80,7 @@ let shuffle key x =
     let n = shape_x.(0) in
     let perm = permutation key ctx n in
     (* Create shuffled tensor by indexing *)
-    let perm_array = unsafe_to_array perm |> Array.map Int32.to_int in
+    let perm_array = to_array perm |> Array.map Int32.to_int in
     let results = Array.map (fun i -> get [ i ] x) perm_array in
     concatenate ~axis:0 (Array.to_list results)
 

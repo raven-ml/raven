@@ -100,7 +100,7 @@ Alongside these core layers, Raven includes **supporting tools** for the develop
 let rune_tensor = Rune.of_bigarray device (Nx.to_bigarray nx_array)
 
 (* Rune to Nx *)
-let nx_array = Nx.of_bigarray (Rune.unsafe_to_bigarray rune_tensor)
+let nx_array = Nx.of_bigarray (Rune.to_bigarray rune_tensor)
 ```
 
 ## Application Frameworks

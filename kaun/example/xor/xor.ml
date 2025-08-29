@@ -51,7 +51,7 @@ let train_xor () =
 
     (* Print loss every 100 epochs *)
     if epoch mod 100 = 0 then
-      Printf.printf "Epoch %d: Loss = %.6f\n" epoch (Rune.unsafe_get [] loss)
+      Printf.printf "Epoch %d: Loss = %.6f\n" epoch (Rune.item [] loss)
   done;
 
   (* Final predictions *)

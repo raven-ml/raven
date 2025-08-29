@@ -29,11 +29,11 @@ let () =
 
   (* Get first 10 values and compare with Python reference *)
   (* Reshape to get a 1D view of first position *)
-  let first_pos = Rune.slice [ I 0; I 0; R [] ] output.last_hidden_state in
-  let first_10 = Rune.slice [ R [ 0; 10 ] ] first_pos in
+  let first_pos = Rune.slice [ I 0; I 0; A ] output.last_hidden_state in
+  let first_10 = Rune.slice [ R (0, 10) ] first_pos in
 
   (* Convert to array for easier access *)
-  let first_10_array = Rune.unsafe_to_array first_10 in
+  let first_10_array = Rune.to_array first_10 in
 
   (* Print first 10 values *)
   Printf.printf "\nFirst 10 values from OCaml:\n";

@@ -27,8 +27,8 @@ module RoPE = struct
 
   let apply_rotary_pos_emb q k cos sin ~seq_len =
     (* Extract the sequence length portion we need *)
-    let cos = Rune.slice [ R [ 0; seq_len ] ] cos in
-    let sin = Rune.slice [ R [ 0; seq_len ] ] sin in
+    let cos = Rune.slice [ R (0, seq_len) ] cos in
+    let sin = Rune.slice [ R (0, seq_len) ] sin in
 
     (* Reshape for broadcasting *)
     let batch_size = (Rune.shape q).(0) in
@@ -48,8 +48,8 @@ module RoPE = struct
     (* Split q and k into two halves for rotation *)
     let split_tensor x =
       let half_dim = head_dim / 2 in
-      let x1 = Rune.slice [ R []; R []; R []; R [ 0; half_dim ] ] x in
-      let x2 = Rune.slice [ R []; R []; R []; R [ half_dim; head_dim ] ] x in
+      let x1 = Rune.slice [ A; A; A; R (0, half_dim) ] x in
+      let x2 = Rune.slice [ A; A; A; R (half_dim, head_dim) ] x in
       (x1, x2)
     in
 

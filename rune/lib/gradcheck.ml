@@ -13,7 +13,7 @@ type gradient_check_result = {
 
 let default_rtol = 2e-3 (* JAX default for float32 *)
 let default_atol = 2e-3 (* JAX default for float32 *)
-let to_float_value t = T.unsafe_get [] t
+let to_float_value t = T.item [] t
 
 let check_gradient ?(eps = Finite_diff.default_eps) ?(rtol = default_rtol)
     ?(atol = default_atol) ?(verbose = false) ?(check_indices = None)

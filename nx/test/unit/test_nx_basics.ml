@@ -322,7 +322,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t =
       Nx.create ctx Nx_core.Dtype.float32 [| 3; 3 |] (Array.init 9 float_of_int)
     in
-    let s = Nx.slice [ R [ 1; -1 ]; R [ 1; -1 ] ] t in
+    let s = Nx.slice [ Nx.R (1, -1); Nx.R (1, -1) ] t in
     check int "offset slice" 4 (Nx.offset s)
 
   (* ───── Element Access And Indexing Tests ───── *)
@@ -366,12 +366,12 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
 
   let test_get_scalar_from_0d ctx () =
     let t = Nx.scalar ctx Nx_core.Dtype.float32 42.0 in
-    check (float 1e-6) "get scalar" 42.0 (Nx.unsafe_get [] t)
+    check (float 1e-6) "get scalar" 42.0 (Nx.item [] t)
 
   let test_set_scalar_in_0d ctx () =
     let t = Nx.scalar ctx Nx_core.Dtype.float32 42.0 in
     Nx.unsafe_set [] 99.0 t;
-    check (float 1e-6) "set scalar" 99.0 (Nx.unsafe_get [] t)
+    check (float 1e-6) "set scalar" 99.0 (Nx.item [] t)
 
   let test_get_view_row ctx () =
     let t = Nx.create ctx Nx_core.Dtype.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
@@ -386,7 +386,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
   let test_set_view_row ctx () =
     let t = Nx.create ctx Nx_core.Dtype.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
     let v = Nx.create ctx Nx_core.Dtype.int32 [| 2 |] [| 8l; 9l |] in
-    Nx.set_slice [ I 0 ] t v;
+    Nx.set_slice [ Nx.I 0 ] t v;
     check_t "set row 0" [| 2; 2 |] [| 8l; 9l; 3l; 4l |] t
 
   let test_set_scalar ctx () =
@@ -401,7 +401,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 3; 4 |]
         (Array.init 12 float_of_int)
     in
-    let s = Nx.slice_ranges [ 1; 0 ] [ 3; 4 ] t in
+    let s = Nx.slice [ Nx.R (1, 3); Nx.R (0, 4) ] t in
     check_t "slice [1:3, 0:4]" [| 2; 4 |]
       [| 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11. |]
       s
@@ -411,7 +411,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 3; 4 |]
         (Array.init 12 float_of_int)
     in
-    let s = Nx.slice_ranges ~steps:[ 2; 2 ] [ 0; 0 ] [ 3; 4 ] t in
+    let s = Nx.slice [ Nx.Rs (0, 3, 2); Nx.Rs (0, 4, 2) ] t in
     check_t "slice with steps" [| 2; 2 |] [| 0.; 2.; 8.; 10. |] s
 
   let test_slice_view ctx () =
@@ -419,7 +419,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 3; 2 |]
         [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
     in
-    let s = Nx.slice_ranges [ 1; 0 ] [ 2; 2 ] t in
+    let s = Nx.slice [ Nx.R (1, 2); Nx.R (0, 2) ] t in
     Nx.unsafe_set [ 1; 0 ] 99.0 t;
     check (float 1e-6) "slice view modified" 99.0 (Nx.unsafe_get [ 0; 0 ] s)
 
@@ -427,14 +427,14 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t =
       Nx.create ctx Nx_core.Dtype.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
     in
-    let sliced = Nx.slice [ R [ -3; -1 ] ] t in
+    let sliced = Nx.slice [ Nx.R (-3, -1) ] t in
     check_t "slice negative indices" [| 2 |] [| 3.; 4. |] sliced
 
   let test_slice_empty_range ctx () =
     let t =
       Nx.create ctx Nx_core.Dtype.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
     in
-    let sliced = Nx.slice [ R [ 2; 1 ] ] t in
+    let sliced = Nx.slice [ Nx.R (2, 1) ] t in
     check_shape "empty slice shape" [| 0 |] sliced
 
   let test_slice_step_zero ctx () =
@@ -444,20 +444,20 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     check_invalid_arg "slice step zero"
       "slice: invalid step (cannot be zero)\n\
        hint: use positive step for forward slicing or negative for reverse"
-      (fun () -> ignore (Nx.slice_ranges ~steps:[ 0 ] [ 0 ] [ 5 ] t))
+      (fun () -> ignore (Nx.slice [ Nx.Rs (0, 5, 0) ] t))
 
   let test_slice_negative_step ctx () =
     let t =
       Nx.create ctx Nx_core.Dtype.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
     in
-    let sliced = Nx.slice_ranges ~steps:[ -1 ] [ 4 ] [ 0 ] t in
+    let sliced = Nx.slice [ Nx.Rs (4, 0, -1) ] t in
     check_t "slice negative step" [| 4 |] [| 5.; 4.; 3.; 2. |] sliced
 
   (* ───── Memory And View Tests ───── *)
 
   let test_data_buffer_view ctx () =
     let t = Nx.create ctx Nx_core.Dtype.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-    let d = Nx.unsafe_data t in
+    let d = Nx.data t in
     Bigarray_ext.Array1.set d 0 99.0;
     check (float 1e-6) "data buffer view" 99.0 (Nx.unsafe_get [ 0 ] t)
 
@@ -477,7 +477,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t =
       Nx.create ctx Nx_core.Dtype.float32 [| 10 |] (Array.init 10 float_of_int)
     in
-    let sliced = Nx.slice_ranges ~steps:[ 2 ] [ 0 ] [ 10 ] t in
+    let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
     let strides = Nx.strides sliced in
     check int "slice stride" 4 strides.(0)
 
@@ -500,7 +500,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t =
       Nx.create ctx Nx_core.Dtype.float32 [| 10 |] (Array.init 10 float_of_int)
     in
-    let sliced = Nx.slice_ranges ~steps:[ 2 ] [ 0 ] [ 10 ] t in
+    let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
     check bool "slice step=2 is contiguous" true (Nx.is_c_contiguous sliced)
 
   let test_offset_after_multiple_slices ctx () =
@@ -508,8 +508,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 5; 5 |]
         (Array.init 25 float_of_int)
     in
-    let slice1 = Nx.slice_ranges [ 1; 0 ] [ 3; 5 ] t in
-    let slice2 = Nx.slice_ranges [ 0; 0 ] [ 1; 5 ] slice1 in
+    let slice1 = Nx.slice [ Nx.R (1, 3); Nx.R (0, 5) ] t in
+    let slice2 = Nx.slice [ Nx.R (0, 1); Nx.R (0, 5) ] slice1 in
     check (float 1e-6) "accumulated offset value" 5.0
       (Nx.unsafe_get [ 0; 0 ] slice2)
 
@@ -519,7 +519,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t =
       Nx.create ctx Nx_core.Dtype.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
     in
-    let ba = Nx.unsafe_to_bigarray t in
+    let ba = Nx.to_bigarray t in
     check (float 1e-6) "initial [0,0]" 1.0
       (Bigarray_ext.Genarray.get ba [| 0; 0 |]);
     Nx.unsafe_set [ 0; 0 ] 55.0 t;
@@ -571,7 +571,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
 
      let test_blit_overlapping_views ctx () = let t = Nx.create ctx
      Nx_core.Dtype.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in let view1 =
-     Nx.slice [ R [ 0; 3 ] ] t in let view2 = Nx.slice [ R [ 2; 5 ] ] t in
+     Nx.slice [ Nx.R (0, 3) ] t in let view2 = Nx.slice [ Nx.R (2, 5) ] t in
      Nx.blit view1 view2; check_t "blit overlapping views" [| 5 |] [| 1.; 2.;
      1.; 2.; 3. |] t *)
 
@@ -579,7 +579,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
 
   let test_to_array ctx () =
     let t = Nx.create ctx Nx_core.Dtype.int32 [| 3 |] [| 1l; 2l; 3l |] in
-    let a = Nx.unsafe_to_array t in
+    let a = Nx.to_array t in
     check (array int32) "to_array" [| 1l; 2l; 3l |] a
 
   let test_astype_float32_to_int32 ctx () =

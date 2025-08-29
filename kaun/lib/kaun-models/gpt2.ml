@@ -320,17 +320,17 @@ let embeddings ~config () =
               let indices_flat =
                 Rune.reshape [| batch_size * seq_len |] indices
               in
-              let indices_array = Rune.unsafe_to_array indices_flat in
+              let indices_array = Rune.to_array indices_flat in
 
               Array.iteri
                 (fun i idx ->
                   let idx_int = Int32.to_int idx in
                   let vocab_size = (Rune.shape embedding_table).(0) in
                   if idx_int >= 0 && idx_int < vocab_size then
-                    let row = Rune.slice [ I idx_int; R [] ] embedding_table in
+                    let row = Rune.slice [ I idx_int; A ] embedding_table in
                     let batch_idx = i / seq_len in
                     let seq_idx = i mod seq_len in
-                    Rune.set_slice [ I batch_idx; I seq_idx; R [] ] result row)
+                    Rune.set_slice [ I batch_idx; I seq_idx; A ] result row)
                 indices_array;
 
               result
@@ -437,11 +437,9 @@ module Gpt2_block = struct
     in
 
     (* Split into Q, K, V *)
-    let query = slice [ R []; R []; R [ 0; hidden_size ] ] qkv in
-    let key = slice [ R []; R []; R [ hidden_size; 2 * hidden_size ] ] qkv in
-    let value =
-      slice [ R []; R []; R [ 2 * hidden_size; 3 * hidden_size ] ] qkv
-    in
+    let query = slice [ A; A; R (0, hidden_size) ] qkv in
+    let key = slice [ A; A; R (hidden_size, 2 * hidden_size) ] qkv in
+    let value = slice [ A; A; R (2 * hidden_size, 3 * hidden_size) ] qkv in
 
     (* Reshape for multi-head attention: [batch, seq, n_head, head_dim] *)
     let reshape_for_heads t =
@@ -968,10 +966,8 @@ module For_causal_lm = struct
           let vocab_size = (shape logits).(2) in
 
           (* Shift logits and labels: predict next token *)
-          let shift_logits =
-            slice [ R []; R [ 0; seq_length - 1 ]; R [] ] logits
-          in
-          let shift_labels = slice [ R []; R [ 1; seq_length ] ] labels in
+          let shift_logits = slice [ A; R (0, seq_length - 1); A ] logits in
+          let shift_labels = slice [ A; R (1, seq_length); A ] labels in
 
           let flat_logits =
             Rune.reshape

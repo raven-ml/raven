@@ -87,7 +87,7 @@ let truncated_normal_impl ~mean ~stddev ~lower ~upper seed shape dev dtype =
       let num_in_bounds = Rune.sum (Rune.cast dtype in_bounds) in
       let total_elements = Array.fold_left ( * ) 1 shape in
       (* Convert to scalar by getting the single element *)
-      let num_in_bounds_array = Rune.unsafe_to_array num_in_bounds in
+      let num_in_bounds_array = Rune.to_array num_in_bounds in
       let acceptance_ratio =
         num_in_bounds_array.(0) /. float_of_int total_elements
       in

@@ -148,7 +148,7 @@ let from_tensor tensor =
     next =
       (fun () ->
         if !idx < n then (
-          let slice = Rune.slice [ R [ !idx ] ] tensor in
+          let slice = Rune.slice [ I !idx ] tensor in
           incr idx;
           Some slice)
         else None);
@@ -169,8 +169,8 @@ let from_tensors (x, y) =
     next =
       (fun () ->
         if !idx < n then (
-          let x_slice = Rune.slice [ R [ !idx ] ] x in
-          let y_slice = Rune.slice [ R [ !idx ] ] y in
+          let x_slice = Rune.slice [ I !idx ] x in
+          let y_slice = Rune.slice [ I !idx ] y in
           incr idx;
           Some (x_slice, y_slice))
         else None);

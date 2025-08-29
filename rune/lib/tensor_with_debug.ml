@@ -244,7 +244,7 @@ let stack ?axis ts = Debug.with_context "stack" (fun () -> T.stack ?axis ts)
 
 (* Data access operations *)
 
-let unsafe_data t = T.unsafe_data t
+let data t = T.data t
 let strides t = T.strides t
 let stride t axis = T.stride t axis
 let dims t = T.dims t
@@ -279,12 +279,12 @@ let fill x value = Debug.with_context "fill" (fun () -> T.fill x value)
 
 (* Conversion operations *)
 
-let unsafe_to_bigarray t = T.unsafe_to_bigarray t
+let to_bigarray t = T.to_bigarray t
 
 let of_bigarray ctx ba =
   Debug.with_context "of_bigarray" (fun () -> T.of_bigarray ctx ba)
 
-let unsafe_to_array t = T.unsafe_to_array t
+let to_array t = T.to_array t
 
 (* Binary operations with scalars *)
 
@@ -487,16 +487,13 @@ let meshgrid ?indexing xs =
 
 (* Indexing operations *)
 
-let slice_ranges ?steps starts stops t =
-  Debug.with_context "slice_ranges" (fun () ->
-      T.slice_ranges ?steps starts stops t)
+let slice specs t = Debug.with_context "slice" (fun () -> T.slice specs t)
 
-let set_slice_ranges ?steps starts stops t value =
-  Debug.with_context "set_slice_ranges" (fun () ->
-      T.set_slice_ranges ?steps starts stops t value)
+let set_slice specs t value =
+  Debug.with_context "set_slice" (fun () -> T.set_slice specs t value)
 
-let unsafe_get indices t = T.unsafe_get indices t
-let unsafe_set indices t value = T.unsafe_set indices t value
+let item indices t = T.unsafe_get indices t
+let set_item indices t value = T.unsafe_set indices t value
 
 let one_hot ~num_classes indices =
   Debug.with_context "one_hot" (fun () -> T.one_hot ~num_classes indices)

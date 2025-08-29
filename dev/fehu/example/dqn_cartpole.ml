@@ -142,7 +142,7 @@ module DQN = struct
         let action_indices =
           Array.map
             (fun a ->
-              let v = Rune.unsafe_to_array a in
+              let v = Rune.to_array a in
               int_of_float v.(0))
             action_batch
         in
@@ -200,7 +200,7 @@ module DQN = struct
       (* Decay epsilon *)
       t.epsilon <- max t.epsilon_min (t.epsilon *. t.epsilon_decay);
 
-      Some (Rune.unsafe_to_array loss).(0)
+      Some (Rune.to_array loss).(0)
 
   let add_experience t obs action reward next_obs terminated =
     Buffer.add t.buffer { obs; action; reward; next_obs; terminated }

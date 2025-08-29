@@ -89,7 +89,7 @@ let test_nested_vmap () =
   check_shape "nested vmap shape" expected_shape result;
 
   (* Check that all values are doubled *)
-  let first_val = T.unsafe_get [ 0; 0; 0 ] result in
+  let first_val = T.item [ 0; 0; 0 ] result in
   check_scalar ~eps "nested vmap first value" 0. first_val
 
 (* Test vmap with reduction *)

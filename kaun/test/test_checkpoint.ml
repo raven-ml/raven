@@ -27,7 +27,7 @@ let test_save_and_load () =
       match Ptree.get_tensor weight_tree with
       | Some loaded_w ->
           let is_equal = Rune.all (Rune.equal w loaded_w) in
-          let is_equal_val = Rune.unsafe_to_array is_equal in
+          let is_equal_val = Rune.to_array is_equal in
           A.check A.bool "weights match" true (is_equal_val.(0) > 0)
       | None -> A.fail "weight is not a tensor")
   | None -> A.fail "weight not found");
@@ -37,7 +37,7 @@ let test_save_and_load () =
       match Ptree.get_tensor bias_tree with
       | Some loaded_b ->
           let is_equal = Rune.all (Rune.equal b loaded_b) in
-          let is_equal_val = Rune.unsafe_to_array is_equal in
+          let is_equal_val = Rune.to_array is_equal in
           A.check A.bool "bias matches" true (is_equal_val.(0) > 0)
       | None -> A.fail "bias is not a tensor")
   | None -> A.fail "bias not found"
@@ -83,7 +83,7 @@ let test_checkpoint_manager () =
   | Some weight_tree -> (
       match Ptree.get_tensor weight_tree with
       | Some w ->
-          let value = Rune.unsafe_get [ 0; 0 ] w in
+          let value = Rune.item [ 0; 0 ] w in
           A.check (A.float 0.01) "restored value" 5.0 value
       | None -> A.fail "weight is not a tensor")
   | None -> A.fail "weight not found"

@@ -55,7 +55,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
   let check_data (type a b) ?eps msg (expected : a array) (actual : (a, b) Nx.t)
       =
     let dt_testable = testable_of_dtype ?eps (Nx.dtype actual) in
-    let actual = Nx.unsafe_to_array actual in
+    let actual = Nx.to_array actual in
     check (array dt_testable) msg expected actual
 
   let check_shape msg expected_shape tensor =
@@ -72,7 +72,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     else
       let diff = Nx.sub a b in
       let abs_diff = Nx.abs diff in
-      let max_diff = Nx.unsafe_get [] (Nx.max abs_diff) in
+      let max_diff = Nx.item [] (Nx.max abs_diff) in
       max_diff < epsilon
 
   (* Common check functions *)
@@ -97,7 +97,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       | Float64 -> test_float expected actual
       | _ ->
           let equal = Nx.array_equal expected actual in
-          if not (equal |> Nx.unsafe_get [] = 0) then
+          if not (equal |> Nx.item [] = 0) then
             Alcotest.failf "%s: tensors not equal\nExpected:\n%s\nActual:\n%s"
               msg (Nx.to_string expected) (Nx.to_string actual)
 

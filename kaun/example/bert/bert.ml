@@ -12,7 +12,7 @@ let () =
   let output = Bert.forward bert inputs () in
 
   (* Get CLS token embedding for sentence representation *)
-  let cls_embedding = slice [ R []; I 0; R [] ] output.last_hidden_state in
-  let cls_mean = mean cls_embedding |> unsafe_get [] in
+  let cls_embedding = slice [ A; I 0; A ] output.last_hidden_state in
+  let cls_mean = mean cls_embedding |> item [] in
 
   Printf.printf "  CLS mean: %.4f\n" cls_mean

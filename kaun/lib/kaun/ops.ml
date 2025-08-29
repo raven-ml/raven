@@ -275,8 +275,8 @@ let embedding ~embedding ~embed_dim ?(scale = true) x =
   let device_emb = device embedding in
   let dtype_emb = dtype embedding in
   let gathered = zeros device_emb dtype_emb [| num_indices; embed_dim |] in
-  (* Use unsafe_to_array to get indices as array for iteration *)
-  let indices_array = unsafe_to_array flat_indices in
+  (* Use to_array to get indices as array for iteration *)
+  let indices_array = to_array flat_indices in
   Array.iteri
     (fun i idx ->
       (* Convert idx to int - assuming integer dtype, use Obj.magic safely *)

@@ -43,14 +43,14 @@ let small_batch_dataset = Kaun.Dataset.batch_xy 10 train_data_raw
 let[@warning "-8"] [images_batch, labels_batch] = Kaun.Dataset.take 1 small_batch_dataset
 
 (* Convert to Nx for visualization *)
-let images_nx = images_batch |> Rune.contiguous |> Rune.unsafe_to_bigarray |> Nx.of_bigarray
+let images_nx = images_batch |> Rune.contiguous |> Rune.to_nx
 
 (* Extract label values *)
 let get_label i = 
   labels_batch
-  |> Rune.slice [R [i; i+1]] 
+  |> Rune.slice [R (i, i+1)] 
   |> Rune.contiguous
-  |> Rune.unsafe_get []
+  |> Rune.item []
   |> int_of_float
 
 let fig = Hugin.Figure.create ~width:1000 ~height:400 ()
@@ -59,7 +59,7 @@ let fig = Hugin.Figure.create ~width:1000 ~height:400 ()
 let () =
   for i = 0 to 9 do
     (* Extract single image and copy to avoid memory layout issues with sliced arrays *)
-    let img = Nx.slice [I i; I 0; R []; R []] images_nx |> Nx.squeeze |> Nx.copy in
+    let img = Nx.slice [I i; I 0; A; A] images_nx |> Nx.squeeze |> Nx.copy in
     let label = get_label i in
 
     (* Add subplot *)

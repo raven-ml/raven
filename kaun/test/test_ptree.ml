@@ -23,7 +23,7 @@ let test_map () =
   (* Check that all tensors are doubled *)
   Ptree.iter
     (fun t ->
-      let first_val = Rune.unsafe_get [ 0 ] (Rune.reshape [| -1 |] t) in
+      let first_val = Rune.item [ 0 ] (Rune.reshape [| -1 |] t) in
       check (float 0.01) "tensor doubled" 2.0 first_val)
     doubled
 
@@ -34,7 +34,7 @@ let test_map2 () =
 
   match sum with
   | Tensor t ->
-      let first_val = Rune.unsafe_get [ 0 ] t in
+      let first_val = Rune.item [ 0 ] t in
       check (float 0.01) "1 + 2 = 3" 3.0 first_val
   | _ -> fail "Expected Tensor"
 
@@ -78,9 +78,8 @@ let test_flat_list () =
 
   match reconstructed with
   | List [ Tensor t1; Tensor t2 ] ->
-      check (float 0.01) "first tensor modified" 11.0 (Rune.unsafe_get [ 0 ] t1);
-      check (float 0.01) "second tensor modified" 12.0
-        (Rune.unsafe_get [ 0 ] t2)
+      check (float 0.01) "first tensor modified" 11.0 (Rune.item [ 0 ] t1);
+      check (float 0.01) "second tensor modified" 12.0 (Rune.item [ 0 ] t2)
   | _ -> fail "Unexpected structure"
 
 let test_equal_structure () =
@@ -112,8 +111,7 @@ let test_arithmetic () =
 
   let test_op name op expected =
     match op a b with
-    | Ptree.Tensor t ->
-        check (float 0.01) name expected (Rune.unsafe_get [ 0 ] t)
+    | Ptree.Tensor t -> check (float 0.01) name expected (Rune.item [ 0 ] t)
     | _ -> fail "Expected Tensor"
   in
 
@@ -123,7 +121,7 @@ let test_arithmetic () =
   test_op "div" Ptree.div (10.0 /. 3.0);
 
   match Ptree.scale 2.0 a with
-  | Tensor t -> check (float 0.01) "scale" 20.0 (Rune.unsafe_get [ 0 ] t)
+  | Tensor t -> check (float 0.01) "scale" 20.0 (Rune.item [ 0 ] t)
   | _ -> fail "Expected Tensor"
 
 let () =

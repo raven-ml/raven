@@ -13,7 +13,7 @@ let test_xla_basic () =
 
   (* sin(2 * 2) = sin(4) ≈ -0.7568 *)
   let expected = Stdlib.sin (2.0 *. 2.0) in
-  let actual = unsafe_get [ 0; 0 ] result in
+  let actual = item [ 0; 0 ] result in
   check (float 0.0001) "xla basic" expected actual
 
 let test_xla_reduce () =
@@ -26,8 +26,8 @@ let test_xla_reduce () =
   let result = xla f x in
 
   (* Sum along axis 1: [3.0; 3.0] *)
-  check (float 0.0001) "reduce sum axis 1, row 0" 3.0 (unsafe_get [ 0 ] result);
-  check (float 0.0001) "reduce sum axis 1, row 1" 3.0 (unsafe_get [ 1 ] result)
+  check (float 0.0001) "reduce sum axis 1, row 0" 3.0 (item [ 0 ] result);
+  check (float 0.0001) "reduce sum axis 1, row 1" 3.0 (item [ 1 ] result)
 
 let test_xla_reshape () =
   let open Rune in
@@ -37,9 +37,9 @@ let test_xla_reshape () =
   let f t = reshape [| 2; 3 |] t in
   let result = xla f x in
 
-  check (float 0.0001) "reshape [0,0]" 0.0 (unsafe_get [ 0; 0 ] result);
-  check (float 0.0001) "reshape [0,1]" 1.0 (unsafe_get [ 0; 1 ] result);
-  check (float 0.0001) "reshape [1,2]" 5.0 (unsafe_get [ 1; 2 ] result)
+  check (float 0.0001) "reshape [0,0]" 0.0 (item [ 0; 0 ] result);
+  check (float 0.0001) "reshape [0,1]" 1.0 (item [ 0; 1 ] result);
+  check (float 0.0001) "reshape [1,2]" 5.0 (item [ 1; 2 ] result)
 
 let test_xla_transpose () =
   let open Rune in
@@ -50,9 +50,9 @@ let test_xla_transpose () =
   let f t = transpose t ~axes:[| 1; 0 |] in
   let result = xla f x in
 
-  check (float 0.0001) "transpose [0,0]" 1.0 (unsafe_get [ 0; 0 ] result);
-  check (float 0.0001) "transpose [0,1]" 4.0 (unsafe_get [ 0; 1 ] result);
-  check (float 0.0001) "transpose [2,1]" 6.0 (unsafe_get [ 2; 1 ] result)
+  check (float 0.0001) "transpose [0,0]" 1.0 (item [ 0; 0 ] result);
+  check (float 0.0001) "transpose [0,1]" 4.0 (item [ 0; 1 ] result);
+  check (float 0.0001) "transpose [2,1]" 6.0 (item [ 2; 1 ] result)
 
 let test_xla_composite () =
   let open Rune in
@@ -74,7 +74,7 @@ let test_xla_composite () =
   in
   let result = xla f x in
 
-  check (float 0.0001) "composite operations" (-1.0) (unsafe_get [ 0 ] result)
+  check (float 0.0001) "composite operations" (-1.0) (item [ 0 ] result)
 
 let test_xla_comparison () =
   let open Rune in
@@ -90,10 +90,10 @@ let test_xla_comparison () =
   let result = xla f x in
 
   (* Expected: [0, 1, 2, 2.5, 2.5] *)
-  check (float 0.0001) "comparison [0]" 0.0 (unsafe_get [ 0 ] result);
-  check (float 0.0001) "comparison [2]" 2.0 (unsafe_get [ 2 ] result);
-  check (float 0.0001) "comparison [3]" 2.5 (unsafe_get [ 3 ] result);
-  check (float 0.0001) "comparison [4]" 2.5 (unsafe_get [ 4 ] result)
+  check (float 0.0001) "comparison [0]" 0.0 (item [ 0 ] result);
+  check (float 0.0001) "comparison [2]" 2.0 (item [ 2 ] result);
+  check (float 0.0001) "comparison [3]" 2.5 (item [ 3 ] result);
+  check (float 0.0001) "comparison [4]" 2.5 (item [ 4 ] result)
 
 let test_simple () =
   let open Rune in
@@ -103,7 +103,7 @@ let test_simple () =
   let f t = add t t in
   let result = xla f x in
 
-  check (float 0.0001) "simple add" 0.0 (unsafe_get [ 0 ] result)
+  check (float 0.0001) "simple add" 0.0 (item [ 0 ] result)
 
 (* TODO: Fix these tests let test_xla_cast () = let open Rune in let dev = ocaml
    in let x = arange dev int32 0 5 1 in
@@ -112,8 +112,7 @@ let test_simple () =
    2.0) in let result = xla f x in
 
    (* Expected: [0, 2, 4, 6, 8] as floats *) check (float 0.0001) "cast [1]" 2.0
-   (unsafe_get [1] result); check (float 0.0001) "cast [3]" 6.0 (unsafe_get [3]
-   result)
+   (item [1] result); check (float 0.0001) "cast [3]" 6.0 (item [3] result)
 
    let test_xla_pad () = let open Rune in let dev = ocaml in let x = arange_f
    dev float32 0. 3. 1. in
@@ -121,8 +120,8 @@ let test_simple () =
    let f t = pad [|(1, 2)|] 10.0 t in let result = xla f x in
 
    (* Expected: [10, 0, 1, 2, 10, 10] *) check (float 0.0001) "pad [0]" 10.0
-   (unsafe_get [0] result); check (float 0.0001) "pad [1]" 0.0 (unsafe_get [1]
-   result); check (float 0.0001) "pad [4]" 10.0 (unsafe_get [4] result)
+   (item [0] result); check (float 0.0001) "pad [1]" 0.0 (item [1] result);
+   check (float 0.0001) "pad [4]" 10.0 (item [4] result)
 
    let test_xla_concat () = let open Rune in let dev = ocaml in let x1 =
    arange_f dev float32 0. 3. 1. in
@@ -131,8 +130,7 @@ let test_simple () =
    concatenate ~axis:0 [a; a] in let result = xla f x1 in
 
    (* Expected: [0, 1, 2, 0, 1, 2] *) check (float 0.0001) "concat [2]" 2.0
-   (unsafe_get [2] result); check (float 0.0001) "concat [3]" 0.0 (unsafe_get
-   [3] result) *)
+   (item [2] result); check (float 0.0001) "concat [3]" 0.0 (item [3] result) *)
 
 (* GPU Tests *)
 
@@ -149,7 +147,7 @@ let test_xla_gpu () =
 
     (* sin(2 * 2) = sin(4) ≈ -0.7568 *)
     let expected = Stdlib.sin (2.0 *. 2.0) in
-    let actual = unsafe_get [ 0; 0 ] result in
+    let actual = item [ 0; 0 ] result in
     check (float 0.0001) "xla gpu" expected actual
 
 let test_xla_gpu_composite () =
@@ -171,9 +169,9 @@ let test_xla_gpu_composite () =
     let result = xla f x in
 
     (* Result should be 2.0 for all elements *)
-    check (float 0.0001) "gpu composite [0]" 2.0 (unsafe_get [ 0 ] result);
-    check (float 0.0001) "gpu composite [1]" 2.0 (unsafe_get [ 1 ] result);
-    check (float 0.0001) "gpu composite [3]" 2.0 (unsafe_get [ 3 ] result)
+    check (float 0.0001) "gpu composite [0]" 2.0 (item [ 0 ] result);
+    check (float 0.0001) "gpu composite [1]" 2.0 (item [ 1 ] result);
+    check (float 0.0001) "gpu composite [3]" 2.0 (item [ 3 ] result)
 
 (* More Operations Tests *)
 
@@ -188,25 +186,25 @@ let test_xla_more_operations () =
   let ones = fill 1.0 (zeros dev float32 [| 3 |]) in
   let f t = div ones t in
   let result = xla f x in
-  check (float 0.0001) "reciprocal of 2" 0.5 (unsafe_get [ 0 ] result);
+  check (float 0.0001) "reciprocal of 2" 0.5 (item [ 0 ] result);
 
   (* Test power operation *)
   let base = arange_f dev float32 1. 4. 1. in
   let exp = fill 2.0 (zeros dev float32 [| 3 |]) in
   let f_pow a = pow a exp in
   let result_pow = xla f_pow base in
-  check (float 0.0001) "pow [0]: 1^2" 1.0 (unsafe_get [ 0 ] result_pow);
-  check (float 0.0001) "pow [1]: 2^2" 4.0 (unsafe_get [ 1 ] result_pow);
-  check (float 0.0001) "pow [2]: 3^2" 9.0 (unsafe_get [ 2 ] result_pow);
+  check (float 0.0001) "pow [0]: 1^2" 1.0 (item [ 0 ] result_pow);
+  check (float 0.0001) "pow [1]: 2^2" 4.0 (item [ 1 ] result_pow);
+  check (float 0.0001) "pow [2]: 3^2" 9.0 (item [ 2 ] result_pow);
 
   (* Test modulo operation *)
   let dividend = arange_f dev float32 5. 8. 1. in
   let divisor = fill 3.0 (zeros dev float32 [| 3 |]) in
   let f_mod a = mod_ a divisor in
   let result_mod = xla f_mod dividend in
-  check (float 0.0001) "mod [0]: 5 % 3" 2.0 (unsafe_get [ 0 ] result_mod);
-  check (float 0.0001) "mod [1]: 6 % 3" 0.0 (unsafe_get [ 1 ] result_mod);
-  check (float 0.0001) "mod [2]: 7 % 3" 1.0 (unsafe_get [ 2 ] result_mod)
+  check (float 0.0001) "mod [0]: 5 % 3" 2.0 (item [ 0 ] result_mod);
+  check (float 0.0001) "mod [1]: 6 % 3" 0.0 (item [ 1 ] result_mod);
+  check (float 0.0001) "mod [2]: 7 % 3" 1.0 (item [ 2 ] result_mod)
 
 let test_xla_reduce_operations () =
   let open Rune in
@@ -222,9 +220,9 @@ let test_xla_reduce_operations () =
   (* Sum along axis 1 with keepdims: [[6], [22], [38]] *)
   check (list Alcotest.int) "result shape" [ 3; 1 ]
     (Array.to_list (shape result));
-  check (float 0.0001) "sum [0,0]" 6.0 (unsafe_get [ 0; 0 ] result);
-  check (float 0.0001) "sum [1,0]" 22.0 (unsafe_get [ 1; 0 ] result);
-  check (float 0.0001) "sum [2,0]" 38.0 (unsafe_get [ 2; 0 ] result)
+  check (float 0.0001) "sum [0,0]" 6.0 (item [ 0; 0 ] result);
+  check (float 0.0001) "sum [1,0]" 22.0 (item [ 1; 0 ] result);
+  check (float 0.0001) "sum [2,0]" 38.0 (item [ 2; 0 ] result)
 
 let test_xla_shape_operations () =
   let open Rune in
@@ -265,10 +263,10 @@ let test_xla_mixed_operations () =
 
   (* t1 = [[1,2,3,4], [5,6,7,8]] t2 = [[1,5], [2,6], [3,7], [4,8]] t3 = [6, 8,
      10, 12] t4 = [sqrt(6), sqrt(8), sqrt(10), sqrt(12)] *)
-  check (float 0.001) "mixed [0]" 2.449 (unsafe_get [ 0 ] result);
-  check (float 0.001) "mixed [1]" 2.828 (unsafe_get [ 1 ] result);
-  check (float 0.001) "mixed [2]" 3.162 (unsafe_get [ 2 ] result);
-  check (float 0.001) "mixed [3]" 3.464 (unsafe_get [ 3 ] result)
+  check (float 0.001) "mixed [0]" 2.449 (item [ 0 ] result);
+  check (float 0.001) "mixed [1]" 2.828 (item [ 1 ] result);
+  check (float 0.001) "mixed [2]" 3.162 (item [ 2 ] result);
+  check (float 0.001) "mixed [3]" 3.464 (item [ 3 ] result)
 
 (* Gather/Shrink Tests *)
 
@@ -285,8 +283,8 @@ let test_xla_shrink () =
   let result = xla f data in
 
   (* Expected: [[0, 1]] *)
-  check (float 0.0001) "shrink [0,0]" 0.0 (unsafe_get [ 0; 0 ] result);
-  check (float 0.0001) "shrink [0,1]" 1.0 (unsafe_get [ 0; 1 ] result)
+  check (float 0.0001) "shrink [0,0]" 0.0 (item [ 0; 0 ] result);
+  check (float 0.0001) "shrink [0,1]" 1.0 (item [ 0; 1 ] result)
 
 let test_xla_concatenate () =
   let open Rune in
@@ -304,8 +302,8 @@ let test_xla_concatenate () =
   (* Check shape and values *)
   check (list Alcotest.int) "concat shape" [ 4; 2 ]
     (Array.to_list (shape result));
-  check (float 0.0001) "concat [0,0]" 1.0 (unsafe_get [ 0; 0 ] result);
-  check (float 0.0001) "concat [2,0]" 2.0 (unsafe_get [ 2; 0 ] result)
+  check (float 0.0001) "concat [0,0]" 1.0 (item [ 0; 0 ] result);
+  check (float 0.0001) "concat [2,0]" 2.0 (item [ 2; 0 ] result)
 
 (* Scatter Tests *)
 
@@ -333,11 +331,11 @@ let test_xla_set_slice_simple () =
     (Array.to_list (shape result));
 
   (* Check values - rows 0, 2, 4 should be 1.0, others 0.0 *)
-  check (float 0.0001) "set_slice [0,0]" 1.0 (unsafe_get [ 0; 0 ] result);
-  check (float 0.0001) "set_slice [1,0]" 0.0 (unsafe_get [ 1; 0 ] result);
-  check (float 0.0001) "set_slice [2,0]" 1.0 (unsafe_get [ 2; 0 ] result);
-  check (float 0.0001) "set_slice [3,0]" 0.0 (unsafe_get [ 3; 0 ] result);
-  check (float 0.0001) "set_slice [4,0]" 1.0 (unsafe_get [ 4; 0 ] result)
+  check (float 0.0001) "set_slice [0,0]" 1.0 (item [ 0; 0 ] result);
+  check (float 0.0001) "set_slice [1,0]" 0.0 (item [ 1; 0 ] result);
+  check (float 0.0001) "set_slice [2,0]" 1.0 (item [ 2; 0 ] result);
+  check (float 0.0001) "set_slice [3,0]" 0.0 (item [ 3; 0 ] result);
+  check (float 0.0001) "set_slice [4,0]" 1.0 (item [ 4; 0 ] result)
 
 let test_xla_set_slice_2d () =
   let open Rune in
@@ -350,18 +348,18 @@ let test_xla_set_slice_2d () =
   let f data_t =
     let result = copy data_t in
     let block = fill 1.0 (zeros dev float32 [| 2; 2 |]) in
-    set_slice [ R [ 1; 3 ]; R [ 1; 3 ] ] result block;
+    set_slice [ R (1, 3); R (1, 3) ] result block;
     result
   in
   let result = xla f data in
 
   (* Check values - center 2x2 block should be 1.0 *)
-  check (float 0.0001) "set_slice 2d [0,0]" 0.0 (unsafe_get [ 0; 0 ] result);
-  check (float 0.0001) "set_slice 2d [1,1]" 1.0 (unsafe_get [ 1; 1 ] result);
-  check (float 0.0001) "set_slice 2d [1,2]" 1.0 (unsafe_get [ 1; 2 ] result);
-  check (float 0.0001) "set_slice 2d [2,1]" 1.0 (unsafe_get [ 2; 1 ] result);
-  check (float 0.0001) "set_slice 2d [2,2]" 1.0 (unsafe_get [ 2; 2 ] result);
-  check (float 0.0001) "set_slice 2d [3,3]" 0.0 (unsafe_get [ 3; 3 ] result)
+  check (float 0.0001) "set_slice 2d [0,0]" 0.0 (item [ 0; 0 ] result);
+  check (float 0.0001) "set_slice 2d [1,1]" 1.0 (item [ 1; 1 ] result);
+  check (float 0.0001) "set_slice 2d [1,2]" 1.0 (item [ 1; 2 ] result);
+  check (float 0.0001) "set_slice 2d [2,1]" 1.0 (item [ 2; 1 ] result);
+  check (float 0.0001) "set_slice 2d [2,2]" 1.0 (item [ 2; 2 ] result);
+  check (float 0.0001) "set_slice 2d [3,3]" 0.0 (item [ 3; 3 ] result)
 
 let test_xla_set_slice_fancy_indexing () =
   let open Rune in
@@ -380,11 +378,11 @@ let test_xla_set_slice_fancy_indexing () =
   let result = xla f data in
 
   (* Check values - rows 1 and 3 should be 1.0 *)
-  check (float 0.0001) "fancy indexing [0,0]" 0.0 (unsafe_get [ 0; 0 ] result);
-  check (float 0.0001) "fancy indexing [1,0]" 1.0 (unsafe_get [ 1; 0 ] result);
-  check (float 0.0001) "fancy indexing [2,0]" 0.0 (unsafe_get [ 2; 0 ] result);
-  check (float 0.0001) "fancy indexing [3,0]" 1.0 (unsafe_get [ 3; 0 ] result);
-  check (float 0.0001) "fancy indexing [4,0]" 0.0 (unsafe_get [ 4; 0 ] result)
+  check (float 0.0001) "fancy indexing [0,0]" 0.0 (item [ 0; 0 ] result);
+  check (float 0.0001) "fancy indexing [1,0]" 1.0 (item [ 1; 0 ] result);
+  check (float 0.0001) "fancy indexing [2,0]" 0.0 (item [ 2; 0 ] result);
+  check (float 0.0001) "fancy indexing [3,0]" 1.0 (item [ 3; 0 ] result);
+  check (float 0.0001) "fancy indexing [4,0]" 0.0 (item [ 4; 0 ] result)
 
 (* Convolution and Fold Tests *)
 
@@ -413,7 +411,7 @@ let test_xla_conv2d_simple () =
 
   (* Check some values - convolution with all-ones kernel sums the window *)
   (* Top-left corner: sum of [[0,1,2], [5,6,7], [10,11,12]] = 54 *)
-  check (float 0.1) "conv2d [0,0,0,0]" 54.0 (unsafe_get [ 0; 0; 0; 0 ] result)
+  check (float 0.1) "conv2d [0,0,0,0]" 54.0 (item [ 0; 0; 0; 0 ] result)
 
 let test_xla_conv2d_with_dilation () =
   let open Rune in

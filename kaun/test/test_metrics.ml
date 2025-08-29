@@ -6,8 +6,8 @@ let tensor_testable eps =
     (fun fmt t ->
       Format.fprintf fmt "tensor[%s]" (Rune.shape_to_string (Rune.shape t)))
     (fun a b ->
-      let a_val = Rune.unsafe_get [] (Rune.sum a) in
-      let b_val = Rune.unsafe_get [] (Rune.sum b) in
+      let a_val = Rune.item [] (Rune.sum a) in
+      let b_val = Rune.item [] (Rune.sum b) in
       abs_float (a_val -. b_val) < eps)
 
 let test_accuracy () =
@@ -161,7 +161,7 @@ let test_r2_score () =
   Metrics.update r2 ~predictions ~targets ();
   let result = Metrics.compute r2 in
   (* R² should be high but < 1.0 *)
-  let result_val = Rune.unsafe_get [] result in
+  let result_val = Rune.item [] result in
   check bool "r2 with error" true (result_val > 0.8 && result_val < 1.0)
 
 let test_cross_entropy () =
@@ -179,7 +179,7 @@ let test_cross_entropy () =
   Metrics.update ce ~predictions ~targets ();
   let result = Metrics.compute ce in
   (* Result should be positive *)
-  let result_val = Rune.unsafe_get [] result in
+  let result_val = Rune.item [] result in
   check bool "cross entropy positive" true (result_val > 0.0)
 
 let test_binary_cross_entropy () =
@@ -194,7 +194,7 @@ let test_binary_cross_entropy () =
   Metrics.update bce ~predictions ~targets ();
   let result = Metrics.compute bce in
   (* Perfect predictions should give very low loss *)
-  let result_val = Rune.unsafe_get [] result in
+  let result_val = Rune.item [] result in
   check bool "binary cross entropy perfect" true (result_val < 0.01)
 
 let test_metric_collection () =
@@ -323,7 +323,7 @@ let test_custom_metric () =
   let result = Metrics.compute custom_mape in
   (* MAPE = mean(|110-100|/100, |210-200|/200, |310-300|/300) * 100 *)
   (* = mean(0.1, 0.05, 0.033) * 100 ≈ 6.1% *)
-  let result_val = Rune.unsafe_get [] result in
+  let result_val = Rune.item [] result in
   check bool "custom MAPE in range" true (result_val > 5.0 && result_val < 7.0)
 
 let test_metric_utilities () =

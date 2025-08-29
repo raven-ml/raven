@@ -15,8 +15,8 @@ let () =
   let labels_1d = Nx.reshape [| n_samples |] labels in
   let labels_f32 = astype_f32 labels_1d in
 
-  let longitude = Nx.slice_ranges [ 0; 0 ] [ n_samples; 1 ] features in
-  let latitude = Nx.slice_ranges [ 0; 1 ] [ n_samples; 2 ] features in
+  let longitude = Nx.slice [ Nx.R (0, n_samples); Nx.R (0, 1) ] features in
+  let latitude = Nx.slice [ Nx.R (0, n_samples); Nx.R (1, 2) ] features in
   let longitude_f32 = astype_f32 longitude in
   let latitude_f32 = astype_f32 latitude in
 

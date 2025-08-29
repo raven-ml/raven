@@ -11,7 +11,9 @@ let test_gather_index_shape () =
   (* Try to gather indices [0, 2] along axis 1 *)
   (* This should select the 0th and 2nd elements along dimension 1 *)
   try
-    let result = slice [ R []; L [ 0; 2 ]; R [] ] data in
+    (* Using take to select indices [0, 2] along axis 1 *)
+    let indices = create int32 [| 2 |] [| 0l; 2l |] in
+    let result = take ~axis:1 indices data in
     Printf.printf "Result shape: ";
     Array.iter (Printf.printf "%d ") (shape result);
     Printf.printf "\n";

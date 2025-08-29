@@ -62,14 +62,3 @@ let randint dtype ?seed ?high shape low =
 
 let fftfreq ?d n = F.fftfreq (Lazy.force context) ?d n
 let rfftfreq ?d n = F.rfftfreq (Lazy.force context) ?d n
-
-(* ───── Aliases to unsafe functions ───── *)
-
-let data t = F.unsafe_data t
-let to_bigarray t = F.unsafe_to_bigarray t
-let to_array t = F.unsafe_to_array t
-let get_item indices t = F.unsafe_get indices t
-let set_item indices value t = F.unsafe_set indices value t
-let map_item f t = F.unsafe_map f t
-let iter_item f t = F.unsafe_iter f t
-let fold_item f acc t = F.unsafe_fold f acc t

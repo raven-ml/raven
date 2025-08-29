@@ -44,7 +44,7 @@ let () =
 
   Printf.printf "\nTesting gradients...\n";
   let loss, grads = value_and_grads loss_fn [ conv1_w; conv1_b ] in
-  Printf.printf "Loss: %f\n" (unsafe_get [] loss);
+  Printf.printf "Loss: %f\n" (item [] loss);
   Printf.printf "Conv1_w gradient shape: %s\n"
     (Array.to_list (shape (List.nth grads 0))
     |> List.map string_of_int |> String.concat ", ");

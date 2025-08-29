@@ -11,7 +11,7 @@ let array_approx_equal ?(eps = 1e-6) a b =
     let abs_diff = Nx.abs diff in
     (* Get maximum value - reshape to scalar and extract *)
     let max_diff = Nx.max abs_diff ~axes:[| 0 |] ~keepdims:false in
-    let max_val = Nx.get_item [] max_diff in
+    let max_val = Nx.item [] max_diff in
     max_val < eps
   with _ -> false
 
@@ -56,7 +56,7 @@ let test_npy_save_load_int64 () =
   for i = 0 to 1 do
     for j = 0 to 4 do
       let expected = (i * 10) + (j * 2) in
-      let actual = Nx.get_item [ i; j ] loaded_i64 |> Int64.to_int in
+      let actual = Nx.item [ i; j ] loaded_i64 |> Int64.to_int in
       check int (Printf.sprintf "value at [%d, %d]" i j) expected actual
     done
   done;
@@ -222,7 +222,7 @@ let test_safetensors_different_dtypes () =
   (* Check int32 values *)
   for i = 0 to 9 do
     let expected = 20 + i in
-    let actual = Nx.get_item [ i ] loaded_i32 |> Int32.to_int in
+    let actual = Nx.item [ i ] loaded_i32 |> Int32.to_int in
     check int (Printf.sprintf "int32 value at [%d]" i) expected actual
   done;
 
@@ -279,7 +279,7 @@ let test_large_arrays () =
 
   (* Verify all values are 1 - sum and check *)
   let sum = Nx.sum loaded_f32 ~axes:[| 0; 1 |] ~keepdims:false in
-  let sum_val = Nx.get_item [] sum in
+  let sum_val = Nx.item [] sum in
   check (float 1e-3) "large array sum" 10000.0 sum_val;
 
   (* Clean up *)

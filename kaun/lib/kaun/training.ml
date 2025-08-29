@@ -148,7 +148,7 @@ let train_step ~state ~x ~y ~loss_fn =
   State.update_metrics state ~predictions:logits ~targets:y ~loss ();
 
   (* Return updated state and loss value *)
-  let loss_val = Rune.unsafe_get [] loss in
+  let loss_val = Rune.item [] loss in
   (state, loss_val)
 
 let eval_step ~state ~x ~y ~loss_fn =
@@ -158,7 +158,7 @@ let eval_step ~state ~x ~y ~loss_fn =
   (* Update metrics *)
   State.update_metrics state ~predictions:logits ~targets:y ~loss ();
 
-  Rune.unsafe_get [] loss
+  Rune.item [] loss
 
 let train_epoch ~state ~dataset ~loss_fn ?(progress = false) () =
   let state = State.reset_metrics state in
@@ -182,7 +182,7 @@ let train_epoch ~state ~dataset ~loss_fn ?(progress = false) () =
   let avg_loss = !total_loss /. float_of_int !batch_count in
   let metrics = State.compute_metrics !state_ref in
   let metric_values =
-    List.map (fun (name, tensor) -> (name, Rune.unsafe_get [] tensor)) metrics
+    List.map (fun (name, tensor) -> (name, Rune.item [] tensor)) metrics
   in
 
   (!state_ref, avg_loss, metric_values)
@@ -501,7 +501,7 @@ let evaluate ~state ~dataset ~loss_fn ?(progress = false) () =
   let avg_loss = !total_loss /. float_of_int !batch_count in
   let metrics = State.compute_metrics state in
   let metric_values =
-    List.map (fun (name, tensor) -> (name, Rune.unsafe_get [] tensor)) metrics
+    List.map (fun (name, tensor) -> (name, Rune.item [] tensor)) metrics
   in
 
   (avg_loss, metric_values)

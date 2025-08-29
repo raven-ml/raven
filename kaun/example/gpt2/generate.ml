@@ -43,13 +43,13 @@ let () =
 
         (* Get logits for the last token *)
         let seq_len = shape input_ids |> fun s -> s.(1) in
-        let last_logits = slice [ R []; I (seq_len - 1); R [] ] logits in
+        let last_logits = slice [ A; I (seq_len - 1); A ] logits in
 
         (* Convert to float array *)
         let vocab_size = shape last_logits |> fun s -> s.(1) in
         let logits_array = Array.make vocab_size 0.0 in
         for j = 0 to vocab_size - 1 do
-          logits_array.(j) <- unsafe_get [ 0; j ] last_logits
+          logits_array.(j) <- item [ 0; j ] last_logits
         done;
 
         (* Sample next token *)

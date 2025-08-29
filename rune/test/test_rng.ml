@@ -48,7 +48,7 @@ let test_uniform () =
   A.check (A.array A.int) "uniform produces correct shape" shape (Rune.shape t);
 
   (* Check values are in [0, 1) *)
-  let values = Rune.unsafe_to_array (Rune.reshape [| 12 |] t) in
+  let values = Rune.to_array (Rune.reshape [| 12 |] t) in
   Array.iter
     (fun v ->
       A.check A.bool "uniform values in [0, 1)" true (v >= 0. && v < 1.))
@@ -57,7 +57,7 @@ let test_uniform () =
   (* Check deterministic *)
   let t2 = Rng.uniform key ctx Float32 shape in
   let is_equal = Rune.all (Rune.equal t t2) in
-  let is_equal_val = Rune.unsafe_to_array is_equal in
+  let is_equal_val = Rune.to_array is_equal in
   A.check A.bool "uniform is deterministic" true (is_equal_val.(0) > 0)
 
 let test_normal () =
@@ -69,7 +69,7 @@ let test_normal () =
   A.check (A.array A.int) "normal produces correct shape" shape (Rune.shape t);
 
   (* Check roughly normal distribution (mean ~0, std ~1) *)
-  let values = Rune.unsafe_to_array t in
+  let values = Rune.to_array t in
   let mean =
     Array.fold_left ( +. ) 0. values /. float_of_int (Array.length values)
   in
@@ -91,7 +91,7 @@ let test_randint () =
   A.check (A.array A.int) "randint produces correct shape" shape (Rune.shape t);
 
   (* Check values are in [min, max) *)
-  let values = Rune.unsafe_to_array t in
+  let values = Rune.to_array t in
   Array.iter
     (fun v ->
       let v = Int32.to_int v in
@@ -109,7 +109,7 @@ let test_bernoulli () =
     (Rune.shape t);
 
   (* Check proportion roughly matches p *)
-  let values = Rune.unsafe_to_array t in
+  let values = Rune.to_array t in
   let ones =
     Array.fold_left (fun acc v -> acc + if v > 0 then 1 else 0) 0 values
   in
@@ -123,8 +123,8 @@ let test_bernoulli () =
    A.check (A.array A.int) "permutation has correct shape" [| n |] (Rune.shape
    perm);
 
-   (* Check it's a valid permutation *) let values = Rune.unsafe_to_array perm
-   |> Array.map Int32.to_int in let sorted = Array.copy values in Array.sort
+   (* Check it's a valid permutation *) let values = Rune.to_array perm |>
+   Array.map Int32.to_int in let sorted = Array.copy values in Array.sort
    compare sorted; Array.iteri (fun i v -> A.check A.int (Printf.sprintf
    "permutation contains %d" i) i v) sorted *)
 
@@ -135,17 +135,17 @@ let test_bernoulli () =
    A.check (A.array A.int) "shuffle preserves shape" (Rune.shape x) (Rune.shape
    shuffled);
 
-   (* Check all elements are still there *) let original = Rune.unsafe_to_array
-   (Rune.reshape [| 10 |] x) in let shuffled_vals = Rune.unsafe_to_array
-   (Rune.reshape [| 10 |] shuffled) in let sorted_orig = Array.copy original in
-   let sorted_shuf = Array.copy shuffled_vals in Array.sort compare sorted_orig;
+   (* Check all elements are still there *) let original = Rune.to_array
+   (Rune.reshape [| 10 |] x) in let shuffled_vals = Rune.to_array (Rune.reshape
+   [| 10 |] shuffled) in let sorted_orig = Array.copy original in let
+   sorted_shuf = Array.copy shuffled_vals in Array.sort compare sorted_orig;
    Array.sort compare sorted_shuf; A.check (A.array (A.float 0.001)) "shuffle
    preserves elements" sorted_orig sorted_shuf;
 
    (* Check it's actually shuffled *) let is_equal = Rune.all (Rune.array_equal
-   x shuffled) in let is_equal_val = Rune.unsafe_to_array is_equal in let
-   is_different = is_equal_val.(0) = 0 in A.check A.bool "shuffle changes order"
-   true is_different *)
+   x shuffled) in let is_equal_val = Rune.to_array is_equal in let is_different
+   = is_equal_val.(0) = 0 in A.check A.bool "shuffle changes order" true
+   is_different *)
 
 let test_truncated_normal () =
   let key = Rng.key 42 in
@@ -159,7 +159,7 @@ let test_truncated_normal () =
     (Rune.shape t);
 
   (* Check all values are within bounds *)
-  let values = Rune.unsafe_to_array t in
+  let values = Rune.to_array t in
   Array.iter
     (fun v ->
       A.check A.bool
@@ -187,7 +187,7 @@ let test_rng_with_autodiff () =
   (* Gradient of x should be ones (since we just add noise) *)
   let expected = Rune.ones ctx Float32 [| 3; 3 |] in
   let is_equal = Rune.all (Rune.equal dx expected) in
-  let is_equal_val = Rune.unsafe_to_array is_equal in
+  let is_equal_val = Rune.to_array is_equal in
   A.check A.bool "RNG works with autodiff" true (is_equal_val.(0) > 0)
 
 let () =

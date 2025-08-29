@@ -20,7 +20,7 @@ let () =
   Printf.printf "Array B:\n%s\n\n" (to_string b);
 
   (* 1. Accessing elements *)
-  let element = get_item [ 0; 1 ] a in
+  let element = item [ 0; 1 ] a in
   Printf.printf "Element A[0,1]: %.1f\n\n" element;
 
   (* 2. Setting elements *)

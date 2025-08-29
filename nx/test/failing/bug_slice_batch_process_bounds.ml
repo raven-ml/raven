@@ -9,12 +9,22 @@ let () =
     (String.concat "; " (Array.to_list (Array.map string_of_int (Nx.shape x))));
 
   (* Complex slice that triggers batch processing with potential bounds issues:
-     - L [0; 2]: list of indices for dimension 0 - I 1: single index for
-     dimension 1 - R [1; 3]: range for dimension 2 *)
-  let slice_spec = [ Nx.L [ 0; 2 ]; Nx.I 1; Nx.R [ 1; 3 ] ] in
-
+     - Take indices [0; 2] from dimension 0 - Then slice index 1 from dimension
+     1 - Then slice range [1, 3) from dimension 2 *)
   try
-    let result = Nx.slice slice_spec x in
+    (* First take indices [0, 2] along axis 0 *)
+    let indices0 = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+    let step1 = Nx.take ~axis:0 indices0 x in
+
+    (* Then slice to get only index 1 along axis 1 *)
+    let step2 =
+      Nx.slice [ Nx.Rs (0, 2, 1); Nx.Rs (1, 2, 1); Nx.Rs (0, 5, 1) ] step1
+    in
+
+    (* Finally slice range [1, 3) along axis 2 *)
+    let result =
+      Nx.slice [ Nx.Rs (0, 2, 1); Nx.Rs (0, 1, 1); Nx.Rs (1, 3, 1) ] step2
+    in
     Printf.printf "Result shape: [%s]\n"
       (String.concat "; "
          (Array.to_list (Array.map string_of_int (Nx.shape result))));

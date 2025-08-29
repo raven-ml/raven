@@ -756,7 +756,7 @@ let global_norm params =
        Rune.scalar (Rune.device p0) (Rune.dtype p0) 0.)
       flat_params
   in
-  Rune.unsafe_get [] (Rune.sqrt norm_sq)
+  Rune.item [] (Rune.sqrt norm_sq)
 
 let set_to_zero params = map_params params (fun t -> Rune.zeros_like t)
 

@@ -64,14 +64,13 @@ module Rng = struct
     done
 
   let take_indices tensor ~axis indices_array =
-    let n_dims = Nx.ndim tensor in
-    let spec =
-      Array.to_list
-        (Array.init n_dims (fun i ->
-             if i = axis then Nx.L (Array.to_list indices_array)
-             else Nx.R [ 0; Nx.dim i tensor; 1 ]))
+    (* Use take to gather along the specified axis *)
+    let indices_tensor =
+      Nx.create Nx.int32
+        [| Array.length indices_array |]
+        (Array.map Int32.of_int indices_array)
     in
-    Nx.slice spec tensor
+    Nx.take ~axis indices_tensor tensor
 end
 
 let make_blobs ?(n_samples = 100) ?(n_features = 2) ?(centers = `N 3)
@@ -100,7 +99,7 @@ let make_blobs ?(n_samples = 100) ?(n_features = 2) ?(centers = `N 3)
     List.init n_centers (fun i ->
         let n = samples_per_center.(i) in
         if n > 0 then
-          let center = Nx.slice [ I i; R [] ] center_coords in
+          let center = Nx.slice [ Nx.I i; Nx.A ] center_coords in
           let noise = Rng.standard_normal state [| n; n_features |] in
           Some (Nx.add (Nx.mul_s noise cluster_std) center)
         else None)
@@ -527,7 +526,7 @@ let make_sparse_uncorrelated ?(n_samples = 100) ?(n_features = 10) ?random_state
   let y =
     if n_features < 4 then Nx.zeros Float32 [| n_samples |]
     else
-      let relevant_x = Nx.slice [ R []; R [ 0; 4; 1 ] ] x in
+      let relevant_x = Nx.slice [ Nx.A; Nx.Rs (0, 4, 1) ] x in
       let coeffs = Nx.create Float32 [| 4 |] [| 1.; 2.; -2.; -1.5 |] in
       Nx.reshape [| n_samples |]
         (Nx.matmul relevant_x (Nx.reshape [| 4; 1 |] coeffs))
@@ -541,12 +540,12 @@ let make_friedman1 ?(n_samples = 100) ?(n_features = 10) ?(noise = 0.0)
     failwith "make_friedman1: n_features must be at least 5";
 
   let x = Rng.uniform state [| n_samples; n_features |] in
-  let x_slice = Nx.slice [ R []; R [ 0; 5; 1 ] ] x in
-  let x0 = Nx.slice [ R []; I 0 ] x_slice in
-  let x1 = Nx.slice [ R []; I 1 ] x_slice in
-  let x2 = Nx.slice [ R []; I 2 ] x_slice in
-  let x3 = Nx.slice [ R []; I 3 ] x_slice in
-  let x4 = Nx.slice [ R []; I 4 ] x_slice in
+  let x_slice = Nx.slice [ Nx.A; Nx.Rs (0, 5, 1) ] x in
+  let x0 = Nx.slice [ Nx.A; Nx.I 0 ] x_slice in
+  let x1 = Nx.slice [ Nx.A; Nx.I 1 ] x_slice in
+  let x2 = Nx.slice [ Nx.A; Nx.I 2 ] x_slice in
+  let x3 = Nx.slice [ Nx.A; Nx.I 3 ] x_slice in
+  let x4 = Nx.slice [ Nx.A; Nx.I 4 ] x_slice in
 
   let term1 = Nx.mul_s (Nx.sin (Nx.mul_s (Nx.mul x0 x1) pi)) 10. in
   let term2 = Nx.mul_s (Nx.square (Nx.sub_s x2 0.5)) 20. in
@@ -650,7 +649,7 @@ let make_swiss_roll ?(n_samples = 100) ?(noise = 0.0) ?random_state
       (t, height))
     else
       let height = Rng.uniform state ~low:0. ~high:21. [| n_samples; 1 |] in
-      (Nx.slice [ R [ 0; n_samples; 1 ]; I 0 ] t_pre, height)
+      (Nx.slice [ Nx.Rs (0, n_samples, 1); Nx.I 0 ] t_pre, height)
   in
   let final_n_samples = Nx.dim 0 t in
 

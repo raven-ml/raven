@@ -263,7 +263,7 @@ let from_nx ?names tensor =
   | [| _rows; cols |] ->
       let tensors =
         List.init cols (fun col_i ->
-            Nx.slice [ Nx.R [ 0; -1 ]; Nx.I col_i ] tensor)
+            Nx.slice [ Nx.R (0, -1); Nx.I col_i ] tensor)
       in
       of_tensors ?names tensors
   | _ -> invalid_arg "from_nx: tensor must be 2D"
@@ -844,7 +844,7 @@ let head ?(n = 5) t =
       (fun (name, col) ->
         match col with
         | Col.P (dtype, tensor) ->
-            let sliced = Nx.slice [ Nx.R [ 0; actual_n ] ] tensor in
+            let sliced = Nx.slice [ R (0, actual_n) ] tensor in
             (name, Col.P (dtype, sliced))
         | Col.S arr -> (name, Col.S (Array.sub arr 0 actual_n))
         | Col.B arr -> (name, Col.B (Array.sub arr 0 actual_n)))
@@ -861,7 +861,7 @@ let tail ?(n = 5) t =
       (fun (name, col) ->
         match col with
         | Col.P (dtype, tensor) ->
-            let sliced = Nx.slice [ Nx.R [ start; n_rows ] ] tensor in
+            let sliced = Nx.slice [ R (start, n_rows) ] tensor in
             (name, Col.P (dtype, sliced))
         | Col.S arr -> (name, Col.S (Array.sub arr start actual_n))
         | Col.B arr -> (name, Col.B (Array.sub arr start actual_n)))
@@ -879,7 +879,7 @@ let slice t ~start ~stop =
       (fun (name, col) ->
         match col with
         | Col.P (dtype, tensor) ->
-            let sliced = Nx.slice [ Nx.R [ start; stop ] ] tensor in
+            let sliced = Nx.slice [ R (start, stop) ] tensor in
             (name, Col.P (dtype, sliced))
         | Col.S arr -> (name, Col.S (Array.sub arr start length))
         | Col.B arr -> (name, Col.B (Array.sub arr start length)))

@@ -165,7 +165,7 @@ let load_checkpoint path =
   let archive = load_npz path in
   let epoch = 
     match Hashtbl.find_opt archive "epoch" with
-    | Some p -> Nx.get_item [] (to_int32 p)
+    | Some p -> Nx.item [] (to_int32 p)
     | None -> failwith "epoch not found"
   in
   let weights = 

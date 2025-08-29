@@ -47,7 +47,7 @@ print_tensor d
 
 **Slicing uses functions.** Instead of NumPy's `arr[0:2, :]`, nx uses:
 ```ocaml
-let slice = get_slice [R [0; 2]; All] arr
+let slice = get_slice [R (0, 2); A] arr
 ```
 
 **Broadcasting works like NumPy.** Arrays with compatible shapes can be used together:

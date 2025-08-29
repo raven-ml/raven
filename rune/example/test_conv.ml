@@ -29,7 +29,7 @@ let () =
   in
 
   let loss, grads = value_and_grads loss_fn [ w ] in
-  Printf.printf "Loss: %f\n" (unsafe_get [] loss);
+  Printf.printf "Loss: %f\n" (item [] loss);
   Printf.printf "Gradient shape: %s\n"
     (Array.to_list (shape (List.hd grads))
     |> List.map string_of_int |> String.concat ", ")

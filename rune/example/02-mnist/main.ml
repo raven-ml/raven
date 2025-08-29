@@ -11,10 +11,12 @@ let get_batch x y batch_size batch_idx =
   if batch_size_actual <= 0 then failwith "Empty batch encountered"
   else
     let x_batch =
-      slice_ranges [ start; 0; 0; 0 ] [ start + batch_size_actual; 1; 28; 28 ] x
+      slice
+        [ R (start, start + batch_size_actual); R (0, 1); R (0, 28); R (0, 28) ]
+        x
     in
     let y_batch =
-      slice_ranges [ start; 0 ] [ start + batch_size_actual; dim 1 y ] y
+      slice [ R (start, start + batch_size_actual); R (0, dim 1 y) ] y
     in
     (x_batch, y_batch)
 
@@ -118,7 +120,7 @@ let accuracy predictions labels =
   let correct = equal pred_classes labels in
   let correct_float = astype Float32 correct in
   let acc = mean correct_float in
-  unsafe_get [] acc
+  item [] acc
 
 (* Training function *)
 let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
@@ -143,9 +145,12 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
         get_batch x_train y_train_onehot batch_size batch_idx
       in
       let y_labels_batch =
-        slice_ranges
-          [ batch_idx * batch_size ]
-          [ Stdlib.min ((batch_idx + 1) * batch_size) num_samples ]
+        slice
+          [
+            R
+              ( batch_idx * batch_size,
+                Stdlib.min ((batch_idx + 1) * batch_size) num_samples );
+          ]
           y_train_labels
       in
 
@@ -158,12 +163,12 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
       let loss, grad_params = value_and_grads loss_fn params in
 
       (* Track metrics *)
-      epoch_loss := !epoch_loss +. unsafe_get [] loss;
+      epoch_loss := !epoch_loss +. item [] loss;
       let logits = forward_lenet params x_batch in
       let pred_classes = argmax logits ~axis:1 ~keepdims:false in
       let correct = equal pred_classes y_labels_batch in
       let correct_count =
-        unsafe_get [] (sum (astype Float32 correct)) |> int_of_float
+        item [] (sum (astype Float32 correct)) |> int_of_float
       in
       epoch_correct := !epoch_correct + correct_count;
       epoch_samples := !epoch_samples + dim 0 x_batch;
@@ -178,7 +183,7 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
 
       (* Print progress *)
       Printf.printf "Epoch %d, Batch %d/%d: Loss = %.4f\n%!" epoch batch_idx
-        num_batches (unsafe_get [] loss)
+        num_batches (item [] loss)
     done;
 
     (* Evaluate on test set *)
@@ -193,7 +198,7 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
       epoch
       (!epoch_loss /. float num_batches)
       (100.0 *. float !epoch_correct /. float !epoch_samples)
-      (unsafe_get [] test_loss) (100.0 *. test_acc)
+      (item [] test_loss) (100.0 *. test_acc)
   done;
   params
 

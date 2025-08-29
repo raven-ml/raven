@@ -478,28 +478,26 @@ let op_gather data_t indices_t axis =
 
   if output_numel = 0 then output_t
   else
-    let data_buffer = Internal.buffer data_t in
-    let indices_buffer = Internal.buffer indices_t in
     let output_buffer = Internal.buffer output_t in
     (* Ensure tensors are materializable for gather operation *)
-    let data_view =
+    let data_buffer, data_view =
       match Lazy_view.compose data_t.view with
-      | Some v -> v
+      | Some v -> (Internal.buffer data_t, v)
       | None -> (
           let cont_data = op_contiguous data_t in
           match Lazy_view.compose cont_data.view with
-          | Some v -> v
+          | Some v -> (Internal.buffer cont_data, v)
           | None ->
               Error.failed ~op:"op_gather" ~what:"cannot materialize data view"
                 ())
     in
-    let indices_view =
+    let indices_buffer, indices_view =
       match Lazy_view.compose indices_t.view with
-      | Some v -> v
+      | Some v -> (Internal.buffer indices_t, v)
       | None -> (
           let cont_indices = op_contiguous indices_t in
           match Lazy_view.compose cont_indices.view with
-          | Some v -> v
+          | Some v -> (Internal.buffer cont_indices, v)
           | None ->
               Error.failed ~op:"op_gather"
                 ~what:"cannot materialize indices view" ())
@@ -590,26 +588,24 @@ let op_scatter (type a b) ?(mode = `Set) ?(unique_indices = false)
           Error.failed ~op:"op_scatter" ~what:"cannot materialize output view"
             ()
     in
-    let updates_buffer = Internal.buffer updates_t in
-    let updates_view =
+    let updates_buffer, updates_view =
       match Lazy_view.compose updates_t.view with
-      | Some v -> v
+      | Some v -> (Internal.buffer updates_t, v)
       | None -> (
           let cont_updates = op_contiguous updates_t in
           match Lazy_view.compose cont_updates.view with
-          | Some v -> v
+          | Some v -> (Internal.buffer cont_updates, v)
           | None ->
               Error.failed ~op:"op_scatter"
                 ~what:"cannot materialize updates view" ())
     in
-    let indices_buffer = Internal.buffer indices_t in
-    let indices_view =
+    let indices_buffer, indices_view =
       match Lazy_view.compose indices_t.view with
-      | Some v -> v
+      | Some v -> (Internal.buffer indices_t, v)
       | None -> (
           let cont_indices = op_contiguous indices_t in
           match Lazy_view.compose cont_indices.view with
-          | Some v -> v
+          | Some v -> (Internal.buffer cont_indices, v)
           | None ->
               Error.failed ~op:"op_scatter"
                 ~what:"cannot materialize indices view" ())

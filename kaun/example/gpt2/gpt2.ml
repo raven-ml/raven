@@ -18,14 +18,12 @@ let () =
 
   (* Get logits for the last token *)
   let seq_len = shape inputs.input_ids |> fun s -> s.(1) in
-  let last_logits = slice [ R []; I (seq_len - 1); R [] ] logits in
+  let last_logits = slice [ A; I (seq_len - 1); A ] logits in
 
   (* Get top prediction *)
   let probs = softmax ~axes:[| 1 |] last_logits in
-  let top_prob = max probs |> unsafe_get [] in
-  let predicted_id =
-    argmax ~axis:1 last_logits |> unsafe_get [] |> Int32.to_int
-  in
+  let top_prob = max probs |> item [] in
+  let predicted_id = argmax ~axis:1 last_logits |> item [] |> Int32.to_int in
 
   Printf.printf "Prompt: %s\n" prompt;
   Printf.printf "Next token ID: %d (prob: %.4f)\n" predicted_id top_prob;

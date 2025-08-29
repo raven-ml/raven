@@ -163,7 +163,7 @@ concat = np.concatenate([arr1, arr2], axis=0)
 **Nx:**
 ```ocaml
 (* Get a single element *)
-let element = Nx.get_item [|0; 1|] arr
+let element = Nx.item [|0; 1|] arr
 
 (* Set a single element *)
 let _ = Nx.set_item [|0; 1|] 5.0 arr

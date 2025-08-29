@@ -183,7 +183,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     (* Each 3x3 window sums to 9 times the sum of its elements *)
     let expected_00 = 0. +. 1. +. 2. +. 8. +. 9. +. 10. +. 16. +. 17. +. 18. in
     check (float 1e-5) "convolve2d Winograd [0,0,0,0]" expected_00
-      (Nx.unsafe_get [ 0; 0; 0; 0 ] result)
+      (Nx.item [ 0; 0; 0; 0 ] result)
 
   let test_convolve2d_groups_winograd ctx () =
     (* Test grouped convolution with parameters that might trigger Winograd but
@@ -274,7 +274,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     (* Verify first output value: sum of top-left 2x2 window *)
     let expected_00 = 0. +. 1. +. 6. +. 7. in
     check (float 1e-5) "convolve2d pool edge case [0,0,0,0]" expected_00
-      (Nx.unsafe_get [ 0; 0; 0; 0 ] result)
+      (Nx.item [ 0; 0; 0; 0 ] result)
 
   let test_convolve2d_groups_reshape_issue ctx () =
     (* Test grouped convolution that might cause reshape issues in pooling This
@@ -458,9 +458,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
     check_shape "pool batch shape" [| 2; 1; 2; 2 |] output;
     (* Check first batch *)
-    check (float 1e-6) "batch 0 [0,0]" 5. (Nx.unsafe_get [ 0; 0; 0; 0 ] output);
+    check (float 1e-6) "batch 0 [0,0]" 5. (Nx.item [ 0; 0; 0; 0 ] output);
     (* Check second batch *)
-    check (float 1e-6) "batch 1 [0,0]" 21. (Nx.unsafe_get [ 1; 0; 0; 0 ] output)
+    check (float 1e-6) "batch 1 [0,0]" 21. (Nx.item [ 1; 0; 0; 0 ] output)
 
   let test_pool_multichannel ctx () =
     (* Test pooling with multiple channels *)

@@ -69,8 +69,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     in
     let r = Nx.reshape [| 2; 2 |] t in
     (* Modify original and check if view is affected *)
-    Nx.unsafe_set [ 0 ] 99.0 t;
-    check (float 1e-6) "reshape view modified" 99.0 (Nx.unsafe_get [ 0; 0 ] r)
+    Nx.set_item [ 0 ] 99.0 t;
+    check (float 1e-6) "reshape view modified" 99.0 (Nx.item [ 0; 0 ] r)
 
   let test_reshape_copy_when_not_contiguous ctx () =
     let t =
@@ -113,10 +113,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let tr = Nx.transpose t in
     check_shape "transpose high-d shape" [| 5; 4; 3; 2 |] tr;
     (* Check a few values to ensure correct transpose *)
-    check (float 1e-6) "transpose[0,0,0,0]" 0.0
-      (Nx.unsafe_get [ 0; 0; 0; 0 ] tr);
-    check (float 1e-6) "transpose[0,0,0,1]" 60.0
-      (Nx.unsafe_get [ 0; 0; 0; 1 ] tr)
+    check (float 1e-6) "transpose[0,0,0,0]" 0.0 (Nx.item [ 0; 0; 0; 0 ] tr);
+    check (float 1e-6) "transpose[0,0,0,1]" 60.0 (Nx.item [ 0; 0; 0; 1 ] tr)
 
   let test_transpose_axes ctx () =
     let t =
@@ -125,8 +123,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     in
     let tr = Nx.transpose ~axes:[| 1; 2; 0 |] t in
     check_shape "transpose custom axes" [| 3; 4; 2 |] tr;
-    check (float 1e-6) "transpose[0,0,0]" 0.0 (Nx.unsafe_get [ 0; 0; 0 ] tr);
-    check (float 1e-6) "transpose[0,0,1]" 12.0 (Nx.unsafe_get [ 0; 0; 1 ] tr)
+    check (float 1e-6) "transpose[0,0,0]" 0.0 (Nx.item [ 0; 0; 0 ] tr);
+    check (float 1e-6) "transpose[0,0,1]" 12.0 (Nx.item [ 0; 0; 1 ] tr)
 
   let test_transpose_invalid_axes ctx () =
     let t =
@@ -144,9 +142,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
         [| 1.; 2.; 3.; 4.; 5.; 6. |]
     in
     let tr = Nx.transpose t in
-    Nx.unsafe_set [ 0; 1 ] 99.0 t;
-    check (float 1e-6) "transpose view modified" 99.0
-      (Nx.unsafe_get [ 1; 0 ] tr)
+    Nx.set_item [ 0; 1 ] 99.0 t;
+    check (float 1e-6) "transpose view modified" 99.0 (Nx.item [ 1; 0 ] tr)
 
   (* ───── Concatenate Tests ───── *)
 
@@ -212,8 +209,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t1 = Nx.create ctx Nx_core.Dtype.float32 [| 2 |] [| 1.0; 2.0 |] in
     let t2 = Nx.create ctx Nx_core.Dtype.float32 [| 2 |] [| 3.0; 4.0 |] in
     let c = Nx.concatenate [ t1; t2 ] in
-    Nx.unsafe_set [ 0 ] 99.0 t1;
-    check (float 1e-6) "concat is new array" 1.0 (Nx.unsafe_get [ 0 ] c)
+    Nx.set_item [ 0 ] 99.0 t1;
+    check (float 1e-6) "concat is new array" 1.0 (Nx.item [ 0 ] c)
 
   (* ───── Stack Tests ───── *)
 
@@ -243,8 +240,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t1 = Nx.create ctx Nx_core.Dtype.float32 [| 2 |] [| 1.0; 2.0 |] in
     let t2 = Nx.create ctx Nx_core.Dtype.float32 [| 2 |] [| 3.0; 4.0 |] in
     let s = Nx.stack ~axis:0 [ t1; t2 ] in
-    Nx.unsafe_set [ 0 ] 99.0 t1;
-    check (float 1e-6) "stack is new array" 1.0 (Nx.unsafe_get [ 0; 0 ] s)
+    Nx.set_item [ 0 ] 99.0 t1;
+    check (float 1e-6) "stack is new array" 1.0 (Nx.item [ 0; 0 ] s)
 
   (* ───── Split Tests ───── *)
 
@@ -292,8 +289,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     in
     let parts = Nx.split ~axis:0 2 t in
     let p1 = List.nth parts 0 in
-    Nx.unsafe_set [ 0 ] 99.0 p1;
-    check (float 1e-6) "split view modified" 99.0 (Nx.unsafe_get [ 0 ] t)
+    Nx.set_item [ 0 ] 99.0 p1;
+    check (float 1e-6) "split view modified" 99.0 (Nx.item [ 0 ] t)
 
   (* ───── Array Split Tests ───── *)
 
@@ -324,8 +321,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     in
     let parts = Nx.array_split ~axis:0 (`Count 2) t in
     let p1 = List.nth parts 0 in
-    Nx.unsafe_set [ 0 ] 99.0 p1;
-    check (float 1e-6) "array_split view modified" 99.0 (Nx.unsafe_get [ 0 ] t)
+    Nx.set_item [ 0 ] 99.0 p1;
+    check (float 1e-6) "array_split view modified" 99.0 (Nx.item [ 0 ] t)
 
   (* ───── Squeeze Expand Tests ───── *)
 
@@ -393,9 +390,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t = Nx.create ctx Nx_core.Dtype.float32 [| 3; 1 |] [| 1.; 2.; 3. |] in
     let b = Nx.broadcast_to [| 3; 4 |] t in
     check_shape "broadcast valid shape" [| 3; 4 |] b;
-    check (float 1e-6) "broadcast[0,0]" 1.0 (Nx.unsafe_get [ 0; 0 ] b);
-    check (float 1e-6) "broadcast[0,3]" 1.0 (Nx.unsafe_get [ 0; 3 ] b);
-    check (float 1e-6) "broadcast[2,2]" 3.0 (Nx.unsafe_get [ 2; 2 ] b)
+    check (float 1e-6) "broadcast[0,0]" 1.0 (Nx.item [ 0; 0 ] b);
+    check (float 1e-6) "broadcast[0,3]" 1.0 (Nx.item [ 0; 3 ] b);
+    check (float 1e-6) "broadcast[2,2]" 3.0 (Nx.item [ 2; 2 ] b)
 
   let test_broadcast_to_invalid ctx () =
     let t = Nx.create ctx Nx_core.Dtype.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -416,8 +413,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t = Nx.scalar ctx Nx_core.Dtype.float32 5.0 in
     let b = Nx.broadcast_to [| 3; 4; 5 |] t in
     check_shape "broadcast scalar shape" [| 3; 4; 5 |] b;
-    check (float 1e-6) "broadcast scalar value" 5.0
-      (Nx.unsafe_get [ 2; 3; 4 ] b)
+    check (float 1e-6) "broadcast scalar value" 5.0 (Nx.item [ 2; 3; 4 ] b)
 
   let test_broadcast_arrays_compatible ctx () =
     let t1 =
@@ -441,9 +437,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     let t2 = Nx.create ctx Nx_core.Dtype.float32 [| 1; 1 |] [| 10.0 |] in
     let broadcasted = Nx.broadcast_arrays [ t1; t2 ] in
     let b1 = List.nth broadcasted 0 in
-    Nx.unsafe_set [ 0; 0 ] 99.0 t1;
+    Nx.set_item [ 0; 0 ] 99.0 t1;
     check (float 1e-6) "broadcast array view modified" 99.0
-      (Nx.unsafe_get [ 0; 0 ] b1)
+      (Nx.item [ 0; 0 ] b1)
 
   let test_broadcast_arrays_invalid ctx () =
     let t1 = Nx.create ctx Nx_core.Dtype.float32 [| 2 |] [| 1.0; 2.0 |] in
@@ -521,16 +517,16 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
     in
     let flat = Nx.flatten t in
-    Nx.unsafe_set [ 0; 0 ] 99.0 t;
-    check (float 1e-6) "flatten view modified" 99.0 (Nx.unsafe_get [ 0 ] flat)
+    Nx.set_item [ 0; 0 ] 99.0 t;
+    check (float 1e-6) "flatten view modified" 99.0 (Nx.item [ 0 ] flat)
 
   let test_ravel_contiguous_view ctx () =
     let t =
       Nx.create ctx Nx_core.Dtype.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
     in
     let r = Nx.ravel t in
-    Nx.unsafe_set [ 0; 0 ] 99.0 t;
-    check (float 1e-6) "ravel view modified" 99.0 (Nx.unsafe_get [ 0 ] r)
+    Nx.set_item [ 0; 0 ] 99.0 t;
+    check (float 1e-6) "ravel view modified" 99.0 (Nx.item [ 0 ] r)
 
   let test_ravel_non_contiguous_copy ctx () =
     let t =
@@ -572,8 +568,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
     in
     let f = Nx.flip t in
-    Nx.unsafe_set [ 0; 0 ] 99.0 t;
-    check (float 1e-6) "flip view modified" 99.0 (Nx.unsafe_get [ 1; 1 ] f)
+    Nx.set_item [ 0; 0 ] 99.0 t;
+    check (float 1e-6) "flip view modified" 99.0 (Nx.item [ 1; 1 ] f)
 
   let test_roll_no_axis ctx () =
     let t =
@@ -592,8 +588,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
     in
     let m = Nx.moveaxis 0 1 t in
-    Nx.unsafe_set [ 0; 0 ] 99.0 t;
-    check (float 1e-6) "moveaxis view modified" 99.0 (Nx.unsafe_get [ 0; 0 ] m)
+    Nx.set_item [ 0; 0 ] 99.0 t;
+    check (float 1e-6) "moveaxis view modified" 99.0 (Nx.item [ 0; 0 ] m)
 
   let test_moveaxis_invalid ctx () =
     let t =
@@ -608,8 +604,8 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       Nx.create ctx Nx_core.Dtype.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
     in
     let s = Nx.swapaxes 0 1 t in
-    Nx.unsafe_set [ 0; 1 ] 99.0 t;
-    check (float 1e-6) "swapaxes view modified" 99.0 (Nx.unsafe_get [ 1; 0 ] s)
+    Nx.set_item [ 0; 1 ] 99.0 t;
+    check (float 1e-6) "swapaxes view modified" 99.0 (Nx.item [ 1; 0 ] s)
 
   let test_swapaxes_invalid ctx () =
     let t =

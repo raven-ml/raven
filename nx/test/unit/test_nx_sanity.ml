@@ -92,7 +92,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
     [
       test_case "data" `Quick (fun () ->
           let t = Nx.create ctx Nx.float32 shape_2x3 test_array in
-          let data = Nx.unsafe_data t in
+          let data = Nx.data t in
           check (float 1e-6) "data[0]" 1.0 data.{0};
           check (float 1e-6) "data[0]" 6.0 data.{5});
       test_case "shape" `Quick (fun () ->
@@ -589,10 +589,10 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           let a = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
           let b = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
           let eq1 = Nx.array_equal a b in
-          check int "array_equal same" 1 (Nx.unsafe_get [] eq1);
+          check int "array_equal same" 1 (Nx.item [] eq1);
           let d = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 4. |] in
           let eq2 = Nx.array_equal a d in
-          check int "array_equal different" 0 (Nx.unsafe_get [] eq2));
+          check int "array_equal different" 0 (Nx.item [] eq2));
     ]
 
   let shape_manipulation_tests ctx =
@@ -670,9 +670,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
                 23.;
               |]
           in
-          check_t "moveaxis values" [| 3; 4; 2 |]
-            (Nx.unsafe_to_array expected)
-            b);
+          check_t "moveaxis values" [| 3; 4; 2 |] (Nx.to_array expected) b);
       test_case "swapaxes" `Quick (fun () ->
           let a =
             Nx.create ctx Nx.float32 [| 2; 3; 4 |]
@@ -710,9 +708,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
                 23.;
               |]
           in
-          check_t "swapaxes values" [| 4; 3; 2 |]
-            (Nx.unsafe_to_array expected)
-            b);
+          check_t "swapaxes values" [| 4; 3; 2 |] (Nx.to_array expected) b);
       test_case "flip" `Quick (fun () ->
           let a = Nx.create ctx Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
           Nx.flip a |> check_t "flip" [| 5 |] [| 5.; 4.; 3.; 2.; 1. |]);
@@ -819,9 +815,9 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           let a = Nx.create ctx Nx.float32 [| 2 |] [| 3.14; 2.71 |] in
           let b = Nx.astype Nx.int32 a in
           check bool "astype dtype" true (Nx.dtype b = Nx.int32));
-      test_case "unsafe_to_bigarray" `Quick (fun () ->
+      test_case "to_bigarray" `Quick (fun () ->
           let a = Nx.create ctx Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-          let ba = Nx.unsafe_to_bigarray a in
+          let ba = Nx.to_bigarray a in
           check int "bigarray dims" 1 (Bigarray_ext.Genarray.num_dims ba);
           check (float 1e-6) "bigarray value" 2.0
             (Bigarray_ext.Genarray.get ba [| 1 |]));
@@ -835,11 +831,11 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           Bigarray_ext.Genarray.set ba [| 2 |] 6.0;
           Nx.of_bigarray ctx ba
           |> check_t "of_bigarray" [| 3 |] [| 4.; 5.; 6. |]);
-      test_case "unsafe_to_array" `Quick (fun () ->
+      test_case "to_array" `Quick (fun () ->
           let a = Nx.create ctx Nx.float32 [| 3 |] [| 7.; 8.; 9. |] in
-          let arr = Nx.unsafe_to_array a in
-          check int "unsafe_to_array length" 3 (Array.length arr);
-          check (float 1e-6) "unsafe_to_array value" 8.0 arr.(1));
+          let arr = Nx.to_array a in
+          check int "to_array length" 3 (Array.length arr);
+          check (float 1e-6) "to_array value" 8.0 arr.(1));
     ]
 
   let indexing_slicing_tests ctx =
@@ -865,21 +861,20 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           check (float 1e-6) "unsafe_set [1,2]" 99.0 (Nx.unsafe_get [ 1; 2 ] a));
       test_case "slice" `Quick (fun () ->
           let a = Nx.create ctx Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-          Nx.slice [ R [ 1; 4 ] ] a |> check_t "slice" [| 3 |] [| 2.; 3.; 4. |]);
+          Nx.slice [ Nx.R (1, 4) ] a |> check_t "slice" [| 3 |] [| 2.; 3.; 4. |]);
       test_case "set_slice" `Quick (fun () ->
           let a = Nx.zeros ctx Nx.float32 [| 5 |] in
           let value = Nx.create ctx Nx.float32 [| 2 |] [| 10.; 20. |] in
-          Nx.set_slice [ R [ 2; 4 ] ] a value;
+          Nx.set_slice [ Nx.R (2, 4) ] a value;
           check_t "set_slice" [| 5 |] [| 0.; 0.; 10.; 20.; 0. |] a);
-      test_case "slice_ranges" `Quick (fun () ->
+      test_case "slice" `Quick (fun () ->
           let a = Nx.create ctx Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-          Nx.slice_ranges [ 1 ] [ 4 ] a
-          |> check_t "slice_ranges" [| 3 |] [| 2.; 3.; 4. |]);
-      test_case "set_slice_ranges" `Quick (fun () ->
+          Nx.slice [ Nx.R (1, 4) ] a |> check_t "slice" [| 3 |] [| 2.; 3.; 4. |]);
+      test_case "set_slice" `Quick (fun () ->
           let a = Nx.zeros ctx Nx.float32 [| 5 |] in
           let value = Nx.create ctx Nx.float32 [| 2 |] [| 10.; 20. |] in
-          Nx.set_slice_ranges [ 2 ] [ 4 ] a value;
-          check_t "set_slice_ranges" [| 5 |] [| 0.; 0.; 10.; 20.; 0. |] a);
+          Nx.set_slice [ Nx.R (2, 4) ] a value;
+          check_t "set_slice" [| 5 |] [| 0.; 0.; 10.; 20.; 0. |] a);
     ]
 
   let linear_algebra_tests ctx =
@@ -1027,7 +1022,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       test_case "rand" `Quick (fun () ->
           let t = Nx.rand ctx Nx.float32 shape_2x3 in
           check_shape "rand shape" shape_2x3 t;
-          let vals = Nx.unsafe_to_array t in
+          let vals = Nx.to_array t in
           Array.iter
             (fun v -> check bool "rand in range" true (v >= 0.0 && v < 1.0))
             vals);
@@ -1035,7 +1030,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           let t = Nx.randn ctx Nx.float32 [| 100 |] in
           check_shape "randn shape" [| 100 |] t;
           (* Check that values are roughly normally distributed *)
-          let vals = Nx.unsafe_to_array t in
+          let vals = Nx.to_array t in
           let mean = Array.fold_left ( +. ) 0.0 vals /. 100.0 in
           check bool "randn mean" true (abs_float mean < 0.5));
       test_case "randint" `Quick (fun () ->
@@ -1118,7 +1113,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let sum = ref (Nx.scalar ctx Nx.float32 0.0) in
           Nx.iter (fun x -> sum := Nx.add !sum x) a;
-          check (float 0.01) "iter sum" 10.0 (Nx.unsafe_get [] !sum));
+          check (float 0.01) "iter sum" 10.0 (Nx.item [] !sum));
       test_case "fold" `Quick (fun () ->
           let a =
             Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
@@ -1126,13 +1121,13 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
           let sum =
             Nx.fold (fun acc x -> Nx.add acc x) (Nx.scalar ctx Nx.float32 0.0) a
           in
-          check (float 0.01) "fold sum" 21.0 (Nx.unsafe_get [] sum));
+          check (float 0.01) "fold sum" 21.0 (Nx.item [] sum));
       test_case "fold product" `Quick (fun () ->
           let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let prod =
             Nx.fold (fun acc x -> Nx.mul acc x) (Nx.scalar ctx Nx.float32 1.0) a
           in
-          check (float 0.01) "fold product" 24.0 (Nx.unsafe_get [] prod));
+          check (float 0.01) "fold product" 24.0 (Nx.item [] prod));
       test_case "fold max" `Quick (fun () ->
           let a =
             Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 5.; 3.; 2.; 6.; 4. |]
@@ -1143,26 +1138,24 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
               (Nx.scalar ctx Nx.float32 neg_infinity)
               a
           in
-          check (float 0.01) "fold max" 6.0 (Nx.unsafe_get [] max_val));
-      test_case "unsafe_map" `Quick (fun () ->
+          check (float 0.01) "fold max" 6.0 (Nx.item [] max_val));
+      test_case "map_item" `Quick (fun () ->
           let a =
             Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
-          let b = Nx.unsafe_map (fun x -> x *. 2.0) a in
-          check_t "unsafe_map double" [| 2; 3 |]
-            [| 2.; 4.; 6.; 8.; 10.; 12. |]
-            b);
-      test_case "unsafe_iter" `Quick (fun () ->
+          let b = Nx.map_item (fun x -> x *. 2.0) a in
+          check_t "map_item double" [| 2; 3 |] [| 2.; 4.; 6.; 8.; 10.; 12. |] b);
+      test_case "iter_item" `Quick (fun () ->
           let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let sum = ref 0.0 in
-          Nx.unsafe_iter (fun x -> sum := !sum +. x) a;
-          check (float 0.01) "unsafe_iter sum" 10.0 !sum);
-      test_case "unsafe_fold" `Quick (fun () ->
+          Nx.iter_item (fun x -> sum := !sum +. x) a;
+          check (float 0.01) "iter_item sum" 10.0 !sum);
+      test_case "fold_item" `Quick (fun () ->
           let a =
             Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
-          let sum = Nx.unsafe_fold (fun acc x -> acc +. x) 0.0 a in
-          check (float 0.01) "unsafe_fold sum" 21.0 sum);
+          let sum = Nx.fold_item (fun acc x -> acc +. x) 0.0 a in
+          check (float 0.01) "fold_item sum" 21.0 sum);
     ]
 
   let suite backend_name ctx =
