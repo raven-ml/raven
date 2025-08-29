@@ -324,7 +324,7 @@ let () =
     ~initial_state () in
   
   train_dqn env
-    ~episodes:1000
+    ~episodes:100
     ~max_steps:50
     ~learning_rate:0.0001
     ~gamma:0.99
