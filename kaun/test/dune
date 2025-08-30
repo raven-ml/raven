@@ -1,5 +1,5 @@
 (tests
- (names test_checkpoint test_ptree test_dataset test_metrics)
+ (names test_checkpoint test_ptree test_dataset test_metrics test_optimizer)
  (package kaun)
  (libraries
   rune

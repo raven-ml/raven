@@ -32,7 +32,7 @@ let train_xor () =
   let opt_state = ref (optimizer.init params) in
 
   (* Training loop *)
-  let epochs = 2000 in
+  let epochs = 500 in
   for epoch = 1 to epochs do
     (* Forward and backward pass *)
     let loss, grads =
@@ -49,8 +49,7 @@ let train_xor () =
     (* Apply updates to params in place *)
     Optimizer.apply_updates_inplace params updates;
 
-    (* Print loss every 100 epochs *)
-    if epoch mod 100 = 0 then
+    if epoch mod 500 = 0 then
       Printf.printf "Epoch %d: Loss = %.6f\n" epoch (Rune.item [] loss)
   done;
 

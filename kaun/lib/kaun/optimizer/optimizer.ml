@@ -17,9 +17,6 @@ let flatten_params params =
   let flat_list, _ = Ptree.flatten params in
   flat_list
 
-(* Helper functions for parameter tree flattening - removed as not currently
-   used *)
-
 (* Core transformations *)
 
 let identity () =
@@ -489,23 +486,33 @@ let masked ~mask ~inner =
 (* Pre-configured optimizers *)
 
 let sgd ~lr ?(momentum = 0.) ?(nesterov = false) () =
-  if momentum > 0. then chain [ trace ~decay:momentum ~nesterov (); scale lr ]
-  else scale lr
+  if momentum > 0. then
+    chain [ trace ~decay:momentum ~nesterov (); scale_by_neg_one (); scale lr ]
+  else chain [ scale_by_neg_one (); scale lr ]
 
 let adam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
-  chain [ scale_by_adam ~b1 ~b2 ~eps (); scale lr ]
+  chain [ scale_by_adam ~b1 ~b2 ~eps (); scale_by_neg_one (); scale lr ]
 
 let adamw ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?(weight_decay = 0.01) ()
     =
   chain
     [
-      scale_by_adam ~b1 ~b2 ~eps (); add_decayed_weights weight_decay; scale lr;
+      scale_by_adam ~b1 ~b2 ~eps ();
+      add_decayed_weights weight_decay;
+      scale_by_neg_one ();
+      scale lr;
     ]
 
 let rmsprop ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.) () =
   if momentum > 0. then
-    chain [ scale_by_rms ~decay ~eps (); trace ~decay:momentum (); scale lr ]
-  else chain [ scale_by_rms ~decay ~eps (); scale lr ]
+    chain
+      [
+        scale_by_rms ~decay ~eps ();
+        trace ~decay:momentum ();
+        scale_by_neg_one ();
+        scale lr;
+      ]
+  else chain [ scale_by_rms ~decay ~eps (); scale_by_neg_one (); scale lr ]
 
 let adagrad ~lr ?(eps = 1e-8) () =
   {
@@ -524,14 +531,14 @@ let adagrad ~lr ?(eps = 1e-8) () =
                   let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
-                    mul (scalar dev dt lr)
+                    mul (scalar dev dt (-.lr))
                       (div g (add (sqrt acc) (scalar dev dt eps)))))
             in
             (updates, State new_accum));
   }
 
 let adabelief ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-16) () =
-  chain [ scale_by_belief ~b1 ~b2 ~eps (); scale lr ]
+  chain [ scale_by_belief ~b1 ~b2 ~eps (); scale_by_neg_one (); scale lr ]
 
 let lamb ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-6) ?(weight_decay = 0.01) () =
   {
@@ -597,7 +604,7 @@ let lamb ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-6) ?(weight_decay = 0.01) () =
                   in
                   let dev = Rune.device update in
                   let dt = Rune.dtype update in
-                  Rune.(mul (mul (scalar dev dt lr) trust_ratio) update))
+                  Rune.(mul (mul (scalar dev dt (-.lr)) trust_ratio) update))
             in
             (updates, State (new_mu, new_nu, count)));
   }
@@ -658,7 +665,7 @@ let radam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
                     let v_hat = Rune.div v (Rune.scalar dev dt bc2) in
                     Rune.(
                       mul
-                        (scalar dev dt (lr *. rect_term))
+                        (scalar dev dt (-.(lr *. rect_term)))
                         (div m_hat (add (sqrt v_hat) (scalar dev dt eps)))))
               else
                 (* Variance is not tractable - use simple moving average *)
@@ -666,7 +673,8 @@ let radam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
                 map_params new_mu (fun m ->
                     let dev = Rune.device m in
                     let dt = Rune.dtype m in
-                    Rune.(mul (scalar dev dt lr) (div m (scalar dev dt bc1))))
+                    Rune.(
+                      mul (scalar dev dt (-.lr)) (div m (scalar dev dt bc1))))
             in
             (updates, State (new_mu, new_nu, count)));
   }
@@ -710,7 +718,7 @@ let yogi ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-3) () =
                   let dt = Rune.dtype m in
                   let m_hat = Rune.div m (Rune.scalar dev dt bc1) in
                   Rune.(
-                    mul (scalar dev dt lr)
+                    mul (scalar dev dt (-.lr))
                       (div m_hat (add (sqrt (abs v)) (scalar dev dt eps)))))
             in
             (updates, State (new_mu, new_nu, count)));
@@ -719,13 +727,13 @@ let yogi ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-3) () =
 (* Utilities *)
 
 let apply_updates params updates =
-  map_params2 params updates (fun p u -> Rune.sub p u)
+  map_params2 params updates (fun p u -> Rune.add p u)
 
 let rec apply_updates_inplace : type a b.
     (a, b) Ptree.t -> (a, b) Ptree.t -> unit =
  fun params updates ->
   match (params, updates) with
-  | Tensor t, Tensor u -> ignore (Rune.isub t u)
+  | Tensor t, Tensor u -> ignore (Rune.iadd t u)
   | List ps, List us -> List.iter2 apply_updates_inplace ps us
   | Record ps, Record us ->
       let sorted_ps =
