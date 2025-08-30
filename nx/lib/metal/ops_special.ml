@@ -537,7 +537,7 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ctx data_template indices
   let axis = if axis < 0 then ndim + axis else axis in
 
   (* Check if we should use the simple 1D scatter or the strided version *)
-  if ndim = 1 && indices_ndim = 1 && updates_ndim = 1 then (
+  if ndim = 1 && indices_ndim = 1 && updates_ndim = 1 then
     (* Use simple 1D scatter kernel *)
     let axis_size = data_shape.(axis) in
     let inner_size = 1 in
@@ -549,7 +549,9 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ctx data_template indices
         (* Use sequential kernel when indices might have duplicates *)
         match mode with
         | `Set -> Printf.sprintf "scatter_sequential_%s" dtype_suffix
-        | `Add -> Printf.sprintf "scatter_add_%s" dtype_suffix  (* Add mode can still use parallel *)
+        | `Add ->
+            Printf.sprintf "scatter_add_%s"
+              dtype_suffix (* Add mode can still use parallel *)
       else
         match mode with
         | `Set -> Printf.sprintf "scatter_%s" dtype_suffix
@@ -603,12 +605,13 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ctx data_template indices
         ComputeCommandEncoder.dispatch_threadgroups encoder
           ~threadgroups_per_grid:grid_size ~threads_per_threadgroup:group_size;
         ComputeCommandEncoder.end_encoding encoder)
-  ) else (
+  else (
     (* Validate that indices and updates have the same rank as data *)
     if ndim <> indices_ndim then
       invalid_arg
-        (Printf.sprintf "scatter: data rank (%d) and indices rank (%d) must match"
-           ndim indices_ndim);
+        (Printf.sprintf
+           "scatter: data rank (%d) and indices rank (%d) must match" ndim
+           indices_ndim);
 
     (* Use strided scatter kernel for NumPy-style scatter *)
     let dtype_suffix = Internal.dtype_to_metal_type data_template.dtype in
@@ -634,106 +637,109 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ctx data_template indices
           updates.Internal.buffer.buffer;
 
         (* Set updates shape *)
-      let shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
-      for i = 0 to ndim - 1 do
-        Ctypes.(shape_arr +@ i <-@ Unsigned.UInt32.of_int updates_shape.(i))
-      done;
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp shape_arr)
-        ~length:(ndim * 4) ~index:3;
+        let shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
+        for i = 0 to ndim - 1 do
+          Ctypes.(shape_arr +@ i <-@ Unsigned.UInt32.of_int updates_shape.(i))
+        done;
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp shape_arr)
+          ~length:(ndim * 4) ~index:3;
 
-      (* Set output shape *)
-      let out_shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
-      for i = 0 to ndim - 1 do
-        Ctypes.(out_shape_arr +@ i <-@ Unsigned.UInt32.of_int data_shape.(i))
-      done;
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp out_shape_arr)
-        ~length:(ndim * 4) ~index:4;
+        (* Set output shape *)
+        let out_shape_arr = Ctypes.(allocate_n uint32_t ~count:ndim) in
+        for i = 0 to ndim - 1 do
+          Ctypes.(out_shape_arr +@ i <-@ Unsigned.UInt32.of_int data_shape.(i))
+        done;
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp out_shape_arr)
+          ~length:(ndim * 4) ~index:4;
 
-      (* Set output strides *)
-      let out_strides = get_strides out.Internal.view in
-      let strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
-      for i = 0 to ndim - 1 do
-        Ctypes.(strides_arr +@ i <-@ Int32.of_int out_strides.(i))
-      done;
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp strides_arr)
-        ~length:(ndim * 4) ~index:5;
+        (* Set output strides *)
+        let out_strides = get_strides out.Internal.view in
+        let strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
+        for i = 0 to ndim - 1 do
+          Ctypes.(strides_arr +@ i <-@ Int32.of_int out_strides.(i))
+        done;
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp strides_arr)
+          ~length:(ndim * 4) ~index:5;
 
-      (* Set indices strides *)
-      let indices_strides = get_strides indices.Internal.view in
-      let indices_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
-      for i = 0 to ndim - 1 do
-        Ctypes.(indices_strides_arr +@ i <-@ Int32.of_int indices_strides.(i))
-      done;
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp indices_strides_arr)
-        ~length:(ndim * 4) ~index:6;
+        (* Set indices strides *)
+        let indices_strides = get_strides indices.Internal.view in
+        let indices_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
+        for i = 0 to ndim - 1 do
+          Ctypes.(indices_strides_arr +@ i <-@ Int32.of_int indices_strides.(i))
+        done;
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp indices_strides_arr)
+          ~length:(ndim * 4) ~index:6;
 
-      (* Set updates strides *)
-      let updates_strides = get_strides updates.Internal.view in
-      let updates_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
-      for i = 0 to ndim - 1 do
-        Ctypes.(updates_strides_arr +@ i <-@ Int32.of_int updates_strides.(i))
-      done;
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp updates_strides_arr)
-        ~length:(ndim * 4) ~index:7;
+        (* Set updates strides *)
+        let updates_strides = get_strides updates.Internal.view in
+        let updates_strides_arr = Ctypes.(allocate_n int32_t ~count:ndim) in
+        for i = 0 to ndim - 1 do
+          Ctypes.(updates_strides_arr +@ i <-@ Int32.of_int updates_strides.(i))
+        done;
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp updates_strides_arr)
+          ~length:(ndim * 4) ~index:7;
 
-      (* Set ndim *)
-      let ndim_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int ndim)) in
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp ndim_val)
-        ~length:4 ~index:8;
+        (* Set ndim *)
+        let ndim_val =
+          Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int ndim))
+        in
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp ndim_val)
+          ~length:4 ~index:8;
 
-      (* Set axis *)
-      let axis_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int axis)) in
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp axis_val)
-        ~length:4 ~index:9;
+        (* Set axis *)
+        let axis_val =
+          Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int axis))
+        in
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp axis_val)
+          ~length:4 ~index:9;
 
-      (* Set offsets *)
-      let out_offset =
-        Ctypes.(
-          allocate uint32_t
-            (Unsigned.UInt32.of_int (get_offset out.Internal.view)))
-      in
-      let indices_offset =
-        Ctypes.(
-          allocate uint32_t
-            (Unsigned.UInt32.of_int (get_offset indices.Internal.view)))
-      in
-      let updates_offset =
-        Ctypes.(
-          allocate uint32_t
-            (Unsigned.UInt32.of_int (get_offset updates.Internal.view)))
-      in
+        (* Set offsets *)
+        let out_offset =
+          Ctypes.(
+            allocate uint32_t
+              (Unsigned.UInt32.of_int (get_offset out.Internal.view)))
+        in
+        let indices_offset =
+          Ctypes.(
+            allocate uint32_t
+              (Unsigned.UInt32.of_int (get_offset indices.Internal.view)))
+        in
+        let updates_offset =
+          Ctypes.(
+            allocate uint32_t
+              (Unsigned.UInt32.of_int (get_offset updates.Internal.view)))
+        in
 
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp out_offset)
-        ~length:4 ~index:10;
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp indices_offset)
-        ~length:4 ~index:11;
-      ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp updates_offset)
-        ~length:4 ~index:12;
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp out_offset)
+          ~length:4 ~index:10;
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp indices_offset)
+          ~length:4 ~index:11;
+        ComputeCommandEncoder.set_bytes encoder
+          ~bytes:Ctypes.(to_voidp updates_offset)
+          ~length:4 ~index:12;
 
-      let threads_per_group, num_groups =
-        Internal.compute_thread_groups updates_size
-      in
-      let grid_size =
-        { Metal.Size.width = num_groups; height = 1; depth = 1 }
-      in
-      let group_size =
-        { Metal.Size.width = threads_per_group; height = 1; depth = 1 }
-      in
+        let threads_per_group, num_groups =
+          Internal.compute_thread_groups updates_size
+        in
+        let grid_size =
+          { Metal.Size.width = num_groups; height = 1; depth = 1 }
+        in
+        let group_size =
+          { Metal.Size.width = threads_per_group; height = 1; depth = 1 }
+        in
 
-      ComputeCommandEncoder.dispatch_threadgroups encoder
-        ~threadgroups_per_grid:grid_size ~threads_per_threadgroup:group_size;
-      ComputeCommandEncoder.end_encoding encoder)
-  );
+        ComputeCommandEncoder.dispatch_threadgroups encoder
+          ~threadgroups_per_grid:grid_size ~threads_per_threadgroup:group_size;
+        ComputeCommandEncoder.end_encoding encoder));
 
   out
 

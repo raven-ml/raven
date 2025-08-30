@@ -350,65 +350,83 @@ module Make (B : S) = struct
   (* Indexing operations tests *)
   let test_grad_get () =
     (* Test getting a single row *)
-    let x = T.create ctx T.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
-    let grad_fn = T.grad (fun x -> T.sum (T.get [1] x)) in
+    let x =
+      T.create ctx T.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+    in
+    let grad_fn = T.grad (fun x -> T.sum (T.get [ 1 ] x)) in
     let grad = grad_fn x in
-    let expected = T.create ctx T.float32 [| 3; 3 |] 
-      [| 0.; 0.; 0.; 1.; 1.; 1.; 0.; 0.; 0. |] in
+    let expected =
+      T.create ctx T.float32 [| 3; 3 |] [| 0.; 0.; 0.; 1.; 1.; 1.; 0.; 0.; 0. |]
+    in
     check_rune ~eps "get single row" expected grad;
-    
+
     (* Test getting a single element *)
-    let grad_fn = T.grad (fun x -> T.get [1; 1] x) in
+    let grad_fn = T.grad (fun x -> T.get [ 1; 1 ] x) in
     let grad = grad_fn x in
-    let expected = T.create ctx T.float32 [| 3; 3 |] 
-      [| 0.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 0. |] in
+    let expected =
+      T.create ctx T.float32 [| 3; 3 |] [| 0.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 0. |]
+    in
     check_rune ~eps "get single element" expected grad
 
   let test_grad_slice () =
-    let x = T.create ctx T.float32 [| 3; 4 |] 
-      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |] in
-    
+    let x =
+      T.create ctx T.float32 [| 3; 4 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
+    in
+
     (* Test range slicing *)
-    let grad_fn = T.grad (fun x -> T.sum (T.slice [T.R (1, 3); T.R (0, 2)] x)) in
+    let grad_fn =
+      T.grad (fun x -> T.sum (T.slice [ T.R (1, 3); T.R (0, 2) ] x))
+    in
     let grad = grad_fn x in
-    let expected = T.create ctx T.float32 [| 3; 4 |] 
-      [| 0.; 0.; 0.; 0.; 1.; 1.; 0.; 0.; 1.; 1.; 0.; 0. |] in
+    let expected =
+      T.create ctx T.float32 [| 3; 4 |]
+        [| 0.; 0.; 0.; 0.; 1.; 1.; 0.; 0.; 1.; 1.; 0.; 0. |]
+    in
     check_rune ~eps "slice range" expected grad;
-    
+
     (* Test with step *)
-    let grad_fn = T.grad (fun x -> T.sum (T.slice [T.Rs (0, 3, 2)] x)) in
+    let grad_fn = T.grad (fun x -> T.sum (T.slice [ T.Rs (0, 3, 2) ] x)) in
     let grad = grad_fn x in
-    let expected = T.create ctx T.float32 [| 3; 4 |] 
-      [| 1.; 1.; 1.; 1.; 0.; 0.; 0.; 0.; 1.; 1.; 1.; 1. |] in
+    let expected =
+      T.create ctx T.float32 [| 3; 4 |]
+        [| 1.; 1.; 1.; 1.; 0.; 0.; 0.; 0.; 1.; 1.; 1.; 1. |]
+    in
     check_rune ~eps "slice with step" expected grad
 
   let test_grad_take () =
     let x = T.create ctx T.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
     let indices = T.create ctx T.int32 [| 3 |] [| 1l; 3l; 0l |] in
-    
+
     (* Test take without axis (flattens) *)
     let grad_fn = T.grad (fun x -> T.sum (T.take indices x)) in
     let grad = grad_fn x in
     let expected = T.create ctx T.float32 [| 5 |] [| 1.; 1.; 0.; 1.; 0. |] in
     check_rune ~eps "take" expected grad;
-    
+
     (* Test 2D take with axis *)
-    let x2 = T.create ctx T.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
+    let x2 =
+      T.create ctx T.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+    in
     let indices2 = T.create ctx T.int32 [| 2 |] [| 0l; 2l |] in
     let grad_fn2 = T.grad (fun x -> T.sum (T.take ~axis:1 indices2 x)) in
     let grad2 = grad_fn2 x2 in
-    let expected2 = T.create ctx T.float32 [| 3; 3 |] 
-      [| 1.; 0.; 1.; 1.; 0.; 1.; 1.; 0.; 1. |] in
+    let expected2 =
+      T.create ctx T.float32 [| 3; 3 |] [| 1.; 0.; 1.; 1.; 0.; 1.; 1.; 0.; 1. |]
+    in
     check_rune ~eps "take with axis" expected2 grad2
 
   let test_grad_take_along_axis () =
     let x = T.create ctx T.float32 [| 2; 3 |] [| 4.; 1.; 2.; 3.; 5.; 6. |] in
     let indices = T.create ctx T.int32 [| 2; 1 |] [| 0l; 1l |] in
-    
-    let grad_fn = T.grad (fun x -> T.sum (T.take_along_axis ~axis:1 indices x)) in
+
+    let grad_fn =
+      T.grad (fun x -> T.sum (T.take_along_axis ~axis:1 indices x))
+    in
     let grad = grad_fn x in
-    let expected = T.create ctx T.float32 [| 2; 3 |] 
-      [| 1.; 0.; 0.; 0.; 1.; 0. |] in
+    let expected =
+      T.create ctx T.float32 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 1.; 0. |]
+    in
     check_rune ~eps "take_along_axis" expected grad
 
   let test_grad_leaky_relu () =

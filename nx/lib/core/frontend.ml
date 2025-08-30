@@ -2404,13 +2404,15 @@ module Make (B : Backend_intf.S) = struct
     | Rs (start_idx, stop_idx, step_val) ->
         if step_val = 0 then
           Error.invalid ~op:"slice" ~what:"step" ~reason:"cannot be zero"
-            ~hint:"use positive step for forward slicing or negative for reverse"
+            ~hint:
+              "use positive step for forward slicing or negative for reverse"
             ();
         let start = if start_idx < 0 then dim_size + start_idx else start_idx in
         let stop = if stop_idx < 0 then dim_size + stop_idx else stop_idx in
-        let stop = 
-          if step_val > 0 then stop - 1  (* Make exclusive end inclusive for positive step *)
-          else stop + 1  (* Make exclusive end inclusive for negative step *)
+        let stop =
+          if step_val > 0 then
+            stop - 1 (* Make exclusive end inclusive for positive step *)
+          else stop + 1 (* Make exclusive end inclusive for negative step *)
         in
         let step = step_val in
         let rec collect acc i =
@@ -2563,9 +2565,11 @@ module Make (B : Backend_intf.S) = struct
                       let stop =
                         if stop_idx < 0 then dim_size + stop_idx else stop_idx
                       in
-                      let stop = 
-                        if step_val > 0 then stop - 1  (* Make exclusive end inclusive for positive step *)
-                        else stop + 1  (* Make exclusive end inclusive for negative step *)
+                      let stop =
+                        if step_val > 0 then stop - 1
+                          (* Make exclusive end inclusive for positive step *)
+                        else stop + 1
+                        (* Make exclusive end inclusive for negative step *)
                       in
                       let step = step_val in
                       (* Check if the range is empty *)
@@ -2776,12 +2780,14 @@ module Make (B : Backend_intf.S) = struct
                 && List.hd indices = normalize_index x_shape.(i) idx
             | R (s, e) ->
                 let s' = normalize_index x_shape.(i) s in
-                let e' = normalize_index x_shape.(i) e - 1 in  (* Make exclusive end inclusive *)
+                let e' = normalize_index x_shape.(i) e - 1 in
+                (* Make exclusive end inclusive *)
                 List.length indices = Stdlib.abs (e' - s') + 1
             | Rs (s, e, step) ->
                 let s' = normalize_index x_shape.(i) s in
                 let e' = normalize_index x_shape.(i) e in
-                let e' = if step > 0 then e' - 1 else e' + 1 in  (* Make exclusive end inclusive *)
+                let e' = if step > 0 then e' - 1 else e' + 1 in
+                (* Make exclusive end inclusive *)
                 List.length indices = Stdlib.abs (e' - s') + 1
             | A -> List.length indices = x_shape.(i)
             | _ -> false)
@@ -2801,16 +2807,20 @@ module Make (B : Backend_intf.S) = struct
               | A -> (0, x_shape.(i))
               | R (s, e) ->
                   let s' = normalize_index x_shape.(i) s in
-                  let e' = normalize_index x_shape.(i) e - 1 in (* Make exclusive end inclusive *)
+                  let e' = normalize_index x_shape.(i) e - 1 in
+                  (* Make exclusive end inclusive *)
                   if s' <= e' then (s', e' + 1) else (e', s' + 1)
               | Rs (s, e, step) ->
                   let s' = normalize_index x_shape.(i) s in
                   let e' = normalize_index x_shape.(i) e in
-                  let e' = if step > 0 then e' - 1 else e' + 1 in (* Make exclusive end inclusive *)
+                  let e' = if step > 0 then e' - 1 else e' + 1 in
+                  (* Make exclusive end inclusive *)
                   if step > 0 then
-                    if s' <= e' then (s', e' + 1) else (s', s')  (* Empty range *)
-                  else
-                    if s' >= e' then (e', s' + 1) else (s', s')  (* Empty range *)
+                    if s' <= e' then (s', e' + 1)
+                    else (s', s') (* Empty range *)
+                  else if s' >= e' then (e', s' + 1)
+                  else (s', s')
+                  (* Empty range *)
               | _ -> assert false)
             full_slice
         in
@@ -5669,8 +5679,7 @@ module Make (B : Backend_intf.S) = struct
       let result_reshaped = reshape final_shape result in
 
       (* The reshape already produces the correct layout *)
-      let result_corrected = result_reshaped
-      in
+      let result_corrected = result_reshaped in
 
       match bias with
       | None -> result_corrected
@@ -5892,8 +5901,7 @@ module Make (B : Backend_intf.S) = struct
     let sum_reshaped = reshape result_shape sum_pooled in
 
     (* The reshape already produces the correct layout *)
-    let sum_corrected = sum_reshaped
-    in
+    let sum_corrected = sum_reshaped in
 
     (* Compute divisor based on mode *)
     if count_include_pad && not ceil_mode then
@@ -6021,8 +6029,7 @@ module Make (B : Backend_intf.S) = struct
       let max_values = reshape result_shape max_pooled in
 
       (* The reshape already produces the correct layout *)
-      let max_values_corrected = max_values
-      in
+      let max_values_corrected = max_values in
 
       if not return_indices then (max_values_corrected, None)
       else
@@ -6068,8 +6075,7 @@ module Make (B : Backend_intf.S) = struct
         let final_indices = reshape result_shape kernel_idx in
 
         (* The reshape already produces the correct layout *)
-        let final_indices_corrected = final_indices
-        in
+        let final_indices_corrected = final_indices in
 
         (max_values_corrected, Some final_indices_corrected)
 
@@ -6203,8 +6209,7 @@ module Make (B : Backend_intf.S) = struct
       let min_values = reshape result_shape min_values_3d in
 
       (* The reshape already produces the correct layout *)
-      let min_values_corrected = min_values
-      in
+      let min_values_corrected = min_values in
 
       if not return_indices then (min_values_corrected, None)
       else (min_values_corrected, None)
