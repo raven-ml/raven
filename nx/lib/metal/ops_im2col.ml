@@ -446,76 +446,102 @@ let op_fold ctx t ~output_size ~kernel_size ~stride ~dilation ~padding =
       ComputeCommandEncoder.set_buffer encoder ~offset:0 ~index:1
         t.Internal.buffer.buffer;
 
-      (* Set dimensions and parameters *)
-      let params =
-        Ctypes.(allocate_n uint32_t ~count:(6 + (6 * n_spatial) + 2))
-      in
-
-      (* Basic dimensions *)
-      Ctypes.(params +@ 0 <-@ Unsigned.UInt32.of_int batch_size);
-      Ctypes.(params +@ 1 <-@ Unsigned.UInt32.of_int channels);
-      Ctypes.(params +@ 2 <-@ Unsigned.UInt32.of_int n_spatial);
-
-      (* Padded spatial dimensions *)
+      (* Set parameters individually to match kernel signature *)
+      
+      (* Buffer 2: output_size *)
+      let output_size_arr = Ctypes.(allocate_n uint32_t ~count:n_spatial) in
       for i = 0 to n_spatial - 1 do
-        Ctypes.(params +@ (3 + i) <-@ Unsigned.UInt32.of_int padded_size.(i))
+        Ctypes.(output_size_arr +@ i <-@ Unsigned.UInt32.of_int output_size.(i))
       done;
-
-      (* Kernel sizes *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + n_spatial + i)
-          <-@ Unsigned.UInt32.of_int kernel_size.(i))
-      done;
-
-      (* Strides *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + (2 * n_spatial) + i)
-          <-@ Unsigned.UInt32.of_int stride.(i))
-      done;
-
-      (* Dilations *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + (3 * n_spatial) + i)
-          <-@ Unsigned.UInt32.of_int dilation.(i))
-      done;
-
-      (* Padding offsets *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + (4 * n_spatial) + i)
-          <-@ Unsigned.UInt32.of_int (fst padding.(i)))
-      done;
-
-      (* Output spatial dimensions *)
-      for i = 0 to n_spatial - 1 do
-        Ctypes.(
-          params +@ (3 + (5 * n_spatial) + i)
-          <-@ Unsigned.UInt32.of_int output_spatial_dims.(i))
-      done;
-
-      Ctypes.(
-        params +@ (3 + (6 * n_spatial)) <-@ Unsigned.UInt32.of_int num_blocks);
-      Ctypes.(
-        params +@ (3 + (6 * n_spatial) + 1)
-        <-@ Unsigned.UInt32.of_int kernel_elements);
-
       ComputeCommandEncoder.set_bytes encoder
-        ~bytes:Ctypes.(to_voidp params)
-        ~length:((6 + (6 * n_spatial) + 2) * 4)
-        ~index:2;
+        ~bytes:Ctypes.(to_voidp output_size_arr)
+        ~length:(n_spatial * 4) ~index:2;
 
-      (* Dispatch kernel *)
-      let total_threads =
-        batch_size * num_blocks * channels * kernel_elements
-      in
-      let threads_per_group, num_groups =
-        Internal.compute_thread_groups total_threads
-      in
+      (* Buffer 3: kernel_size *)
+      let kernel_size_arr = Ctypes.(allocate_n uint32_t ~count:n_spatial) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(kernel_size_arr +@ i <-@ Unsigned.UInt32.of_int kernel_size.(i))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp kernel_size_arr)
+        ~length:(n_spatial * 4) ~index:3;
+
+      (* Buffer 4: stride *)
+      let stride_arr = Ctypes.(allocate_n uint32_t ~count:n_spatial) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(stride_arr +@ i <-@ Unsigned.UInt32.of_int stride.(i))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp stride_arr)
+        ~length:(n_spatial * 4) ~index:4;
+
+      (* Buffer 5: dilation *)
+      let dilation_arr = Ctypes.(allocate_n uint32_t ~count:n_spatial) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(dilation_arr +@ i <-@ Unsigned.UInt32.of_int dilation.(i))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp dilation_arr)
+        ~length:(n_spatial * 4) ~index:5;
+
+      (* Buffer 6: padding (pad_before, pad_after for each dim) *)
+      let padding_arr = Ctypes.(allocate_n uint32_t ~count:(n_spatial * 2)) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(padding_arr +@ (i * 2) <-@ Unsigned.UInt32.of_int (fst padding.(i)));
+        Ctypes.(padding_arr +@ ((i * 2) + 1) <-@ Unsigned.UInt32.of_int (snd padding.(i)))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp padding_arr)
+        ~length:(n_spatial * 2 * 4) ~index:6;
+
+      (* Buffer 7: out_spatial (output block spatial dimensions) *)
+      let out_spatial_arr = Ctypes.(allocate_n uint32_t ~count:n_spatial) in
+      for i = 0 to n_spatial - 1 do
+        Ctypes.(out_spatial_arr +@ i <-@ Unsigned.UInt32.of_int output_spatial_dims.(i))
+      done;
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp out_spatial_arr)
+        ~length:(n_spatial * 4) ~index:7;
+
+      (* Buffer 8: n_spatial *)
+      let n_spatial_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int n_spatial)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp n_spatial_val)
+        ~length:4 ~index:8;
+
+      (* Buffer 9: batch_size *)
+      let batch_size_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int batch_size)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp batch_size_val)
+        ~length:4 ~index:9;
+
+      (* Buffer 10: channels *)
+      let channels_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int channels)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp channels_val)
+        ~length:4 ~index:10;
+
+      (* Buffer 11: kernel_elements *)
+      let kernel_elements_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int kernel_elements)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp kernel_elements_val)
+        ~length:4 ~index:11;
+
+      (* Buffer 12: num_blocks *)
+      let num_blocks_val = Ctypes.(allocate uint32_t (Unsigned.UInt32.of_int num_blocks)) in
+      ComputeCommandEncoder.set_bytes encoder
+        ~bytes:Ctypes.(to_voidp num_blocks_val)
+        ~length:4 ~index:12;
+
+      (* Dispatch kernel with 3D grid matching kernel expectations *)
+      (* The kernel expects gid.x = spatial_idx, gid.y = channel, gid.z = batch *)
+      let padded_numel = Array.fold_left ( * ) 1 padded_size in
+      
+      let threads_per_group = 256 in
       let grid_size =
-        { Metal.Size.width = num_groups; height = 1; depth = 1 }
+        { Metal.Size.width = (padded_numel + threads_per_group - 1) / threads_per_group; 
+          height = channels; 
+          depth = batch_size }
       in
       let group_size =
         { Metal.Size.width = threads_per_group; height = 1; depth = 1 }

@@ -102,12 +102,18 @@ let kernel_unfold_float32 (input : (float, float32_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding input coordinates *)
@@ -217,12 +223,18 @@ let kernel_unfold_uint8 (input : (int, int8_unsigned_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding input coordinates *)
@@ -332,12 +344,18 @@ let kernel_unfold_float64 (input : (float, float64_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding input coordinates *)
@@ -447,12 +465,18 @@ let kernel_unfold_int32 (input : (int32, int32_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding input coordinates *)
@@ -562,12 +586,18 @@ let kernel_unfold_int64 (input : (int64, int64_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding input coordinates *)
@@ -680,12 +710,18 @@ let kernel_fold_float32 (input : (float, float32_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding output coordinates *)
@@ -798,12 +834,18 @@ let kernel_fold_float64 (input : (float, float64_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding output coordinates *)
@@ -911,12 +953,18 @@ let kernel_fold_uint8 (input : (int, int8_unsigned_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding output coordinates *)
@@ -1026,12 +1074,18 @@ let kernel_fold_int32 (input : (int32, int32_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding output coordinates *)
@@ -1140,12 +1194,18 @@ let kernel_fold_int64 (input : (int64, int64_elt) t)
 
       (* Iterate through all kernel positions *)
       for kernel_idx = 0 to kernel_elements - 1 do
-        (* Convert kernel index to kernel coordinates *)
-        (* Fix: Use reversed order for kernel to match row-major reshape *)
+        (* Convert kernel index to kernel coordinates using row-major order *)
+        (* This matches how the kernel is reshaped in correlate_nd_general *)
         let idx = ref kernel_idx in
+        (* Compute strides for row-major indexing *)
+        let kernel_strides = Array.make num_spatial_dims 1 in
+        for i = num_spatial_dims - 1 downto 1 do
+          kernel_strides.(i - 1) <- kernel_strides.(i) * kernel_size.(i)
+        done;
+        (* Convert flat index to coordinates *)
         for i = 0 to num_spatial_dims - 1 do
-          kernel_coords.(i) <- !idx mod kernel_size.(i);
-          idx := !idx / kernel_size.(i)
+          kernel_coords.(i) <- !idx / kernel_strides.(i);
+          idx := !idx mod kernel_strides.(i)
         done;
 
         (* Calculate corresponding output coordinates *)

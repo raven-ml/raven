@@ -34,12 +34,17 @@ kernel void unfold_float(device float* out [[buffer(0)]],
         temp /= out_spatial[i];
     }
     
-    // Convert kernel index to kernel coordinates
+    // Convert kernel index to kernel coordinates using row-major order
+    // This matches how the kernel is reshaped in correlate_nd_general
     temp = kernel_idx;
     uint kernel_coords[16];
-    for (int i = n_spatial - 1; i >= 0; i--) {
-        kernel_coords[i] = temp % kernel_size[i];
-        temp /= kernel_size[i];
+    for (uint i = 0; i < n_spatial; i++) {
+        uint stride_val = 1;
+        for (uint j = i + 1; j < n_spatial; j++) {
+            stride_val *= kernel_size[j];
+        }
+        kernel_coords[i] = temp / stride_val;
+        temp = temp % stride_val;
     }
     
     // Calculate input coordinates
@@ -133,7 +138,9 @@ kernel void fold_float(device float* out [[buffer(0)]],
         uint kernel_idx = 0;
         uint kernel_multiplier = 1;
         
-        for (int i = n_spatial - 1; i >= 0; i--) {
+        // Build kernel index using row-major order
+        uint kernel_coords_temp[16];
+        for (uint i = 0; i < n_spatial; i++) {
             int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
@@ -149,8 +156,17 @@ kernel void fold_float(device float* out [[buffer(0)]],
                 break;
             }
             
-            kernel_idx += kernel_coord * kernel_multiplier;
-            kernel_multiplier *= kernel_size[i];
+            kernel_coords_temp[i] = kernel_coord;
+        }
+        
+        if (contributes) {
+            // Convert kernel coordinates to flat index using row-major order
+            kernel_idx = 0;
+            kernel_multiplier = 1;
+            for (int i = n_spatial - 1; i >= 0; i--) {
+                kernel_idx += kernel_coords_temp[i] * kernel_multiplier;
+                kernel_multiplier *= kernel_size[i];
+            }
         }
         
         if (contributes) {
@@ -201,11 +217,17 @@ kernel void unfold_int(device int* out [[buffer(0)]],
         temp /= out_spatial[i];
     }
     
+    // Convert kernel index to kernel coordinates using row-major order
+    // This matches how the kernel is reshaped in correlate_nd_general
     temp = kernel_idx;
     uint kernel_coords[16];
-    for (int i = n_spatial - 1; i >= 0; i--) {
-        kernel_coords[i] = temp % kernel_size[i];
-        temp /= kernel_size[i];
+    for (uint i = 0; i < n_spatial; i++) {
+        uint stride_val = 1;
+        for (uint j = i + 1; j < n_spatial; j++) {
+            stride_val *= kernel_size[j];
+        }
+        kernel_coords[i] = temp / stride_val;
+        temp = temp % stride_val;
     }
     
     // Calculate input coordinates (input is already padded)
@@ -286,7 +308,9 @@ kernel void fold_int(device int* out [[buffer(0)]],
         uint kernel_idx = 0;
         uint kernel_multiplier = 1;
         
-        for (int i = n_spatial - 1; i >= 0; i--) {
+        // Build kernel index using row-major order
+        uint kernel_coords_temp[16];
+        for (uint i = 0; i < n_spatial; i++) {
             int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
@@ -301,8 +325,17 @@ kernel void fold_int(device int* out [[buffer(0)]],
                 break;
             }
             
-            kernel_idx += kernel_coord * kernel_multiplier;
-            kernel_multiplier *= kernel_size[i];
+            kernel_coords_temp[i] = kernel_coord;
+        }
+        
+        if (contributes) {
+            // Convert kernel coordinates to flat index using row-major order
+            kernel_idx = 0;
+            kernel_multiplier = 1;
+            for (int i = n_spatial - 1; i >= 0; i--) {
+                kernel_idx += kernel_coords_temp[i] * kernel_multiplier;
+                kernel_multiplier *= kernel_size[i];
+            }
         }
         
         if (contributes) {
@@ -353,11 +386,17 @@ kernel void unfold_double(device double* out [[buffer(0)]],
         temp /= out_spatial[i];
     }
     
+    // Convert kernel index to kernel coordinates using row-major order
+    // This matches how the kernel is reshaped in correlate_nd_general
     temp = kernel_idx;
     uint kernel_coords[16];
-    for (int i = n_spatial - 1; i >= 0; i--) {
-        kernel_coords[i] = temp % kernel_size[i];
-        temp /= kernel_size[i];
+    for (uint i = 0; i < n_spatial; i++) {
+        uint stride_val = 1;
+        for (uint j = i + 1; j < n_spatial; j++) {
+            stride_val *= kernel_size[j];
+        }
+        kernel_coords[i] = temp / stride_val;
+        temp = temp % stride_val;
     }
     
     uint padded_coords[16];
@@ -437,7 +476,9 @@ kernel void fold_double(device double* out [[buffer(0)]],
         uint kernel_idx = 0;
         uint kernel_multiplier = 1;
         
-        for (int i = n_spatial - 1; i >= 0; i--) {
+        // Build kernel index using row-major order
+        uint kernel_coords_temp[16];
+        for (uint i = 0; i < n_spatial; i++) {
             int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
@@ -452,8 +493,17 @@ kernel void fold_double(device double* out [[buffer(0)]],
                 break;
             }
             
-            kernel_idx += kernel_coord * kernel_multiplier;
-            kernel_multiplier *= kernel_size[i];
+            kernel_coords_temp[i] = kernel_coord;
+        }
+        
+        if (contributes) {
+            // Convert kernel coordinates to flat index using row-major order
+            kernel_idx = 0;
+            kernel_multiplier = 1;
+            for (int i = n_spatial - 1; i >= 0; i--) {
+                kernel_idx += kernel_coords_temp[i] * kernel_multiplier;
+                kernel_multiplier *= kernel_size[i];
+            }
         }
         
         if (contributes) {
@@ -501,11 +551,17 @@ kernel void unfold_long(device long* out [[buffer(0)]],
         temp /= out_spatial[i];
     }
     
+    // Convert kernel index to kernel coordinates using row-major order
+    // This matches how the kernel is reshaped in correlate_nd_general
     temp = kernel_idx;
     uint kernel_coords[16];
-    for (int i = n_spatial - 1; i >= 0; i--) {
-        kernel_coords[i] = temp % kernel_size[i];
-        temp /= kernel_size[i];
+    for (uint i = 0; i < n_spatial; i++) {
+        uint stride_val = 1;
+        for (uint j = i + 1; j < n_spatial; j++) {
+            stride_val *= kernel_size[j];
+        }
+        kernel_coords[i] = temp / stride_val;
+        temp = temp % stride_val;
     }
     
     // Calculate input coordinates (input is already padded)
@@ -586,7 +642,9 @@ kernel void fold_long(device long* out [[buffer(0)]],
         uint kernel_idx = 0;
         uint kernel_multiplier = 1;
         
-        for (int i = n_spatial - 1; i >= 0; i--) {
+        // Build kernel index using row-major order
+        uint kernel_coords_temp[16];
+        for (uint i = 0; i < n_spatial; i++) {
             int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
@@ -601,8 +659,17 @@ kernel void fold_long(device long* out [[buffer(0)]],
                 break;
             }
             
-            kernel_idx += kernel_coord * kernel_multiplier;
-            kernel_multiplier *= kernel_size[i];
+            kernel_coords_temp[i] = kernel_coord;
+        }
+        
+        if (contributes) {
+            // Convert kernel coordinates to flat index using row-major order
+            kernel_idx = 0;
+            kernel_multiplier = 1;
+            for (int i = n_spatial - 1; i >= 0; i--) {
+                kernel_idx += kernel_coords_temp[i] * kernel_multiplier;
+                kernel_multiplier *= kernel_size[i];
+            }
         }
         
         if (contributes) {
@@ -651,11 +718,17 @@ kernel void unfold_uchar(device uchar* out [[buffer(0)]],
         temp /= out_spatial[i];
     }
     
+    // Convert kernel index to kernel coordinates using row-major order
+    // This matches how the kernel is reshaped in correlate_nd_general
     temp = kernel_idx;
     uint kernel_coords[16];
-    for (int i = n_spatial - 1; i >= 0; i--) {
-        kernel_coords[i] = temp % kernel_size[i];
-        temp /= kernel_size[i];
+    for (uint i = 0; i < n_spatial; i++) {
+        uint stride_val = 1;
+        for (uint j = i + 1; j < n_spatial; j++) {
+            stride_val *= kernel_size[j];
+        }
+        kernel_coords[i] = temp / stride_val;
+        temp = temp % stride_val;
     }
     
     // Calculate input coordinates (input is already padded)
@@ -736,7 +809,9 @@ kernel void fold_uchar(device uchar* out [[buffer(0)]],
         uint kernel_idx = 0;
         uint kernel_multiplier = 1;
         
-        for (int i = n_spatial - 1; i >= 0; i--) {
+        // Build kernel index using row-major order
+        uint kernel_coords_temp[16];
+        for (uint i = 0; i < n_spatial; i++) {
             int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
@@ -751,8 +826,17 @@ kernel void fold_uchar(device uchar* out [[buffer(0)]],
                 break;
             }
             
-            kernel_idx += kernel_coord * kernel_multiplier;
-            kernel_multiplier *= kernel_size[i];
+            kernel_coords_temp[i] = kernel_coord;
+        }
+        
+        if (contributes) {
+            // Convert kernel coordinates to flat index using row-major order
+            kernel_idx = 0;
+            kernel_multiplier = 1;
+            for (int i = n_spatial - 1; i >= 0; i--) {
+                kernel_idx += kernel_coords_temp[i] * kernel_multiplier;
+                kernel_multiplier *= kernel_size[i];
+            }
         }
         
         if (contributes) {
@@ -804,11 +888,17 @@ kernel void unfold_half(device half* out [[buffer(0)]],
         temp /= out_spatial[i];
     }
     
+    // Convert kernel index to kernel coordinates using row-major order
+    // This matches how the kernel is reshaped in correlate_nd_general
     temp = kernel_idx;
     uint kernel_coords[16];
-    for (int i = n_spatial - 1; i >= 0; i--) {
-        kernel_coords[i] = temp % kernel_size[i];
-        temp /= kernel_size[i];
+    for (uint i = 0; i < n_spatial; i++) {
+        uint stride_val = 1;
+        for (uint j = i + 1; j < n_spatial; j++) {
+            stride_val *= kernel_size[j];
+        }
+        kernel_coords[i] = temp / stride_val;
+        temp = temp % stride_val;
     }
     
     uint input_coords[16];
@@ -888,7 +978,9 @@ kernel void fold_half(device half* out [[buffer(0)]],
         uint kernel_idx = 0;
         uint kernel_multiplier = 1;
         
-        for (int i = n_spatial - 1; i >= 0; i--) {
+        // Build kernel index using row-major order
+        uint kernel_coords_temp[16];
+        for (uint i = 0; i < n_spatial; i++) {
             int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
@@ -903,8 +995,17 @@ kernel void fold_half(device half* out [[buffer(0)]],
                 break;
             }
             
-            kernel_idx += kernel_coord * kernel_multiplier;
-            kernel_multiplier *= kernel_size[i];
+            kernel_coords_temp[i] = kernel_coord;
+        }
+        
+        if (contributes) {
+            // Convert kernel coordinates to flat index using row-major order
+            kernel_idx = 0;
+            kernel_multiplier = 1;
+            for (int i = n_spatial - 1; i >= 0; i--) {
+                kernel_idx += kernel_coords_temp[i] * kernel_multiplier;
+                kernel_multiplier *= kernel_size[i];
+            }
         }
         
         if (contributes) {
@@ -953,11 +1054,17 @@ kernel void unfold_char(device char* out [[buffer(0)]],
         temp /= out_spatial[i];
     }
     
+    // Convert kernel index to kernel coordinates using row-major order
+    // This matches how the kernel is reshaped in correlate_nd_general
     temp = kernel_idx;
     uint kernel_coords[16];
-    for (int i = n_spatial - 1; i >= 0; i--) {
-        kernel_coords[i] = temp % kernel_size[i];
-        temp /= kernel_size[i];
+    for (uint i = 0; i < n_spatial; i++) {
+        uint stride_val = 1;
+        for (uint j = i + 1; j < n_spatial; j++) {
+            stride_val *= kernel_size[j];
+        }
+        kernel_coords[i] = temp / stride_val;
+        temp = temp % stride_val;
     }
     
     uint input_coords[16];
@@ -1037,7 +1144,9 @@ kernel void fold_char(device char* out [[buffer(0)]],
         uint kernel_idx = 0;
         uint kernel_multiplier = 1;
         
-        for (int i = n_spatial - 1; i >= 0; i--) {
+        // Build kernel index using row-major order
+        uint kernel_coords_temp[16];
+        for (uint i = 0; i < n_spatial; i++) {
             int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
@@ -1052,8 +1161,17 @@ kernel void fold_char(device char* out [[buffer(0)]],
                 break;
             }
             
-            kernel_idx += kernel_coord * kernel_multiplier;
-            kernel_multiplier *= kernel_size[i];
+            kernel_coords_temp[i] = kernel_coord;
+        }
+        
+        if (contributes) {
+            // Convert kernel coordinates to flat index using row-major order
+            kernel_idx = 0;
+            kernel_multiplier = 1;
+            for (int i = n_spatial - 1; i >= 0; i--) {
+                kernel_idx += kernel_coords_temp[i] * kernel_multiplier;
+                kernel_multiplier *= kernel_size[i];
+            }
         }
         
         if (contributes) {
@@ -1104,11 +1222,17 @@ kernel void unfold_short(device short* out [[buffer(0)]],
         temp /= out_spatial[i];
     }
     
+    // Convert kernel index to kernel coordinates using row-major order
+    // This matches how the kernel is reshaped in correlate_nd_general
     temp = kernel_idx;
     uint kernel_coords[16];
-    for (int i = n_spatial - 1; i >= 0; i--) {
-        kernel_coords[i] = temp % kernel_size[i];
-        temp /= kernel_size[i];
+    for (uint i = 0; i < n_spatial; i++) {
+        uint stride_val = 1;
+        for (uint j = i + 1; j < n_spatial; j++) {
+            stride_val *= kernel_size[j];
+        }
+        kernel_coords[i] = temp / stride_val;
+        temp = temp % stride_val;
     }
     
     uint input_coords[16];
@@ -1188,7 +1312,9 @@ kernel void fold_short(device short* out [[buffer(0)]],
         uint kernel_idx = 0;
         uint kernel_multiplier = 1;
         
-        for (int i = n_spatial - 1; i >= 0; i--) {
+        // Build kernel index using row-major order
+        uint kernel_coords_temp[16];
+        for (uint i = 0; i < n_spatial; i++) {
             int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
@@ -1203,8 +1329,17 @@ kernel void fold_short(device short* out [[buffer(0)]],
                 break;
             }
             
-            kernel_idx += kernel_coord * kernel_multiplier;
-            kernel_multiplier *= kernel_size[i];
+            kernel_coords_temp[i] = kernel_coord;
+        }
+        
+        if (contributes) {
+            // Convert kernel coordinates to flat index using row-major order
+            kernel_idx = 0;
+            kernel_multiplier = 1;
+            for (int i = n_spatial - 1; i >= 0; i--) {
+                kernel_idx += kernel_coords_temp[i] * kernel_multiplier;
+                kernel_multiplier *= kernel_size[i];
+            }
         }
         
         if (contributes) {
@@ -1255,11 +1390,17 @@ kernel void unfold_ushort(device ushort* out [[buffer(0)]],
         temp /= out_spatial[i];
     }
     
+    // Convert kernel index to kernel coordinates using row-major order
+    // This matches how the kernel is reshaped in correlate_nd_general
     temp = kernel_idx;
     uint kernel_coords[16];
-    for (int i = n_spatial - 1; i >= 0; i--) {
-        kernel_coords[i] = temp % kernel_size[i];
-        temp /= kernel_size[i];
+    for (uint i = 0; i < n_spatial; i++) {
+        uint stride_val = 1;
+        for (uint j = i + 1; j < n_spatial; j++) {
+            stride_val *= kernel_size[j];
+        }
+        kernel_coords[i] = temp / stride_val;
+        temp = temp % stride_val;
     }
     
     uint input_coords[16];
@@ -1339,7 +1480,9 @@ kernel void fold_ushort(device ushort* out [[buffer(0)]],
         uint kernel_idx = 0;
         uint kernel_multiplier = 1;
         
-        for (int i = n_spatial - 1; i >= 0; i--) {
+        // Build kernel index using row-major order
+        uint kernel_coords_temp[16];
+        for (uint i = 0; i < n_spatial; i++) {
             int block_start = int(block_coords[i]) * int(stride[i]);
             int rel_pos = int(out_coords[i]) - block_start;
             
@@ -1354,8 +1497,17 @@ kernel void fold_ushort(device ushort* out [[buffer(0)]],
                 break;
             }
             
-            kernel_idx += kernel_coord * kernel_multiplier;
-            kernel_multiplier *= kernel_size[i];
+            kernel_coords_temp[i] = kernel_coord;
+        }
+        
+        if (contributes) {
+            // Convert kernel coordinates to flat index using row-major order
+            kernel_idx = 0;
+            kernel_multiplier = 1;
+            for (int i = n_spatial - 1; i >= 0; i--) {
+                kernel_idx += kernel_coords_temp[i] * kernel_multiplier;
+                kernel_multiplier *= kernel_size[i];
+            }
         }
         
         if (contributes) {

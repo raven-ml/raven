@@ -417,6 +417,36 @@ DEFINE_SCATTER_ADD(float)
 DEFINE_SCATTER_ADD(int)
 DEFINE_SCATTER_ADD(uchar)
 
+// ===== SEQUENTIAL SCATTER FOR DUPLICATE INDICES =====
+// This kernel processes indices sequentially to handle duplicates correctly
+// Only one thread does all the work to ensure ordering
+#define DEFINE_SCATTER_SEQUENTIAL(type) \
+kernel void scatter_sequential_##type(device type* out [[buffer(0)]], \
+                                     device const int* indices [[buffer(1)]], \
+                                     device const type* updates [[buffer(2)]], \
+                                     constant uint& axis_size [[buffer(3)]], \
+                                     constant uint& inner_size [[buffer(4)]], \
+                                     constant uint& indices_size [[buffer(5)]], \
+                                     uint gid [[thread_position_in_grid]]) { \
+    if (gid != 0) return; /* Only thread 0 does the work */ \
+    \
+    for (uint idx_pos = 0; idx_pos < indices_size; idx_pos++) { \
+        int idx = indices[idx_pos]; \
+        if (idx < 0) idx += axis_size; \
+        \
+        for (uint inner_pos = 0; inner_pos < inner_size; inner_pos++) { \
+            uint update_idx = idx_pos * inner_size + inner_pos; \
+            uint out_idx = uint(idx) * inner_size + inner_pos; \
+            out[out_idx] = updates[update_idx]; \
+        } \
+    } \
+}
+
+// Instantiate sequential scatter for needed types
+DEFINE_SCATTER_SEQUENTIAL(float)
+DEFINE_SCATTER_SEQUENTIAL(int)
+DEFINE_SCATTER_SEQUENTIAL(uchar)
+
 // ===== ASSIGN STRIDED OPERATIONS =====
 #define DEFINE_ASSIGN_STRIDED(type) \
 kernel void assign_strided_##type(device type* dst [[buffer(0)]], \
@@ -482,9 +512,8 @@ kernel void gather_strided_##type(device type* out [[buffer(0)]], \
         uint coord = temp % out_shape[i]; \
         temp /= out_shape[i]; \
         \
-        if (uint(i) == axis) { \
-            indices_idx += coord * indices_strides[i]; \
-        } else { \
+        indices_idx += coord * indices_strides[i]; \
+        if (uint(i) != axis) { \
             data_idx += coord * data_strides[i]; \
         } \
     } \
@@ -505,6 +534,110 @@ kernel void gather_strided_##type(device type* out [[buffer(0)]], \
 DEFINE_GATHER_STRIDED(float)
 DEFINE_GATHER_STRIDED(int)
 DEFINE_GATHER_STRIDED(uchar)
+
+// ===== SCATTER STRIDED OPERATIONS =====
+#define DEFINE_SCATTER_STRIDED(type) \
+kernel void scatter_strided_##type(device type* out [[buffer(0)]], \
+                                   device const int* indices [[buffer(1)]], \
+                                   device const type* updates [[buffer(2)]], \
+                                   constant uint* updates_shape [[buffer(3)]], \
+                                   constant uint* out_shape [[buffer(4)]], \
+                                   constant int* out_strides [[buffer(5)]], \
+                                   constant int* indices_strides [[buffer(6)]], \
+                                   constant int* updates_strides [[buffer(7)]], \
+                                   constant uint& ndim [[buffer(8)]], \
+                                   constant uint& axis [[buffer(9)]], \
+                                   constant uint& out_offset [[buffer(10)]], \
+                                   constant uint& indices_offset [[buffer(11)]], \
+                                   constant uint& updates_offset [[buffer(12)]], \
+                                   uint gid [[thread_position_in_grid]]) { \
+    uint total_size = 1; \
+    for (uint i = 0; i < ndim; i++) { \
+        total_size *= updates_shape[i]; \
+    } \
+    if (gid >= total_size) return; \
+    \
+    uint temp = gid; \
+    uint out_idx = out_offset; \
+    uint indices_idx = indices_offset; \
+    uint updates_idx = updates_offset; \
+    \
+    for (int i = int(ndim) - 1; i >= 0; i--) { \
+        uint coord = temp % updates_shape[i]; \
+        temp /= updates_shape[i]; \
+        \
+        indices_idx += coord * indices_strides[i]; \
+        updates_idx += coord * updates_strides[i]; \
+        if (uint(i) != axis) { \
+            out_idx += coord * out_strides[i]; \
+        } \
+    } \
+    \
+    int idx = indices[indices_idx]; \
+    \
+    int axis_size = int(out_shape[axis]); \
+    if (idx < 0) idx += axis_size; \
+    \
+    out_idx += uint(idx) * out_strides[axis]; \
+    \
+    out[out_idx] = updates[updates_idx]; \
+}
+
+#define DEFINE_SCATTER_ADD_STRIDED(type) \
+kernel void scatter_add_strided_##type(device type* out [[buffer(0)]], \
+                                       device const int* indices [[buffer(1)]], \
+                                       device const type* updates [[buffer(2)]], \
+                                       constant uint* updates_shape [[buffer(3)]], \
+                                       constant uint* out_shape [[buffer(4)]], \
+                                       constant int* out_strides [[buffer(5)]], \
+                                       constant int* indices_strides [[buffer(6)]], \
+                                       constant int* updates_strides [[buffer(7)]], \
+                                       constant uint& ndim [[buffer(8)]], \
+                                       constant uint& axis [[buffer(9)]], \
+                                       constant uint& out_offset [[buffer(10)]], \
+                                       constant uint& indices_offset [[buffer(11)]], \
+                                       constant uint& updates_offset [[buffer(12)]], \
+                                       uint gid [[thread_position_in_grid]]) { \
+    uint total_size = 1; \
+    for (uint i = 0; i < ndim; i++) { \
+        total_size *= updates_shape[i]; \
+    } \
+    if (gid >= total_size) return; \
+    \
+    uint temp = gid; \
+    uint out_idx = out_offset; \
+    uint indices_idx = indices_offset; \
+    uint updates_idx = updates_offset; \
+    \
+    for (int i = int(ndim) - 1; i >= 0; i--) { \
+        uint coord = temp % updates_shape[i]; \
+        temp /= updates_shape[i]; \
+        \
+        indices_idx += coord * indices_strides[i]; \
+        updates_idx += coord * updates_strides[i]; \
+        if (uint(i) != axis) { \
+            out_idx += coord * out_strides[i]; \
+        } \
+    } \
+    \
+    int idx = indices[indices_idx]; \
+    \
+    int axis_size = int(out_shape[axis]); \
+    if (idx < 0) idx += axis_size; \
+    \
+    out_idx += uint(idx) * out_strides[axis]; \
+    \
+    out[out_idx] += updates[updates_idx]; \
+}
+
+// Instantiate scatter_strided for needed types
+DEFINE_SCATTER_STRIDED(float)
+DEFINE_SCATTER_STRIDED(int)
+DEFINE_SCATTER_STRIDED(uchar)
+
+DEFINE_SCATTER_ADD_STRIDED(float)
+DEFINE_SCATTER_ADD_STRIDED(int)
+DEFINE_SCATTER_ADD_STRIDED(uchar)
 
 // Simplified Threefry random number generator
 kernel void threefry_int32(device int* out [[buffer(0)]],

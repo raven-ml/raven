@@ -2402,10 +2402,16 @@ module Make (B : Backend_intf.S) = struct
         in
         collect [] start
     | Rs (start_idx, stop_idx, step_val) ->
+        if step_val = 0 then
+          Error.invalid ~op:"slice" ~what:"step" ~reason:"cannot be zero"
+            ~hint:"use positive step for forward slicing or negative for reverse"
+            ();
         let start = if start_idx < 0 then dim_size + start_idx else start_idx in
         let stop = if stop_idx < 0 then dim_size + stop_idx else stop_idx in
-        let stop = stop - 1 in
-        (* Make exclusive end inclusive *)
+        let stop = 
+          if step_val > 0 then stop - 1  (* Make exclusive end inclusive for positive step *)
+          else stop + 1  (* Make exclusive end inclusive for negative step *)
+        in
         let step = step_val in
         let rec collect acc i =
           if step > 0 then
@@ -2557,8 +2563,10 @@ module Make (B : Backend_intf.S) = struct
                       let stop =
                         if stop_idx < 0 then dim_size + stop_idx else stop_idx
                       in
-                      let stop = stop - 1 in
-                      (* Make exclusive end inclusive *)
+                      let stop = 
+                        if step_val > 0 then stop - 1  (* Make exclusive end inclusive for positive step *)
+                        else stop + 1  (* Make exclusive end inclusive for negative step *)
+                      in
                       let step = step_val in
                       (* Check if the range is empty *)
                       let is_empty =
@@ -2766,10 +2774,14 @@ module Make (B : Backend_intf.S) = struct
             | I idx ->
                 List.length indices = 1
                 && List.hd indices = normalize_index x_shape.(i) idx
-            | R (s, e) | Rs (s, e, 1) ->
-                let s', e' =
-                  (normalize_index x_shape.(i) s, normalize_index x_shape.(i) e)
-                in
+            | R (s, e) ->
+                let s' = normalize_index x_shape.(i) s in
+                let e' = normalize_index x_shape.(i) e - 1 in  (* Make exclusive end inclusive *)
+                List.length indices = Stdlib.abs (e' - s') + 1
+            | Rs (s, e, step) ->
+                let s' = normalize_index x_shape.(i) s in
+                let e' = normalize_index x_shape.(i) e in
+                let e' = if step > 0 then e' - 1 else e' + 1 in  (* Make exclusive end inclusive *)
                 List.length indices = Stdlib.abs (e' - s') + 1
             | A -> List.length indices = x_shape.(i)
             | _ -> false)
@@ -2787,10 +2799,18 @@ module Make (B : Backend_intf.S) = struct
                   let idx' = normalize_index x_shape.(i) idx in
                   (idx', idx' + 1)
               | A -> (0, x_shape.(i))
-              | R (s, e) | Rs (s, e, 1) ->
+              | R (s, e) ->
+                  let s' = normalize_index x_shape.(i) s in
+                  let e' = normalize_index x_shape.(i) e - 1 in (* Make exclusive end inclusive *)
+                  if s' <= e' then (s', e' + 1) else (e', s' + 1)
+              | Rs (s, e, step) ->
                   let s' = normalize_index x_shape.(i) s in
                   let e' = normalize_index x_shape.(i) e in
-                  if s' <= e' then (s', e' + 1) else (e', s' + 1)
+                  let e' = if step > 0 then e' - 1 else e' + 1 in (* Make exclusive end inclusive *)
+                  if step > 0 then
+                    if s' <= e' then (s', e' + 1) else (s', s')  (* Empty range *)
+                  else
+                    if s' >= e' then (e', s' + 1) else (s', s')  (* Empty range *)
               | _ -> assert false)
             full_slice
         in
@@ -2883,9 +2903,8 @@ module Make (B : Backend_intf.S) = struct
                   (Printf.sprintf "out of bounds for shape %s"
                      (Shape.to_string x_shape))
                 ~hint:
-                  (Printf.sprintf
-                     "index %d at dim %d: %d (normalized from %d) ∉ [0, %d)"
-                     normalized_idx dim normalized_idx idx x_shape.(dim))
+                  (Printf.sprintf "index %d at dim %d: %d ∉ [0, %d)" dim dim
+                     normalized_idx x_shape.(dim))
                 ()
             else normalized_idx)
         indices
@@ -2911,9 +2930,8 @@ module Make (B : Backend_intf.S) = struct
                 ~reason:
                   (Format.asprintf "out of bounds for shape %a" Shape.pp x_shape)
                 ~hint:
-                  (Printf.sprintf
-                     "index %d at dim %d: %d (normalized from %d) ∉ [0, %d)"
-                     normalized_idx dim normalized_idx idx x_shape.(dim))
+                  (Printf.sprintf "index %d at dim %d: %d ∉ [0, %d)" dim dim
+                     normalized_idx x_shape.(dim))
                 ()
             else normalized_idx)
         indices
@@ -5650,14 +5668,8 @@ module Make (B : Backend_intf.S) = struct
       in
       let result_reshaped = reshape final_shape result in
 
-      (* For 2D convolutions, the unfold operation produces blocks in
-         column-major order (width-first), but we need row-major order
-         (height-first) for the output. So we need to transpose the last two
-         dimensions. *)
-      let result_corrected =
-        if num_spatial_dims = 2 then
-          transpose ~axes:[| 0; 1; 3; 2 |] result_reshaped
-        else result_reshaped
+      (* The reshape already produces the correct layout *)
+      let result_corrected = result_reshaped
       in
 
       match bias with
@@ -5879,18 +5891,8 @@ module Make (B : Backend_intf.S) = struct
     let result_shape = Array.concat [ prefix_shape; output_spatial ] in
     let sum_reshaped = reshape result_shape sum_pooled in
 
-    (* For 2D pooling, unfold produces blocks in column-major order, so we need
-       to transpose the last two dimensions *)
-    let sum_corrected =
-      if num_spatial_dims = 2 then
-        transpose
-          ~axes:
-            (Array.init x_ndim (fun i ->
-                 if i = x_ndim - 2 then x_ndim - 1
-                 else if i = x_ndim - 1 then x_ndim - 2
-                 else i))
-          sum_reshaped
-      else sum_reshaped
+    (* The reshape already produces the correct layout *)
+    let sum_corrected = sum_reshaped
     in
 
     (* Compute divisor based on mode *)
@@ -6018,18 +6020,8 @@ module Make (B : Backend_intf.S) = struct
       let result_shape = Array.concat [ prefix_shape; output_spatial ] in
       let max_values = reshape result_shape max_pooled in
 
-      (* For 2D pooling, unfold produces blocks in column-major order, so we
-         need to transpose the last two dimensions *)
-      let max_values_corrected =
-        if num_spatial_dims = 2 then
-          transpose
-            ~axes:
-              (Array.init x_ndim (fun i ->
-                   if i = x_ndim - 2 then x_ndim - 1
-                   else if i = x_ndim - 1 then x_ndim - 2
-                   else i))
-            max_values
-        else max_values
+      (* The reshape already produces the correct layout *)
+      let max_values_corrected = max_values
       in
 
       if not return_indices then (max_values_corrected, None)
@@ -6075,17 +6067,8 @@ module Make (B : Backend_intf.S) = struct
          more complex index arithmetic based on the spatial layout *)
         let final_indices = reshape result_shape kernel_idx in
 
-        (* For 2D pooling, transpose indices to match the corrected values *)
-        let final_indices_corrected =
-          if num_spatial_dims = 2 then
-            transpose
-              ~axes:
-                (Array.init x_ndim (fun i ->
-                     if i = x_ndim - 2 then x_ndim - 1
-                     else if i = x_ndim - 1 then x_ndim - 2
-                     else i))
-              final_indices
-          else final_indices
+        (* The reshape already produces the correct layout *)
+        let final_indices_corrected = final_indices
         in
 
         (max_values_corrected, Some final_indices_corrected)
@@ -6219,18 +6202,8 @@ module Make (B : Backend_intf.S) = struct
       let result_shape = Array.concat [ prefix_shape; output_spatial ] in
       let min_values = reshape result_shape min_values_3d in
 
-      (* For 2D pooling, unfold produces blocks in column-major order, so we
-         need to transpose the last two dimensions *)
-      let min_values_corrected =
-        if num_spatial_dims = 2 then
-          transpose
-            ~axes:
-              (Array.init x_ndim (fun i ->
-                   if i = x_ndim - 2 then x_ndim - 1
-                   else if i = x_ndim - 1 then x_ndim - 2
-                   else i))
-            min_values
-        else min_values
+      (* The reshape already produces the correct layout *)
+      let min_values_corrected = min_values
       in
 
       if not return_indices then (min_values_corrected, None)
