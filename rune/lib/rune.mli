@@ -4039,10 +4039,10 @@ module Rng : sig
 
   val uniform :
     key -> 'dev device -> ('a, 'b) dtype -> int array -> ('a, 'b, 'dev) t
-  (** Generate uniform random values in [0, 1).
+  (** Generate uniform random values in \[0, 1).
       
       [uniform key dtype shape] generates a tensor of the given shape with
-      values uniformly distributed in the half-open interval [0, 1).
+      values uniformly distributed in the half-open interval \[0, 1).
       
       @param key PRNG key for random generation
       @param dtype Data type of the output tensor
@@ -4066,7 +4066,7 @@ module Rng : sig
   (** Generate random integers in a range.
       
       [randint key ~min ~max shape] generates a tensor of integers uniformly
-      distributed in the half-open interval [min, max).
+      distributed in the half-open interval \[min, max).
       
       @param key PRNG key for random generation
       @param min Minimum value (inclusive)
@@ -4081,7 +4081,7 @@ module Rng : sig
       element is true with probability [p].
 
       @param key PRNG key for random generation
-      @param p Probability of true (must be in [0, 1])
+      @param p Probability of true (must be in \[0, 1])
       @param shape Shape of the output tensor
       @return Tensor with boolean random values *)
 
