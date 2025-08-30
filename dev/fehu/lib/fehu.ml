@@ -1,3 +1,5 @@
+module Visualization = Visualization
+
 module Space = struct
   type 'dev t =
     | Discrete of int
@@ -199,6 +201,135 @@ module Training = struct
     let std = Rune.std x ~axes:[| 0 |] ~keepdims:true in
     let std_eps = Rune.add std (Rune.scalar (Rune.device x) Rune.float32 eps) in
     Rune.div (Rune.sub x mean) std_eps
+
+  let compute_advantages ~rewards ~values ~gamma =
+    let n = Array.length rewards in
+    let advantages = Array.make n 0.0 in
+    let returns = Array.make n 0.0 in
+    
+    let running_return = ref 0.0 in
+    for i = n - 1 downto 0 do
+      running_return := rewards.(i) +. gamma *. !running_return;
+      returns.(i) <- !running_return;
+      advantages.(i) <- !running_return -. values.(i)
+    done;
+    
+    (advantages, returns)
+
+  let compute_policy_loss ~log_probs ~advantages ~normalize_advantages =
+    let advantages_t = Rune.create Rune.c Rune.float32 [| Array.length advantages |] advantages in
+    let log_probs_t = Rune.create Rune.c Rune.float32 [| Array.length log_probs |] log_probs in
+    
+    let advantages_t = 
+      if normalize_advantages then
+        normalize advantages_t ()
+      else advantages_t in
+    
+    let policy_loss = Rune.mul log_probs_t advantages_t in
+    Rune.neg (Rune.mean policy_loss ~axes:[| 0 |] ~keepdims:false)
+
+  let compute_grpo_loss ~log_probs ~ref_log_probs ~advantages ~beta =
+    let n = Array.length log_probs in
+    let log_probs_t = Rune.create Rune.c Rune.float32 [| n |] log_probs in
+    let ref_log_probs_t = Rune.create Rune.c Rune.float32 [| n |] ref_log_probs in
+    let advantages_t = Rune.create Rune.c Rune.float32 [| n |] advantages in
+    
+    let log_ratio = Rune.sub log_probs_t ref_log_probs_t in
+    let kl_penalty = Rune.mul_s log_ratio beta in
+    let grpo_advantages = Rune.sub advantages_t kl_penalty in
+    
+    let policy_loss = Rune.mul log_probs_t grpo_advantages in
+    Rune.neg (Rune.mean policy_loss ~axes:[| 0 |] ~keepdims:false)
+end
+
+module Trajectory = struct
+  type 'dev t = {
+    states: (float, Rune.float32_elt, 'dev) Rune.t array;
+    actions: (float, Rune.float32_elt, 'dev) Rune.t array;
+    rewards: float array;
+    log_probs: float array option;
+    values: float array option;
+    dones: bool array;
+  }
+
+  let create ~states ~actions ~rewards ?(log_probs=None) ?(values=None) ?(dones=[||]) () =
+    let n = Array.length states in
+    let dones = if Array.length dones = 0 then Array.make n false else dones in
+    { states; actions; rewards; log_probs; values; dones }
+
+  let length t = Array.length t.states
+
+  let concat trajectories =
+    let states = Array.concat (List.map (fun t -> t.states) trajectories) in
+    let actions = Array.concat (List.map (fun t -> t.actions) trajectories) in
+    let rewards = Array.concat (List.map (fun t -> t.rewards) trajectories) in
+    let log_probs = 
+      if List.exists (fun t -> t.log_probs = None) trajectories then None
+      else Some (Array.concat (List.map (fun t -> Option.get t.log_probs) trajectories))
+    in
+    let values =
+      if List.exists (fun t -> t.values = None) trajectories then None
+      else Some (Array.concat (List.map (fun t -> Option.get t.values) trajectories))
+    in
+    let dones = Array.concat (List.map (fun t -> t.dones) trajectories) in
+    { states; actions; rewards; log_probs; values; dones }
+end
+
+module Curriculum = struct
+  type 'dev t = {
+    stages: 'dev Env.t array;
+    current_stage: int ref;
+    advance_criterion: Training.stats -> bool;
+    window: Training.stats list ref;
+    window_size: int;
+  }
+
+  let create ~stages ~advance_criterion ?(window_size=100) () = {
+    stages;
+    current_stage = ref 0;
+    advance_criterion;
+    window = ref [];
+    window_size;
+  }
+
+  let current_env t = t.stages.(!(t.current_stage))
+
+  let update_stats t stats =
+    t.window := stats :: !(t.window);
+    if List.length !(t.window) > t.window_size then
+      t.window := List.filteri (fun i _ -> i < t.window_size) !(t.window)
+
+  let try_advance t =
+    if !(t.current_stage) < Array.length t.stages - 1 then
+      let recent_stats = !(t.window) in
+      if List.length recent_stats >= 10 then
+        let avg_stats = {
+          Training.episode_reward = 
+            (List.fold_left (fun acc s -> acc +. s.Training.episode_reward) 0.0 recent_stats)
+            /. float_of_int (List.length recent_stats);
+          episode_length =
+            (List.fold_left (fun acc s -> acc + s.Training.episode_length) 0 recent_stats)
+            / List.length recent_stats;
+          total_timesteps = 
+            List.fold_left (fun acc s -> acc + s.Training.total_timesteps) 0 recent_stats;
+          n_episodes = 
+            List.fold_left (fun acc s -> acc + s.Training.n_episodes) 0 recent_stats;
+          mean_reward =
+            (List.fold_left (fun acc s -> acc +. s.Training.mean_reward) 0.0 recent_stats)
+            /. float_of_int (List.length recent_stats);
+          std_reward = 0.0;
+        } in
+        if t.advance_criterion avg_stats then begin
+          incr t.current_stage;
+          t.window := [];
+          true
+        end else false
+      else false
+    else false
+
+  let reset t =
+    t.current_stage := 0;
+    t.window := []
 end
 
 module Envs = struct
