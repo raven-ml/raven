@@ -1,5 +1,0 @@
-(executable
- (public_name gemma)
- (package kaun)
- (name main)
- (libraries kaun rune))
