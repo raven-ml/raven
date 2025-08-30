@@ -1624,6 +1624,7 @@ module Make (B : Backend_intf.S) = struct
           if not (Array.for_all Fun.id seen) then
             Error.invalid ~op:"transpose" ~what:"axes"
               ~reason:"do not form a permutation" ();
+          (* Normalize negative axes *)
           Array.map
             (fun ax_val -> if ax_val < 0 then ax_val + r else ax_val)
             ax_arr
@@ -5419,6 +5420,55 @@ module Make (B : Backend_intf.S) = struct
     let arg = mul (mul x sqrt2_pi) inner in
     let y = tanh arg in
     mul half (mul x (add one y))
+
+  (* Error function (erf) using Abramowitz and Stegun approximation
+     erf(x) ≈ sign(x) * (1 - exp(-x² * (a₁t + a₂t² + a₃t³ + a₄t⁴ + a₅t⁵)))
+     where t = 1 / (1 + p|x|) and p = 0.3275911 *)
+  let erf x =
+    (* Constants for the approximation *)
+    let p = scalar_like x 0.3275911 in
+    let a1 = scalar_like x 0.254829592 in
+    let a2 = scalar_like x (-0.284496736) in
+    let a3 = scalar_like x 1.421413741 in
+    let a4 = scalar_like x (-1.453152027) in
+    let a5 = scalar_like x 1.061405429 in
+    
+    (* Get sign and absolute value *)
+    let sign_x = sign x in
+    let abs_x = abs x in
+    
+    (* t = 1 / (1 + p * |x|) *)
+    let one = scalar_like x 1.0 in
+    let t = div one (add one (mul p abs_x)) in
+    
+    (* Polynomial evaluation: a₁t + a₂t² + a₃t³ + a₄t⁴ + a₅t⁵ *)
+    let t2 = mul t t in
+    let t3 = mul t2 t in
+    let t4 = mul t3 t in
+    let t5 = mul t4 t in
+    
+    let poly = add (mul a1 t) (mul a2 t2) in
+    let poly = add poly (mul a3 t3) in
+    let poly = add poly (mul a4 t4) in
+    let poly = add poly (mul a5 t5) in
+    
+    (* exp(-x²) *)
+    let x2 = mul x x in
+    let exp_neg_x2 = exp (neg x2) in
+    
+    (* Final result: sign(x) * (1 - exp(-x²) * poly) *)
+    let result = sub one (mul exp_neg_x2 poly) in
+    mul sign_x result
+
+  (* Exact GELU using error function:
+     GELU(x) = 0.5 * x * (1 + erf(x / sqrt(2))) *)
+  let gelu x =
+    let half = scalar_like x 0.5 in
+    let one = scalar_like x 1.0 in
+    let sqrt2 = scalar_like x 1.4142135623730951 in
+    let x_over_sqrt2 = div x sqrt2 in
+    let erf_val = erf x_over_sqrt2 in
+    mul (mul half x) (add one erf_val)
 
   (* Soft-sign: x / (|x| + 1)*)
   let softsign x =

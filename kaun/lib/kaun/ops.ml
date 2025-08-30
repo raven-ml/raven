@@ -267,36 +267,21 @@ let layer_norm ?gamma ?beta ~dim ?(eps = 1e-5) ~elementwise_affine x =
   else normalized
 
 let embedding ~embedding ~embed_dim ?(scale = true) x =
-  (* TODO: add take/take_along_axis in nx *)
-  (* x is integer tensor of indices *)
+  (* Use Rune.take for differentiable embedding lookup *)
+  (* x must be an int32 tensor of indices *)
   let input_shape = shape x in
   let flat_indices = reshape [| -1 |] x in
-  let num_indices = (shape flat_indices).(0) in
-  let device_emb = device embedding in
-  let dtype_emb = dtype embedding in
-  let gathered = zeros device_emb dtype_emb [| num_indices; embed_dim |] in
-  (* Use to_array to get indices as array for iteration *)
-  let indices_array = to_array flat_indices in
-  Array.iteri
-    (fun i idx ->
-      (* Convert idx to int - assuming integer dtype, use Obj.magic safely *)
-      let idx_int =
-        try
-          let idx_raw = Obj.magic idx in
-          try Int32.to_int idx_raw
-          with _ -> (
-            try Int64.to_int idx_raw
-            with _ -> (
-              try idx_raw
-              with _ -> failwith "embedding: could not convert index to int"))
-        with _ -> failwith "embedding: input must be integer tensor"
-      in
-      let row = slice [ I idx_int ] embedding in
-      set_slice [ I i ] gathered row)
-    indices_array;
+  
+  (* Use take to gather embeddings at the specified indices *)
+  let gathered = take ~axis:0 flat_indices embedding in
+  
+  (* Reshape back to original shape plus embedding dimension *)
   let output_shape = Array.append input_shape [| embed_dim |] in
   let embedded = reshape output_shape gathered in
+  
   if scale then
+    let device_emb = device embedding in
+    let dtype_emb = dtype embedding in
     let scale_factor = Stdlib.sqrt (float_of_int embed_dim) in
     mul embedded (scalar device_emb dtype_emb scale_factor)
   else embedded
@@ -309,15 +294,14 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
     ~hidden_act ~use_bias () =
   (* Self-Attention *)
   let attn_output =
-    (* Project to Q, K, V - assuming weights are stored in HuggingFace format
-       (transposed) *)
-    let q = matmul hidden_states (transpose q_weight ~axes:[| 1; 0 |]) in
+    (* Project to Q, K, V - weights should be [hidden_size, hidden_size] *)
+    let q = matmul hidden_states q_weight in
     let q = if use_bias then Option.fold ~none:q ~some:(add q) q_bias else q in
 
-    let k = matmul hidden_states (transpose k_weight ~axes:[| 1; 0 |]) in
+    let k = matmul hidden_states k_weight in
     let k = if use_bias then Option.fold ~none:k ~some:(add k) k_bias else k in
 
-    let v = matmul hidden_states (transpose v_weight ~axes:[| 1; 0 |]) in
+    let v = matmul hidden_states v_weight in
     let v = if use_bias then Option.fold ~none:v ~some:(add v) v_bias else v in
 
     (* Multi-head attention reshape and compute *)
@@ -368,7 +352,7 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
     let context = reshape [| batch_size; seq_len; hidden_size |] context in
 
     (* Output projection *)
-    let output = matmul context (transpose attn_out_weight ~axes:[| 1; 0 |]) in
+    let output = matmul context attn_out_weight in
     let output =
       if use_bias then Option.fold ~none:output ~some:(add output) attn_out_bias
       else output
@@ -383,25 +367,14 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
   (* Add & Norm after attention *)
   let hidden_states = add hidden_states attn_output in
   let hidden_states =
-    let mean_val = mean hidden_states ~axes:[| 2 |] ~keepdims:true in
-    let variance =
-      let diff = sub hidden_states mean_val in
-      mean (mul diff diff) ~axes:[| 2 |] ~keepdims:true
-    in
-    let std =
-      sqrt
-        (add variance
-           (scalar (device hidden_states) (dtype hidden_states) layer_norm_eps))
-    in
-    let normalized = div (sub hidden_states mean_val) std in
-    add (mul normalized attn_gamma) attn_beta
+    layer_norm ~gamma:attn_gamma ~beta:attn_beta ~dim:hidden_size ~eps:layer_norm_eps ~elementwise_affine:true hidden_states
   in
 
   (* Feed-forward network *)
   let ffn_output =
     (* Intermediate linear *)
     let intermediate =
-      matmul hidden_states (transpose inter_weight ~axes:[| 1; 0 |])
+      matmul hidden_states inter_weight
     in
     let intermediate =
       if use_bias then
@@ -427,7 +400,7 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
     in
 
     (* Output linear *)
-    let output = matmul activated (transpose out_weight ~axes:[| 1; 0 |]) in
+    let output = matmul activated out_weight in
     let output =
       if use_bias then Option.fold ~none:output ~some:(add output) out_bias
       else output
@@ -441,15 +414,4 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
 
   (* Add & Norm after FFN *)
   let hidden_states = add hidden_states ffn_output in
-  let mean_val = mean hidden_states ~axes:[| 2 |] ~keepdims:true in
-  let variance =
-    let diff = sub hidden_states mean_val in
-    mean (mul diff diff) ~axes:[| 2 |] ~keepdims:true
-  in
-  let std =
-    sqrt
-      (add variance
-         (scalar (device hidden_states) (dtype hidden_states) layer_norm_eps))
-  in
-  let normalized = div (sub hidden_states mean_val) std in
-  add (mul normalized ffn_gamma) ffn_beta
+  layer_norm ~gamma:ffn_gamma ~beta:ffn_beta ~dim:hidden_size ~eps:layer_norm_eps ~elementwise_affine:true hidden_states

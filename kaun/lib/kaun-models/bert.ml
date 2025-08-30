@@ -329,7 +329,7 @@ let embeddings ~config () =
           ]);
     Kaun.apply =
       (fun params ~training ?rngs x ->
-        (* x is expected to be float tensor, but we need int indices *)
+        (* x is expected to be float tensor for compatibility with Kaun modules *)
         (* Cast back to int32 for embedding lookups *)
         let input_ids = Rune.cast Rune.int32 x in
         match params with
@@ -359,37 +359,22 @@ let embeddings ~config () =
               get_embedding_table "token_type_embeddings"
             in
 
-            (* Perform embedding lookups manually *)
+            (* Perform embedding lookups using Rune.take for differentiability *)
             let lookup_embeddings embedding_table indices =
               let batch_size = (Rune.shape indices).(0) in
               let seq_len = (Rune.shape indices).(1) in
               let embed_dim = (Rune.shape embedding_table).(1) in
-              let device = Rune.device embedding_table in
-              let dtype = Rune.dtype embedding_table in
 
-              (* Create output tensor *)
-              let result =
-                Rune.zeros device dtype [| batch_size; seq_len; embed_dim |]
-              in
-
-              (* Flatten indices and lookup *)
+              (* Flatten indices for take operation *)
               let indices_flat =
                 Rune.reshape [| batch_size * seq_len |] indices
               in
-              let indices_array = Rune.to_array indices_flat in
-
-              Array.iteri
-                (fun i idx ->
-                  let idx_int = Int32.to_int idx in
-                  let vocab_size = (Rune.shape embedding_table).(0) in
-                  if idx_int >= 0 && idx_int < vocab_size then
-                    let row = Rune.slice [ I idx_int; A ] embedding_table in
-                    let batch_idx = i / seq_len in
-                    let seq_idx = i mod seq_len in
-                    Rune.set_slice [ I batch_idx; I seq_idx; A ] result row)
-                indices_array;
-
-              result
+              
+              (* Use take to gather embeddings *)
+              let gathered = Rune.take ~axis:0 indices_flat embedding_table in
+              
+              (* Reshape to [batch_size, seq_len, embed_dim] *)
+              Rune.reshape [| batch_size; seq_len; embed_dim |] gathered
             in
 
             (* Apply token embeddings *)
@@ -677,7 +662,10 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
               | _ -> Kaun.Ptree.Record.empty
             in
             let field =
-              if String.ends_with ~suffix:"gamma" s then "gamma" else "beta"
+              if String.ends_with ~suffix:"weight" s then "gamma"
+              else if String.ends_with ~suffix:"bias" s then "beta"
+              else if String.ends_with ~suffix:"gamma" s then "gamma"
+              else "beta"
             in
             let updated_ln =
               Kaun.Ptree.Record.add field (Kaun.Ptree.Tensor tensor) ln_params
@@ -694,25 +682,30 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
                 let param_name = String.concat "." params in
 
                 (* Map HF param names to Kaun param names *)
-                let kaun_param =
+                (* HuggingFace stores weights transposed, so we need to transpose them *)
+                let kaun_param, needs_transpose =
                   match param_name with
-                  | "attention.self.query.weight" -> "q_weight"
-                  | "attention.self.key.weight" -> "k_weight"
-                  | "attention.self.value.weight" -> "v_weight"
-                  | "attention.output.dense.weight" -> "attn_out_weight"
-                  | "intermediate.dense.weight" -> "inter_weight"
-                  | "output.dense.weight" -> "out_weight"
-                  | "attention.self.query.bias" -> "q_bias"
-                  | "attention.self.key.bias" -> "k_bias"
-                  | "attention.self.value.bias" -> "v_bias"
-                  | "attention.output.dense.bias" -> "attn_out_bias"
-                  | "intermediate.dense.bias" -> "inter_bias"
-                  | "output.dense.bias" -> "out_bias"
-                  | "attention.output.LayerNorm.gamma" -> "attn_gamma"
-                  | "attention.output.LayerNorm.beta" -> "attn_beta"
-                  | "output.LayerNorm.gamma" -> "ffn_gamma"
-                  | "output.LayerNorm.beta" -> "ffn_beta"
-                  | _ -> param_name
+                  | "attention.self.query.weight" -> "q_weight", true
+                  | "attention.self.key.weight" -> "k_weight", true
+                  | "attention.self.value.weight" -> "v_weight", true
+                  | "attention.output.dense.weight" -> "attn_out_weight", true
+                  | "intermediate.dense.weight" -> "inter_weight", true
+                  | "output.dense.weight" -> "out_weight", true
+                  | "attention.self.query.bias" -> "q_bias", false
+                  | "attention.self.key.bias" -> "k_bias", false
+                  | "attention.self.value.bias" -> "v_bias", false
+                  | "attention.output.dense.bias" -> "attn_out_bias", false
+                  | "intermediate.dense.bias" -> "inter_bias", false
+                  | "output.dense.bias" -> "out_bias", false
+                  | "attention.output.LayerNorm.weight" -> "attn_gamma", false
+                  | "attention.output.LayerNorm.bias" -> "attn_beta", false
+                  | "output.LayerNorm.weight" -> "ffn_gamma", false
+                  | "output.LayerNorm.bias" -> "ffn_beta", false
+                  | "attention.output.LayerNorm.gamma" -> "attn_gamma", false
+                  | "attention.output.LayerNorm.beta" -> "attn_beta", false
+                  | "output.LayerNorm.gamma" -> "ffn_gamma", false
+                  | "output.LayerNorm.beta" -> "ffn_beta", false
+                  | _ -> param_name, false
                 in
 
                 (* Ensure we have enough layers *)
@@ -723,14 +716,22 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
 
                 (* Add param to the appropriate layer *)
                 let layer_params = List.nth !encoder_layers layer_idx_int in
+                (* Transpose weight matrices if needed (HuggingFace stores them transposed) *)
+                let final_tensor =
+                  if needs_transpose then
+                    Rune.transpose tensor ~axes:[| 1; 0 |]
+                  else tensor
+                in
                 layer_params :=
-                  Kaun.Ptree.Record.add kaun_param (Kaun.Ptree.Tensor tensor)
+                  Kaun.Ptree.Record.add kaun_param (Kaun.Ptree.Tensor final_tensor)
                     !layer_params
             | _ -> ())
         (* Pooler *)
         | s when String.starts_with ~prefix:"pooler.dense.weight" s ->
+            (* Transpose the pooler weight too (HuggingFace stores it transposed) *)
+            let transposed_tensor = Rune.transpose tensor ~axes:[| 1; 0 |] in
             pooler_params :=
-              Kaun.Ptree.Record.add "dense_weight" (Kaun.Ptree.Tensor tensor)
+              Kaun.Ptree.Record.add "dense_weight" (Kaun.Ptree.Tensor transposed_tensor)
                 !pooler_params
         | s when String.starts_with ~prefix:"pooler.dense.bias" s ->
             pooler_params :=
@@ -858,10 +859,10 @@ let forward bert inputs ?(training = false) ?(output_hidden_states = false)
         (* Extract CLS token from encoder output *)
         let cls_token = slice [ A; I 0; A ] last_hidden_state in
 
-        (* Apply dense + tanh - HuggingFace stores weights transposed *)
+        (* Apply dense + tanh - weights are already in correct shape after loading *)
         let pooled =
           add
-            (matmul cls_token (transpose pooler_weight ~axes:[| 1; 0 |]))
+            (matmul cls_token pooler_weight)
             pooler_bias
         in
         Some (tanh pooled)

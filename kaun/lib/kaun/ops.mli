@@ -70,7 +70,7 @@ val embedding :
   embedding:(float, 'a, 'b) Rune.t ->
   embed_dim:int ->
   ?scale:bool ->
-  ('c, 'd, 'e) Rune.t ->
+  (int32, Rune.int32_elt, 'b) Rune.t ->
   (float, 'a, 'b) Rune.t
 
 val transformer_encoder_layer :

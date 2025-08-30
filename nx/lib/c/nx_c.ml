@@ -629,7 +629,10 @@ let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
   out
 
 let op_contiguous x =
-  if is_contiguous x && offset x = 0 then x
+  (* Check if already contiguous with no offset and no broadcast dimensions *)
+  let strides_arr = strides x in
+  let has_broadcast = Array.exists (( = ) 0) strides_arr in
+  if is_contiguous x && offset x = 0 && not has_broadcast then x
   else
     let x' = ensure_materializable x in
     let x_ffi = to_ffi_tensor x' in

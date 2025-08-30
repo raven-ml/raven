@@ -10,7 +10,7 @@ let softmax = softmax
 
 (* Modern Activations *)
 
-let gelu = gelu_approx (* Rune provides the approximate version *)
+let gelu = gelu
 let silu = silu
 let swish = silu (* Alias for silu *)
 let mish = mish

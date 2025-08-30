@@ -3066,6 +3066,34 @@ val softmax : ?axes:int array -> (float, 'a) t -> (float, 'a) t
       - : float = 1.
     ]} *)
 
+val erf : (float, 'a) t -> (float, 'a) t
+(** [erf t] computes the error function.
+    
+    The error function erf(x) = (2/√π) ∫₀ˣ e^(-t²) dt.
+    Uses Abramowitz and Stegun approximation for numerical stability.
+    
+    {@ocaml[
+      # erf (scalar float32 0.) |> get_item []
+      - : float = 0.
+      # erf (scalar float32 1.) |> get_item [] |> Float.round_to_decimal ~digits:4
+      - : float = 0.8427
+    ]} *)
+
+val gelu : (float, 'a) t -> (float, 'a) t
+(** [gelu t] applies exact Gaussian Error Linear Unit.
+    
+    GELU(x) = 0.5 * x * (1 + erf(x / √2))
+    
+    This is the exact GELU using error function, more numerically stable
+    than the approximation for gradient computation.
+    
+    {@ocaml[
+      # gelu (scalar float32 0.) |> get_item []
+      - : float = 0.
+      # gelu (scalar float32 1.) |> get_item [] |> Float.round
+      - : float = 1.
+    ]} *)
+
 val gelu_approx : (float, 'a) t -> (float, 'a) t
 (** [gelu_approx t] applies Gaussian Error Linear Unit approximation.
 

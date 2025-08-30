@@ -297,7 +297,7 @@ let embeddings ~config () =
               get_embedding_table "position_embeddings"
             in
 
-            (* Perform embedding lookups manually *)
+            (* Perform embedding lookups using differentiable operations *)
             let lookup_embeddings embedding_table indices =
               let batch_size = (Rune.shape indices).(0) in
               let seq_len = (Rune.shape indices).(1) in
@@ -308,32 +308,17 @@ let embeddings ~config () =
                      "Embedding table has wrong shape: %d dims, expected 2"
                      (Array.length table_shape));
               let embed_dim = table_shape.(1) in
-              let device = Rune.device embedding_table in
-              let dtype = Rune.dtype embedding_table in
-
-              (* Create output tensor *)
-              let result =
-                Rune.zeros device dtype [| batch_size; seq_len; embed_dim |]
-              in
-
-              (* Flatten indices and lookup *)
+              
+              (* Flatten indices for gather operation *)
               let indices_flat =
                 Rune.reshape [| batch_size * seq_len |] indices
               in
-              let indices_array = Rune.to_array indices_flat in
-
-              Array.iteri
-                (fun i idx ->
-                  let idx_int = Int32.to_int idx in
-                  let vocab_size = (Rune.shape embedding_table).(0) in
-                  if idx_int >= 0 && idx_int < vocab_size then
-                    let row = Rune.slice [ I idx_int; A ] embedding_table in
-                    let batch_idx = i / seq_len in
-                    let seq_idx = i mod seq_len in
-                    Rune.set_slice [ I batch_idx; I seq_idx; A ] result row)
-                indices_array;
-
-              result
+              
+              (* Use take to gather embeddings - this is differentiable *)
+              let gathered = Rune.take ~axis:0 indices_flat embedding_table in
+              
+              (* Reshape to [batch_size, seq_len, embed_dim] *)
+              Rune.reshape [| batch_size; seq_len; embed_dim |] gathered
             in
 
             (* Apply token embeddings *)

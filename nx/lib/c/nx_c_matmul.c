@@ -100,7 +100,7 @@ static inline void iterate_batch(
   }
 
 // Generic matmul implementation
-#define MATMUL_OP_IMPL(suffix)                                                 \
+#define MATMUL_OP_IMPL(suffix, ELEM_SIZE)                                      \
   static void nx_c_matmul_##suffix(const ndarray_t *a, const ndarray_t *b,     \
                                    ndarray_t *c) {                             \
     if (!a || !b || !c) {                                                      \
@@ -173,9 +173,9 @@ static inline void iterate_batch(
     long b_cs = b->strides[b->ndim - 1];                                       \
     long c_rs = c->strides[c->ndim - 2];                                       \
     long c_cs = c->strides[c->ndim - 1];                                       \
-    void *a_data = (char *)a->data + a->offset;                                \
-    void *b_data = (char *)b->data + b->offset;                                \
-    void *c_data = (char *)c->data + c->offset;                                \
+    void *a_data = (char *)a->data + (ELEM_SIZE ? a->offset * ELEM_SIZE : a->offset / 2);  \
+    void *b_data = (char *)b->data + (ELEM_SIZE ? b->offset * ELEM_SIZE : b->offset / 2);  \
+    void *c_data = (char *)c->data + (ELEM_SIZE ? c->offset * ELEM_SIZE : c->offset / 2);  \
     caml_enter_blocking_section();                                             \
     iterate_batch(batch_shape, batch_nd, batch_strides_a, batch_strides_b,     \
                   batch_strides_c, a_data, b_data, c_data, 0, 0, 0, a_rs,      \
@@ -191,7 +191,7 @@ static inline void iterate_batch(
 // Macro to generate both kernel and implementation for matmul
 #define MATMUL_OP_FOR_TYPE(suffix, T, ACCUM_T, CAST) \
   MATMUL_OP_KERNEL(suffix, T, ACCUM_T, CAST)         \
-  MATMUL_OP_IMPL(suffix)
+  MATMUL_OP_IMPL(suffix, sizeof(T))
 
 // Low-precision float kernel (convert to float for mul/acc)
 #define LOW_PREC_MATMUL_KERNEL(suffix, T, TO_FLOAT, FROM_FLOAT)               \
@@ -218,7 +218,7 @@ static inline void iterate_batch(
   }
 
 // For low-precision, use the impl with the special kernel
-#define LOW_PREC_MATMUL_IMPL(suffix, T) MATMUL_OP_IMPL(suffix)
+#define LOW_PREC_MATMUL_IMPL(suffix, T) MATMUL_OP_IMPL(suffix, sizeof(T))
 
 // Complex16 matmul kernel
 #define COMPLEX16_MATMUL_KERNEL                                               \
@@ -294,7 +294,7 @@ static inline void iterate_batch(
       }                                                                        \
     }                                                                          \
   }                                                                            \
-  MATMUL_OP_IMPL(suffix)
+  MATMUL_OP_IMPL(suffix, 0)  /* int4 offset is in nibbles, handled in kernel */
 
 // Generate for integer types with wider accumulation
 GENERATE_MATMUL_OP(i8, int8_t, int64_t, (int8_t))
@@ -331,7 +331,7 @@ LOW_PREC_MATMUL_IMPL(f8e5m2, caml_ba_fp8_e5m2)
 
 // Complex16
 COMPLEX16_MATMUL_KERNEL
-MATMUL_OP_IMPL(c16)
+MATMUL_OP_IMPL(c16, sizeof(caml_ba_complex16))
 
 // Int4/Uint4
 INT4_MATMUL_IMPL(1, i4)

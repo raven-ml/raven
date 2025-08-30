@@ -28,9 +28,8 @@ let compute_strides shape_array =
     done;
     strides
 
-(* drop strides for unit dimensions *)
-let canonicalize_strides shape_array strides =
-  Array.mapi (fun i s -> if shape_array.(i) = 1 then 0 else s) strides
+(* canonicalize strides - keep original strides, don't force stride 0 for size 1 *)
+let canonicalize_strides _shape_array strides = strides
 
 (* Try to get concrete shape, return None if symbolic *)
 let eval_shape_opt shape = Symbolic_shape.eval shape
@@ -618,8 +617,16 @@ let flip view flip_axes_bools =
 
 (* Try to merge two views into one *)
 let merge v1 v2 =
-  (* Case 1: v2 is contiguous - v1 doesn't matter *)
-  if v2.layout = C_contiguous then Some v2
+  (* Case 1: v2 is contiguous - we can only merge if v1 is also contiguous
+     and can be safely reshaped to v2's shape without losing information. *)
+  if v2.layout = C_contiguous then (
+    if v1.layout = C_contiguous then
+      (* Both are contiguous - safe to reshape v1 to v2's shape *)
+      try Some (reshape v1 v2.shape) with _ -> None
+    else
+      (* v1 is not contiguous (e.g., transposed) - cannot merge without losing information *)
+      None
+  )
     (* Case 2: v1 is contiguous and same shape - use v2 *)
   else if v1.layout = C_contiguous && Symbolic_shape.equal v1.shape v2.shape
   then Some v2
