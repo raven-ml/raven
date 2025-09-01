@@ -385,16 +385,9 @@ module Gpt2_block = struct
 
   (* GPT-2 uses GELU activation *)
   let gelu x =
-    (* GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3))) *)
-    (* Using the tanh approximation that GPT-2 uses *)
-    let sqrt_2_over_pi = 0.7978845608 in
-    let x_cubed = mul x (mul x x) in
-    let inner = mul_s x_cubed 0.044715 in
-    let inner = add x inner in
-    let inner = mul_s inner sqrt_2_over_pi in
-    let inner = tanh inner in
-    let inner = add_s inner 1.0 in
-    mul x (mul_s inner 0.5)
+    (* Use exact GELU with erf for numerical stability *)
+    (* GELU(x) = 0.5 * x * (1 + erf(x / sqrt(2))) *)
+    Rune.gelu x
 
   (* Multi-head attention with causal masking *)
   let causal_attention ~n_head ~hidden_size ~params x =
