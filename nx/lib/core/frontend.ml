@@ -4385,8 +4385,137 @@ module Make (B : Backend_intf.S) = struct
         in
         B.op_gather flat_a diag_indices_t 0
     | [| a |], "ij->ji" -> transpose a
-    | _ ->
-        Error.failed ~op:"einsum" ~what:"general subscripts not implemented" ()
+    | _ -> (
+        (* need input operands *)
+        if Array.length operands = 0 then
+          invalid_arg "einsum: no input operands";
+        (* TODO: fix Str usage - https://stackoverflow.com/questions/74254573/ocaml-v5-0-module-str-is-unavailable *)
+        (* Consider: more general regexp ([a-z]+(,[a-z]+)+->[a-z]+) *)
+        match Str.split (Str.regexp "->") subscripts with
+        | [] | [ _ ] | _ :: _ :: _ :: _ ->
+            (* exactly one output *)
+            invalid_arg "einsum: subscript must contain exactly one '->'"
+        | [ lhs; rhs ] ->
+            let is_atoz char =
+              Char.compare 'a' char >= 0 || Char.compare char 'z' <= 0
+            in
+            let all_lowercase str = String.for_all is_atoz str in
+            let all_distinct str =
+              let module CharSet = Set.Make (Char) in
+              let chars =
+                String.fold_left
+                  (fun set char -> CharSet.add char set)
+                  CharSet.empty str
+              in
+              CharSet.cardinal chars = String.length str
+            in
+            let valid_indices str = all_lowercase str && all_distinct str in
+            let inputs = String.split_on_char ',' lhs in
+            (* check number of inputs *)
+            if List.length inputs <> Array.length operands then
+              invalid_arg
+                "einsum: number of inputs in subscripts not equal to number of \
+                 operands";
+            (* check output and inputs are all lowercase distinct chars, and
+               input and operand dims match *)
+            if not (valid_indices rhs) then
+              invalid_arg "einsum: output must have distinct a-z characters";
+            List.iteri
+              (fun i input ->
+                if not (valid_indices input) then
+                  invalid_arg
+                    (Printf.sprintf
+                       "einsum: operand %d must have distinct a-z characters" i);
+                if String.length input <> ndim operands.(i) then
+                  invalid_arg
+                    (Printf.sprintf
+                       "einsum: rank of input '%s' must match operand %d" input
+                       i))
+              inputs;
+            (* setup for checking conventions *)
+            let module IndexInfo = Map.Make (Char) in
+            let num_inputs, lhs_chars =
+              let process_char input_idx (axis_idx, info) char =
+                ( axis_idx + 1,
+                  IndexInfo.add_to_list char (input_idx, axis_idx) info )
+              in
+              let process_input (input_idx, info) input =
+                String.fold_left (process_char input_idx) (0, info) input
+              in
+              List.fold_left process_input (0, IndexInfo.empty) inputs
+            in
+            assert (num_inputs = List.length inputs);
+            let contracted_chars, output_chars =
+              IndexInfo.partition
+                (fun _ usages ->
+                  assert (not (List.is_empty usages));
+                  List.length usages > 1)
+                lhs_chars
+            in
+            (* rhs is subset of non-repeated chars *)
+            String.iter
+              (fun char ->
+                match IndexInfo.find_opt char output_chars with
+                | None ->
+                    invalid_arg
+                      (Printf.sprintf
+                         "einsum: character %c in output not bound in input"
+                         char)
+                | Some usages -> assert (List.length usages = 1))
+              rhs;
+            (* non-repeated chars is subset of output chars *)
+            IndexInfo.iter
+              (fun char _ ->
+                if not (String.contains rhs char) then
+                  invalid_arg
+                    (Printf.sprintf
+                       "einsum: non-repeated character %c bound in input must \
+                        be bound in output"
+                       char))
+              output_chars;
+            (* contracted_chars and output_chars are disjoint on their keys,
+           * because they were partitioned from lhs_chars, and at this stage in
+           * the code we know rhs has same characters as output_chars *)
+            (* setup for contractions *)
+            let module CharSet = Set.Make (Char) in
+            let op_sets =
+              Array.of_list inputs
+              |> Array.map (fun input -> CharSet.of_seq @@ String.to_seq input)
+            in
+            (* actually do contractions *)
+            let contract (op_i, i) op_j =
+              let j = i + 1 in
+              let to_contract = CharSet.inter op_sets.(i) op_sets.(j) in
+              if CharSet.is_empty to_contract then (outer op_i op_j, j)
+              else
+                let get_axes idx =
+                  CharSet.fold
+                    (fun char axes ->
+                      match IndexInfo.find_opt char contracted_chars with
+                      | None -> axes
+                      | Some usages ->
+                          List.filter_map
+                            (fun (input_idx, axis_idx) ->
+                              if input_idx = idx then Some axis_idx else None)
+                            usages
+                          @ axes)
+                    to_contract []
+                in
+                let axes_i = Array.of_list @@ get_axes i in
+                let axes_j = Array.of_list @@ get_axes j in
+                (tensordot ~axes:(axes_i, axes_j) op_i op_j, j)
+            in
+            let not_first = Array.sub operands 1 (Array.length operands - 1) in
+            let result, n =
+              Array.fold_left contract (operands.(0), 0) not_first
+            in
+            assert (n = Array.length operands);
+            let final_dims = Array.make (String.length rhs) 0 in
+            String.iteri (fun i char ->
+                final_dims.(i) <-
+                  let (input_idx, axis_idx) = List.hd @@ IndexInfo.find char output_chars in
+                  (shape operands.(input_idx)).(axis_idx)) rhs;
+            reshape final_dims result)
 
   let kron a b =
     (* Kronecker product implementation that creates proper block structure *)
