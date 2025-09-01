@@ -34,104 +34,9 @@ type ('a, 'b) t =
     }
       -> ('a, 'b) t
 
-let is_device_available = function
-  | Ocaml -> true
-  | Metal -> Rune_metal.is_available
-  | C -> (
-      match Sys.backend_type with
-      | Sys.(Native | Bytecode) -> true
-      | Sys.Other "js_of_ocaml" -> false
-      | _ -> false)
-
-(* Ocaml_context creation *)
-let create_context ?(device = Ocaml) () : context =
-  match device with
-  | Ocaml -> Ocaml_context (Nx_native.create_context ())
-  | C ->
-      if not (is_device_available C) then
-        failwith "C backend is not available on this platform"
-      else C_context (Nx_c.create_context ())
-  | Metal ->
-      if not (is_device_available Metal) then
-        failwith "Metal backend is not available on this platform"
-      else Metal_context (Rune_metal.create_context ())
-
-let default_device () : device_type =
-  if is_device_available Metal then Metal
-  else if is_device_available C then C
-  else Ocaml
-
-let create_default_context () : context =
-  create_context ~device:(default_device ()) ()
-
-(* Extract context from tensor *)
-let context : type a b. (a, b) t -> context = function
-  | Ocaml_tensor cpu_t -> Ocaml_context (Nx_native.context cpu_t)
-  | C_tensor c_t -> C_context (Nx_c.context c_t)
-  | Metal_tensor metal_t -> Metal_context (Rune_metal.context metal_t)
-  | Symbolic_tensor _ -> failwith "Symbolic tensors do not have a context"
-
-(* Device transfer operations *)
-let to_device (target_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t =
-  match (target_ctx, t) with
-  (* Already on correct device *)
-  | Ocaml_context _, Ocaml_tensor _
-  | Metal_context _, Metal_tensor _
-  | C_context _, C_tensor _ ->
-      t
-  (* CPU to Metal *)
-  | Metal_context metal_ctx, Ocaml_tensor cpu_t ->
-      let data = Nx_native.data cpu_t in
-      Metal_tensor (Rune_metal.op_const_array metal_ctx data)
-  (* Metal to CPU *)
-  | Ocaml_context ctx, Metal_tensor metal_t ->
-      let data = Rune_metal.data metal_t in
-      Ocaml_tensor (Nx_native.op_const_array ctx data)
-  (* CPU to C *)
-  | C_context c_ctx, Ocaml_tensor cpu_t ->
-      let data = Nx_native.data cpu_t in
-      C_tensor (Nx_c.op_const_array c_ctx data)
-  (* C to CPU *)
-  | Ocaml_context ctx, C_tensor c_t ->
-      let data = Nx_c.data c_t in
-      Ocaml_tensor (Nx_native.op_const_array ctx data)
-  (* Metal to C *)
-  | C_context c_ctx, Metal_tensor metal_t ->
-      let data = Rune_metal.data metal_t in
-      C_tensor (Nx_c.op_const_array c_ctx data)
-  (* C to Metal *)
-  | Metal_context metal_ctx, C_tensor c_t ->
-      let data = Nx_c.data c_t in
-      Metal_tensor (Rune_metal.op_const_array metal_ctx data)
-  (* Symbolic tensors update their context *)
-  | _, Symbolic_tensor _ -> failwith "Cannot transfer symbolic tensor to device"
-
-(* Lenses *)
-let view : type a b. (a, b) t -> Lazy_view.t = function
-  | Ocaml_tensor t -> Nx_native.view t
-  | Metal_tensor t -> Rune_metal.view t
-  | C_tensor t -> Nx_c.view t
-  | Symbolic_tensor { shape; _ } ->
-      Lazy_view.create (Symbolic_shape.of_ints shape)
-
-let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
-  | Ocaml_tensor t -> Nx_native.dtype t
-  | Metal_tensor t -> Rune_metal.dtype t
-  | C_tensor t -> Nx_c.dtype t
-  | Symbolic_tensor { dtype; _ } -> dtype
-
-let is_symbolic = function Symbolic_tensor _ -> true | _ -> false
-
-let data : type a b.
-    (a, b) t -> (a, b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t = function
-  | Ocaml_tensor t -> Nx_native.data t
-  | Metal_tensor t -> Rune_metal.data t
-  | C_tensor t -> Nx_c.data t
-  | Symbolic_tensor { id; _ } ->
-      failwith (Printf.sprintf "Cannot extract data from symbolic tensor %d" id)
-
 (* Effects - no context in most operations per new backend interface *)
 type _ Effect.t +=
+  | E_view : ('a, 'b) t -> Lazy_view.t Effect.t
   | E_buffer : {
       context : context;
       dtype : ('a, 'b) Dtype.t;
@@ -307,6 +212,106 @@ type _ Effect.t +=
       s : int array option;
     }
       -> (float, Dtype.float64_elt) t Effect.t
+  | E_psum : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
+
+let is_device_available = function
+  | Ocaml -> true
+  | Metal -> Rune_metal.is_available
+  | C -> (
+      match Sys.backend_type with
+      | Sys.(Native | Bytecode) -> true
+      | Sys.Other "js_of_ocaml" -> false
+      | _ -> false)
+
+(* Ocaml_context creation *)
+let create_context ?(device = Ocaml) () : context =
+  match device with
+  | Ocaml -> Ocaml_context (Nx_native.create_context ())
+  | C ->
+      if not (is_device_available C) then
+        failwith "C backend is not available on this platform"
+      else C_context (Nx_c.create_context ())
+  | Metal ->
+      if not (is_device_available Metal) then
+        failwith "Metal backend is not available on this platform"
+      else Metal_context (Rune_metal.create_context ())
+
+let default_device () : device_type =
+  if is_device_available Metal then Metal
+  else if is_device_available C then C
+  else Ocaml
+
+let create_default_context () : context =
+  create_context ~device:(default_device ()) ()
+
+(* Extract context from tensor *)
+let context : type a b. (a, b) t -> context = function
+  | Ocaml_tensor cpu_t -> Ocaml_context (Nx_native.context cpu_t)
+  | C_tensor c_t -> C_context (Nx_c.context c_t)
+  | Metal_tensor metal_t -> Metal_context (Rune_metal.context metal_t)
+  | Symbolic_tensor _ -> failwith "Symbolic tensors do not have a context"
+
+(* Device transfer operations *)
+let to_device (target_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t =
+  match (target_ctx, t) with
+  (* Already on correct device *)
+  | Ocaml_context _, Ocaml_tensor _
+  | Metal_context _, Metal_tensor _
+  | C_context _, C_tensor _ ->
+      t
+  (* CPU to Metal *)
+  | Metal_context metal_ctx, Ocaml_tensor cpu_t ->
+      let data = Nx_native.data cpu_t in
+      Metal_tensor (Rune_metal.op_const_array metal_ctx data)
+  (* Metal to CPU *)
+  | Ocaml_context ctx, Metal_tensor metal_t ->
+      let data = Rune_metal.data metal_t in
+      Ocaml_tensor (Nx_native.op_const_array ctx data)
+  (* CPU to C *)
+  | C_context c_ctx, Ocaml_tensor cpu_t ->
+      let data = Nx_native.data cpu_t in
+      C_tensor (Nx_c.op_const_array c_ctx data)
+  (* C to CPU *)
+  | Ocaml_context ctx, C_tensor c_t ->
+      let data = Nx_c.data c_t in
+      Ocaml_tensor (Nx_native.op_const_array ctx data)
+  (* Metal to C *)
+  | C_context c_ctx, Metal_tensor metal_t ->
+      let data = Rune_metal.data metal_t in
+      C_tensor (Nx_c.op_const_array c_ctx data)
+  (* C to Metal *)
+  | Metal_context metal_ctx, C_tensor c_t ->
+      let data = Nx_c.data c_t in
+      Metal_tensor (Rune_metal.op_const_array metal_ctx data)
+  (* Symbolic tensors update their context *)
+  | _, Symbolic_tensor _ -> failwith "Cannot transfer symbolic tensor to device"
+
+(* Lenses *)
+let view (type a b) (x : (a, b) t) : Lazy_view.t =
+  try Effect.perform (E_view x)
+  with Effect.Unhandled _ -> (
+    match x with
+    | Ocaml_tensor t -> Nx_native.view t
+    | Metal_tensor t -> Rune_metal.view t
+    | C_tensor t -> Nx_c.view t
+    | Symbolic_tensor { shape; _ } ->
+        Lazy_view.create (Symbolic_shape.of_ints shape))
+
+let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
+  | Ocaml_tensor t -> Nx_native.dtype t
+  | Metal_tensor t -> Rune_metal.dtype t
+  | C_tensor t -> Nx_c.dtype t
+  | Symbolic_tensor { dtype; _ } -> dtype
+
+let is_symbolic = function Symbolic_tensor _ -> true | _ -> false
+
+let data : type a b.
+    (a, b) t -> (a, b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t = function
+  | Ocaml_tensor t -> Nx_native.data t
+  | Metal_tensor t -> Rune_metal.data t
+  | C_tensor t -> Nx_c.data t
+  | Symbolic_tensor { id; _ } ->
+      failwith (Printf.sprintf "Cannot extract data from symbolic tensor %d" id)
 
 (* Helper functions for different operation types *)
 
@@ -511,6 +516,12 @@ let op_recip t_in =
   unary_op
     (fun () -> E_recip { t_in })
     Nx_native.op_recip Rune_metal.op_recip Nx_c.op_recip t_in
+
+(* Collective primitive: parallel sum across mapped axis, to be handled by
+   vmap. *)
+let op_psum t_in =
+  try Effect.perform (E_psum { t_in })
+  with Effect.Unhandled _ -> failwith "psum must be used under vmap"
 
 (* Reduction operations *)
 let op_reduce_sum ~axes ~keepdims t_in =
