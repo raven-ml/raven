@@ -867,3 +867,5 @@ let op_as_strided t_in new_shape new_strides_in_elements offset_in_elements =
              offset_in_elements)
     | Symbolic_tensor _ ->
         failwith "op_as_strided: cannot operate on symbolic tensor")
+
+let op_associative_scan = Obj.magic ()

@@ -335,4 +335,7 @@ module type S = sig
       strided views (e.g., native with Bigarray) can implement this as
       zero-copy. Other backends may fall back to copying data if necessary.
       Raises if the view would access out-of-bounds memory. *)
+
+  val op_associative_scan :
+    axis:int -> op:[ `Sum | `Prod | `Max | `Min ] -> ('a, 'b) t -> ('a, 'b) t
 end

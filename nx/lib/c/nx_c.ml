@@ -1157,3 +1157,5 @@ let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
 
   (* Return tensor with the same buffer but new view - no data copying *)
   { t with view = new_view }
+
+let op_associative_scan = Obj.magic ()
