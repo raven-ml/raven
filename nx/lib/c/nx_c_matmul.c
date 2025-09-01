@@ -118,7 +118,27 @@ static inline void iterate_batch(
     long kk = b->shape[b->ndim - 2];                                           \
     long n = b->shape[b->ndim - 1];                                            \
     if (k != kk) {                                                             \
-      caml_failwith("nx_c_matmul_" #suffix ": inner dimension mismatch");      \
+      /* Build shape strings for error message */                              \
+      char shape_a_str[256] = "[";                                             \
+      char shape_b_str[256] = "[";                                             \
+      for (int i = 0; i < a->ndim; i++) {                                      \
+        char buf[32];                                                          \
+        snprintf(buf, sizeof(buf), "%s%ld", i > 0 ? "," : "", a->shape[i]);   \
+        strcat(shape_a_str, buf);                                              \
+      }                                                                        \
+      strcat(shape_a_str, "]");                                                \
+      for (int i = 0; i < b->ndim; i++) {                                      \
+        char buf[32];                                                          \
+        snprintf(buf, sizeof(buf), "%s%ld", i > 0 ? "," : "", b->shape[i]);   \
+        strcat(shape_b_str, buf);                                              \
+      }                                                                        \
+      strcat(shape_b_str, "]");                                                \
+      char msg[512];                                                           \
+      snprintf(msg, sizeof(msg),                                               \
+               "dot: cannot contract %s (last axis: %ld) to %s (axis %d: %ld) "\
+               "(size %ld≠%ld)",                                               \
+               shape_a_str, k, shape_b_str, b->ndim - 2, kk, k, kk);           \
+      caml_invalid_argument(msg);                                              \
     }                                                                          \
     if (c->shape[c->ndim - 2] != m || c->shape[c->ndim - 1] != n) {            \
       caml_failwith("nx_c_matmul_" #suffix ": output shape mismatch");         \
