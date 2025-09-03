@@ -713,3 +713,32 @@ let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
 
   (* Return tensor with the same buffer but new view *)
   { t with view = new_view }
+
+let op_associative_scan ~axis ~op t =
+  let shape = Internal.shape t in
+  let dims_n = Array.length shape in
+  let norm_axis = if axis < 0 then axis + dims_n else axis in
+
+  if dims_n = 0 && axis <> 0 && axis <> -1 then
+    Error.failed ~op:"op_associative_scan"
+      ~what:(Printf.sprintf "axis %i out of bounds for scalar tensor" axis)
+      ()
+  else if dims_n = 0 then Internal.copy t
+  else if norm_axis < 0 || axis >= dims_n then
+    Error.failed ~op:"op_associative_scan"
+      ~what:
+        (Printf.sprintf "axis %i out of bounds for tensor (rank %i)" axis dims_n)
+      ()
+  else
+    let ctx = t.context in
+    let size = Internal.numel t in
+
+    if size = 0 then Internal.copy t
+    else
+      let dtype = t.dtype in
+      let out_tensor =
+        op_buffer ctx dtype size |> fun t ->
+        with_view t (Lazy_view.create (Symbolic_shape.of_ints shape))
+      in
+
+      Ops_cumulate.cumulate ~axis:norm_axis ~op t out_tensor

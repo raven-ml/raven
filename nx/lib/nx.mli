@@ -3546,6 +3546,11 @@ val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
 
     Functions to iterate over and transform arrays. *)
 
+val cumsum : axis:int -> ('a, 'b) t -> ('a, 'b) t
+val cumprod : axis:int -> ('a, 'b) t -> ('a, 'b) t
+val cummin : axis:int -> ('a, 'b) t -> ('a, 'b) t
+val cummax : axis:int -> ('a, 'b) t -> ('a, 'b) t
+
 val map_item : ('a -> 'a) -> ('a, 'b) t -> ('a, 'b) t
 (** [map_item f t] applies [f] to each element.
 
