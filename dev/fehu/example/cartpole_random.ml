@@ -5,7 +5,7 @@ module Rng = Rune.Rng
 
 let () =
   (* Create the CartPole environment *)
-  let env = Envs.cartpole () in
+  let env = Classic.cartpole () in
 
   Printf.printf "CartPole environment created!\n";
   Printf.printf "Observation space: Box with shape [|4|]\n";

@@ -3,6 +3,10 @@
     Fehu provides RL-specific components that compose with Kaun for neural
     networks. Users should use Kaun models for policies and value functions. *)
 
+(** {1 Visualization} *)
+
+module Visualization = Visualization
+
 (** {1 Spaces} *)
 
 module Space : sig
@@ -117,6 +121,82 @@ module Training : sig
     unit ->
     (float, Rune.float32_elt, 'dev) Rune.t
   (** Normalize tensor to zero mean and unit variance *)
+
+  val compute_advantages :
+    rewards:float array ->
+    values:float array ->
+    gamma:float ->
+    float array * float array
+  (** Compute advantages for policy gradient methods. Returns (advantages, returns) *)
+
+  val compute_policy_loss :
+    log_probs:float array ->
+    advantages:float array ->
+    normalize_advantages:bool ->
+    (float, Rune.float32_elt, [ `c ]) Rune.t
+  (** Compute REINFORCE policy gradient loss *)
+
+  val compute_grpo_loss :
+    log_probs:float array ->
+    ref_log_probs:float array ->
+    advantages:float array ->
+    beta:float ->
+    (float, Rune.float32_elt, [ `c ]) Rune.t
+  (** Compute GRPO (Group Relative Policy Optimization) loss *)
+end
+
+(** {1 Trajectories} *)
+
+module Trajectory : sig
+  type 'dev t = {
+    states : (float, Rune.float32_elt, 'dev) Rune.t array;
+    actions : (float, Rune.float32_elt, 'dev) Rune.t array;
+    rewards : float array;
+    log_probs : float array option;
+    values : float array option;
+    dones : bool array;
+  }
+
+  val create :
+    states:(float, Rune.float32_elt, 'dev) Rune.t array ->
+    actions:(float, Rune.float32_elt, 'dev) Rune.t array ->
+    rewards:float array ->
+    ?log_probs:float array option ->
+    ?values:float array option ->
+    ?dones:bool array ->
+    unit ->
+    'dev t
+
+  val length : 'dev t -> int
+  
+  val concat : 'dev t list -> 'dev t
+  (** Concatenate multiple trajectories into one *)
+end
+
+(** {1 Curriculum Learning} *)
+
+module Curriculum : sig
+  type 'dev t
+
+  val create :
+    stages:'dev Env.t array ->
+    advance_criterion:(Training.stats -> bool) ->
+    ?window_size:int ->
+    unit ->
+    'dev t
+  (** Create curriculum with multiple environment stages *)
+
+  val current_env : 'dev t -> 'dev Env.t
+  (** Get current environment in curriculum *)
+
+  val update_stats : 'dev t -> Training.stats -> unit
+  (** Update curriculum with latest training statistics *)
+
+  val try_advance : 'dev t -> bool
+  (** Try to advance to next stage. Returns true if advanced *)
+
+  val reset : 'dev t -> unit
+  (** Reset curriculum to first stage *)
 end
 
 (** {1 Common Environments} *)
