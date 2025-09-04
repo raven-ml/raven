@@ -1,6 +1,6 @@
 (library
  (name nx_core)
  (public_name nx.core)
- (libraries bigarray_ext)
+ (libraries str bigarray_ext)
  (instrumentation
   (backend landmarks)))
