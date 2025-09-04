@@ -4460,9 +4460,9 @@ module Make (B : Backend_intf.S) = struct
               let dim_b = shape_b.(axis_b) in
               if dim_a <> dim_b then
                 invalid_arg
-                  "dimension mismatch: index var '%c' (axis %d) has dim. %d on \
-                   left, but has (on axis %d) dim. %d on the right"
-                  char axis_a dim_a axis_b dim_b;
+                  "index var '%c' must have consistent dimensions (%d on the \
+                   left, %d on the right)"
+                  char dim_a dim_b;
               contractions := (axis_a, axis_b) :: !contractions;
               Hashtbl.remove kept_b_vars char);
       (* Iterate through index_vars in str_b, in order. For each var, check
@@ -4485,12 +4485,10 @@ module Make (B : Backend_intf.S) = struct
 
     type ('a, 'b) plan =
       | Operand of ('a, 'b) t * string
-      | Outer of ('a, 'b) plan * ('a, 'b) plan * int array * string
       | Contract of ('a, 'b) plan * ('a, 'b) plan * binary_result
 
     let get_shape_vars = function
       | Operand (x, str) -> (shape x, str)
-      | Outer (_, _, shape, str) -> (shape, str)
       | Contract (_, _, result) -> (result.shape, result.vars)
 
     let add_to_plan plan (op_b, str_b) =
@@ -4498,13 +4496,11 @@ module Make (B : Backend_intf.S) = struct
       let result =
         binary_einsum ~left:(shape_a, str_a) ~right:(shape op_b, str_b)
       in
-      if Array.length result.left_axes = 0 then
-        Outer (plan, Operand (op_b, str_b), result.shape, result.vars)
-      else Contract (plan, Operand (op_b, str_b), result)
+      Contract (plan, Operand (op_b, str_b), result)
 
     let make_plan vars_operands =
       let len = Array.length vars_operands in
-      assert (Array.length vars_operands > 0);
+      assert (len > 0);
       let op, str = vars_operands.(0) in
       let plan_so_far = ref (Operand (op, str)) in
       for i = 1 to len - 1 do
@@ -4514,10 +4510,6 @@ module Make (B : Backend_intf.S) = struct
 
     let rec eval_plan = function
       | Operand (op, str) -> (op, str)
-      | Outer (a, b, _, str) ->
-          let op_a, _ = eval_plan a in
-          let op_b, _ = eval_plan b in
-          (outer op_a op_b, str)
       | Contract (a, b, result) ->
           let op_a, _ = eval_plan a in
           let op_b, _ = eval_plan b in
@@ -4561,7 +4553,7 @@ module Make (B : Backend_intf.S) = struct
           let input_len = Array.length input_strs in
           (* check number of inputs *)
           if input_len <> Array.length operands then
-            invalid_arg "number of inputs must equal number of  operands";
+            invalid_arg "number of inputs must equal number of operands";
           (* check each input *)
           ArrayLabels.iteri input_strs ~f:(fun i input ->
               if not (all_distinct input) then
@@ -4579,9 +4571,7 @@ module Make (B : Backend_intf.S) = struct
           let _, contracted_vars = get_shape_vars plan in
           (* check the output vars are the same RANK as the contracted ones *)
           if not (permutes contracted_vars output_str) then
-            invalid_arg
-              "index vars mismatch: input vars contract to '%s', but output \
-               vars are '%s'"
+            invalid_arg "contracted input vars '%s' must match output vars '%s'"
               contracted_vars output_str;
           let to_transpose, contracted_vars' = eval_plan plan in
           assert (String.equal contracted_vars contracted_vars');
