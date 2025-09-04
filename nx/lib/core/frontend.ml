@@ -4363,183 +4363,236 @@ module Make (B : Backend_intf.S) = struct
           squeeze result_mat
         else reshape result_shape result_mat
 
-  let invalid_einsum fmt =
-    Printf.ksprintf (fun s -> invalid_arg ("einsum: " ^ s)) fmt
+  module Einsum = struct
+    let invalid_arg fmt =
+      Printf.ksprintf (fun s -> invalid_arg ("einsum: " ^ s)) fmt
 
-  type binary_einsum_result = {
-    left_contraction_axes : int array;
-    right_contraction_axes : int array;
-    shape : int array;
-    vars : string;
-  }
+    type binary_result = {
+      left_axes : int array;
+      right_axes : int array;
+      shape : int array;
+      vars : string;
+    }
 
-  let all_distinct, permute =
-    let module CharSet = Set.Make (Char) in
-    let of_string str = CharSet.of_seq @@ String.to_seq str in
-    ( (fun str -> String.length str = CharSet.cardinal (of_string str)),
-      fun str str' -> CharSet.equal (of_string str) (of_string str') )
+    let all_distinct, permutes =
+      let module CharSet = Set.Make (Char) in
+      let of_string str = CharSet.of_seq @@ String.to_seq str in
+      ( (fun str -> String.length str = CharSet.cardinal (of_string str)),
+        fun str str' -> CharSet.equal (of_string str) (of_string str') )
 
-  let binary_einsum ~left:(shape_a, str_a) ~right:(shape_b, str_b) =
-    assert (all_distinct str_a);
-    assert (all_distinct str_b);
-    assert (String.length str_a = Array.length shape_a);
-    assert (String.length str_b = Array.length shape_b);
-    let kept_b_vars =
-      let map = Hashtbl.create (String.length str_b) in
-      StringLabels.iteri str_b ~f:(fun i char -> Hashtbl.add map char i);
-      map
-    in
-    let rev_var_shape = ref [] in
-    let contractions = ref [] in
-    (* Iterate through index vars in str_a, in order. For each var, check if
-     * it's shared (in kept_b_vars, constructed from str_b).
-     * 1. Not shared: store output var, and its dimension.
-     * 2. Shared means contracted: record contraction for a & b, 
-     *      and _REMOVE IT_ from kept_b_vars. *)
-    StringLabels.iteri str_a ~f:(fun axis_a char ->
-        let dim_a = shape_a.(axis_a) in
-        match Hashtbl.find_opt kept_b_vars char with
-        | None -> rev_var_shape := (dim_a, char) :: !rev_var_shape
-        | Some axis_b ->
-            let dim_b = shape_b.(axis_b) in
-            if dim_a <> dim_b then
-              invalid_einsum
-                "dimension mismatch: index var '%c' (axis %d) has dim. %d on \
-                 left, but has (on axis %d) dim. %d on the right"
-                char axis_a dim_a axis_b dim_b;
-            contractions := (axis_a, axis_b) :: !contractions;
-            Hashtbl.remove kept_b_vars char);
-    (* Iterate through index_vars in str_b, in order. For each var, check
-     * if it's to be kept and if so, keep output var and dimension *)
-    StringLabels.iter str_b ~f:(fun char ->
-        match Hashtbl.find_opt kept_b_vars char with
-        | None -> ()
-        | Some axis_b ->
-            rev_var_shape := (shape_b.(axis_b), char) :: !rev_var_shape);
-    let left_contraction_axes, right_contraction_axes =
-      let as_, bs = List.split !contractions in
-      (Array.of_list as_, Array.of_list bs)
-    in
-    let shape, vars =
-      let shape, vars = List.split @@ List.rev !rev_var_shape in
-      (Array.of_list shape, String.of_seq (List.to_seq vars))
-    in
-    assert (all_distinct vars);
-    { left_contraction_axes; right_contraction_axes; shape; vars }
+    (* As an example, consider
+           (shape_a, str_a) = ([| 1; 2; 3; 4 |], "ijkl")
+           (shape_b, str_b) = ([| 1; 3; 5 |] , "iks").
 
-  type ('a, 'b) einsum_plan =
-    | Operand of ('a, 'b) t * string
-    | Outer of ('a, 'b) einsum_plan * ('a, 'b) einsum_plan * int array * string
-    | Contract of
-        ('a, 'b) einsum_plan * ('a, 'b) einsum_plan * binary_einsum_result
+       First we create a mapping for "iks" to their indices.
+           kept_b_vars = ['i' -> 0; 'k' -> 1; 's' -> 2].
 
-  let get_info = function
-    | Operand (x, str) -> (shape x, str)
-    | Outer (_, _, shape, str) -> (shape, str)
-    | Contract (_, _, result) -> (result.shape, result.vars)
+       Then we iterate through "ijkl"
+       Case: axis_a = 0, 'i'.
+            'i' -> 0 is in kept_b_vars (and dimensions match).
+                shape_a.(axis_a)  = 1 = shape_b.(axis_b)
+            (0, 0) are the left and right axes, added to contractions.
+            'i' is removed from kept_b_vars (we'll see why later).
+       Case: axis_a = 1, 'j'.
+            'j' is not in kept_b_vars.
+            (2, 'j') is added to rev_var_shape (for final output).
+       Case: axis_a = 2, 'k'.
+            'k' -> 1 in kept_b_vars (and dimensions match).
+                shape_a.(axis_a) = 3 = shape_b.(axis_b)
+            (2, 1) are the left and right axes, added to contractions.
+            'i' is removed from kept_b_vars (we'll see why later).
+       Case: axis_a = 3, 'l'.
+            'l' is not in kept_b_vars.
+            (4, 'l') is added to rev_var_shape (for final output).
 
-  let rec einsum_plan acc vars_operands i =
-    let len = Array.length vars_operands in
-    assert (len > 0 && 0 <= i && i <= len);
-    if i = len then acc
-    else
-      let shape_a, str_a = get_info acc in
-      let op_b, str_b = vars_operands.(i) in
-      let shape_b = shape op_b in
-      let result =
-        binary_einsum ~left:(shape_a, str_a) ~right:(shape_b, str_b)
+       Now, kept_b_vars = [ 's' -> 2 ]
+            contractions = [ (2, 1);  (0, 0) ]
+            rev_var_shape = [ (4, 'l'); (2, 'j') ].
+
+       Next, we iterate through "iks".
+       Case: axis_b = 0, 'i'.
+            'i' is not in kept_b_vars, skip.
+       Case: axis_b = 1, 'k'.
+            'k' is not in kept_b_vars, skip.
+       Case: axis_b = 2, 's'.
+            'm' is in kept_b_vars.
+                shape_b.(axis_b) = 5.
+            (5, 's') is added to rev_var_shape.
+
+       Hence rev_var_shape =  [ (5, 's'); (4, 'l'); (2, 'j') ].
+       Reminder: contractions = [ (2, 1); (0, 0) ].
+
+       From this, we conclude:
+            left_axes = [ 0; 2 ]
+            right_axes = [ 1; 2 ]
+            shape = [ 2; 4; 5 ]
+            vars = "jls".
+
+       NOTE: If we don't ensure all the letters are distinct, we will
+       observe strange behaviour with the kept_b_vars : (_, _) Hashtbl.t.
+       Specifically,
+         - Mappings from letter to index will be hidden (but not lost).
+         - Removing a mapping will 'unhide' previous mappings.
+    *) [@ocamlformat "disable"]
+
+    let binary_einsum ~left:(shape_a, str_a) ~right:(shape_b, str_b) =
+      assert (all_distinct str_a);
+      assert (all_distinct str_b);
+      assert (String.length str_a = Array.length shape_a);
+      assert (String.length str_b = Array.length shape_b);
+      let kept_b_vars =
+        let map = Hashtbl.create (String.length str_b) in
+        StringLabels.iteri str_b ~f:(fun i char -> Hashtbl.add map char i);
+        map
       in
-      if Array.length result.left_contraction_axes = 0 then
-        einsum_plan
-          (Outer (acc, Operand (op_b, str_b), result.shape, result.vars))
-          vars_operands (i + 1)
-      else
-        einsum_plan
-          (Contract (acc, Operand (op_b, str_b), result))
-          vars_operands (i + 1)
+      let rev_var_shape = ref [] in
+      let contractions = ref [] in
+      (* Iterate through index vars in str_a, in order. For each var, check if
+       * it's shared (in kept_b_vars, constructed from str_b).
+       * 1. Not shared: store output var, and its dimension.
+       * 2. Shared means contracted: record contraction for a & b,
+       *      and _REMOVE IT_ from kept_b_vars. *)
+      StringLabels.iteri str_a ~f:(fun axis_a char ->
+          let dim_a = shape_a.(axis_a) in
+          match Hashtbl.find_opt kept_b_vars char with
+          | None -> rev_var_shape := (dim_a, char) :: !rev_var_shape
+          | Some axis_b ->
+              let dim_b = shape_b.(axis_b) in
+              if dim_a <> dim_b then
+                invalid_arg
+                  "dimension mismatch: index var '%c' (axis %d) has dim. %d on \
+                   left, but has (on axis %d) dim. %d on the right"
+                  char axis_a dim_a axis_b dim_b;
+              contractions := (axis_a, axis_b) :: !contractions;
+              Hashtbl.remove kept_b_vars char);
+      (* Iterate through index_vars in str_b, in order. For each var, check
+       * if it's to be kept and if so, keep output var and dimension *)
+      StringLabels.iter str_b ~f:(fun char ->
+          match Hashtbl.find_opt kept_b_vars char with
+          | None -> ()
+          | Some axis_b ->
+              rev_var_shape := (shape_b.(axis_b), char) :: !rev_var_shape);
+      let left_axes, right_axes =
+        let as_, bs = List.split !contractions in
+        (Array.of_list as_, Array.of_list bs)
+      in
+      let shape, vars =
+        let shape, vars = List.split @@ List.rev !rev_var_shape in
+        (Array.of_list shape, String.of_seq (List.to_seq vars))
+      in
+      assert (all_distinct vars);
+      { left_axes; right_axes; shape; vars }
 
-  let einsum_plan vars_operands =
-    let op, str = vars_operands.(0) in
-    einsum_plan (Operand (op, str)) vars_operands 1
+    type ('a, 'b) plan =
+      | Operand of ('a, 'b) t * string
+      | Outer of ('a, 'b) plan * ('a, 'b) plan * int array * string
+      | Contract of ('a, 'b) plan * ('a, 'b) plan * binary_result
 
-  let rec einsum_eval_plan = function
-    | Operand (op, str) -> (op, str)
-    | Outer (a, b, _, str) ->
-        let op_a, _ = einsum_eval_plan a in
-        let op_b, _ = einsum_eval_plan b in
-        (outer op_a op_b, str)
-    | Contract (a, b, result) ->
-        let op_a, _ = einsum_eval_plan a in
-        let op_b, _ = einsum_eval_plan b in
-        let axes =
-          (result.left_contraction_axes, result.right_contraction_axes)
-        in
-        (tensordot ~axes op_a op_b, result.vars)
+    let get_shape_vars = function
+      | Operand (x, str) -> (shape x, str)
+      | Outer (_, _, shape, str) -> (shape, str)
+      | Contract (_, _, result) -> (result.shape, result.vars)
 
-  let einsum subscripts operands =
-    (* Parse subscripts and implement einsum logic *)
-    match (operands, subscripts) with
-    | [| a |], "ii->i" ->
-        (* Extract diagonal *)
-        let shape_a = shape a in
-        if ndim a <> 2 then
-          invalid_arg "einsum: diagonal extraction requires 2D array";
-        (* Take the minimum of the two dimensions for non-square matrices *)
-        let m = shape_a.(0) in
-        let n = shape_a.(1) in
-        let min_dim = if m < n then m else n in
-        (* Gather elements at [i, i] positions *)
-        let flat_a = reshape [| m * n |] a in
-        let diag_indices = Array.init min_dim (fun i -> (i * n) + i) in
-        let diag_indices_t =
-          create (B.context a) Dtype.int32 [| min_dim |]
-            (Array.map Int32.of_int diag_indices)
-        in
-        B.op_gather flat_a diag_indices_t 0
-    | _ ->
-        (* need input operands *)
-        if Array.length operands = 0 then invalid_einsum "no input operands";
-        let pattern = {|\([a-z]+\(,[a-z]+\)*\)->\([a-z]+\)|} in
-        let regexp = Str.regexp pattern in
-        (* check format, then destruct *)
-        if not (Str.string_match regexp subscripts 0) then
-          invalid_einsum "subscript must be of form [a-z]+(,[a-z]+)*->[a-z]+";
-        let[@ocaml.warning "-8"] [ input_str; output_str ] =
-          Str.split (Str.regexp "->") subscripts
-        in
-        let input_strs = Array.of_list @@ String.split_on_char ',' input_str in
-        let input_len = Array.length input_strs in
-        (* check number of inputs *)
-        if input_len <> Array.length operands then
-          invalid_einsum "number of inputs must equal number of  operands";
-        (* check each input *)
-        ArrayLabels.iteri input_strs ~f:(fun i input ->
-            if not (all_distinct input) then
-              (* TODO relax for diagonals *)
-              invalid_einsum "operand %d must have distinct a-z characters" i;
-            if String.length input <> ndim operands.(i) then
-              (* TODO relax for diagnoals, ellipses *)
-              invalid_einsum "rank of input '%s' must match operand %d" input i);
-        (* and check output *)
-        if not (all_distinct output_str) then
-          invalid_einsum "output must have distinct a-z characters";
-        (* plan and execute *)
-        let vars_operands = Array.combine operands input_strs in
-        let plan = einsum_plan vars_operands in
-        let _, contracted_vars = get_info plan in
-        (* check the output vars are the same RANK as the contracted ones *)
-        if not (permute contracted_vars output_str) then
-          invalid_einsum
-            "index vars mismatch: input vars contract to '%s', but output vars \
-             are '%s'"
-            contracted_vars output_str;
-        let to_transpose, contracted_vars' = einsum_eval_plan plan in
-        assert (String.equal contracted_vars contracted_vars');
-        let axes =
-          Array.init (String.length contracted_vars) (fun i ->
-              String.index output_str @@ String.get contracted_vars i)
-        in
-        transpose ~axes to_transpose
+    let add_to_plan plan (op_b, str_b) =
+      let shape_a, str_a = get_shape_vars plan in
+      let result =
+        binary_einsum ~left:(shape_a, str_a) ~right:(shape op_b, str_b)
+      in
+      if Array.length result.left_axes = 0 then
+        Outer (plan, Operand (op_b, str_b), result.shape, result.vars)
+      else Contract (plan, Operand (op_b, str_b), result)
+
+    let make_plan vars_operands =
+      let len = Array.length vars_operands in
+      assert (Array.length vars_operands > 0);
+      let op, str = vars_operands.(0) in
+      let plan_so_far = ref (Operand (op, str)) in
+      for i = 1 to len - 1 do
+        plan_so_far := add_to_plan !plan_so_far vars_operands.(i)
+      done;
+      !plan_so_far
+
+    let rec eval_plan = function
+      | Operand (op, str) -> (op, str)
+      | Outer (a, b, _, str) ->
+          let op_a, _ = eval_plan a in
+          let op_b, _ = eval_plan b in
+          (outer op_a op_b, str)
+      | Contract (a, b, result) ->
+          let op_a, _ = eval_plan a in
+          let op_b, _ = eval_plan b in
+          let { left_axes; right_axes; vars; shape = _ } = result in
+          (tensordot ~axes:(left_axes, right_axes) op_a op_b, vars)
+
+    let calculate subscripts operands =
+      (* Parse subscripts and implement einsum logic *)
+      match (operands, subscripts) with
+      | [| a |], "ii->i" ->
+          (* Extract diagonal *)
+          let shape_a = shape a in
+          if ndim a <> 2 then
+            invalid_arg "diagonal extraction requires 2D array";
+          (* Take the minimum of the two dimensions for non-square matrices *)
+          let m = shape_a.(0) in
+          let n = shape_a.(1) in
+          let min_dim = if m < n then m else n in
+          (* Gather elements at [i, i] positions *)
+          let flat_a = reshape [| m * n |] a in
+          let diag_indices = Array.init min_dim (fun i -> (i * n) + i) in
+          let diag_indices_t =
+            create (B.context a) Dtype.int32 [| min_dim |]
+              (Array.map Int32.of_int diag_indices)
+          in
+          B.op_gather flat_a diag_indices_t 0
+      | _ ->
+          (* need input operands *)
+          if Array.length operands = 0 then invalid_arg "no input operands";
+          let pattern = {|\([a-z]+\(,[a-z]+\)*\)->\([a-z]+\)|} in
+          let regexp = Str.regexp pattern in
+          (* check format, then destruct *)
+          if not (Str.string_match regexp subscripts 0) then
+            invalid_arg "subscript must be of form [a-z]+(,[a-z]+)*->[a-z]+";
+          let[@ocaml.warning "-8"] [ input_str; output_str ] =
+            Str.split (Str.regexp "->") subscripts
+          in
+          let input_strs =
+            Array.of_list @@ String.split_on_char ',' input_str
+          in
+          let input_len = Array.length input_strs in
+          (* check number of inputs *)
+          if input_len <> Array.length operands then
+            invalid_arg "number of inputs must equal number of  operands";
+          (* check each input *)
+          ArrayLabels.iteri input_strs ~f:(fun i input ->
+              if not (all_distinct input) then
+                (* TODO relax for diagonals *)
+                invalid_arg "operand %d must have distinct a-z characters" i;
+              if String.length input <> ndim operands.(i) then
+                (* TODO relax for diagnoals, ellipses *)
+                invalid_arg "rank of input '%s' must match operand %d" input i);
+          (* and check output *)
+          if not (all_distinct output_str) then
+            invalid_arg "output must have distinct a-z characters";
+          (* plan and execute *)
+          let vars_operands = Array.combine operands input_strs in
+          let plan = make_plan vars_operands in
+          let _, contracted_vars = get_shape_vars plan in
+          (* check the output vars are the same RANK as the contracted ones *)
+          if not (permutes contracted_vars output_str) then
+            invalid_arg
+              "index vars mismatch: input vars contract to '%s', but output \
+               vars are '%s'"
+              contracted_vars output_str;
+          let to_transpose, contracted_vars' = eval_plan plan in
+          assert (String.equal contracted_vars contracted_vars');
+          let axes =
+            Array.init (String.length contracted_vars) (fun i ->
+                String.index output_str @@ String.get contracted_vars i)
+          in
+          transpose ~axes to_transpose
+  end
+
+  let einsum subscripts operands = Einsum.calculate subscripts operands
 
   let kron a b =
     (* Kronecker product implementation that creates proper block structure *)
