@@ -1,3 +1,3 @@
 (executables
- (names cartpole_random dqn_cartpole sokoban_reinforce sokoban_grpo sokoban_dqn backoff_tabular visualize_logs test_room_gen test_visualization test_solvability test_deadlock test_wall_segments test_dqn_curriculum)
- (libraries fehu kaun sokoban classic unix))
+ (names cartpole_random dqn_cartpole)
+ (libraries fehu kaun classic unix))
