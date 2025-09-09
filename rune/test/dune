@@ -1,5 +1,6 @@
 (tests
  (names test_autodiff test_gradcheck test_jvp test_rng test_vmap)
+ (modules test_autodiff test_gradcheck test_jvp test_rng test_vmap)
  (package rune)
  (libraries rune nx_core alcotest test_rune_support))
 

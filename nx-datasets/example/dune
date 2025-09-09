@@ -1,15 +1,19 @@
 (executable
  (name iris)
+ (modules iris)
  (libraries nx_datasets hugin nx))
 
 (executable
  (name mnist)
+ (modules mnist)
  (libraries nx_datasets hugin nx))
 
 (executable
  (name airline)
+ (modules airline)
  (libraries nx_datasets hugin nx))
 
 (executable
  (name california)
+ (modules california)
  (libraries nx_datasets hugin nx))

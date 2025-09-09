@@ -1,3 +1,4 @@
 (executable
  (name plot3d)
+ (modules plot3d)
  (libraries hugin nx))

@@ -1,3 +1,4 @@
 (executable
  (name plot2d)
+ (modules plot2d)
  (libraries hugin nx))

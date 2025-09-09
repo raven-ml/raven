@@ -1,3 +1,4 @@
 (executable
  (name subplots)
+ (modules subplots)
  (libraries nx hugin))

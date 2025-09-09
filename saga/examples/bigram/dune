@@ -1,3 +1,4 @@
 (executables
  (names bigram)
+ (modules bigram)
  (libraries saga))

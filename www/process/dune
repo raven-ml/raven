@@ -1,3 +1,4 @@
 (executables
  (names index sidebar generate_api_rules)
+ (modules index sidebar generate_api_rules)
  (libraries lambdasoup str markup yojson))

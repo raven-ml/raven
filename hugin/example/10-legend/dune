@@ -1,3 +1,4 @@
 (executable
  (name legend_demo)
+ (modules legend_demo)
  (libraries hugin nx))

@@ -1,5 +1,6 @@
 (executables
  (names basic_debug debug_with_grad)
+ (modules basic_debug debug_with_grad)
  (libraries rune))
 
 (cram

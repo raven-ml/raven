@@ -1,3 +1,4 @@
 (executable
  (name imshow)
+ (modules imshow)
  (libraries hugin nx_io))
