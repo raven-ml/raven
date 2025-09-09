@@ -1,9 +1,9 @@
 (*
 ```ocaml
  *)
+include Slide2
 (* Collect a complete episode using our policy *)
 let collect_episode env policy_net params max_steps =
-  let device = Rune.c in
   let rng = Rune.Rng.key (Random.int 1000000) in  
   (* Storage for episode data *)
   let states = ref [] in
@@ -11,7 +11,7 @@ let collect_episode env policy_net params max_steps =
   let rewards = ref [] in
   let log_probs = ref [] in  
   (* Reset environment *)
-  let obs, _ = env.reset () in
+  let obs, _ = env.Envs.reset () in
   states := obs :: !states;  
   (* Run episode *)
   let rec run_steps step obs =

@@ -1,6 +1,7 @@
 (*
 ```ocaml
  *)
+include Slide6
 (* Helper function to implement clipping *)
 let clip_ratio ratio epsilon =
   let min_ratio = 1.0 -. epsilon in

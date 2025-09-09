@@ -2,6 +2,7 @@
 (*
 ```ocaml
  *)
+include Slide1
 open Kaun
 (* Define a simple policy network for our grid world *)
 let create_policy_network grid_size n_actions =
@@ -18,13 +19,12 @@ let create_policy_network grid_size n_actions =
   ]
 (* Initialize the policy *)
 let initialize_policy () =
-  let device = Rune.c in
   let rng = Rune.Rng.key 42 in  
   (* Create network *)
   let policy_net = create_policy_network 5 4 in  
   (* Initialize parameters with dummy input *)
   let dummy_obs = Rune.zeros device Rune.float32 [|5; 5|] in
-  let params = Kaun.init policy_net ~rngs:rng dummy_obs in  
+  let params = Kaun.init policy_net ~rngs:rng ~device ~dtype:Rune.float32 in  
   (policy_net, params) 
 (* Sample action from policy *)
 let sample_action policy_net params obs rng =
@@ -34,7 +34,7 @@ let sample_action policy_net params obs rng =
   let probs = Rune.softmax ~axes:[|-1|] logits in  
   (* Sample from categorical distribution *)
   (* For workshop: we'll use argmax for simplicity *)
-  let action = Rune.argmax ~axis:(-1) probs in  
+  let action = Rune.argmax ~axes:[|-1|] probs in  
   (* Also return log probability for REINFORCE *)
   let log_probs = Rune.log probs in
   let action_log_prob = Rune.gather log_probs action in  

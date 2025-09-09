@@ -124,7 +124,7 @@ module DQNAgent = struct
       (* Greedy action selection *)
       let q_values = Kaun.apply t.q_network t.q_params ~training:false obs in
       let action_idx = Rune.argmax q_values ~axis:(-1) ~keepdims:false in
-      int_of_float (Rune.unsafe_to_array (Rune.cast Rune.float32 action_idx)).(0)
+      int_of_float (Rune.to_array (Rune.cast Rune.float32 action_idx)).(0)
 
   let update_target_network t =
     t.target_params <- t.q_params
@@ -154,7 +154,7 @@ module DQNAgent = struct
         let batch_q_values = ref [] in
         for i = 0 to batch_size - 1 do
           let q_row = Rune.slice [ Rune.I i; Rune.R [] ] q_values in
-          let q_array = Rune.unsafe_to_array q_row in
+          let q_array = Rune.to_array q_row in
           let q_value = q_array.(actions.(i)) in
           batch_q_values := q_value :: !batch_q_values
         done;
@@ -164,7 +164,7 @@ module DQNAgent = struct
         let target_q_values = Kaun.apply t.target_network t.target_params 
           ~training:false batch_next_states in
         let max_next_q = Rune.max target_q_values ~axes:[| -1 |] ~keepdims:false in
-        let max_next_q_array = Rune.unsafe_to_array max_next_q in
+        let max_next_q_array = Rune.to_array max_next_q in
         
         (* Compute TD targets *)
         let targets = Array.mapi (fun i r ->
@@ -190,7 +190,7 @@ module DQNAgent = struct
       (* Decay epsilon *)
       t.epsilon := max t.epsilon_min (!(t.epsilon) *. t.epsilon_decay);
       
-      Rune.unsafe_to_array loss_value |> Array.fold_left (+.) 0.0
+      Rune.to_array loss_value |> Array.fold_left (+.) 0.0
 
   let store_transition t state action reward next_state is_done =
     let transition = ReplayBuffer.{

@@ -108,7 +108,7 @@ module ReinforceAgent = struct
     
     if training then
       let probs = Rune.softmax logits ~axes:[| -1 |] in
-      let probs_array = Rune.unsafe_to_array probs in
+      let probs_array = Rune.to_array probs in
       
       let r = Random.float 1.0 in
       let rec sample_idx i cumsum =
@@ -125,7 +125,7 @@ module ReinforceAgent = struct
       let exp_logits = Rune.exp (Rune.sub logits max_logits) in
       let sum_exp = Rune.sum exp_logits ~axes:[| -1 |] ~keepdims:true in
       let log_probs = Rune.sub logits (Rune.add max_logits (Rune.log sum_exp)) in
-      let log_prob_array = Rune.unsafe_to_array log_probs in
+      let log_prob_array = Rune.to_array log_probs in
       let log_prob = log_prob_array.(action_idx) in
       
       (action, log_prob)
@@ -138,7 +138,7 @@ module ReinforceAgent = struct
     match t.baseline_network, t.baseline_params with
     | Some net, Some params ->
       let value = Kaun.apply net params ~training:false obs in
-      let value_array = Rune.unsafe_to_array value in
+      let value_array = Rune.to_array value in
       value_array.(0)
     | _ -> 0.0
 
@@ -199,7 +199,7 @@ module ReinforceAgent = struct
       let action, log_prob = select_action t obs ~training:true in
       let value = if t.use_baseline then predict_value t obs else 0.0 in
       
-      let action_idx = int_of_float (Rune.unsafe_to_array action).(0) in
+      let action_idx = int_of_float (Rune.to_array action).(0) in
       
       let next_obs, reward, terminated, truncated, info = env.Env.step action in
       if terminated || truncated then stage_info := info;
@@ -296,8 +296,8 @@ module ReinforceAgent = struct
         let exp_logits = Rune.exp (Rune.sub logits max_logits) in
         let sum_exp = Rune.sum exp_logits ~axes:[| -1 |] ~keepdims:true in
         let log_probs_pred = Rune.sub logits (Rune.add max_logits (Rune.log sum_exp)) in
-        let action_idx = int_of_float (Rune.unsafe_to_array action).(0) in
-        let log_prob_array = Rune.unsafe_to_array log_probs_pred in
+        let action_idx = int_of_float (Rune.to_array action).(0) in
+        let log_prob_array = Rune.to_array log_probs_pred in
         let log_prob = log_prob_array.(action_idx) in
         let log_prob = Rune.scalar Rune.c Rune.float32 log_prob in
         
@@ -330,7 +330,7 @@ module ReinforceAgent = struct
             let return = returns.(i) in
             
             let value_pred = Kaun.apply net params ~training:true state in
-            let value_array = Rune.unsafe_to_array value_pred in
+            let value_array = Rune.to_array value_pred in
             let value = Rune.scalar Rune.c Rune.float32 value_array.(0) in
             let target = Rune.scalar Rune.c Rune.float32 return in
             let loss = Rune.square (Rune.sub value target) in

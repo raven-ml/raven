@@ -52,7 +52,7 @@ let obs_to_state obs =
   let height = shape.(0) in
   let width = shape.(1) in
   
-  let features = Rune.unsafe_to_array obs in
+  let features = Rune.to_array obs in
   
   let state = Sokoban.Core.{
     grid = Array.make_matrix height width Sokoban.Core.Empty;

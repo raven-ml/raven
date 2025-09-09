@@ -2,7 +2,7 @@
 ```ocaml
  *)
 open Fehu
-let dev = Rune.metal ()
+let device = Rune.metal ()
 (* Workshop Part 1: Define a simple grid world *)
 let create_simple_gridworld size =
   (* Mutable state for agent position *)
@@ -11,8 +11,8 @@ let create_simple_gridworld size =
   (* Define observation and action spaces *)
   let observation_space =
     Space.Box {
-     low = Rune.zeros dev Rune.float32 [|size; size|];
-     high = Rune.ones dev Rune.float32 [|size; size|];
+     low = Rune.zeros device Rune.float32 [|size; size|];
+     high = Rune.ones device Rune.float32 [|size; size|];
      shape = [|size; size|];
     }
   in  
@@ -22,7 +22,7 @@ let create_simple_gridworld size =
   let reset ?seed () =
     let _ = Option.map Random.init seed in
     agent_pos := (0, 0);
-    let obs = Rune.zeros dev Rune.float32 [|size; size|] in
+    let obs = Rune.zeros device Rune.float32 [|size; size|] in
     (* Mark agent position *)
     Rune.unsafe_set [0; 0] 1.0 obs;
     (obs, [])
@@ -42,7 +42,7 @@ let create_simple_gridworld size =
     in    
     agent_pos := new_pos;    
     (* Create observation *)
-    let obs = Rune.zeros dev Rune.float32 [|size; size|] in
+    let obs = Rune.zeros device Rune.float32 [|size; size|] in
     let x, y = !agent_pos in
     Rune.unsafe_set [x; y] 1.0 obs;   
     (* Compute reward *)
@@ -52,9 +52,9 @@ let create_simple_gridworld size =
   in
   Env.make ~observation_space ~action_space ~reset ~step ()
 (* Test the environment *)
-let () =
+let main () =
   let env = create_simple_gridworld 5 in
-  let obs, _ = env.reset () in
+  let obs, _ = env.Envs.reset () in
   print_endline "Initial state:";
   Rune.print obs
 (* 

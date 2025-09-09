@@ -1,6 +1,7 @@
 (*
 ```ocaml
  *)
+include Slide5
 (* Create a value network for the baseline *)
 let create_value_network grid_size =
   Layer.sequential [
@@ -15,7 +16,6 @@ let create_value_network grid_size =
   ]
 (* REINFORCE with learned baseline (Actor-Critic) *)
 let train_actor_critic env n_episodes lr_actor lr_critic gamma =
-  let device = Rune.c in
   let rng = Rune.Rng.key 42 in  
   (* Initialize actor (policy) and critic (value) networks *)
   let policy_net = create_policy_network 5 4 in

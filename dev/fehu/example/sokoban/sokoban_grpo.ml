@@ -70,8 +70,8 @@ module GrpoAgent = struct
     let exp_logits = Rune.exp (Rune.sub logits max_logits) in
     let sum_exp = Rune.sum exp_logits ~axes:[| -1 |] ~keepdims:true in
     let log_probs = Rune.sub logits (Rune.add max_logits (Rune.log sum_exp)) in
-    let action_idx = int_of_float (Rune.unsafe_to_array action).(0) in
-    let log_prob_array = Rune.unsafe_to_array log_probs in
+    let action_idx = int_of_float (Rune.to_array action).(0) in
+    let log_prob_array = Rune.to_array log_probs in
     log_prob_array.(action_idx)
 
   let select_action _t obs ~network ~params ~training =
@@ -79,7 +79,7 @@ module GrpoAgent = struct
     
     if training then
       let probs = Rune.softmax logits ~axes:[| -1 |] in
-      let probs_array = Rune.unsafe_to_array probs in
+      let probs_array = Rune.to_array probs in
       
       let r = Random.float 1.0 in
       let rec sample_idx i cumsum =
@@ -96,7 +96,7 @@ module GrpoAgent = struct
       let exp_logits = Rune.exp (Rune.sub logits max_logits) in
       let sum_exp = Rune.sum exp_logits ~axes:[| -1 |] ~keepdims:true in
       let log_probs = Rune.sub logits (Rune.add max_logits (Rune.log sum_exp)) in
-      let log_prob_array = Rune.unsafe_to_array log_probs in
+      let log_prob_array = Rune.to_array log_probs in
       let log_prob = log_prob_array.(action_idx) in
       
       (action, log_prob)
@@ -216,8 +216,8 @@ module GrpoAgent = struct
         let exp_logits = Rune.exp (Rune.sub logits max_logits') in
         let sum_exp = Rune.sum exp_logits ~axes:[| -1 |] ~keepdims:true in
         let log_probs = Rune.sub logits (Rune.add max_logits' (Rune.log sum_exp)) in
-        let action_idx = int_of_float (Rune.unsafe_to_array action).(0) in
-        let log_prob_array = Rune.unsafe_to_array log_probs in
+        let action_idx = int_of_float (Rune.to_array action).(0) in
+        let log_prob_array = Rune.to_array log_probs in
         let log_prob = log_prob_array.(action_idx) in
         let log_prob = Rune.scalar Rune.c Rune.float32 log_prob in
         

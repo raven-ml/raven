@@ -1,9 +1,9 @@
 (*
 ```ocaml
  *)
+include Slide3
 (* REINFORCE training loop *)
 let train_reinforce env n_episodes learning_rate gamma =
-  let device = Rune.c in  
   (* Initialize policy *)
   let policy_net, params = initialize_policy () in  
   (* Create optimizer *)
@@ -55,7 +55,7 @@ let train_reinforce env n_episodes learning_rate gamma =
   done;  
   (policy_net, params)
 (* Run the training *)
-let () =
+let main () =
   let env = create_simple_gridworld 5 in
   let trained_policy, trained_params = 
     train_reinforce env 100 0.01 0.99 in

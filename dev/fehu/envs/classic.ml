@@ -37,11 +37,11 @@ let cartpole () =
   in
 
   let step action =
-    let action_array = Rune.unsafe_to_array action in
+    let action_array = Rune.to_array action in
     let action_val = int_of_float action_array.(0) in
     let force = if action_val = 1 then force_mag else -.force_mag in
 
-    let s = Rune.unsafe_to_array !state in
+    let s = Rune.to_array !state in
     let x = s.(0) in
     let x_dot = s.(1) in
     let theta = s.(2) in
@@ -114,9 +114,9 @@ let mountain_car () =
   in
 
   let step action =
-    let action_array = Rune.unsafe_to_array action in
+    let action_array = Rune.to_array action in
     let action_val = int_of_float action_array.(0) in
-    let s = Rune.unsafe_to_array !state in
+    let s = Rune.to_array !state in
     let position = s.(0) in
     let velocity = s.(1) in
 
@@ -190,11 +190,11 @@ let pendulum () =
   in
 
   let step action =
-    let action_array = Rune.unsafe_to_array action in
+    let action_array = Rune.to_array action in
     let u = action_array.(0) in
     let u = max (-.max_torque) (min max_torque u) in
 
-    let s = Rune.unsafe_to_array !state in
+    let s = Rune.to_array !state in
     let theta = s.(0) in
     let theta_dot = s.(1) in
 

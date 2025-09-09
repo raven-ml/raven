@@ -1,10 +1,10 @@
 (*
 ```ocaml
  *)
+include Slide4
 (* REINFORCE with running average baseline *)
 let train_reinforce_with_baseline env n_episodes learning_rate
     gamma =
-  let device = Rune.c in  
   (* Initialize policy *)
   let policy_net, params = initialize_policy () in
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in

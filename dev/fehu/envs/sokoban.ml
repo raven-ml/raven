@@ -738,7 +738,7 @@ let sokoban ?(width=7) ?(height=7) ?(max_steps=200) ?initial_state () =
   
   let step action =
     incr steps;
-    let action_val = int_of_float (Rune.unsafe_to_array action).(0) in
+    let action_val = int_of_float (Rune.to_array action).(0) in
     let direction = match action_val with
       | 0 -> Core.Up
       | 1 -> Core.Down
@@ -844,7 +844,7 @@ let sokoban_curriculum ?(max_steps=200) ?stages () =
   
   let step action =
     incr steps;
-    let action_val = int_of_float (Rune.unsafe_to_array action).(0) in
+    let action_val = int_of_float (Rune.to_array action).(0) in
     let direction = match action_val with
       | 0 -> Core.Up
       | 1 -> Core.Down
