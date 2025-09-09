@@ -27,8 +27,13 @@ let train_reinforce env n_episodes learning_rate gamma =
         (* Forward pass through policy *)
         let logits =
           Kaun.apply policy_net p ~training:true state in
-        let log_probs = Rune.log_softmax ~axis:(-1) logits in
-        let action_log_prob = Rune.gather log_probs action in        
+        let probs = Rune.softmax ~axes:[|-1|] logits in
+        let log_probs = Rune.log probs in
+        (* Get log prob of selected action - convert action back to int32 for indexing *)
+        let action_idx = Rune.cast Rune.int32 action in
+        let action_expanded = Rune.reshape [|1; 1|] action_idx in
+        let action_log_prob = Rune.take_along_axis ~axis:(-1) action_expanded log_probs in
+        let action_log_prob = Rune.squeeze action_log_prob in        
         (* REINFORCE loss: -G_t * log π(a_t|s_t) *)
         let step_loss = Rune.mul
           (Rune.scalar device Rune.float32 (-. g_t))
@@ -51,13 +56,13 @@ let train_reinforce env n_episodes learning_rate gamma =
       let total_reward =
         Array.fold_left (+.) 0. episode_data.rewards in
       Printf.printf "Episode %d: Return = %.2f, Loss = %.4f\n"
-        episode total_reward (Rune.unsafe_get [] loss)
+        episode total_reward (Rune.item [] loss)
   done;  
   (policy_net, params)
 (* Run the training *)
 let main () =
   let env = create_simple_gridworld 5 in
-  let trained_policy, trained_params = 
+  let _trained_policy, _trained_params = 
     train_reinforce env 100 0.01 0.99 in
   print_endline "Training complete!"
 (*

@@ -1,6 +1,8 @@
 (*
 ```ocaml
  *)
+include Slide8
+
 (* Complete workshop pipeline *)
 let run_complete_workshop () =
   (* 1. Create environment *)
@@ -15,13 +17,13 @@ let run_complete_workshop () =
   print_endline "\nTraining Actor-Critic...";
   let _, _, _, _ = train_actor_critic env 50 0.01 0.005 0.99 in  
   (* 5. Advanced: GRPO with clipping and KL *)
-  print_endline "\nTraining with GRPO...";
-  let _, _ = train_grpo env 50 4 0.001 0.2 0.01 in  
+  print_endline "\nGRPO training would go here (not yet implemented)";
+  (* let _, _ = train_grpo env 50 4 0.001 0.2 0.01 in *)
   print_endline "\nWorkshop complete! You've implemented:";
   print_endline "- Basic REINFORCE";
   print_endline "- REINFORCE with baseline";
   print_endline "- Actor-Critic";
-  print_endline "- GRPO with clipping and KL penalties"
+  print_endline "- Clipping and KL penalties (demonstrated)"
 (* Evaluation helper *)
 let evaluate_policy env policy_net params n_episodes =
   let total_returns = ref 0.0 in  
@@ -47,8 +49,8 @@ let compare_methods () =
       let p_net, p_params, _, _ =
         train_actor_critic env 100 0.01 0.005 0.99 in
       (p_net, p_params));
-    ("GRPO",
-     train_grpo env 100 4 0.001 0.2 0.01);
+    (* ("GRPO",
+       train_grpo env 100 4 0.001 0.2 0.01); *)
   ] in  
   (* Evaluate each *)
   List.iter (fun (name, (net, params)) ->

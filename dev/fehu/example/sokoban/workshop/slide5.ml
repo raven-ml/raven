@@ -28,7 +28,7 @@ let train_reinforce_with_baseline env n_episodes learning_rate
     let advantages =
       Array.map (fun r -> r -. !baseline) returns in    
     (* Compute policy gradient with baseline *)
-    let loss, grads = Kaun.value_and_grad (fun p ->
+    let _loss, grads = Kaun.value_and_grad (fun p ->
       let total_loss =
         ref (Rune.zeros device Rune.float32 [||]) in      
       Array.iteri (fun t state ->
@@ -37,8 +37,13 @@ let train_reinforce_with_baseline env n_episodes learning_rate
         let advantage = advantages.(t) in        
         let logits =
           Kaun.apply policy_net p ~training:true state in
-        let log_probs = Rune.log_softmax ~axis:(-1) logits in
-        let action_log_prob = Rune.gather log_probs action in        
+        let probs = Rune.softmax ~axes:[|-1|] logits in
+        let log_probs = Rune.log probs in
+        (* Get log prob of selected action - convert action back to int32 for indexing *)
+        let action_idx = Rune.cast Rune.int32 action in
+        let action_expanded = Rune.reshape [|1; 1|] action_idx in
+        let action_log_prob = Rune.take_along_axis ~axis:(-1) action_expanded log_probs in
+        let action_log_prob = Rune.squeeze action_log_prob in        
         (* Loss: -advantage * log π(a_t|s_t) *)
         let step_loss = Rune.mul
           (Rune.scalar device Rune.float32 (-. advantage))
@@ -60,6 +65,17 @@ let train_reinforce_with_baseline env n_episodes learning_rate
         episode episode_return !baseline
   done;  
   (policy_net, params)
+(* Main function to test REINFORCE with baseline *)
+let main () =
+  print_endline "=== Slide 5: REINFORCE with Baseline ===";
+  let env = create_simple_gridworld 5 in
+  
+  (* Train for a few episodes *)
+  let _policy_net, _params = 
+    train_reinforce_with_baseline env 20 0.01 0.99 in
+  
+  print_endline "REINFORCE with baseline training complete!"
+
 (*
 ```
  *)

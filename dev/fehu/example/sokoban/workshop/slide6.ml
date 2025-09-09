@@ -4,15 +4,15 @@
 include Slide5
 (* Create a value network for the baseline *)
 let create_value_network grid_size =
-  Layer.sequential [
-    Layer.flatten ();
-    Layer.linear ~in_features:(grid_size * grid_size)
+  Kaun.Layer.sequential [
+    Kaun.Layer.flatten ();
+    Kaun.Layer.linear ~in_features:(grid_size * grid_size)
                  ~out_features:32 ();
-    Layer.relu ();
-    Layer.linear ~in_features:32 ~out_features:16 ();
-    Layer.relu ();
+    Kaun.Layer.relu ();
+    Kaun.Layer.linear ~in_features:32 ~out_features:16 ();
+    Kaun.Layer.relu ();
     (* Single value output *)
-    Layer.linear ~in_features:16 ~out_features:1 ();
+    Kaun.Layer.linear ~in_features:16 ~out_features:1 ();
   ]
 (* REINFORCE with learned baseline (Actor-Critic) *)
 let train_actor_critic env n_episodes lr_actor lr_critic gamma =
@@ -20,13 +20,11 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
   (* Initialize actor (policy) and critic (value) networks *)
   let policy_net = create_policy_network 5 4 in
   let value_net = create_value_network 5 in  
-  let dummy_obs = Rune.zeros device Rune.float32 [|5; 5|] in
+  let keys = Rune.Rng.split ~n:2 rng in
   let policy_params =
-    Kaun.init policy_net ~rngs:(Rune.Rng.split ~n:1 rng).(0)
-      dummy_obs in
+    Kaun.init policy_net ~rngs:keys.(0) ~device ~dtype:Rune.float32 in
   let value_params =
-    Kaun.init value_net ~rngs:(Rune.Rng.split ~n:1 rng).(0)
-      dummy_obs in  
+    Kaun.init value_net ~rngs:keys.(1) ~device ~dtype:Rune.float32 in  
   (* Separate optimizers for actor and critic *)
   let policy_opt = Kaun.Optimizer.adam ~lr:lr_actor () in
   let value_opt = Kaun.Optimizer.adam ~lr:lr_critic () in
@@ -41,7 +39,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
     let values = Array.map (fun state ->
       let v =
         Kaun.apply value_net value_params ~training:false state in
-      Rune.unsafe_get [] v
+      Rune.item [] v
     ) episode_data.states in    
     (* Compute advantages (TD error) *)
     let advantages =
@@ -52,7 +50,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
         Kaun.apply value_net vp ~training:true state
       ) episode_data.states in      
       (* MSE loss between predictions and returns *)
-      let pred_tensor = Rune.stack predictions in
+      let pred_tensor = Rune.stack ~axis:0 (Array.to_list predictions) in
       let returns_tensor = Rune.create device Rune.float32 
         [|Array.length returns|] returns in
       Kaun.Loss.mse pred_tensor returns_tensor
@@ -64,7 +62,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
     Kaun.Optimizer.apply_updates_inplace
         value_params value_updates;    
     (* Update actor (policy network) *)
-    let policy_loss, policy_grads = Kaun.value_and_grad (fun pp ->
+    let _policy_loss, policy_grads = Kaun.value_and_grad (fun pp ->
       let total_loss =
         ref (Rune.zeros device Rune.float32 [||]) in      
       Array.iteri (fun t state ->
@@ -72,8 +70,13 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
         let advantage = advantages.(t) in        
         let logits =
           Kaun.apply policy_net pp ~training:true state in
-        let log_probs = Rune.log_softmax ~axis:(-1) logits in
-        let action_log_prob = Rune.gather log_probs action in        
+        let probs = Rune.softmax ~axes:[|-1|] logits in
+        let log_probs = Rune.log probs in
+        (* Get log prob of selected action - convert action back to int32 for indexing *)
+        let action_idx = Rune.cast Rune.int32 action in
+        let action_expanded = Rune.reshape [|1; 1|] action_idx in
+        let action_log_prob = Rune.take_along_axis ~axis:(-1) action_expanded log_probs in
+        let action_log_prob = Rune.squeeze action_log_prob in        
         let step_loss = Rune.mul
           (Rune.scalar device Rune.float32 (-. advantage))
           action_log_prob in        
@@ -93,9 +96,20 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
     if episode mod 10 = 0 then
       Printf.printf
         "Episode %d: Return = %.2f, Value Loss = %.4f\n"
-        episode returns.(0) (Rune.unsafe_get [] value_loss)
+        episode returns.(0) (Rune.item [] value_loss)
   done;  
   (policy_net, policy_params, value_net, value_params)
+(* Main function to test Actor-Critic *)
+let main () =
+  print_endline "=== Slide 6: Actor-Critic ===";
+  let env = create_simple_gridworld 5 in
+  
+  (* Train for a few episodes *)
+  let _policy_net, _policy_params, _value_net, _value_params = 
+    train_actor_critic env 20 0.01 0.005 0.99 in
+  
+  print_endline "Actor-Critic training complete!"
+
 (*
 ```
  *)

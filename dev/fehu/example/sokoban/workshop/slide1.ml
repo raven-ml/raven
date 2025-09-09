@@ -2,7 +2,7 @@
 ```ocaml
  *)
 open Fehu
-let device = Rune.metal ()
+let device = Rune.c
 (* Workshop Part 1: Define a simple grid world *)
 let create_simple_gridworld size =
   (* Mutable state for agent position *)
@@ -24,13 +24,13 @@ let create_simple_gridworld size =
     agent_pos := (0, 0);
     let obs = Rune.zeros device Rune.float32 [|size; size|] in
     (* Mark agent position *)
-    Rune.unsafe_set [0; 0] 1.0 obs;
+    Rune.set_item [0; 0] 1.0 obs;
     (obs, [])
   in  
   (* Step function - take action and return new state *)
   let step action =
     let action_idx =
-      Rune.unsafe_get [] action |> int_of_float in
+      Rune.item [] action |> int_of_float in
     let x, y = !agent_pos in    
     (* Move based on action *)
     let new_pos = match action_idx with
@@ -44,7 +44,7 @@ let create_simple_gridworld size =
     (* Create observation *)
     let obs = Rune.zeros device Rune.float32 [|size; size|] in
     let x, y = !agent_pos in
-    Rune.unsafe_set [x; y] 1.0 obs;   
+    Rune.set_item [x; y] 1.0 obs;   
     (* Compute reward *)
     let reward = if new_pos = goal_pos then 10.0 else -0.1 in
     let terminated = new_pos = goal_pos in
@@ -54,7 +54,7 @@ let create_simple_gridworld size =
 (* Test the environment *)
 let main () =
   let env = create_simple_gridworld 5 in
-  let obs, _ = env.Envs.reset () in
+  let obs, _ = env.Fehu.Env.reset () in
   print_endline "Initial state:";
   Rune.print obs
 (* 

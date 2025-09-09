@@ -2,6 +2,14 @@
 ```ocaml
  *)
 include Slide2
+
+(* Episode data type *)
+type episode_data = {
+  states : (float, Rune.float32_elt, [`c]) Rune.t array;
+  actions : (float, Rune.float32_elt, [`c]) Rune.t array;
+  rewards : float array;
+  log_probs : (float, Rune.float32_elt, [`c]) Rune.t array;
+}
 (* Collect a complete episode using our policy *)
 let collect_episode env policy_net params max_steps =
   let rng = Rune.Rng.key (Random.int 1000000) in  
@@ -11,7 +19,7 @@ let collect_episode env policy_net params max_steps =
   let rewards = ref [] in
   let log_probs = ref [] in  
   (* Reset environment *)
-  let obs, _ = env.Envs.reset () in
+  let obs, _ = env.Fehu.Env.reset () in
   states := obs :: !states;  
   (* Run episode *)
   let rec run_steps step obs =
@@ -22,7 +30,7 @@ let collect_episode env policy_net params max_steps =
         sample_action policy_net params obs rng in      
       (* Take environment step *)
       let next_obs, reward, terminated, truncated, _ =
-        env.step action in      
+        env.Fehu.Env.step action in      
       (* Store transition *)
       actions := action :: !actions;
       rewards := reward :: !rewards;
@@ -53,6 +61,26 @@ let compute_returns rewards gamma =
       returns.(i) <- rewards.(i) +. gamma *. returns.(i + 1)
   done;  
   returns
+(* Main function to test episode collection *)
+let main () =
+  print_endline "=== Slide 3: Episode Collection ===";
+  let env = create_simple_gridworld 5 in
+  let policy_net, params = initialize_policy () in
+  
+  (* Collect a single episode *)
+  let episode = collect_episode env policy_net params 50 in
+  
+  Printf.printf "Episode collected:\n";
+  Printf.printf "  States: %d\n" (Array.length episode.states);
+  Printf.printf "  Actions: %d\n" (Array.length episode.actions);
+  Printf.printf "  Total reward: %.2f\n" 
+    (Array.fold_left (+.) 0. episode.rewards);
+  
+  (* Compute and display returns *)
+  let returns = compute_returns episode.rewards 0.99 in
+  Printf.printf "  Return (G_0): %.2f\n" returns.(0);
+  print_endline "Episode collection test complete!"
+
 (*
 ```
  *)
