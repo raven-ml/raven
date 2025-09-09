@@ -1,3 +1,4 @@
 (executables
  (names cartpole_random dqn_cartpole)
+ (modules cartpole_random dqn_cartpole)
  (libraries fehu kaun classic unix))

@@ -2,9 +2,6 @@
 
 Welcome to reinforcement learning! If you're familiar with supervised learning and neural network training, you're about to discover a fundamentally different approach to machine learning.
 
-{pause .block}
-This presentation is work-in-progress!
-
 ## What is Reinforcement Learning? {#rl-definition}
 
 {.definition title="Reinforcement Learning"}
@@ -31,6 +28,15 @@ Instead of learning from labeled examples, an **agent** learns by **acting** in 
 - **States**: Current positions of character, boxes, walls (as pixel grid or feature vector)
 - **Actions**: Move up, down, left, right (4 discrete actions)
 - **Rewards**: +10 for solving puzzle, -1 per step, -5 for invalid moves
+
+{pause}
+
+### Workshop Setup: Your First Environment
+
+Let's start by creating a simple grid world environment using Fehu:
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide1.ml}
 
 {pause}
 
@@ -106,6 +112,13 @@ Both environment and information states are **Markovian** - they capture all rel
 - **Action sampling**: Choose "down" with 60% probability
 - **Learned parameters**: θ represents all network weights and biases
 
+{pause}
+
+### Workshop Part 2: Create Your First Policy Network
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide2.ml}
+
 ***
 
 {pause up #episodes}
@@ -140,6 +153,13 @@ $$V^\pi(s) = \mathbb{E}_\pi[G_t | S_t = s]$$
 {pause}
 
 But how do we compute gradients when the "target" (return) depends on our own actions?
+
+{pause}
+
+### Workshop Part 3: Collect an Episode
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide3.ml}
 
 ***
 
@@ -206,6 +226,12 @@ From Sutton & Barto:
      - Update: $\theta \leftarrow \theta + \alpha G_t \nabla_\theta \ln \pi(A_t|S_t,\theta)$
 
 {pause up=algorithm-reinforce}
+
+### Workshop Part 4: Implement Basic REINFORCE
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide4.ml}
+
 ### Key Properties: High Variance Problem
 
 From Sutton & Barto:
@@ -298,6 +324,12 @@ From Sutton & Barto:
 > - **Learned** to predict V(s) using gradient descent
 > - More complex but much more effective
 
+{pause down}
+### Workshop Part 5: Add a Simple Baseline
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide5.ml}
+
 ***
 
 {pause center #reinforce-baseline}
@@ -319,6 +351,13 @@ The baseline **neural network** is learned to predict expected returns, reducing
 **Two networks training simultaneously**:
 - **Policy network**: θ parameters, outputs action probabilities
 - **Baseline network**: w parameters, outputs state value estimates
+
+{pause}
+
+### Workshop Part 6: Learned Baseline (Actor-Critic)
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide6.ml}
 
 ***
 
@@ -357,6 +396,13 @@ REINFORCE with baseline is a simple actor-critic method:
 - Implement a policy network model
 - Implement REINFORCE
 - Enhance with the constant baseline
+
+{pause}
+
+### Workshop Summary: What We Built
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide_pip.ml}
 
 ***
 
@@ -436,6 +482,13 @@ $$L^{CLIP}(\theta) = \min\left(\text{ratio}_t \cdot A_t, \; \text{clip}(\text{ra
 - `ratio = 0.01` → clipped to `0.8` → prevents tiny updates too
 - `ratio = 1.1` → no clipping needed, within [0.8, 1.2]
 
+{pause}
+
+### Workshop Part 7: Add Clipping for Stability
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide7.ml}
+
 ***
 
 {pause center #kl-penalty}
@@ -468,6 +521,13 @@ $$L_{total}(\theta) = L_{policy}(\theta) - \beta \cdot D_{KL}[\pi_{old} \| \pi_{
 > → discourages big changes
 > 
 > The penalty acts like a "trust region" - we trust small changes more than large ones.
+
+{pause}
+
+### Workshop Part 8: Add KL Penalty
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide8.ml}
 
 {pause up=kl-objective}
 > ### Why Both Clipping AND KL Penalty?
@@ -532,20 +592,134 @@ Now we can understand GRPO: **REINFORCE + GRPO Innovation + Clipping + KL Penalt
 {pause down=grpo-for-llms}
 
 {#grpo-implementation}
-### GRPO Implementation Reality
+### GRPO Implementation in Fehu
 
-```python
-# For each query, generate G=4 responses
-responses = model.generate(query, num_return_sequences=4)
+```ocaml
+(* Workshop Part 9: GRPO Implementation *)
+open Fehu
 
-# Compute group-relative advantages  
-rewards = [reward_model(r) for r in responses]
-advantages = (rewards - np.mean(rewards)) / (np.std(rewards) + 1e-8)
+(* Generate multiple trajectories for the same initial state *)
+let collect_group_trajectories env policy_net params init_state group_size =
+  let trajectories = Array.init group_size (fun _ ->
+    (* Each trajectory starts from same state but different random actions *)
+    collect_episode_from_state env policy_net params init_state 100
+  ) in
+  trajectories
 
-# Clipped policy gradient update
-ratios = new_probs / old_probs
-clipped_loss = min(ratios * advantages, 
-                  clip(ratios, 0.8, 1.2) * advantages)
+(* Compute group-relative advantages *)
+let compute_group_advantages rewards =
+  let mean = Array.fold_left (+.) 0. rewards /. 
+             float_of_int (Array.length rewards) in
+  let variance = Array.fold_left (fun acc r -> 
+    acc +. (r -. mean) ** 2.) 0. rewards /. 
+    float_of_int (Array.length rewards) in
+  let std = sqrt variance in
+  
+  (* Normalize advantages within group *)
+  Array.map (fun r -> (r -. mean) /. (std +. 1e-8)) rewards
+
+(* GRPO training step *)
+let train_grpo_step env policy_net params old_params group_size epsilon beta =
+  let device = Rune.c in
+  
+  (* Get initial state *)
+  let init_obs, _ = env.reset () in
+  
+  (* Collect group of trajectories from same starting point *)
+  let group = collect_group_trajectories env policy_net params init_obs group_size in
+  
+  (* Extract returns for each trajectory *)
+  let group_returns = Array.map (fun traj ->
+    let returns = compute_returns traj.rewards 0.99 in
+    returns.(0)  (* Total return *)
+  ) group in
+  
+  (* Compute group-relative advantages *)
+  let group_advantages = compute_group_advantages group_returns in
+  
+  (* Update policy using clipped objective with KL penalty *)
+  let loss, grads = Kaun.value_and_grad (fun p ->
+    let total_loss = ref (Rune.zeros device Rune.float32 [||]) in
+    
+    Array.iteri (fun g_idx trajectory ->
+      let advantage = group_advantages.(g_idx) in
+      
+      Array.iteri (fun t state ->
+        let action = trajectory.actions.(t) in
+        
+        (* Compute new and old log probs *)
+        let new_logits = Kaun.apply policy_net p ~training:true state in
+        let new_log_probs = Rune.log_softmax ~axis:(-1) new_logits in
+        let new_action_log_prob = Rune.gather new_log_probs action in
+        
+        let old_logits = Kaun.apply policy_net old_params ~training:false state in
+        let old_log_probs = Rune.log_softmax ~axis:(-1) old_logits in
+        let old_action_log_prob = Rune.gather old_log_probs action in
+        
+        (* Compute ratio and clip *)
+        let log_ratio = Rune.sub new_action_log_prob old_action_log_prob in
+        let ratio = Rune.exp log_ratio in
+        let clipped_ratio = clip_ratio ratio epsilon in
+        
+        (* Clipped objective *)
+        let adv_scalar = Rune.scalar device Rune.float32 advantage in
+        let obj1 = Rune.mul ratio adv_scalar in
+        let obj2 = Rune.mul clipped_ratio adv_scalar in
+        let clipped_obj = Rune.minimum obj1 obj2 in
+        
+        (* Add KL penalty *)
+        let kl_penalty = Rune.mul 
+          (Rune.scalar device Rune.float32 beta)
+          (Rune.sub old_action_log_prob new_action_log_prob) in
+        
+        let step_loss = Rune.sub (Rune.neg clipped_obj) kl_penalty in
+        total_loss := Rune.add !total_loss step_loss
+      ) trajectory.states
+    ) group;
+    
+    (* Average over all steps and trajectories *)
+    let total_steps = Array.fold_left (fun acc traj -> 
+      acc + Array.length traj.states) 0 group in
+    Rune.div !total_loss (Rune.scalar device Rune.float32 (float_of_int total_steps))
+  ) params in
+  
+  (loss, grads)
+
+(* Complete GRPO training loop *)
+let train_grpo env n_iterations group_size learning_rate epsilon beta =
+  let device = Rune.c in
+  let rng = Rune.Rng.key 42 in
+  
+  (* Initialize policy *)
+  let policy_net = create_policy_network 5 4 in
+  let dummy_obs = Rune.zeros device Rune.float32 [|5; 5|] in
+  let params = Kaun.init policy_net ~rngs:rng dummy_obs in
+  let old_params = ref (Ptree.copy params) in  (* Keep old params for ratios *)
+  
+  (* Optimizer *)
+  let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
+  let opt_state = ref (optimizer.init params) in
+  
+  for iter = 1 to n_iterations do
+    (* GRPO update *)
+    let loss, grads = train_grpo_step env policy_net params !old_params 
+                                     group_size epsilon beta in
+    
+    (* Apply gradients *)
+    let updates, new_state = optimizer.update !opt_state params grads in
+    opt_state := new_state;
+    Kaun.Optimizer.apply_updates_inplace params updates;
+    
+    (* Update old params periodically *)
+    if iter mod 5 = 0 then
+      old_params := Ptree.copy params;
+    
+    if iter mod 10 = 0 then
+      Printf.printf "Iteration %d: Loss = %.4f\n" 
+        iter (Rune.unsafe_get [] loss)
+  done;
+  
+  (policy_net, params)
 ```
 
 ***
