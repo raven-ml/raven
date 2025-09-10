@@ -359,7 +359,8 @@ let embeddings ~config () =
               get_embedding_table "token_type_embeddings"
             in
 
-            (* Perform embedding lookups using Rune.take for differentiability *)
+            (* Perform embedding lookups using Rune.take for
+               differentiability *)
             let lookup_embeddings embedding_table indices =
               let batch_size = (Rune.shape indices).(0) in
               let seq_len = (Rune.shape indices).(1) in
@@ -369,10 +370,10 @@ let embeddings ~config () =
               let indices_flat =
                 Rune.reshape [| batch_size * seq_len |] indices
               in
-              
+
               (* Use take to gather embeddings *)
               let gathered = Rune.take ~axis:0 indices_flat embedding_table in
-              
+
               (* Reshape to [batch_size, seq_len, embed_dim] *)
               Rune.reshape [| batch_size; seq_len; embed_dim |] gathered
             in
@@ -685,27 +686,27 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
                 (* HuggingFace stores weights transposed, so we need to transpose them *)
                 let kaun_param, needs_transpose =
                   match param_name with
-                  | "attention.self.query.weight" -> "q_weight", true
-                  | "attention.self.key.weight" -> "k_weight", true
-                  | "attention.self.value.weight" -> "v_weight", true
-                  | "attention.output.dense.weight" -> "attn_out_weight", true
-                  | "intermediate.dense.weight" -> "inter_weight", true
-                  | "output.dense.weight" -> "out_weight", true
-                  | "attention.self.query.bias" -> "q_bias", false
-                  | "attention.self.key.bias" -> "k_bias", false
-                  | "attention.self.value.bias" -> "v_bias", false
-                  | "attention.output.dense.bias" -> "attn_out_bias", false
-                  | "intermediate.dense.bias" -> "inter_bias", false
-                  | "output.dense.bias" -> "out_bias", false
-                  | "attention.output.LayerNorm.weight" -> "attn_gamma", false
-                  | "attention.output.LayerNorm.bias" -> "attn_beta", false
-                  | "output.LayerNorm.weight" -> "ffn_gamma", false
-                  | "output.LayerNorm.bias" -> "ffn_beta", false
-                  | "attention.output.LayerNorm.gamma" -> "attn_gamma", false
-                  | "attention.output.LayerNorm.beta" -> "attn_beta", false
-                  | "output.LayerNorm.gamma" -> "ffn_gamma", false
-                  | "output.LayerNorm.beta" -> "ffn_beta", false
-                  | _ -> param_name, false
+                  | "attention.self.query.weight" -> ("q_weight", true)
+                  | "attention.self.key.weight" -> ("k_weight", true)
+                  | "attention.self.value.weight" -> ("v_weight", true)
+                  | "attention.output.dense.weight" -> ("attn_out_weight", true)
+                  | "intermediate.dense.weight" -> ("inter_weight", true)
+                  | "output.dense.weight" -> ("out_weight", true)
+                  | "attention.self.query.bias" -> ("q_bias", false)
+                  | "attention.self.key.bias" -> ("k_bias", false)
+                  | "attention.self.value.bias" -> ("v_bias", false)
+                  | "attention.output.dense.bias" -> ("attn_out_bias", false)
+                  | "intermediate.dense.bias" -> ("inter_bias", false)
+                  | "output.dense.bias" -> ("out_bias", false)
+                  | "attention.output.LayerNorm.weight" -> ("attn_gamma", false)
+                  | "attention.output.LayerNorm.bias" -> ("attn_beta", false)
+                  | "output.LayerNorm.weight" -> ("ffn_gamma", false)
+                  | "output.LayerNorm.bias" -> ("ffn_beta", false)
+                  | "attention.output.LayerNorm.gamma" -> ("attn_gamma", false)
+                  | "attention.output.LayerNorm.beta" -> ("attn_beta", false)
+                  | "output.LayerNorm.gamma" -> ("ffn_gamma", false)
+                  | "output.LayerNorm.beta" -> ("ffn_beta", false)
+                  | _ -> (param_name, false)
                 in
 
                 (* Ensure we have enough layers *)
@@ -716,23 +717,24 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
 
                 (* Add param to the appropriate layer *)
                 let layer_params = List.nth !encoder_layers layer_idx_int in
-                (* Transpose weight matrices if needed (HuggingFace stores them transposed) *)
+                (* Transpose weight matrices if needed (HuggingFace stores them
+                   transposed) *)
                 let final_tensor =
-                  if needs_transpose then
-                    Rune.transpose tensor ~axes:[| 1; 0 |]
+                  if needs_transpose then Rune.transpose tensor ~axes:[| 1; 0 |]
                   else tensor
                 in
                 layer_params :=
-                  Kaun.Ptree.Record.add kaun_param (Kaun.Ptree.Tensor final_tensor)
-                    !layer_params
+                  Kaun.Ptree.Record.add kaun_param
+                    (Kaun.Ptree.Tensor final_tensor) !layer_params
             | _ -> ())
         (* Pooler *)
         | s when String.starts_with ~prefix:"pooler.dense.weight" s ->
-            (* Transpose the pooler weight too (HuggingFace stores it transposed) *)
+            (* Transpose the pooler weight too (HuggingFace stores it
+               transposed) *)
             let transposed_tensor = Rune.transpose tensor ~axes:[| 1; 0 |] in
             pooler_params :=
-              Kaun.Ptree.Record.add "dense_weight" (Kaun.Ptree.Tensor transposed_tensor)
-                !pooler_params
+              Kaun.Ptree.Record.add "dense_weight"
+                (Kaun.Ptree.Tensor transposed_tensor) !pooler_params
         | s when String.starts_with ~prefix:"pooler.dense.bias" s ->
             pooler_params :=
               Kaun.Ptree.Record.add "dense_bias" (Kaun.Ptree.Tensor tensor)
@@ -859,12 +861,9 @@ let forward bert inputs ?(training = false) ?(output_hidden_states = false)
         (* Extract CLS token from encoder output *)
         let cls_token = slice [ A; I 0; A ] last_hidden_state in
 
-        (* Apply dense + tanh - weights are already in correct shape after loading *)
-        let pooled =
-          add
-            (matmul cls_token pooler_weight)
-            pooler_bias
-        in
+        (* Apply dense + tanh - weights are already in correct shape after
+           loading *)
+        let pooled = add (matmul cls_token pooler_weight) pooler_bias in
         Some (tanh pooled)
     | _ -> None
   in

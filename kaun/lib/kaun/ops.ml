@@ -271,14 +271,14 @@ let embedding ~embedding ~embed_dim ?(scale = true) x =
   (* x must be an int32 tensor of indices *)
   let input_shape = shape x in
   let flat_indices = reshape [| -1 |] x in
-  
+
   (* Use take to gather embeddings at the specified indices *)
   let gathered = take ~axis:0 flat_indices embedding in
-  
+
   (* Reshape back to original shape plus embedding dimension *)
   let output_shape = Array.append input_shape [| embed_dim |] in
   let embedded = reshape output_shape gathered in
-  
+
   if scale then
     let device_emb = device embedding in
     let dtype_emb = dtype embedding in
@@ -367,15 +367,14 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
   (* Add & Norm after attention *)
   let hidden_states = add hidden_states attn_output in
   let hidden_states =
-    layer_norm ~gamma:attn_gamma ~beta:attn_beta ~dim:hidden_size ~eps:layer_norm_eps ~elementwise_affine:true hidden_states
+    layer_norm ~gamma:attn_gamma ~beta:attn_beta ~dim:hidden_size
+      ~eps:layer_norm_eps ~elementwise_affine:true hidden_states
   in
 
   (* Feed-forward network *)
   let ffn_output =
     (* Intermediate linear *)
-    let intermediate =
-      matmul hidden_states inter_weight
-    in
+    let intermediate = matmul hidden_states inter_weight in
     let intermediate =
       if use_bias then
         Option.fold ~none:intermediate ~some:(add intermediate) inter_bias
@@ -414,4 +413,5 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
 
   (* Add & Norm after FFN *)
   let hidden_states = add hidden_states ffn_output in
-  layer_norm ~gamma:ffn_gamma ~beta:ffn_beta ~dim:hidden_size ~eps:layer_norm_eps ~elementwise_affine:true hidden_states
+  layer_norm ~gamma:ffn_gamma ~beta:ffn_beta ~dim:hidden_size
+    ~eps:layer_norm_eps ~elementwise_affine:true hidden_states

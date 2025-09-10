@@ -503,9 +503,17 @@ let one_hot ~num_classes indices =
 let softmax ?axes x = Debug.with_context "softmax" (fun () -> T.softmax ?axes x)
 let numel x = T.numel x
 let get indices x = Debug.with_context "get" (fun () -> T.get indices x)
-let set indices x value = Debug.with_context "set" (fun () -> T.set indices x value)
-let take ?axis ?mode x indices = Debug.with_context "take" (fun () -> T.take ?axis ?mode x indices)
-let take_along_axis ~axis x indices = Debug.with_context "take_along_axis" (fun () -> T.take_along_axis ~axis x indices)
+
+let set indices x value =
+  Debug.with_context "set" (fun () -> T.set indices x value)
+
+let take ?axis ?mode x indices =
+  Debug.with_context "take" (fun () -> T.take ?axis ?mode x indices)
+
+let take_along_axis ~axis x indices =
+  Debug.with_context "take_along_axis" (fun () ->
+      T.take_along_axis ~axis x indices)
+
 let add_s a s = Debug.with_context "add_s" (fun () -> T.add_s a s)
 
 (* Splitting operations *)

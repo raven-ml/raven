@@ -980,17 +980,20 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     (* For matmul, we need to transpose the last two dimensions *)
                     let ndim = Array.length (T.shape a_val) in
                     let transpose_last_two tensor =
-                      if ndim >= 2 then
+                      if ndim >= 2 then (
                         let axes = Array.init ndim (fun i -> i) in
                         (* Swap last two dimensions *)
                         axes.(ndim - 2) <- ndim - 1;
                         axes.(ndim - 1) <- ndim - 2;
-                        T.transpose ~axes tensor
-                      else
-                        T.transpose tensor
+                        T.transpose ~axes tensor)
+                      else T.transpose tensor
                     in
-                    let grad_a = T.matmul d_loss_d_result (transpose_last_two b_val) in
-                    let grad_b = T.matmul (transpose_last_two a_val) d_loss_d_result in
+                    let grad_a =
+                      T.matmul d_loss_d_result (transpose_last_two b_val)
+                    in
+                    let grad_b =
+                      T.matmul (transpose_last_two a_val) d_loss_d_result
+                    in
                     (grad_a, grad_b)
                 in
                 twg_a.bv <- T.add twg_a.bv grad_contrib_to_a;

@@ -68,7 +68,8 @@ type 'dev inputs = {
 (* GPT-2 specific tokenizer with BPE *)
 module Tokenizer = struct
   type t = {
-    bpe_tokenizer : Saga.tokenizer; (* Using proper Saga tokenizer type *)
+    bpe_model : Saga.Bpe.t;
+        (* Store the actual BPE model for encoding/decoding *)
     vocab_size : int;
     bos_token_id : int;
     eos_token_id : int;
@@ -145,16 +146,9 @@ module Tokenizer = struct
 
     (* Create GPT-2 tokenizer with ByteLevel pre-tokenizer Use use_regex:true to
        enable GPT-2 pattern splitting *)
-    let pre_tokenizer =
-      Saga.Tokenizers.Pre_tokenizers.byte_level ~add_prefix_space:false
-        ~use_regex:true ()
-    in
-    let tokenizer =
-      Saga.tokenizer ~pre_tokenizer (`BPE (vocab_file, merges_file))
-    in
-
+    let bpe_model = Saga.Bpe.from_files ~vocab_file ~merges_file in
     {
-      bpe_tokenizer = tokenizer;
+      bpe_model;
       vocab_size = 50257;
       (* GPT-2 vocab size *)
       bos_token_id = 50256;
@@ -165,7 +159,21 @@ module Tokenizer = struct
       (* GPT-2 doesn't use padding by default *)
     }
 
-  let encode_to_array t text = Saga.encode t.bpe_tokenizer text
+  let encode_to_array t text =
+    (* Use pre-tokenizer to split text, then apply BPE tokenization *)
+    let pre_tokenizer =
+      Saga.Pre_tokenizers.byte_level ~add_prefix_space:false ~use_regex:true ()
+    in
+    let pre_tokens = pre_tokenizer text |> List.map fst in
+    (* Tokenize each pre-token with BPE and collect IDs *)
+    let token_ids =
+      List.concat_map
+        (fun pre_token ->
+          Saga.Bpe.tokenize t.bpe_model pre_token
+          |> List.map (fun token -> token.Saga.Bpe.id))
+        pre_tokens
+    in
+    Array.of_list token_ids
 
   let encode t text ~device =
     let token_ids = encode_to_array t text in
@@ -236,7 +244,13 @@ module Tokenizer = struct
     (* Convert to Rune tensor *)
     Rune.of_nx device nx_tensor
 
-  let decode t token_ids = Saga.decode t.bpe_tokenizer token_ids
+  let decode t token_ids =
+    (* Decode token IDs back to text using BPE model *)
+    let tokens =
+      Array.to_list token_ids
+      |> List.filter_map (fun id -> Saga.Bpe.id_to_token t.bpe_model id)
+    in
+    String.concat "" tokens
 
   (* Get special token IDs *)
   let get_bos_token_id t = t.bos_token_id
@@ -308,15 +322,15 @@ let embeddings ~config () =
                      "Embedding table has wrong shape: %d dims, expected 2"
                      (Array.length table_shape));
               let embed_dim = table_shape.(1) in
-              
+
               (* Flatten indices for gather operation *)
               let indices_flat =
                 Rune.reshape [| batch_size * seq_len |] indices
               in
-              
+
               (* Use take to gather embeddings - this is differentiable *)
               let gathered = Rune.take ~axis:0 indices_flat embedding_table in
-              
+
               (* Reshape to [batch_size, seq_len, embed_dim] *)
               Rune.reshape [| batch_size; seq_len; embed_dim |] gathered
             in

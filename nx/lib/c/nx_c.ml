@@ -1115,24 +1115,23 @@ let op_eigh (type a b) ~vectors (x : (a, b) t) :
 
 let op_triangular_solve ~upper ~transpose ~unit_diag a b =
   let a' = ensure_materializable a in
-  
+
   (* Handle 1D input b by expanding to 2D *)
   let b_shape = shape b in
   let b_ndim = Array.length b_shape in
   let b_is_1d = b_ndim = 1 in
-  
+
   let b_expanded, out_shape =
     if b_is_1d then
       (* Expand 1D to 2D by adding a trailing dimension *)
       let new_shape = [| b_shape.(0); 1 |] in
       let b_reshaped = op_reshape b (Symbolic_shape.of_ints new_shape) in
-      (b_reshaped, b_shape)  (* Keep original shape for output *)
-    else
-      (b, shape b)
+      (b_reshaped, b_shape) (* Keep original shape for output *)
+    else (b, shape b)
   in
-  
+
   let b' = ensure_materializable b_expanded in
-  
+
   (* Create output with appropriate shape *)
   let out_shape_expanded = shape b_expanded in
   let out_expanded = create_tensor b.context b.dtype out_shape_expanded in
@@ -1142,12 +1141,10 @@ let op_triangular_solve ~upper ~transpose ~unit_diag a b =
   let out_ffi = to_ffi_tensor out_expanded in
 
   caml_triangular_solve a_ffi b_ffi out_ffi upper transpose unit_diag;
-  
+
   (* Squeeze output back to 1D if input was 1D *)
-  if b_is_1d then
-    op_reshape out_expanded (Symbolic_shape.of_ints out_shape)
-  else
-    out_expanded
+  if b_is_1d then op_reshape out_expanded (Symbolic_shape.of_ints out_shape)
+  else out_expanded
 
 let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
   (* C backend implementation: production-grade with zero-copy support *)

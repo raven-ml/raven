@@ -1,5 +1,11 @@
 (tests
- (names test_checkpoint test_ptree test_dataset test_metrics test_optimizer test_gradients_vs_jax)
+ (names
+  test_checkpoint
+  test_ptree
+  test_dataset
+  test_metrics
+  test_optimizer
+  test_gradients_vs_jax)
  (package kaun)
  (libraries
   rune

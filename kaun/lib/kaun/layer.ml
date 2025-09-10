@@ -348,7 +348,7 @@ let embedding ~vocab_size ~embed_dim ?(scale = true) ?embedding_init () =
     apply =
       (fun params ~training:_ ?rngs:_ x ->
         match params with
-        | Tensor embedding -> 
+        | Tensor embedding ->
             (* Cast input to int32 for embedding lookup *)
             let indices = Rune.cast Rune.int32 x in
             Ops.embedding ~embedding ~embed_dim ~scale indices
