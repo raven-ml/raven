@@ -1,194 +1,192 @@
-(** Saga - Fast tokenization and text processing for ML in OCaml *)
+(** Saga - Fast tokenization and text processing for ML in OCaml.
 
-(** {1 Modules} *)
+    Saga is a comprehensive text processing library for machine learning
+    applications, providing fast tokenization, statistical language models, and
+    modern text generation capabilities. It combines simplicity for common use
+    cases with flexibility for advanced workflows.
+
+    {1 Library Overview}
+
+    Saga consists of four main components:
+    - {!section-tokenization}: Fast tokenization with BPE, WordPiece, and custom
+      methods
+    - {!section-io}: Efficient file I/O utilities for large text corpora
+    - {!section-lm}: High-level statistical language models (n-grams)
+    - {!section-sampling}: Advanced text generation with composable processors
+
+    All components work together seamlessly but can be used independently.
+
+    {1 Quick Start}
+
+    {2 Simple tokenization and text processing}
+    {[
+      open Saga
+
+      (* Basic word tokenization *)
+      let tokens = tokenize "Hello, world! How are you?"
+      (* Returns: ["Hello"; ","; "world"; "!"; "How"; "are"; "you"; "?"] *)
+
+      (* Character-level tokenization *)
+      let chars = tokenize ~method_:`Chars "Hello"
+      (* Returns: ["H"; "e"; "l"; "l"; "o"] *)
+
+      (* Batch processing with padding *)
+      let batch_ids = encode_batch [ "Hello world"; "Hi there" ] ~pad:true
+      (* Returns: padded tensor of token IDs *)
+    ]}
+
+    {2 Training a language model}
+    {[
+      (* Load training data *)
+      let texts = read_lines "training_data.txt"
+
+      (* Create and train a bigram model *)
+      let model =
+        LM.ngram ~n:2 ~tokenizer:(tokenizer `Words) () |> LM.train texts
+
+      (* Generate new text *)
+      let generated =
+        LM.generate model ~num_tokens:20 ~temperature:0.8 () Printf.printf
+          "Generated: %s\n" generated
+
+      (* Evaluate on test data *)
+      let test_perplexity =
+        LM.perplexity model "the quick brown fox" Printf.printf
+          "Test perplexity: %.2f\n" test_perplexity
+    ]}
+
+    {2 Advanced text generation}
+    {[
+      (* Create a model function (typically a neural network) *)
+      let model_fn token_ids =
+        (* Your neural network forward pass *)
+        Array.make 50000 0.0 (* Example: uniform logits *)
+
+      (* Configure generation with custom processors *)
+      let config =
+        Sampler.default
+        |> Sampler.with_temperature 0.9
+        |> Sampler.with_top_k 40
+        |> Sampler.with_repetition_penalty 1.1
+
+      (* Generate with fine-grained control *)
+      let result =
+        Sampler.generate_text ~model:model_fn
+          ~tokenizer:(encode ~vocab:(vocab [ "hello"; "world" ]))
+          ~decoder:(decode (vocab [ "hello"; "world" ]))
+          ~prompt:"Hello" ~generation_config:config ()
+    ]}
+
+    {1 Common Patterns}
+
+    {2 Text preprocessing pipeline}
+    {[
+      let preprocess_texts texts =
+        texts
+        |> List.map (normalize ~lowercase:true ~collapse_whitespace:true)
+        |> List.filter (fun s -> String.length s > 10) (* Filter short texts *)
+        |> List.map (tokenize ~method_:`Words)
+    ]}
+
+    {2 Model comparison and evaluation}
+    {[
+      let compare_models texts test_texts =
+        let models =
+          [
+            ("unigram", LM.ngram ~n:1 ());
+            ("bigram", LM.ngram ~n:2 ());
+            ("trigram", LM.ngram ~n:3 ~smoothing:0.1 ());
+          ]
+        in
+        List.map
+          (fun (name, model) ->
+            let trained = LM.train model texts in
+            let avg_perp =
+              List.map (LM.perplexity trained) test_texts
+              |> List.fold_left ( +. ) 0.
+              |> fun sum -> sum /. float_of_int (List.length test_texts)
+            in
+            (name, avg_perp))
+          models
+    ]}
+
+    {2 Custom tokenization workflows}
+    {[
+      let create_code_tokenizer () =
+        tokenizer (`Regex {|[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+|[(){}[\].,;]|\S|})
+        |> Tokenizer.with_normalizer (normalize ~collapse_whitespace:true)
+
+      let process_code_files filenames =
+        filenames |> List.map read_lines |> List.flatten
+        |> List.map (Tokenizer.run (create_code_tokenizer ()))
+    ]}
+
+    {1 Performance Tips}
+
+    - Use {!read_lines_lazy} for very large files to avoid memory issues
+    - Character-level models work well for small vocabularies (names, short
+      sequences)
+    - Word-level models are better for natural language with large vocabularies
+    - Higher n-gram orders need exponentially more training data
+    - BPE and WordPiece tokenizers handle out-of-vocabulary words better than
+      simple word splitting
+
+    {1 Integration with Other Libraries}
+
+    Saga integrates well with:
+    - {{:https://github.com/janestreet/base}Base/Core} for functional
+      programming utilities
+    - {{:https://nx.ocaml.org}Nx} for tensor operations and neural networks
+    - {{:https://dune.build}Dune} for build system integration
+    - Standard CSV/JSON libraries for data loading *)
+
+(** {1:section-tokenization Tokenization}
+
+    Fast and flexible tokenization supporting multiple algorithms and custom
+    patterns. Handles everything from simple word splitting to advanced subword
+    tokenization. *)
+
+include
+  module type of Saga_tokenizers
+    with type 'a Tokenizer.t = 'a Saga_tokenizers.Tokenizer.t
+(** @inline *)
+
+(** {1:section-io File I/O}
+
+    Efficient file I/O utilities optimized for large text corpora and ML
+    workflows. *)
+
+include module type of Io
+(** @inline *)
+
+(** {1:section-lm Language Models}
+
+    High-level statistical language models with simple training and generation
+    APIs. *)
+
+include module type of Lm
+(** @inline *)
+
+(** {1:section-sampling Advanced Text Generation}
+
+    Modern text generation with composable processors and fine-grained control,
+    designed for integration with neural language models. *)
 
 module Sampler = Sampler
-(** Text generation and sampling utilities *)
+(** Advanced text generation and sampling utilities.
 
-(** {1 Core Types} *)
+    Provides Transformers-style generation with:
+    - Composable logits processors (temperature, top-k, top-p, repetition
+      penalties)
+    - Flexible stopping criteria (length, time, custom strings)
+    - Configuration builders and presets
+    - Full compatibility with neural language models
 
-type tokenizer
-(** Abstract tokenizer type that handles encoding/decoding *)
+    Use this for production text generation systems or when you need fine
+    control over the generation process. For simple statistical models,
+    {!LM.generate} may be more convenient.
 
-type vocab
-(** Vocabulary mapping between tokens and indices *)
-
-(** {1 Quick Start - Simple API} *)
-
-(** {2 Tokenizers} *)
-
-val tokenizer :
-  ?pre_tokenizer:(string -> (string * (int * int)) list) ->
-  [ `BPE of string * string  (** vocab_file, merges_file *)
-  | `WordPiece of string * string  (** vocab_file, unk_token *)
-  | `Words  (** Whitespace tokenization *)
-  | `Chars  (** Character-level tokenization *)
-  | `Regex of string  (** Custom regex pattern *) ] ->
-  tokenizer
-(** Create a tokenizer with optional pre-tokenizer.
-
-    Examples:
-    {[
-      (* GPT-2 style BPE with ByteLevel pre-tokenizer *)
-      let tok =
-        tokenizer
-          ~pre_tokenizer:(Saga.Tokenizers.Pre_tokenizers.byte_level ())
-          (`BPE ("vocab.json", "merges.txt"))
-
-      (* Simple word tokenizer *)
-      let tok = tokenizer `Words
-    ]} *)
-
-val encode : tokenizer -> string -> int array
-(** [encode tokenizer text] converts text to token IDs *)
-
-val decode : tokenizer -> int array -> string
-(** [decode tokenizer ids] converts token IDs back to text *)
-
-val encode_batch :
-  tokenizer ->
-  ?max_length:int ->
-  ?padding:bool ->
-  ?truncation:bool ->
-  string list ->
-  (int32, Bigarray.int32_elt) Nx.t
-(** [encode_batch tokenizer texts] encodes multiple texts to a tensor. Returns
-    shape [batch_size; seq_length] *)
-
-(** {2 Text Processing} *)
-
-val normalize :
-  ?lowercase:bool ->
-  ?strip_accents:bool ->
-  ?clean_whitespace:bool ->
-  string ->
-  string
-(** Simple text normalization. All options default to false. *)
-
-val tokenize : string -> string list
-(** [tokenize text] splits text into words (whitespace + punctuation) *)
-
-val split_sentences : string -> string list
-(** [split_sentences text] splits text into sentences *)
-
-(** {2 Vocabulary} *)
-
-val build_vocab :
-  ?max_size:int -> ?min_freq:int -> tokenizer -> string list -> vocab
-(** [build_vocab tokenizer texts] builds vocabulary from texts *)
-
-val vocab_size : vocab -> int
-(** Returns vocabulary size *)
-
-val save_vocab : vocab -> string -> unit
-(** Save vocabulary to file *)
-
-val load_vocab : string -> vocab
-(** Load vocabulary from file *)
-
-(** {1 Language Models - High-level API} *)
-
-module LM : sig
-  type t
-  (** Abstract language model type *)
-
-  val train_ngram : n:int -> ?smoothing:float -> tokenizer -> string list -> t
-  (** [train_ngram ~n tokenizer texts] trains an n-gram model. Example:
-      [train_ngram ~n:2 tokenizer texts] for bigram *)
-
-  val generate :
-    t ->
-    ?max_tokens:int ->
-    ?temperature:float ->
-    ?top_k:int ->
-    ?top_p:float ->
-    ?prompt:string ->
-    tokenizer ->
-    string
-  (** [generate model tokenizer] generates text. Returns decoded string. Now
-      supports top-p (nucleus) sampling via the Sampler module. *)
-
-  val perplexity : t -> tokenizer -> string -> float
-  (** [perplexity model tokenizer text] computes perplexity *)
-
-  val save : t -> string -> unit
-  (** Save model to file *)
-
-  val load : string -> t
-  (** Load model from file *)
-end
-
-(** {1 Advanced API - Direct Module Access} *)
-
-(** {2 Tokenizer Implementations} *)
-
-module Tokenizers = Saga_tokenizers
-(** Low-level access to BPE, WordPiece, Unicode utilities *)
-
-(** {2 Model Implementations} *)
-
-module Models = Saga_models
-(** Low-level access to N-gram models *)
-
-(** {2 Advanced Tokenizer Configuration} *)
-
-module Tokenizer : sig
-  type 'a t
-  (** Typed tokenizer for advanced configuration *)
-
-  val create :
-    [ `BPE of Saga_tokenizers.Bpe.t
-    | `WordPiece of Saga_tokenizers.Wordpiece.t
-    | `Words
-    | `Chars
-    | `Regex of string ] ->
-    tokenizer
-  (** Create from low-level tokenizer *)
-
-  val with_normalizer : (string -> string) -> tokenizer -> tokenizer
-  (** Add normalization step *)
-
-  val with_pre_tokenizer :
-    (string -> (string * (int * int)) list) -> tokenizer -> tokenizer
-  (** Add pre-tokenization step *)
-
-  val encode_with_offsets : tokenizer -> string -> (int * int * int) array
-  (** Returns (token_id, start_offset, end_offset) for each token *)
-end
-
-(** {2 Vocabulary Management} *)
-
-module Vocab : sig
-  type t = vocab
-
-  val create : unit -> t
-  (** Create empty vocabulary *)
-
-  val add : t -> string -> unit
-  (** Add single token *)
-
-  val add_tokens : t -> string list -> unit
-  (** Add multiple tokens *)
-
-  val token_to_id : t -> string -> int option
-  (** Get token ID *)
-
-  val id_to_token : t -> int -> string option
-  (** Get token string *)
-
-  val size : t -> int
-
-  val pad_token : string
-  (** Special tokens *)
-
-  val unk_token : string
-  val bos_token : string
-  val eos_token : string
-  val pad_id : t -> int
-  val unk_id : t -> int
-  val bos_id : t -> int
-  val eos_id : t -> int
-end
+    See {!Sampler} for detailed documentation and examples. *)
 
 (** {1 Examples}
 
@@ -227,5 +225,75 @@ end
         |> Tokenizer.with_normalizer (normalize ~lowercase:true)
 
       (* Regex tokenizer for code *)
-      let code_tok = tokenizer (`Regex {|[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+|.|})]
+      let code_tok = tokenizer (`Regex {|[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+|.|})
+    ]}
+
+    {2 End-to-End Name Generator}
+    {[
+      let build_name_generator training_file =
+        (* Load and train character-level model *)
+        let names = read_lines training_file in
+        let model =
+          LM.ngram ~n:3 ~tokenizer:(tokenizer `Chars) ~smoothing:0.1 ()
+          |> LM.train names in
+
+        (* Return generator function *)
+        fun ?(temperature=0.8) ?(max_len=12) () ->
+          LM.generate model ~num_tokens:max_len ~temperature ()
+
+      (* Generate 10 new names *)
+      let gen = build_name_generator "names.txt" in
+      List.init 10 (fun _ -> gen ()) |> List.iter (Printf.printf "%s\n")
+    ]}
+
+    {2 Advanced Neural Model Integration}
+    {[
+      let setup_neural_generation neural_model vocab_file =
+        let vocab = vocab_load vocab_file in
+        let tokenize_fn text = encode ~vocab text in
+        let decode_fn ids = decode vocab ids in
+
+        (* Wrap neural model for Sampler API *)
+        let model_fn token_ids =
+          let tensor = Nx.of_array1 (Array.of_list token_ids) in
+          let logits = neural_model tensor in
+          Nx.to_array1 logits
+        in
+
+        (* Creative writing configuration *)
+        let config =
+          Sampler.creative_writing
+          |> Sampler.with_max_new_tokens 200
+          |> Sampler.with_repetition_penalty 1.15
+        in
+
+        let processors =
+          [
+            Sampler.temperature_warper ~temperature:1.1;
+            Sampler.top_p_warper ~p:0.9;
+            Sampler.no_repeat_ngram ~ngram_size:3;
+          ]
+        in
+
+        (* Generate with stopping criteria *)
+        Sampler.generate_text ~model:model_fn ~tokenizer:tokenize_fn
+          ~decoder:decode_fn ~generation_config:config
+          ~logits_processor:processors
+    ]}
+
+    {2 Batch Processing Pipeline}
+    {[
+      let process_corpus_directory input_dir output_file =
+        (* Custom preprocessing pipeline *)
+        let preprocess text =
+          text |> normalize ~lowercase:true ~collapse_whitespace:true
+          |> fun s -> if String.length s > 20 then Some s else None
+        in
+
+        Sys.readdir input_dir |> Array.to_list
+        |> List.filter (fun f -> Filename.extension f = ".txt")
+        |> List.map (fun f -> Filename.concat input_dir f)
+        |> List.map read_lines_lazy |> Seq.concat
+        |> Seq.filter_map preprocess
+        |> List.of_seq |> write_lines output_file
     ]} *)

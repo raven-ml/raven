@@ -1,6 +1,6 @@
 (** Pre-tokenizers implementation *)
 
-type t_with_offsets = string -> (string * (int * int)) list
+type t = string -> (string * (int * int)) list
 
 let utf8_next s pos =
   let i = pos in

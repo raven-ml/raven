@@ -2,7 +2,7 @@ open Alcotest
 module S = Saga.Sampler
 
 (* Test helpers *)
-let _float_array_testable =
+let float_array_testable =
   testable
     (fun fmt arr ->
       Format.fprintf fmt "[%s]"
@@ -11,305 +11,228 @@ let _float_array_testable =
       Array.length a = Array.length b
       && Array.for_all2 (fun x y -> abs_float (x -. y) < 1e-6) a b)
 
-let _int_array_testable =
+let int_list_testable =
   testable
-    (fun fmt arr ->
+    (fun fmt lst ->
       Format.fprintf fmt "[%s]"
-        (String.concat "; " (Array.to_list (Array.map string_of_int arr))))
+        (String.concat "; " (List.map string_of_int lst)))
     ( = )
 
-(* Mock tokenizer for testing *)
+(* Mock model for testing *)
+let mock_model tokens =
+  (* Simple mock that returns different logits based on context *)
+  let vocab_size = 10 in
+  let logits = Array.make vocab_size (-10.0) in
+  (* Favor next sequential token *)
+  let last_token = match List.rev tokens with [] -> 0 | h :: _ -> h in
+  let next_token = (last_token + 1) mod vocab_size in
+  logits.(next_token) <- 5.0;
+  logits.((next_token + 1) mod vocab_size) <- 3.0;
+  logits.((next_token + 2) mod vocab_size) <- 1.0;
+  logits
+
+(* Mock tokenizer and decoder *)
 let mock_tokenizer text =
-  (* Simple character-based tokenizer for testing *)
-  let chars = String.to_seq text |> List.of_seq in
-  Array.of_list (List.map Char.code chars)
+  String.to_seq text |> List.of_seq |> List.map Char.code
 
-(* Mock decoder for testing *)
 let mock_decoder tokens =
-  let chars = Array.map (fun i -> Char.chr (i mod 256)) tokens in
-  String.init (Array.length chars) (fun i -> chars.(i))
+  List.map (fun i -> Char.chr (i mod 256)) tokens
+  |> List.to_seq |> String.of_seq
 
-(* Test greedy sampling *)
-let test_greedy () =
-  let logits = [| 1.0; 3.0; 2.0; 0.5 |] in
-  let result = S.greedy logits in
-  check int "greedy should select max logit index" 1 result;
-
-  let logits2 = [| -1.0; -2.0; -0.5; -3.0 |] in
-  let result2 = S.greedy logits2 in
-  check int "greedy should select max logit index (negative)" 2 result2
-
-(* Test softmax conversion *)
-let test_softmax () =
-  (* Internal test - we need to expose softmax or test indirectly *)
-  let logits = [| 0.0; 0.0; 0.0 |] in
-  (* With temperature=1.0 and uniform logits, should get ~uniform
-     distribution *)
-  let token = S.sample_token ~temperature:1.0 ~seed:42 logits in
-  check bool "sample_token should return valid index" true
-    (token >= 0 && token < 3)
-
-(* Test temperature scaling *)
-let test_temperature () =
-  let logits = [| 1.0; 2.0; 3.0 |] in
-
-  (* Very low temperature should make it more deterministic *)
-  let token_low = S.sample_token ~temperature:0.01 ~seed:42 logits in
-  check int "low temperature should be more deterministic" 2 token_low;
-
-  (* High temperature makes distribution more uniform *)
-  let results = ref [] in
-  for seed = 0 to 100 do
-    let token = S.sample_token ~temperature:10.0 ~seed logits in
-    results := token :: !results
-  done;
-  (* With high temperature, we should see variety in selections *)
-  let unique = List.sort_uniq compare !results in
-  check bool "high temperature should produce variety" true
-    (List.length unique > 1)
-
-(* Test top-k filtering *)
-let test_top_k () =
-  let logits = [| 1.0; 2.0; 3.0; 4.0; 5.0 |] in
-
-  (* With top_k=2, only indices 3 and 4 should be possible *)
-  let results = ref [] in
-  for seed = 0 to 50 do
-    let token = S.sample_token ~top_k:2 ~seed logits in
-    results := token :: !results
-  done;
-
-  let unique = List.sort_uniq compare !results in
-  List.iter
-    (fun idx ->
-      check bool
-        (Printf.sprintf "top-k=2 should only select from top 2 (got %d)" idx)
-        true
-        (idx = 3 || idx = 4))
-    unique;
-
-  (* Verify we get both values with enough samples *)
-  check bool "should sample both top values" true
-    (List.mem 3 !results && List.mem 4 !results)
-
-(* Test top-p (nucleus) filtering *)
-let test_top_p () =
-  (* Create logits where top 2 account for >90% probability *)
-  let logits = [| 0.0; 0.0; 10.0; 9.0; 0.0 |] in
-
-  let results = ref [] in
-  for seed = 0 to 50 do
-    let token = S.sample_token ~top_p:0.9 ~seed logits in
-    results := token :: !results
-  done;
-
-  (* Should mostly/only see indices 2 and 3 *)
-  let unique = List.sort_uniq compare !results in
-  List.iter
-    (fun idx ->
-      check bool
-        (Printf.sprintf "top-p=0.9 should select high prob tokens (got %d)" idx)
-        true
-        (idx = 2 || idx = 3))
-    unique
-
-(* Test combined sampling parameters *)
-let test_combined_sampling () =
-  let logits = [| 1.0; 2.0; 3.0; 4.0; 5.0 |] in
-
-  (* Combine temperature with top-k *)
-  let token = S.sample_token ~temperature:0.5 ~top_k:3 ~seed:42 logits in
-  check bool "combined sampling should return valid index" true
-    (token >= 2 && token <= 4);
-
-  (* Combine all parameters *)
-  let token2 =
-    S.sample_token ~temperature:1.0 ~top_k:4 ~top_p:0.95 ~seed:42 logits
-  in
-  check bool "all parameters combined should work" true
-    (token2 >= 0 && token2 < 5)
-
-(* Test generation with mock logits function *)
-let test_generate () =
-  (* Simple logits function that always favors next sequential token *)
-  let logits_fn prev_token =
-    let logits = Array.make 256 0.0 in
-    logits.((prev_token + 1) mod 256) <- 10.0;
-    (* Strongly favor next token *)
-    logits
-  in
-
-  let tokens =
-    S.generate ~max_tokens:5 ~temperature:0.01 ~seed:42 ~logits_fn
-      ~tokenizer:mock_tokenizer ()
-  in
-
-  check int "should generate requested number of tokens" 5 (Array.length tokens);
-
-  (* With very low temperature, should be deterministic *)
-  for i = 1 to Array.length tokens - 1 do
-    let expected = (tokens.(i - 1) + 1) mod 256 in
-    check int
-      (Printf.sprintf "token %d should be sequential" i)
-      expected tokens.(i)
-  done
-
-(* Test generation with starting text *)
-let test_generate_with_start () =
-  let logits_fn _prev_token =
-    let logits = Array.make 256 (-10.0) in
-    logits.(65) <- 10.0;
-    (* Strongly favor 'A' *)
-    logits
-  in
-
-  let tokens =
-    S.generate ~max_tokens:3 ~temperature:0.01 ~seed:42 ~start:"Hi" ~logits_fn
-      ~tokenizer:mock_tokenizer ()
-  in
-
-  (* Should start with "Hi" tokens plus 3 generated *)
-  check int "should include start tokens plus generated" 5 (Array.length tokens);
-  check int "first token should be 'H'" 72 tokens.(0);
-  check int "second token should be 'i'" 105 tokens.(1);
-  (* Generated tokens should all be 'A' (65) *)
-  for i = 2 to 4 do
-    check int
-      (Printf.sprintf "generated token %d should be 'A'" (i - 2))
-      65 tokens.(i)
-  done
-
-(* Test generate_text function *)
-let test_generate_text () =
-  let logits_fn _prev_token =
-    let logits = Array.make 256 (-10.0) in
-    (* Create a pattern: always generate 'A' after anything *)
-    logits.(65) <- 10.0;
-    logits
-  in
-
-  let text =
-    S.generate_text ~max_tokens:3 ~temperature:0.01 ~seed:42 ~start:"Test"
-      ~logits_fn ~tokenizer:mock_tokenizer ~decoder:mock_decoder ()
-  in
-
-  (* Should be "Test" + "AAA" *)
-  check string "generated text should match expected" "TestAAA" text
-
-(* Test edge cases *)
-let test_edge_cases () =
-  (* Empty logits array should not crash *)
-  let empty_logits = [||] in
-  check_raises "empty logits should raise exception"
-    (Invalid_argument "index out of bounds") (fun () ->
-      ignore (S.greedy empty_logits));
-
-  (* Single logit *)
-  let single = [| 1.0 |] in
-  let token = S.sample_token ~seed:42 single in
-  check int "single logit should return 0" 0 token;
-
-  (* All equal logits *)
-  let equal = [| 1.0; 1.0; 1.0; 1.0 |] in
-  let results = ref [] in
-  for seed = 0 to 100 do
-    results := S.sample_token ~seed equal :: !results
-  done;
-  let unique = List.sort_uniq compare !results in
-  (* With equal probabilities, should eventually sample all indices *)
-  check bool "equal logits should allow all indices" true
-    (List.length unique > 1);
-
-  (* Very large logits differences *)
-  let extreme = [| -1000.0; 1000.0; -1000.0 |] in
-  let token = S.sample_token ~temperature:1.0 ~seed:42 extreme in
-  check int "extreme logits should select max" 1 token
-
-(* Test determinism with seeds *)
-let test_determinism () =
+(* Test temperature warper *)
+let test_temperature_warper () =
   let logits = [| 1.0; 2.0; 3.0; 4.0 |] in
 
-  (* Same seed should give same result *)
-  let token1 = S.sample_token ~temperature:1.0 ~seed:123 logits in
-  let token2 = S.sample_token ~temperature:1.0 ~seed:123 logits in
-  check int "same seed should give same result" token1 token2;
+  (* Temperature = 1.0 should not change logits *)
+  let warper = S.temperature_warper ~temperature:1.0 in
+  let result = warper.process ~prompt_length:0 [] logits in
+  check float_array_testable "temperature 1.0 should not change logits" logits
+    result;
 
-  (* Different seeds should (usually) give different results *)
-  let results = ref [] in
-  for seed = 0 to 20 do
-    results := S.sample_token ~temperature:1.0 ~seed logits :: !results
-  done;
-  let unique = List.sort_uniq compare !results in
-  check bool "different seeds should give variety" true (List.length unique > 1)
+  (* Temperature = 2.0 should scale down *)
+  let warper2 = S.temperature_warper ~temperature:2.0 in
+  let result2 = warper2.process ~prompt_length:0 [] logits in
+  let expected = [| 0.5; 1.0; 1.5; 2.0 |] in
+  check float_array_testable "temperature 2.0 should halve logits" expected
+    result2;
 
-(* Test top-k with k larger than array *)
-let test_top_k_edge_cases () =
-  let logits = [| 1.0; 2.0; 3.0 |] in
+  (* Temperature = 0.5 should scale up *)
+  let warper3 = S.temperature_warper ~temperature:0.5 in
+  let result3 = warper3.process ~prompt_length:0 [] logits in
+  let expected3 = [| 2.0; 4.0; 6.0; 8.0 |] in
+  check float_array_testable "temperature 0.5 should double logits" expected3
+    result3
 
-  (* top_k larger than array should work like no filtering *)
-  let token = S.sample_token ~top_k:10 ~seed:42 logits in
-  check bool "top_k > array length should work" true (token >= 0 && token < 3);
+(* Test top-k warper *)
+let test_top_k_warper () =
+  let logits = [| 1.0; 4.0; 2.0; 3.0 |] in
 
-  (* top_k = 1 should be deterministic *)
-  let results = ref [] in
-  for seed = 0 to 10 do
-    results := S.sample_token ~top_k:1 ~seed logits :: !results
-  done;
-  let unique = List.sort_uniq compare !results in
-  check int "top_k=1 should be deterministic" 1 (List.length unique);
-  check int "top_k=1 should select max" 2 (List.hd unique)
+  (* Top-k = 2 should keep only top 2 *)
+  let warper = S.top_k_warper ~k:2 in
+  let result = warper.process ~prompt_length:0 [] logits in
+  check bool "index 1 should be kept (4.0)" true (result.(1) > -1e9);
+  check bool "index 3 should be kept (3.0)" true (result.(3) > -1e9);
+  check bool "index 0 should be filtered" true (result.(0) < -1e9);
+  check bool "index 2 should be filtered" true (result.(2) < -1e9)
 
-(* Test top-p edge cases *)
-let test_top_p_edge_cases () =
-  let logits = [| 1.0; 2.0; 3.0 |] in
+(* Test repetition penalty *)
+let test_repetition_penalty () =
+  let logits = [| 1.0; 2.0; 3.0; 4.0 |] in
+  let previous_tokens = [ 1; 3 ] in
 
-  (* top_p = 1.0 should include everything *)
-  let token = S.sample_token ~top_p:1.0 ~seed:42 logits in
-  check bool "top_p=1.0 should work" true (token >= 0 && token < 3);
+  let processor = S.repetition_penalty ~penalty:1.5 in
+  let result = processor.process ~prompt_length:0 previous_tokens logits in
 
-  (* Very small top_p should be restrictive *)
-  let results = ref [] in
-  for seed = 0 to 20 do
-    results := S.sample_token ~top_p:0.1 ~seed logits :: !results
-  done;
-  (* Should mostly/only get the highest probability token *)
-  let most_common =
-    List.fold_left
-      (fun acc x ->
-        let count_x = List.filter (( = ) x) !results |> List.length in
-        let count_acc = List.filter (( = ) acc) !results |> List.length in
-        if count_x > count_acc then x else acc)
-      (List.hd !results) !results
+  (* Token 1 should be penalized (positive logit divided by penalty) *)
+  check (float 0.01) "token 1 should be penalized" (2.0 /. 1.5) result.(1);
+  (* Token 3 should be penalized *)
+  check (float 0.01) "token 3 should be penalized" (4.0 /. 1.5) result.(3);
+  (* Others unchanged *)
+  check (float 0.01) "token 0 unchanged" 1.0 result.(0);
+  check (float 0.01) "token 2 unchanged" 3.0 result.(2)
+
+(* Test min_new_tokens processor *)
+let test_min_new_tokens () =
+  let logits = [| 1.0; 2.0; 3.0; 4.0 |] in
+  let eos_token_ids = [ 3 ] in
+
+  (* When we haven't generated enough tokens, EOS should be blocked *)
+  let processor = S.min_new_tokens ~min_new_tokens:2 ~eos_token_ids in
+  let tokens = [ 0 ] in
+  (* Only 1 token generated after prompt *)
+  let result = processor.process ~prompt_length:0 tokens logits in
+  check bool "EOS should be blocked" true (result.(3) < -1e9);
+  check (float 0.01) "other tokens unchanged" 1.0 result.(0);
+
+  (* When we have enough tokens, EOS should be allowed *)
+  let tokens2 = [ 0; 1; 2 ] in
+  (* 3 tokens, enough *)
+  let result2 = processor.process ~prompt_length:0 tokens2 logits in
+  check (float 0.01) "EOS should be allowed" 4.0 result2.(3)
+
+(* Test generation with config *)
+let test_generation_config () =
+  Random.init 42;
+
+  (* Build config using builder pattern *)
+  let config =
+    S.default
+    |> S.with_temperature 0.01 (* Almost greedy *)
+    |> S.with_max_new_tokens 5 |> S.with_do_sample true
   in
-  check int "small top_p should favor highest prob" 2 most_common
 
-(* Test suite *)
+  let output =
+    S.generate ~model:mock_model ~input_ids:[ 0 ] ~generation_config:config ()
+  in
+
+  match output.sequences with
+  | [ seq ] ->
+      check bool "should generate sequence" true (List.length seq > 1);
+      check bool "should not exceed max tokens" true (List.length seq <= 6)
+  | _ -> fail "should generate exactly one sequence"
+
+(* Test preset configurations *)
+let test_presets () =
+  (* Test creative writing preset *)
+  let creative = S.creative_writing in
+  check (float 0.01) "creative temperature" 0.8 creative.temperature;
+  check (float 0.01) "creative top_p" 0.9 creative.top_p;
+  check (float 0.01) "creative repetition_penalty" 1.2
+    creative.repetition_penalty;
+
+  (* Test factual preset *)
+  let factual = S.factual in
+  check (float 0.01) "factual temperature" 0.3 factual.temperature;
+  check int "factual top_k" 10 factual.top_k;
+
+  (* Test from_preset *)
+  let chat = S.from_preset "chat" in
+  check (float 0.01) "chat temperature" 0.7 chat.temperature
+
+(* Test processor composition *)
+let test_processor_composition () =
+  let logits = [| 1.0; 2.0; 3.0; 4.0 |] in
+
+  (* Compose temperature and top-k *)
+  let composed = S.(temperature_warper ~temperature:2.0 @@ top_k_warper ~k:2) in
+  let result = composed.process ~prompt_length:0 [] logits in
+
+  (* Should apply both: first temperature scaling, then top-k *)
+  check bool "high values should be kept" true
+    (result.(3) > -1e9 && result.(3) < 3.0);
+  (* Scaled and kept *)
+  check bool "low values should be filtered" true (result.(0) < -1e9)
+
+(* Test pipeline operator *)
+let test_pipeline_operator () =
+  let logits = [| 1.0; 2.0; 3.0; 4.0 |] in
+
+  (* Use pipeline operator *)
+  let result =
+    logits
+    |> S.( |>> ) (S.temperature_warper ~temperature:2.0)
+    |> S.( |>> ) (S.top_k_warper ~k:3)
+  in
+
+  (* Check that transformations were applied *)
+  check bool "should apply temperature" true (result.(3) < 3.0);
+  check bool "should apply top-k filter" true (result.(0) < -1e9)
+
+(* Test stopping criteria *)
+let test_stopping_criteria () =
+  let start_time = Unix.gettimeofday () in
+
+  (* Max length criterion *)
+  let max_len = S.max_length_criteria ~max_length:5 in
+  check bool "should not stop before max" false
+    (max_len.should_stop ~prompt_length:0 ~start_time [ 1; 2; 3 ]);
+  check bool "should stop at max" true
+    (max_len.should_stop ~prompt_length:0 ~start_time [ 1; 2; 3; 4; 5 ]);
+
+  (* EOS token criterion *)
+  let eos = S.eos_token_criteria ~eos_token_ids:[ 9 ] in
+  check bool "should not stop without EOS" false
+    (eos.should_stop ~prompt_length:0 ~start_time [ 1; 2; 3 ]);
+  check bool "should stop with EOS" true
+    (eos.should_stop ~prompt_length:0 ~start_time [ 1; 2; 9 ])
+
+(* Test generation with processors *)
+let test_generation_with_processors () =
+  Random.init 42;
+
+  let config = S.default |> S.with_max_new_tokens 10 |> S.with_do_sample true in
+
+  (* Add custom processors *)
+  let processors =
+    [ S.temperature_warper ~temperature:0.8; S.repetition_penalty ~penalty:1.2 ]
+  in
+
+  let output =
+    S.generate ~model:mock_model ~input_ids:[ 0 ] ~generation_config:config
+      ~logits_processor:processors ()
+  in
+
+  check bool "should generate with processors" true
+    (match output.sequences with [ seq ] -> List.length seq > 1 | _ -> false)
+
 let () =
   run "Sampler"
     [
-      ( "basic",
+      ( "processors",
         [
-          test_case "greedy" `Quick test_greedy;
-          test_case "softmax" `Quick test_softmax;
-          test_case "temperature" `Quick test_temperature;
-        ] );
-      ( "filtering",
-        [
-          test_case "top_k" `Quick test_top_k;
-          test_case "top_p" `Quick test_top_p;
-          test_case "combined_sampling" `Quick test_combined_sampling;
+          test_case "temperature warper" `Quick test_temperature_warper;
+          test_case "top-k warper" `Quick test_top_k_warper;
+          test_case "repetition penalty" `Quick test_repetition_penalty;
+          test_case "min_new_tokens" `Quick test_min_new_tokens;
+          test_case "processor composition" `Quick test_processor_composition;
+          test_case "pipeline operator" `Quick test_pipeline_operator;
         ] );
       ( "generation",
         [
-          test_case "generate" `Quick test_generate;
-          test_case "generate_with_start" `Quick test_generate_with_start;
-          test_case "generate_text" `Quick test_generate_text;
+          test_case "generation config" `Quick test_generation_config;
+          test_case "presets" `Quick test_presets;
+          test_case "stopping criteria" `Quick test_stopping_criteria;
+          test_case "generation with processors" `Quick
+            test_generation_with_processors;
         ] );
-      ( "edge_cases",
-        [
-          test_case "edge_cases" `Quick test_edge_cases;
-          test_case "top_k_edge_cases" `Quick test_top_k_edge_cases;
-          test_case "top_p_edge_cases" `Quick test_top_p_edge_cases;
-        ] );
-      ("determinism", [ test_case "determinism" `Quick test_determinism ]);
     ]

@@ -52,11 +52,36 @@ let () =
           logits_array.(j) <- item [ 0; j ] last_logits
         done;
 
-        (* Sample next token *)
-        let next_token =
+        (* Sample next token using new API *)
+        (* Create a simple model function that returns the logits *)
+        let model_fn _tokens = logits_array in
+
+        (* Configure generation for single token *)
+        let config =
+          Sampler.default
+          |> Sampler.with_temperature temperature
+          |> Sampler.with_max_new_tokens 1 (* Generate just 1 token *)
+          |> Sampler.with_do_sample true
+        in
+        let config =
           match top_k with
-          | Some k -> Sampler.sample_token ~temperature ~top_k:k logits_array
-          | None -> Sampler.sample_token ~temperature logits_array
+          | Some k -> Sampler.with_top_k k config
+          | None -> config
+        in
+
+        (* Generate single token *)
+        let output =
+          Sampler.generate ~model:model_fn ~input_ids:(Array.to_list !tokens)
+            ~generation_config:config ()
+        in
+
+        (* Extract the generated token *)
+        let next_token =
+          match output.sequences with
+          | [ seq ] ->
+              (* Get the last token from the sequence *)
+              List.hd (List.rev seq)
+          | _ -> failwith "Unexpected generation output"
         in
 
         (* Add to tokens *)

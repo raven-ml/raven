@@ -293,7 +293,7 @@ module Tokenizer = struct
   type 'a t = {
     tokenize : string -> string list;
     normalizer : (string -> string) option;
-    pre_tokenizer : (string -> string list) option;
+    pre_tokenizer : Pre_tokenizers.t option;
   }
 
   let words =
@@ -342,7 +342,10 @@ module Tokenizer = struct
   let run t text =
     let text = match t.normalizer with Some f -> f text | None -> text in
     match t.pre_tokenizer with
-    | Some pre -> List.concat_map t.tokenize (pre text)
+    | Some pre ->
+        (* Pre-tokenizer returns (string * (int * int)) list, extract strings *)
+        let pre_tokens = pre text |> List.map fst in
+        List.concat_map t.tokenize pre_tokens
     | None -> t.tokenize text
 
   let run_with_offsets t text =

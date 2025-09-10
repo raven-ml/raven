@@ -1,435 +1,186 @@
 (** Implementation of n-gram language models *)
 
-module IntMap = Map.Make (Int)
+module Int_map = Map.Make (Int)
 
-module IntPairMap = Map.Make (struct
+module Int_pair_map = Map.Make (struct
   type t = int * int
 
   let compare = compare
 end)
 
 type vocab_stats = { vocab_size : int; total_tokens : int; unique_ngrams : int }
+type smoothing = Add_k of float | Stupid_backoff of float
 
 type t = {
   n : int;
   vocab_size : int;
-  counts : (int list, int) Hashtbl.t; (* context -> next_token -> count *)
-  context_totals : (int list, int) Hashtbl.t; (* context -> total_count *)
-  smoothing : float;
+  counts : (int array, (int, int) Hashtbl.t) Hashtbl.t;
+      (* context -> (next_token -> count) *)
+  context_totals : (int array, int) Hashtbl.t; (* context -> total_count *)
+  smoothing : smoothing;
+  orders : (int array, (int, int) Hashtbl.t) Hashtbl.t array;
+  order_totals : (int array, int) Hashtbl.t array;
+  logits_cache : (int array, float array) Hashtbl.t option;
+  cache_capacity : int;
 }
-(** Generic n-gram model *)
-
-(* Mark fields as used to suppress warnings *)
-let _ = fun (model : t) -> (model.counts, model.context_totals, model.smoothing)
 
 (** Unigram model implementation *)
-module Unigram = struct
-  type model = {
-    counts : int IntMap.t;
-    total : int;
-    vocab_size : int;
-    log_probs : float array;
-  }
-
-  let train tokens =
-    (* Count token frequencies *)
-    let counts = ref IntMap.empty in
-    let total = ref 0 in
-    let max_token = ref 0 in
-
-    Array.iter
-      (fun token ->
-        counts :=
-          IntMap.update token
-            (function None -> Some 1 | Some c -> Some (c + 1))
-            !counts;
-        total := !total + 1;
-        max_token := max !max_token token)
-      tokens;
-
-    let vocab_size = !max_token + 1 in
-
-    (* Compute log probabilities with Laplace smoothing *)
-    let log_probs =
-      Array.make vocab_size (log (1.0 /. float_of_int (!total + vocab_size)))
-    in
-    IntMap.iter
-      (fun token count ->
-        log_probs.(token) <-
-          log (float_of_int (count + 1) /. float_of_int (!total + vocab_size)))
-      !counts;
-
-    { counts = !counts; total = !total; vocab_size; log_probs }
-
-  let train_from_corpus corpus =
-    (* Collect all tokens from corpus *)
-    let all_tokens = List.concat_map Array.to_list corpus in
-    train (Array.of_list all_tokens)
-
-  let logits model _prev_token =
-    (* Return log probabilities (not normalized to sum to 1 in log space) *)
-    Array.copy model.log_probs
-
-  let log_prob model token =
-    if token >= 0 && token < model.vocab_size then model.log_probs.(token)
-    else log (1.0 /. float_of_int (model.total + model.vocab_size))
-
-  let sample model ?(temperature = 1.0) ?(seed = Random.int 1000000) () =
-    let rng = Random.State.make [| seed |] in
-    let probs =
-      Array.map (fun log_p -> exp (log_p /. temperature)) model.log_probs
-    in
-
-    (* Normalize *)
-    let sum = Array.fold_left ( +. ) 0.0 probs in
-    let probs = Array.map (fun p -> p /. sum) probs in
-
-    (* Sample *)
-    let r = Random.State.float rng 1.0 in
-    let cumsum = ref 0.0 in
-    let result = ref (model.vocab_size - 1) in
-    for i = 0 to model.vocab_size - 1 do
-      cumsum := !cumsum +. probs.(i);
-      if !cumsum > r && !result = model.vocab_size - 1 then result := i
-    done;
-    !result
-
-  let stats model =
-    {
-      vocab_size = model.vocab_size;
-      total_tokens = model.total;
-      unique_ngrams = IntMap.cardinal model.counts;
-    }
-
-  let save model path =
-    let oc = open_out_bin path in
-    output_value oc model;
-    close_out oc
-
-  let load path =
-    let ic = open_in_bin path in
-    let model = input_value ic in
-    close_in ic;
-    model
-end
+(* Removed Unigram submodule in favor of generic API *)
 
 (** Bigram model implementation *)
-module Bigram = struct
-  type model = {
-    counts : int IntPairMap.t IntMap.t;
-        (* prev_token -> (next_token, count) map *)
-    context_totals : int IntMap.t; (* prev_token -> total_count *)
-    vocab_size : int;
-    smoothing : float;
-  }
-
-  let train ?(smoothing = 1.0) tokens =
-    let counts = ref IntMap.empty in
-    let context_totals = ref IntMap.empty in
-    let max_token = ref 0 in
-
-    (* Count bigrams *)
-    for i = 0 to Array.length tokens - 2 do
-      let prev = tokens.(i) in
-      let next = tokens.(i + 1) in
-      max_token := max !max_token (max prev next);
-
-      (* Update counts *)
-      counts :=
-        IntMap.update prev
-          (function
-            | None -> Some (IntPairMap.singleton (prev, next) 1)
-            | Some m ->
-                Some
-                  (IntPairMap.update (prev, next)
-                     (function None -> Some 1 | Some c -> Some (c + 1))
-                     m))
-          !counts;
-
-      (* Update context totals *)
-      context_totals :=
-        IntMap.update prev
-          (function None -> Some 1 | Some c -> Some (c + 1))
-          !context_totals
-    done;
-
-    (* Handle last token *)
-    if Array.length tokens > 0 then
-      max_token := max !max_token tokens.(Array.length tokens - 1);
-
-    {
-      counts = !counts;
-      context_totals = !context_totals;
-      vocab_size = !max_token + 1;
-      smoothing;
-    }
-
-  let train_from_corpus ?(smoothing = 1.0) corpus =
-    let all_tokens = List.concat_map Array.to_list corpus in
-    train ~smoothing (Array.of_list all_tokens)
-
-  let logits model prev_token =
-    let logits = Array.make model.vocab_size (log 0.0) in
-    (* Initialize with -inf *)
-
-    (* Get context total with smoothing *)
-    let context_total =
-      match IntMap.find_opt prev_token model.context_totals with
-      | Some total ->
-          float_of_int total
-          +. (model.smoothing *. float_of_int model.vocab_size)
-      | None -> model.smoothing *. float_of_int model.vocab_size
-    in
-
-    (* Fill in log probabilities *)
-    for next_token = 0 to model.vocab_size - 1 do
-      let count =
-        match IntMap.find_opt prev_token model.counts with
-        | None -> 0
-        | Some next_map -> (
-            match IntPairMap.find_opt (prev_token, next_token) next_map with
-            | None -> 0
-            | Some c -> c)
-      in
-      logits.(next_token) <-
-        log ((float_of_int count +. model.smoothing) /. context_total)
-    done;
-
-    logits
-
-  let log_prob model ~prev ~next =
-    let context_total =
-      match IntMap.find_opt prev model.context_totals with
-      | Some total ->
-          float_of_int total
-          +. (model.smoothing *. float_of_int model.vocab_size)
-      | None -> model.smoothing *. float_of_int model.vocab_size
-    in
-
-    let count =
-      match IntMap.find_opt prev model.counts with
-      | None -> 0
-      | Some next_map -> (
-          match IntPairMap.find_opt (prev, next) next_map with
-          | None -> 0
-          | Some c -> c)
-    in
-
-    log ((float_of_int count +. model.smoothing) /. context_total)
-
-  let sample model ~prev ?(temperature = 1.0) ?(seed = Random.int 1000000) () =
-    let rng = Random.State.make [| seed |] in
-    let log_probs = logits model prev in
-
-    (* Convert to probabilities with temperature *)
-    let probs = Array.map (fun log_p -> exp (log_p /. temperature)) log_probs in
-
-    (* Normalize *)
-    let sum = Array.fold_left ( +. ) 0.0 probs in
-    let probs = Array.map (fun p -> p /. sum) probs in
-
-    (* Sample *)
-    let r = Random.State.float rng 1.0 in
-    let cumsum = ref 0.0 in
-    let result = ref (model.vocab_size - 1) in
-    for i = 0 to model.vocab_size - 1 do
-      cumsum := !cumsum +. probs.(i);
-      if !cumsum > r && !result = model.vocab_size - 1 then result := i
-    done;
-    !result
-
-  let stats model =
-    let unique_bigrams =
-      IntMap.fold
-        (fun _ next_map acc -> acc + IntPairMap.cardinal next_map)
-        model.counts 0
-    in
-    {
-      vocab_size = model.vocab_size;
-      total_tokens =
-        IntMap.fold (fun _ count acc -> acc + count) model.context_totals 0;
-      unique_ngrams = unique_bigrams;
-    }
-
-  let save model path =
-    let oc = open_out_bin path in
-    output_value oc model;
-    close_out oc
-
-  let load path =
-    let ic = open_in_bin path in
-    let model = input_value ic in
-    close_in ic;
-    model
-end
+(* Removed Bigram submodule in favor of generic API *)
 
 (** Trigram model implementation *)
-module Trigram = struct
-  type model = {
-    counts : (int * int * int, int) Hashtbl.t;
-        (* (prev1, prev2, next) -> count *)
-    context_totals : (int * int, int) Hashtbl.t; (* (prev1, prev2) -> total *)
-    vocab_size : int;
-    smoothing : float;
-  }
-
-  let train ?(smoothing = 1.0) tokens =
-    let counts = Hashtbl.create 10000 in
-    let context_totals = Hashtbl.create 1000 in
-    let max_token = ref 0 in
-
-    (* Count trigrams *)
-    for i = 0 to Array.length tokens - 3 do
-      let prev1 = tokens.(i) in
-      let prev2 = tokens.(i + 1) in
-      let next = tokens.(i + 2) in
-      max_token := max !max_token (max (max prev1 prev2) next);
-
-      (* Update counts *)
-      let key = (prev1, prev2, next) in
-      let count = try Hashtbl.find counts key with Not_found -> 0 in
-      Hashtbl.replace counts key (count + 1);
-
-      (* Update context totals *)
-      let context = (prev1, prev2) in
-      let total =
-        try Hashtbl.find context_totals context with Not_found -> 0
-      in
-      Hashtbl.replace context_totals context (total + 1)
-    done;
-
-    (* Handle last tokens *)
-    if Array.length tokens > 0 then
-      max_token := max !max_token tokens.(Array.length tokens - 1);
-    if Array.length tokens > 1 then
-      max_token := max !max_token tokens.(Array.length tokens - 2);
-
-    { counts; context_totals; vocab_size = !max_token + 1; smoothing }
-
-  let train_from_corpus ?(smoothing = 1.0) corpus =
-    let all_tokens = List.concat_map Array.to_list corpus in
-    train ~smoothing (Array.of_list all_tokens)
-
-  let logits model ~prev1 ~prev2 =
-    let logits = Array.make model.vocab_size (log 0.0) in
-
-    let context = (prev1, prev2) in
-    let context_total =
-      match Hashtbl.find_opt model.context_totals context with
-      | Some total ->
-          float_of_int total
-          +. (model.smoothing *. float_of_int model.vocab_size)
-      | None -> model.smoothing *. float_of_int model.vocab_size
-    in
-
-    for next_token = 0 to model.vocab_size - 1 do
-      let count =
-        try Hashtbl.find model.counts (prev1, prev2, next_token)
-        with Not_found -> 0
-      in
-      logits.(next_token) <-
-        log ((float_of_int count +. model.smoothing) /. context_total)
-    done;
-
-    logits
-
-  let log_prob model ~prev1 ~prev2 ~next =
-    let context = (prev1, prev2) in
-    let context_total =
-      match Hashtbl.find_opt model.context_totals context with
-      | Some total ->
-          float_of_int total
-          +. (model.smoothing *. float_of_int model.vocab_size)
-      | None -> model.smoothing *. float_of_int model.vocab_size
-    in
-
-    let count =
-      try Hashtbl.find model.counts (prev1, prev2, next) with Not_found -> 0
-    in
-
-    log ((float_of_int count +. model.smoothing) /. context_total)
-
-  let sample model ~prev1 ~prev2 ?(temperature = 1.0)
-      ?(seed = Random.int 1000000) () =
-    let rng = Random.State.make [| seed |] in
-    let log_probs = logits model ~prev1 ~prev2 in
-
-    let probs = Array.map (fun log_p -> exp (log_p /. temperature)) log_probs in
-
-    let sum = Array.fold_left ( +. ) 0.0 probs in
-    let probs = Array.map (fun p -> p /. sum) probs in
-
-    let r = Random.State.float rng 1.0 in
-    let cumsum = ref 0.0 in
-    let result = ref (model.vocab_size - 1) in
-    for i = 0 to model.vocab_size - 1 do
-      cumsum := !cumsum +. probs.(i);
-      if !cumsum > r && !result = model.vocab_size - 1 then result := i
-    done;
-    !result
-
-  let stats model =
-    {
-      vocab_size = model.vocab_size;
-      total_tokens =
-        Hashtbl.fold (fun _ count acc -> acc + count) model.context_totals 0;
-      unique_ngrams = Hashtbl.length model.counts;
-    }
-
-  let save model path =
-    let oc = open_out_bin path in
-    output_value oc model;
-    close_out oc
-
-  let load path =
-    let ic = open_in_bin path in
-    let model = input_value ic in
-    close_in ic;
-    model
-end
+(* Removed Trigram submodule in favor of generic API *)
 
 (** Generic n-gram functions *)
 
-let create ~n ?(smoothing = 1.0) tokens =
+let build_orders ~n tokens =
+  let orders = Array.init n (fun _ -> Hashtbl.create 1000) in
+  let order_totals = Array.init n (fun _ -> Hashtbl.create 1000) in
+  let max_token = ref 0 in
+  Array.iter (fun t -> if t > !max_token then max_token := t) tokens;
+  let len = Array.length tokens in
+  for i = 0 to len - 1 do
+    for k = 1 to n do
+      if i + k - 1 < len then (
+        let ctx_len = k - 1 in
+        let context =
+          if ctx_len = 0 then [||] else Array.sub tokens i ctx_len
+        in
+        let next = tokens.(i + k - 1) in
+        if next > !max_token then max_token := next;
+        let tbl = orders.(k - 1) in
+        let next_counts =
+          match Hashtbl.find_opt tbl context with
+          | Some t -> t
+          | None ->
+              let t = Hashtbl.create 8 in
+              Hashtbl.add tbl context t;
+              t
+        in
+        let c =
+          match Hashtbl.find_opt next_counts next with Some x -> x | None -> 0
+        in
+        Hashtbl.replace next_counts next (c + 1);
+        let totals = order_totals.(k - 1) in
+        let tot =
+          match Hashtbl.find_opt totals context with Some x -> x | None -> 0
+        in
+        Hashtbl.replace totals context (tot + 1))
+    done
+  done;
+  (!max_token + 1, orders, order_totals)
+
+let create ~n ?(smoothing = Add_k 1.0) ?(cache_capacity = 0) tokens =
   if n < 1 then invalid_arg "n must be >= 1";
 
-  let counts = Hashtbl.create 10000 in
-  let context_totals = Hashtbl.create 1000 in
-  let max_token = ref 0 in
+  let vocab_size, orders, order_totals = build_orders ~n tokens in
 
-  (* Count n-grams *)
-  for i = 0 to Array.length tokens - n do
-    let context =
-      if n = 1 then [] else Array.to_list (Array.sub tokens i (n - 1))
-    in
-    let next = tokens.(i + n - 1) in
-    max_token := max !max_token next;
-
-    (* Update counts for this context-next pair *)
-    let next_counts =
-      try Hashtbl.find counts context with Not_found -> Hashtbl.create 100
-    in
-    let count = try Hashtbl.find next_counts next with Not_found -> 0 in
-    Hashtbl.replace next_counts next (count + 1);
-    Hashtbl.replace counts context next_counts;
-
-    (* Update context total *)
-    let total = try Hashtbl.find context_totals context with Not_found -> 0 in
-    Hashtbl.replace context_totals context (total + 1)
-  done;
-
+  let counts = orders.(n - 1) in
+  let context_totals = order_totals.(n - 1) in
   {
     n;
-    vocab_size = !max_token + 1;
-    counts = Hashtbl.create 0;
-    (* Placeholder - real implementation would convert *)
-    context_totals = Hashtbl.create 0;
+    vocab_size;
+    counts;
+    context_totals;
     smoothing;
+    orders;
+    order_totals;
+    logits_cache =
+      (if cache_capacity > 0 then Some (Hashtbl.create cache_capacity) else None);
+    cache_capacity;
   }
 
-let logits _model ~context:_ =
-  (* Simplified - real implementation would look up counts *)
-  Array.make 100 (log (1.0 /. 100.0))
+let logits_add_k model ~context k =
+  (* Compute log probabilities P(next|context) with add-k smoothing *)
+  let vocab = model.vocab_size in
+  let logits = Array.make vocab (log 0.0) in
+
+  let context_total_smoothed =
+    match Hashtbl.find_opt model.context_totals context with
+    | Some total -> float_of_int total +. (k *. float_of_int vocab)
+    | None -> k *. float_of_int vocab
+  in
+
+  let next_counts =
+    match Hashtbl.find_opt model.counts context with
+    | Some tbl -> tbl
+    | None -> Hashtbl.create 0
+  in
+
+  for token = 0 to vocab - 1 do
+    let c =
+      match Hashtbl.find_opt next_counts token with Some x -> x | None -> 0
+    in
+    logits.(token) <- log ((float_of_int c +. k) /. context_total_smoothed)
+  done;
+
+  logits
+
+let rec backoff_score model context token alpha order_idx =
+  if order_idx < 0 then 1.0 /. float_of_int model.vocab_size
+  else
+    let counts_tbl = model.orders.(order_idx) in
+    let totals_tbl = model.order_totals.(order_idx) in
+    let ctx_len = Array.length context in
+    let used_ctx =
+      if ctx_len = order_idx then context
+      else if order_idx = 0 then [||]
+      else
+        let start = max 0 (ctx_len - order_idx) in
+        Array.sub context start order_idx
+    in
+    let next_counts =
+      match Hashtbl.find_opt counts_tbl used_ctx with
+      | Some t -> t
+      | None -> Hashtbl.create 0
+    in
+    let total =
+      match Hashtbl.find_opt totals_tbl used_ctx with
+      | Some t -> float_of_int t
+      | None -> 0.0
+    in
+    let c =
+      match Hashtbl.find_opt next_counts token with
+      | Some x -> float_of_int x
+      | None -> 0.0
+    in
+    if c > 0.0 && total > 0.0 then c /. total
+    else alpha *. backoff_score model context token alpha (order_idx - 1)
+
+let logits_backoff model ~context alpha =
+  let vocab = model.vocab_size in
+  let scores = Array.make vocab 0.0 in
+  for token = 0 to vocab - 1 do
+    scores.(token) <- backoff_score model context token alpha (model.n - 1)
+  done;
+  (* Normalize and return log *)
+  let sum = Array.fold_left ( +. ) 0.0 scores in
+  if sum <= 0.0 then Array.make vocab (log (1.0 /. float_of_int vocab))
+  else Array.map (fun p -> log (p /. sum)) scores
+
+let logits model ~context =
+  (* Cache lookup *)
+  match model.logits_cache with
+  | Some cache -> (
+      match Hashtbl.find_opt cache context with
+      | Some v -> v
+      | None ->
+          let v =
+            match model.smoothing with
+            | Add_k k -> logits_add_k model ~context k
+            | Stupid_backoff a -> logits_backoff model ~context a
+          in
+          (* simple capacity policy: clear if over capacity *)
+          if Hashtbl.length cache >= model.cache_capacity then
+            Hashtbl.clear cache;
+          Hashtbl.add cache context v;
+          v)
+  | None -> (
+      match model.smoothing with
+      | Add_k k -> logits_add_k model ~context k
+      | Stupid_backoff a -> logits_backoff model ~context a)
 
 let perplexity model tokens =
   let log_prob_sum = ref 0.0 in
@@ -441,25 +192,29 @@ let perplexity model tokens =
       else Array.sub tokens (i - model.n + 1) (model.n - 1)
     in
     let log_probs = logits model ~context in
-    log_prob_sum := !log_prob_sum +. log_probs.(tokens.(i));
-    incr count
+    let tok = tokens.(i) in
+    if tok >= 0 && tok < model.vocab_size then (
+      log_prob_sum := !log_prob_sum +. log_probs.(tok);
+      incr count)
   done;
 
-  exp (-. !log_prob_sum /. float_of_int !count)
+  if !count = 0 then infinity else exp (-. !log_prob_sum /. float_of_int !count)
 
 let generate model ?(max_tokens = 100) ?(temperature = 1.0)
     ?(seed = Random.int 1000000) ?(start = [||]) () =
   let rng = Random.State.make [| seed |] in
-  let result = Array.to_list start in
+  (* Maintain generated tokens as a reverse list for O(1) append. *)
+  let rev_tokens = List.rev (Array.to_list start) in
 
-  let rec gen_loop tokens remaining =
-    if remaining <= 0 then List.rev tokens
+  let rec gen_loop rev_tokens remaining =
+    if remaining <= 0 then Array.of_list (List.rev rev_tokens)
     else
       let context =
         if model.n = 1 then [||]
         else
-          let ctx_len = min (model.n - 1) (List.length tokens) in
-          Array.of_list (List.take ctx_len tokens)
+          let ctx_len = min (model.n - 1) (List.length rev_tokens) in
+          let ctx_rev = List.(rev (rev_tokens |> take ctx_len)) in
+          Array.of_list ctx_rev
       in
       let log_probs = logits model ~context in
 
@@ -468,7 +223,9 @@ let generate model ?(max_tokens = 100) ?(temperature = 1.0)
         Array.map (fun log_p -> exp (log_p /. temperature)) log_probs
       in
       let sum = Array.fold_left ( +. ) 0.0 probs in
-      let probs = Array.map (fun p -> p /. sum) probs in
+      let probs =
+        if sum > 0. then Array.map (fun p -> p /. sum) probs else probs
+      in
 
       let r = Random.State.float rng 1.0 in
       let cumsum = ref 0.0 in
@@ -479,15 +236,145 @@ let generate model ?(max_tokens = 100) ?(temperature = 1.0)
           next_token := i
       done;
 
-      gen_loop (!next_token :: tokens) (remaining - 1)
+      gen_loop (!next_token :: rev_tokens) (remaining - 1)
   in
 
-  Array.of_list (gen_loop (List.rev result) max_tokens)
+  gen_loop rev_tokens max_tokens
 
-(* Helper for List.take since it's not in older OCaml versions *)
-let rec list_take n = function
-  | [] -> []
-  | _ when n <= 0 -> []
-  | h :: t -> h :: list_take (n - 1) t
+let stats model =
+  let unique =
+    Hashtbl.fold
+      (fun _ next_map acc -> acc + Hashtbl.length next_map)
+      model.counts 0
+  in
+  {
+    vocab_size = model.vocab_size;
+    total_tokens = Hashtbl.fold (fun _ c acc -> acc + c) model.context_totals 0;
+    unique_ngrams = unique;
+  }
 
-let _ = list_take (* Suppress unused warning *)
+let save model path =
+  let oc = open_out_bin path in
+  output_value oc model;
+  close_out oc
+
+let load path =
+  let ic = open_in_bin path in
+  let model = input_value ic in
+  close_in ic;
+  model
+
+let save_text model path =
+  let oc = open_out path in
+  let smoothing_tag, smoothing_val =
+    match model.smoothing with
+    | Add_k k -> ("addk", k)
+    | Stupid_backoff a -> ("sbo", a)
+  in
+  Printf.fprintf oc "n %d vocab %d smooth %s %f\n" model.n model.vocab_size
+    smoothing_tag smoothing_val;
+  Printf.fprintf oc "orders %d\n" (Array.length model.orders);
+  for oi = 0 to Array.length model.orders - 1 do
+    let tbl = model.orders.(oi) in
+    Printf.fprintf oc "order %d contexts %d\n" (oi + 1) (Hashtbl.length tbl);
+    Hashtbl.iter
+      (fun ctx nexts ->
+        (* print context *)
+        Printf.fprintf oc "ctx %d" (Array.length ctx);
+        Array.iter (fun t -> Printf.fprintf oc " %d" t) ctx;
+        (* print next counts *)
+        Printf.fprintf oc " next %d" (Hashtbl.length nexts);
+        Hashtbl.iter (fun token c -> Printf.fprintf oc " %d:%d" token c) nexts;
+        output_string oc "\n")
+      tbl
+  done;
+  close_out oc
+
+let load_text path =
+  let ic = open_in path in
+  let line = input_line ic in
+  let n, vocab_size, smoothing =
+    Scanf.sscanf line "n %d vocab %d smooth %s %f" (fun n v tag sval ->
+        let s = if tag = "addk" then Add_k sval else Stupid_backoff sval in
+        (n, v, s))
+  in
+  let orders = Array.init n (fun _ -> Hashtbl.create 1000) in
+  let order_totals = Array.init n (fun _ -> Hashtbl.create 1000) in
+  let _ = input_line ic in
+  (* orders line *)
+  let current_order = ref 0 in
+  let rec loop () =
+    match input_line ic with
+    | exception End_of_file -> ()
+    | l ->
+        if l = "" then loop ()
+        else if String.length l >= 5 && String.sub l 0 5 = "order" then (
+          (* parse order index, 1-based *)
+          (try
+             Scanf.sscanf l "order %d contexts %d" (fun oi _ ->
+                 current_order := oi - 1)
+           with _ -> ());
+          loop ())
+        else if String.length l >= 3 && String.sub l 0 3 = "ctx" then
+          (* parse ctx line *)
+          try
+            let rest = String.sub l 4 (String.length l - 4) in
+            (* rest: "<clen> <c0> ... <cN> next <m> <t1:c1> ..." *)
+            let parts =
+              List.filter (( <> ) "") (String.split_on_char ' ' rest)
+            in
+            match parts with
+            | clen_str :: tl ->
+                let clen = int_of_string clen_str in
+                let ctx = Array.make clen 0 in
+                let rec take_ctx i lst =
+                  if i = clen then lst
+                  else
+                    match lst with
+                    | h :: t ->
+                        ctx.(i) <- int_of_string h;
+                        take_ctx (i + 1) t
+                    | [] -> []
+                in
+                let after_ctx = take_ctx 0 tl in
+                let after_next =
+                  match after_ctx with
+                  | h :: t when h = "next" -> t
+                  | _ -> after_ctx
+                in
+                let _m, pairs =
+                  match after_next with
+                  | m :: rest -> (int_of_string m, rest)
+                  | _ -> (0, [])
+                in
+                let tbl = Hashtbl.create 8 in
+                List.iter
+                  (fun p ->
+                    match String.split_on_char ':' p with
+                    | [ a; b ] ->
+                        Hashtbl.replace tbl (int_of_string a) (int_of_string b)
+                    | _ -> ())
+                  pairs;
+                Hashtbl.add orders.(!current_order) ctx tbl;
+                let total = Hashtbl.fold (fun _ c acc -> acc + c) tbl 0 in
+                Hashtbl.add order_totals.(!current_order) ctx total;
+                loop ()
+            | _ -> loop ()
+          with _ -> loop ()
+        else loop ()
+  in
+  loop ();
+  close_in ic;
+  let counts = orders.(n - 1) in
+  let context_totals = order_totals.(n - 1) in
+  {
+    n;
+    vocab_size;
+    counts;
+    context_totals;
+    smoothing;
+    orders;
+    order_totals;
+    logits_cache = None;
+    cache_capacity = 0;
+  }

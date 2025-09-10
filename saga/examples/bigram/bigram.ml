@@ -2,7 +2,7 @@ open Saga
 
 let () =
   (* Create a simple tokenizer *)
-  let tok = tokenizer `Words in
+  let tok = Tokenizer.words in
 
   (* Sample text - we'll use a small Shakespeare excerpt for testing *)
   let text =
@@ -19,7 +19,8 @@ let () =
   in
 
   (* Train a bigram model *)
-  let model = LM.train_ngram ~n:2 tok [ text ] in
+  let model = ngram ~n:2 ~tokenizer:tok () in
+  let model = train model [ text ] in
 
   (* Generate text with different starting prompts *)
   Printf.printf "=== Bigram Language Model Demo ===\n\n";
@@ -29,17 +30,16 @@ let () =
   (* Generate with different temperatures *)
   Printf.printf "Generated text (temperature=0.5, prompt=\"To be\"):\n";
   let generated =
-    LM.generate model ~max_tokens:50 ~temperature:0.5 ~prompt:"To be" tok
+    generate model ~num_tokens:50 ~temperature:0.5 ~prompt:"To be" ()
   in
   Printf.printf "%s\n\n" generated;
 
   Printf.printf "Generated text (temperature=1.0, prompt=\"The\"):\n";
   let generated =
-    LM.generate model ~max_tokens:50 ~temperature:1.0 ~top_k:10 ~prompt:"The"
-      tok
+    generate model ~num_tokens:50 ~temperature:1.0 ~top_k:10 ~prompt:"The" ()
   in
   Printf.printf "%s\n\n" generated;
 
   Printf.printf "Generated text (temperature=1.5, no prompt):\n";
-  let generated = LM.generate model ~max_tokens:50 ~temperature:1.5 tok in
+  let generated = generate model ~num_tokens:50 ~temperature:1.5 () in
   Printf.printf "%s\n" generated
