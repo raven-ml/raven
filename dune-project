@@ -125,11 +125,8 @@
    (= :version))
   (ctypes
    (>= 0.21.0))
-  ; rune.jit.metal
   (ctypes-foreign
-   (and
-    (>= 0.21.0)
-    (= :os macos)))
+   (>= 0.21.0))
   (alcotest :with-test)))
 
 (package
