@@ -9,7 +9,7 @@ let run_complete_workshop () =
   let env = create_simple_gridworld 5 in  
   (* 2. Try basic REINFORCE *)
   print_endline "Training with basic REINFORCE...";
-  let _, _ = train_reinforce env 50 0.01 0.99 in  
+  let _, _, _ = train_reinforce env 50 0.01 0.99 in  
   (* 3. Add baseline for variance reduction *)
   print_endline "\nTraining with baseline...";
   let _, _ = train_reinforce_with_baseline env 50 0.01 0.99 in  
@@ -42,7 +42,7 @@ let compare_methods () =
   (* Train each method *)
   let methods = [
     ("REINFORCE",
-     train_reinforce env 100 0.01 0.99);
+     let p, params, _ = train_reinforce env 100 0.01 0.99 in (p, params));
     ("REINFORCE+Baseline",
      train_reinforce_with_baseline env 100 0.01 0.99);
     ("Actor-Critic", 

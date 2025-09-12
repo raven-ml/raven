@@ -8,12 +8,21 @@ let train_reinforce env n_episodes learning_rate gamma =
   let policy_net, params = initialize_policy () in  
   (* Create optimizer *)
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
-  let opt_state = ref (optimizer.init params) in  
+  let opt_state = ref (optimizer.init params) in
+  
+  (* Collect episodes for visualization *)
+  let collected_episodes = ref [] in
+  
   (* Training loop *)
   for episode = 1 to n_episodes do
     (* Collect episode *)
     let episode_data =
-      collect_episode env policy_net params 100 in    
+      collect_episode env policy_net params 100 in
+    
+    (* Store first and last episodes *)
+    if episode = 1 || episode = n_episodes then
+      collected_episodes := episode_data :: !collected_episodes;
+    
     (* Compute returns *)
     let _returns = compute_returns episode_data.rewards gamma in    
     (* Compute policy gradient loss *)
@@ -60,13 +69,10 @@ let train_reinforce env n_episodes learning_rate gamma =
       Printf.printf "Episode %d: Return = %.2f, Loss = %.4f\n"
         episode total_reward (Rune.item [] loss)
   done;  
-  (policy_net, params)
-(* Run the training *)
+  (policy_net, params, List.rev !collected_episodes)
+(* Main function - just for slide consistency *)
 let main () =
-  let env = create_simple_gridworld 5 in
-  let _trained_policy, _trained_params = 
-    train_reinforce env 100 0.01 0.99 in
-  print_endline "Training complete!"
+  print_endline "REINFORCE training function defined."
 (*
 ```
  *)
