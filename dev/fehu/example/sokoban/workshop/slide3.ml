@@ -1,7 +1,8 @@
 (*
 ```ocaml
  *)
-include Slide2
+open Slide1
+open Slide2
 
 (* Episode data type *)
 type episode_data = {

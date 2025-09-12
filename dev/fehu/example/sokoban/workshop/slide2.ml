@@ -2,7 +2,7 @@
 (*
 ```ocaml
  *)
-include Slide1
+open Slide1
 open Kaun
 
 (* Numerically stable log_softmax computation *)

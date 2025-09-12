@@ -1,7 +1,9 @@
 (*
 ```ocaml
  *)
-include Slide3
+open Slide1
+open Slide2
+open Slide3
 (* REINFORCE training loop *)
 let train_reinforce env n_episodes learning_rate gamma =
   (* Initialize policy *)

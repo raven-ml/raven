@@ -1,7 +1,9 @@
 (*
 ```ocaml
  *)
-include Slide8
+open Slide2
+open Slide3
+open Slide7
 open Fehu
 
 (* Collect episode starting from a specific state *)

@@ -1,7 +1,9 @@
 (*
 ```ocaml
  *)
-include Slide5
+open Slide1
+open Slide2
+open Slide3
 (* Create a value network for the baseline *)
 let create_value_network grid_size =
   Kaun.Layer.sequential [

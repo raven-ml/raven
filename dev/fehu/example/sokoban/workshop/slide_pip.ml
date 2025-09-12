@@ -1,7 +1,11 @@
 (*
 ```ocaml
  *)
-include Slide8
+open Slide1
+open Slide3
+open Slide4
+open Slide5
+open Slide6
 
 (* Complete workshop pipeline *)
 let run_complete_workshop () =

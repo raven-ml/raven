@@ -1,7 +1,7 @@
 (*
 ```ocaml
  *)
-include Slide7
+open Slide1
 (* Compute KL divergence between two policies *)
 let compute_kl_divergence old_probs new_probs =
   (* KL(old || new) = sum(old * log(old/new)) *)

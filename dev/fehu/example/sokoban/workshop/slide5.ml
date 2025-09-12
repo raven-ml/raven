@@ -1,7 +1,9 @@
 (*
 ```ocaml
  *)
-include Slide4
+open Slide1
+open Slide2
+open Slide3
 (* REINFORCE with running average baseline *)
 let train_reinforce_with_baseline env n_episodes learning_rate
     gamma =
