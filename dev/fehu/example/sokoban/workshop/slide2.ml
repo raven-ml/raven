@@ -50,19 +50,25 @@ let sample_action policy_net params obs _rng =
   (* Convert to probabilities *)
   let probs = Rune.softmax ~axes:[|-1|] logits in  
   (* Sample from categorical distribution *)
-  (* For workshop: we'll use argmax for simplicity *)
-  let action_idx = Rune.argmax ~axis:(-1) probs in
+  (* Simple sampling: convert to CPU, sample, convert back *)
+  let probs_array = Rune.to_array (Rune.reshape [|4|] probs) in
+  let cumsum = Array.make 4 0.0 in
+  cumsum.(0) <- probs_array.(0);
+  for i = 1 to 3 do
+    cumsum.(i) <- cumsum.(i-1) +. probs_array.(i)
+  done;
+  let r = Random.float 1.0 in
+  let action_int = ref 0 in
+  for i = 0 to 3 do
+    if r > cumsum.(i) then action_int := i + 1
+  done;
   (* Convert to float tensor for environment *)
-  let action = Rune.squeeze (Rune.cast Rune.float32 action_idx) in
+  let action = Rune.scalar device Rune.float32 (float_of_int !action_int) in
   (* Also return log probability for REINFORCE *)
-  let log_probs = Rune.log probs in
-  (* Use take_along_axis to get the log prob
-     of the selected action *)
-  let action_idx_expanded = Rune.reshape [|1; 1|] action_idx in
-  let action_log_prob =
-    Rune.take_along_axis ~axis:(-1)
-      action_idx_expanded log_probs in
-  let action_log_prob = Rune.squeeze action_log_prob in
+  let log_probs = Rune.log (Rune.add probs (Rune.scalar device Rune.float32 1e-8)) in
+  (* Get the log prob of selected action *)
+  let log_probs_array = Rune.to_array (Rune.reshape [|4|] log_probs) in
+  let action_log_prob = Rune.scalar device Rune.float32 log_probs_array.(!action_int) in
   (action, action_log_prob)  
 
 let main () =

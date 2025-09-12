@@ -17,17 +17,36 @@ let train_reinforce env n_episodes learning_rate gamma =
     (* Compute returns *)
     let _returns = compute_returns episode_data.rewards gamma in    
     (* Compute policy gradient loss *)
-    (* NOTE: Proper REINFORCE loss computation has shape issues to be debugged *)
-    (* For now, using a simplified proxy loss *)
     let loss, grads = Kaun.value_and_grad (fun p ->
-      (* Compute mean logits as proxy loss *)
-      let state = episode_data.states.(0) in  
-      let state_batched = Rune.reshape [|1; 5; 5|] state in
-      let logits = Kaun.apply policy_net p ~training:true state_batched in
-      (* Scale by average return for REINFORCE-like behavior *)
-      let avg_return = Array.fold_left (+.) 0. episode_data.rewards /. 
-                       float_of_int (Array.length episode_data.rewards) in
-      Rune.mul (Rune.mean logits) (Rune.scalar device Rune.float32 (-. avg_return))
+      (* Compute loss for all states *)
+      let total_loss = ref (Rune.scalar device Rune.float32 0.0) in
+      
+      (* Process a subset of states to avoid indexing issues *)
+      let n_samples = min 10 (Array.length episode_data.states) in
+      for t = 0 to n_samples - 1 do
+        let state = episode_data.states.(t) in  
+        let action = episode_data.actions.(t) in
+        let g_t = _returns.(t) in
+        
+        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let logits = Kaun.apply policy_net p ~training:true state_batched in
+        
+        (* Compute negative log likelihood weighted by return *)
+        (* Create action mask without set_item *)
+        let action_int = int_of_float (Rune.item [] action) in
+        let mask = Rune.init device Rune.float32 [|1; 4|] (fun idxs ->
+          if idxs.(1) = action_int then 1.0 else 0.0
+        ) in
+        
+        let log_probs = log_softmax ~axis:(-1) logits in
+        let selected_log_prob = Rune.sum (Rune.mul mask log_probs) in
+        let weighted_loss = Rune.mul (Rune.neg selected_log_prob) 
+                                     (Rune.scalar device Rune.float32 g_t) in
+        
+        total_loss := Rune.add !total_loss weighted_loss
+      done;
+      
+      Rune.div !total_loss (Rune.scalar device Rune.float32 (float_of_int n_samples))
     ) params in     
     (* Update parameters *)
     let updates, new_state =
