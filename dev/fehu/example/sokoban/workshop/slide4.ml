@@ -30,13 +30,16 @@ let train_reinforce env n_episodes learning_rate gamma =
       (* Compute loss for all states *)
       let total_loss = ref (Rune.scalar device Rune.float32 0.0) in
       
-      (* Process a subset of states to avoid indexing issues *)
+      (* EXERCISE 1: We only process first 10 states due to autodiff indexing issues
+         This severely limits learning efficiency - see exercise1.md for details
+         Challenge: Make this work for ALL states in the episode *)
       let n_samples = min 10 (Array.length episode_data.states) in
       for t = 0 to n_samples - 1 do
         let state = episode_data.states.(t) in  
         let action = episode_data.actions.(t) in
         let g_t = _returns.(t) in
         
+        (* Classic gotcha with the Gym API: adding batch dimension *)
         let state_batched = Rune.reshape [|1; 5; 5|] state in
         let logits = Kaun.apply policy_net p ~training:true state_batched in
         
