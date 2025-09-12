@@ -10,7 +10,8 @@ let compute_kl_divergence old_probs new_probs =
   let kl_terms = Rune.mul old_probs log_ratio in
   Rune.sum kl_terms ~axes:[|1|]  (* Sum over actions *)
 (* Policy loss with KL penalty *)
-let compute_policy_loss_with_kl old_probs new_probs advantages beta =
+let compute_policy_loss_with_kl old_probs new_probs
+    advantages beta =
   let device = Rune.c in  
   (* Convert advantages to tensor *)
   let adv_tensor = Rune.create device Rune.float32 
@@ -21,8 +22,9 @@ let compute_policy_loss_with_kl old_probs new_probs advantages beta =
   let policy_loss = Rune.neg (Rune.mean policy_obj) in  
   (* KL penalty *)
   let kl_div = compute_kl_divergence old_probs new_probs in
-  let kl_penalty = Rune.mul (Rune.scalar device Rune.float32 beta) 
-                            (Rune.mean kl_div) in  
+  let kl_penalty =
+    Rune.mul (Rune.scalar device Rune.float32 beta) 
+             (Rune.mean kl_div) in  
   (* Combined loss *)
   Rune.add policy_loss kl_penalty
 (* Main function to demonstrate KL penalty *)
@@ -43,9 +45,12 @@ let main () =
   let advantages = [|0.5; -0.3; 0.8|] in
   
   (* Compute loss with KL penalty *)
-  let loss = compute_policy_loss_with_kl old_probs new_probs advantages 0.01 in
+  let loss =
+    compute_policy_loss_with_kl old_probs new_probs
+      advantages 0.01 in
   
-  Printf.printf "Policy loss with KL penalty: %.4f\n" (Rune.item [] loss);
+  Printf.printf "Policy loss with KL penalty: %.4f\n"
+      (Rune.item [] loss);
   
   (* Compute KL divergence *)
   let kl_div = compute_kl_divergence old_probs new_probs in
