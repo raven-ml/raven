@@ -175,7 +175,8 @@ type ('layout, 'dev) params =  (* Parameter tree structure *)
 type module_ = {
   init : 'layout 'dev. 
     rngs:Rune.Rng.key -> 
-    ('layout, 'dev) tensor -> 
+    device:'dev Rune.device ->
+    dtype:(float, 'layout) Rune.dtype ->
     ('layout, 'dev) params;
   apply : 'layout 'dev.
     ('layout, 'dev) params ->

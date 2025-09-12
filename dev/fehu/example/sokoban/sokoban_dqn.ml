@@ -89,9 +89,9 @@ module DQNAgent = struct
     let q_network = create_q_network obs_dim n_actions in
     let target_network = create_q_network obs_dim n_actions in
     
-    let dummy_input = Rune.zeros Rune.c Rune.float32 [| obs_dim |] in
-    let q_params = Kaun.init q_network ~rngs:keys.(0) dummy_input in
-    let target_params = Kaun.init target_network ~rngs:keys.(1) dummy_input in
+    let device = Rune.c in
+    let q_params = Kaun.init q_network ~rngs:keys.(0) ~device ~dtype:Rune.float32 in
+    let target_params = Kaun.init target_network ~rngs:keys.(1) ~device ~dtype:Rune.float32 in
 
     let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
     let opt_state = optimizer.init q_params in
@@ -153,7 +153,7 @@ module DQNAgent = struct
         (* Get Q-values for taken actions *)
         let batch_q_values = ref [] in
         for i = 0 to batch_size - 1 do
-          let q_row = Rune.slice [ Rune.I i; Rune.R [] ] q_values in
+          let q_row = Rune.slice [ Rune.I i; Rune.R (0, 4) ] q_values in
           let q_array = Rune.to_array q_row in
           let q_value = q_array.(actions.(i)) in
           batch_q_values := q_value :: !batch_q_values

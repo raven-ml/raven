@@ -40,9 +40,9 @@ module GrpoAgent = struct
     let policy_network = create_network obs_dim n_actions in
     let reference_network = create_network obs_dim n_actions in
 
-    let dummy_input = Rune.zeros Rune.c Rune.float32 [| obs_dim |] in
-    let policy_params = Kaun.init policy_network ~rngs:keys.(0) dummy_input in
-    let reference_params = Kaun.init reference_network ~rngs:keys.(1) dummy_input in
+    let device = Rune.c in
+    let policy_params = Kaun.init policy_network ~rngs:keys.(0) ~device ~dtype:Rune.float32 in
+    let reference_params = Kaun.init reference_network ~rngs:keys.(1) ~device ~dtype:Rune.float32 in
 
     let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
     let opt_state = optimizer.init policy_params in

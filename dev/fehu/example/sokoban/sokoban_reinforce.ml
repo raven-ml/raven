@@ -25,8 +25,8 @@ module ReinforceAgent = struct
 
   (* Custom module to add channel dimension for conv2d *)
   let add_channel_dim () = {
-    Kaun.Module.init = (fun ~rngs:_ _x -> Kaun.Ptree.List []);
-    Kaun.Module.apply = (fun _ ~training:_ ?rngs:_ x ->
+    Kaun.init = (fun ~rngs:_ ~device:_ ~dtype:_ -> Kaun.Ptree.List []);
+    Kaun.apply = (fun _ ~training:_ ?rngs:_ x ->
       (* Reshape from [H, W] to [1, H, W] for single channel *)
       Rune.reshape [| 1; 10; 10 |] x
     );
@@ -70,9 +70,8 @@ module ReinforceAgent = struct
     let keys = Rng.split ~n:2 rng in
 
     let policy_network = create_policy_network n_actions in
-    (* Dummy input is 2D (10x10 grid) *)
-    let dummy_input = Rune.zeros Rune.c Rune.float32 [| 10; 10 |] in
-    let policy_params = Kaun.init policy_network ~rngs:keys.(0) dummy_input in
+    let device = Rune.c in
+    let policy_params = Kaun.init policy_network ~rngs:keys.(0) ~device ~dtype:Rune.float32 in
 
     let policy_optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
     let policy_opt_state = policy_optimizer.init policy_params in
@@ -80,7 +79,7 @@ module ReinforceAgent = struct
     let baseline_network, baseline_params, baseline_optimizer, baseline_opt_state =
       if use_baseline then
         let net = create_baseline_network () in
-        let params = Kaun.init net ~rngs:keys.(1) dummy_input in
+        let params = Kaun.init net ~rngs:keys.(1) ~device ~dtype:Rune.float32 in
         let opt = Kaun.Optimizer.adam ~lr:(learning_rate *. 10.0) () in
         let opt_state = opt.init params in
         (Some net, Some params, Some opt, Some opt_state)
