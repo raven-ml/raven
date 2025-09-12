@@ -34,15 +34,18 @@ let train_reinforce_with_baseline env n_episodes learning_rate
       Array.iteri (fun t state ->
         let action = episode_data.actions.(t) in
         (* Use advantage instead of return *)
-        let advantage = advantages.(t) in        
+        let advantage = advantages.(t) in
+        (* Add batch dimension to state *)
+        let state_batched = Rune.reshape [|1; 5; 5|] state in        
         let logits =
-          Kaun.apply policy_net p ~training:true state in
+          Kaun.apply policy_net p ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
         (* Get log prob of selected action -
            convert action back to int32 for indexing *)
-        let action_idx = Rune.cast Rune.int32 action in
+        let action_int = int_of_float (Rune.item [] action) in
+        let action_tensor = Rune.scalar device Rune.int32 (Int32.of_int action_int) in
         let action_expanded =
-          Rune.reshape [|1; 1|] action_idx in
+          Rune.reshape [|1; 1|] action_tensor in
         let action_log_prob =
           Rune.take_along_axis ~axis:(-1) action_expanded log_probs in
         let action_log_prob =

@@ -39,16 +39,21 @@ let initialize_policy () =
 
 (* Sample action from policy *)
 let sample_action policy_net params obs _rng =
+  (* Add batch dimension if needed *)
+  let obs_batched = 
+    if Array.length (Rune.shape obs) = 2 then
+      Rune.reshape [|1; 5; 5|] obs
+    else obs in
   (* Get action logits *)
   let logits =
-    Kaun.apply policy_net params ~training:false obs in  
+    Kaun.apply policy_net params ~training:false obs_batched in  
   (* Convert to probabilities *)
   let probs = Rune.softmax ~axes:[|-1|] logits in  
   (* Sample from categorical distribution *)
   (* For workshop: we'll use argmax for simplicity *)
   let action_idx = Rune.argmax ~axis:(-1) probs in
   (* Convert to float tensor for environment *)
-  let action = Rune.cast Rune.float32 action_idx in
+  let action = Rune.squeeze (Rune.cast Rune.float32 action_idx) in
   (* Also return log probability for REINFORCE *)
   let log_probs = Rune.log probs in
   (* Use take_along_axis to get the log prob
@@ -65,9 +70,9 @@ let main () =
   let policy_net, params = initialize_policy () in
   print_endline "Policy network initialized!";
   
-  (* Create a test observation *)
-  let test_obs = Rune.zeros device Rune.float32 [|5; 5|] in
-  Rune.set_item [2; 2] 1.0 test_obs;  (* Agent at center *)
+  (* Create a test observation with batch dimension *)
+  let test_obs = Rune.zeros device Rune.float32 [|1; 5; 5|] in
+  Rune.set_item [0; 2; 2] 1.0 test_obs;  (* Agent at center *)
   
   (* Sample an action *)
   let rng = Rune.Rng.key 42 in

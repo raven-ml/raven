@@ -100,20 +100,23 @@ let train_grpo_step env policy_net params old_params
       Array.iteri (fun t state ->
         let action = trajectory.actions.(t) in
         
+        (* Add batch dimension to state *)
+        let state_batched = Rune.reshape [|1; 5; 5|] state in
         (* Compute new and old log probs *)
         let new_logits = 
-          Kaun.apply policy_net p ~training:true state in
+          Kaun.apply policy_net p ~training:true state_batched in
         let new_log_probs = log_softmax ~axis:(-1) new_logits in
         (* Use take_along_axis to get log prob of the action *)
-        let action_idx = Rune.cast Rune.int32 action in
-        let action_expanded = Rune.reshape [|1; 1|] action_idx in
+        let action_int = int_of_float (Rune.item [] action) in
+        let action_tensor = Rune.scalar device Rune.int32 (Int32.of_int action_int) in
+        let action_expanded = Rune.reshape [|1; 1|] action_tensor in
         let new_action_log_prob =
           Rune.take_along_axis ~axis:(-1) action_expanded new_log_probs in
         let new_action_log_prob = Rune.squeeze new_action_log_prob in
         
         let old_logits =
           Kaun.apply policy_net old_params ~training:false
-            state in
+            state_batched in
         let old_log_probs = log_softmax ~axis:(-1) old_logits in
         let old_action_log_prob =
           Rune.take_along_axis ~axis:(-1) action_expanded old_log_probs in
