@@ -22,9 +22,11 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
   let value_net = create_value_network 5 in  
   let keys = Rune.Rng.split ~n:2 rng in
   let policy_params =
-    Kaun.init policy_net ~rngs:keys.(0) ~device ~dtype:Rune.float32 in
+    Kaun.init policy_net ~rngs:keys.(0) ~device
+      ~dtype:Rune.float32 in
   let value_params =
-    Kaun.init value_net ~rngs:keys.(1) ~device ~dtype:Rune.float32 in  
+    Kaun.init value_net ~rngs:keys.(1) ~device
+      ~dtype:Rune.float32 in  
   (* Separate optimizers for actor and critic *)
   let policy_opt = Kaun.Optimizer.adam ~lr:lr_actor () in
   let value_opt = Kaun.Optimizer.adam ~lr:lr_critic () in
@@ -50,7 +52,8 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
         Kaun.apply value_net vp ~training:true state
       ) episode_data.states in      
       (* MSE loss between predictions and returns *)
-      let pred_tensor = Rune.stack ~axis:0 (Array.to_list predictions) in
+      let pred_tensor =
+        Rune.stack ~axis:0 (Array.to_list predictions) in
       let returns_tensor = Rune.create device Rune.float32 
         [|Array.length returns|] returns in
       Kaun.Loss.mse pred_tensor returns_tensor
@@ -62,7 +65,8 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
     Kaun.Optimizer.apply_updates_inplace
         value_params value_updates;    
     (* Update actor (policy network) *)
-    let _policy_loss, policy_grads = Kaun.value_and_grad (fun pp ->
+    let _policy_loss, policy_grads =
+      Kaun.value_and_grad (fun pp ->
       let total_loss =
         ref (Rune.zeros device Rune.float32 [||]) in      
       Array.iteri (fun t state ->
@@ -70,13 +74,17 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
         let advantage = advantages.(t) in        
         let logits =
           Kaun.apply policy_net pp ~training:true state in
-        let probs = Rune.softmax ~axes:[|-1|] logits in
-        let log_probs = Rune.log probs in
-        (* Get log prob of selected action - convert action back to int32 for indexing *)
+        let log_probs = log_softmax ~axis:(-1) logits in
+        (* Get log prob of selected action -
+           convert action back to int32 for indexing *)
         let action_idx = Rune.cast Rune.int32 action in
-        let action_expanded = Rune.reshape [|1; 1|] action_idx in
-        let action_log_prob = Rune.take_along_axis ~axis:(-1) action_expanded log_probs in
-        let action_log_prob = Rune.squeeze action_log_prob in        
+        let action_expanded =
+          Rune.reshape [|1; 1|] action_idx in
+        let action_log_prob =
+          Rune.take_along_axis ~axis:(-1)
+            action_expanded log_probs in
+        let action_log_prob =
+          Rune.squeeze action_log_prob in        
         let step_loss = Rune.mul
           (Rune.scalar device Rune.float32 (-. advantage))
           action_log_prob in        

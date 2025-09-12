@@ -117,6 +117,19 @@ Both environment and information states are **Markovian** - they capture all rel
 ### Workshop Part 2: Create Your First Policy Network
 
 {pause down="~duration:15"}
+
+{.note title="Numerical Stability Tip"}
+> When computing log probabilities from a neural network:
+> - **Avoid**: `log(softmax(logits))` - can underflow for small probabilities
+> - **Prefer**: Direct log-softmax computation: `logits - log(sum(exp(logits)))`
+> - **Better**: Use the numerically stable version with max subtraction:
+>   ```
+>   log_softmax(x) = x - max(x) - log(sum(exp(x - max(x))))
+>   ```
+> This prevents overflow in exp() and maintains precision across the full range.
+
+{pause down="~duration:15"}
+
 {slip include src=../example/sokoban/workshop/slide2.ml}
 
 ***

@@ -27,12 +27,14 @@ let train_reinforce env n_episodes learning_rate gamma =
         (* Forward pass through policy *)
         let logits =
           Kaun.apply policy_net p ~training:true state in
-        let probs = Rune.softmax ~axes:[|-1|] logits in
-        let log_probs = Rune.log probs in
-        (* Get log prob of selected action - convert action back to int32 for indexing *)
+        let log_probs = log_softmax ~axis:(-1) logits in
+        (* Get log prob of selected action -
+           convert action back to int32 for indexing *)
         let action_idx = Rune.cast Rune.int32 action in
         let action_expanded = Rune.reshape [|1; 1|] action_idx in
-        let action_log_prob = Rune.take_along_axis ~axis:(-1) action_expanded log_probs in
+        let action_log_prob =
+          Rune.take_along_axis ~axis:(-1)
+            action_expanded log_probs in
         let action_log_prob = Rune.squeeze action_log_prob in        
         (* REINFORCE loss: -G_t * log π(a_t|s_t) *)
         let step_loss = Rune.mul
