@@ -4,6 +4,7 @@
 open Slide1
 open Slide2
 open Slide3
+open Slide4  (* For training_history type *)
 (* REINFORCE with running average baseline *)
 let train_reinforce_with_baseline env n_episodes learning_rate
      gamma =
@@ -12,7 +13,12 @@ let train_reinforce_with_baseline env n_episodes learning_rate
   let opt_state = ref (optimizer.init params) in
   let baseline = ref 0.0 in
   (* Exponential moving average factor *)
-  let baseline_alpha = 0.01 in  
+  let baseline_alpha = 0.01 in
+
+  (* History tracking *)
+  let history_returns = Array.make n_episodes 0.0 in
+  let history_losses = Array.make n_episodes 0.0 in
+
   for episode = 1 to n_episodes do
     (* Collect episode *)
     let episode_data =
@@ -26,7 +32,7 @@ let train_reinforce_with_baseline env n_episodes learning_rate
     let advantages =
       Array.map (fun r -> r -. !baseline) returns in    
     (* Compute policy gradient with baseline *)
-    let _loss, grads = Kaun.value_and_grad (fun p ->
+    let loss, grads = Kaun.value_and_grad (fun p ->
       let total_loss =
         ref (Rune.zeros device Rune.float32 [||]) in      
       Array.iteri (fun t state ->
@@ -65,19 +71,28 @@ let train_reinforce_with_baseline env n_episodes learning_rate
     let updates, new_state =
       optimizer.update !opt_state params grads in
     opt_state := new_state;
-    Kaun.Optimizer.apply_updates_inplace params updates;    
+    Kaun.Optimizer.apply_updates_inplace params updates;
+
+    (* Track history *)
+    let total_reward =
+      Array.fold_left (+.) 0. episode_data.rewards in
+    history_returns.(episode - 1) <- total_reward;
+    history_losses.(episode - 1) <- Rune.item [] loss;
+
     if episode mod 10 = 0 then
       Printf.printf "Episode %d: Return = %.2f, Baseline = %.2f\n"
         episode episode_return !baseline
-  done;  
-  (policy_net, params)
+  done;
+
+  (* Return with history *)
+  (policy_net, params, {returns = history_returns; losses = history_losses})
 (* Main function to test REINFORCE with baseline *)
 let main () =
   print_endline "=== Slide 5: REINFORCE with Baseline ===";
   let env = create_simple_gridworld 5 in
   
   (* Train for a few episodes *)
-  let _policy_net, _params = 
+  let _policy_net, _params, _history =
     train_reinforce_with_baseline env 20 0.01 0.99 in
   
   print_endline "REINFORCE with baseline training complete!"

@@ -4,6 +4,7 @@
 open Slide1
 open Slide2
 open Slide3
+open Slide4  (* For training_history type *)
 (* Create a value network for the baseline *)
 let create_value_network grid_size =
   Kaun.Layer.sequential [
@@ -19,6 +20,9 @@ let create_value_network grid_size =
 
 (* REINFORCE with learned baseline (Actor-Critic) *)
 let train_actor_critic env n_episodes lr_actor lr_critic gamma =
+  (* History tracking *)
+  let history_returns = Array.make n_episodes 0.0 in
+  let history_losses = Array.make n_episodes 0.0 in
   let rng = Rune.Rng.key 42 in  
   (* Initialize actor (policy) and critic (value) networks *)
   let policy_net = create_policy_network 5 4 in
@@ -110,25 +114,34 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
       Rune.div !total_loss
         (Rune.scalar device Rune.float32 n_steps_float)
     ) policy_params in    
-    let policy_updates, new_policy_state = 
+    let policy_updates, new_policy_state =
       policy_opt.update !policy_opt_state
         policy_params policy_grads in
     policy_opt_state := new_policy_state;
     Kaun.Optimizer.apply_updates_inplace
-      policy_params policy_updates;    
+      policy_params policy_updates;
+
+    (* Track history *)
+    let total_reward = Array.fold_left (+.) 0. episode_data.rewards in
+    history_returns.(episode - 1) <- total_reward;
+    history_losses.(episode - 1) <- Rune.item [] value_loss;  (* Using value loss as primary metric *)
+
     if episode mod 10 = 0 then
       Printf.printf
         "Episode %d: Return = %.2f, Value Loss = %.4f\n"
         episode returns.(0) (Rune.item [] value_loss)
-  done;  
-  (policy_net, policy_params, value_net, value_params)
+  done;
+
+  (* Return with history *)
+  (policy_net, policy_params, value_net, value_params,
+   {returns = history_returns; losses = history_losses})
 (* Main function to test Actor-Critic *)
 let main () =
   print_endline "=== Slide 6: Actor-Critic ===";
   let env = create_simple_gridworld 5 in
   
   (* Train for a few episodes *)
-  let _policy_net, _policy_params, _value_net, _value_params = 
+  let _policy_net, _policy_params, _value_net, _value_params, _history =
     train_actor_critic env 20 0.01 0.005 0.99 in
   
   print_endline "Actor-Critic training complete!"

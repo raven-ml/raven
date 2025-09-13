@@ -13,13 +13,13 @@ let run_complete_workshop () =
   let env = create_simple_gridworld 5 in  
   (* 2. Try basic REINFORCE *)
   print_endline "Training with basic REINFORCE...";
-  let _, _, _ = train_reinforce env 50 0.01 0.99 in  
+  let _, _, _, _ = train_reinforce env 50 0.01 0.99 in  
   (* 3. Add baseline for variance reduction *)
   print_endline "\nTraining with baseline...";
-  let _, _ = train_reinforce_with_baseline env 50 0.01 0.99 in
+  let _, _, _ = train_reinforce_with_baseline env 50 0.01 0.99 in
   (* 4. Use learned baseline (Actor-Critic) *)
   print_endline "\nTraining Actor-Critic...";
-  let _, _, _, _ = train_actor_critic env 50 0.01 0.005 0.99 in
+  let _, _, _, _, _ = train_actor_critic env 50 0.01 0.005 0.99 in
   print_endline "\nWorkshop complete! You've implemented:";
   print_endline "- Basic REINFORCE";
   print_endline "- REINFORCE with baseline";
@@ -43,11 +43,11 @@ let compare_methods () =
   (* Train each method *)
   let methods = [
     ("REINFORCE",
-     let p, params, _ = train_reinforce env 100 0.01 0.99 in (p, params));
+     let p, params, _, _ = train_reinforce env 100 0.01 0.99 in (p, params));
     ("REINFORCE+Baseline",
-     train_reinforce_with_baseline env 100 0.01 0.99);
+     let p, params, _ = train_reinforce_with_baseline env 100 0.01 0.99 in (p, params));
     ("Actor-Critic", 
-      let p_net, p_params, _, _ =
+      let p_net, p_params, _, _, _ =
         train_actor_critic env 100 0.01 0.005 0.99 in
       (p_net, p_params));
   ] in  

@@ -1,150 +1,14 @@
 (* Algorithm comparison plots for RL workshop *)
 
 open Workshop
-open Slide1
-open Slide2
-open Slide3
 
-let device = Rune.c  (* CPU device *)
-
-(* Store training history for multiple algorithms *)
-type training_history = {
+(* Extended training history type for named plots *)
+type named_history = {
   name: string;
   returns: float array;
   losses: float array;
   color: string;  (* SVG color *)
 }
-
-(* Modified training functions that return history *)
-let train_reinforce_with_history env n_episodes learning_rate gamma =
-  let policy_net, params = initialize_policy () in
-  let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
-  let opt_state = ref (optimizer.init params) in
-
-  let returns = Array.make n_episodes 0.0 in
-  let losses = Array.make n_episodes 0.0 in
-
-  for episode = 0 to n_episodes - 1 do
-    let episode_data = collect_episode env policy_net params 100 in
-    let episode_returns = compute_returns episode_data.rewards gamma in
-    let total_reward = Array.fold_left (+.) 0. episode_data.rewards in
-    returns.(episode) <- total_reward;
-
-    (* Compute policy gradient loss *)
-    let loss, grads = Kaun.value_and_grad (fun p ->
-      let total_loss = ref (Rune.scalar device Rune.float32 0.0) in
-
-      let n_samples = min 30 (Array.length episode_data.states) in
-      for t = 0 to n_samples - 1 do
-        let state = episode_data.states.(t) in
-        let action = episode_data.actions.(t) in
-        let g_t = episode_returns.(t) in
-
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
-        let logits = Kaun.apply policy_net p ~training:true state_batched in
-        let log_probs = log_softmax ~axis:(-1) logits in
-
-        (* Use one-hot encoding for action selection *)
-        let action_int_tensor = Rune.astype Rune.int32 action in
-        let action_one_hot = Rune.one_hot ~num_classes:4 action_int_tensor in
-        let action_one_hot =
-          Rune.reshape [|1; 4|] action_one_hot |>
-          Rune.astype Rune.float32 in
-        let selected_log_prob = Rune.sum (Rune.mul action_one_hot log_probs) in
-
-        let weighted_loss = Rune.mul (Rune.neg selected_log_prob)
-                                     (Rune.scalar device Rune.float32 g_t) in
-        total_loss := Rune.add !total_loss weighted_loss
-      done;
-
-      Rune.div !total_loss (Rune.scalar device Rune.float32 (float_of_int n_samples))
-    ) params in
-
-    losses.(episode) <- Rune.item [] loss;
-
-    (* Update parameters *)
-    let updates, new_state = optimizer.update !opt_state params grads in
-    opt_state := new_state;
-    Kaun.Optimizer.apply_updates_inplace params updates;
-
-    (* Progress indicator *)
-    if (episode + 1) mod 20 = 0 then
-      Printf.printf "  Episode %d/%d\n%!" (episode + 1) n_episodes;
-  done;
-
-  { name = "REINFORCE (no baseline)";
-    returns = returns;
-    losses = losses;
-    color = "#1f77b4" }  (* Blue *)
-
-let train_reinforce_baseline_with_history env n_episodes learning_rate gamma =
-  let policy_net, params = initialize_policy () in
-  let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
-  let opt_state = ref (optimizer.init params) in
-
-  let returns = Array.make n_episodes 0.0 in
-  let losses = Array.make n_episodes 0.0 in
-  let baseline = ref 0.0 in  (* Running average baseline *)
-  let alpha = 0.1 in  (* Baseline learning rate *)
-
-  for episode = 0 to n_episodes - 1 do
-    let episode_data = collect_episode env policy_net params 100 in
-    let episode_returns = compute_returns episode_data.rewards gamma in
-    let total_reward = Array.fold_left (+.) 0. episode_data.rewards in
-    returns.(episode) <- total_reward;
-
-    (* Update baseline with exponential moving average *)
-    baseline := (1.0 -. alpha) *. !baseline +. alpha *. total_reward;
-
-    (* Compute advantages *)
-    let advantages = Array.map (fun g -> g -. !baseline) episode_returns in
-
-    (* Compute policy gradient loss with baseline *)
-    let loss, grads = Kaun.value_and_grad (fun p ->
-      let total_loss = ref (Rune.scalar device Rune.float32 0.0) in
-
-      let n_samples = min 30 (Array.length episode_data.states) in
-      for t = 0 to n_samples - 1 do
-        let state = episode_data.states.(t) in
-        let action = episode_data.actions.(t) in
-        let advantage = advantages.(t) in
-
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
-        let logits = Kaun.apply policy_net p ~training:true state_batched in
-        let log_probs = log_softmax ~axis:(-1) logits in
-
-        (* Use one-hot encoding for action selection *)
-        let action_int_tensor = Rune.astype Rune.int32 action in
-        let action_one_hot = Rune.one_hot ~num_classes:4 action_int_tensor in
-        let action_one_hot =
-          Rune.reshape [|1; 4|] action_one_hot |>
-          Rune.astype Rune.float32 in
-        let selected_log_prob = Rune.sum (Rune.mul action_one_hot log_probs) in
-
-        let weighted_loss = Rune.mul (Rune.neg selected_log_prob)
-                                     (Rune.scalar device Rune.float32 advantage) in
-        total_loss := Rune.add !total_loss weighted_loss
-      done;
-
-      Rune.div !total_loss (Rune.scalar device Rune.float32 (float_of_int n_samples))
-    ) params in
-
-    losses.(episode) <- Rune.item [] loss;
-
-    (* Update parameters *)
-    let updates, new_state = optimizer.update !opt_state params grads in
-    opt_state := new_state;
-    Kaun.Optimizer.apply_updates_inplace params updates;
-
-    (* Progress indicator *)
-    if (episode + 1) mod 20 = 0 then
-      Printf.printf "  Episode %d/%d\n%!" (episode + 1) n_episodes;
-  done;
-
-  { name = "REINFORCE with baseline";
-    returns = returns;
-    losses = losses;
-    color = "#2ca02c" }  (* Green *)
 
 (* Compute moving average for smoothing plots *)
 let moving_average data window_size =
@@ -332,22 +196,31 @@ let () =
   print_endline "=== RL Workshop: Algorithm Comparison ===";
   print_endline "Training multiple REINFORCE variants...\n";
 
-  let env = create_simple_gridworld 5 in
+  let env = Slide1.create_simple_gridworld 5 in
   let n_episodes = 200 in
   let learning_rate = 0.01 in
   let gamma = 0.99 in
 
-  (* Train different variants *)
+  (* Train different variants using slide functions *)
   print_endline "Training REINFORCE without baseline...";
-  let history_no_baseline =
-    train_reinforce_with_history env n_episodes learning_rate gamma in
+  let _policy_net1, _params1, _episodes1, history_no_baseline =
+    Slide4.train_reinforce env n_episodes learning_rate gamma in
 
   print_endline "\nTraining REINFORCE with baseline...";
-  let history_baseline =
-    train_reinforce_baseline_with_history env n_episodes learning_rate gamma in
+  let _policy_net2, _params2, history_baseline =
+    Slide5.train_reinforce_with_baseline env n_episodes learning_rate gamma in
 
-  (* Create comparison plots *)
-  let histories = [history_no_baseline; history_baseline] in
+  (* Convert to named histories *)
+  let histories = [
+    { name = "REINFORCE (no baseline)";
+      returns = history_no_baseline.returns;
+      losses = history_no_baseline.losses;
+      color = "#1f77b4" };  (* Blue *)
+    { name = "REINFORCE with baseline";
+      returns = history_baseline.returns;
+      losses = history_baseline.losses;
+      color = "#2ca02c" };  (* Green *)
+  ] in
 
   (* ASCII plots for terminal *)
   ascii_plot histories "returns" 10;

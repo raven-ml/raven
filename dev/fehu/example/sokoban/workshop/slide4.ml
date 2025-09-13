@@ -4,17 +4,28 @@
 open Slide1
 open Slide2
 open Slide3
+
+(* Training history type *)
+type training_history = {
+  returns: float array;
+  losses: float array;
+}
+
 (* REINFORCE training loop *)
 let train_reinforce env n_episodes learning_rate gamma =
   (* Initialize policy *)
-  let policy_net, params = initialize_policy () in  
+  let policy_net, params = initialize_policy () in
   (* Create optimizer *)
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
   let opt_state = ref (optimizer.init params) in
-  
+
   (* Collect episodes for visualization *)
   let collected_episodes = ref [] in
-  
+
+  (* History tracking *)
+  let history_returns = Array.make n_episodes 0.0 in
+  let history_losses = Array.make n_episodes 0.0 in
+
   (* Training loop *)
   for episode = 1 to n_episodes do
     (* Collect episode *)
@@ -81,15 +92,23 @@ let train_reinforce env n_episodes learning_rate gamma =
     let updates, new_state =
       optimizer.update !opt_state params grads in
     opt_state := new_state;
-    Kaun.Optimizer.apply_updates_inplace params updates;    
+    Kaun.Optimizer.apply_updates_inplace params updates;
+
+    (* Track history *)
+    let total_reward =
+      Array.fold_left (+.) 0. episode_data.rewards in
+    history_returns.(episode - 1) <- total_reward;
+    history_losses.(episode - 1) <- Rune.item [] loss;
+
     (* Log progress *)
     if episode mod 10 = 0 then
-      let total_reward =
-        Array.fold_left (+.) 0. episode_data.rewards in
       Printf.printf "Episode %d: Return = %.2f, Loss = %.4f\n"
         episode total_reward (Rune.item [] loss)
-  done;  
-  (policy_net, params, List.rev !collected_episodes)
+  done;
+
+  (* Return everything including history *)
+  (policy_net, params, List.rev !collected_episodes,
+   {returns = history_returns; losses = history_losses})
 (* Main function - just for slide consistency *)
 let main () =
   print_endline "REINFORCE training function defined."

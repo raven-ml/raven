@@ -2375,17 +2375,28 @@ let main () =
 open Slide1
 open Slide2
 open Slide3
+
+(* Training history type *)
+type training_history = {
+  returns: float array;
+  losses: float array;
+}
+
 (* REINFORCE training loop *)
 let train_reinforce env n_episodes learning_rate gamma =
   (* Initialize policy *)
-  let policy_net, params = initialize_policy () in  
+  let policy_net, params = initialize_policy () in
   (* Create optimizer *)
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
   let opt_state = ref (optimizer.init params) in
-  
+
   (* Collect episodes for visualization *)
   let collected_episodes = ref [] in
-  
+
+  (* History tracking *)
+  let history_returns = Array.make n_episodes 0.0 in
+  let history_losses = Array.make n_episodes 0.0 in
+
   (* Training loop *)
   for episode = 1 to n_episodes do
     (* Collect episode *)
@@ -2452,15 +2463,23 @@ let train_reinforce env n_episodes learning_rate gamma =
     let updates, new_state =
       optimizer.update !opt_state params grads in
     opt_state := new_state;
-    Kaun.Optimizer.apply_updates_inplace params updates;    
+    Kaun.Optimizer.apply_updates_inplace params updates;
+
+    (* Track history *)
+    let total_reward =
+      Array.fold_left (+.) 0. episode_data.rewards in
+    history_returns.(episode - 1) &amp;lt;- total_reward;
+    history_losses.(episode - 1) &amp;lt;- Rune.item [] loss;
+
     (* Log progress *)
     if episode mod 10 = 0 then
-      let total_reward =
-        Array.fold_left (+.) 0. episode_data.rewards in
       Printf.printf &amp;quot;Episode %d: Return = %.2f, Loss = %.4f\n&amp;quot;
         episode total_reward (Rune.item [] loss)
-  done;  
-  (policy_net, params, List.rev !collected_episodes)
+  done;
+
+  (* Return everything including history *)
+  (policy_net, params, List.rev !collected_episodes,
+   {returns = history_returns; losses = history_losses})
 (* Main function - just for slide consistency *)
 let main () =
   print_endline &amp;quot;REINFORCE training function defined.&amp;quot;
@@ -2550,6 +2569,7 @@ update_parameters policy_grad learning_rate
 open Slide1
 open Slide2
 open Slide3
+open Slide4  (* For training_history type *)
 (* REINFORCE with running average baseline *)
 let train_reinforce_with_baseline env n_episodes learning_rate
      gamma =
@@ -2558,7 +2578,12 @@ let train_reinforce_with_baseline env n_episodes learning_rate
   let opt_state = ref (optimizer.init params) in
   let baseline = ref 0.0 in
   (* Exponential moving average factor *)
-  let baseline_alpha = 0.01 in  
+  let baseline_alpha = 0.01 in
+
+  (* History tracking *)
+  let history_returns = Array.make n_episodes 0.0 in
+  let history_losses = Array.make n_episodes 0.0 in
+
   for episode = 1 to n_episodes do
     (* Collect episode *)
     let episode_data =
@@ -2572,7 +2597,7 @@ let train_reinforce_with_baseline env n_episodes learning_rate
     let advantages =
       Array.map (fun r -&amp;gt; r -. !baseline) returns in    
     (* Compute policy gradient with baseline *)
-    let _loss, grads = Kaun.value_and_grad (fun p -&amp;gt;
+    let loss, grads = Kaun.value_and_grad (fun p -&amp;gt;
       let total_loss =
         ref (Rune.zeros device Rune.float32 [||]) in      
       Array.iteri (fun t state -&amp;gt;
@@ -2611,19 +2636,28 @@ let train_reinforce_with_baseline env n_episodes learning_rate
     let updates, new_state =
       optimizer.update !opt_state params grads in
     opt_state := new_state;
-    Kaun.Optimizer.apply_updates_inplace params updates;    
+    Kaun.Optimizer.apply_updates_inplace params updates;
+
+    (* Track history *)
+    let total_reward =
+      Array.fold_left (+.) 0. episode_data.rewards in
+    history_returns.(episode - 1) &amp;lt;- total_reward;
+    history_losses.(episode - 1) &amp;lt;- Rune.item [] loss;
+
     if episode mod 10 = 0 then
       Printf.printf &amp;quot;Episode %d: Return = %.2f, Baseline = %.2f\n&amp;quot;
         episode episode_return !baseline
-  done;  
-  (policy_net, params)
+  done;
+
+  (* Return with history *)
+  (policy_net, params, {returns = history_returns; losses = history_losses})
 (* Main function to test REINFORCE with baseline *)
 let main () =
   print_endline &amp;quot;=== Slide 5: REINFORCE with Baseline ===&amp;quot;;
   let env = create_simple_gridworld 5 in
   
   (* Train for a few episodes *)
-  let _policy_net, _params = 
+  let _policy_net, _params, _history =
     train_reinforce_with_baseline env 20 0.01 0.99 in
   
   print_endline &amp;quot;REINFORCE with baseline training complete!&amp;quot;
@@ -2676,6 +2710,7 @@ let main () =
 open Slide1
 open Slide2
 open Slide3
+open Slide4  (* For training_history type *)
 (* Create a value network for the baseline *)
 let create_value_network grid_size =
   Kaun.Layer.sequential [
@@ -2691,6 +2726,9 @@ let create_value_network grid_size =
 
 (* REINFORCE with learned baseline (Actor-Critic) *)
 let train_actor_critic env n_episodes lr_actor lr_critic gamma =
+  (* History tracking *)
+  let history_returns = Array.make n_episodes 0.0 in
+  let history_losses = Array.make n_episodes 0.0 in
   let rng = Rune.Rng.key 42 in  
   (* Initialize actor (policy) and critic (value) networks *)
   let policy_net = create_policy_network 5 4 in
@@ -2782,25 +2820,34 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
       Rune.div !total_loss
         (Rune.scalar device Rune.float32 n_steps_float)
     ) policy_params in    
-    let policy_updates, new_policy_state = 
+    let policy_updates, new_policy_state =
       policy_opt.update !policy_opt_state
         policy_params policy_grads in
     policy_opt_state := new_policy_state;
     Kaun.Optimizer.apply_updates_inplace
-      policy_params policy_updates;    
+      policy_params policy_updates;
+
+    (* Track history *)
+    let total_reward = Array.fold_left (+.) 0. episode_data.rewards in
+    history_returns.(episode - 1) &amp;lt;- total_reward;
+    history_losses.(episode - 1) &amp;lt;- Rune.item [] value_loss;  (* Using value loss as primary metric *)
+
     if episode mod 10 = 0 then
       Printf.printf
         &amp;quot;Episode %d: Return = %.2f, Value Loss = %.4f\n&amp;quot;
         episode returns.(0) (Rune.item [] value_loss)
-  done;  
-  (policy_net, policy_params, value_net, value_params)
+  done;
+
+  (* Return with history *)
+  (policy_net, policy_params, value_net, value_params,
+   {returns = history_returns; losses = history_losses})
 (* Main function to test Actor-Critic *)
 let main () =
   print_endline &amp;quot;=== Slide 6: Actor-Critic ===&amp;quot;;
   let env = create_simple_gridworld 5 in
   
   (* Train for a few episodes *)
-  let _policy_net, _policy_params, _value_net, _value_params = 
+  let _policy_net, _policy_params, _value_net, _value_params, _history =
     train_actor_critic env 20 0.01 0.005 0.99 in
   
   print_endline &amp;quot;Actor-Critic training complete!&amp;quot;
@@ -2857,13 +2904,13 @@ let run_complete_workshop () =
   let env = create_simple_gridworld 5 in  
   (* 2. Try basic REINFORCE *)
   print_endline &amp;quot;Training with basic REINFORCE...&amp;quot;;
-  let _, _, _ = train_reinforce env 50 0.01 0.99 in  
+  let _, _, _, _ = train_reinforce env 50 0.01 0.99 in  
   (* 3. Add baseline for variance reduction *)
   print_endline &amp;quot;\nTraining with baseline...&amp;quot;;
-  let _, _ = train_reinforce_with_baseline env 50 0.01 0.99 in
+  let _, _, _ = train_reinforce_with_baseline env 50 0.01 0.99 in
   (* 4. Use learned baseline (Actor-Critic) *)
   print_endline &amp;quot;\nTraining Actor-Critic...&amp;quot;;
-  let _, _, _, _ = train_actor_critic env 50 0.01 0.005 0.99 in
+  let _, _, _, _, _ = train_actor_critic env 50 0.01 0.005 0.99 in
   print_endline &amp;quot;\nWorkshop complete! You've implemented:&amp;quot;;
   print_endline &amp;quot;- Basic REINFORCE&amp;quot;;
   print_endline &amp;quot;- REINFORCE with baseline&amp;quot;;
@@ -2887,11 +2934,11 @@ let compare_methods () =
   (* Train each method *)
   let methods = [
     (&amp;quot;REINFORCE&amp;quot;,
-     let p, params, _ = train_reinforce env 100 0.01 0.99 in (p, params));
+     let p, params, _, _ = train_reinforce env 100 0.01 0.99 in (p, params));
     (&amp;quot;REINFORCE+Baseline&amp;quot;,
-     train_reinforce_with_baseline env 100 0.01 0.99);
+     let p, params, _ = train_reinforce_with_baseline env 100 0.01 0.99 in (p, params));
     (&amp;quot;Actor-Critic&amp;quot;, 
-      let p_net, p_params, _, _ =
+      let p_net, p_params, _, _, _ =
         train_actor_critic env 100 0.01 0.005 0.99 in
       (p_net, p_params));
   ] in  
