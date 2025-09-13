@@ -401,9 +401,14 @@ From Sutton & Barto:
 {pause down="~duration:15"}
 {slip include src=../example/sokoban/workshop/slide5.ml}
 
+{pause down focus .block}
+> ![REINFORCE without baseline vs. with non-learned baseline: losses](reinforce_losses.svg)
+> ![REINFORCE without baseline vs. with non-learned baseline: returns](reinforce_returns.svg)
+
+
 ***
 
-{pause center #reinforce-baseline}
+{pause unfocus center #reinforce-baseline}
 ## REINFORCE with Learned Baseline
 
 {.block title="REINFORCE with Learned Baseline Algorithm"}
