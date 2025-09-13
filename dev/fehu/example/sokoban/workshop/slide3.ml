@@ -28,7 +28,7 @@ let collect_episode env policy_net params max_steps =
     else begin
       (* Get action from policy *)
       let action, log_prob =
-        sample_action policy_net params obs rng in      
+        sample_action policy_net params obs rng in
       (* Take environment step *)
       let next_obs, reward, terminated, truncated, _ =
         env.Fehu.Env.step action in      

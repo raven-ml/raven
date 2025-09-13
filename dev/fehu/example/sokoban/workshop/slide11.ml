@@ -42,8 +42,14 @@ let create_curriculum_env curriculum_state =
         | _ -> 0.0
     done
   done;
-  let state = Rune.init device Rune.float32 [|height; width|] (fun idxs ->
-    state_array.(idxs.(0)).(idxs.(1))
+
+  (* Always create a 5x5 state, padding if necessary *)
+  let state = Rune.init device Rune.float32 [|5; 5|] (fun idxs ->
+    let i, j = idxs.(0), idxs.(1) in
+    if i < height && j < width then
+      state_array.(i).(j)
+    else
+      1.0  (* Pad with walls *)
   ) in
 
   (* Create Fehu.Env interface *)
@@ -54,19 +60,19 @@ let create_curriculum_env curriculum_state =
 
   let step _action =
     (* Simplified: random reward for demonstration *)
-    let reward = if Random.float 1.0 < 0.1 then 10.0 else -0.1 in
-    let terminated = Random.float 1.0 < 0.05 in
+    let reward = if Random.float 1.0 < 0.2 then 10.0 else -0.1 in
+    let terminated = Random.float 1.0 < 0.3 in  (* Higher termination probability *)
     let truncated = false in
     (state, reward, terminated, truncated, [])  (* obs, reward, terminated, truncated, info *)
   in
 
   let render () = () in
 
-  (* Use Fehu.Env.make to create environment *)
+  (* Use Fehu.Env.make to create environment - always 5x5 *)
   let observation_space = Fehu.Space.Box {
-    low = Rune.zeros device Rune.float32 [|height; width|];
-    high = Rune.ones device Rune.float32 [|height; width|];
-    shape = [|height; width|];
+    low = Rune.zeros device Rune.float32 [|5; 5|];
+    high = Rune.ones device Rune.float32 [|5; 5|];
+    shape = [|5; 5|];
   } in
   let action_space = Fehu.Space.Discrete 4 in
 
@@ -84,6 +90,7 @@ let train_reinforce_curriculum n_episodes learning_rate gamma window_size =
   let performance_history = ref [] in
 
   for episode = 1 to n_episodes do
+
     (* Get environment for current curriculum stage *)
     let env = create_curriculum_env curriculum_state in
 
@@ -162,7 +169,7 @@ let train_reinforce_curriculum n_episodes learning_rate gamma window_size =
     (* Log progress *)
     if episode mod 10 = 0 || advanced then begin
       let stage = List.nth curriculum_stages !curriculum_state.current_stage in
-      Printf.printf "Episode %4d | Stage: %-15s | Return: %6.2f | Loss: %.4f%s\n"
+      Printf.printf "Episode %4d | Stage: %-15s | Return: %6.2f | Loss: %.4f%s\n%!"
         episode stage.name total_reward (Rune.item [] loss)
         (if advanced then " [ADVANCED!]" else "")
     end
@@ -193,7 +200,7 @@ let analyze_curriculum_performance history =
       Printf.printf "\nStage %d: %s\n" (i + 1) stage.name;
       Printf.printf "  Episodes: %d-%d (%d total)\n" first_ep last_ep n;
       Printf.printf "  Average reward: %.2f\n" avg_reward;
-      Printf.printf "  Difficulty: %d/10\n" stage.difficulty
+      Printf.printf "  Difficulty: %d/10\n%!" stage.difficulty
     end
   ) stages_data;
 
@@ -235,7 +242,7 @@ let main () =
 
   (* Train with curriculum *)
   let policy_net, params, final_curriculum, history =
-    train_reinforce_curriculum 200 0.01 0.99 20 in
+    train_reinforce_curriculum 50 0.01 0.99 20 in
 
   (* Analyze results *)
   analyze_curriculum_performance history;

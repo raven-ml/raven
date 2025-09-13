@@ -919,6 +919,136 @@ Combined with modern RL algorithms (PPO, GRPO), curriculum learning enables trai
 
 ***
 
+{pause down=egocentric-allocentric}
+
+## Egocentric vs Allocentric: How Should Agents See the World?
+
+When designing observations for RL agents, a fundamental choice is between **egocentric** (agent-centered) and **allocentric** (world-centered) representations. This decision profoundly impacts learning efficiency, generalization, and policy complexity.
+
+### Allocentric: The World as It Is
+
+In our Sokoban implementation (Slides 10-11), we use an allocentric representation:
+
+```
+#####     Grid position [2,1] = '@' (player)
+#@o #     Grid position [2,2] = 'o' (box)
+# x #     Grid position [3,2] = 'x' (target)
+#####
+```
+
+The agent sees the entire grid with their position marked as a special value:
+- **Fixed frame of reference**: North is always up
+- **Absolute positions**: Player at (2,1) sees themselves at (2,1)
+- **Complete information**: Full map visible at once
+
+### Egocentric: The World from the Agent's View
+
+An egocentric representation centers the world on the agent:
+
+```
+Allocentric:        Egocentric (agent-centered):
+#####               #?#??
+#@o #               #o #?
+# x #               # x #
+#####               #####
+                    @@@@@ (agent always at center)
+```
+
+Key differences:
+- **Agent-relative coordinates**: Agent is always at (0,0) or center
+- **Local view**: May only see nearby cells
+- **Relative directions**: "Box is 1 step ahead" not "Box is at (2,2)"
+
+### Comparison for Navigation Tasks
+
+| Aspect | Allocentric | Egocentric |
+|--------|-------------|------------|
+| **Generalization** | Poor - must relearn for new positions | Good - same policy from any position |
+| **Sample Efficiency** | Good for small, fixed maps | Good for local patterns |
+| **Policy Complexity** | High - must memorize position→action | Low - learn relative rules |
+| **Exploration** | Knows where it's been | May revisit same areas |
+| **Transfer Learning** | Limited to similar layouts | Transfers across different maps |
+
+### Hybrid Approaches
+
+Many successful systems combine both:
+
+1. **Local + Global**: Egocentric view for navigation, allocentric map for planning
+2. **Attention Mechanisms**: Focus on agent-local region within global context
+3. **Memory Systems**: Build allocentric map from egocentric observations
+
+### Case Study: Why Our Sokoban Uses Allocentric
+
+For our curriculum learning demonstration, allocentric makes sense:
+- **Small grids** (5×5): Full observability is reasonable
+- **Puzzle solving**: Requires understanding global configuration
+- **Fixed layouts**: Each curriculum stage has specific patterns to learn
+
+However, this limits generalization. The agent learns "at position (1,1) push right" rather than "when box is adjacent, push toward target."
+
+### When to Use Each
+
+**Choose Allocentric when:**
+- Map size is small and fixed
+- Global planning is essential
+- Training on specific layouts
+- Full observability is realistic
+
+**Choose Egocentric when:**
+- Generalizing across environments
+- Local reactive behaviors suffice
+- Maps are large or procedurally generated
+- Partial observability is natural
+
+### Implementation Considerations
+
+#### Egocentric Transform
+```python
+def make_egocentric(grid, agent_pos, view_radius=2):
+    """Center the observation on the agent."""
+    x, y = agent_pos
+    # Extract local window around agent
+    local_view = grid[
+        max(0, x-view_radius):x+view_radius+1,
+        max(0, y-view_radius):y+view_radius+1
+    ]
+    # Pad if near edges
+    # Rotate if considering orientation
+    return local_view
+```
+
+#### Network Architecture Impact
+- **Allocentric**: Can use standard CNNs, position embeddings help
+- **Egocentric**: Benefits from rotation-invariant architectures, recurrent memory
+
+### The Orientation Question
+
+We keep orientation allocentric (north is always up) for simplicity:
+- Sokoban has no turning actions (only move up/down/left/right)
+- Rotation invariance adds complexity without clear benefit
+- But for agents that can turn, egocentric orientation is often crucial
+
+{.note title="Exercise 4: Egocentric Sokoban"}
+> Implement an egocentric version of the Sokoban environment where:
+> 1. The agent is always centered in the observation
+> 2. The view shows a 5×5 window around the agent
+> 3. Cells outside the map are marked as walls
+> 4. Compare learning curves with allocentric version
+>
+> Does it generalize better to new puzzle layouts?
+> See `exercise4.md` for implementation guide.
+
+### Future Directions
+
+Modern approaches increasingly use:
+- **Transformers**: Attend to relevant parts regardless of position
+- **Graph Networks**: Represent spatial relations explicitly
+- **World Models**: Learn to transform between egocentric and allocentric
+
+The choice between egocentric and allocentric isn't binary - it's about finding the right representation for your task's structure and generalization requirements.
+
+***
+
 {pause down=fin}
 
 ## References
