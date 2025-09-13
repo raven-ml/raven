@@ -1,6 +1,9 @@
 # Build output directory
 _build/
 
+# CMakelists.txt build directory
+build/
+
 # Dune lock files
 dune.lock/
 
