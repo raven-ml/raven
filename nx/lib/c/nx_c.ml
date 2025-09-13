@@ -674,9 +674,13 @@ let op_threefry key counter =
 
 (* Element Access Ops *)
 let op_gather data indices axis =
-  (* Ensure inputs are materializable *)
+  (* Ensure inputs are materializable. Preserve broadcasted strides for indices
+     to enable C fast paths (e.g., memcpy row gather). *)
   let data' = ensure_materializable data in
-  let indices' = ensure_materializable indices in
+  (* Do not materialize indices unless we cannot get strides *)
+  let indices' =
+    if can_get_strides indices then indices else ensure_materializable indices
+  in
 
   (* Get shapes *)
   let indices_shape = shape indices in

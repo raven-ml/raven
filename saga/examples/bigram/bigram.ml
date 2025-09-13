@@ -1,9 +1,6 @@
 open Saga
 
 let () =
-  (* Create a simple tokenizer *)
-  let tok = Tokenizer.words in
-
   (* Sample text - we'll use a small Shakespeare excerpt for testing *)
   let text =
     "To be or not to be that is the question\n\
@@ -17,8 +14,14 @@ let () =
      Devoutly to be wished To die to sleep\n\
      To sleep perchance to dream ay theres the rub"
   in
+  (* Create a tokenizer trained for words on this text *)
+  let tok = Tokenizer.create ~model:(Models.word_level ()) in
+  Tokenizer.set_pre_tokenizer tok (Some (Pre_tokenizers.whitespace ()));
+  (* Train a simple word-level vocab from the text *)
+  let seq = Seq.return text in
+  Tokenizer.train_from_iterator tok seq ~trainer:(Trainers.word_level ()) ();
 
-  (* Train a bigram model *)
+  (* Train a bigram model (word-level) *)
   let model = ngram ~n:2 ~tokenizer:tok () in
   let model = train model [ text ] in
 
@@ -29,17 +32,21 @@ let () =
 
   (* Generate with different temperatures *)
   Printf.printf "Generated text (temperature=0.5, prompt=\"To be\"):\n";
-  let generated =
-    generate model ~num_tokens:50 ~temperature:0.5 ~prompt:"To be" ()
+  let ids =
+    generate_ids model ~num_tokens:50 ~temperature:0.5 ~prompt:"To be" ()
   in
-  Printf.printf "%s\n\n" generated;
+  let tokens = decode_ids model ids in
+  Printf.printf "%s\n\n" (String.concat " " tokens);
 
   Printf.printf "Generated text (temperature=1.0, prompt=\"The\"):\n";
-  let generated =
-    generate model ~num_tokens:50 ~temperature:1.0 ~top_k:10 ~prompt:"The" ()
+  let ids =
+    generate_ids model ~num_tokens:50 ~temperature:1.0 ~top_k:10 ~prompt:"The"
+      ()
   in
-  Printf.printf "%s\n\n" generated;
+  let tokens = decode_ids model ids in
+  Printf.printf "%s\n\n" (String.concat " " tokens);
 
   Printf.printf "Generated text (temperature=1.5, no prompt):\n";
-  let generated = generate model ~num_tokens:50 ~temperature:1.5 () in
-  Printf.printf "%s\n" generated
+  let ids = generate_ids model ~num_tokens:50 ~temperature:1.5 () in
+  let tokens = decode_ids model ids in
+  Printf.printf "%s\n" (String.concat " " tokens)

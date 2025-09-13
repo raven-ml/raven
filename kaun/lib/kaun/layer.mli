@@ -86,6 +86,20 @@ type module_ = {
 
 (** {1 Convolutional Layers} *)
 
+val conv1d :
+  in_channels:int ->
+  out_channels:int ->
+  ?kernel_size:int ->
+  ?stride:int ->
+  ?dilation:int ->
+  ?padding:[ `Same | `Valid | `Causal ] ->
+  unit ->
+  module_
+(** [conv1d ~in_channels ~out_channels ?kernel_size ?stride ?dilation ?padding
+     ()] creates a 1D convolutional layer over inputs of shape
+    [batch; in_channels; length]. Supports `Same, `Valid, and `Causal padding.
+    Default: kernel_size=3, stride=1, dilation=1, padding=`Same. *)
+
 val conv2d :
   in_channels:int ->
   out_channels:int ->
@@ -472,3 +486,68 @@ val transformer_encoder :
     @param hidden_act
       Activation function for feed-forward network. Default: [`gelu]
     @param use_bias Whether to use bias in linear layers. Default: [true] *)
+
+(** {1 Recurrent Layers} *)
+
+val rnn :
+  input_size:int ->
+  hidden_size:int ->
+  ?return_sequences:bool ->
+  ?learned_init:bool ->
+  unit ->
+  module_
+(** Simple tanh RNN over a sequence. Input [batch; seq; input_size], output
+    [batch; hidden_size] (last hidden state). *)
+
+val gru :
+  input_size:int ->
+  hidden_size:int ->
+  ?return_sequences:bool ->
+  ?learned_init:bool ->
+  unit ->
+  module_
+(** GRU over a sequence. Input/output like rnn. *)
+
+val lstm :
+  input_size:int ->
+  hidden_size:int ->
+  ?return_sequences:bool ->
+  ?learned_init:bool ->
+  unit ->
+  module_
+(** LSTM over a sequence. Input/output like rnn. *)
+
+(** {1 Positional Encodings} *)
+
+val positional_embedding_learned :
+  max_len:int -> embed_dim:int -> unit -> module_
+(** Adds learned positional embeddings to input [batch; seq; embed_dim]. *)
+
+val positional_encoding_sinusoidal_table :
+  max_len:int ->
+  embed_dim:int ->
+  device:'dev Rune.device ->
+  dtype:(float, 'layout) Rune.dtype ->
+  (float, 'layout, 'dev) Rune.t
+(** Create a [max_len; embed_dim] sinusoidal positional encoding table (not
+    trainable). Can be added to token embeddings. *)
+
+val transformer_decoder_block :
+  embed_dim:int ->
+  num_heads:int ->
+  mlp_hidden:int ->
+  ?dropout:float ->
+  unit ->
+  module_
+(** Decoder-style transformer block with causal self-attention, pre-LN, MLP, and
+    residual connections. Expects/returns [batch; seq; embed_dim]. *)
+
+val transformer_decoder :
+  num_layers:int ->
+  embed_dim:int ->
+  num_heads:int ->
+  mlp_hidden:int ->
+  ?dropout:float ->
+  unit ->
+  module_
+(** Stack multiple decoder blocks sequentially. *)

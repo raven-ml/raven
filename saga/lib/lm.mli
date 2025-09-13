@@ -182,6 +182,25 @@ val generate :
       let long_text = Saga.generate model ~min_new_tokens:100 ~num_tokens:200 ()
     ]} *)
 
+val generate_ids :
+  model ->
+  ?num_tokens:int ->
+  ?temperature:float ->
+  ?top_k:int ->
+  ?top_p:float ->
+  ?seed:int ->
+  ?min_new_tokens:int ->
+  ?prompt:string ->
+  unit ->
+  int list
+(** Same as [generate] but returns generated token IDs (in the LM's internal
+    vocabulary). *)
+
+val decode_ids : model -> int list -> string list
+(** [decode_ids model ids] converts the LM's token IDs to their string tokens.
+    This is useful to control how to join tokens (e.g., with spaces for
+    word-level models). *)
+
 (** {1 Model Evaluation} *)
 
 val score : model -> string -> float
@@ -249,7 +268,7 @@ val ngram :
   ?smoothing:float ->
   ?min_freq:int ->
   ?specials:string list ->
-  ?tokenizer:'a Saga_tokenizers.Tokenizer.t ->
+  ?tokenizer:Saga_tokenizers.Tokenizer.t ->
   unit ->
   model
 (** [ngram ~n ?smoothing ?min_freq ?specials ?tokenizer ()] creates an n-gram

@@ -46,6 +46,77 @@ let swish () =
     apply = (fun _params ~training:_ ?rngs:_ x -> Activations.swish x);
   }
 
+let conv1d ~in_channels ~out_channels ?(kernel_size = 3) ?(stride = 1)
+    ?(dilation = 1) ?(padding = `Same) () =
+  {
+    init =
+      (fun (type l d)
+        ~rngs
+        ~device:(dev : d Rune.device)
+        ~(dtype : (float, l) Rune.dtype)
+      ->
+        Rune.debug_with_context
+          (Printf.sprintf "conv1d_%dx%d_%d_init" in_channels out_channels
+             kernel_size) (fun () ->
+            let rngs_split = Rune.Rng.split rngs in
+            let rng1 = rngs_split.(0) in
+            let fan_in = in_channels * kernel_size in
+            let fan_out = out_channels * kernel_size in
+            let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
+            let weight_shape = [| out_channels; in_channels; kernel_size |] in
+            let w = Rune.Rng.uniform rng1 dev dtype weight_shape in
+            let w =
+              Rune.sub
+                (Rune.mul w (Rune.scalar dev dtype (2.0 *. limit)))
+                (Rune.scalar dev dtype limit)
+            in
+            let b = Rune.zeros dev dtype [| out_channels |] in
+            Ptree.record_of [ ("weight", Tensor w); ("bias", Tensor b) ]));
+    apply =
+      (fun (type l d)
+        (params : (l, d) Ptree.t)
+        ~training:_
+        ?rngs:_
+        (x : (l, d) tensor)
+      ->
+        match params with
+        | Record fields ->
+            let w =
+              match Ptree.Record.find_opt "weight" fields with
+              | Some (Tensor t) -> t
+              | _ -> failwith "conv1d: missing or invalid weight parameter"
+            in
+            let b =
+              match Ptree.Record.find_opt "bias" fields with
+              | Some (Tensor t) -> t
+              | _ -> failwith "conv1d: missing or invalid bias parameter"
+            in
+            Rune.debug_with_context
+              (Printf.sprintf "conv1d_%dx%d_%d" in_channels out_channels
+                 kernel_size) (fun () ->
+                let x =
+                  match padding with
+                  | `Same -> x
+                  | `Valid -> x
+                  | `Causal ->
+                      let pad_left = (kernel_size - 1) * dilation in
+                      let pad_cfg = [| (0, 0); (0, 0); (pad_left, 0) |] in
+                      Rune.pad pad_cfg 0.0 x
+                in
+                let padding_mode =
+                  match padding with
+                  | `Same -> `Same
+                  | `Valid -> `Valid
+                  | `Causal -> `Valid
+                in
+                let conv =
+                  Rune.convolve1d x w ~stride ~dilation ~padding_mode
+                in
+                let b_reshaped = Rune.reshape [| 1; out_channels; 1 |] b in
+                Rune.add conv b_reshaped)
+        | _ -> failwith "conv1d: invalid params structure");
+  }
+
 let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
   let kh, kw = kernel_size in
   {
@@ -641,5 +712,504 @@ let transformer_encoder ~num_layers ~hidden_size ~num_attention_heads
         transformer_encoder_layer ~hidden_size ~num_attention_heads
           ~intermediate_size ~hidden_dropout_prob ~attention_probs_dropout_prob
           ~layer_norm_eps ~hidden_act ~use_bias ())
+  in
+  sequential layers
+
+(* Recurrent layers *)
+
+let rnn ~input_size ~hidden_size ?(return_sequences = false)
+    ?(learned_init = false) () =
+  {
+    init =
+      (fun ~rngs ~device ~dtype ->
+        let glorot = (Initializers.glorot_uniform ()).f in
+        let keys = Rune.Rng.split ~n:2 rngs in
+        let w_xh =
+          glorot
+            (Rune.Rng.to_int keys.(0))
+            [| input_size; hidden_size |]
+            device dtype
+        in
+        let w_hh =
+          glorot
+            (Rune.Rng.to_int keys.(1))
+            [| hidden_size; hidden_size |]
+            device dtype
+        in
+        let b = Rune.zeros device dtype [| hidden_size |] in
+        let base =
+          [
+            ("w_xh", Ptree.Tensor w_xh);
+            ("w_hh", Ptree.Tensor w_hh);
+            ("b", Ptree.Tensor b);
+          ]
+        in
+        let base =
+          if learned_init then
+            let h0 = Rune.zeros device dtype [| hidden_size |] in
+            base @ [ ("h0", Ptree.Tensor h0) ]
+          else base
+        in
+        Ptree.record_of base);
+    apply =
+      (fun params ~training:_ ?rngs:_ x ->
+        match params with
+        | Record fields ->
+            let get name =
+              match Ptree.Record.find_opt name fields with
+              | Some (Tensor t) -> t
+              | _ -> failwith ("rnn: missing " ^ name)
+            in
+            let w_xh = get "w_xh" and w_hh = get "w_hh" and b = get "b" in
+            let dev = Rune.device x and dt = Rune.dtype x in
+            let batch, seq_len, _ =
+              match Rune.shape x with
+              | [| b; s; i |] -> (b, s, i)
+              | _ -> failwith "rnn: expected [b; s; i]"
+            in
+            let h_init =
+              match Ptree.Record.find_opt "h0" fields with
+              | Some (Tensor h0) ->
+                  Rune.reshape [| 1; hidden_size |] h0
+                  |> Rune.expand [| batch; hidden_size |]
+              | _ -> Rune.zeros dev dt [| batch; hidden_size |]
+            in
+            let h = ref h_init in
+            let outputs =
+              Array.make seq_len (Rune.zeros dev dt [| batch; hidden_size |])
+            in
+            for t = 0 to seq_len - 1 do
+              let xt = Rune.slice [ Rune.A; Rune.I t; Rune.A ] x in
+              let pre =
+                Rune.add (Rune.matmul xt w_xh)
+                  (Rune.add (Rune.matmul !h w_hh)
+                     (Rune.reshape [| 1; hidden_size |] b))
+              in
+              h := Rune.tanh pre
+            done;
+            if return_sequences then (
+              (* Fill outputs in second loop to keep simple shape reuse *)
+              let h2 = ref h_init in
+              for t = 0 to seq_len - 1 do
+                let xt = Rune.slice [ Rune.A; Rune.I t; Rune.A ] x in
+                let pre =
+                  Rune.add (Rune.matmul xt w_xh)
+                    (Rune.add (Rune.matmul !h2 w_hh)
+                       (Rune.reshape [| 1; hidden_size |] b))
+                in
+                h2 := Rune.tanh pre;
+                outputs.(t) <- !h2
+              done;
+              Rune.stack ~axis:1 (Array.to_list outputs))
+            else !h
+        | _ -> failwith "rnn: invalid params");
+  }
+
+let gru ~input_size ~hidden_size ?(return_sequences = false)
+    ?(learned_init = false) () =
+  {
+    init =
+      (fun ~rngs ~device ~dtype ->
+        let glorot = (Initializers.glorot_uniform ()).f in
+        let keys = Rune.Rng.split ~n:2 rngs in
+        let w_ih =
+          glorot
+            (Rune.Rng.to_int keys.(0))
+            [| input_size; hidden_size * 3 |]
+            device dtype
+        in
+        let w_hh =
+          glorot
+            (Rune.Rng.to_int keys.(1))
+            [| hidden_size; hidden_size * 3 |]
+            device dtype
+        in
+        let b = Rune.zeros device dtype [| hidden_size * 3 |] in
+        let base =
+          [
+            ("w_ih", Ptree.Tensor w_ih);
+            ("w_hh", Ptree.Tensor w_hh);
+            ("b", Ptree.Tensor b);
+          ]
+        in
+        let base =
+          if learned_init then
+            let h0 = Rune.zeros device dtype [| hidden_size |] in
+            base @ [ ("h0", Ptree.Tensor h0) ]
+          else base
+        in
+        Ptree.record_of base);
+    apply =
+      (fun params ~training:_ ?rngs:_ x ->
+        match params with
+        | Record fields ->
+            let get name =
+              match Ptree.Record.find_opt name fields with
+              | Some (Tensor t) -> t
+              | _ -> failwith ("gru: missing " ^ name)
+            in
+            let w_ih = get "w_ih" and w_hh = get "w_hh" and b = get "b" in
+            let dev = Rune.device x and dt = Rune.dtype x in
+            let batch, seq_len, _ =
+              match Rune.shape x with
+              | [| b; s; i |] -> (b, s, i)
+              | _ -> failwith "gru: expected [b; s; i]"
+            in
+            let h_init =
+              match Ptree.Record.find_opt "h0" fields with
+              | Some (Tensor h0) ->
+                  Rune.reshape [| 1; hidden_size |] h0
+                  |> Rune.expand [| batch; hidden_size |]
+              | _ -> Rune.zeros dev dt [| batch; hidden_size |]
+            in
+            let h = ref h_init in
+            let outputs =
+              Array.make seq_len (Rune.zeros dev dt [| batch; hidden_size |])
+            in
+            for t = 0 to seq_len - 1 do
+              let xt = Rune.slice [ Rune.A; Rune.I t; Rune.A ] x in
+              let gates =
+                Rune.add (Rune.matmul xt w_ih)
+                  (Rune.add (Rune.matmul !h w_hh)
+                     (Rune.reshape [| 1; hidden_size * 3 |] b))
+              in
+              let z =
+                Rune.sigmoid
+                  (Rune.slice [ Rune.A; Rune.R (0, hidden_size) ] gates)
+              in
+              let r =
+                Rune.sigmoid
+                  (Rune.slice
+                     [ Rune.A; Rune.R (hidden_size, hidden_size * 2) ]
+                     gates)
+              in
+              let n =
+                Rune.tanh
+                  (Rune.add
+                     (Rune.slice
+                        [ Rune.A; Rune.R (hidden_size * 2, hidden_size * 3) ]
+                        gates)
+                     (Rune.matmul (Rune.mul r !h)
+                        (Rune.slice [ Rune.A; Rune.R (0, hidden_size) ] w_hh)))
+              in
+              h :=
+                Rune.add
+                  (Rune.mul (Rune.sub (Rune.scalar dev dt 1.0) z) n)
+                  (Rune.mul z !h)
+            done;
+            if return_sequences then (
+              let h2 = ref h_init in
+              for t = 0 to seq_len - 1 do
+                let xt = Rune.slice [ Rune.A; Rune.I t; Rune.A ] x in
+                let gates =
+                  Rune.add (Rune.matmul xt w_ih)
+                    (Rune.add (Rune.matmul !h2 w_hh)
+                       (Rune.reshape [| 1; hidden_size * 3 |] b))
+                in
+                let z =
+                  Rune.sigmoid
+                    (Rune.slice [ Rune.A; Rune.R (0, hidden_size) ] gates)
+                in
+                let r =
+                  Rune.sigmoid
+                    (Rune.slice
+                       [ Rune.A; Rune.R (hidden_size, hidden_size * 2) ]
+                       gates)
+                in
+                let n =
+                  Rune.tanh
+                    (Rune.add
+                       (Rune.slice
+                          [ Rune.A; Rune.R (hidden_size * 2, hidden_size * 3) ]
+                          gates)
+                       (Rune.matmul (Rune.mul r !h2)
+                          (Rune.slice [ Rune.A; Rune.R (0, hidden_size) ] w_hh)))
+                in
+                h2 :=
+                  Rune.add
+                    (Rune.mul (Rune.sub (Rune.scalar dev dt 1.0) z) n)
+                    (Rune.mul z !h2);
+                outputs.(t) <- !h2
+              done;
+              Rune.stack ~axis:1 (Array.to_list outputs))
+            else !h
+        | _ -> failwith "gru: invalid params");
+  }
+
+let lstm ~input_size ~hidden_size ?(return_sequences = false)
+    ?(learned_init = false) () =
+  {
+    init =
+      (fun ~rngs ~device ~dtype ->
+        let glorot = (Initializers.glorot_uniform ()).f in
+        let keys = Rune.Rng.split ~n:2 rngs in
+        let w_ih =
+          glorot
+            (Rune.Rng.to_int keys.(0))
+            [| input_size; hidden_size * 4 |]
+            device dtype
+        in
+        let w_hh =
+          glorot
+            (Rune.Rng.to_int keys.(1))
+            [| hidden_size; hidden_size * 4 |]
+            device dtype
+        in
+        let b = Rune.zeros device dtype [| hidden_size * 4 |] in
+        let base =
+          [
+            ("w_ih", Ptree.Tensor w_ih);
+            ("w_hh", Ptree.Tensor w_hh);
+            ("b", Ptree.Tensor b);
+          ]
+        in
+        let base =
+          if learned_init then
+            let h0 = Rune.zeros device dtype [| hidden_size |] in
+            let c0 = Rune.zeros device dtype [| hidden_size |] in
+            base @ [ ("h0", Ptree.Tensor h0); ("c0", Ptree.Tensor c0) ]
+          else base
+        in
+        Ptree.record_of base);
+    apply =
+      (fun params ~training:_ ?rngs:_ x ->
+        match params with
+        | Record fields ->
+            let get name =
+              match Ptree.Record.find_opt name fields with
+              | Some (Tensor t) -> t
+              | _ -> failwith ("lstm: missing " ^ name)
+            in
+            let w_ih = get "w_ih" and w_hh = get "w_hh" and b = get "b" in
+            let dev = Rune.device x and dt = Rune.dtype x in
+            let batch, seq_len, _ =
+              match Rune.shape x with
+              | [| b; s; i |] -> (b, s, i)
+              | _ -> failwith "lstm: expected [b; s; i]"
+            in
+            let h_init =
+              match Ptree.Record.find_opt "h0" fields with
+              | Some (Tensor h0) ->
+                  Rune.reshape [| 1; hidden_size |] h0
+                  |> Rune.expand [| batch; hidden_size |]
+              | _ -> Rune.zeros dev dt [| batch; hidden_size |]
+            in
+            let c_init =
+              match Ptree.Record.find_opt "c0" fields with
+              | Some (Tensor c0) ->
+                  Rune.reshape [| 1; hidden_size |] c0
+                  |> Rune.expand [| batch; hidden_size |]
+              | _ -> Rune.zeros dev dt [| batch; hidden_size |]
+            in
+            let h = ref h_init in
+            let c = ref c_init in
+            let outputs =
+              Array.make seq_len (Rune.zeros dev dt [| batch; hidden_size |])
+            in
+            for t = 0 to seq_len - 1 do
+              let xt = Rune.slice [ Rune.A; Rune.I t; Rune.A ] x in
+              let gates =
+                Rune.add (Rune.matmul xt w_ih)
+                  (Rune.add (Rune.matmul !h w_hh)
+                     (Rune.reshape [| 1; hidden_size * 4 |] b))
+              in
+              let i =
+                Rune.sigmoid
+                  (Rune.slice [ Rune.A; Rune.R (0, hidden_size) ] gates)
+              in
+              let f =
+                Rune.sigmoid
+                  (Rune.slice
+                     [ Rune.A; Rune.R (hidden_size, hidden_size * 2) ]
+                     gates)
+              in
+              let g =
+                Rune.tanh
+                  (Rune.slice
+                     [ Rune.A; Rune.R (hidden_size * 2, hidden_size * 3) ]
+                     gates)
+              in
+              let o =
+                Rune.sigmoid
+                  (Rune.slice
+                     [ Rune.A; Rune.R (hidden_size * 3, hidden_size * 4) ]
+                     gates)
+              in
+              c := Rune.add (Rune.mul f !c) (Rune.mul i g);
+              h := Rune.mul o (Rune.tanh !c)
+            done;
+            if return_sequences then (
+              let h2 = ref h_init in
+              let c2 = ref c_init in
+              for t = 0 to seq_len - 1 do
+                let xt = Rune.slice [ Rune.A; Rune.I t; Rune.A ] x in
+                let gates =
+                  Rune.add (Rune.matmul xt w_ih)
+                    (Rune.add (Rune.matmul !h2 w_hh)
+                       (Rune.reshape [| 1; hidden_size * 4 |] b))
+                in
+                let i =
+                  Rune.sigmoid
+                    (Rune.slice [ Rune.A; Rune.R (0, hidden_size) ] gates)
+                in
+                let f =
+                  Rune.sigmoid
+                    (Rune.slice
+                       [ Rune.A; Rune.R (hidden_size, hidden_size * 2) ]
+                       gates)
+                in
+                let g =
+                  Rune.tanh
+                    (Rune.slice
+                       [ Rune.A; Rune.R (hidden_size * 2, hidden_size * 3) ]
+                       gates)
+                in
+                let o =
+                  Rune.sigmoid
+                    (Rune.slice
+                       [ Rune.A; Rune.R (hidden_size * 3, hidden_size * 4) ]
+                       gates)
+                in
+                c2 := Rune.add (Rune.mul f !c2) (Rune.mul i g);
+                h2 := Rune.mul o (Rune.tanh !c2);
+                outputs.(t) <- !h2
+              done;
+              Rune.stack ~axis:1 (Array.to_list outputs))
+            else !h
+        | _ -> failwith "lstm: invalid params");
+  }
+
+let positional_embedding_learned ~max_len ~embed_dim () =
+  {
+    init =
+      (fun ~rngs ~device ~dtype ->
+        let initf = (Initializers.normal_range ~mean:0.0 ~stddev:0.02 ()).f in
+        let key = (Rune.Rng.split rngs).(0) in
+        let table =
+          initf (Rune.Rng.to_int key) [| max_len; embed_dim |] device dtype
+        in
+        Ptree.Tensor table);
+    apply =
+      (fun params ~training:_ ?rngs:_ x ->
+        match params with
+        | Tensor table ->
+            let b, s, _ =
+              match Rune.shape x with
+              | [| b; s; e |] -> (b, s, e)
+              | _ -> failwith "positional_embedding: expected [b; s; e]"
+            in
+            let dev = Rune.device x in
+            let pos = Rune.arange dev Rune.int32 0 s 1 in
+            let pos = Rune.reshape [| 1; s |] pos |> Rune.expand [| b; s |] in
+            let pos_e =
+              Ops.embedding ~embedding:table ~embed_dim ~scale:false pos
+            in
+            Rune.add x pos_e
+        | _ -> failwith "positional_embedding: invalid params");
+  }
+
+let positional_encoding_sinusoidal_table ~max_len ~embed_dim ~device ~dtype =
+  let dt = dtype in
+  let d2 = embed_dim / 2 in
+  let position =
+    Rune.arange device Rune.int32 0 max_len 1
+    |> Rune.cast dt
+    |> Rune.reshape [| max_len; 1 |]
+  in
+  let j =
+    Rune.arange device Rune.int32 0 d2 1
+    |> Rune.cast dt
+    |> Rune.reshape [| 1; d2 |]
+  in
+  let exponent =
+    Rune.div
+      (Rune.mul (Rune.scalar device dt 2.0) j)
+      (Rune.scalar device dt (float_of_int embed_dim))
+  in
+  let angle_rate = Rune.pow (Rune.scalar device dt 10000.0) exponent in
+  let angle = Rune.div position angle_rate in
+  let sin_term = Rune.sin angle in
+  let cos_term = Rune.cos angle in
+  let sin_e = Rune.expand_dims [| 2 |] sin_term in
+  let cos_e = Rune.expand_dims [| 2 |] cos_term in
+  let stacked = Rune.stack ~axis:2 [ sin_e; cos_e ] in
+  (* [L; d2; 2] *)
+  Rune.reshape [| max_len; d2 * 2 |] stacked
+
+let transformer_decoder_block ~embed_dim ~num_heads ~mlp_hidden ?(dropout = 0.0)
+    () =
+  let attn = multi_head_attention ~embed_dim ~num_heads () in
+  let ln1 = layer_norm ~dim:embed_dim () in
+  let ln2 = layer_norm ~dim:embed_dim () in
+  let ff =
+    sequential
+      [
+        linear ~in_features:embed_dim ~out_features:mlp_hidden ();
+        gelu ();
+        linear ~in_features:mlp_hidden ~out_features:embed_dim ();
+      ]
+  in
+  {
+    init =
+      (fun ~rngs ~device ~dtype ->
+        let ks = Rune.Rng.split ~n:4 rngs in
+        Ptree.record_of
+          [
+            ("attn", attn.init ~rngs:ks.(0) ~device ~dtype);
+            ("ln1", ln1.init ~rngs:ks.(1) ~device ~dtype);
+            ("ln2", ln2.init ~rngs:ks.(2) ~device ~dtype);
+            ("ff", ff.init ~rngs:ks.(3) ~device ~dtype);
+          ]);
+    apply =
+      (fun params ~training ?rngs x ->
+        match params with
+        | Record fields ->
+            let get name =
+              match Ptree.Record.find_opt name fields with
+              | Some p -> p
+              | None -> failwith ("decoder_block: missing " ^ name)
+            in
+            let p_attn = get "attn"
+            and p_ln1 = get "ln1"
+            and p_ln2 = get "ln2"
+            and p_ff = get "ff" in
+            let x_norm = ln1.apply p_ln1 ~training ?rngs x in
+            (* Extract weights from attn params to call Ops with is_causal *)
+            let attn_out =
+              match p_attn with
+              | Record f ->
+                  let getw n =
+                    match Ptree.Record.find_opt n f with
+                    | Some (Tensor t) -> t
+                    | _ -> failwith ("attn param " ^ n)
+                  in
+                  let q = getw "q_proj"
+                  and k = getw "k_proj"
+                  and v = getw "v_proj"
+                  and o = getw "out_proj" in
+                  let head_dim = embed_dim / num_heads in
+                  let effective_dropout = if training then dropout else 0.0 in
+                  let out, _ =
+                    Ops.multi_head_attention ~q_proj_w:q ~k_proj_w:k ~v_proj_w:v
+                      ~out_proj_w:o ~query:x_norm ~is_causal:true ~embed_dim
+                      ~num_heads ~num_kv_heads:num_heads ~head_dim
+                      ~dropout:effective_dropout ?rngs ~bias:false
+                      ~add_bias_kv:false ~scale:1.0 ()
+                  in
+                  out
+              | _ -> failwith "attn params"
+            in
+            let x = Rune.add x attn_out in
+            let x2 = ln2.apply p_ln2 ~training ?rngs x in
+            let ff_out = ff.apply p_ff ~training ?rngs x2 in
+            Rune.add x ff_out
+        | _ -> failwith "decoder_block: invalid params");
+  }
+
+let transformer_decoder ~num_layers ~embed_dim ~num_heads ~mlp_hidden
+    ?(dropout = 0.0) () =
+  let layers =
+    List.init num_layers (fun _ ->
+        transformer_decoder_block ~embed_dim ~num_heads ~mlp_hidden ~dropout ())
   in
   sequential layers

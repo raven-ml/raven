@@ -363,6 +363,109 @@ let from_text ~tokenizer path =
   (* Create a single-element dataset containing all tokens *)
   from_array [| tokens |]
 
+let sliding_window ~block_size ~tokenize ~device texts =
+  (* First, tokenize all texts and create sliding windows *)
+  let pad_token = 0 in
+  (* Use 0 as padding token *)
+
+  (* Tokenize each text and collect all tokens *)
+  let all_tokens =
+    List.concat_map
+      (fun text ->
+        let tokens = tokenize text in
+        tokens)
+      texts
+  in
+
+  (* Create sliding windows from the tokens *)
+  let windows = ref [] in
+
+  (* For each starting position, create a window *)
+  let rec create_windows tokens =
+    match tokens with
+    | [] -> ()
+    | _ :: rest ->
+        (* Create context of block_size *)
+
+        (* Take block_size tokens for context *)
+        let rec take n lst acc =
+          match (n, lst) with
+          | 0, _ | _, [] -> (List.rev acc, lst)
+          | n, h :: t -> take (n - 1) t (h :: acc)
+        in
+
+        let ctx_tokens, remaining = take block_size tokens [] in
+
+        (* Pad context if needed *)
+        let padded_ctx =
+          if List.length ctx_tokens < block_size then
+            let padding =
+              List.init
+                (block_size - List.length ctx_tokens)
+                (fun _ -> pad_token)
+            in
+            padding @ ctx_tokens
+          else ctx_tokens
+        in
+
+        (* Target is the next token after context (or pad if none) *)
+        let target_token =
+          match remaining with h :: _ -> h | [] -> pad_token
+        in
+
+        (* Add window to list *)
+        windows := (padded_ctx, target_token) :: !windows;
+
+        (* Continue with rest *)
+        create_windows rest
+  in
+
+  (* Create windows for all possible positions *)
+  for i = 0 to List.length all_tokens - 1 do
+    let tokens_from_i =
+      let rec drop n lst =
+        match (n, lst) with
+        | 0, l -> l
+        | _, [] -> []
+        | n, _ :: t -> drop (n - 1) t
+      in
+      drop i all_tokens
+    in
+
+    if tokens_from_i <> [] then create_windows tokens_from_i
+  done;
+
+  let windows_array = Array.of_list (List.rev !windows) in
+
+  (* Create dataset from windows *)
+  let idx = ref 0 in
+  {
+    next =
+      (fun () ->
+        if !idx >= Array.length windows_array then None
+        else
+          let context, target = windows_array.(!idx) in
+          incr idx;
+
+          (* Convert to tensors - need device parameter from somewhere *)
+          (* For now, use CPU device as default *)
+          let ctx_array = Array.of_list (List.map float_of_int context) in
+          let tgt_array = [| float_of_int target |] in
+
+          let ctx_tensor =
+            Rune.create device Rune.float32 [| List.length context |] ctx_array
+          in
+          let tgt_tensor = Rune.create device Rune.float32 [| 1 |] tgt_array in
+
+          Some (ctx_tensor, tgt_tensor));
+    cardinality = (fun () -> Finite (Array.length windows_array));
+    reset = Some (fun () -> idx := 0);
+    spec =
+      (fun () ->
+        Tuple
+          [ Tensor ([| block_size |], "float32"); Tensor ([| 1 |], "float32") ]);
+  }
+
 (** {1 Transformations} *)
 
 let map f dataset =
@@ -584,7 +687,12 @@ let batch_generic ?(drop_remainder = false) size dataset =
   {
     next;
     cardinality = (fun () -> Unknown);
-    reset = None;
+    reset =
+      Some
+        (fun () ->
+          (* Clear local buffer and reset underlying dataset if possible *)
+          buffer := [];
+          match dataset.reset with Some f -> f () | None -> ());
     spec = (fun () -> Array (dataset.spec ()));
   }
 
@@ -883,7 +991,22 @@ let shuffle ?rng ?(buffer_size = 10000) dataset =
       result
   in
 
-  { next; cardinality = dataset.cardinality; reset = None; spec = dataset.spec }
+  {
+    next;
+    cardinality = dataset.cardinality;
+    reset =
+      Some
+        (fun () ->
+          (* Reset underlying dataset, clear buffer, and refill *)
+          (match dataset.reset with Some f -> f () | None -> ());
+          for i = 0 to buffer_size - 1 do
+            buffer.(i) <- None
+          done;
+          buffer_count := 0;
+          exhausted := false;
+          fill_buffer ());
+    spec = dataset.spec;
+  }
 
 let sample ?rng ?(replacement = false) n dataset =
   if replacement then
@@ -1398,6 +1521,10 @@ let to_array dataset = Array.of_list (to_list dataset)
 
 let cardinality dataset = dataset.cardinality ()
 let element_spec dataset = dataset.spec ()
+
+(** {1 Dataset Control} *)
+
+let reset dataset = match dataset.reset with Some f -> f () | None -> ()
 
 (** {1 Common Pipelines} *)
 

@@ -268,6 +268,40 @@ static double get_elem_byte_size(int kind) {
   }
 }
 
+// Integer element size in bytes for common kinds. Returns 0 if unsupported
+static inline size_t elem_size_from_kind(int kind) {
+  switch (kind) {
+    case CAML_BA_SINT8:
+    case CAML_BA_UINT8:
+    case NX_BA_BOOL:
+    case NX_BA_FP8_E4M3:
+    case NX_BA_FP8_E5M2:
+    case NX_BA_QINT8:
+    case NX_BA_QUINT8:
+      return 1;
+    case CAML_BA_SINT16:
+    case CAML_BA_UINT16:
+    case CAML_BA_FLOAT16:
+    case NX_BA_BFLOAT16:
+    case NX_BA_COMPLEX16:
+      return 2;
+    case CAML_BA_INT32:
+    case CAML_BA_FLOAT32:
+      return 4;
+    case CAML_BA_INT64:
+    case CAML_BA_FLOAT64:
+    case CAML_BA_NATIVE_INT:
+    case CAML_BA_CAML_INT:
+      return 8;
+    case CAML_BA_COMPLEX32:
+      return 8;  // 2 * float32
+    case CAML_BA_COMPLEX64:
+      return 16; // 2 * float64
+    default:
+      return 0;
+  }
+}
+
 // Zero the output array - requires passing the value to access bigarray
 static void zero_ndarray(ndarray_t *nd, value v_tensor, int kind) {
   value v_data = Field(v_tensor, FFI_TENSOR_DATA);
@@ -576,8 +610,53 @@ static void dispatch_gather(value v_data, value v_indices, value v_out,
 
   if (!op) caml_failwith("gather not supported for dtype");
 
+  // Fast path: 2D gather along axis 0 with broadcasted indices on dim 1,
+  // contiguous data/out -> memcpy whole rows
+  const char *error = NULL;
+  size_t elem_size = elem_size_from_kind(kind);
+  if (axis == 0 && data.ndim == 2 && indices.ndim == 2 && out.ndim == 2 &&
+      elem_size > 0 && is_contiguous(&data) && is_contiguous(&out)) {
+    // Broadcasting along dim 1 is represented by stride==0 on indices dim 1
+    if (indices.strides[1] == 0 &&
+        data.shape[1] == out.shape[1] && indices.shape[0] == out.shape[0]) {
+      long n = out.shape[0];
+      long d = out.shape[1];
+      long data_row_stride = data.strides[0]; // in elements
+      long out_row_stride = out.strides[0];   // in elements
+      char *restrict data_ptr = (char *)data.data;
+      char *restrict out_ptr = (char *)out.data;
+      int32_t *restrict idx_ptr = (int32_t *)indices.data;
+      long idx_off0 = indices.offset; // element offset
+      long idx_row_stride = indices.strides[0]; // in elements
+      long data_base = data.offset; // element offset
+      long out_base = out.offset;   // element offset
+      size_t row_bytes = (size_t)d * elem_size;
+
+      caml_enter_blocking_section();
+      for (long i = 0; i < n; i++) {
+        long idx_eoff = idx_off0 + i * idx_row_stride; // indices strides[1]==0
+        int32_t index = idx_ptr[idx_eoff];
+        if (index < 0) index += data.shape[0];
+        if (index < 0 || index >= data.shape[0]) {
+          error = "index out of bounds";
+          break;
+        }
+        long src_eoff = data_base + index * data_row_stride;
+        long dst_eoff = out_base + i * out_row_stride;
+        memcpy(out_ptr + (size_t)dst_eoff * elem_size,
+               data_ptr + (size_t)src_eoff * elem_size, row_bytes);
+      }
+      caml_leave_blocking_section();
+      cleanup_ndarray(&data);
+      cleanup_ndarray(&indices);
+      cleanup_ndarray(&out);
+      if (error) caml_failwith(error);
+      return;
+    }
+  }
+
   caml_enter_blocking_section();
-  const char *error = generic_gather(&data, &indices, &out, axis, op);
+  error = generic_gather(&data, &indices, &out, axis, op);
   caml_leave_blocking_section();
 
   cleanup_ndarray(&data);

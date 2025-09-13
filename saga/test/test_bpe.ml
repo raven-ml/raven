@@ -121,9 +121,21 @@ let test_tokenizer_integration () =
   output_string oc "#version: 0.2\nh e\nhe llo\n";
   close_out oc;
 
-  (* Test the Tokenizer.bpe function *)
-  let tokenizer = Tokenizer.bpe ~vocab:vocab_file ~merges:merges_file in
-  let tokens = Tokenizer.run tokenizer "hello" in
+  (* Create a BPE tokenizer using the model *)
+  let vocab =
+    [
+      ("h", 0); ("e", 1); ("l", 2); ("o", 3); ("he", 4); ("llo", 5); ("hello", 6);
+    ]
+  in
+  let merges = [ ("h", "e"); ("he", "llo") ] in
+  let model = Models.bpe ~vocab ~merges () in
+  let tokenizer = Tokenizer.create ~model in
+
+  (* For now, just test encoding *)
+  let encoding =
+    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello") ()
+  in
+  let tokens = Array.to_list (Encoding.get_tokens encoding) in
 
   Printf.printf "Tokenizer.bpe result: ";
   List.iter (Printf.printf "%s ") tokens;

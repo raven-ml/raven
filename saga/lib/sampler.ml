@@ -218,16 +218,17 @@ let top_p_warper ~p =
           (* Find cutoff *)
           let cumsum = ref 0.0 in
           let cutoff_idx = ref (Array.length sorted) in
-          for i = 0 to Array.length sorted - 1 do
-            cumsum := !cumsum +. snd sorted.(i);
-            if !cumsum > p && i > 0 then (
-              cutoff_idx := i;
-              raise Exit)
-          done;
+          (try
+             for i = 0 to Array.length sorted - 1 do
+               cumsum := !cumsum +. snd sorted.(i);
+               if !cumsum > p && i > 0 then (
+                 cutoff_idx := i;
+                 raise Exit)
+             done
+           with Exit -> ());
 
           (* Apply cutoff *)
           let result = Array.make (Array.length logits) neg_infinity in
-          (try () with Exit -> ());
           for i = 0 to !cutoff_idx - 1 do
             let idx, _ = sorted.(i) in
             result.(idx) <- logits.(idx)
@@ -457,13 +458,14 @@ let sample_from_logits logits =
   let r = Random.float 1.0 in
   let cumsum = ref 0.0 in
   let result = ref 0 in
-  for i = 0 to Array.length probs - 1 do
-    cumsum := !cumsum +. probs.(i);
-    if !cumsum > r then (
-      result := i;
-      raise Exit)
-  done;
-  (try () with Exit -> ());
+  (try
+     for i = 0 to Array.length probs - 1 do
+       cumsum := !cumsum +. probs.(i);
+       if !cumsum > r then (
+         result := i;
+         raise Exit)
+     done
+   with Exit -> ());
   !result
 
 (** Helper: greedy selection *)

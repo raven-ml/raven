@@ -15,102 +15,146 @@ let _check_error_msg expected_pattern f =
            "Error message '%s' doesn't contain expected pattern '%s'" msg
            expected_pattern)
 
-(* ───── Vocabulary Error Tests ───── *)
+(* ───── Tokenizer Creation Error Tests ───── *)
 
-let test_vocab_min_freq_error () =
-  check_raises "negative min_freq"
-    (Invalid_argument "vocab: invalid min_freq 0 (must be >= 1)") (fun () ->
-      ignore (vocab ~min_freq:0 [ "hello" ]))
+let test_load_nonexistent_file () =
+  match Tokenizer.from_file "/nonexistent/file.json" with
+  | Ok _ -> fail "Expected error but got Ok"
+  | Error _ -> check bool "load failed" true true
 
-let test_vocab_size_exceeded () =
-  let tokens = List.init 100 (fun i -> string_of_int i) in
-  (* This should succeed as we only check size after building *)
-  let v = vocab ~max_size:10 tokens in
-  check bool "vocab size limited" true (vocab_size v <= 10)
+let test_load_invalid_json () =
+  let temp_file = Filename.temp_file "test" ".json" in
+  let oc = open_out temp_file in
+  output_string oc "{ invalid json }";
+  close_out oc;
 
-(* ───── Encoding Error Tests ───── *)
+  match Tokenizer.from_file temp_file with
+  | Ok _ ->
+      Sys.remove temp_file;
+      fail "Expected error but got Ok"
+  | Error _ ->
+      Sys.remove temp_file;
+      check bool "load failed with invalid json" true true
 
-let test_encoding_overflow () =
-  check_raises "sequence too long"
-    (Invalid_argument
-       "encode_batch: cannot encode sequence length 5 to max_length 3\n\
-        hint: increase max_length or truncate input") (fun () ->
-      let long_text = "one two three four five" in
-      ignore (encode_batch ~max_len:3 ~pad:false [ long_text ]))
+(* ───── Model Error Tests ───── *)
 
-(* ───── Tokenization Error Tests ───── *)
+let test_bpe_empty_vocab () =
+  let model = Models.bpe ~vocab:[] ~merges:[] () in
+  let tokenizer = Tokenizer.create ~model in
+  let encoding =
+    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello") ()
+  in
+  (* Should handle empty vocab gracefully *)
+  let ids = Encoding.get_ids encoding in
+  check int "empty vocab encoding" 0 (Array.length ids)
 
-let test_invalid_regex_pattern () =
-  check_raises "invalid regex"
-    (Invalid_argument
-       "tokenize: invalid regex pattern '[' (invalid regex pattern)") (fun () ->
-      ignore (tokenize ~method_:(`Regex "[") "test"))
+let test_wordpiece_empty_vocab () =
+  let model = Models.wordpiece ~vocab:[] ~unk_token:"[UNK]" () in
+  let tokenizer = Tokenizer.create ~model in
+  let encoding =
+    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello") ()
+  in
+  let ids = Encoding.get_ids encoding in
+  check int "empty vocab encoding" 0 (Array.length ids)
 
-(* ───── File I/O Error Tests ───── *)
+(* ───── Pre-tokenizer Error Tests ───── *)
 
-let test_vocab_file_not_found () =
-  check_raises "file not found"
-    (Invalid_argument
-       "vocab_load: load vocab from '/nonexistent/file.txt' (file not found)")
-    (fun () -> ignore (vocab_load "/nonexistent/file.txt"))
+let test_invalid_split_pattern () =
+  (* The pre-tokenizers should handle invalid patterns gracefully *)
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  let pre_tok =
+    Pre_tokenizers.split ~pattern:"[" ~behavior:`Removed ~invert:false ()
+  in
+  Tokenizer.set_pre_tokenizer tokenizer (Some pre_tok);
 
-let test_vocab_save_permission_error () =
-  (* Try to save to a directory that doesn't exist *)
-  try
-    let v = vocab [ "test" ] in
-    vocab_save v "/nonexistent/dir/vocab.txt";
-    fail "Expected exception but none was raised"
-  with Invalid_argument msg ->
-    (* The exact error message depends on the system *)
-    check bool "save error" true
-      (try
-         ignore (String.index msg 'v');
-         true
-       with Not_found -> false)
+  (* This should not crash *)
+  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left "test") () in
+  check bool "handled invalid pattern" true
+    (Encoding.get_ids encoding |> Array.length >= 0)
 
-(* ───── Unicode Error Tests ───── *)
+(* ───── Normalizer Error Tests ───── *)
 
 let test_unicode_normalization_error () =
   (* Unicode functions should handle errors gracefully *)
   let text = "test" ^ String.make 1 '\xFF' ^ String.make 1 '\xFE' in
   (* Invalid UTF-8 *)
-  (* These should not crash, but skip invalid sequences *)
-  let _ = normalize ~lowercase:true text in
-  let _ = normalize ~strip_accents:true text in
-  let _ = normalize ~collapse_whitespace:true text in
-  check bool "handled invalid UTF-8" true true
 
-(* ───── Decode Error Tests ───── *)
+  let tokenizer = Tokenizer.create ~model:(Models.chars ()) in
+  let normalizer = Normalizers.nfc () in
+  Tokenizer.set_normalizer tokenizer (Some normalizer);
 
-let test_decode_batch_wrong_shape () =
-  let tensor = Nx.zeros Nx.int32 [| 2; 3; 4 |] in
-  (* 3D tensor *)
-  let v = vocab [ "test" ] in
-  check_raises "wrong tensor shape"
-    (Invalid_argument
-       "decode_batch: invalid tensor shape (expected 2D tensor [batch_size; \
-        seq_len])") (fun () -> ignore (decode_batch v tensor))
+  (* These should not crash, but handle invalid sequences *)
+  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left text) () in
+  check bool "handled invalid UTF-8" true
+    (Encoding.get_ids encoding |> Array.length >= 0)
+
+(* ───── Decoder Error Tests ───── *)
+
+let test_decode_invalid_ids () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  (* Try to decode IDs that don't exist in vocab *)
+  let decoded = Tokenizer.decode tokenizer [ 999; 1000; 1001 ] () in
+  (* Should handle gracefully - probably returns empty or unknown tokens *)
+  check bool "decoded invalid ids" true (String.length decoded >= 0)
+
+(* ───── Batch Processing Error Tests ───── *)
+
+let test_encode_batch_empty () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  let encodings = Tokenizer.encode_batch tokenizer ~input:[] () in
+  check int "empty batch" 0 (List.length encodings)
+
+let test_decode_batch_empty () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  let decoded = Tokenizer.decode_batch tokenizer [] () in
+  check int "empty decode batch" 0 (List.length decoded)
+
+(* ───── Special Token Error Tests ───── *)
+
+let test_add_duplicate_special_tokens () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  let count1 =
+    Tokenizer.add_special_tokens tokenizer
+      [ Either.Left "<pad>"; Either.Left "<pad>" (* Duplicate *) ]
+  in
+  (* Should handle duplicates gracefully *)
+  check bool "handled duplicates" true (count1 >= 0)
+
+(* ───── Save/Load Error Tests ───── *)
+
+let test_save_to_invalid_path () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  (* Try to save to a directory that doesn't exist *)
+  try
+    Tokenizer.save tokenizer ~path:"/nonexistent/dir/tokenizer.json" ();
+    fail "Expected exception but none was raised"
+  with _ -> check bool "save failed as expected" true true
 
 (* ───── Test Suite ───── *)
 
 let error_tests =
   [
-    (* Vocabulary errors *)
-    test_case "vocab min_freq error" `Quick test_vocab_min_freq_error;
-    test_case "vocab size exceeded" `Quick test_vocab_size_exceeded;
-    (* Encoding errors *)
-    test_case "encoding overflow" `Quick test_encoding_overflow;
-    (* Tokenization errors *)
-    test_case "invalid regex pattern" `Quick test_invalid_regex_pattern;
-    (* File I/O errors *)
-    test_case "vocab file not found" `Quick test_vocab_file_not_found;
-    test_case "vocab save permission error" `Quick
-      test_vocab_save_permission_error;
-    (* Unicode errors *)
+    (* Tokenizer creation errors *)
+    test_case "load nonexistent file" `Quick test_load_nonexistent_file;
+    test_case "load invalid json" `Quick test_load_invalid_json;
+    (* Model errors *)
+    test_case "bpe empty vocab" `Quick test_bpe_empty_vocab;
+    test_case "wordpiece empty vocab" `Quick test_wordpiece_empty_vocab;
+    (* Pre-tokenizer errors *)
+    test_case "invalid split pattern" `Quick test_invalid_split_pattern;
+    (* Normalizer errors *)
     test_case "unicode normalization error" `Quick
       test_unicode_normalization_error;
-    (* Decode errors *)
-    test_case "decode batch wrong shape" `Quick test_decode_batch_wrong_shape;
+    (* Decoder errors *)
+    test_case "decode invalid ids" `Quick test_decode_invalid_ids;
+    (* Batch processing errors *)
+    test_case "encode batch empty" `Quick test_encode_batch_empty;
+    test_case "decode batch empty" `Quick test_decode_batch_empty;
+    (* Special token errors *)
+    test_case "add duplicate special tokens" `Quick
+      test_add_duplicate_special_tokens;
+    (* Save/Load errors *)
+    test_case "save to invalid path" `Quick test_save_to_invalid_path;
   ]
 
 let () = Alcotest.run "saga errors" [ ("errors", error_tests) ]

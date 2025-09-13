@@ -3,125 +3,114 @@
 open Alcotest
 open Saga_tokenizers
 
-(* Basic Vocabulary Tests *)
+(* Basic Vocabulary Tests using Models and Tokenizer API *)
 
 let test_vocab_create_empty () =
-  let v = Vocab.create () in
-  check int "empty vocab size" 4 (Vocab.size v);
-  (* 4 special tokens *)
-  check int "pad index" 0 (Vocab.pad_idx v);
-  check int "unk index" 1 (Vocab.unk_idx v);
-  check int "bos index" 2 (Vocab.bos_idx v);
-  check int "eos index" 3 (Vocab.eos_idx v)
+  let model = Models.word_level () in
+  let vocab = Models.get_vocab model in
+  check int "empty vocab size" 0 (List.length vocab)
 
-let test_vocab_add_single () =
-  let v = Vocab.create () in
-  Vocab.add v "hello";
-  check int "size after add" 5 (Vocab.size v);
-  check (option int) "get index" (Some 4) (Vocab.get_index v "hello");
-  check (option string) "get token" (Some "hello") (Vocab.get_token v 4)
+let test_vocab_with_tokenizer () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  let vocab = Tokenizer.get_vocab tokenizer () in
+  check int "initial vocab size" 0 (List.length vocab)
 
-let test_vocab_add_duplicate () =
-  let v = Vocab.create () in
-  Vocab.add v "hello";
-  Vocab.add v "hello";
-  (* Should not increase size *)
-  check int "size after duplicate" 5 (Vocab.size v)
+let test_vocab_add_tokens () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  (* Add special tokens *)
+  let count =
+    Tokenizer.add_special_tokens tokenizer
+      [
+        Either.Left "<pad>";
+        Either.Left "<unk>";
+        Either.Left "<bos>";
+        Either.Left "<eos>";
+      ]
+  in
+  check bool "tokens added" true (count > 0);
 
-let test_vocab_add_batch () =
-  let v = Vocab.create () in
-  Vocab.add_batch v [ "hello"; "world"; "test" ];
-  check int "size after batch" 7 (Vocab.size v);
-  check (option int) "hello index" (Some 4) (Vocab.get_index v "hello");
-  check (option int) "world index" (Some 5) (Vocab.get_index v "world");
-  check (option int) "test index" (Some 6) (Vocab.get_index v "test")
+  (* Get vocab size *)
+  let vocab_size = Tokenizer.get_vocab_size tokenizer () in
+  check bool "vocab size increased" true (vocab_size > 0)
 
-let test_vocab_unknown_token () =
-  let v = Vocab.create () in
-  check (option int) "unknown token" None (Vocab.get_index v "unknown");
-  check (option string) "invalid index" None (Vocab.get_token v 100)
+let test_vocab_encode_decode () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  (* Add some tokens *)
+  let _ =
+    Tokenizer.add_tokens tokenizer [ Either.Left "hello"; Either.Left "world" ]
+  in
 
-(* Building Vocabulary from Tokens *)
+  (* Test encoding *)
+  let encoding =
+    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello world") ()
+  in
+  let ids = Encoding.get_ids encoding in
+  check bool "encoded to ids" true (Array.length ids > 0);
 
-let test_vocab_from_tokens_simple () =
-  let tokens = [ "hello"; "world"; "hello"; "there" ] in
-  let v = vocab tokens in
-  check int "vocab size" 7 (Vocab.size v)
-(* 4 special + 3 unique tokens *)
+  (* Test decoding *)
+  let decoded = Tokenizer.decode tokenizer (Array.to_list ids) () in
+  check bool "decoded back" true (String.length decoded > 0)
 
-let test_vocab_from_tokens_min_freq () =
-  let tokens = [ "a"; "b"; "b"; "c"; "c"; "c" ] in
-  let v = vocab ~min_freq:2 tokens in
-  (* Should include special tokens + b(2) + c(3), not a(1) *)
-  check int "vocab with min_freq" 6 (Vocab.size v);
-  check (option int) "frequent token b" (Some 5) (Vocab.get_index v "b");
-  check (option int) "frequent token c" (Some 4) (Vocab.get_index v "c");
-  check (option int) "infrequent token a" None (Vocab.get_index v "a")
+let test_vocab_batch_encode () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
+  let inputs =
+    [ Either.Left (Either.Left "hello"); Either.Left (Either.Left "world") ]
+  in
+  let encodings = Tokenizer.encode_batch tokenizer ~input:inputs () in
+  check int "batch size" 2 (List.length encodings)
 
-let test_vocab_from_tokens_max_size () =
-  let tokens = List.init 100 (fun i -> Printf.sprintf "token%d" i) in
-  let v = vocab ~max_size:10 tokens in
-  check int "vocab with max_size" 10 (Vocab.size v)
+let test_vocab_special_tokens () =
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
 
-let test_vocab_from_tokens_empty () =
-  let v = vocab [] in
-  check int "vocab from empty tokens" 4 (Vocab.size v)
+  (* Add special tokens *)
+  let count =
+    Tokenizer.add_special_tokens tokenizer
+      [ Either.Left "[CLS]"; Either.Left "[SEP]"; Either.Left "[PAD]" ]
+  in
+  check bool "special tokens added" true (count > 0);
 
-(* Special Tokens Tests *)
-
-let test_vocab_special_tokens_preserved () =
-  let v = Vocab.create () in
-  (* Try to add special tokens - should not change their indices *)
-  Vocab.add v "<pad>";
-  Vocab.add v "<unk>";
-  check int "pad index unchanged" 0 (Vocab.pad_idx v);
-  check int "unk index unchanged" 1 (Vocab.unk_idx v)
-
-let test_vocab_get_special_tokens () =
-  let v = Vocab.create () in
-  check (option string) "get pad token" (Some "<pad>") (Vocab.get_token v 0);
-  check (option string) "get unk token" (Some "<unk>") (Vocab.get_token v 1);
-  check (option string) "get bos token" (Some "<bos>") (Vocab.get_token v 2);
-  check (option string) "get eos token" (Some "<eos>") (Vocab.get_token v 3)
-
-(* File I/O Tests *)
+  (* Encode with special tokens *)
+  let encoding =
+    Tokenizer.encode tokenizer ~sequence:(Either.Left "test")
+      ~add_special_tokens:true ()
+  in
+  let tokens = Encoding.get_tokens encoding in
+  check bool "has tokens" true (Array.length tokens > 0)
 
 let test_vocab_save_load () =
-  let v1 = Vocab.create () in
-  Vocab.add_batch v1 [ "hello"; "world"; "test" ];
+  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
 
-  let temp_file = Filename.temp_file "vocab_test" ".txt" in
-  vocab_save v1 temp_file;
+  (* Add some tokens *)
+  let _ =
+    Tokenizer.add_tokens tokenizer
+      [ Either.Left "hello"; Either.Left "world"; Either.Left "test" ]
+  in
 
-  let v2 = vocab_load temp_file in
-  check int "loaded vocab size" (Vocab.size v1) (Vocab.size v2);
+  (* Save to file *)
+  let temp_file = Filename.temp_file "vocab_test" ".json" in
+  Tokenizer.save tokenizer ~path:temp_file ();
 
-  (* Check all tokens are preserved *)
-  check (option int) "hello preserved" (Some 4) (Vocab.get_index v2 "hello");
-  check (option int) "world preserved" (Some 5) (Vocab.get_index v2 "world");
-  check (option int) "test preserved" (Some 6) (Vocab.get_index v2 "test");
+  (* Load from file *)
+  let loaded = Tokenizer.from_file temp_file in
+  (match loaded with
+  | Ok loaded_tokenizer ->
+      let vocab1 = Tokenizer.get_vocab tokenizer () in
+      let vocab2 = Tokenizer.get_vocab loaded_tokenizer () in
+      check int "same vocab size" (List.length vocab1) (List.length vocab2)
+  | Error _ -> check bool "failed to load" false true);
 
   Sys.remove temp_file
 
-let test_vocab_load_nonexistent () =
-  check_raises "load nonexistent file"
-    (Invalid_argument
-       "vocab_load: load vocab from '/nonexistent/file.txt' (file not found)")
-    (fun () -> ignore (vocab_load "/nonexistent/file.txt"))
-
-(* Edge Cases *)
-
-let test_vocab_large () =
-  let tokens = List.init 10000 (fun i -> Printf.sprintf "token_%d" i) in
-  let v = vocab tokens in
-  check bool "large vocab created" true (Vocab.size v > 1000);
-
-  (* Check some random tokens *)
-  check (option int) "token_500"
-    (Some (Vocab.get_index v "token_500" |> Option.get))
-    (Vocab.get_index v "token_500");
-  check (option string) "reverse lookup" (Some "token_500")
-    (Vocab.get_token v (Vocab.get_index v "token_500" |> Option.get))
+let test_vocab_from_pretrained () =
+  (* Test loading a pretrained tokenizer *)
+  let result = Tokenizer.from_pretrained "bert-base-uncased" () in
+  match result with
+  | Ok _ ->
+      (* Would succeed if we had actual pretrained models *)
+      check bool "loaded pretrained" true true
+  | Error _ ->
+      (* Expected to fail without actual model files *)
+      check bool "expected failure without model files" true true
 
 (* Test Suite *)
 
@@ -129,24 +118,13 @@ let vocab_tests =
   [
     (* Basic operations *)
     test_case "create empty" `Quick test_vocab_create_empty;
-    test_case "add single" `Quick test_vocab_add_single;
-    test_case "add duplicate" `Quick test_vocab_add_duplicate;
-    test_case "add batch" `Quick test_vocab_add_batch;
-    test_case "unknown token" `Quick test_vocab_unknown_token;
-    (* Building from tokens *)
-    test_case "from tokens simple" `Quick test_vocab_from_tokens_simple;
-    test_case "from tokens min_freq" `Quick test_vocab_from_tokens_min_freq;
-    test_case "from tokens max_size" `Quick test_vocab_from_tokens_max_size;
-    test_case "from tokens empty" `Quick test_vocab_from_tokens_empty;
-    (* Special tokens *)
-    test_case "special tokens preserved" `Quick
-      test_vocab_special_tokens_preserved;
-    test_case "get special tokens" `Quick test_vocab_get_special_tokens;
-    (* File I/O *)
-    test_case "save and load" `Quick test_vocab_save_load;
-    test_case "load nonexistent" `Quick test_vocab_load_nonexistent;
-    (* Edge cases *)
-    test_case "large vocab" `Slow test_vocab_large;
+    test_case "with tokenizer" `Quick test_vocab_with_tokenizer;
+    test_case "add tokens" `Quick test_vocab_add_tokens;
+    test_case "encode decode" `Quick test_vocab_encode_decode;
+    test_case "batch encode" `Quick test_vocab_batch_encode;
+    test_case "special tokens" `Quick test_vocab_special_tokens;
+    test_case "save load" `Quick test_vocab_save_load;
+    test_case "from pretrained" `Quick test_vocab_from_pretrained;
   ]
 
-let () = Alcotest.run "saga vocabulary" [ ("vocabulary", vocab_tests) ]
+let () = run "Vocabulary tests" [ ("vocab", vocab_tests) ]

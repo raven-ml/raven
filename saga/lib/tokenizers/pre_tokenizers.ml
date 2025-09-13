@@ -253,7 +253,7 @@ let split_gpt2_pattern text =
     List.rev !tokens
 
 (** Whitespace split *)
-let whitespace_split text =
+let whitespace_split () text =
   let pieces = ref [] in
   let current = Buffer.create 16 in
   let current_start = ref 0 in
@@ -281,7 +281,7 @@ let whitespace_split text =
   List.rev !pieces
 
 (** Whitespace tokenizer with pattern \w+|[^\w\s]+ *)
-let whitespace text =
+let whitespace () text =
   let pieces = ref [] in
   let current = Buffer.create 16 in
   let current_start = ref 0 in
@@ -295,27 +295,41 @@ let whitespace text =
         :: !pieces;
       Buffer.clear current)
   in
+  let in_word = ref false in
+  let in_punct = ref false in
   while !i < len do
     let code, l = utf8_next text !i in
     if is_alphabetic code || is_numeric code || code = 95 (* _ *) then (
+      (* Word character *)
+      if !in_punct then flush_current ();
       if Buffer.length current = 0 then current_start := !i;
       Buffer.add_string current (String.sub text !i l);
+      in_word := true;
+      in_punct := false;
       i := !i + l)
     else if is_whitespace code then (
+      (* Whitespace - flush and skip *)
       flush_current ();
+      in_word := false;
+      in_punct := false;
       i := !i + l)
     else (
-      flush_current ();
-      current_start := !i;
+      (* Punctuation/other character *)
+      if !in_word then flush_current ();
+      if Buffer.length current = 0 then current_start := !i;
       Buffer.add_string current (String.sub text !i l);
-      i := !i + l;
-      flush_current ())
+      in_word := false;
+      in_punct := true;
+      i := !i + l)
   done;
   flush_current ();
   List.rev !pieces
 
 (** ByteLevel pre-tokenizer *)
-let byte_level ?(add_prefix_space = true) ?(use_regex = true) () text =
+let byte_level ?(add_prefix_space = true) ?(use_regex = true)
+    ?(trim_offsets = true) () text =
+  let _ = trim_offsets in
+  (* Not used for now *)
   (* Track original offsets *)
   let original_text = text in
   (* Add prefix space if needed *)
@@ -363,7 +377,7 @@ let byte_level ?(add_prefix_space = true) ?(use_regex = true) () text =
     pieces_with_offsets
 
 (** BERT pre-tokenizer *)
-let bert text =
+let bert () text =
   let pieces = ref [] in
   let current = Buffer.create 16 in
   let current_start = ref 0 in
@@ -456,7 +470,7 @@ let punctuation ?(behavior = `Isolated) () text =
   List.rev !pieces
 
 (** Split on pattern *)
-let split ~pattern ~behavior ?(invert = false) () text =
+let split ~pattern ?(behavior = `Removed) ?(invert = false) () text =
   let plen = String.length pattern in
   if plen = 0 then [ (text, (0, String.length text)) ]
   else
@@ -511,7 +525,8 @@ let split ~pattern ~behavior ?(invert = false) () text =
     List.rev !pieces
 
 (** Character delimiter split *)
-let char_delimiter_split delim text =
+let char_delimiter_split ~delimiter () text =
+  let delim = delimiter in
   split ~pattern:(String.make 1 delim) ~behavior:`Removed ~invert:false () text
 
 (** Digits splitter *)
@@ -555,8 +570,11 @@ let digits ?(individual_digits = false) () text =
 type prepend_scheme = [ `First | `Never | `Always ]
 (** Metaspace pre-tokenizer *)
 
-let metaspace ?(replacement = "▁") ?(prepend_scheme = `Always) ?(split = true)
-    ?(is_first = true) () text =
+let metaspace ?(replacement = '_') ?(prepend_scheme = `Always) ?(split = true)
+    () text =
+  let replacement = String.make 1 replacement in
+  let is_first = true in
+  (* Always true for this simplified implementation *)
   (* Add prefix space if needed *)
   let text =
     match prepend_scheme with
@@ -656,7 +674,7 @@ let fixed_script code : script =
     | `Hira | `Kana -> (`Hani :> script)
     | s -> (s :> script)
 
-let unicode_scripts text =
+let unicode_scripts () text =
   let pieces = ref [] in
   let current = Buffer.create 16 in
   let current_start = ref 0 in
@@ -684,3 +702,9 @@ let unicode_scripts text =
   done;
   flush_current ();
   List.rev !pieces
+
+(** Pre-tokenize a string using the given pre-tokenizer *)
+let pre_tokenize_str pre_tokenizer text =
+  (* Pre_tokenizers.t is already a function from string to (string * (int *
+     int)) list *)
+  pre_tokenizer text

@@ -1,0 +1,3 @@
+(executables
+ (names makemore)
+ (libraries rune kaun saga))

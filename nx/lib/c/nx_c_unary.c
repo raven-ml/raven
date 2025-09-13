@@ -120,7 +120,7 @@ static inline void iterate_inner_dims_unary(const ndarray_t *x,
 
 // Generic unary operation kernel
 #define UNARY_OP_KERNEL(name, T, suffix, OP)                              \
-  static void nx_c_##name##_##suffix##_kernel(void *x_data, void *z_data, \
+  static inline void nx_c_##name##_##suffix##_kernel(void *x_data, void *z_data, \
                                               long x_off, long z_off) {   \
     T *x = (T *)x_data;                                                   \
     T *z = (T *)z_data;                                                   \
@@ -137,10 +137,11 @@ static inline void iterate_inner_dims_unary(const ndarray_t *x,
     if (total == 0) return;                                                    \
                                                                                \
     if (is_contiguous(x) && is_contiguous(z)) {                                \
+      T *restrict xs = (T *)x->data + x->offset;                               \
+      T *restrict zs = (T *)z->data + z->offset;                               \
       _Pragma("omp parallel for simd if(total > 1000)") for (long i = 0;       \
                                                              i < total; i++) { \
-        nx_c_##name##_##suffix##_kernel(x->data, z->data, x->offset + i,       \
-                                        z->offset + i);                        \
+        nx_c_##name##_##suffix##_kernel(xs, zs, i, i);                         \
       }                                                                        \
     } else if (x->shape[0] > 1 && total / x->shape[0] > 50) {                  \
       _Pragma("omp parallel for if(x->shape[0] > 4)") for (long i = 0;         \

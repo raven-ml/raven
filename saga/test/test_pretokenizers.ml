@@ -200,7 +200,7 @@ let test_byte_level_edge_cases () =
 (** Test BERT pre-tokenizer *)
 let test_bert_pretokenizer () =
   let test_case text expected =
-    let result = Pre.bert text in
+    let result = Pre.bert () text in
     check_tokenization
       (Printf.sprintf "BERT tokenization of %S" text)
       result expected
@@ -231,7 +231,7 @@ let test_bert_pretokenizer () =
 (** Test Whitespace pre-tokenizer *)
 let test_whitespace_pretokenizer () =
   let test_case text expected =
-    let result = Pre.whitespace text in
+    let result = Pre.whitespace () text in
     check_tokenization
       (Printf.sprintf "Whitespace tokenization of %S" text)
       result expected
@@ -253,7 +253,7 @@ let test_whitespace_pretokenizer () =
 (** Test WhitespaceSplit pre-tokenizer *)
 let test_whitespace_split () =
   let test_case text expected =
-    let result = Pre.whitespace_split text in
+    let result = Pre.whitespace_split () text in
     check_tokenization
       (Printf.sprintf "WhitespaceSplit of %S" text)
       result expected
@@ -374,7 +374,7 @@ let test_split_pretokenizer () =
 (** Test CharDelimiterSplit pre-tokenizer *)
 let test_char_delimiter_split () =
   let test_case delim text expected =
-    let result = Pre.char_delimiter_split delim text in
+    let result = Pre.char_delimiter_split ~delimiter:delim () text in
     check_tokenization
       (Printf.sprintf "CharDelimiterSplit delim='%c' text=%S" delim text)
       result expected
@@ -391,7 +391,7 @@ let test_char_delimiter_split () =
 let test_sequence_pretokenizer () =
   (* Combine whitespace split then punctuation isolation *)
   let tokenizers =
-    [ Pre.whitespace_split; Pre.punctuation ~behavior:`Isolated () ]
+    [ Pre.whitespace_split (); Pre.punctuation ~behavior:`Isolated () ]
   in
   let tokenizer = Pre.sequence tokenizers in
 
@@ -437,7 +437,8 @@ let test_fixed_length () =
 (** Test UnicodeScripts pre-tokenizer *)
 let test_unicode_scripts () =
   let test_case text desc =
-    let result = Pre.unicode_scripts text in
+    let tokenizer = Pre.unicode_scripts () in
+    let result = tokenizer text in
     (* Just verify it runs without crashing and produces something reasonable *)
     check bool
       (Printf.sprintf "UnicodeScripts %s" desc)
@@ -456,13 +457,13 @@ let test_unicode_scripts () =
 let test_metaspace_basic () =
   let test_case text expected =
     let result =
-      Pre.metaspace ~replacement:"▁" ~prepend_scheme:`Always ~split:true () text
+      Pre.metaspace ~replacement:'_' ~prepend_scheme:`Always ~split:true () text
     in
     check_strings (Printf.sprintf "Metaspace %S" text) result expected
   in
 
-  test_case "Hello world" [ "▁Hello"; "▁world" ];
-  test_case " starts with space" [ "▁starts"; "▁with"; "▁space" ];
+  test_case "Hello world" [ "_Hello"; "_world" ];
+  test_case " starts with space" [ "_starts"; "_with"; "_space" ];
   test_case "" []
 
 (** Main test suite *)

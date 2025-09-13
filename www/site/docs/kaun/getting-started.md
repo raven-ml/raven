@@ -107,8 +107,8 @@ Activation.elu ~alpha:1.0 x
 Activation.leaky_relu ~negative_slope:0.01 x
 
 (* Initializers *)
-Initializer.constant 0.0
-Initializer.glorot_uniform
+Initializers.constant 0.0
+Initializers.glorot_uniform
 
 (* Optimizers *)
 Optimizer.sgd ~lr:0.01 ()

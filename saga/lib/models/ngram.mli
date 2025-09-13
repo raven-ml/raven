@@ -27,6 +27,10 @@ val logits : t -> context:int array -> float array
 val perplexity : t -> int array -> float
 (** [perplexity model tokens] computes perplexity on test tokens *)
 
+val log_prob : t -> int array -> float
+(** [log_prob model tokens] returns the sum of log-probabilities of the observed
+    tokens under the model. *)
+
 val generate :
   t ->
   ?max_tokens:int ->
@@ -52,3 +56,6 @@ val save_text : t -> string -> unit
 
 val load_text : string -> t
 (** [load_text filename] deserializes the model from a text file. *)
+
+val n : t -> int
+(** [n model] returns the n-gram order of the model. *)

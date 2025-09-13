@@ -105,7 +105,7 @@ type t = string -> (string * (int * int)) list
       text
     - Offsets must be non-overlapping and in ascending order *)
 
-val bert : t
+val bert : unit -> t
 (** [bert text] applies BERT-style pre-tokenization.
 
     Splits on whitespace and separates punctuation. Designed for BERT-family
@@ -125,7 +125,8 @@ val bert : t
           ("!", (12, 13)); (" ", (13, 14)); ("你", (14, 15)); ("好", (15, 16))] *)
     ]} *)
 
-val byte_level : ?add_prefix_space:bool -> ?use_regex:bool -> unit -> t
+val byte_level :
+  ?add_prefix_space:bool -> ?use_regex:bool -> ?trim_offsets:bool -> unit -> t
 (** [byte_level ?add_prefix_space ?use_regex ()] creates a byte-level
     pre-tokenizer.
 
@@ -157,7 +158,7 @@ val byte_level : ?add_prefix_space:bool -> ?use_regex:bool -> unit -> t
       (* Simpler splitting without regex complexity *)
     ]} *)
 
-val whitespace : t
+val whitespace : unit -> t
 (** [whitespace text] splits on whitespace using pattern \\w+|[^\\w\\s]+.
 
     Groups word characters (letters, digits, underscore) together and groups
@@ -177,7 +178,7 @@ val whitespace : t
           ("going", (23, 28)); ("?", (28, 29))] *)
     ]} *)
 
-val whitespace_split : t
+val whitespace_split : unit -> t
 (** [whitespace_split text] performs simple whitespace splitting.
 
     Splits text on any whitespace characters and removes the whitespace. This is
@@ -233,7 +234,7 @@ val punctuation : ?behavior:behavior -> unit -> t
          [("Don'", (0, 4)); ("t stop", (4, 10))] *)
     ]} *)
 
-val split : pattern:string -> behavior:behavior -> ?invert:bool -> unit -> t
+val split : pattern:string -> ?behavior:behavior -> ?invert:bool -> unit -> t
 (** [split ~pattern ~behavior ?invert ()] creates a pattern-based splitter.
 
     Splits text based on a specific string pattern. More flexible than
@@ -262,7 +263,7 @@ val split : pattern:string -> behavior:behavior -> ?invert:bool -> unit -> t
       (* Splits on non-"abc" characters (numbers), removing them *)
     ]} *)
 
-val char_delimiter_split : char -> t
+val char_delimiter_split : delimiter:char -> unit -> t
 (** [char_delimiter_split delimiter] splits on a specific character delimiter.
 
     Splits text whenever the specified character is encountered, removing the
@@ -323,10 +324,9 @@ type prepend_scheme =
     handling of word boundaries across different contexts. *)
 
 val metaspace :
-  ?replacement:string ->
+  ?replacement:char ->
   ?prepend_scheme:prepend_scheme ->
   ?split:bool ->
-  ?is_first:bool ->
   unit ->
   t
 (** [metaspace ?replacement ?prepend_scheme ?split ?is_first ()] creates a
@@ -412,7 +412,7 @@ val fixed_length : length:int -> t
       (* Result: [("H", (0, 1)); ("i", (1, 2)); ("!", (2, 3))] *)
     ]} *)
 
-val unicode_scripts : t
+val unicode_scripts : unit -> t
 (** [unicode_scripts text] splits text on Unicode script boundaries.
 
     Separates text when the Unicode script changes (e.g., Latin to Cyrillic,
@@ -473,3 +473,9 @@ val byte_level_decode : string -> string
       let decoded = Pre_tokenizers.byte_level_decode encoded_piece in
       assert (decoded = original || (* handle encoding differences *))
     ]} *)
+
+val pre_tokenize_str : t -> string -> (string * (int * int)) list
+(** Pre-tokenize a string.
+    @param t The pre-tokenizer to use
+    @param string The string to pre-tokenize
+    @return List of pre-tokens with their offsets *)

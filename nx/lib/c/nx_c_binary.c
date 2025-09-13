@@ -117,7 +117,7 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
 
 // Generic binary operation kernel
 #define BINARY_OP_KERNEL(name, T, suffix, OP)                             \
-  static void nx_c_##name##_##suffix##_kernel(void *x_data, void *y_data, \
+  static inline void nx_c_##name##_##suffix##_kernel(void *x_data, void *y_data, \
                                               void *z_data, long x_off,   \
                                               long y_off, long z_off) {   \
     T *x = (T *)x_data;                                                   \
@@ -137,11 +137,12 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
     if (total == 0) return;                                                    \
                                                                                \
     if (is_fully_contiguous(x, y, z)) {                                        \
+      T *restrict xs = (T *)x->data + x->offset;                               \
+      T *restrict ys = (T *)y->data + y->offset;                               \
+      T *restrict zs = (T *)z->data + z->offset;                               \
       _Pragma("omp parallel for simd if(total > 1000)") for (long i = 0;       \
                                                              i < total; i++) { \
-        nx_c_##name##_##suffix##_kernel(x->data, y->data, z->data,             \
-                                        x->offset + i, y->offset + i,          \
-                                        z->offset + i);                        \
+        nx_c_##name##_##suffix##_kernel(xs, ys, zs, i, i, i);                  \
       }                                                                        \
     } else if (x->shape[0] > 1 && total / x->shape[0] > 50) {                  \
       _Pragma("omp parallel for if(x->shape[0] > 4)") for (long i = 0;         \

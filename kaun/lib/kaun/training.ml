@@ -165,19 +165,28 @@ let train_epoch ~state ~dataset ~loss_fn ?(progress = false) () =
   let state_ref = ref state in
   let total_loss = ref 0. in
   let batch_count = ref 0 in
+  let total_time = ref 0. in
 
   if progress then Printf.printf "Training: ";
 
-  Dataset.iter
+  (* Convert to list to ensure we can iterate multiple times *)
+  let batches = Dataset.to_list dataset in
+  List.iter
     (fun (x, y) ->
       incr batch_count;
+      let step_start = Unix.gettimeofday () in
       let state', loss = train_step ~state:!state_ref ~x ~y ~loss_fn in
+      let step_time = Unix.gettimeofday () -. step_start in
+      total_time := !total_time +. step_time;
       state_ref := state';
       total_loss := !total_loss +. loss;
       if progress && !batch_count mod 10 = 0 then Printf.printf ".")
-    dataset;
+    batches;
 
-  if progress then Printf.printf " done\n%!";
+  (if progress then
+     let avg_step_time = !total_time /. float_of_int !batch_count *. 1000. in
+     Printf.printf " done (%d steps, avg %.1fms/step)\n%!" !batch_count
+       avg_step_time);
 
   let avg_loss = !total_loss /. float_of_int !batch_count in
   let metrics = State.compute_metrics !state_ref in
@@ -558,6 +567,12 @@ let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
     let epoch = !epoch_idx in
     if progress then Printf.printf "\nEpoch %d/%d\n" epoch epochs;
 
+    let epoch_start_time = Unix.gettimeofday () in
+
+    (* Reset datasets at the start of each epoch, if supported *)
+    Dataset.reset train_data;
+    (match val_data with Some ds -> Dataset.reset ds | None -> ());
+
     (* Call on_epoch_begin *)
     (match callback with
     | Some cb ->
@@ -605,7 +620,7 @@ let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
       };
 
     (* Validate if data provided *)
-    match val_data with
+    (match val_data with
     | Some val_dataset ->
         let val_loss, val_metrics =
           evaluate ~state:!state_ref ~dataset:val_dataset ~loss_fn ~progress ()
@@ -616,7 +631,7 @@ let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
           (fun (name, value) ->
             if progress then Printf.printf ", %s: %.4f" name value)
           val_metrics;
-        if progress then Printf.printf "\n";
+        if progress then Printf.printf "\n%!";
 
         (* Update validation history *)
         let val_loss_list =
@@ -642,48 +657,51 @@ let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
             val_loss = Some val_loss_list;
             val_metrics = val_metrics_list;
           }
-    | None -> (
-        ();
+    | None -> ());
 
-        (* Call on_epoch_end *)
-        match callback with
-        | Some cb ->
-            let ctx =
-              Callbacks.
-                {
-                  epoch;
-                  state = !state_ref;
-                  history = !history_ref;
-                  train_loss = Some train_loss;
-                  val_loss =
-                    (match val_data with
-                    | Some _ -> (
-                        match !history_ref.val_loss with
-                        | Some losses -> (
-                            match List.rev losses with
-                            | [] -> None
-                            | hd :: _ -> Some hd)
-                        | None -> None)
-                    | None -> None);
-                  train_metrics;
-                  val_metrics =
-                    (match val_data with
-                    | Some _ -> (
-                        match !history_ref.val_metrics with
-                        | Some metrics ->
-                            List.map
-                              (fun (name, values) ->
-                                match List.rev values with
-                                | [] -> (name, 0.0)
-                                | hd :: _ -> (name, hd))
-                              metrics
-                        | None -> [])
-                    | None -> []);
-                }
-            in
-            if cb.on_epoch_end ctx then incr epoch_idx
-            else continue_training := false
-        | None -> incr epoch_idx)
+    (* Print epoch timing *)
+    let epoch_time = Unix.gettimeofday () -. epoch_start_time in
+    if progress then Printf.printf "  Time: %.2fs\n%!" epoch_time;
+
+    (* Call on_epoch_end *)
+    match callback with
+    | Some cb ->
+        let ctx =
+          Callbacks.
+            {
+              epoch;
+              state = !state_ref;
+              history = !history_ref;
+              train_loss = Some train_loss;
+              val_loss =
+                (match val_data with
+                | Some _ -> (
+                    match !history_ref.val_loss with
+                    | Some losses -> (
+                        match List.rev losses with
+                        | [] -> None
+                        | hd :: _ -> Some hd)
+                    | None -> None)
+                | None -> None);
+              train_metrics;
+              val_metrics =
+                (match val_data with
+                | Some _ -> (
+                    match !history_ref.val_metrics with
+                    | Some metrics ->
+                        List.map
+                          (fun (name, values) ->
+                            match List.rev values with
+                            | [] -> (name, 0.0)
+                            | hd :: _ -> (name, hd))
+                          metrics
+                    | None -> [])
+                | None -> []);
+            }
+        in
+        if cb.on_epoch_end ctx then incr epoch_idx
+        else continue_training := false
+    | None -> incr epoch_idx
   done;
 
   (* Call on_train_end *)

@@ -200,6 +200,19 @@ let perplexity model tokens =
 
   if !count = 0 then infinity else exp (-. !log_prob_sum /. float_of_int !count)
 
+let log_prob model tokens =
+  let sum = ref 0.0 in
+  for i = model.n - 1 to Array.length tokens - 1 do
+    let context =
+      if model.n = 1 then [||]
+      else Array.sub tokens (i - model.n + 1) (model.n - 1)
+    in
+    let log_probs = logits model ~context in
+    let tok = tokens.(i) in
+    if tok >= 0 && tok < model.vocab_size then sum := !sum +. log_probs.(tok)
+  done;
+  !sum
+
 let generate model ?(max_tokens = 100) ?(temperature = 1.0)
     ?(seed = Random.int 1000000) ?(start = [||]) () =
   let rng = Random.State.make [| seed |] in
@@ -252,6 +265,8 @@ let stats model =
     total_tokens = Hashtbl.fold (fun _ c acc -> acc + c) model.context_totals 0;
     unique_ngrams = unique;
   }
+
+let n model = model.n
 
 let save model path =
   let oc = open_out_bin path in

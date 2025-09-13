@@ -41,10 +41,9 @@ static inline void iterate_batch(
     return;
   }
 
-  int *coords = (int *)calloc(batch_nd, sizeof(int));
-  if (!coords) {
-    caml_failwith("iterate_batch: allocation failed");
-  }
+  int coords_buf[MAX_NDIM];
+  int *coords = coords_buf; // batch_nd <= MAX_NDIM by construction
+  for (int i = 0; i < batch_nd; ++i) coords[i] = 0;
 
   bool done = false;
   while (!done) {
@@ -72,31 +71,30 @@ static inline void iterate_batch(
       coords[i] = 0;
     }
   }
-
-  free(coords);
 }
 
 // Generic matmul kernel
-#define MATMUL_OP_KERNEL(suffix, T, ACCUM_T, CAST)                            \
-  static void nx_c_matmul_##suffix##_kernel(                                  \
-      void *a_data, long a_off, long a_rs, long a_cs, void *b_data,           \
-      long b_off, long b_rs, long b_cs, void *c_data, long c_off, long c_rs,  \
-      long c_cs, long m, long k, long n) {                                    \
-    T *a = (T *)a_data;                                                       \
-    T *b = (T *)b_data;                                                       \
-    T *c = (T *)c_data;                                                       \
-    _Pragma("omp parallel for collapse(2) if(m * n > 1000)") for (long i = 0; \
-                                                                  i < m;      \
-                                                                  i++) {      \
-      for (long j = 0; j < n; j++) {                                          \
-        ACCUM_T sum = 0;                                                      \
-        for (long p = 0; p < k; p++) {                                        \
-          sum += (ACCUM_T)a[a_off + i * a_rs + p * a_cs] *                    \
-                 (ACCUM_T)b[b_off + p * b_rs + j * b_cs];                     \
-        }                                                                     \
-        c[c_off + i * c_rs + j * c_cs] = CAST(sum);                           \
-      }                                                                       \
-    }                                                                         \
+#define MATMUL_OP_KERNEL(suffix, T, ACCUM_T, CAST)                                  \
+  static void nx_c_matmul_##suffix##_kernel(                                        \
+      void *a_data, long a_off, long a_rs, long a_cs, void *b_data,                 \
+      long b_off, long b_rs, long b_cs, void *c_data, long c_off, long c_rs,        \
+      long c_cs, long m, long k, long n) {                                          \
+    T *restrict a = (T *)a_data;                                                    \
+    T *restrict b = (T *)b_data;                                                    \
+    T *restrict c = (T *)c_data;                                                    \
+    /* Generic kernel (naive triple loop). Specific types may override               \
+       with specialized kernels below. */                                            \
+    _Pragma("omp parallel for collapse(2) if(m * n > 1000)")                        \
+    for (long i = 0; i < m; i++) {                                                  \
+      for (long j = 0; j < n; j++) {                                                \
+        ACCUM_T sum = 0;                                                            \
+        for (long p = 0; p < k; p++) {                                              \
+          sum += (ACCUM_T)a[a_off + i * a_rs + p * a_cs] *                          \
+                 (ACCUM_T)b[b_off + p * b_rs + j * b_cs];                           \
+        }                                                                           \
+        c[c_off + i * c_rs + j * c_cs] = CAST(sum);                                 \
+      }                                                                             \
+    }                                                                               \
   }
 
 // Generic matmul implementation
@@ -123,13 +121,13 @@ static inline void iterate_batch(
       char shape_b_str[256] = "[";                                             \
       for (int i = 0; i < a->ndim; i++) {                                      \
         char buf[32];                                                          \
-        snprintf(buf, sizeof(buf), "%s%ld", i > 0 ? "," : "", a->shape[i]);   \
+        snprintf(buf, sizeof(buf), "%s%d", i > 0 ? "," : "", a->shape[i]);   \
         strcat(shape_a_str, buf);                                              \
       }                                                                        \
       strcat(shape_a_str, "]");                                                \
       for (int i = 0; i < b->ndim; i++) {                                      \
         char buf[32];                                                          \
-        snprintf(buf, sizeof(buf), "%s%ld", i > 0 ? "," : "", b->shape[i]);   \
+        snprintf(buf, sizeof(buf), "%s%d", i > 0 ? "," : "", b->shape[i]);   \
         strcat(shape_b_str, buf);                                              \
       }                                                                        \
       strcat(shape_b_str, "]");                                                \
@@ -144,14 +142,14 @@ static inline void iterate_batch(
       caml_failwith("nx_c_matmul_" #suffix ": output shape mismatch");         \
     }                                                                          \
     int batch_nd = nd - 2;                                                     \
-    long *batch_shape = (long *)calloc(batch_nd, sizeof(long));                \
-    long *batch_strides_a = (long *)calloc(batch_nd, sizeof(long));            \
-    long *batch_strides_b = (long *)calloc(batch_nd, sizeof(long));            \
-    long *batch_strides_c = (long *)calloc(batch_nd, sizeof(long));            \
-    if (!batch_shape || !batch_strides_a || !batch_strides_b ||                \
-        !batch_strides_c) {                                                    \
-      caml_failwith("nx_c_matmul_" #suffix ": allocation failed");             \
-    }                                                                          \
+    long batch_shape_buf[MAX_NDIM];                                            \
+    long batch_strides_a_buf[MAX_NDIM];                                        \
+    long batch_strides_b_buf[MAX_NDIM];                                        \
+    long batch_strides_c_buf[MAX_NDIM];                                        \
+    long *batch_shape = batch_shape_buf;                                       \
+    long *batch_strides_a = batch_strides_a_buf;                                \
+    long *batch_strides_b = batch_strides_b_buf;                                \
+    long *batch_strides_c = batch_strides_c_buf;                                \
     int a_batch_offset = nd - a->ndim;                                         \
     int b_batch_offset = nd - b->ndim;                                         \
     for (int i = 0; i < batch_nd; i++) {                                       \
@@ -168,10 +166,6 @@ static inline void iterate_batch(
         strb = b->strides[b_i];                                                \
       }                                                                        \
       if (sa != sb && sa != 1 && sb != 1) {                                    \
-        free(batch_shape);                                                     \
-        free(batch_strides_a);                                                 \
-        free(batch_strides_b);                                                 \
-        free(batch_strides_c);                                                 \
         caml_failwith("nx_c_matmul_" #suffix ": batch shape mismatch");        \
       }                                                                        \
       long s = sa > sb ? sa : sb;                                              \
@@ -180,10 +174,6 @@ static inline void iterate_batch(
       batch_strides_b[i] = (sb == 1) ? 0 : strb;                               \
       batch_strides_c[i] = c->strides[i];                                      \
       if (c->shape[i] != s) {                                                  \
-        free(batch_shape);                                                     \
-        free(batch_strides_a);                                                 \
-        free(batch_strides_b);                                                 \
-        free(batch_strides_c);                                                 \
         caml_failwith("nx_c_matmul_" #suffix ": output batch shape mismatch"); \
       }                                                                        \
     }                                                                          \
@@ -202,10 +192,6 @@ static inline void iterate_batch(
                   a_cs, b_rs, b_cs, c_rs, c_cs, m, k, n,                       \
                   nx_c_matmul_##suffix##_kernel);                              \
     caml_leave_blocking_section();                                             \
-    free(batch_shape);                                                         \
-    free(batch_strides_a);                                                     \
-    free(batch_strides_b);                                                     \
-    free(batch_strides_c);                                                     \
   }
 
 // Macro to generate both kernel and implementation for matmul
@@ -329,8 +315,114 @@ GENERATE_MATMUL_OP(qu8, caml_ba_quint8, uint64_t, (caml_ba_quint8))
 GENERATE_MATMUL_OP(bool_, caml_ba_bool, uint64_t, (caml_ba_bool))
 
 // Float types with same-type accumulation
-GENERATE_MATMUL_OP(f32, float, float, )
-GENERATE_MATMUL_OP(f64, double, double, )
+/* Optimized blocked kernels for float32/float64. These improve cache locality
+   by computing NB outputs in a column tile at a time, reusing A(i,p) across
+   a small block of B(p, j..j+NB-1). Works with arbitrary strides. */
+static void nx_c_matmul_f32_kernel(void *a_data, long a_off, long a_rs,
+                                   long a_cs, void *b_data, long b_off,
+                                   long b_rs, long b_cs, void *c_data,
+                                   long c_off, long c_rs, long c_cs, long m,
+                                   long k, long n) {
+  float *restrict a = (float *)a_data;
+  float *restrict b = (float *)b_data;
+  float *restrict c = (float *)c_data;
+  /* Small-GEMM microkernel for attention-sized multiplies */
+  if (m <= 16 && n <= 16 && k <= 64) {
+    float acc[16][16];
+    for (int ii = 0; ii < m; ++ii)
+      for (int jj = 0; jj < n; ++jj) acc[ii][jj] = 0.0f;
+    float bcol[16];
+    for (long p = 0; p < k; ++p) {
+      long bbase = b_off + p * b_rs;
+      for (int jj = 0; jj < n; ++jj) bcol[jj] = b[bbase + (long)jj * b_cs];
+      for (int ii = 0; ii < m; ++ii) {
+        float aval = a[a_off + (long)ii * a_rs + p * a_cs];
+        for (int jj = 0; jj < n; ++jj) acc[ii][jj] += aval * bcol[jj];
+      }
+    }
+    for (int ii = 0; ii < m; ++ii) {
+      long cbase = c_off + (long)ii * c_rs;
+      for (int jj = 0; jj < n; ++jj) c[cbase + (long)jj * c_cs] = acc[ii][jj];
+    }
+    return;
+  }
+  const int NB = 64; /* tile width along N (columns) */
+
+  _Pragma("omp parallel for collapse(2) if(m * n > 1024)")
+  for (long i = 0; i < m; i++) {
+    for (long j0 = 0; j0 < n; j0 += NB) {
+      int jb = (int)((j0 + NB) < n ? NB : (n - j0));
+      float acc[64];
+      /* process one row of C for a tile of columns */
+      for (int jj = 0; jj < jb; jj++) acc[jj] = 0.0f;
+      for (long p = 0; p < k; p++) {
+        float aval = a[a_off + i * a_rs + p * a_cs];
+        long bbase = b_off + p * b_rs + j0 * b_cs;
+        for (int jj = 0; jj < jb; jj++) {
+          acc[jj] += aval * b[bbase + (long)jj * b_cs];
+        }
+      }
+      long cbase = c_off + i * c_rs + j0 * c_cs;
+      for (int jj = 0; jj < jb; jj++) {
+        c[cbase + (long)jj * c_cs] = acc[jj];
+      }
+    }
+  }
+}
+
+static void nx_c_matmul_f64_kernel(void *a_data, long a_off, long a_rs,
+                                   long a_cs, void *b_data, long b_off,
+                                   long b_rs, long b_cs, void *c_data,
+                                   long c_off, long c_rs, long c_cs, long m,
+                                   long k, long n) {
+  double *restrict a = (double *)a_data;
+  double *restrict b = (double *)b_data;
+  double *restrict c = (double *)c_data;
+  if (m <= 16 && n <= 16 && k <= 64) {
+    double acc[16][16];
+    for (int ii = 0; ii < m; ++ii)
+      for (int jj = 0; jj < n; ++jj) acc[ii][jj] = 0.0;
+    double bcol[16];
+    for (long p = 0; p < k; ++p) {
+      long bbase = b_off + p * b_rs;
+      for (int jj = 0; jj < n; ++jj) bcol[jj] = b[bbase + (long)jj * b_cs];
+      for (int ii = 0; ii < m; ++ii) {
+        double aval = a[a_off + (long)ii * a_rs + p * a_cs];
+        for (int jj = 0; jj < n; ++jj) acc[ii][jj] += aval * bcol[jj];
+      }
+    }
+    for (int ii = 0; ii < m; ++ii) {
+      long cbase = c_off + (long)ii * c_rs;
+      for (int jj = 0; jj < n; ++jj) c[cbase + (long)jj * c_cs] = acc[ii][jj];
+    }
+    return;
+  }
+  const int NB = 32; /* smaller tile for doubles to fit caches */
+
+  _Pragma("omp parallel for collapse(2) if(m * n > 1024)")
+  for (long i = 0; i < m; i++) {
+    for (long j0 = 0; j0 < n; j0 += NB) {
+      int jb = (int)((j0 + NB) < n ? NB : (n - j0));
+      double acc[32];
+      for (int jj = 0; jj < jb; jj++) acc[jj] = 0.0;
+      for (long p = 0; p < k; p++) {
+        double aval = a[a_off + i * a_rs + p * a_cs];
+        long bbase = b_off + p * b_rs + j0 * b_cs;
+        for (int jj = 0; jj < jb; jj++) {
+          acc[jj] += aval * b[bbase + (long)jj * b_cs];
+        }
+      }
+      long cbase = c_off + i * c_rs + j0 * c_cs;
+      for (int jj = 0; jj < jb; jj++) {
+        c[cbase + (long)jj * c_cs] = acc[jj];
+      }
+    }
+  }
+}
+
+/* Use the optimized kernels for f32/f64 and the generic implementation glue */
+MATMUL_OP_IMPL(f32, sizeof(float))
+MATMUL_OP_IMPL(f64, sizeof(double))
 
 // Complex types with same-type accumulation
 GENERATE_MATMUL_OP(c32, complex32, complex32, )

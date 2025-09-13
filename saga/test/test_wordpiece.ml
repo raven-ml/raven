@@ -148,9 +148,26 @@ let test_tokenizer_integration () =
   output_string oc "[PAD]\n[UNK]\n[CLS]\n[SEP]\nhello\nworld\n##ing\n";
   close_out oc;
 
-  (* Test the Tokenizer.wordpiece function *)
-  let tokenizer = Tokenizer.wordpiece ~vocab:vocab_file ~unk_token:"[UNK]" in
-  let tokens = Tokenizer.run tokenizer "hello" in
+  (* Create a WordPiece tokenizer using the model *)
+  let vocab =
+    [
+      ("[PAD]", 0);
+      ("[UNK]", 1);
+      ("[CLS]", 2);
+      ("[SEP]", 3);
+      ("hello", 4);
+      ("world", 5);
+      ("##ing", 6);
+    ]
+  in
+  let model = Models.wordpiece ~vocab ~unk_token:"[UNK]" () in
+  let tokenizer = Tokenizer.create ~model in
+
+  (* For now, just test encoding *)
+  let encoding =
+    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello") ()
+  in
+  let tokens = Array.to_list (Encoding.get_tokens encoding) in
 
   Printf.printf "Tokenizer.wordpiece result: ";
   List.iter (Printf.printf "%s ") tokens;

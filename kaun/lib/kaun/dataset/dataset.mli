@@ -95,6 +95,36 @@ val from_jsonl : ?field:string -> string -> string t
      }
     } *)
 
+val sliding_window :
+  block_size:int ->
+  tokenize:(string -> int list) ->
+  device:'dev Rune.device ->
+  string list ->
+  ((float, Rune.float32_elt, 'dev) Rune.t
+  * (float, Rune.float32_elt, 'dev) Rune.t)
+  t
+(** [sliding_window ~block_size ~tokenize texts] creates a dataset of sliding
+    window context/target pairs for language modeling.
+
+    @param block_size Size of the context window
+    @param tokenize Function to convert text to token indices
+    @param texts List of input texts (e.g., names for character-level modeling)
+    @return Dataset of (context, target) tensor pairs
+
+    Creates all possible sliding windows of size [block_size] from the input
+    texts, where each window predicts the next token. Automatically handles
+    padding with a special token.
+
+    Example:
+    {[
+      let dataset =
+        sliding_window ~block_size:3
+          ~tokenize:(fun s -> encode_chars ~vocab s)
+          [ "hello"; "world" ]
+      (* Generates windows like: "...h" -> "e" "..he" -> "l" ".hel" -> "l"
+         "hell" -> "o" etc. *)
+    ]} *)
+
 val from_csv :
   ?separator:char ->
   ?text_column:int ->
@@ -302,6 +332,13 @@ val cardinality : 'a t -> cardinality
 
 val element_spec : 'a t -> element_spec
 (** [element_spec dataset] returns a structured description of element types *)
+
+(** {1 Dataset Control} *)
+
+val reset : 'a t -> unit
+(** [reset dataset] resets the dataset to its initial state if supported. This
+    makes it possible to iterate a dataset multiple times (e.g., across training
+    epochs). If the dataset does not support reset, this is a no-op. *)
 
 (** {1 Common Pipelines} *)
 

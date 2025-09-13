@@ -148,7 +148,7 @@
 
 include
   module type of Saga_tokenizers
-    with type 'a Tokenizer.t = 'a Saga_tokenizers.Tokenizer.t
+    with type Tokenizer.t = Saga_tokenizers.Tokenizer.t
 (** @inline *)
 
 (** {1:section-io File I/O}
@@ -164,6 +164,7 @@ include module type of Io
     High-level statistical language models with simple training and generation
     APIs. *)
 
+(* Re-export LM high-level API at the top level. *)
 include module type of Lm
 (** @inline *)
 
@@ -194,10 +195,11 @@ module Sampler = Sampler
     {[
       open Saga
 
-      (* Simple word tokenization *)
-      let tok = tokenizer `Words
-      let ids = encode tok "Hello world!"
-      let text = decode tok ids
+      (* Simple char tokenization *)
+      let tok = Tokenizer.create ~model:(Models.chars ())
+      let enc = Tokenizer.encode tok ~sequence:(Either.Left "Hello world!") ()
+      let ids = Encoding.get_ids enc
+      let text = Tokenizer.decode tok (Array.to_list ids) ()
 
       (* BPE tokenization *)
       let tok = tokenizer (`BPE ("vocab.json", "merges.txt"))

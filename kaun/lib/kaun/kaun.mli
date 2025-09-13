@@ -60,7 +60,7 @@ module Dataset = Dataset
 module Loss = Loss
 (** @inline *)
 
-module Initializer = Initializers
+module Initializers = Initializers
 (** @inline *)
 
 module Layer = Layer

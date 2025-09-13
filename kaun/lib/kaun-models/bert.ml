@@ -438,7 +438,7 @@ let pooler ~hidden_size () =
       (fun ~rngs ~device ~dtype ->
         (* Initialize dense layer weights *)
         let key = Rune.Rng.to_int rngs in
-        let init_fn = (Kaun.Initializer.normal ~stddev:0.02 ()).f in
+        let init_fn = (Kaun.Initializers.normal ~stddev:0.02 ()).f in
         let dense_weight =
           init_fn key [| hidden_size; hidden_size |] device dtype
         in

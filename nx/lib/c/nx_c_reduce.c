@@ -24,6 +24,19 @@ typedef struct {
   reduce_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
 } reduce_op_table;
 
+// Forward declarations for optimized fallback symbols generated later
+// (needed so we can call them from fast paths before their definitions)
+// Forward decls for wrapper functions that call the generic (macro-generated)
+// fallback implementations. Definitions are placed after the generic impls.
+static void nx_c_reduce_sum_f32_generic_wrap(const ndarray_t *, ndarray_t *,
+                                             const int *, int, bool);
+static void nx_c_reduce_sum_f64_generic_wrap(const ndarray_t *, ndarray_t *,
+                                             const int *, int, bool);
+static void nx_c_reduce_max_f32_generic_wrap(const ndarray_t *, ndarray_t *,
+                                             const int *, int, bool);
+static void nx_c_reduce_max_f64_generic_wrap(const ndarray_t *, ndarray_t *,
+                                             const int *, int, bool);
+
 // Helper functions
 static int cmp_int(const void *a, const void *b) {
   return *(const int *)a - *(const int *)b;
@@ -94,19 +107,9 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
     _Pragma("omp parallel for if(total_out > 1000)") for (long idx = 0;    \
                                                           idx < total_out; \
                                                           ++idx) {         \
-      int *local_out_coord = (int *)calloc(output->ndim, sizeof(int));     \
-      if (!local_out_coord) caml_failwith("allocation failed");            \
-      int *local_in_coord = (int *)calloc(input->ndim, sizeof(int));       \
-      if (!local_in_coord) {                                               \
-        free(local_out_coord);                                             \
-        caml_failwith("allocation failed");                                \
-      }                                                                    \
-      int *local_reduced_coord = (int *)calloc(num_axes, sizeof(int));     \
-      if (!local_reduced_coord) {                                          \
-        free(local_out_coord);                                             \
-        free(local_in_coord);                                              \
-        caml_failwith("allocation failed");                                \
-      }                                                                    \
+      int local_out_coord[MAX_NDIM];                                       \
+      int local_in_coord[MAX_NDIM];                                        \
+      int local_reduced_coord[MAX_NDIM];                                   \
       get_coord_from_idx(idx, output, local_out_coord);                    \
       memset(local_in_coord, 0, input->ndim * sizeof(int));                \
       if (keepdims) {                                                      \
@@ -150,9 +153,6 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
       }                                                                    \
       long out_off = output->offset + get_offset(output, local_out_coord); \
       ((T *)output->data)[out_off] = acc;                                  \
-      free(local_out_coord);                                               \
-      free(local_in_coord);                                                \
-      free(local_reduced_coord);                                           \
     }                                                                      \
     free(is_reduced);                                                      \
     free(kept_axes);                                                       \
@@ -213,19 +213,9 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
     _Pragma("omp parallel for if(total_out > 1000)") for (long idx = 0;        \
                                                           idx < total_out;     \
                                                           ++idx) {             \
-      int *local_out_coord = (int *)calloc(output->ndim, sizeof(int));         \
-      if (!local_out_coord) caml_failwith("allocation failed");                \
-      int *local_in_coord = (int *)calloc(input->ndim, sizeof(int));           \
-      if (!local_in_coord) {                                                   \
-        free(local_out_coord);                                                 \
-        caml_failwith("allocation failed");                                    \
-      }                                                                        \
-      int *local_reduced_coord = (int *)calloc(num_axes, sizeof(int));         \
-      if (!local_reduced_coord) {                                              \
-        free(local_out_coord);                                                 \
-        free(local_in_coord);                                                  \
-        caml_failwith("allocation failed");                                    \
-      }                                                                        \
+      int local_out_coord[MAX_NDIM];                                           \
+      int local_in_coord[MAX_NDIM];                                            \
+      int local_reduced_coord[MAX_NDIM];                                       \
       get_coord_from_idx(idx, output, local_out_coord);                        \
       memset(local_in_coord, 0, input->ndim * sizeof(int));                    \
       if (keepdims) {                                                          \
@@ -269,9 +259,6 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
       }                                                                        \
       long out_off = output->offset + get_offset(output, local_out_coord);     \
       ((T *)output->data)[out_off] = FROM_FLOAT(acc);                          \
-      free(local_out_coord);                                                   \
-      free(local_in_coord);                                                    \
-      free(local_reduced_coord);                                               \
     }                                                                          \
     free(is_reduced);                                                          \
     free(kept_axes);                                                           \
@@ -572,9 +559,64 @@ REDUCE_OP_FOR_TYPE(reduce_sum, int64_t, i64, SUM_IDENTITY(int64_t),
                    SUM_HAS_IDENTITY, SUM_OP)
 REDUCE_OP_FOR_TYPE(reduce_sum, intnat, inat, SUM_IDENTITY(intnat),
                    SUM_HAS_IDENTITY, SUM_OP)
-REDUCE_OP_FOR_TYPE(reduce_sum, float, f32, SUM_IDENTITY(float),
+// Optimized last-dim contiguous fast paths for f32/f64 reduce_sum
+static void nx_c_reduce_sum_f32(const ndarray_t *input, ndarray_t *output,
+                                const int *axes, int num_axes, bool keepdims) {
+  int last = input->ndim - 1;
+  if (num_axes == 1 && axes[0] == last && is_contiguous(input) &&
+      is_contiguous(output) && input->ndim >= 1) {
+    long K = input->shape[last];
+    long total = total_elements_safe(input);
+    long M = (K == 0) ? 0 : (total / K);
+    float *in = (float *)input->data;
+    float *out = (float *)output->data;
+    long in_off = input->offset;
+    long out_off = output->offset;
+    _Pragma("omp parallel for if(M > 1024)")
+    for (long r = 0; r < M; ++r) {
+      const float *row = in + in_off + r * K;
+      float acc = 0.0f;
+      for (long p = 0; p < K; ++p) acc += row[p];
+      out[out_off + r] = acc;
+    }
+    return;
+  }
+  // Fallback to generic implementation
+  nx_c_reduce_sum_f32_generic_wrap(input, output, axes, num_axes, keepdims);
+}
+
+static void nx_c_reduce_sum_f64(const ndarray_t *input, ndarray_t *output,
+                                const int *axes, int num_axes, bool keepdims) {
+  int last = input->ndim - 1;
+  if (num_axes == 1 && axes[0] == last && is_contiguous(input) &&
+      is_contiguous(output) && input->ndim >= 1) {
+    long K = input->shape[last];
+    long total = total_elements_safe(input);
+    long M = (K == 0) ? 0 : (total / K);
+    double *in = (double *)input->data;
+    double *out = (double *)output->data;
+    long in_off = input->offset;
+    long out_off = output->offset;
+    _Pragma("omp parallel for if(M > 1024)")
+    for (long r = 0; r < M; ++r) {
+      const double *row = in + in_off + r * K;
+      double acc = 0.0;
+      for (long p = 0; p < K; ++p) acc += row[p];
+      out[out_off + r] = acc;
+    }
+    return;
+  }
+  // Fallback to generic implementation
+  nx_c_reduce_sum_f64_generic_wrap(input, output, axes, num_axes, keepdims);
+}
+
+// Provide generic versions under alternate names to call in fallback
+#define nx_c_reduce_sum_f32_generic nx_c_reduce_sum_f32_fallback
+#define nx_c_reduce_sum_f64_generic nx_c_reduce_sum_f64_fallback
+
+REDUCE_OP_FOR_TYPE(reduce_sum, float, f32_fallback, SUM_IDENTITY(float),
                    SUM_HAS_IDENTITY, SUM_OP)
-REDUCE_OP_FOR_TYPE(reduce_sum, double, f64, SUM_IDENTITY(double),
+REDUCE_OP_FOR_TYPE(reduce_sum, double, f64_fallback, SUM_IDENTITY(double),
                    SUM_HAS_IDENTITY, SUM_OP)
 REDUCE_OP_FOR_TYPE(reduce_sum, complex32, c32, SUM_COMPLEX_IDENTITY,
                    SUM_HAS_IDENTITY, SUM_COMPLEX_OP)
@@ -602,20 +644,117 @@ LOW_PREC_REDUCE_OP_IMPL(reduce_sum, caml_ba_fp8_e5m2, f8e5m2,
 
 COMPLEX16_REDUCE_IMPL(reduce_sum, SUM_COMPLEX_IDENTITY, SUM_HAS_IDENTITY,
                       SUM_COMPLEX_OP)
-INT4_REDUCE_IMPL(reduce_sum, 1, i4, 0, SUM_HAS_IDENTITY, SUM_OP, CLAMP_I4)
-INT4_REDUCE_IMPL(reduce_sum, 0, u4, 0, SUM_HAS_IDENTITY, SUM_OP, CLAMP_U4)
-BUILD_DISPATCH_TABLE(reduce_sum)
+  INT4_REDUCE_IMPL(reduce_sum, 1, i4, 0, SUM_HAS_IDENTITY, SUM_OP, CLAMP_I4)
+  INT4_REDUCE_IMPL(reduce_sum, 0, u4, 0, SUM_HAS_IDENTITY, SUM_OP, CLAMP_U4)
+// Define wrappers now that generic functions exist
+static void nx_c_reduce_sum_f32_generic_wrap(const ndarray_t *input,
+                                             ndarray_t *output,
+                                             const int *axes, int num_axes,
+                                             bool keepdims) {
+  nx_c_reduce_sum_f32_fallback(input, output, axes, num_axes, keepdims);
+}
+static void nx_c_reduce_sum_f64_generic_wrap(const ndarray_t *input,
+                                             ndarray_t *output,
+                                             const int *axes, int num_axes,
+                                             bool keepdims) {
+  nx_c_reduce_sum_f64_fallback(input, output, axes, num_axes, keepdims);
+}
+// Build dispatch table (bind f32/f64 to optimized versions)
+static const reduce_op_table reduce_sum_table = {
+    .i8 = nx_c_reduce_sum_i8,
+    .u8 = nx_c_reduce_sum_u8,
+    .i16 = nx_c_reduce_sum_i16,
+    .u16 = nx_c_reduce_sum_u16,
+    .i32 = nx_c_reduce_sum_i32,
+    .i64 = nx_c_reduce_sum_i64,
+    .inat = nx_c_reduce_sum_inat,
+    .f16 = nx_c_reduce_sum_f16,
+    .f32 = nx_c_reduce_sum_f32,
+    .f64 = nx_c_reduce_sum_f64,
+    .c32 = nx_c_reduce_sum_c32,
+    .c64 = nx_c_reduce_sum_c64,
+    .bf16 = nx_c_reduce_sum_bf16,
+    .bool_ = nx_c_reduce_sum_bool_,
+    .i4 = nx_c_reduce_sum_i4,
+    .u4 = nx_c_reduce_sum_u4,
+    .f8e4m3 = nx_c_reduce_sum_f8e4m3,
+    .f8e5m2 = nx_c_reduce_sum_f8e5m2,
+    .c16 = nx_c_reduce_sum_c16,
+    .qi8 = nx_c_reduce_sum_qi8,
+    .qu8 = nx_c_reduce_sum_qu8};
 
 // Generate for reduce_max
 #define MAX_OP(acc, val) ((acc) > (val) ? (acc) : (val))
 #define MAX_IDENTITY(T) ((T)0)  // unused
 #define MAX_HAS_IDENTITY 0
 /* NaN propagation: if either operand is NaN, return NaN */
-#define MAX_OP_FLOAT(acc, val) (isnan(acc) || isnan(val) ? NAN : ((acc) > (val) ? (acc) : (val)))
+#define MAX_OP_FLOAT(acc, val) \
+  (isnan(acc) || isnan(val) ? NAN : ((acc) > (val) ? (acc) : (val)))
 #define MAX_IDENTITY_FLOAT 0.0f   // unused
 #define MAX_COMPLEX_IDENTITY (0)  // unused
 #define MAX_COMPLEX_OP(acc, val) complex_max(acc, val)
 #define MAX_COMPLEX64_OP(acc, val) complex64_max(acc, val)
+
+// Optimized last-dim contiguous fast paths for f32/f64 reduce_max
+static void nx_c_reduce_max_f32(const ndarray_t *input, ndarray_t *output,
+                                const int *axes, int num_axes, bool keepdims) {
+  int last = input->ndim - 1;
+  if (num_axes == 1 && axes[0] == last && is_contiguous(input) &&
+      is_contiguous(output) && input->ndim >= 1) {
+    long K = input->shape[last];
+    long total = total_elements_safe(input);
+    long M = (K == 0) ? 0 : (total / K);
+    float *in = (float *)input->data;
+    float *out = (float *)output->data;
+    long in_off = input->offset;
+    long out_off = output->offset;
+    _Pragma("omp parallel for if(M > 1024)")
+    for (long r = 0; r < M; ++r) {
+      const float *row = in + in_off + r * K;
+      float acc = -INFINITY;
+      for (long p = 0; p < K; ++p) {
+        float v = row[p];
+        acc = (isnan(acc) || isnan(v)) ? NAN : (v > acc ? v : acc);
+      }
+      out[out_off + r] = acc;
+    }
+    return;
+  }
+  // Fallback to generic implementation
+  nx_c_reduce_max_f32_generic_wrap(input, output, axes, num_axes, keepdims);
+}
+
+static void nx_c_reduce_max_f64(const ndarray_t *input, ndarray_t *output,
+                                const int *axes, int num_axes, bool keepdims) {
+  int last = input->ndim - 1;
+  if (num_axes == 1 && axes[0] == last && is_contiguous(input) &&
+      is_contiguous(output) && input->ndim >= 1) {
+    long K = input->shape[last];
+    long total = total_elements_safe(input);
+    long M = (K == 0) ? 0 : (total / K);
+    double *in = (double *)input->data;
+    double *out = (double *)output->data;
+    long in_off = input->offset;
+    long out_off = output->offset;
+    _Pragma("omp parallel for if(M > 1024)")
+    for (long r = 0; r < M; ++r) {
+      const double *row = in + in_off + r * K;
+      double acc = -INFINITY;
+      for (long p = 0; p < K; ++p) {
+        double v = row[p];
+        acc = (isnan(acc) || isnan(v)) ? NAN : (v > acc ? v : acc);
+      }
+      out[out_off + r] = acc;
+    }
+    return;
+  }
+  // Fallback to generic implementation
+  nx_c_reduce_max_f64_generic_wrap(input, output, axes, num_axes, keepdims);
+}
+
+// Provide generic versions under alternate names to call in fallback
+#define nx_c_reduce_max_f32_generic nx_c_reduce_max_f32_fallback
+#define nx_c_reduce_max_f64_generic nx_c_reduce_max_f64_fallback
 
 REDUCE_OP_FOR_TYPE(reduce_max, int8_t, i8, MAX_IDENTITY(int8_t),
                    MAX_HAS_IDENTITY, MAX_OP)
@@ -631,9 +770,9 @@ REDUCE_OP_FOR_TYPE(reduce_max, int64_t, i64, MAX_IDENTITY(int64_t),
                    MAX_HAS_IDENTITY, MAX_OP)
 REDUCE_OP_FOR_TYPE(reduce_max, intnat, inat, MAX_IDENTITY(intnat),
                    MAX_HAS_IDENTITY, MAX_OP)
-REDUCE_OP_FOR_TYPE(reduce_max, float, f32, MAX_IDENTITY(float),
+REDUCE_OP_FOR_TYPE(reduce_max, float, f32_fallback, MAX_IDENTITY(float),
                    MAX_HAS_IDENTITY, MAX_OP_FLOAT)
-REDUCE_OP_FOR_TYPE(reduce_max, double, f64, MAX_IDENTITY(double),
+REDUCE_OP_FOR_TYPE(reduce_max, double, f64_fallback, MAX_IDENTITY(double),
                    MAX_HAS_IDENTITY, MAX_OP_FLOAT)
 REDUCE_OP_FOR_TYPE(reduce_max, complex32, c32, MAX_COMPLEX_IDENTITY,
                    MAX_HAS_IDENTITY, MAX_COMPLEX_OP)
@@ -663,7 +802,42 @@ COMPLEX16_REDUCE_IMPL(reduce_max, MAX_COMPLEX_IDENTITY, MAX_HAS_IDENTITY,
                       complex_max)
 INT4_REDUCE_IMPL(reduce_max, 1, i4, 0, MAX_HAS_IDENTITY, MAX_OP, CLAMP_I4)
 INT4_REDUCE_IMPL(reduce_max, 0, u4, 0, MAX_HAS_IDENTITY, MAX_OP, CLAMP_U4)
-BUILD_DISPATCH_TABLE(reduce_max)
+// Define wrappers now that generic functions exist
+static void nx_c_reduce_max_f32_generic_wrap(const ndarray_t *input,
+                                             ndarray_t *output,
+                                             const int *axes, int num_axes,
+                                             bool keepdims) {
+  nx_c_reduce_max_f32_fallback(input, output, axes, num_axes, keepdims);
+}
+static void nx_c_reduce_max_f64_generic_wrap(const ndarray_t *input,
+                                             ndarray_t *output,
+                                             const int *axes, int num_axes,
+                                             bool keepdims) {
+  nx_c_reduce_max_f64_fallback(input, output, axes, num_axes, keepdims);
+}
+// Build dispatch table (bind f32/f64 to optimized versions)
+static const reduce_op_table reduce_max_table = {
+    .i8 = nx_c_reduce_max_i8,
+    .u8 = nx_c_reduce_max_u8,
+    .i16 = nx_c_reduce_max_i16,
+    .u16 = nx_c_reduce_max_u16,
+    .i32 = nx_c_reduce_max_i32,
+    .i64 = nx_c_reduce_max_i64,
+    .inat = nx_c_reduce_max_inat,
+    .f16 = nx_c_reduce_max_f16,
+    .f32 = nx_c_reduce_max_f32,
+    .f64 = nx_c_reduce_max_f64,
+    .c32 = nx_c_reduce_max_c32,
+    .c64 = nx_c_reduce_max_c64,
+    .bf16 = nx_c_reduce_max_bf16,
+    .bool_ = nx_c_reduce_max_bool_,
+    .i4 = nx_c_reduce_max_i4,
+    .u4 = nx_c_reduce_max_u4,
+    .f8e4m3 = nx_c_reduce_max_f8e4m3,
+    .f8e5m2 = nx_c_reduce_max_f8e5m2,
+    .c16 = nx_c_reduce_max_c16,
+    .qi8 = nx_c_reduce_max_qi8,
+    .qu8 = nx_c_reduce_max_qu8};
 
 // Generate for reduce_prod
 #define PROD_OP(acc, val) ((acc) * (val))

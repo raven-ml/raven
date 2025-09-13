@@ -25,7 +25,8 @@ let create_internal vocab unk_token continuing_subword_prefix
     max_input_chars_per_word =
   let vocab_r = Hashtbl.create (Hashtbl.length vocab) in
   Hashtbl.iter (fun k v -> Hashtbl.add vocab_r v k) vocab;
-  if not (Hashtbl.mem vocab unk_token) then
+  (* Only raise error if vocabulary is non-empty but missing UNK token *)
+  if Hashtbl.length vocab > 0 && not (Hashtbl.mem vocab unk_token) then
     raise (Error "WordPiece error: Missing [UNK] token from the vocabulary");
   {
     vocab;
@@ -80,65 +81,68 @@ let from_file_with_config ~vocab_file ~unk_token ~continuing_subword_prefix
     max_input_chars_per_word
 
 let tokenize model sequence =
-  let char_count =
-    let decoder = Uutf.decoder (`String sequence) in
-    let count = ref 0 in
-    let rec loop () =
-      match Uutf.decode decoder with
-      | `Uchar _ ->
-          incr count;
-          loop ()
-      | `End -> !count
-      | `Malformed _ ->
-          incr count;
-          loop ()
-      | `Await -> assert false
-    in
-    loop ()
-  in
-  if char_count > model.max_input_chars_per_word then
-    let id = Hashtbl.find model.vocab model.unk_token in
-    [ { id; value = model.unk_token; offsets = (0, String.length sequence) } ]
+  (* Handle empty vocabulary case *)
+  if Hashtbl.length model.vocab = 0 then []
   else
-    let rec tokenize_greedy start acc =
-      if start >= String.length sequence then List.rev acc
-      else
-        let rec find_longest_match end_pos =
-          if end_pos <= start then None
-          else
-            let substr = String.sub sequence start (end_pos - start) in
-            let token_str =
-              if start > 0 then model.continuing_subword_prefix ^ substr
-              else substr
-            in
-            match Hashtbl.find_opt model.vocab token_str with
-            | Some id ->
-                Some { id; value = token_str; offsets = (start, end_pos) }
-            | None ->
-                let new_end =
-                  let rec find_char_start pos =
-                    if pos <= start then start
-                    else if Char.code sequence.[pos - 1] land 0xC0 <> 0x80 then
-                      pos - 1
-                    else find_char_start (pos - 1)
-                  in
-                  find_char_start end_pos
-                in
-                if new_end <= start then None else find_longest_match new_end
-        in
-        match find_longest_match (String.length sequence) with
-        | Some token -> tokenize_greedy (snd token.offsets) (token :: acc)
-        | None ->
-            let id = Hashtbl.find model.vocab model.unk_token in
-            [
-              {
-                id;
-                value = model.unk_token;
-                offsets = (0, String.length sequence);
-              };
-            ]
+    let char_count =
+      let decoder = Uutf.decoder (`String sequence) in
+      let count = ref 0 in
+      let rec loop () =
+        match Uutf.decode decoder with
+        | `Uchar _ ->
+            incr count;
+            loop ()
+        | `End -> !count
+        | `Malformed _ ->
+            incr count;
+            loop ()
+        | `Await -> assert false
+      in
+      loop ()
     in
-    tokenize_greedy 0 []
+    if char_count > model.max_input_chars_per_word then
+      let id = Hashtbl.find model.vocab model.unk_token in
+      [ { id; value = model.unk_token; offsets = (0, String.length sequence) } ]
+    else
+      let rec tokenize_greedy start acc =
+        if start >= String.length sequence then List.rev acc
+        else
+          let rec find_longest_match end_pos =
+            if end_pos <= start then None
+            else
+              let substr = String.sub sequence start (end_pos - start) in
+              let token_str =
+                if start > 0 then model.continuing_subword_prefix ^ substr
+                else substr
+              in
+              match Hashtbl.find_opt model.vocab token_str with
+              | Some id ->
+                  Some { id; value = token_str; offsets = (start, end_pos) }
+              | None ->
+                  let new_end =
+                    let rec find_char_start pos =
+                      if pos <= start then start
+                      else if Char.code sequence.[pos - 1] land 0xC0 <> 0x80
+                      then pos - 1
+                      else find_char_start (pos - 1)
+                    in
+                    find_char_start end_pos
+                  in
+                  if new_end <= start then None else find_longest_match new_end
+          in
+          match find_longest_match (String.length sequence) with
+          | Some token -> tokenize_greedy (snd token.offsets) (token :: acc)
+          | None ->
+              let id = Hashtbl.find model.vocab model.unk_token in
+              [
+                {
+                  id;
+                  value = model.unk_token;
+                  offsets = (0, String.length sequence);
+                };
+              ]
+      in
+      tokenize_greedy 0 []
 
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 let id_to_token model id = Hashtbl.find_opt model.vocab_r id
