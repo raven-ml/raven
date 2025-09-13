@@ -1,11 +1,11 @@
 (library
  (name workshop)
  (public_name fehu.example.sokoban.workshop)
- (modules slide1 slide2 slide3 slide4 slide5 slide6 slide7 slide8 slide9 slide_pip helpers)
+ (modules slide1 slide2 slide3 slide4 slide5 slide6 slide7 slide8 slide_pip helpers)
  (libraries fehu rune kaun sokoban unix))
 
 (executables
- (names run1 run2 run3 run4 run5 run6 run7 run8 run9 run_pip)
+ (names run1 run2 run3 run4 run5 run6 run7 run8 run_pip)
  (libraries fehu rune kaun sokoban unix workshop)
- (modules run1 run2 run3 run4 run5 run6 run7 run8 run9 run_pip)
+ (modules run1 run2 run3 run4 run5 run6 run7 run8 run_pip)
  (modes exe))

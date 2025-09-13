@@ -617,11 +617,6 @@ Now we can understand GRPO: **REINFORCE + GRPO Innovation + Clipping + KL Penalt
 > 2. **Extended environment API** - Add state save/restore methods (non-standard)
 > 3. **Environment copies** - Fork multiple environment instances (memory intensive)
 > 4. **Batched environments** - Run parallel environments from same initial conditions (special case of 3)
-> 
-> The code below shows the algorithm structure, but would need one of these solutions for production use.
-
-{pause down="~duration:15"}
-{slip include src=../example/sokoban/workshop/slide9.ml}
 
 ***
 

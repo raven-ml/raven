@@ -1,4 +1,4 @@
 (executables
- (names sokoban_reinforce sokoban_grpo sokoban_dqn backoff_tabular visualize_logs test_room_gen test_visualization test_solvability test_deadlock test_wall_segments test_dqn_curriculum)
- (modules sokoban_reinforce sokoban_grpo sokoban_dqn backoff_tabular visualize_logs test_room_gen test_visualization test_solvability test_deadlock test_wall_segments test_dqn_curriculum)
+ (names sokoban_reinforce sokoban_dqn backoff_tabular visualize_logs test_room_gen test_visualization test_solvability test_deadlock test_wall_segments test_dqn_curriculum)
+ (modules sokoban_reinforce sokoban_dqn backoff_tabular visualize_logs test_room_gen test_visualization test_solvability test_deadlock test_wall_segments test_dqn_curriculum)
  (libraries fehu kaun sokoban unix))

@@ -6,23 +6,19 @@ open Slide2
 open Slide3
 (* REINFORCE with running average baseline *)
 let train_reinforce_with_baseline env n_episodes learning_rate
-    gamma =
-  (* Initialize policy *)
+     gamma =
   let policy_net, params = initialize_policy () in
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
-  let opt_state = ref (optimizer.init params) in  
-  (* Running average baseline *)
+  let opt_state = ref (optimizer.init params) in
   let baseline = ref 0.0 in
   (* Exponential moving average factor *)
   let baseline_alpha = 0.01 in  
   for episode = 1 to n_episodes do
     (* Collect episode *)
     let episode_data =
-      collect_episode env policy_net params 100 in    
-    (* Compute returns *)
+      collect_episode env policy_net params 100 in
     let returns = compute_returns episode_data.rewards gamma in    
     (* Update baseline (exponential moving average) *)
-    (* Total episode return *)
     let episode_return = returns.(0) in
     baseline := !baseline *. (1.0 -. baseline_alpha) +. 
                 episode_return *. baseline_alpha;    
