@@ -2712,25 +2712,35 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
     let episode_data =
       collect_episode env policy_net policy_params 100 in
     let returns = compute_returns episode_data.rewards gamma in    
-    (* Compute value estimates for all states *)
-    let values = Array.map (fun state -&amp;gt;
+    (* Compute value estimates for states that have returns *)
+    let n_steps = Array.length returns in
+    let values = Array.init n_steps (fun i -&amp;gt;
+      let state = episode_data.states.(i) in
+      (* Add batch dimension to state *)
+      let state_batched = Rune.reshape [|1; 5; 5|] state in
       let v =
-        Kaun.apply value_net value_params ~training:false state in
+        Kaun.apply value_net value_params ~training:false state_batched in
       Rune.item [] v
-    ) episode_data.states in    
+    ) in    
     (* Compute advantages (TD error) *)
     let advantages =
       Array.mapi (fun i r -&amp;gt; r -. values.(i)) returns in    
     (* Update critic (value network) *)
     let value_loss, value_grads = Kaun.value_and_grad (fun vp -&amp;gt;
-      let predictions = Array.map (fun state -&amp;gt;
-        Kaun.apply value_net vp ~training:true state
-      ) episode_data.states in      
+      (* Only compute predictions for states that have returns *)
+      let n_steps = Array.length returns in
+      let predictions = Array.init n_steps (fun i -&amp;gt;
+        let state = episode_data.states.(i) in
+        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let pred = Kaun.apply value_net vp ~training:true state_batched in
+        (* Squeeze to remove batch dimension *)
+        Rune.squeeze ~axes:[|0; 1|] pred
+      ) in
       (* MSE loss between predictions and returns *)
       let pred_tensor =
         Rune.stack ~axis:0 (Array.to_list predictions) in
-      let returns_tensor = Rune.create device Rune.float32 
-        [|Array.length returns|] returns in
+      let returns_tensor = Rune.create device Rune.float32
+        [|n_steps|] returns in
       Kaun.Loss.mse pred_tensor returns_tensor
     ) value_params in    
     let value_updates, new_value_state = 
@@ -2744,35 +2754,33 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
       Kaun.value_and_grad (fun pp -&amp;gt;
       let total_loss =
         ref (Rune.zeros device Rune.float32 [||]) in      
-      Array.iteri (fun t state -&amp;gt;
+      for t = 0 to n_steps - 1 do
+        let state = episode_data.states.(t) in
         let action = episode_data.actions.(t) in
         let advantage = advantages.(t) in
         (* Add batch dimension to state *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in        
+        let state_batched = Rune.reshape [|1; 5; 5|] state in
         let logits =
           Kaun.apply policy_net pp ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
-        (* Get log prob of selected action -
-           convert action back to int32 for indexing *)
-        let action_int = int_of_float (Rune.item [] action) in
-        let action_tensor =
-          Rune.scalar device Rune.int32 (Int32.of_int action_int) in
-        let action_expanded =
-          Rune.reshape [|1; 1|] action_tensor in
-        let action_log_prob =
-          Rune.take_along_axis ~axis:(-1)
-            action_expanded log_probs in
-        let action_log_prob =
-          Rune.squeeze action_log_prob in        
+
+        (* Convert action to one-hot encoding to stay on device *)
+        let action_int_tensor = Rune.astype Rune.int32 action in
+        let action_one_hot = Rune.one_hot ~num_classes:4 action_int_tensor in
+        let action_one_hot =
+          Rune.reshape [|1; 4|] action_one_hot |&amp;gt;
+          Rune.astype Rune.float32 in
+
+        (* Select the log prob using element-wise multiply and sum *)
+        let action_log_prob = Rune.sum (Rune.mul action_one_hot log_probs) in
         let step_loss = Rune.mul
           (Rune.scalar device Rune.float32 (-. advantage))
-          action_log_prob in        
+          action_log_prob in
         total_loss := Rune.add !total_loss step_loss
-      ) episode_data.states;      
-      let n_steps =
-        float_of_int (Array.length episode_data.states) in
+      done;
+      let n_steps_float = float_of_int n_steps in
       Rune.div !total_loss
-        (Rune.scalar device Rune.float32 n_steps)
+        (Rune.scalar device Rune.float32 n_steps_float)
     ) policy_params in    
     let policy_updates, new_policy_state = 
       policy_opt.update !policy_opt_state
