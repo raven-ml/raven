@@ -2883,6 +2883,7 @@ let main () =
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Actor&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: The policy π(a|s,θ)&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Critic&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: The baseline b(s,w)&lt;/span&gt;&lt;/li&gt;
 &lt;/ul&gt;
+&lt;p&gt;&lt;span&gt;For spatial tasks like Sokoban, both networks benefit from convolutional architectures (see Exercise 4) that preserve grid structure.&lt;/span&gt;&lt;/p&gt;
 &lt;hr&gt;
 &lt;h2 id=&quot;midpoint-summary&quot; down-at-unpause=midpoint-takeaways pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#midpoint-summary&quot;&gt;&lt;/a&gt;&lt;span&gt;Midpoint Summary&lt;/span&gt;&lt;/h2&gt;
 &lt;div id=&quot;midpoint-takeaways&quot; class=&quot;block&quot; title=&quot;Key Takeaways&quot;&gt;
@@ -3592,7 +3593,16 @@ for episode in range(1000):
 #       #
 #########
 &lt;/code&gt;&lt;/pre&gt;
-&lt;div pause&gt;
+&lt;div id=&quot;exercise-cnn&quot; class=&quot;block&quot; pause down-at-unpause title=&quot;Exercise 4: CNN-based Policy and Value Networks&quot;&gt;
+&lt;p&gt;&lt;span&gt;Replace fully-connected networks with convolutional neural networks:&lt;/span&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;span&gt;Design CNN architectures using conv2d layers&lt;/span&gt;&lt;/li&gt;
+&lt;li&gt;&lt;span&gt;Preserve spatial structure of the grid&lt;/span&gt;&lt;/li&gt;
+&lt;li&gt;&lt;span&gt;Compare learning efficiency with FC networks&lt;/span&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&lt;span&gt;See &lt;/span&gt;&lt;code&gt;exercise4.md&lt;/code&gt;&lt;span&gt; for implementation guide.&lt;/span&gt;&lt;/p&gt;
+&lt;/div&gt;
+&lt;div pause unreveal-at-unpause=exercise-cnn unstatic-at-unpause=exercise-cnn&gt;
 &lt;p&gt;&lt;span&gt;Starting with such complexity leads to:&lt;/span&gt;&lt;/p&gt;
 &lt;ul&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Sparse rewards&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: Agent rarely solves the puzzle randomly&lt;/span&gt;&lt;/li&gt;

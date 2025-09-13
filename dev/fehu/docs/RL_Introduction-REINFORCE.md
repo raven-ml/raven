@@ -452,8 +452,10 @@ From Sutton & Barto:
 > "Methods that learn approximations to both policy and value functions are often called actor–critic methods"
 
 REINFORCE with baseline is a simple actor-critic method:
-- **Actor**: The policy π(a|s,θ)  
+- **Actor**: The policy π(a|s,θ)
 - **Critic**: The baseline b(s,w)
+
+For spatial tasks like Sokoban, both networks benefit from convolutional architectures (see Exercise 4) that preserve grid structure.
 
 ***
 
@@ -937,7 +939,15 @@ Imagine teaching an agent to solve this Sokoban puzzle:
 #########
 ```
 
-{pause}
+{pause  down .block title="Exercise 4: CNN-based Policy and Value Networks" #exercise-cnn}
+> Replace fully-connected networks with convolutional neural networks:
+> 1. Design CNN architectures using conv2d layers
+> 2. Preserve spatial structure of the grid
+> 3. Compare learning efficiency with FC networks
+>
+> See `exercise4.md` for implementation guide.
+
+{pause unreveal=exercise-cnn unstatic=exercise-cnn}
 > Starting with such complexity leads to:
 > - **Sparse rewards**: Agent rarely solves the puzzle randomly
 > - **No learning signal**: Without successes, gradients are uninformative
