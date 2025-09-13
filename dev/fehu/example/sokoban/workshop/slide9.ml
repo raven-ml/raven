@@ -4,6 +4,7 @@
 open Slide1
 open Slide2
 open Slide3
+open Slide4  (* For training_history type *)
 open Slide7
 open Slide8
 
@@ -11,12 +12,20 @@ open Slide8
 let copy_params params =
   Kaun.Ptree.map Rune.copy params
 
-(* REINFORCE++ with GRPO features: clipping and KL penalty *)
+(* REINFORCE++ with baseline, clipping, and KL penalty *)
 let train_reinforce_plus_plus env n_episodes learning_rate gamma
     epsilon beta =
   let policy_net, params = initialize_policy () in
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
   let opt_state = ref (optimizer.init params) in
+
+  (* History tracking *)
+  let history_returns = Array.make n_episodes 0.0 in
+  let history_losses = Array.make n_episodes 0.0 in
+
+  (* Baseline for variance reduction *)
+  let baseline = ref 0.0 in
+  let baseline_alpha = 0.01 in  (* Exponential moving average factor *)
 
   (* Store old policy for computing ratios *)
   let old_params = ref (copy_params params) in
@@ -27,9 +36,17 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
       collect_episode env policy_net params 100 in
     let returns = compute_returns episode_data.rewards gamma in
 
+    (* Update baseline (exponential moving average) *)
+    let episode_return = if Array.length returns > 0 then returns.(0) else 0.0 in
+    baseline := !baseline *. (1.0 -. baseline_alpha) +.
+                episode_return *. baseline_alpha;
+
+    (* Compute advantages (returns - baseline) *)
+    let advantages = Array.map (fun r -> r -. !baseline) returns in
+
     (* Compute old log probs for clipping *)
     let old_log_probs = ref [] in
-    let n_states = min 10 (Array.length episode_data.states) in
+    let n_states = min 10 (Array.length advantages) in
     for t = 0 to n_states - 1 do
       let state = episode_data.states.(t) in
       let state_batched = Rune.reshape [|1; 5; 5|] state in
@@ -50,11 +67,11 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
       let total_kl = ref (Rune.scalar device Rune.float32 0.0) in
 
       (* Process first 10 states due to autodiff limitations *)
-      let n_samples = min 10 (Array.length episode_data.states) in
+      let n_samples = min 10 (Array.length advantages) in
       for t = 0 to n_samples - 1 do
         let state = episode_data.states.(t) in
         let action = episode_data.actions.(t) in
-        let g_t = returns.(t) in
+        let advantage = advantages.(t) in
 
         (* Get current policy probabilities *)
         let state_batched = Rune.reshape [|1; 5; 5|] state in
@@ -77,10 +94,10 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
         let ratio = Rune.exp log_ratio in
         let clipped_ratio = clip_ratio ratio epsilon in
 
-        (* Compute objectives *)
-        let g_t_tensor = Rune.scalar device Rune.float32 g_t in
-        let obj1 = Rune.mul ratio g_t_tensor in
-        let obj2 = Rune.mul clipped_ratio g_t_tensor in
+        (* Compute objectives with advantage *)
+        let advantage_tensor = Rune.scalar device Rune.float32 advantage in
+        let obj1 = Rune.mul ratio advantage_tensor in
+        let obj2 = Rune.mul clipped_ratio advantage_tensor in
         let clipped_obj = Rune.minimum obj1 obj2 in
 
         (* Add to loss (negative for gradient descent) *)
@@ -114,24 +131,29 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
     if episode mod 3 = 0 then
       old_params := copy_params params;
 
+    (* Track history *)
+    let total_reward =
+      Array.fold_left (+.) 0. episode_data.rewards in
+    history_returns.(episode - 1) <- total_reward;
+    history_losses.(episode - 1) <- Rune.item [] loss;
+
     (* Log progress *)
     if episode mod 10 = 0 then
-      let total_reward =
-        Array.fold_left (+.) 0. episode_data.rewards in
-      Printf.printf "Episode %d: Return = %.2f, Loss = %.4f\n"
-        episode total_reward (Rune.item [] loss)
+      Printf.printf "Episode %d: Return = %.2f, Baseline = %.2f, Loss = %.4f\n"
+        episode episode_return !baseline (Rune.item [] loss)
   done;
 
-  (policy_net, params)
+  (* Return with history *)
+  (policy_net, params, {returns = history_returns; losses = history_losses})
 
 (* Main function to test REINFORCE++ *)
 let main () =
-  print_endline "=== Slide 5: REINFORCE++ (with GRPO features) ===";
-  print_endline "Features: ratio clipping, KL penalty";
+  print_endline "=== Slide 9: REINFORCE++ ===";
+  print_endline "Features: baseline, ratio clipping, KL penalty";
   let env = create_simple_gridworld 5 in
 
   (* Train with clipping (epsilon=0.2) and KL penalty (beta=0.01) *)
-  let _policy_net, _params =
+  let _policy_net, _params, _history =
     train_reinforce_plus_plus env 50 0.01 0.99 0.2 0.01 in
 
   print_endline "REINFORCE++ training complete!"

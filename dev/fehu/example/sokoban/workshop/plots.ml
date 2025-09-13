@@ -153,7 +153,8 @@ let ascii_plot histories metric_name window_size =
       | 0 -> '*'
       | 1 -> '+'
       | 2 -> 'o'
-      | 3 -> 'x'
+      | 3 -> '#'
+      | 4 -> 'x'
       | _ -> '.'
     in
 
@@ -191,7 +192,8 @@ let ascii_plot histories metric_name window_size =
       | 0 -> '*'
       | 1 -> '+'
       | 2 -> 'o'
-      | 3 -> 'x'
+      | 3 -> '#'
+      | 4 -> 'x'
       | _ -> '.'
     in
     Printf.printf "  %c - %s\n" char h.name
@@ -212,7 +214,7 @@ let parse_args () =
 
   let spec = [
     ("-a", Arg.String (fun s -> algorithms := s :: !algorithms),
-     "ALGO  Add algorithm to comparison: reinforce, baseline, actor-critic, all (default: reinforce,baseline)");
+     "ALGO  Add algorithm to comparison: reinforce, baseline, actor-critic, reinforce++, all (default: reinforce,baseline)");
     ("-n", Arg.Set_int n_episodes,
      "N     Number of training episodes (default: 200)");
     ("-lr", Arg.Set_float learning_rate,
@@ -230,7 +232,7 @@ let parse_args () =
   if !help then begin
     Printf.printf "%s\n" usage;
     Printf.printf "  -a ALGO       Add algorithm to comparison\n";
-    Printf.printf "                Available: reinforce, baseline, actor-critic, all\n";
+    Printf.printf "                Available: reinforce, baseline, actor-critic, reinforce++, all\n";
     Printf.printf "  -n N          Number of training episodes (default: 200)\n";
     Printf.printf "  -lr LR        Learning rate (default: 0.01)\n";
     Printf.printf "  -gamma G      Discount factor (default: 0.99)\n";
@@ -247,7 +249,7 @@ let parse_args () =
 
   (* Handle "all" option *)
   let algos = if List.mem "all" algos then
-    ["reinforce"; "baseline"; "actor-critic"]
+    ["reinforce"; "baseline"; "actor-critic"; "reinforce++"]
   else
     algos in
 
@@ -306,6 +308,20 @@ let () =
           color = "#d62728"  (* Red *)
         } :: !histories
 
+    | "reinforce++" ->
+        print_endline "Training REINFORCE++...";
+        (* REINFORCE++ with clipping and KL penalty *)
+        let epsilon = 0.2 in  (* Clipping parameter *)
+        let beta = 0.01 in    (* KL penalty coefficient *)
+        let _policy_net, _params, history =
+          Slide9.train_reinforce_plus_plus env n_episodes learning_rate gamma epsilon beta in
+        histories := {
+          name = "REINFORCE++";
+          returns = history.returns;
+          losses = history.losses;
+          color = "#ff7f0e"  (* Orange *)
+        } :: !histories
+
     | unknown ->
         Printf.eprintf "Warning: Unknown algorithm '%s', skipping\n" unknown
   ) algorithms;
@@ -346,5 +362,7 @@ let () =
     print_endline "- Baseline reduces variance in returns (smoother curve)";
   if List.exists (fun h -> h.name = "Actor-Critic") histories then
     print_endline "- Actor-Critic uses learned baseline for better variance reduction";
+  if List.exists (fun h -> h.name = "REINFORCE++") histories then
+    print_endline "- REINFORCE++ adds stability through clipping and KL regularization";
   print_endline "- All methods should converge to similar final performance";
-  print_endline "- Training stability varies: Actor-Critic > Baseline > REINFORCE"
+  print_endline "- Training stability varies: Actor-Critic > REINFORCE++ > Baseline > REINFORCE"

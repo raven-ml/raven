@@ -439,8 +439,8 @@ The baseline **neural network** is learned to predict expected returns, reducing
 {slip include src=../example/sokoban/workshop/slide6.ml}
 
 {pause down focus .block}
-> ![REINFORCE without baseline vs. with non-learned baseline: losses](reinforce_losses-v2.svg)
-> ![REINFORCE without baseline vs. with non-learned baseline: returns](reinforce_returns-v2.svg)
+> ![REINFORCE with learned baseline: losses](reinforce_losses-v2.svg)
+> ![REINFORCE with learned baseline: returns](reinforce_returns-v2.svg)
 
 ***
 
@@ -602,6 +602,17 @@ $$L_{total}(\theta) = L_{policy}(\theta) - \beta \cdot D_{KL}[\pi_{old} \| \pi_{
 > **KL Penalty**: Soft constraint on overall policy distribution
 > 
 > Together they provide robust stability for policy optimization.
+
+{pause center}
+### Workshop Part 9: Combining REINFORCE, Clipping and KL-penalty
+
+{pause down="~duration:15"}
+{slip include src=../example/sokoban/workshop/slide9.ml}
+
+{pause down focus .block}
+> ![REINFORCE with non-learned baseline, clipping and KL-penalty: losses](reinforce_losses-v3.svg)
+> ![REINFORCE with non-learned baseline, clipping and KL-penalty: returns](reinforce_returns-v3.svg)
+> REINFORCE++ appears very unstable, worth investigating!
 
 ***
 
