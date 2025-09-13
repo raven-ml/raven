@@ -38,18 +38,16 @@ let train_reinforce_with_baseline env n_episodes learning_rate
         let logits =
           Kaun.apply policy_net p ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
-        (* Get log prob of selected action -
-           convert action back to int32 for indexing *)
-        let action_int = int_of_float (Rune.item [] action) in
-        let action_tensor =
-          Rune.scalar device Rune.int32 (Int32.of_int action_int) in
-        let action_expanded =
-          Rune.reshape [|1; 1|] action_tensor in
-        let action_log_prob =
-          Rune.take_along_axis ~axis:(-1)
-            action_expanded log_probs in
-        let action_log_prob =
-          Rune.squeeze action_log_prob in        
+
+        (* Convert action to one-hot encoding to stay on device *)
+        let action_int_tensor = Rune.astype Rune.int32 action in
+        let action_one_hot = Rune.one_hot ~num_classes:4 action_int_tensor in
+        let action_one_hot =
+          Rune.reshape [|1; 4|] action_one_hot |>
+          Rune.astype Rune.float32 in
+
+        (* Select the log prob using element-wise multiply and sum *)
+        let action_log_prob = Rune.sum (Rune.mul action_one_hot log_probs) in        
         (* Loss: -advantage * log π(a_t|s_t) *)
         let step_loss = Rune.mul
           (Rune.scalar device Rune.float32 (-. advantage))
