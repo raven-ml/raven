@@ -140,6 +140,10 @@ A complete sequence of interactions from start to terminal state.
 The total reward from time step t until the end of the episode:
 $$G_t = R_{t+1} + R_{t+2} + ... + R_T$$
 
+> **Note on Discounting**: For simplicity, we present **episodic** (undiscounted) returns here, following Sutton's preference for clarity. However, the workshop code uses **discounted** returns with γ=0.99:
+> $$G_t = R_{t+1} + \gamma R_{t+2} + \gamma^2 R_{t+3} + ...$$
+> Both approaches work well; discounting helps with numerical stability and infinite horizons.
+
 {.definition title="Value of a State $V^\pi(s)$"}
 The expected return when starting from state s and following policy π:
 $$V^\pi(s) = \mathbb{E}_\pi[G_t | S_t = s]$$

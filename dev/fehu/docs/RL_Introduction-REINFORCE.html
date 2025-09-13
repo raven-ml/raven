@@ -2124,6 +2124,9 @@ let main () =
 &lt;p class=&quot;definition&quot; title=&quot;Episode&quot;&gt;&lt;span&gt;A complete sequence of interactions from start to terminal state.&lt;/span&gt;&lt;/p&gt;
 &lt;p class=&quot;definition&quot; title=&quot;Return $G_t$&quot;&gt;&lt;span&gt;The total reward from time step t until the end of the episode:&lt;/span&gt;
 \[G_t = R_{t+1} + R_{t+2} + ... + R_T\]&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;&lt;span&gt;Note on Discounting&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: For simplicity, we present &lt;/span&gt;&lt;strong&gt;&lt;span&gt;episodic&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; (undiscounted) returns here, following Sutton's preference for clarity. However, the workshop code uses &lt;/span&gt;&lt;strong&gt;&lt;span&gt;discounted&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; returns with γ=0.99:&lt;/span&gt;
+\[G_t = R_{t+1} + \gamma R_{t+2} + \gamma^2 R_{t+3} + ...\]
+&lt;span&gt;Both approaches work well; discounting helps with numerical stability and infinite horizons.&lt;/span&gt;&lt;/p&gt;
 &lt;p class=&quot;definition&quot; title=&quot;Value of a State $V^\pi(s)$&quot;&gt;&lt;span&gt;The expected return when starting from state s and following policy π:&lt;/span&gt;
 \[V^\pi(s) = \mathbb{E}_\pi[G_t | S_t = s]\]&lt;/p&gt;
 &lt;div pause down-at-unpause&gt;
