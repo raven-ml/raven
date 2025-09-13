@@ -226,7 +226,7 @@ let parse_args () =
     ("-grid", Arg.Set_int grid_size,
      "SIZE  Grid size for environment (default: 5, try 7 or 9)");
     ("-env", Arg.Set_string env_type,
-     "TYPE  Environment type: gridworld, curriculum (default: gridworld)");
+     "TYPE  Environment type: gridworld, curriculum, sokoban (default: gridworld)");
     ("-help", Arg.Set help,
      "      Display this help message");
     ("--help", Arg.Set help,
@@ -243,13 +243,14 @@ let parse_args () =
     Printf.printf "  -lr LR        Learning rate (default: 0.01)\n";
     Printf.printf "  -gamma G      Discount factor (default: 0.99)\n";
     Printf.printf "  -grid SIZE    Grid size for environment (default: 5, try 7 or 9)\n";
-    Printf.printf "  -env TYPE     Environment type: gridworld, curriculum (default: gridworld)\n";
+    Printf.printf "  -env TYPE     Environment type: gridworld, curriculum, sokoban (default: gridworld)\n";
     Printf.printf "  -help/--help  Display this help message\n\n";
     Printf.printf "Examples:\n";
     Printf.printf "  %s                          # Compare reinforce vs baseline\n" Sys.argv.(0);
     Printf.printf "  %s -a all                   # Compare all algorithms\n" Sys.argv.(0);
     Printf.printf "  %s -a reinforce -a actor-critic -n 300  # Custom comparison\n" Sys.argv.(0);
     Printf.printf "  %s -env curriculum -a baseline  # Use curriculum environment\n" Sys.argv.(0);
+    Printf.printf "  %s -env sokoban -a all -n 500  # Sokoban with all algorithms\n" Sys.argv.(0);
     exit 0
   end;
 
@@ -290,6 +291,8 @@ let () =
           stage_transitions = [];
         } in
         Slide11.create_curriculum_env curriculum_state
+    | "sokoban" ->
+        Workshop.Advanced_curriculum.create_sokoban_curriculum ()
     | _ ->
         Printf.eprintf "Unknown environment type: %s\n" env_type;
         exit 1
@@ -298,8 +301,13 @@ let () =
   (* Train selected algorithms *)
   let histories = ref [] in
 
-  (* Curriculum environment is always 5x5 *)
-  let effective_grid_size = if env_type = "curriculum" then 5 else grid_size in
+  (* Curriculum environment is always 5x5, Sokoban is 9x9 *)
+  let effective_grid_size =
+    match env_type with
+    | "curriculum" -> 5
+    | "sokoban" -> 9
+    | _ -> grid_size
+  in
 
   List.iter (fun algo ->
     match algo with
