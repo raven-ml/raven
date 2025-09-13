@@ -7,10 +7,12 @@ open Kaun
 
 (* Numerically stable log_softmax computation *)
 let log_softmax ~axis logits =
-  let max_logits = Rune.max logits ~axes:[| axis |] ~keepdims:true in
+  let max_logits =
+     Rune.max logits ~axes:[| axis |] ~keepdims:true in
   let shifted = Rune.sub logits max_logits in
   let exp_shifted = Rune.exp shifted in
-  let sum_exp = Rune.sum exp_shifted ~axes:[| axis |] ~keepdims:true in
+  let sum_exp =
+    Rune.sum exp_shifted ~axes:[| axis |] ~keepdims:true in
   Rune.sub shifted (Rune.log sum_exp)
 
 (* Define a simple policy network for our grid world *)
@@ -19,11 +21,15 @@ let create_policy_network grid_size n_actions =
   Layer.sequential [
     (* Custom reshape to handle [1, 5, 5] -> [1, 25] *)
     {
-      Kaun.init = (fun ~rngs:_ ~device:_ ~dtype:_ -> Kaun.Ptree.List []);
-      Kaun.apply = (fun _ ~training:_ ?rngs:_ x ->
-        (* Flatten from [batch, height, width] to [batch, height*width] *)
+      Kaun.init =
+        (fun ~rngs:_ ~device:_ ~dtype:_ -> Kaun.Ptree.List []);
+      Kaun.apply =
+        (fun _ ~training:_ ?rngs:_ x ->
+        (* Flatten from [batch, height, width]
+           to [batch, height*width] *)
         let shape = Rune.shape x in
-        let batch_size = if Array.length shape >= 1 then shape.(0) else 1 in
+        let batch_size =
+          if Array.length shape >= 1 then shape.(0) else 1 in
         Rune.reshape [|batch_size; grid_size * grid_size|] x
       );
     };
@@ -36,28 +42,23 @@ let create_policy_network grid_size n_actions =
     (* No softmax here - we'll apply it when needed *)
   ]
 
-(* Initialize the policy *)
 let initialize_policy () =
-  let rng = Rune.Rng.key 42 in  
-  (* Create network *)
-  let policy_net = create_policy_network 5 4 in  
-  (* Initialize parameters *)
+  let rng = Rune.Rng.key 42 in
+  let policy_net = create_policy_network 5 4 in
   let params =
     Kaun.init policy_net ~rngs:rng ~device ~dtype:Rune.float32 in  
   (policy_net, params) 
 
-(* Sample action from policy *)
 let sample_action policy_net params obs _rng =
-  (* Add batch dimension if needed *)
+  (* Add batch dimension if needed -- a frequent source of bugs! *)
   let obs_batched =
     if Array.length (Rune.shape obs) = 2 then
       Rune.reshape [|1; 5; 5|] obs
     else obs in
 
-  (* Get action logits *)
   let logits =
     Kaun.apply policy_net params ~training:false obs_batched in
-  (* Convert to probabilities *)
+  (* Convert to action probabilities *)
   let probs = Rune.softmax ~axes:[|-1|] logits in
   (* Sample from categorical distribution *)
   (* Simple sampling: convert to CPU, sample, convert back *)
@@ -78,12 +79,18 @@ let sample_action policy_net params obs _rng =
     if r > cumsum.(i) then action_int := i + 1
   done;
   (* Convert to float tensor for environment *)
-  let action = Rune.scalar device Rune.float32 (float_of_int !action_int) in
+  let action =
+    Rune.scalar device Rune.float32 (float_of_int !action_int) in
   (* Also return log probability for REINFORCE *)
-  let log_probs = Rune.log (Rune.add probs (Rune.scalar device Rune.float32 1e-8)) in
+  let log_probs =
+    Rune.log (Rune.add probs 
+              (Rune.scalar device Rune.float32 1e-8)) in
   (* Get the log prob of selected action *)
-  let log_probs_array = Rune.to_array (Rune.reshape [|4|] log_probs) in
-  let action_log_prob = Rune.scalar device Rune.float32 log_probs_array.(!action_int) in
+  let log_probs_array =
+    Rune.to_array (Rune.reshape [|4|] log_probs) in
+  let action_log_prob =
+    Rune.scalar device Rune.float32
+      log_probs_array.(!action_int) in
   (action, action_log_prob)  
 
 let main () =

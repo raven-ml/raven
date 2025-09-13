@@ -112,12 +112,9 @@ Both environment and information states are **Markovian** - they capture all rel
 - **Action sampling**: Choose "down" with 60% probability
 - **Learned parameters**: θ represents all network weights and biases
 
-{pause}
-
 ### Workshop Part 2: Create Your First Policy Network
 
-{pause down="~duration:15"}
-
+{pause down}
 {.note title="Numerical Stability Tip"}
 > When computing log probabilities from a neural network:
 > - **Avoid**: `log(softmax(logits))` - can underflow for small probabilities
@@ -129,7 +126,6 @@ Both environment and information states are **Markovian** - they capture all rel
 > This prevents overflow in exp() and maintains precision across the full range.
 
 {pause down="~duration:15"}
-
 {slip include src=../example/sokoban/workshop/slide2.ml}
 
 ***
@@ -1249,11 +1245,12 @@ def create_generalization_curriculum():
 ### The Meta-Game: Learning to Generate Environments
 
 The frontier is now **learned environment generation**:
-- **POET**: Paired Open-Ended Trailblazer
-- **PAIRED**: Protagonist Antagonist Induced Regret Environment Design
-- **PLR**: Prioritized Level Replay
+- **POET**: Paired Open-Ended Trailblazer - co-evolves agents and environments
+- **PAIRED**: Protagonist Antagonist Induced Regret Environment Design - adversarial environment generation
+- **PLR**: Prioritized Level Replay - selectively revisits high-learning-value environments
+- **RLVR**: Reinforcement Learning from Verifiable Rewards - ensures reward correctness through formal verification
 
-These methods learn to create environments that maximize learning progress.
+These methods automate environment design, reward engineering, and curriculum discovery to maximize learning progress while ensuring correctness.
 
 ### Practical Guidelines
 
