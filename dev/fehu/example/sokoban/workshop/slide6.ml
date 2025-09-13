@@ -83,7 +83,8 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
         (* Get log prob of selected action -
            convert action back to int32 for indexing *)
         let action_int = int_of_float (Rune.item [] action) in
-        let action_tensor = Rune.scalar device Rune.int32 (Int32.of_int action_int) in
+        let action_tensor =
+          Rune.scalar device Rune.int32 (Int32.of_int action_int) in
         let action_expanded =
           Rune.reshape [|1; 1|] action_tensor in
         let action_log_prob =
