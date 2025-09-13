@@ -22,7 +22,7 @@ let train_reinforce env n_episodes learning_rate gamma =
       collect_episode env policy_net params 100 in
     
     (* Store first and last episodes *)
-    if episode = 1 || episode = n_episodes then
+    if episode < 4 || episode = n_episodes then
       collected_episodes := episode_data :: !collected_episodes;
     
     (* Compute returns *)

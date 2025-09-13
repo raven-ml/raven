@@ -41,11 +41,13 @@ let train_reinforce_with_baseline env n_episodes learning_rate
         (* Get log prob of selected action -
            convert action back to int32 for indexing *)
         let action_int = int_of_float (Rune.item [] action) in
-        let action_tensor = Rune.scalar device Rune.int32 (Int32.of_int action_int) in
+        let action_tensor =
+          Rune.scalar device Rune.int32 (Int32.of_int action_int) in
         let action_expanded =
           Rune.reshape [|1; 1|] action_tensor in
         let action_log_prob =
-          Rune.take_along_axis ~axis:(-1) action_expanded log_probs in
+          Rune.take_along_axis ~axis:(-1)
+            action_expanded log_probs in
         let action_log_prob =
           Rune.squeeze action_log_prob in        
         (* Loss: -advantage * log π(a_t|s_t) *)

@@ -15,10 +15,12 @@ let () =
   (* Visualize first and last episodes *)
   (match episodes with
   | [] -> print_endline "No episodes collected!"
-  | first :: rest ->
+  | [first] -> Workshop.Helpers.visualize_episode first 1
+  | first :: second :: rest ->
       Workshop.Helpers.visualize_episode first 1;
+      Workshop.Helpers.visualize_episode second 2;
       (match List.rev rest with
-       | [] -> () (* Only one episode *)
+       | [] -> ()
        | last :: _ -> Workshop.Helpers.visualize_episode last 100));
   
   print_endline "\nTraining complete!";
