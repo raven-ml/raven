@@ -16,6 +16,7 @@ let create_value_network grid_size =
     (* Single value output *)
     Kaun.Layer.linear ~in_features:16 ~out_features:1 ();
   ]
+
 (* REINFORCE with learned baseline (Actor-Critic) *)
 let train_actor_critic env n_episodes lr_actor lr_critic gamma =
   let rng = Rune.Rng.key 42 in  

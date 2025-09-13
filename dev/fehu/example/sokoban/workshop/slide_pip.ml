@@ -16,7 +16,7 @@ let run_complete_workshop () =
   let _, _, _ = train_reinforce env 50 0.01 0.99 in  
   (* 3. Add baseline for variance reduction *)
   print_endline "\nTraining with baseline...";
-  let _, _ = train_reinforce_with_baseline env 50 0.01 0.99 in  
+  let _, _ = train_reinforce_with_baseline env 50 0.01 0.99 in
   (* 4. Use learned baseline (Actor-Critic) *)
   print_endline "\nTraining Actor-Critic...";
   let _, _, _, _ = train_actor_critic env 50 0.01 0.005 0.99 in

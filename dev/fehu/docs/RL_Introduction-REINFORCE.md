@@ -651,6 +651,89 @@ Now we can understand GRPO: **REINFORCE + GRPO Innovation + Clipping + KL Penalt
 
 ***
 
+{pause down=ppo-multi-updates}
+
+## PPO's Key Innovation: Multiple Updates Per Batch
+
+While GRPO achieves sample efficiency through multiple trajectories from the same state, PPO takes a different approach: **reusing collected data through multiple gradient updates**.
+
+### The Sample Efficiency Problem
+
+Both REINFORCE and our REINFORCE++ (Slide 9) follow this pattern:
+1. Collect one episode
+2. Compute one gradient update
+3. Discard the episode
+4. Repeat
+
+This throws away valuable data after a single use!
+
+### PPO's Solution: Batch Collection and Reuse
+
+```python
+# Pseudocode for PPO's core innovation
+def train_ppo(env, n_iterations, batch_size, n_epochs):
+    for iteration in range(n_iterations):
+        # Step 1: Collect BATCH of trajectories
+        batch = collect_episodes(env, policy, batch_size)
+        old_policy = copy(policy)
+
+        # Step 2: Multiple optimization epochs on SAME data
+        for epoch in range(n_epochs):  # Typically 3-10 epochs
+            for trajectory in batch:
+                # Compute ratio using FIXED old_policy
+                ratio = pi(a|s) / old_pi(a|s)
+                # Update with clipped objective
+                loss = clip(ratio, 1-ε, 1+ε) * advantage
+                update_policy(loss)
+```
+
+### Why This Works
+
+1. **Fixed Reference Point**: `old_policy` stays constant during all epochs, providing a stable trust region
+2. **Clipping Becomes Essential**: As the policy diverges from `old_policy` over multiple updates, clipping prevents overfitting to the batch
+3. **Sample Efficiency**: Extract 3-10x more learning from each environment interaction
+
+### The Tradeoff Space
+
+| Algorithm | Trajectories | Updates | Variance Reduction |
+|-----------|-------------|---------|-------------------|
+| REINFORCE | 1 per step | 1 per trajectory | None |
+| REINFORCE++ | 1 per step | 1 per trajectory | Clipping/KL |
+| GRPO | Multiple from same state | 1 per trajectory | Relative advantages |
+| PPO | Batch collection | Multiple per trajectory | Clipping + reuse |
+
+### The Insight
+
+- **GRPO**: "Let's collect better data" (multiple trajectories from same state)
+- **PPO**: "Let's use our data better" (multiple updates per batch)
+- **Optimal**: Combine both approaches!
+
+{.note title="Exercise 3: Implementing Full PPO"}
+> Upgrade REINFORCE++ to full PPO by adding:
+> 1. Batch trajectory collection
+> 2. Multiple optimization epochs per batch
+> 3. Proper importance sampling with fixed old_policy
+>
+> See `exercise3.md` for detailed instructions.
+
+### Key Implementation Considerations
+
+1. **Batch Size**: Typically 32-2048 trajectories depending on environment
+2. **Number of Epochs**: Usually 3-10 (too many causes overfitting)
+3. **Minibatch Updates**: Large batches can be split into minibatches
+4. **Early Stopping**: Stop epochs if KL divergence exceeds threshold
+
+This completes our journey through modern policy optimization:
+- Started with basic REINFORCE
+- Added variance reduction techniques
+- Introduced stability through clipping and KL penalties
+- Explored GRPO's multiple trajectory approach
+- Culminated in PPO's efficient data reuse
+
+Each innovation addresses specific challenges while building on previous insights!
+
+***
+
 {pause down=fin}
 
 ## References

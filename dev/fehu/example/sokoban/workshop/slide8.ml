@@ -27,6 +27,7 @@ let compute_policy_loss_with_kl old_probs new_probs
              (Rune.mean kl_div) in  
   (* Combined loss *)
   Rune.add policy_loss kl_penalty
+
 (* Main function to demonstrate KL penalty *)
 let main () =
   print_endline "=== Slide 8: KL Divergence Penalty ===";
