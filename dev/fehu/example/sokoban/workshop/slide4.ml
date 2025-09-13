@@ -50,16 +50,23 @@ let train_reinforce env n_episodes learning_rate gamma =
           Kaun.apply policy_net p ~training:true state_batched in
         
         (* Compute negative log likelihood weighted by return *)
-        (* Create action mask without set_item *)
-        let action_int = int_of_float (Rune.item [] action) in
-        let mask =
-          Rune.init device Rune.float32 [|1; 4|] (fun idxs ->
-            if idxs.(1) = action_int then 1.0 else 0.0
-        ) in
-        
+        (* Get the log probability of the action that was taken *)
         let log_probs = log_softmax ~axis:(-1) logits in
+
+        (* Convert action to one-hot encoding to stay on device *)
+        (* First convert float action to int tensor *)
+        let action_int_tensor =
+          Rune.astype Rune.int32 action in
+        let action_one_hot =
+          Rune.one_hot ~num_classes:4 action_int_tensor in
+        (* Reshape to match log_probs shape [1, 4] *)
+        let action_one_hot =
+          Rune.reshape [|1; 4|] action_one_hot |>
+          Rune.astype Rune.float32 in
+
+        (* Select the log prob using element-wise multiply and sum *)
         let selected_log_prob =
-          Rune.sum (Rune.mul mask log_probs) in
+          Rune.sum (Rune.mul action_one_hot log_probs) in
         let weighted_loss =
           Rune.mul (Rune.neg selected_log_prob) 
                    (Rune.scalar device Rune.float32 g_t) in

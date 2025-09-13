@@ -62,12 +62,13 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
         let log_probs = log_softmax ~axis:(-1) logits in
         let probs = Rune.exp log_probs in
 
-        (* Get action log prob *)
-        let action_int = int_of_float (Rune.item [] action) in
-        let mask = Rune.init device Rune.float32 [|1; 4|] (fun idxs ->
-          if idxs.(1) = action_int then 1.0 else 0.0
-        ) in
-        let new_log_prob = Rune.sum (Rune.mul mask log_probs) in
+        (* Get action log prob - stay on device using one-hot *)
+        let action_int_tensor = Rune.astype Rune.int32 action in
+        let action_one_hot = Rune.one_hot ~num_classes:4 action_int_tensor in
+        let action_one_hot =
+          Rune.reshape [|1; 4|] action_one_hot |>
+          Rune.astype Rune.float32 in
+        let new_log_prob = Rune.sum (Rune.mul action_one_hot log_probs) in
         let old_log_prob =
           Rune.scalar device Rune.float32 old_log_probs_array.(t) in
 
