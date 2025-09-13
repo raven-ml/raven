@@ -4,14 +4,13 @@
 open Slide1
 open Slide2
 
-(* Episode data type *)
 type episode_data = {
   states : (float, Rune.float32_elt, [`c]) Rune.t array;
   actions : (float, Rune.float32_elt, [`c]) Rune.t array;
   rewards : float array;
   log_probs : (float, Rune.float32_elt, [`c]) Rune.t array;
 }
-(* Collect a complete episode using our policy *)
+
 let collect_episode env policy_net params max_steps =
   let rng = Rune.Rng.key (Random.int 1000000) in  
   (* Storage for episode data *)
@@ -50,7 +49,7 @@ let collect_episode env policy_net params max_steps =
     rewards = Array.of_list (List.rev !rewards);
     log_probs = Array.of_list (List.rev !log_probs);
   }
-(* Compute returns from rewards *)
+
 let compute_returns rewards gamma =
   let n = Array.length rewards in
   let returns = Array.make n 0.0 in  
@@ -62,7 +61,7 @@ let compute_returns rewards gamma =
       returns.(i) <- rewards.(i) +. gamma *. returns.(i + 1)
   done;  
   returns
-(* Main function to test episode collection *)
+
 let main () =
   print_endline "=== Slide 3: Episode Collection ===";
   let env = create_simple_gridworld 5 in

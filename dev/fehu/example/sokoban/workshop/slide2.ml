@@ -61,7 +61,8 @@ let sample_action policy_net params obs _rng =
   (* Convert to action probabilities *)
   let probs = Rune.softmax ~axes:[|-1|] logits in
   (* Sample from categorical distribution *)
-  (* Simple sampling: convert to CPU, sample, convert back *)
+  (* Simple sampling: convert to CPU, sample, convert back;
+     OK because the environment runs on CPU and is the bottleneck. *)
   (* Handle both [1,4] and [4] shapes *)
   let probs_flat =
     if Array.length (Rune.shape probs) = 2 then
