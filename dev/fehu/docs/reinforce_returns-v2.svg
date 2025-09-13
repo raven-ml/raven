@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="400" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="400" fill="white"/>
+  <line x1="50" y1="350" x2="750" y2="350" stroke="black" stroke-width="2"/>
+  <line x1="50" y1="50" x2="50" y2="350" stroke="black" stroke-width="2"/>
+  <text x="400" y="30" text-anchor="middle" font-size="20" font-weight="bold">Returns per Episode</text>
+  <text x="400" y="390" text-anchor="middle" font-size="14">Episode</text>
+  <text x="15" y="200" text-anchor="middle" font-size="14" transform="rotate(-90 15 200)">Returns</text>
+  <text x="50" y="370" text-anchor="middle" font-size="12">0</text>
+  <text x="40" y="350" text-anchor="end" font-size="12">2.8</text>
+  <text x="234" y="370" text-anchor="middle" font-size="12">5</text>
+  <text x="40" y="276" text-anchor="end" font-size="12">4.4</text>
+  <text x="418" y="370" text-anchor="middle" font-size="12">10</text>
+  <text x="40" y="200" text-anchor="end" font-size="12">5.9</text>
+  <text x="602" y="370" text-anchor="middle" font-size="12">15</text>
+  <text x="40" y="126" text-anchor="end" font-size="12">7.5</text>
+  <text x="786" y="370" text-anchor="middle" font-size="12">20</text>
+  <text x="40" y="50" text-anchor="end" font-size="12">9.0</text>
+  <polyline points="50,145 86,136 123,135 160,133 197,127 234,121 271,111 307,102 344,98 381,110 418,101 455,101 492,98 528,92 565,89 602,90 639,94 676,97 713,97 750,95" fill="none" stroke="#d62728" stroke-width="2" opacity="0.8"/>
+  <polyline points="50,180 86,200 123,192 160,180 197,169 234,160 271,156 307,161 344,152 381,150 418,132 455,99 492,74 528,66 565,64 602,64 639,63 676,62 713,50 750,51" fill="none" stroke="#2ca02c" stroke-width="2" opacity="0.8"/>
+  <polyline points="50,232 86,215 123,206 160,203 197,280 234,263 271,330 307,314 344,345 381,348 418,347 455,350 492,350 528,343 565,335 602,271 639,290 676,205 713,194 750,148" fill="none" stroke="#1f77b4" stroke-width="2" opacity="0.8"/>
+  <line x1="600" y1="70" x2="630" y2="70" stroke="#d62728" stroke-width="2"/>
+  <text x="635" y="74" font-size="12">Actor-Critic</text>
+  <line x1="600" y1="90" x2="630" y2="90" stroke="#2ca02c" stroke-width="2"/>
+  <text x="635" y="94" font-size="12">REINFORCE with baseline</text>
+  <line x1="600" y1="110" x2="630" y2="110" stroke="#1f77b4" stroke-width="2"/>
+  <text x="635" y="114" font-size="12">REINFORCE (no baseline)</text>
+</svg>

@@ -98,13 +98,15 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
 
         (* Convert action to one-hot encoding to stay on device *)
         let action_int_tensor = Rune.astype Rune.int32 action in
-        let action_one_hot = Rune.one_hot ~num_classes:4 action_int_tensor in
+        let action_one_hot =
+          Rune.one_hot ~num_classes:4 action_int_tensor in
         let action_one_hot =
           Rune.reshape [|1; 4|] action_one_hot |>
           Rune.astype Rune.float32 in
 
         (* Select the log prob using element-wise multiply and sum *)
-        let action_log_prob = Rune.sum (Rune.mul action_one_hot log_probs) in
+        let action_log_prob =
+          Rune.sum (Rune.mul action_one_hot log_probs) in
         let step_loss = Rune.mul
           (Rune.scalar device Rune.float32 (-. advantage))
           action_log_prob in
@@ -122,9 +124,11 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
       policy_params policy_updates;
 
     (* Track history *)
-    let total_reward = Array.fold_left (+.) 0. episode_data.rewards in
+    let total_reward =
+      Array.fold_left (+.) 0. episode_data.rewards in
     history_returns.(episode - 1) <- total_reward;
-    history_losses.(episode - 1) <- Rune.item [] value_loss;  (* Using value loss as primary metric *)
+    (* Using value loss as primary metric *)
+    history_losses.(episode - 1) <- Rune.item [] value_loss;
 
     if episode mod 10 = 0 then
       Printf.printf

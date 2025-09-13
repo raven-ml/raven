@@ -23,9 +23,9 @@ let train_reinforce_with_baseline env n_episodes learning_rate
     (* Collect episode *)
     let episode_data =
       collect_episode env policy_net params 100 in
-    let returns = compute_returns episode_data.rewards gamma in    
+    let returns = compute_returns episode_data.rewards gamma in
     (* Update baseline (exponential moving average) *)
-    let episode_return = returns.(0) in
+    let episode_return = if Array.length returns > 0 then returns.(0) else 0.0 in
     baseline := !baseline *. (1.0 -. baseline_alpha) +. 
                 episode_return *. baseline_alpha;    
     (* Compute advantages (returns - baseline) *)
@@ -34,13 +34,16 @@ let train_reinforce_with_baseline env n_episodes learning_rate
     (* Compute policy gradient with baseline *)
     let loss, grads = Kaun.value_and_grad (fun p ->
       let total_loss =
-        ref (Rune.zeros device Rune.float32 [||]) in      
-      Array.iteri (fun t state ->
+        ref (Rune.zeros device Rune.float32 [||]) in
+      (* Only iterate over steps where we have advantages *)
+      let n_steps = Array.length advantages in
+      for t = 0 to n_steps - 1 do
+        let state = episode_data.states.(t) in
         let action = episode_data.actions.(t) in
         (* Use advantage instead of return *)
         let advantage = advantages.(t) in
         (* Add batch dimension to state *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in        
+        let state_batched = Rune.reshape [|1; 5; 5|] state in
         let logits =
           Kaun.apply policy_net p ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
@@ -55,17 +58,17 @@ let train_reinforce_with_baseline env n_episodes learning_rate
 
         (* Select log prob using element-wise multiply and sum *)
         let action_log_prob =
-          Rune.sum (Rune.mul action_one_hot log_probs) in        
+          Rune.sum (Rune.mul action_one_hot log_probs) in
         (* Loss: -advantage * log π(a_t|s_t) *)
         let step_loss = Rune.mul
           (Rune.scalar device Rune.float32 (-. advantage))
-          action_log_prob in        
+          action_log_prob in
         total_loss := Rune.add !total_loss step_loss
-      ) episode_data.states;      
-      let n_steps =
-        float_of_int (Array.length episode_data.states) in
+      done;
+      let n_steps_float =
+        float_of_int n_steps in
       Rune.div !total_loss
-        (Rune.scalar device Rune.float32 n_steps)
+        (Rune.scalar device Rune.float32 n_steps_float)
     ) params in    
     (* Update parameters *)
     let updates, new_state =

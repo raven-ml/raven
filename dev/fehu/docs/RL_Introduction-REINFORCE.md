@@ -402,8 +402,8 @@ From Sutton & Barto:
 {slip include src=../example/sokoban/workshop/slide5.ml}
 
 {pause down focus .block}
-> ![REINFORCE without baseline vs. with non-learned baseline: losses](reinforce_losses.svg)
-> ![REINFORCE without baseline vs. with non-learned baseline: returns](reinforce_returns.svg)
+> ![REINFORCE without baseline vs. with non-learned baseline: losses](reinforce_losses-v1.svg)
+> ![REINFORCE without baseline vs. with non-learned baseline: returns](reinforce_returns-v1.svg)
 
 
 ***
@@ -435,9 +435,13 @@ The baseline **neural network** is learned to predict expected returns, reducing
 {pause down="~duration:15"}
 {slip include src=../example/sokoban/workshop/slide6.ml}
 
+{pause down focus .block}
+> ![REINFORCE without baseline vs. with non-learned baseline: losses](reinforce_losses-v2.svg)
+> ![REINFORCE without baseline vs. with non-learned baseline: returns](reinforce_returns-v2.svg)
+
 ***
 
-{pause center}
+{pause unfocus center}
 ### Actor-Critic Methods
 
 From Sutton & Barto:

@@ -108,8 +108,13 @@ let generate_svg_plot histories metric_name output_file =
   List.iter (fun h ->
     Printf.fprintf oc "  <line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"2\"/>\n"
       (width - margin - 150) !legend_y (width - margin - 120) !legend_y h.color;
+    let legend_text =
+      if metric_name = "losses" && h.name = "Actor-Critic" then
+        h.name ^ " (value loss)"
+      else
+        h.name in
     Printf.fprintf oc "  <text x=\"%d\" y=\"%d\" font-size=\"12\">%s</text>\n"
-      (width - margin - 115) (!legend_y + 4) h.name;
+      (width - margin - 115) (!legend_y + 4) legend_text;
     legend_y := !legend_y + 20
   ) histories;
 
@@ -148,6 +153,7 @@ let ascii_plot histories metric_name window_size =
       | 0 -> '*'
       | 1 -> '+'
       | 2 -> 'o'
+      | 3 -> 'x'
       | _ -> '.'
     in
 
@@ -185,45 +191,135 @@ let ascii_plot histories metric_name window_size =
       | 0 -> '*'
       | 1 -> '+'
       | 2 -> 'o'
+      | 3 -> 'x'
       | _ -> '.'
     in
     Printf.printf "  %c - %s\n" char h.name
   ) histories
 
+(* Parse command line arguments *)
+let parse_args () =
+  let algorithms = ref [] in
+  let n_episodes = ref 200 in
+  let learning_rate = ref 0.01 in
+  let gamma = ref 0.99 in
+  let help = ref false in
+
+  let usage = Printf.sprintf
+    "Usage: %s [OPTIONS]\n\
+     Compare different REINFORCE variants.\n\n\
+     Options:" Sys.argv.(0) in
+
+  let spec = [
+    ("-a", Arg.String (fun s -> algorithms := s :: !algorithms),
+     "ALGO  Add algorithm to comparison: reinforce, baseline, actor-critic, all (default: reinforce,baseline)");
+    ("-n", Arg.Set_int n_episodes,
+     "N     Number of training episodes (default: 200)");
+    ("-lr", Arg.Set_float learning_rate,
+     "LR    Learning rate (default: 0.01)");
+    ("-gamma", Arg.Set_float gamma,
+     "G     Discount factor (default: 0.99)");
+    ("-help", Arg.Set help,
+     "      Display this help message");
+    ("--help", Arg.Set help,
+     "     Display this help message");
+  ] in
+
+  Arg.parse spec (fun _ -> ()) usage;
+
+  if !help then begin
+    Printf.printf "%s\n" usage;
+    Printf.printf "  -a ALGO       Add algorithm to comparison\n";
+    Printf.printf "                Available: reinforce, baseline, actor-critic, all\n";
+    Printf.printf "  -n N          Number of training episodes (default: 200)\n";
+    Printf.printf "  -lr LR        Learning rate (default: 0.01)\n";
+    Printf.printf "  -gamma G      Discount factor (default: 0.99)\n";
+    Printf.printf "  -help/--help  Display this help message\n\n";
+    Printf.printf "Examples:\n";
+    Printf.printf "  %s                          # Compare reinforce vs baseline\n" Sys.argv.(0);
+    Printf.printf "  %s -a all                   # Compare all algorithms\n" Sys.argv.(0);
+    Printf.printf "  %s -a reinforce -a actor-critic -n 300  # Custom comparison\n" Sys.argv.(0);
+    exit 0
+  end;
+
+  (* Default to reinforce and baseline if no algorithms specified *)
+  let algos = if !algorithms = [] then ["reinforce"; "baseline"] else !algorithms in
+
+  (* Handle "all" option *)
+  let algos = if List.mem "all" algos then
+    ["reinforce"; "baseline"; "actor-critic"]
+  else
+    algos in
+
+  (List.rev algos, !n_episodes, !learning_rate, !gamma)
+
 (* Main function *)
 let () =
   Random.self_init ();
+
+  let algorithms, n_episodes, learning_rate, gamma = parse_args () in
+
   print_endline "=== RL Workshop: Algorithm Comparison ===";
-  print_endline "Training multiple REINFORCE variants...\n";
+  Printf.printf "Comparing algorithms: %s\n" (String.concat ", " algorithms);
+  Printf.printf "Episodes: %d, Learning rate: %.3f, Gamma: %.2f\n\n"
+    n_episodes learning_rate gamma;
 
   let env = Slide1.create_simple_gridworld 5 in
-  let n_episodes = 200 in
-  let learning_rate = 0.01 in
-  let gamma = 0.99 in
 
-  (* Train different variants using slide functions *)
-  print_endline "Training REINFORCE without baseline...";
-  let _policy_net1, _params1, _episodes1, history_no_baseline =
-    Slide4.train_reinforce env n_episodes learning_rate gamma in
+  (* Train selected algorithms *)
+  let histories = ref [] in
 
-  print_endline "\nTraining REINFORCE with baseline...";
-  let _policy_net2, _params2, history_baseline =
-    Slide5.train_reinforce_with_baseline env n_episodes learning_rate gamma in
+  List.iter (fun algo ->
+    match algo with
+    | "reinforce" ->
+        print_endline "Training REINFORCE without baseline...";
+        let _policy_net, _params, _episodes, history =
+          Slide4.train_reinforce env n_episodes learning_rate gamma in
+        histories := {
+          name = "REINFORCE (no baseline)";
+          returns = history.returns;
+          losses = history.losses;
+          color = "#1f77b4"  (* Blue *)
+        } :: !histories
 
-  (* Convert to named histories *)
-  let histories = [
-    { name = "REINFORCE (no baseline)";
-      returns = history_no_baseline.returns;
-      losses = history_no_baseline.losses;
-      color = "#1f77b4" };  (* Blue *)
-    { name = "REINFORCE with baseline";
-      returns = history_baseline.returns;
-      losses = history_baseline.losses;
-      color = "#2ca02c" };  (* Green *)
-  ] in
+    | "baseline" ->
+        print_endline "Training REINFORCE with baseline...";
+        let _policy_net, _params, history =
+          Slide5.train_reinforce_with_baseline env n_episodes learning_rate gamma in
+        histories := {
+          name = "REINFORCE with baseline";
+          returns = history.returns;
+          losses = history.losses;
+          color = "#2ca02c"  (* Green *)
+        } :: !histories
+
+    | "actor-critic" ->
+        print_endline "Training Actor-Critic...";
+        (* Actor-Critic uses different learning rates for actor and critic *)
+        let lr_critic = learning_rate *. 0.5 in  (* Critic often trains slower *)
+        let _policy_net, _policy_params, _value_net, _value_params, history =
+          Slide6.train_actor_critic env n_episodes learning_rate lr_critic gamma in
+        histories := {
+          name = "Actor-Critic";
+          returns = history.returns;
+          losses = history.losses;
+          color = "#d62728"  (* Red *)
+        } :: !histories
+
+    | unknown ->
+        Printf.eprintf "Warning: Unknown algorithm '%s', skipping\n" unknown
+  ) algorithms;
+
+  let histories = List.rev !histories in
+
+  if histories = [] then begin
+    Printf.eprintf "Error: No valid algorithms selected\n";
+    exit 1
+  end;
 
   (* ASCII plots for terminal *)
   ascii_plot histories "returns" 10;
+  print_endline "\nNote: Actor-Critic shows value network loss, others show policy loss";
   ascii_plot histories "losses" 10;
 
   (* SVG plots for files *)
@@ -240,12 +336,15 @@ let () =
                      float_of_int (Array.length last_10_returns) in
     Printf.printf "%s:\n" h.name;
     Printf.printf "  Average last 10 returns: %.2f\n" avg_return;
-    Printf.printf "  Final loss: %.4f\n" h.losses.(n - 1);
+    let loss_type = if h.name = "Actor-Critic" then "value loss" else "policy loss" in
+    Printf.printf "  Final %s: %.4f\n" loss_type h.losses.(n - 1);
   ) histories;
 
   print_endline "\n=== Analysis ===";
   print_endline "Expected observations:";
-  print_endline "1. Baseline reduces variance in returns (smoother curve)";
-  print_endline "2. Baseline may converge faster to optimal policy";
-  print_endline "3. Loss magnitude typically smaller with baseline";
-  print_endline "4. Both should eventually reach similar performance"
+  if List.exists (fun h -> h.name = "REINFORCE with baseline") histories then
+    print_endline "- Baseline reduces variance in returns (smoother curve)";
+  if List.exists (fun h -> h.name = "Actor-Critic") histories then
+    print_endline "- Actor-Critic uses learned baseline for better variance reduction";
+  print_endline "- All methods should converge to similar final performance";
+  print_endline "- Training stability varies: Actor-Critic > Baseline > REINFORCE"
