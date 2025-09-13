@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="400" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="400" fill="white"/>
+  <line x1="50" y1="350" x2="750" y2="350" stroke="black" stroke-width="2"/>
+  <line x1="50" y1="50" x2="50" y2="350" stroke="black" stroke-width="2"/>
+  <text x="400" y="30" text-anchor="middle" font-size="20" font-weight="bold">Losses per Episode</text>
+  <text x="400" y="390" text-anchor="middle" font-size="14">Episode</text>
+  <text x="15" y="200" text-anchor="middle" font-size="14" transform="rotate(-90 15 200)">Losses</text>
+  <text x="50" y="370" text-anchor="middle" font-size="12">0</text>
+  <text x="40" y="350" text-anchor="end" font-size="12">-8.6</text>
+  <text x="221" y="370" text-anchor="middle" font-size="12">12</text>
+  <text x="40" y="275" text-anchor="end" font-size="12">1.1</text>
+  <text x="407" y="370" text-anchor="middle" font-size="12">25</text>
+  <text x="40" y="200" text-anchor="end" font-size="12">10.8</text>
+  <text x="578" y="370" text-anchor="middle" font-size="12">37</text>
+  <text x="40" y="125" text-anchor="end" font-size="12">20.5</text>
+  <text x="764" y="370" text-anchor="middle" font-size="12">50</text>
+  <text x="40" y="50" text-anchor="end" font-size="12">30.3</text>
+  <polyline points="50,245 64,244 78,243 92,243 107,243 121,243 135,243 150,240 164,240 178,244 192,245 207,245 221,245 235,246 250,251 264,256 278,256 292,256 307,257 321,257 335,254 350,254 364,254 378,255 392,255 407,250 421,246 435,247 450,247 464,248 478,248 492,248 507,249 521,249 535,249 550,250 564,250 578,250 592,251 607,251 621,252 635,252 650,252 664,253 678,253 692,253 707,253 721,253 735,254 750,254" fill="none" stroke="#ff7f0e" stroke-width="2" opacity="0.8"/>
+  <polyline points="50,160 64,161 78,162 92,162 107,163 121,164 135,166 150,167 164,169 178,148 192,149 207,151 221,153 235,154 250,156 264,157 278,159 292,161 307,162 321,163 335,188 350,190 364,191 378,160 392,162 407,164 421,166 435,167 450,169 464,171 478,172 492,174 507,175 521,125 535,160 550,161 564,134 578,112 592,113 607,114 621,83 635,84 650,55 664,56 678,81 692,67 707,50 721,67 735,82 750,59" fill="none" stroke="#d62728" stroke-width="2" opacity="0.8"/>
+  <polyline points="50,321 64,321 78,321 92,320 107,320 121,320 135,319 150,318 164,318 178,308 192,308 207,307 221,307 235,306 250,297 264,297 278,288 292,287 307,280 321,280 335,288 350,279 364,278 378,271 392,264 407,263 421,255 435,253 450,243 464,243 478,234 492,226 507,226 521,220 535,227 550,224 564,228 578,226 592,229 607,230 621,228 635,227 650,226 664,226 678,224 692,214 707,216 721,212 735,213 750,209" fill="none" stroke="#2ca02c" stroke-width="2" opacity="0.8"/>
+  <polyline points="50,349 64,349 78,350 92,350 107,349 121,349 135,350 150,350 164,350 178,350 192,350 207,350 221,350 235,350 250,344 264,345 278,344 292,345 307,344 321,344 335,344 350,344 364,344 378,344 392,344 407,350 421,350 435,350 450,350 464,350 478,340 492,340 507,340 521,332 535,327 550,322 564,315 578,315 592,309 607,309 621,309 635,318 650,318 664,318 678,326 692,330 707,334 721,340 735,339 750,349" fill="none" stroke="#1f77b4" stroke-width="2" opacity="0.8"/>
+  <line x1="600" y1="70" x2="630" y2="70" stroke="#ff7f0e" stroke-width="2"/>
+  <text x="635" y="74" font-size="12">REINFORCE++</text>
+  <line x1="600" y1="90" x2="630" y2="90" stroke="#d62728" stroke-width="2"/>
+  <text x="635" y="94" font-size="12">Actor-Critic (value loss)</text>
+  <line x1="600" y1="110" x2="630" y2="110" stroke="#2ca02c" stroke-width="2"/>
+  <text x="635" y="114" font-size="12">REINFORCE with baseline</text>
+  <line x1="600" y1="130" x2="630" y2="130" stroke="#1f77b4" stroke-width="2"/>
+  <text x="635" y="134" font-size="12">REINFORCE (no baseline)</text>
+</svg>

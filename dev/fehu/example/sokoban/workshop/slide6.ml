@@ -19,14 +19,14 @@ let create_value_network grid_size =
   ]
 
 (* REINFORCE with learned baseline (Actor-Critic) *)
-let train_actor_critic env n_episodes lr_actor lr_critic gamma =
+let train_actor_critic env n_episodes lr_actor lr_critic gamma ?(grid_size=5) () =
   (* History tracking *)
   let history_returns = Array.make n_episodes 0.0 in
   let history_losses = Array.make n_episodes 0.0 in
-  let rng = Rune.Rng.key 42 in  
+  let rng = Rune.Rng.key 42 in
   (* Initialize actor (policy) and critic (value) networks *)
-  let policy_net = create_policy_network 5 4 in
-  let value_net = create_value_network 5 in  
+  let policy_net = create_policy_network grid_size 4 in
+  let value_net = create_value_network grid_size in  
   let keys = Rune.Rng.split ~n:2 rng in
   let policy_params =
     Kaun.init policy_net ~rngs:keys.(0) ~device
@@ -49,7 +49,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
     let values = Array.init n_steps (fun i ->
       let state = episode_data.states.(i) in
       (* Add batch dimension to state *)
-      let state_batched = Rune.reshape [|1; 5; 5|] state in
+      let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
       let v =
         Kaun.apply value_net value_params ~training:false state_batched in
       Rune.item [] v
@@ -63,7 +63,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
       let n_steps = Array.length returns in
       let predictions = Array.init n_steps (fun i ->
         let state = episode_data.states.(i) in
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let pred = Kaun.apply value_net vp ~training:true state_batched in
         (* Squeeze to remove batch dimension *)
         Rune.squeeze ~axes:[|0; 1|] pred
@@ -91,7 +91,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
         let action = episode_data.actions.(t) in
         let advantage = advantages.(t) in
         (* Add batch dimension to state *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let logits =
           Kaun.apply policy_net pp ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
@@ -146,7 +146,7 @@ let main () =
   
   (* Train for a few episodes *)
   let _policy_net, _policy_params, _value_net, _value_params, _history =
-    train_actor_critic env 20 0.01 0.005 0.99 in
+    train_actor_critic env 20 0.01 0.005 0.99 () in
   
   print_endline "Actor-Critic training complete!"
 

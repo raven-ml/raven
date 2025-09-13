@@ -7,8 +7,8 @@ open Slide3
 open Slide4  (* For training_history type *)
 (* REINFORCE with running average baseline *)
 let train_reinforce_with_baseline env n_episodes learning_rate
-     gamma =
-  let policy_net, params = initialize_policy () in
+     gamma ?(grid_size=5) () =
+  let policy_net, params = initialize_policy ~grid_size () in
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
   let opt_state = ref (optimizer.init params) in
   let baseline = ref 0.0 in
@@ -43,7 +43,7 @@ let train_reinforce_with_baseline env n_episodes learning_rate
         (* Use advantage instead of return *)
         let advantage = advantages.(t) in
         (* Add batch dimension to state *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let logits =
           Kaun.apply policy_net p ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
@@ -96,7 +96,7 @@ let main () =
   
   (* Train for a few episodes *)
   let _policy_net, _params, _history =
-    train_reinforce_with_baseline env 20 0.01 0.99 in
+    train_reinforce_with_baseline env 20 0.01 0.99 () in
   
   print_endline "REINFORCE with baseline training complete!"
 

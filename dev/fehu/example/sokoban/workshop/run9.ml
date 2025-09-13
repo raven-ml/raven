@@ -15,8 +15,8 @@ let () =
   print_endline "- Learning rate: 0.01";
   print_endline "- Discount factor: 0.99\n";
 
-  let policy_net, params =
-    Slide9.train_reinforce_plus_plus env 200 0.01 0.99 0.2 0.01 in
+  let policy_net, params, _history =
+    Slide9.train_reinforce_plus_plus env 200 0.01 0.99 0.2 0.01 () in
 
   (* Evaluate final policy *)
   print_endline "\n=== Evaluating final policy ===";

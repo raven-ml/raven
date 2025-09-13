@@ -12,9 +12,9 @@ type training_history = {
 }
 
 (* REINFORCE training loop *)
-let train_reinforce env n_episodes learning_rate gamma =
+let train_reinforce env n_episodes learning_rate gamma ?(grid_size=5) () =
   (* Initialize policy *)
-  let policy_net, params = initialize_policy () in
+  let policy_net, params = initialize_policy ~grid_size () in
   (* Create optimizer *)
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
   let opt_state = ref (optimizer.init params) in
@@ -56,7 +56,7 @@ let train_reinforce env n_episodes learning_rate gamma =
         
         (* Classic gotcha with the Gym API:
            adding batch dimension. *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let logits =
           Kaun.apply policy_net p ~training:true state_batched in
         

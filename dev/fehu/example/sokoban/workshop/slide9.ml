@@ -13,8 +13,8 @@ let copy_params params =
 
 (* REINFORCE++ with baseline, clipping, and KL penalty *)
 let train_reinforce_plus_plus env n_episodes learning_rate gamma
-    epsilon beta =
-  let policy_net, params = initialize_policy () in
+    epsilon beta ?(grid_size=5) () =
+  let policy_net, params = initialize_policy ~grid_size () in
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
   let opt_state = ref (optimizer.init params) in
 
@@ -51,7 +51,7 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
     let n_states = min 10 (Array.length advantages) in
     for t = 0 to n_states - 1 do
       let state = episode_data.states.(t) in
-      let state_batched = Rune.reshape [|1; 5; 5|] state in
+      let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
       let old_logits =
         Kaun.apply policy_net !old_params ~training:false
           state_batched in
@@ -80,7 +80,7 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
         let advantage = advantages.(t) in
 
         (* Get current policy probabilities *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let logits =
           Kaun.apply policy_net p ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
@@ -169,7 +169,7 @@ let main () =
 
   (* Train with clipping (epsilon=0.2) and KL penalty (beta=0.01) *)
   let _policy_net, _params, _history =
-    train_reinforce_plus_plus env 50 0.01 0.99 0.2 0.01 in
+    train_reinforce_plus_plus env 50 0.01 0.99 0.2 0.01 () in
 
   print_endline "REINFORCE++ training complete!"
 

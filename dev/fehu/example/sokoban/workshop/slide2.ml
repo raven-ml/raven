@@ -42,18 +42,19 @@ let create_policy_network grid_size n_actions =
     (* No softmax here - we'll apply it when needed *)
   ]
 
-let initialize_policy () =
+let initialize_policy ?(grid_size=5) () =
   let rng = Rune.Rng.key 42 in
-  let policy_net = create_policy_network 5 4 in
+  let policy_net = create_policy_network grid_size 4 in
   let params =
-    Kaun.init policy_net ~rngs:rng ~device ~dtype:Rune.float32 in  
+    Kaun.init policy_net ~rngs:rng ~device ~dtype:Rune.float32 in
   (policy_net, params) 
 
 let sample_action policy_net params obs _rng =
   (* Add batch dimension if needed -- a frequent source of bugs! *)
   let obs_batched =
     if Array.length (Rune.shape obs) = 2 then
-      Rune.reshape [|1; 5; 5|] obs
+      let shape = Rune.shape obs in
+      Rune.reshape [|1; shape.(0); shape.(1)|] obs
     else obs in
 
   let logits =

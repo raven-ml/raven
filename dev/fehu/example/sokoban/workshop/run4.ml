@@ -10,7 +10,7 @@ let () =
   
   (* Train the agent and get collected episodes *)
   let _policy_net, _params, episodes, _history =
-    train_reinforce env 100 0.01 0.99 in
+    train_reinforce env 100 0.01 0.99 () in
   
   (* Visualize first and last episodes *)
   (match episodes with

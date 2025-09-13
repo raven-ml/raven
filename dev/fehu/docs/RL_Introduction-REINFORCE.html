@@ -2046,18 +2046,19 @@ let create_policy_network grid_size n_actions =
     (* No softmax here - we'll apply it when needed *)
   ]
 
-let initialize_policy () =
+let initialize_policy ?(grid_size=5) () =
   let rng = Rune.Rng.key 42 in
-  let policy_net = create_policy_network 5 4 in
+  let policy_net = create_policy_network grid_size 4 in
   let params =
-    Kaun.init policy_net ~rngs:rng ~device ~dtype:Rune.float32 in  
+    Kaun.init policy_net ~rngs:rng ~device ~dtype:Rune.float32 in
   (policy_net, params) 
 
 let sample_action policy_net params obs _rng =
   (* Add batch dimension if needed -- a frequent source of bugs! *)
   let obs_batched =
     if Array.length (Rune.shape obs) = 2 then
-      Rune.reshape [|1; 5; 5|] obs
+      let shape = Rune.shape obs in
+      Rune.reshape [|1; shape.(0); shape.(1)|] obs
     else obs in
 
   let logits =
@@ -2387,9 +2388,9 @@ type training_history = {
 }
 
 (* REINFORCE training loop *)
-let train_reinforce env n_episodes learning_rate gamma =
+let train_reinforce env n_episodes learning_rate gamma ?(grid_size=5) () =
   (* Initialize policy *)
-  let policy_net, params = initialize_policy () in
+  let policy_net, params = initialize_policy ~grid_size () in
   (* Create optimizer *)
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
   let opt_state = ref (optimizer.init params) in
@@ -2431,7 +2432,7 @@ let train_reinforce env n_episodes learning_rate gamma =
         
         (* Classic gotcha with the Gym API:
            adding batch dimension. *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let logits =
           Kaun.apply policy_net p ~training:true state_batched in
         
@@ -2576,8 +2577,8 @@ open Slide3
 open Slide4  (* For training_history type *)
 (* REINFORCE with running average baseline *)
 let train_reinforce_with_baseline env n_episodes learning_rate
-     gamma =
-  let policy_net, params = initialize_policy () in
+     gamma ?(grid_size=5) () =
+  let policy_net, params = initialize_policy ~grid_size () in
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
   let opt_state = ref (optimizer.init params) in
   let baseline = ref 0.0 in
@@ -2612,7 +2613,7 @@ let train_reinforce_with_baseline env n_episodes learning_rate
         (* Use advantage instead of return *)
         let advantage = advantages.(t) in
         (* Add batch dimension to state *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let logits =
           Kaun.apply policy_net p ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
@@ -2665,7 +2666,7 @@ let main () =
   
   (* Train for a few episodes *)
   let _policy_net, _params, _history =
-    train_reinforce_with_baseline env 20 0.01 0.99 in
+    train_reinforce_with_baseline env 20 0.01 0.99 () in
   
   print_endline &amp;quot;REINFORCE with baseline training complete!&amp;quot;
 
@@ -2732,14 +2733,14 @@ let create_value_network grid_size =
   ]
 
 (* REINFORCE with learned baseline (Actor-Critic) *)
-let train_actor_critic env n_episodes lr_actor lr_critic gamma =
+let train_actor_critic env n_episodes lr_actor lr_critic gamma ?(grid_size=5) () =
   (* History tracking *)
   let history_returns = Array.make n_episodes 0.0 in
   let history_losses = Array.make n_episodes 0.0 in
-  let rng = Rune.Rng.key 42 in  
+  let rng = Rune.Rng.key 42 in
   (* Initialize actor (policy) and critic (value) networks *)
-  let policy_net = create_policy_network 5 4 in
-  let value_net = create_value_network 5 in  
+  let policy_net = create_policy_network grid_size 4 in
+  let value_net = create_value_network grid_size in  
   let keys = Rune.Rng.split ~n:2 rng in
   let policy_params =
     Kaun.init policy_net ~rngs:keys.(0) ~device
@@ -2762,7 +2763,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
     let values = Array.init n_steps (fun i -&amp;gt;
       let state = episode_data.states.(i) in
       (* Add batch dimension to state *)
-      let state_batched = Rune.reshape [|1; 5; 5|] state in
+      let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
       let v =
         Kaun.apply value_net value_params ~training:false state_batched in
       Rune.item [] v
@@ -2776,7 +2777,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
       let n_steps = Array.length returns in
       let predictions = Array.init n_steps (fun i -&amp;gt;
         let state = episode_data.states.(i) in
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let pred = Kaun.apply value_net vp ~training:true state_batched in
         (* Squeeze to remove batch dimension *)
         Rune.squeeze ~axes:[|0; 1|] pred
@@ -2804,7 +2805,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma =
         let action = episode_data.actions.(t) in
         let advantage = advantages.(t) in
         (* Add batch dimension to state *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let logits =
           Kaun.apply policy_net pp ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
@@ -2859,7 +2860,7 @@ let main () =
   
   (* Train for a few episodes *)
   let _policy_net, _policy_params, _value_net, _value_params, _history =
-    train_actor_critic env 20 0.01 0.005 0.99 in
+    train_actor_critic env 20 0.01 0.005 0.99 () in
   
   print_endline &amp;quot;Actor-Critic training complete!&amp;quot;
 
@@ -3122,8 +3123,8 @@ let copy_params params =
 
 (* REINFORCE++ with baseline, clipping, and KL penalty *)
 let train_reinforce_plus_plus env n_episodes learning_rate gamma
-    epsilon beta =
-  let policy_net, params = initialize_policy () in
+    epsilon beta ?(grid_size=5) () =
+  let policy_net, params = initialize_policy ~grid_size () in
   let optimizer = Kaun.Optimizer.adam ~lr:learning_rate () in
   let opt_state = ref (optimizer.init params) in
 
@@ -3160,7 +3161,7 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
     let n_states = min 10 (Array.length advantages) in
     for t = 0 to n_states - 1 do
       let state = episode_data.states.(t) in
-      let state_batched = Rune.reshape [|1; 5; 5|] state in
+      let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
       let old_logits =
         Kaun.apply policy_net !old_params ~training:false
           state_batched in
@@ -3189,7 +3190,7 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
         let advantage = advantages.(t) in
 
         (* Get current policy probabilities *)
-        let state_batched = Rune.reshape [|1; 5; 5|] state in
+        let state_batched = Rune.reshape [|1; grid_size; grid_size|] state in
         let logits =
           Kaun.apply policy_net p ~training:true state_batched in
         let log_probs = log_softmax ~axis:(-1) logits in
@@ -3278,7 +3279,7 @@ let main () =
 
   (* Train with clipping (epsilon=0.2) and KL penalty (beta=0.01) *)
   let _policy_net, _params, _history =
-    train_reinforce_plus_plus env 50 0.01 0.99 0.2 0.01 in
+    train_reinforce_plus_plus env 50 0.01 0.99 0.2 0.01 () in
 
   print_endline &amp;quot;REINFORCE++ training complete!&amp;quot;
 
