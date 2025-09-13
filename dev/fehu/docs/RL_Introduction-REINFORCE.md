@@ -1219,7 +1219,7 @@ We keep orientation allocentric (north is always up) for simplicity:
 - Rotation invariance adds complexity without clear benefit
 - But for agents that can turn, egocentric orientation is often crucial
 
-{.note title="Exercise 4: Egocentric Sokoban"}
+{.note title="Exercise 5: Egocentric Sokoban"}
 > Implement an egocentric version of the Sokoban environment where:
 > 1. The agent is always centered in the observation
 > 2. The view shows a 5×5 window around the agent
@@ -1227,7 +1227,7 @@ We keep orientation allocentric (north is always up) for simplicity:
 > 4. Compare learning curves with allocentric version
 >
 > Does it generalize better to new puzzle layouts?
-> See `exercise4.md` for implementation guide.
+> See `exercise5.md` for implementation guide.
 
 {pause up}
 ### Future Directions

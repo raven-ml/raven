@@ -1,4 +1,4 @@
-# Exercise 4: Egocentric Sokoban - Learning Position-Invariant Policies
+# Exercise 5: Egocentric Sokoban - Learning Position-Invariant Policies
 
 ## Background
 
