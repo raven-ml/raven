@@ -454,10 +454,10 @@ REINFORCE with baseline is a simple actor-critic method:
 
 ***
 
-{pause center}
-## Summary {#summary}
+{pause down=midpoint-takeaways}
+## Midpoint Summary
 
-{.block title="Key Takeaways"}
+{#midpoint-takeaways .block title="Key Takeaways"}
 > 
 > ✓ **RL learns from interaction**, not labeled data
 > 
@@ -468,21 +468,6 @@ REINFORCE with baseline is a simple actor-critic method:
 > ✓ **Baselines reduce variance** without introducing bias
 > 
 > ✓ **Actor-critic architectures** combine policy and value learning
-
-{pause up=summary}
-### Next Steps
-
-- Implement the Sokoban environment
-- Implement a policy network model
-- Implement REINFORCE
-- Enhance with the constant baseline
-
-{pause}
-
-### Workshop Summary: What We Built
-
-{pause down="~duration:15"}
-{slip include src=../example/sokoban/workshop/slide_pip.ml}
 
 ***
 
