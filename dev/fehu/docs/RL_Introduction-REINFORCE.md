@@ -238,7 +238,7 @@ $$\nabla J(\theta) = \sum_{s,a} \mu(s) \cdot \pi(a|s) \cdot Q^\pi(s,a) \cdot \na
 
 But we **don't know** $Q^\pi(s,a)$ - the expected return for taking action $a$ in state $s$!
 
-{.example title="The Counterfactual Problem"}
+{pause down .example title="The Counterfactual Problem"}
 > In Sokoban at position (2,2):
 > - We pushed the box **left** and eventually won (G_t = 10)
 > - But what if we had pushed **right**? We'll never know!
@@ -246,7 +246,11 @@ But we **don't know** $Q^\pi(s,a)$ - the expected return for taking action $a$ i
 
 ### Why This Is Different from Supervised Learning
 
-{.comparison title="Supervised vs Reinforcement Learning"}
+<style>
+   table { border-collapse: collapse; width: 100%; margin: 1em 0; } td, th { border: 1px solid #ddd; padding: 12px; text-align: left; } th { background-color: #f2f2f2; font-weight: bold; } tr:nth-child(even) { background-color: #f9f9f9; }
+</style>
+
+{pause down .comparison title="Supervised vs Reinforcement Learning"}
 | **Supervised Learning** | **Reinforcement Learning** |
 |------------------------|---------------------------|
 | Know target y for ALL classes | Only know G_t for action taken |
@@ -254,6 +258,7 @@ But we **don't know** $Q^\pi(s,a)$ - the expected return for taking action $a$ i
 | Can compute exact gradient | Must approximate with samples |
 | Loss = -Σ y_true · log(y_pred) | Loss = -G_t · log π(a_taken\|s) |
 
+{pause up}
 ### The Monte Carlo Solution
 
 Since we can't know the expected return for all actions, we:
@@ -267,6 +272,7 @@ Since we can't know the expected return for all actions, we:
 > The actions we take more often (high π(a\|s)) naturally appear more in our gradient updates.
 > This **implicit weighting by sampling** is why we use log π, not π itself!
 
+{pause}
 ### The Exploration-Exploitation Connection
 
 This partial feedback creates the exploration-exploitation dilemma:
@@ -274,7 +280,7 @@ This partial feedback creates the exploration-exploitation dilemma:
 - **Exploration**: Try other actions to discover if they're better
 - We can only learn about actions we actually try!
 
-{.note title="Why RL is Hard"}
+{pause down .note title="Why RL is Hard"}
 > Unlike supervised learning where we see all labels, in RL we're learning from
 > "bandit feedback" - we only see outcomes for choices we make, never for the roads not taken.
 
