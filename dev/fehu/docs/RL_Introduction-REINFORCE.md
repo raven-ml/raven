@@ -227,6 +227,59 @@ From Sutton & Barto:
 
 ***
 
+{pause center #monte-carlo-necessity}
+## Why Monte Carlo? The Partial Feedback Problem
+
+### The Fundamental Challenge
+
+To compute the policy gradient analytically, we'd need:
+
+$$\nabla J(\theta) = \sum_{s,a} \mu(s) \cdot \pi(a|s) \cdot Q^\pi(s,a) \cdot \nabla \log \pi(a|s)$$
+
+But we **don't know** $Q^\pi(s,a)$ - the expected return for taking action $a$ in state $s$!
+
+{.example title="The Counterfactual Problem"}
+> In Sokoban at position (2,2):
+> - We pushed the box **left** and eventually won (G_t = 10)
+> - But what if we had pushed **right**? We'll never know!
+> - We only observe returns for actions we actually took
+
+### Why This Is Different from Supervised Learning
+
+{.comparison title="Supervised vs Reinforcement Learning"}
+| **Supervised Learning** | **Reinforcement Learning** |
+|------------------------|---------------------------|
+| Know target y for ALL classes | Only know G_t for action taken |
+| Full feedback: P(y\|x) for all y | Partial feedback: One action's outcome |
+| Can compute exact gradient | Must approximate with samples |
+| Loss = -Σ y_true · log(y_pred) | Loss = -G_t · log π(a_taken\|s) |
+
+### The Monte Carlo Solution
+
+Since we can't know the expected return for all actions, we:
+
+1. **Sample** trajectories by following our current policy
+2. **Observe** actual returns G_t along those trajectories
+3. **Update** based on what we actually experienced
+4. **Repeat** many times - sampling frequency provides the expectation
+
+{.insight title="Key Insight"}
+> The actions we take more often (high π(a\|s)) naturally appear more in our gradient updates.
+> This **implicit weighting by sampling** is why we use log π, not π itself!
+
+### The Exploration-Exploitation Connection
+
+This partial feedback creates the exploration-exploitation dilemma:
+- **Exploitation**: Take actions that worked well before (high G_t observed)
+- **Exploration**: Try other actions to discover if they're better
+- We can only learn about actions we actually try!
+
+{.note title="Why RL is Hard"}
+> Unlike supervised learning where we see all labels, in RL we're learning from
+> "bandit feedback" - we only see outcomes for choices we make, never for the roads not taken.
+
+***
+
 {pause center #algorithm-reinforce}
 ## REINFORCE Algorithm Steps
 
