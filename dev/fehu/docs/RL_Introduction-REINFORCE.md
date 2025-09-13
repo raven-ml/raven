@@ -734,6 +734,191 @@ Each innovation addresses specific challenges while building on previous insight
 
 ***
 
+{pause down=curriculum}
+
+## Part 2: Curriculum Learning with Sokoban
+
+After mastering policy optimization algorithms, let's explore how to train agents on complex tasks using **curriculum learning** - the art of teaching through progressively harder challenges.
+
+### The Challenge: Learning Complex Tasks
+
+Imagine teaching an agent to solve this Sokoban puzzle:
+
+```
+#########
+#   @   #  @ = player
+# o o o #  o = box
+#       #  x = target
+# x x x #
+#       #
+#########
+```
+
+Starting with such complexity leads to:
+- **Sparse rewards**: Agent rarely solves the puzzle randomly
+- **No learning signal**: Without successes, gradients are uninformative
+- **Wasted computation**: Millions of failed attempts
+
+### The Solution: Start Simple, Build Up
+
+Just like teaching a child mathematics (counting → addition → algebra), we teach RL agents progressively:
+
+#### Stage 1: Straight Corridor (Difficulty 1/10)
+```
+#####
+#@o #  Push one box straight
+# x #  to the target
+#####
+```
+- **Skills learned**: Basic push mechanics, goal understanding
+- **Success rate**: 90% after 50 episodes
+
+#### Stage 2: Simple Room (Difficulty 3/10)
+```
+#######
+#@    #  Navigate around
+# o   #  to push box
+#  x  #
+#######
+```
+- **Skills learned**: Path planning, spatial reasoning
+- **Success rate**: 80% after 100 episodes
+
+#### Stage 3: Multiple Boxes (Difficulty 5/10)
+```
+#######
+#@    #  Coordinate multiple
+# o o #  boxes to targets
+# x x #
+#######
+```
+- **Skills learned**: Sequential planning, avoiding deadlocks
+- **Success rate**: 70% after 200 episodes
+
+### Implementation: Automatic Curriculum Progression
+
+{.code title="Slide 10: Curriculum Management"}
+```ocaml
+type curriculum_state = {
+  current_stage: int;
+  recent_wins: bool Queue.t;  (* Track last N episodes *)
+  episodes_in_stage: int;
+}
+
+let should_advance state window_size =
+  let wins = Queue.fold (+) 0 state.recent_wins in
+  let win_rate = wins / window_size in
+  win_rate >= stage.success_threshold
+
+let update_curriculum state won =
+  Queue.add won state.recent_wins;
+  if should_advance state then
+    advance_to_next_stage state
+  else
+    state
+```
+
+### Key Design Decisions
+
+1. **Advancement Criteria**
+   - Fixed win rate threshold (e.g., 80% over 100 episodes)
+   - Minimum episodes in stage (prevent lucky streaks)
+   - Optional: Regression detection (move back if struggling)
+
+2. **Stage Design**
+   - Each stage introduces ONE new concept
+   - Skills transfer to next stage
+   - Difficulty gap not too large
+
+3. **Performance Window**
+   - Rolling window (last 100 episodes)
+   - Exponential moving average
+   - Separate windows per stage
+
+### Results: Curriculum vs Fixed Difficulty
+
+| Metric | With Curriculum | Without (Always Hard) |
+|--------|----------------|--------------------|
+| Episodes to first win | 50 | 500+ |
+| Final success rate | 70% | 30% |
+| Training stability | High | Low |
+| Skill transfer | Progressive | Random |
+
+### Visualizing Progress
+
+{.code title="Slide 11: Training with Curriculum"}
+```
+Episode   50 | Stage: Corridor     | Win rate: 92% | [ADVANCING]
+Episode  120 | Stage: Simple Room  | Win rate: 85% | [ADVANCING]
+Episode  250 | Stage: Multi-Box    | Win rate: 76% | [ADVANCING]
+Episode  400 | Stage: Complex      | Win rate: 61% | [STABLE]
+```
+
+### Advanced Curriculum Techniques
+
+1. **Adaptive Pacing**
+   - Faster advancement for quick learners
+   - Slower for struggling agents
+   - Individual vs population-based
+
+2. **Skill Decomposition**
+   - Separate curricula for different skills
+   - Combine learned behaviors
+   - Transfer learning between tasks
+
+3. **Procedural Generation**
+   - Infinite variations within difficulty level
+   - Prevents overfitting to specific layouts
+   - Smooth difficulty interpolation
+
+### Connection to Human Learning
+
+Curriculum learning mirrors human education:
+- **Scaffolding**: Temporary support removed gradually
+- **Zone of Proximal Development**: Tasks just beyond current ability
+- **Mastery Learning**: Solid foundation before advancement
+- **Spiral Curriculum**: Revisit concepts with increasing depth
+
+### Practical Tips
+
+1. **Start Too Easy Rather Than Too Hard**
+   - Early success builds good exploration
+   - Prevents random policy collapse
+
+2. **Monitor for Curriculum Hacking**
+   - Agent might exploit easy stages
+   - Add variety within each stage
+
+3. **Consider Forgetting**
+   - Skills from early stages may degrade
+   - Occasional review episodes
+   - Or lifelong learning techniques
+
+### Exercises
+
+{.note title="Exercise 4: Custom Curriculum Design"}
+> Design a curriculum for teaching an agent to play chess:
+> 1. Start with endgames (K+R vs K)
+> 2. Add pieces gradually
+> 3. Increase board complexity
+>
+> What would your stages be? How would you measure progress?
+
+{.note title="Exercise 5: Reverse Curriculum"}
+> Implement "reverse curriculum" where you start hard and make it easier when stuck.
+> Compare with forward curriculum. When might each be better?
+
+### Summary
+
+Curriculum learning transforms impossible tasks into learnable sequences:
+- **Gradual complexity** ensures constant learning signal
+- **Automatic progression** adapts to agent capability
+- **Skill building** creates robust, generalizable policies
+
+Combined with modern RL algorithms (PPO, GRPO), curriculum learning enables training on tasks that would otherwise be intractable.
+
+***
+
 {pause down=fin}
 
 ## References
