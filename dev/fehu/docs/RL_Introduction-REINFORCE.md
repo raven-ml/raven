@@ -1049,6 +1049,263 @@ The choice between egocentric and allocentric isn't binary - it's about finding 
 
 ***
 
+{pause down=environment-engineering}
+
+## Domain-Specific Engineering: From Clever Algorithms to Clever Environments
+
+The field of RL is undergoing a fundamental shift: instead of engineering domain-specific algorithms, we're increasingly engineering environments to train general algorithms. This change reflects a deeper understanding that the **environment is the curriculum**, and careful environment design can be more powerful than algorithmic cleverness.
+
+### The Old Way: Algorithm Engineering
+
+Historically, each domain got its own specialized algorithm:
+- **Chess**: Alpha-beta pruning with hand-crafted evaluation functions
+- **Go**: Monte Carlo Tree Search with domain-specific patterns
+- **Robotics**: Trajectory optimization with physics models
+- **Games**: Behavior trees and finite state machines
+
+Each required deep domain expertise and years of refinement.
+
+### The New Way: Environment Engineering
+
+Modern RL focuses on general algorithms (PPO, SAC, DQN) trained on carefully designed environments:
+- **OpenAI Five**: Dota 2 with curriculum of increasing difficulty
+- **AlphaStar**: StarCraft with league play and exploiter agents
+- **Rubik's Cube**: Domain randomization for sim-to-real transfer
+- **LLM Fine-tuning**: Synthetic data generation and quality filtering
+
+The algorithms stay the same; the environments become sophisticated.
+
+### Critical: Environment Quality Control
+
+Not all environments are created equal. A seemingly simple Sokoban puzzle might be:
+- **Unsolvable**: No valid sequence reaches the goal
+- **Trivially solvable**: Random actions quickly succeed
+- **Degenerate**: Multiple boxes in corners (deadlock)
+- **Ambiguous**: Multiple contradictory solutions
+
+#### Solvability Checking for Sokoban
+
+```python
+def is_solvable(grid):
+    """Check if a Sokoban puzzle has at least one solution."""
+    # Use A* or breadth-first search
+    initial_state = parse_grid(grid)
+    frontier = PriorityQueue()
+    frontier.put((0, initial_state))
+    visited = set()
+
+    while not frontier.empty():
+        _, state = frontier.get()
+        if is_goal_state(state):
+            return True
+
+        if state in visited:
+            continue
+        visited.add(state)
+
+        for action in get_valid_actions(state):
+            next_state = apply_action(state, action)
+            if not is_deadlock(next_state):
+                priority = heuristic(next_state)
+                frontier.put((priority, next_state))
+
+    return False
+
+def is_deadlock(state):
+    """Detect unrecoverable states."""
+    # Check for boxes in corners without targets
+    # Check for boxes against walls forming immovable patterns
+    # Check for box clusters that can't be separated
+    return has_corner_deadlock(state) or has_freeze_deadlock(state)
+```
+
+#### Quality Metrics for Training Environments
+
+1. **Solvability Rate**: Percentage of generated levels with solutions
+2. **Difficulty Distribution**: Range from trivial to challenging
+3. **Solution Uniqueness**: Levels with few vs many solutions
+4. **State Space Coverage**: Diversity of situations encountered
+5. **Skill Requirements**: Which abilities each level tests
+
+### Procedural Generation with Constraints
+
+Instead of hand-crafting levels, generate them with quality guarantees:
+
+```python
+def generate_curriculum_level(difficulty_target):
+    """Generate a solvable level matching difficulty criteria."""
+    max_attempts = 100
+
+    for _ in range(max_attempts):
+        # Generate candidate level
+        grid = random_level_topology(difficulty_target)
+
+        # Check quality constraints
+        if not is_solvable(grid):
+            continue
+
+        solution = find_optimal_solution(grid)
+        if not solution:
+            continue
+
+        # Measure difficulty metrics
+        metrics = {
+            'solution_length': len(solution),
+            'branching_factor': compute_branching(grid),
+            'deadlock_states': count_deadlocks(grid),
+            'box_interactions': measure_dependencies(grid)
+        }
+
+        # Check if matches target difficulty
+        if matches_difficulty(metrics, difficulty_target):
+            return grid
+
+    # Fallback to relaxed constraints
+    return generate_simplified_level(difficulty_target)
+```
+
+### The Curriculum as Environment Sequence
+
+Modern curriculum learning is really **environment scheduling**:
+
+```python
+class AdaptiveCurriculum:
+    def __init__(self):
+        self.level_generator = ProceduralGenerator()
+        self.student_model = StudentProgressTracker()
+
+    def next_environment(self):
+        """Generate next training environment based on student progress."""
+        # Estimate student's current skill level
+        skill_estimate = self.student_model.estimate_skills()
+
+        # Target slightly beyond current ability (ZPD)
+        target_difficulty = skill_estimate * 1.2
+
+        # Generate appropriate level
+        env = self.level_generator.create(
+            difficulty=target_difficulty,
+            focus_skills=self.student_model.weak_areas(),
+            avoid_patterns=self.student_model.mastered_patterns()
+        )
+
+        # Ensure quality
+        if not self.validate_environment(env):
+            env = self.get_fallback_environment(target_difficulty)
+
+        return env
+```
+
+### Case Study: Sokoban Curriculum Quality
+
+For our Sokoban curriculum, we should ensure:
+
+1. **Stage 1 (Corridor)**:
+   - Always solvable in ≤5 moves
+   - No deadlock states possible
+   - Single box, straight line to target
+
+2. **Stage 2 (Simple Room)**:
+   - Solvable in 5-15 moves
+   - No corner deadlocks
+   - Requires basic path planning
+
+3. **Stage 3 (Multi-box)**:
+   - All boxes independently moveable
+   - No interdependent deadlocks
+   - Multiple solution paths
+
+Without quality control, we risk:
+- **Unsolvable levels** → No learning signal
+- **Trivial levels** → No skill development
+- **Deadlock-prone levels** → Frustration without learning
+
+### Engineering Environments for Generalization
+
+The goal isn't to solve specific puzzles but to develop general capabilities:
+
+```python
+def create_generalization_curriculum():
+    """Design environments that teach transferable skills."""
+
+    return [
+        # Teach: Object permanence
+        {'hide_targets': False, 'walls_visible': True},
+
+        # Teach: Spatial reasoning
+        {'grid_size': 3, 'rotations': True},
+
+        # Teach: Planning
+        {'lookahead_reward': True, 'subgoals': True},
+
+        # Teach: Exploration
+        {'partial_observability': True, 'fog_of_war': True},
+
+        # Test: Combination of all skills
+        {'randomize': True, 'all_features': True}
+    ]
+```
+
+### The Meta-Game: Learning to Generate Environments
+
+The frontier is now **learned environment generation**:
+- **POET**: Paired Open-Ended Trailblazer
+- **PAIRED**: Protagonist Antagonist Induced Regret Environment Design
+- **PLR**: Prioritized Level Replay
+
+These methods learn to create environments that maximize learning progress.
+
+### Practical Guidelines
+
+1. **Always Validate Generated Environments**
+   ```python
+   assert is_solvable(env)
+   assert not has_trivial_solution(env)
+   assert difficulty_in_range(env, target_range)
+   ```
+
+2. **Track Environment Statistics**
+   ```python
+   log_metrics({
+       'solve_rate': successful_episodes / total_episodes,
+       'avg_steps': mean(episode_lengths),
+       'unique_states': len(visited_states),
+       'curriculum_stage': current_stage
+   })
+   ```
+
+3. **Maintain Environment Diversity**
+   - Avoid overfitting to specific patterns
+   - Rotate through different challenges
+   - Include both familiar and novel elements
+
+4. **Design for Failure Recovery**
+   - Ensure mistakes are recoverable
+   - Provide clear failure feedback
+   - Allow exploration without catastrophe
+
+### Future Directions
+
+The field is moving toward:
+- **Foundation Models** trained on diverse environment distributions
+- **Environment Transformers** that can adapt any task
+- **Automated Curriculum Discovery** through meta-learning
+- **Sim-to-Real** via environment randomization
+
+The key insight: **A good environment is worth a thousand algorithmic tricks**.
+
+### Summary
+
+Domain-specific engineering in RL has shifted from crafting clever algorithms to:
+1. **Designing quality environments** with solvability guarantees
+2. **Procedural generation** with difficulty control
+3. **Adaptive curricula** that respond to learning progress
+4. **Environment engineering** for generalization
+
+This paradigm shift recognizes that the environment IS the teacher, and careful environment design can guide general algorithms to master complex domains without domain-specific algorithmic modifications.
+
+***
+
 {pause down=fin}
 
 ## References
