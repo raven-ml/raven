@@ -1807,6 +1807,10 @@ relevance:0},{begin:/-&gt;/}]})})();hljs.registerLanguage(&quot;ocaml&quot;,e)})
 &lt;div&gt;
 &lt;h1 id=&quot;reinforcement-learning-an-introduction-to-reinforce&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#reinforcement-learning-an-introduction-to-reinforce&quot;&gt;&lt;/a&gt;&lt;span&gt;Reinforcement Learning: An Introduction to REINFORCE&lt;/span&gt;&lt;/h1&gt;
 &lt;p&gt;&lt;span&gt;Welcome to reinforcement learning! If you're familiar with supervised learning and neural network training, you're about to discover a fundamentally different approach to machine learning.&lt;/span&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;&lt;span&gt;Part A:&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; on-policy algorithms&lt;/span&gt;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;span&gt;Part B:&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; Sokoban, curriculum learning, representation engineering for agents and environments&lt;/span&gt;&lt;/li&gt;
+&lt;/ol&gt;
 &lt;h2 id=&quot;what-is-reinforcement-learning&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#what-is-reinforcement-learning&quot;&gt;&lt;/a&gt;&lt;span&gt;What is Reinforcement Learning? &lt;/span&gt;&lt;span id=&quot;rl-definition&quot;&gt;&lt;/span&gt;&lt;/h2&gt;
 &lt;p class=&quot;definition&quot; title=&quot;Reinforcement Learning&quot;&gt;&lt;span&gt;Instead of learning from labeled examples, an &lt;/span&gt;&lt;strong&gt;&lt;span&gt;agent&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; learns by &lt;/span&gt;&lt;strong&gt;&lt;span&gt;acting&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; in an &lt;/span&gt;&lt;strong&gt;&lt;span&gt;environment&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; and receiving &lt;/span&gt;&lt;strong&gt;&lt;span&gt;rewards&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;
 &lt;h3 id=&quot;rl-framework&quot; center-at-unpause pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#rl-framework&quot;&gt;&lt;/a&gt;&lt;span&gt;The RL Framework&lt;/span&gt;&lt;/h3&gt;
@@ -2951,25 +2955,22 @@ let main () =
 &lt;p&gt;&lt;span&gt;(*&lt;/span&gt;&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&quot;language-ocaml&quot;&gt; *)
 open Slide1
-(* Helper function to implement clipping *)
+
 let clip_ratio ratio epsilon =
   let min_ratio = 1.0 -. epsilon in
   let max_ratio = 1.0 +. epsilon in
   Rune.clip ratio ~min:min_ratio ~max:max_ratio
 
-(* Compute clipped policy loss *)
 let compute_clipped_loss old_log_probs new_log_probs
     advantages epsilon =
   let device = Rune.c in  
   (* Compute policy ratios: exp(new_log_prob - old_log_prob) *)
   let log_ratios = Rune.sub new_log_probs old_log_probs in
-  let ratios = Rune.exp log_ratios in  
-  (* Clip ratios *)
+  let ratios = Rune.exp log_ratios in
   let clipped_ratios = clip_ratio ratios epsilon in  
   (* Convert advantages to tensor *)
   let adv_tensor = Rune.create device Rune.float32 
-    [|Array.length advantages|] advantages in  
-  (* Compute both objectives *)
+    [|Array.length advantages|] advantages in
   let obj1 = Rune.mul ratios adv_tensor in
   let obj2 = Rune.mul clipped_ratios adv_tensor in  
   (* Take minimum (pessimistic bound) *)
@@ -2993,7 +2994,6 @@ let main () =
   
   Printf.printf &amp;quot;Clipped loss: %.4f\n&amp;quot; (Rune.item [] loss);
   print_endline &amp;quot;Clipping demonstration complete!&amp;quot;
-
 (*
 &lt;/code&gt;&lt;/pre&gt;
 &lt;p&gt;&lt;span&gt;*)&lt;/span&gt;&lt;/p&gt;
@@ -3030,18 +3030,17 @@ let main () =
 &lt;p&gt;&lt;span&gt;(*&lt;/span&gt;&lt;/p&gt;
 &lt;pre&gt;&lt;code class=&quot;language-ocaml&quot;&gt; *)
 open Slide1
-(* Compute KL divergence between two policies *)
+
 let compute_kl_divergence old_probs new_probs =
   (* KL(old || new) = sum(old * log(old/new)) *)
   let ratio = Rune.div old_probs new_probs in
   let log_ratio = Rune.log ratio in
   let kl_terms = Rune.mul old_probs log_ratio in
   Rune.sum kl_terms ~axes:[|1|]  (* Sum over actions *)
-(* Policy loss with KL penalty *)
+  
 let compute_policy_loss_with_kl old_probs new_probs
     advantages beta =
-  let device = Rune.c in  
-  (* Convert advantages to tensor *)
+  let device = Rune.c in
   let adv_tensor = Rune.create device Rune.float32 
     [|Array.length advantages|] advantages in  
   (* Policy gradient objective *)
@@ -3197,10 +3196,9 @@ let main () =
 &lt;p&gt;&lt;strong&gt;&lt;span&gt;GRPO doesn't replace REINFORCE - it's REINFORCE evolved for modern LLM training.&lt;/span&gt;&lt;/strong&gt;&lt;/p&gt;
 &lt;p&gt;&lt;strong&gt;&lt;span&gt;You now understand the complete journey from REINFORCE to GRPO!&lt;/span&gt;&lt;/strong&gt;&lt;/p&gt;
 &lt;hr&gt;
-&lt;div down-at-unpause=ppo-multi-updates pause&gt;&lt;/div&gt;
-&lt;h2 id=&quot;ppos-key-innovation-multiple-updates-per-batch&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#ppos-key-innovation-multiple-updates-per-batch&quot;&gt;&lt;/a&gt;&lt;span&gt;PPO's Key Innovation: Multiple Updates Per Batch&lt;/span&gt;&lt;/h2&gt;
+&lt;h2 id=&quot;ppos-key-innovation-multiple-updates-per-batch&quot; center-at-unpause pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#ppos-key-innovation-multiple-updates-per-batch&quot;&gt;&lt;/a&gt;&lt;span&gt;PPO's Key Innovation: Multiple Updates Per Batch&lt;/span&gt;&lt;/h2&gt;
 &lt;p&gt;&lt;span&gt;While GRPO achieves sample efficiency through multiple trajectories from the same state, PPO takes a different approach: &lt;/span&gt;&lt;strong&gt;&lt;span&gt;reusing collected data through multiple gradient updates&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;.&lt;/span&gt;&lt;/p&gt;
-&lt;h3 id=&quot;the-sample-efficiency-problem&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-sample-efficiency-problem&quot;&gt;&lt;/a&gt;&lt;span&gt;The Sample Efficiency Problem&lt;/span&gt;&lt;/h3&gt;
+&lt;h3 id=&quot;the-sample-efficiency-problem&quot; down-at-unpause=sample-efficiency pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-sample-efficiency-problem&quot;&gt;&lt;/a&gt;&lt;span&gt;The Sample Efficiency Problem&lt;/span&gt;&lt;/h3&gt;
 &lt;p&gt;&lt;span&gt;Both REINFORCE and our REINFORCE++ (Slide 9) follow this pattern:&lt;/span&gt;&lt;/p&gt;
 &lt;ol&gt;
 &lt;li&gt;&lt;span&gt;Collect one episode&lt;/span&gt;&lt;/li&gt;
@@ -3208,9 +3206,9 @@ let main () =
 &lt;li&gt;&lt;span&gt;Discard the episode&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;span&gt;Repeat&lt;/span&gt;&lt;/li&gt;
 &lt;/ol&gt;
-&lt;p&gt;&lt;span&gt;This throws away valuable data after a single use!&lt;/span&gt;&lt;/p&gt;
-&lt;h3 id=&quot;ppos-solution-batch-collection-and-reuse&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#ppos-solution-batch-collection-and-reuse&quot;&gt;&lt;/a&gt;&lt;span&gt;PPO's Solution: Batch Collection and Reuse&lt;/span&gt;&lt;/h3&gt;
-&lt;pre&gt;&lt;code class=&quot;language-python&quot;&gt;# Pseudocode for PPO's core innovation
+&lt;p id=&quot;sample-efficiency&quot;&gt;&lt;span&gt;This throws away valuable data after a single use!&lt;/span&gt;&lt;/p&gt;
+&lt;h3 id=&quot;ppos-solution-batch-collection-and-reuse&quot; down-at-unpause=ppo-multibatch-pseudocode pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#ppos-solution-batch-collection-and-reuse&quot;&gt;&lt;/a&gt;&lt;span&gt;PPO's Solution: Batch Collection and Reuse&lt;/span&gt;&lt;/h3&gt;
+&lt;pre id=&quot;ppo-multibatch-pseudocode&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;# Pseudocode for PPO's core innovation
 def train_ppo(env, n_iterations, batch_size, n_epochs):
     for iteration in range(n_iterations):
         # Step 1: Collect BATCH of trajectories
@@ -3226,13 +3224,14 @@ def train_ppo(env, n_iterations, batch_size, n_epochs):
                 loss = clip(ratio, 1-ε, 1+ε) * advantage
                 update_policy(loss)
 &lt;/code&gt;&lt;/pre&gt;
-&lt;h3 id=&quot;why-this-works&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#why-this-works&quot;&gt;&lt;/a&gt;&lt;span&gt;Why This Works&lt;/span&gt;&lt;/h3&gt;
+&lt;h3 id=&quot;why-this-works&quot; center-at-unpause pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#why-this-works&quot;&gt;&lt;/a&gt;&lt;span&gt;Why This Works&lt;/span&gt;&lt;/h3&gt;
 &lt;ol&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Fixed Reference Point&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: &lt;/span&gt;&lt;code&gt;old_policy&lt;/code&gt;&lt;span&gt; stays constant during all epochs, providing a stable trust region&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Clipping Becomes Essential&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: As the policy diverges from &lt;/span&gt;&lt;code&gt;old_policy&lt;/code&gt;&lt;span&gt; over multiple updates, clipping prevents overfitting to the batch&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Sample Efficiency&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: Extract 3-10x more learning from each environment interaction&lt;/span&gt;&lt;/li&gt;
 &lt;/ol&gt;
-&lt;h3 id=&quot;the-tradeoff-space&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-tradeoff-space&quot;&gt;&lt;/a&gt;&lt;span&gt;The Tradeoff Space&lt;/span&gt;&lt;/h3&gt;
+&lt;h3 id=&quot;the-ppo-grpo-tradeoff-space&quot; down-at-unpause=reinforce-ppo-comparison pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-ppo-grpo-tradeoff-space&quot;&gt;&lt;/a&gt;&lt;span&gt;The PPO-GRPO Tradeoff Space&lt;/span&gt;&lt;/h3&gt;
+&lt;div id=&quot;reinforce-ppo-comparison&quot;&gt;
 &lt;div role=&quot;region&quot;&gt;&lt;table&gt;
 &lt;tr&gt;
 &lt;th&gt;&lt;span&gt;Algorithm&lt;/span&gt;&lt;/th&gt;
@@ -3264,9 +3263,9 @@ def train_ppo(env, n_iterations, batch_size, n_epochs):
 &lt;td&gt;&lt;span&gt;Multiple per trajectory&lt;/span&gt;&lt;/td&gt;
 &lt;td&gt;&lt;span&gt;Clipping + reuse&lt;/span&gt;&lt;/td&gt;
 &lt;/tr&gt;
-&lt;/table&gt;&lt;/div&gt;&lt;hr&gt;
-&lt;div id=&quot;replay-buffers&quot; center-at-unpause pause&gt;&lt;/div&gt;
-&lt;h2 id=&quot;replay-buffers-and-on-policy-vs-off-policy-methods&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#replay-buffers-and-on-policy-vs-off-policy-methods&quot;&gt;&lt;/a&gt;&lt;span&gt;Replay Buffers and On-Policy vs Off-Policy Methods&lt;/span&gt;&lt;/h2&gt;
+&lt;/table&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;hr&gt;
+&lt;h2 id=&quot;replay-buffers&quot; up-at-unpause pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#replay-buffers&quot;&gt;&lt;/a&gt;&lt;span&gt;Replay Buffers and On-Policy vs Off-Policy Methods&lt;/span&gt;&lt;/h2&gt;
 &lt;h3 id=&quot;why-ppo-and-grpo-dont-use-replay-buffers&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#why-ppo-and-grpo-dont-use-replay-buffers&quot;&gt;&lt;/a&gt;&lt;span&gt;Why PPO and GRPO Don't Use Replay Buffers&lt;/span&gt;&lt;/h3&gt;
 &lt;p&gt;&lt;span&gt;A common question: &amp;quot;Why don't PPO and GRPO use replay buffers like DQN or SAC?&amp;quot; The answer reveals a fundamental distinction in RL algorithms.&lt;/span&gt;&lt;/p&gt;
 &lt;div class=&quot;definition&quot; title=&quot;On-Policy vs Off-Policy&quot;&gt;
@@ -3283,15 +3282,15 @@ def train_ppo(env, n_iterations, batch_size, n_epochs):
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Large replay buffers&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; improve sample efficiency&lt;/span&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;/div&gt;
-&lt;h3 id=&quot;the-policy-ratio-paradox&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-policy-ratio-paradox&quot;&gt;&lt;/a&gt;&lt;span&gt;The Policy Ratio Paradox&lt;/span&gt;&lt;/h3&gt;
+&lt;h3 id=&quot;the-policy-ratio-paradox&quot; center-at-unpause pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-policy-ratio-paradox&quot;&gt;&lt;/a&gt;&lt;span&gt;The Policy Ratio Paradox&lt;/span&gt;&lt;/h3&gt;
 &lt;p&gt;&lt;span&gt;Wait, doesn't PPO use policy ratios π_new/π_old to handle off-policy data? &lt;/span&gt;&lt;strong&gt;&lt;span&gt;Yes, but with crucial limitations:&lt;/span&gt;&lt;/strong&gt;&lt;/p&gt;
 &lt;ol&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Small Divergence Only&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: Policy ratios only work when π_new ≈ π_old&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Trust Region&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: That's why we clip ratios to [1-ε, 1+ε] (typically ε=0.2)&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Limited Reuse&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: After 3-10 updates, data is too stale even with ratios&lt;/span&gt;&lt;/li&gt;
 &lt;/ol&gt;
-&lt;h3 id=&quot;what-happens-if-you-add-a-replay-buffer-to-ppo&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#what-happens-if-you-add-a-replay-buffer-to-ppo&quot;&gt;&lt;/a&gt;&lt;span&gt;What Happens If You Add a Replay Buffer to PPO?&lt;/span&gt;&lt;/h3&gt;
-&lt;pre&gt;&lt;code class=&quot;language-python&quot;&gt;# This DOESN'T work well!
+&lt;h3 id=&quot;what-happens-if-you-add-a-replay-buffer-to-ppo&quot; down-at-unpause=offpolicy-bad-pseudocode pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#what-happens-if-you-add-a-replay-buffer-to-ppo&quot;&gt;&lt;/a&gt;&lt;span&gt;What Happens If You Add a Replay Buffer to PPO?&lt;/span&gt;&lt;/h3&gt;
+&lt;pre id=&quot;offpolicy-bad-pseudocode&quot;&gt;&lt;code class=&quot;language-python&quot;&gt;# This DOESN'T work well!
 replay_buffer = []
 for episode in range(1000):
     trajectory = collect_episode(env, policy)
@@ -3305,13 +3304,13 @@ for episode in range(1000):
         loss = clip(ratio, 0.8, 1.2) * advantage
         # Clipping can't save us from such extreme ratios
 &lt;/code&gt;&lt;/pre&gt;
-&lt;p&gt;&lt;strong&gt;&lt;span&gt;Problems:&lt;/span&gt;&lt;/strong&gt;&lt;/p&gt;
+&lt;p up-at-unpause=offpolicy-bad-pseudocode pause&gt;&lt;strong&gt;&lt;span&gt;Problems:&lt;/span&gt;&lt;/strong&gt;&lt;/p&gt;
 &lt;ol&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Stale policy ratios&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: If data is from 100 episodes ago, π_old is very different&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Importance sampling breaks&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: Ratios become extreme (→0 or →∞)&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Clipping becomes ineffective&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: Always clips to boundaries, learning stops&lt;/span&gt;&lt;/li&gt;
 &lt;/ol&gt;
-&lt;h3 id=&quot;when-replay-buffers-make-sense&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#when-replay-buffers-make-sense&quot;&gt;&lt;/a&gt;&lt;span&gt;When Replay Buffers Make Sense&lt;/span&gt;&lt;/h3&gt;
+&lt;h3 id=&quot;when-replay-buffers-make-sense&quot; up-at-unpause pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#when-replay-buffers-make-sense&quot;&gt;&lt;/a&gt;&lt;span&gt;When Replay Buffers Make Sense&lt;/span&gt;&lt;/h3&gt;
 &lt;p&gt;&lt;span&gt;Replay buffers work for &lt;/span&gt;&lt;strong&gt;&lt;span&gt;value-based&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; and &lt;/span&gt;&lt;strong&gt;&lt;span&gt;deterministic policy&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; methods:&lt;/span&gt;&lt;/p&gt;
 &lt;div class=&quot;example&quot; title=&quot;DQN's Replay Buffer&quot;&gt;
 &lt;p&gt;&lt;strong&gt;&lt;span&gt;DQN&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; learns Q(s,a) values, not a policy directly:&lt;/span&gt;&lt;/p&gt;
@@ -3329,7 +3328,7 @@ for episode in range(1000):
 &lt;li&gt;&lt;span&gt;Can leverage replay buffer fully&lt;/span&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;/div&gt;
-&lt;h3 id=&quot;the-hybrid-approach-ppo-with-experience-replay&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-hybrid-approach-ppo-with-experience-replay&quot;&gt;&lt;/a&gt;&lt;span&gt;The Hybrid Approach: PPO with Experience Replay?&lt;/span&gt;&lt;/h3&gt;
+&lt;h3 id=&quot;hybrid-on-off&quot; center-at-unpause pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#hybrid-on-off&quot;&gt;&lt;/a&gt;&lt;span&gt;The Hybrid Approach: PPO with Experience Replay?&lt;/span&gt;&lt;/h3&gt;
 &lt;p&gt;&lt;span&gt;Some research explores limited replay in on-policy methods:&lt;/span&gt;&lt;/p&gt;
 &lt;ol&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Very Recent Replay&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: Only last 2-3 iterations (not 1000s)&lt;/span&gt;&lt;/li&gt;
@@ -3337,7 +3336,7 @@ for episode in range(1000):
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Behavior Cloning Regularization&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: Add BC loss to stay near data distribution&lt;/span&gt;&lt;/li&gt;
 &lt;/ol&gt;
 &lt;p&gt;&lt;span&gt;But in practice, vanilla PPO without replay buffers works excellently!&lt;/span&gt;&lt;/p&gt;
-&lt;h3 id=&quot;key-takeaway&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#key-takeaway&quot;&gt;&lt;/a&gt;&lt;span&gt;Key Takeaway&lt;/span&gt;&lt;/h3&gt;
+&lt;h3 id=&quot;key-takeaway&quot; up-at-unpause=hybrid-on-off pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#key-takeaway&quot;&gt;&lt;/a&gt;&lt;span&gt;Key Takeaway&lt;/span&gt;&lt;/h3&gt;
 &lt;div class=&quot;warning&quot; title=&quot;The Fundamental Tradeoff&quot;&gt;
 &lt;p&gt;&lt;strong&gt;&lt;span&gt;On-Policy (PPO/GRPO)&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;:&lt;/span&gt;
 &lt;span&gt;✓ Stable, predictable learning&lt;/span&gt;
@@ -3357,7 +3356,7 @@ for episode in range(1000):
 &lt;li&gt;&lt;span&gt;Neither uses replay buffers because they're fundamentally &lt;/span&gt;&lt;strong&gt;&lt;span&gt;on-policy&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;!&lt;/span&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;hr&gt;
-&lt;h3 id=&quot;the-insight&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-insight&quot;&gt;&lt;/a&gt;&lt;span&gt;The Insight&lt;/span&gt;&lt;/h3&gt;
+&lt;h3 id=&quot;the-insight&quot; up-at-unpause pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-insight&quot;&gt;&lt;/a&gt;&lt;span&gt;The Insight&lt;/span&gt;&lt;/h3&gt;
 &lt;ul&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;GRPO&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: &amp;quot;Let's collect better data&amp;quot; (multiple trajectories from same state)&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;PPO&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: &amp;quot;Let's use our data better&amp;quot; (multiple updates per batch)&lt;/span&gt;&lt;/li&gt;
@@ -3372,7 +3371,7 @@ for episode in range(1000):
 &lt;/ol&gt;
 &lt;p&gt;&lt;span&gt;See &lt;/span&gt;&lt;code&gt;exercise3.md&lt;/code&gt;&lt;span&gt; for detailed instructions.&lt;/span&gt;&lt;/p&gt;
 &lt;/div&gt;
-&lt;h3 id=&quot;key-implementation-considerations&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#key-implementation-considerations&quot;&gt;&lt;/a&gt;&lt;span&gt;Key Implementation Considerations&lt;/span&gt;&lt;/h3&gt;
+&lt;h3 id=&quot;key-implementation-considerations&quot; down-at-unpause=end-replay-buffers pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#key-implementation-considerations&quot;&gt;&lt;/a&gt;&lt;span&gt;Key Implementation Considerations&lt;/span&gt;&lt;/h3&gt;
 &lt;ol&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Batch Size&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: Typically 32-2048 trajectories depending on environment&lt;/span&gt;&lt;/li&gt;
 &lt;li&gt;&lt;strong&gt;&lt;span&gt;Number of Epochs&lt;/span&gt;&lt;/strong&gt;&lt;span&gt;: Usually 3-10 (too many causes overfitting)&lt;/span&gt;&lt;/li&gt;
@@ -3388,9 +3387,8 @@ for episode in range(1000):
 &lt;li&gt;&lt;span&gt;Culminated in PPO's efficient data reuse&lt;/span&gt;&lt;/li&gt;
 &lt;/ul&gt;
 &lt;p&gt;&lt;span&gt;Each innovation addresses specific challenges while building on previous insights!&lt;/span&gt;&lt;/p&gt;
-&lt;hr&gt;
-&lt;div down-at-unpause=curriculum pause&gt;&lt;/div&gt;
-&lt;h2 id=&quot;part-2-curriculum-learning-with-sokoban&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#part-2-curriculum-learning-with-sokoban&quot;&gt;&lt;/a&gt;&lt;span&gt;Part 2: Curriculum Learning with Sokoban&lt;/span&gt;&lt;/h2&gt;
+&lt;hr id=&quot;end-replay-buffers&quot;&gt;
+&lt;h2 id=&quot;part-b-curriculum-learning-with-sokoban&quot; up-at-unpause pause&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#part-b-curriculum-learning-with-sokoban&quot;&gt;&lt;/a&gt;&lt;span&gt;Part B: Curriculum Learning with Sokoban&lt;/span&gt;&lt;/h2&gt;
 &lt;p&gt;&lt;span&gt;After mastering policy optimization algorithms, let's explore how to train agents on complex tasks using &lt;/span&gt;&lt;strong&gt;&lt;span&gt;curriculum learning&lt;/span&gt;&lt;/strong&gt;&lt;span&gt; - the art of teaching through progressively harder challenges.&lt;/span&gt;&lt;/p&gt;
 &lt;h3 id=&quot;the-challenge-learning-complex-tasks&quot;&gt;&lt;a class=&quot;anchor&quot; aria-hidden=&quot;true&quot; href=&quot;#the-challenge-learning-complex-tasks&quot;&gt;&lt;/a&gt;&lt;span&gt;The Challenge: Learning Complex Tasks&lt;/span&gt;&lt;/h3&gt;
 &lt;p&gt;&lt;span&gt;Imagine teaching an agent to solve this Sokoban puzzle:&lt;/span&gt;&lt;/p&gt;

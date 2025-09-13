@@ -2,6 +2,9 @@
 
 Welcome to reinforcement learning! If you're familiar with supervised learning and neural network training, you're about to discover a fundamentally different approach to machine learning.
 
+1. **Part A:** on-policy algorithms
+2. **Part B:** Sokoban, curriculum learning, representation engineering for agents and environments
+
 ## What is Reinforcement Learning? {#rl-definition}
 
 {.definition title="Reinforcement Learning"}
@@ -704,12 +707,12 @@ Now we can understand GRPO: **REINFORCE + GRPO Innovation + Clipping + KL Penalt
 
 ***
 
-{pause down=ppo-multi-updates}
-
+{pause center}
 ## PPO's Key Innovation: Multiple Updates Per Batch
 
 While GRPO achieves sample efficiency through multiple trajectories from the same state, PPO takes a different approach: **reusing collected data through multiple gradient updates**.
 
+{pause down=sample-efficiency}
 ### The Sample Efficiency Problem
 
 Both REINFORCE and our REINFORCE++ (Slide 9) follow this pattern:
@@ -718,10 +721,13 @@ Both REINFORCE and our REINFORCE++ (Slide 9) follow this pattern:
 3. Discard the episode
 4. Repeat
 
+{#sample-efficiency}
 This throws away valuable data after a single use!
 
+{pause down=ppo-multibatch-pseudocode}
 ### PPO's Solution: Batch Collection and Reuse
 
+{#ppo-multibatch-pseudocode}
 ```python
 # Pseudocode for PPO's core innovation
 def train_ppo(env, n_iterations, batch_size, n_epochs):
@@ -740,14 +746,17 @@ def train_ppo(env, n_iterations, batch_size, n_epochs):
                 update_policy(loss)
 ```
 
+{pause center}
 ### Why This Works
 
 1. **Fixed Reference Point**: `old_policy` stays constant during all epochs, providing a stable trust region
 2. **Clipping Becomes Essential**: As the policy diverges from `old_policy` over multiple updates, clipping prevents overfitting to the batch
 3. **Sample Efficiency**: Extract 3-10x more learning from each environment interaction
 
-### The Tradeoff Space
+{pause down=reinforce-ppo-comparison}
+### The PPO-GRPO Tradeoff Space
 
+{#reinforce-ppo-comparison}
 | Algorithm | Trajectories | Updates | Variance Reduction |
 |-----------|-------------|---------|-------------------|
 | REINFORCE | 1 per step | 1 per trajectory | None |
@@ -757,8 +766,7 @@ def train_ppo(env, n_iterations, batch_size, n_epochs):
 
 ***
 
-{pause center #replay-buffers}
-
+{pause up #replay-buffers}
 ## Replay Buffers and On-Policy vs Off-Policy Methods
 
 ### Why PPO and GRPO Don't Use Replay Buffers
@@ -776,6 +784,7 @@ A common question: "Why don't PPO and GRPO use replay buffers like DQN or SAC?" 
 > - Can use old data from replay buffer
 > - **Large replay buffers** improve sample efficiency
 
+{pause center}
 ### The Policy Ratio Paradox
 
 Wait, doesn't PPO use policy ratios π_new/π_old to handle off-policy data? **Yes, but with crucial limitations:**
@@ -784,8 +793,10 @@ Wait, doesn't PPO use policy ratios π_new/π_old to handle off-policy data? **Y
 2. **Trust Region**: That's why we clip ratios to [1-ε, 1+ε] (typically ε=0.2)
 3. **Limited Reuse**: After 3-10 updates, data is too stale even with ratios
 
+{pause down=offpolicy-bad-pseudocode}
 ### What Happens If You Add a Replay Buffer to PPO?
 
+{#offpolicy-bad-pseudocode}}
 ```python
 # This DOESN'T work well!
 replay_buffer = []
@@ -802,11 +813,13 @@ for episode in range(1000):
         # Clipping can't save us from such extreme ratios
 ```
 
+{pause up=offpolicy-bad-pseudocode}
 **Problems:**
 1. **Stale policy ratios**: If data is from 100 episodes ago, π_old is very different
 2. **Importance sampling breaks**: Ratios become extreme (→0 or →∞)
 3. **Clipping becomes ineffective**: Always clips to boundaries, learning stops
 
+{pause up}
 ### When Replay Buffers Make Sense
 
 Replay buffers work for **value-based** and **deterministic policy** methods:
@@ -823,6 +836,7 @@ Replay buffers work for **value-based** and **deterministic policy** methods:
 > - Actor uses reparameterization trick (not policy ratios)
 > - Can leverage replay buffer fully
 
+{pause center #hybrid-on-off}
 ### The Hybrid Approach: PPO with Experience Replay?
 
 Some research explores limited replay in on-policy methods:
@@ -833,6 +847,7 @@ Some research explores limited replay in on-policy methods:
 
 But in practice, vanilla PPO without replay buffers works excellently!
 
+{pause up=hybrid-on-off}
 ### Key Takeaway
 
 {.warning title="The Fundamental Tradeoff"}
@@ -855,6 +870,7 @@ PPO and GRPO achieve sample efficiency through **different mechanisms**:
 
 ***
 
+{pause up}
 ### The Insight
 
 - **GRPO**: "Let's collect better data" (multiple trajectories from same state)
@@ -869,6 +885,7 @@ PPO and GRPO achieve sample efficiency through **different mechanisms**:
 >
 > See `exercise3.md` for detailed instructions.
 
+{pause down=end-replay-buffers}
 ### Key Implementation Considerations
 
 1. **Batch Size**: Typically 32-2048 trajectories depending on environment
@@ -885,11 +902,11 @@ This completes our journey through modern policy optimization:
 
 Each innovation addresses specific challenges while building on previous insights!
 
+{#end-replay-buffers}
 ***
 
-{pause down=curriculum}
-
-## Part 2: Curriculum Learning with Sokoban
+{pause up}
+## Part B: Curriculum Learning with Sokoban
 
 After mastering policy optimization algorithms, let's explore how to train agents on complex tasks using **curriculum learning** - the art of teaching through progressively harder challenges.
 

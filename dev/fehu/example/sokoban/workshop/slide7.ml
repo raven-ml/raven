@@ -2,25 +2,22 @@
 ```ocaml
  *)
 open Slide1
-(* Helper function to implement clipping *)
+
 let clip_ratio ratio epsilon =
   let min_ratio = 1.0 -. epsilon in
   let max_ratio = 1.0 +. epsilon in
   Rune.clip ratio ~min:min_ratio ~max:max_ratio
 
-(* Compute clipped policy loss *)
 let compute_clipped_loss old_log_probs new_log_probs
     advantages epsilon =
   let device = Rune.c in  
   (* Compute policy ratios: exp(new_log_prob - old_log_prob) *)
   let log_ratios = Rune.sub new_log_probs old_log_probs in
-  let ratios = Rune.exp log_ratios in  
-  (* Clip ratios *)
+  let ratios = Rune.exp log_ratios in
   let clipped_ratios = clip_ratio ratios epsilon in  
   (* Convert advantages to tensor *)
   let adv_tensor = Rune.create device Rune.float32 
-    [|Array.length advantages|] advantages in  
-  (* Compute both objectives *)
+    [|Array.length advantages|] advantages in
   let obj1 = Rune.mul ratios adv_tensor in
   let obj2 = Rune.mul clipped_ratios adv_tensor in  
   (* Take minimum (pessimistic bound) *)
@@ -44,7 +41,6 @@ let main () =
   
   Printf.printf "Clipped loss: %.4f\n" (Rune.item [] loss);
   print_endline "Clipping demonstration complete!"
-
 (*
 ```
  *)

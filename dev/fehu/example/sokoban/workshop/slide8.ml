@@ -2,18 +2,17 @@
 ```ocaml
  *)
 open Slide1
-(* Compute KL divergence between two policies *)
+
 let compute_kl_divergence old_probs new_probs =
   (* KL(old || new) = sum(old * log(old/new)) *)
   let ratio = Rune.div old_probs new_probs in
   let log_ratio = Rune.log ratio in
   let kl_terms = Rune.mul old_probs log_ratio in
   Rune.sum kl_terms ~axes:[|1|]  (* Sum over actions *)
-(* Policy loss with KL penalty *)
+  
 let compute_policy_loss_with_kl old_probs new_probs
     advantages beta =
-  let device = Rune.c in  
-  (* Convert advantages to tensor *)
+  let device = Rune.c in
   let adv_tensor = Rune.create device Rune.float32 
     [|Array.length advantages|] advantages in  
   (* Policy gradient objective *)
