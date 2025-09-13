@@ -206,6 +206,7 @@ let parse_args () =
   let learning_rate = ref 0.01 in
   let gamma = ref 0.99 in
   let grid_size = ref 5 in
+  let env_type = ref "gridworld" in
   let help = ref false in
 
   let usage = Printf.sprintf
@@ -224,6 +225,8 @@ let parse_args () =
      "G     Discount factor (default: 0.99)");
     ("-grid", Arg.Set_int grid_size,
      "SIZE  Grid size for environment (default: 5, try 7 or 9)");
+    ("-env", Arg.Set_string env_type,
+     "TYPE  Environment type: gridworld, curriculum (default: gridworld)");
     ("-help", Arg.Set help,
      "      Display this help message");
     ("--help", Arg.Set help,
@@ -240,11 +243,13 @@ let parse_args () =
     Printf.printf "  -lr LR        Learning rate (default: 0.01)\n";
     Printf.printf "  -gamma G      Discount factor (default: 0.99)\n";
     Printf.printf "  -grid SIZE    Grid size for environment (default: 5, try 7 or 9)\n";
+    Printf.printf "  -env TYPE     Environment type: gridworld, curriculum (default: gridworld)\n";
     Printf.printf "  -help/--help  Display this help message\n\n";
     Printf.printf "Examples:\n";
     Printf.printf "  %s                          # Compare reinforce vs baseline\n" Sys.argv.(0);
     Printf.printf "  %s -a all                   # Compare all algorithms\n" Sys.argv.(0);
     Printf.printf "  %s -a reinforce -a actor-critic -n 300  # Custom comparison\n" Sys.argv.(0);
+    Printf.printf "  %s -env curriculum -a baseline  # Use curriculum environment\n" Sys.argv.(0);
     exit 0
   end;
 
@@ -257,30 +262,51 @@ let parse_args () =
   else
     algos in
 
-  (List.rev algos, !n_episodes, !learning_rate, !gamma, !grid_size)
+  (List.rev algos, !n_episodes, !learning_rate, !gamma, !grid_size, !env_type)
 
 (* Main function *)
 let () =
   Random.self_init ();
 
-  let algorithms, n_episodes, learning_rate, gamma, grid_size = parse_args () in
+  let algorithms, n_episodes, learning_rate, gamma, grid_size, env_type = parse_args () in
 
   print_endline "=== RL Workshop: Algorithm Comparison ===";
   Printf.printf "Comparing algorithms: %s\n" (String.concat ", " algorithms);
-  Printf.printf "Episodes: %d, Learning rate: %.3f, Gamma: %.2f, Grid: %dx%d\n\n"
-    n_episodes learning_rate gamma grid_size grid_size;
+  Printf.printf "Environment: %s\n" env_type;
+  Printf.printf "Episodes: %d, Learning rate: %.3f, Gamma: %.2f"
+    n_episodes learning_rate gamma;
+  if env_type = "gridworld" then
+    Printf.printf ", Grid: %dx%d" grid_size grid_size;
+  Printf.printf "\n\n";
 
-  let env = Slide1.create_simple_gridworld grid_size in
+  let env = match env_type with
+    | "gridworld" -> Slide1.create_simple_gridworld grid_size
+    | "curriculum" ->
+        let curriculum_state = ref Slide10.{
+          current_stage = 0;
+          episodes_in_stage = 0;
+          recent_wins = Queue.create ();
+          total_episodes = 0;
+          stage_transitions = [];
+        } in
+        Slide11.create_curriculum_env curriculum_state
+    | _ ->
+        Printf.eprintf "Unknown environment type: %s\n" env_type;
+        exit 1
+  in
 
   (* Train selected algorithms *)
   let histories = ref [] in
+
+  (* Curriculum environment is always 5x5 *)
+  let effective_grid_size = if env_type = "curriculum" then 5 else grid_size in
 
   List.iter (fun algo ->
     match algo with
     | "reinforce" ->
         print_endline "Training REINFORCE without baseline...";
         let _policy_net, _params, _episodes, history =
-          Slide4.train_reinforce env n_episodes learning_rate gamma ~grid_size () in
+          Slide4.train_reinforce env n_episodes learning_rate gamma ~grid_size:effective_grid_size () in
         histories := {
           name = "REINFORCE (no baseline)";
           returns = history.returns;
@@ -291,7 +317,7 @@ let () =
     | "baseline" ->
         print_endline "Training REINFORCE with baseline...";
         let _policy_net, _params, history =
-          Slide5.train_reinforce_with_baseline env n_episodes learning_rate gamma ~grid_size () in
+          Slide5.train_reinforce_with_baseline env n_episodes learning_rate gamma ~grid_size:effective_grid_size () in
         histories := {
           name = "REINFORCE with baseline";
           returns = history.returns;
@@ -304,7 +330,7 @@ let () =
         (* Actor-Critic uses different learning rates for actor and critic *)
         let lr_critic = learning_rate *. 0.5 in  (* Critic often trains slower *)
         let _policy_net, _policy_params, _value_net, _value_params, history =
-          Slide6.train_actor_critic env n_episodes learning_rate lr_critic gamma ~grid_size () in
+          Slide6.train_actor_critic env n_episodes learning_rate lr_critic gamma ~grid_size:effective_grid_size () in
         histories := {
           name = "Actor-Critic";
           returns = history.returns;
@@ -318,7 +344,7 @@ let () =
         let epsilon = 0.2 in  (* Clipping parameter *)
         let beta = 0.01 in    (* KL penalty coefficient *)
         let _policy_net, _params, history =
-          Slide9.train_reinforce_plus_plus env n_episodes learning_rate gamma epsilon beta ~grid_size () in
+          Slide9.train_reinforce_plus_plus env n_episodes learning_rate gamma epsilon beta ~grid_size:effective_grid_size () in
         histories := {
           name = "REINFORCE++";
           returns = history.returns;
