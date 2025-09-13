@@ -612,6 +612,7 @@ $$L_{total}(\theta) = L_{policy}(\theta) - \beta \cdot D_{KL}[\pi_{old} \| \pi_{
 {pause down focus .block}
 > ![REINFORCE with non-learned baseline, clipping and KL-penalty: losses](reinforce_losses-v3.svg)
 > ![REINFORCE with non-learned baseline, clipping and KL-penalty: returns](reinforce_returns-v3.svg)
+>
 > REINFORCE++ appears very unstable, worth investigating!
 
 ***
@@ -818,8 +819,9 @@ for episode in range(1000):
     # Sample old trajectories - BAD IDEA for PPO
     batch = sample(replay_buffer, batch_size)
     for trajectory in batch:
-        ratio = pi_current(a|s) / pi_old(a|s)  # pi_old from when?
-        # Problem: ratio could be 100x or 0.01x if policies diverged!
+        ratio = pi_current(a|s) / pi_old(a|s) # pi_old from when?
+        # Problem:
+        # ratio could be 100x or 0.01x if policies diverged!
         loss = clip(ratio, 0.8, 1.2) * advantage
         # Clipping can't save us from such extreme ratios
 ```
@@ -935,15 +937,18 @@ Imagine teaching an agent to solve this Sokoban puzzle:
 #########
 ```
 
-Starting with such complexity leads to:
-- **Sparse rewards**: Agent rarely solves the puzzle randomly
-- **No learning signal**: Without successes, gradients are uninformative
-- **Wasted computation**: Millions of failed attempts
+{pause}
+> Starting with such complexity leads to:
+> - **Sparse rewards**: Agent rarely solves the puzzle randomly
+> - **No learning signal**: Without successes, gradients are uninformative
+> - **Wasted computation**: Millions of failed attempts
 
+{pause center #curriculum-sokoban}
 ### The Solution: Start Simple, Build Up
 
 Just like teaching a child mathematics (counting → addition → algebra), we teach RL agents progressively:
 
+{pause up=curriculum-sokoban}
 #### Stage 1: Straight Corridor (Difficulty 1/10)
 ```
 #####
@@ -954,28 +959,31 @@ Just like teaching a child mathematics (counting → addition → algebra), we t
 - **Skills learned**: Basic push mechanics, goal understanding
 - **Success rate**: 90% after 50 episodes
 
-#### Stage 2: Simple Room (Difficulty 3/10)
-```
-#######
-#@    #  Navigate around
-# o   #  to push box
-#  x  #
-#######
-```
-- **Skills learned**: Path planning, spatial reasoning
-- **Success rate**: 80% after 100 episodes
+{pause down}
+> #### Stage 2: Simple Room (Difficulty 3/10)
+> ```
+> #######
+> #@    #  Navigate around
+> # o   #  to push box
+> #  x  #
+> #######
+> ```
+> - **Skills learned**: Path planning, spatial reasoning
+> - **Success rate**: 80% after 100 episodes
 
-#### Stage 3: Multiple Boxes (Difficulty 5/10)
-```
-#######
-#@    #  Coordinate multiple
-# o o #  boxes to targets
-# x x #
-#######
-```
-- **Skills learned**: Sequential planning, avoiding deadlocks
-- **Success rate**: 70% after 200 episodes
+{pause down}
+> #### Stage 3: Multiple Boxes (Difficulty 5/10)
+> ```
+> #######
+> #@    #  Coordinate multiple
+> # o o #  boxes to targets
+> # x x #
+> #######
+> ```
+> - **Skills learned**: Sequential planning, avoiding deadlocks
+> - **Success rate**: 70% after 200 episodes
 
+{pause up}
 ### Implementation: Automatic Curriculum Progression
 
 {.code title="Slide 10: Curriculum Management"}
@@ -999,6 +1007,7 @@ let update_curriculum state won =
     state
 ```
 
+{pause up}
 ### Key Design Decisions
 
 1. **Advancement Criteria**
@@ -1016,8 +1025,10 @@ let update_curriculum state won =
    - Exponential moving average
    - Separate windows per stage
 
+{pause down=curriculum-brag-table #curriculum-results}
 ### Results: Curriculum vs Fixed Difficulty
 
+{#curriculum-brag-table}
 | Metric | With Curriculum | Without (Always Hard) |
 |--------|----------------|--------------------|
 | Episodes to first win | 50 | 500+ |
@@ -1025,6 +1036,7 @@ let update_curriculum state won =
 | Training stability | High | Low |
 | Skill transfer | Progressive | Random |
 
+{pause up=curriculum-results}
 ### Visualizing Progress
 
 {.code title="Slide 11: Training with Curriculum"}
@@ -1035,6 +1047,7 @@ Episode  250 | Stage: Multi-Box    | Win rate: 76% | [ADVANCING]
 Episode  400 | Stage: Complex      | Win rate: 61% | [STABLE]
 ```
 
+{pause up}
 ### Advanced Curriculum Techniques
 
 1. **Adaptive Pacing**
@@ -1052,14 +1065,17 @@ Episode  400 | Stage: Complex      | Win rate: 61% | [STABLE]
    - Prevents overfitting to specific layouts
    - Smooth difficulty interpolation
 
+{pause down=human-curriculum}
 ### Connection to Human Learning
 
-Curriculum learning mirrors human education:
-- **Scaffolding**: Temporary support removed gradually
-- **Zone of Proximal Development**: Tasks just beyond current ability
-- **Mastery Learning**: Solid foundation before advancement
-- **Spiral Curriculum**: Revisit concepts with increasing depth
+{#human-curriculum}
+> Curriculum learning mirrors human education:
+> - **Scaffolding**: Temporary support removed gradually
+> - **Zone of Proximal Development**: Tasks just beyond current ability
+> - **Mastery Learning**: Solid foundation before advancement
+> - **Spiral Curriculum**: Revisit concepts with increasing depth
 
+{pause up}
 ### Practical Tips
 
 1. **Start Too Easy Rather Than Too Hard**
@@ -1075,20 +1091,7 @@ Curriculum learning mirrors human education:
    - Occasional review episodes
    - Or lifelong learning techniques
 
-### Exercises
-
-{.note title="Exercise 4: Custom Curriculum Design"}
-> Design a curriculum for teaching an agent to play chess:
-> 1. Start with endgames (K+R vs K)
-> 2. Add pieces gradually
-> 3. Increase board complexity
->
-> What would your stages be? How would you measure progress?
-
-{.note title="Exercise 5: Reverse Curriculum"}
-> Implement "reverse curriculum" where you start hard and make it easier when stuck.
-> Compare with forward curriculum. When might each be better?
-
+{pause}
 ### Summary
 
 Curriculum learning transforms impossible tasks into learnable sequences:
@@ -1100,8 +1103,7 @@ Combined with modern RL algorithms (PPO, GRPO), curriculum learning enables trai
 
 ***
 
-{pause down=egocentric-allocentric}
-
+{pause up}
 ## Egocentric vs Allocentric: How Should Agents See the World?
 
 When designing observations for RL agents, a fundamental choice is between **egocentric** (agent-centered) and **allocentric** (world-centered) representations. This decision profoundly impacts learning efficiency, generalization, and policy complexity.
@@ -1122,6 +1124,7 @@ The agent sees the entire grid with their position marked as a special value:
 - **Absolute positions**: Player at (2,1) sees themselves at (2,1)
 - **Complete information**: Full map visible at once
 
+{pause up}
 ### Egocentric: The World from the Agent's View
 
 An egocentric representation centers the world on the agent:
@@ -1140,6 +1143,7 @@ Key differences:
 - **Local view**: May only see nearby cells
 - **Relative directions**: "Box is 1 step ahead" not "Box is at (2,2)"
 
+{pause up}
 ### Comparison for Navigation Tasks
 
 | Aspect | Allocentric | Egocentric |
@@ -1150,6 +1154,7 @@ Key differences:
 | **Exploration** | Knows where it's been | May revisit same areas |
 | **Transfer Learning** | Limited to similar layouts | Transfers across different maps |
 
+{pause}
 ### Hybrid Approaches
 
 Many successful systems combine both:
@@ -1158,6 +1163,7 @@ Many successful systems combine both:
 2. **Attention Mechanisms**: Focus on agent-local region within global context
 3. **Memory Systems**: Build allocentric map from egocentric observations
 
+{pause up}
 ### Case Study: Why Our Sokoban Uses Allocentric
 
 For our curriculum learning demonstration, allocentric makes sense:
@@ -1167,6 +1173,7 @@ For our curriculum learning demonstration, allocentric makes sense:
 
 However, this limits generalization. The agent learns "at position (1,1) push right" rather than "when box is adjacent, push toward target."
 
+{pause}
 ### When to Use Each
 
 **Choose Allocentric when:**
@@ -1181,6 +1188,7 @@ However, this limits generalization. The agent learns "at position (1,1) push ri
 - Maps are large or procedurally generated
 - Partial observability is natural
 
+{pause up}
 ### Implementation Considerations
 
 #### Egocentric Transform
@@ -1198,14 +1206,16 @@ def make_egocentric(grid, agent_pos, view_radius=2):
     return local_view
 ```
 
+{pause}
 #### Network Architecture Impact
 - **Allocentric**: Can use standard CNNs, position embeddings help
 - **Egocentric**: Benefits from rotation-invariant architectures, recurrent memory
 
+{pause up}
 ### The Orientation Question
 
 We keep orientation allocentric (north is always up) for simplicity:
-- Sokoban has no turning actions (only move up/down/left/right)
+- Sokoban has no turning actions (only move up/down/left/right = north/south/west/east)
 - Rotation invariance adds complexity without clear benefit
 - But for agents that can turn, egocentric orientation is often crucial
 
@@ -1219,6 +1229,7 @@ We keep orientation allocentric (north is always up) for simplicity:
 > Does it generalize better to new puzzle layouts?
 > See `exercise4.md` for implementation guide.
 
+{pause up}
 ### Future Directions
 
 Modern approaches increasingly use:
@@ -1230,12 +1241,12 @@ The choice between egocentric and allocentric isn't binary - it's about finding 
 
 ***
 
-{pause down=environment-engineering}
-
+{pause up}
 ## Domain-Specific Engineering: From Clever Algorithms to Clever Environments
 
 The field of RL is undergoing a fundamental shift: instead of engineering domain-specific algorithms, we're increasingly engineering environments to train general algorithms. This change reflects a deeper understanding that the **environment is the curriculum**, and careful environment design can be more powerful than algorithmic cleverness.
 
+ {pause}
 ### The Old Way: Algorithm Engineering
 
 Historically, each domain got its own specialized algorithm:
@@ -1246,16 +1257,18 @@ Historically, each domain got its own specialized algorithm:
 
 Each required deep domain expertise and years of refinement.
 
-### The New Way: Environment Engineering
+{pause down}
+> ### The New Way: Environment Engineering
+> 
+> Modern RL focuses on general algorithms (PPO, SAC, DQN) trained on carefully designed environments:
+> - **OpenAI Five**: Dota 2 with curriculum of increasing difficulty
+> - **AlphaStar**: StarCraft with league play and exploiter agents
+> - **Rubik's Cube**: Domain randomization for sim-to-real transfer
+> - **LLM Fine-tuning**: Synthetic data generation and quality filtering
+> 
+> The algorithms stay the same; the environments become sophisticated.
 
-Modern RL focuses on general algorithms (PPO, SAC, DQN) trained on carefully designed environments:
-- **OpenAI Five**: Dota 2 with curriculum of increasing difficulty
-- **AlphaStar**: StarCraft with league play and exploiter agents
-- **Rubik's Cube**: Domain randomization for sim-to-real transfer
-- **LLM Fine-tuning**: Synthetic data generation and quality filtering
-
-The algorithms stay the same; the environments become sophisticated.
-
+{pause up}
 ### Critical: Environment Quality Control
 
 Not all environments are created equal. A seemingly simple Sokoban puzzle might be:
@@ -1264,8 +1277,10 @@ Not all environments are created equal. A seemingly simple Sokoban puzzle might 
 - **Degenerate**: Multiple boxes in corners (deadlock)
 - **Ambiguous**: Multiple contradictory solutions
 
+{pause}
 #### Solvability Checking for Sokoban
 
+{pause down}
 ```python
 def is_solvable(grid):
     """Check if a Sokoban puzzle has at least one solution."""
@@ -1297,9 +1312,11 @@ def is_deadlock(state):
     # Check for boxes in corners without targets
     # Check for boxes against walls forming immovable patterns
     # Check for box clusters that can't be separated
-    return has_corner_deadlock(state) or has_freeze_deadlock(state)
+    return has_corner_deadlock(state)
+           or has_freeze_deadlock(state)
 ```
 
+{pause center}
 #### Quality Metrics for Training Environments
 
 1. **Solvability Rate**: Percentage of generated levels with solutions
@@ -1308,10 +1325,12 @@ def is_deadlock(state):
 4. **State Space Coverage**: Diversity of situations encountered
 5. **Skill Requirements**: Which abilities each level tests
 
+{pause up}
 ### Procedural Generation with Constraints
 
 Instead of hand-crafting levels, generate them with quality guarantees:
 
+{pause down}
 ```python
 def generate_curriculum_level(difficulty_target):
     """Generate a solvable level matching difficulty criteria."""
@@ -1345,10 +1364,12 @@ def generate_curriculum_level(difficulty_target):
     return generate_simplified_level(difficulty_target)
 ```
 
+{pause up}
 ### The Curriculum as Environment Sequence
 
 Modern curriculum learning is really **environment scheduling**:
 
+{pause down}
 ```python
 class AdaptiveCurriculum:
     def __init__(self):
@@ -1377,6 +1398,7 @@ class AdaptiveCurriculum:
         return env
 ```
 
+{pause up}
 ### Case Study: Sokoban Curriculum Quality
 
 For our Sokoban curriculum, we should ensure:
@@ -1401,6 +1423,7 @@ Without quality control, we risk:
 - **Trivial levels** → No skill development
 - **Deadlock-prone levels** → Frustration without learning
 
+{pause up}
 ### Engineering Environments for Generalization
 
 The goal isn't to solve specific puzzles but to develop general capabilities:
@@ -1427,6 +1450,7 @@ def create_generalization_curriculum():
     ]
 ```
 
+{pause up}
 ### The Meta-Game: Learning to Generate Environments
 
 The frontier is now **learned environment generation**:
@@ -1437,6 +1461,7 @@ The frontier is now **learned environment generation**:
 
 These methods automate environment design, reward engineering, and curriculum discovery to maximize learning progress while ensuring correctness.
 
+{pause up}
 ### Practical Guidelines
 
 1. **Always Validate Generated Environments**
@@ -1461,11 +1486,13 @@ These methods automate environment design, reward engineering, and curriculum di
    - Rotate through different challenges
    - Include both familiar and novel elements
 
+{pause down}
 4. **Design for Failure Recovery**
    - Ensure mistakes are recoverable
    - Provide clear failure feedback
    - Allow exploration without catastrophe
 
+{pause up}
 ### Future Directions
 
 The field is moving toward:
@@ -1476,6 +1503,7 @@ The field is moving toward:
 
 The key insight: **A good environment is worth a thousand algorithmic tricks**.
 
+{pause}
 ### Summary
 
 Domain-specific engineering in RL has shifted from crafting clever algorithms to:
