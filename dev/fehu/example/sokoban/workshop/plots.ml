@@ -207,6 +207,7 @@ let parse_args () =
   let gamma = ref 0.99 in
   let grid_size = ref 5 in
   let env_type = ref "gridworld" in
+  let max_steps = ref 200 in
   let help = ref false in
 
   let usage = Printf.sprintf
@@ -226,7 +227,9 @@ let parse_args () =
     ("-grid", Arg.Set_int grid_size,
      "SIZE  Grid size for environment (default: 5, try 7 or 9)");
     ("-env", Arg.Set_string env_type,
-     "TYPE  Environment type: gridworld, curriculum, sokoban (default: gridworld)");
+     "TYPE  Environment type: gridworld, curriculum, verified-curriculum (default: gridworld)");
+    ("-max-steps", Arg.Set_int max_steps,
+     "N     Maximum steps per episode for Verified Sokoban (default: 200)");
     ("-help", Arg.Set help,
      "      Display this help message");
     ("--help", Arg.Set help,
@@ -243,14 +246,16 @@ let parse_args () =
     Printf.printf "  -lr LR        Learning rate (default: 0.01)\n";
     Printf.printf "  -gamma G      Discount factor (default: 0.99)\n";
     Printf.printf "  -grid SIZE    Grid size for environment (default: 5, try 7 or 9)\n";
-    Printf.printf "  -env TYPE     Environment type: gridworld, curriculum, sokoban (default: gridworld)\n";
+    Printf.printf "  -env TYPE     Environment type: gridworld, curriculum, verified-curriculum (default: gridworld)\n";
+    Printf.printf "  -max-steps N  Maximum steps per episode for Verified Sokoban (default: 200)\n";
     Printf.printf "  -help/--help  Display this help message\n\n";
     Printf.printf "Examples:\n";
     Printf.printf "  %s                          # Compare reinforce vs baseline\n" Sys.argv.(0);
     Printf.printf "  %s -a all                   # Compare all algorithms\n" Sys.argv.(0);
     Printf.printf "  %s -a reinforce -a actor-critic -n 300  # Custom comparison\n" Sys.argv.(0);
-    Printf.printf "  %s -env curriculum -a baseline  # Use curriculum environment\n" Sys.argv.(0);
-    Printf.printf "  %s -env sokoban -a all -n 500  # Sokoban with all algorithms\n" Sys.argv.(0);
+    Printf.printf "  %s -env curriculum -a baseline  # Use gridworld curriculum environment\n" Sys.argv.(0);
+    Printf.printf "  %s -env verified-curriculum -a all -n 500  # Verified Sokoban with all algorithms\n" Sys.argv.(0);
+    Printf.printf "  %s -env verified-curriculum -a baseline -n 1000  # Verified Sokoban curriculum\n" Sys.argv.(0);
     exit 0
   end;
 
@@ -263,13 +268,13 @@ let parse_args () =
   else
     algos in
 
-  (List.rev algos, !n_episodes, !learning_rate, !gamma, !grid_size, !env_type)
+  (List.rev algos, !n_episodes, !learning_rate, !gamma, !grid_size, !env_type, !max_steps)
 
 (* Main function *)
 let () =
   Random.self_init ();
 
-  let algorithms, n_episodes, learning_rate, gamma, grid_size, env_type = parse_args () in
+  let algorithms, n_episodes, learning_rate, gamma, grid_size, env_type, max_steps = parse_args () in
 
   print_endline "=== RL Workshop: Algorithm Comparison ===";
   Printf.printf "Comparing algorithms: %s\n" (String.concat ", " algorithms);
@@ -277,7 +282,9 @@ let () =
   Printf.printf "Episodes: %d, Learning rate: %.3f, Gamma: %.2f"
     n_episodes learning_rate gamma;
   if env_type = "gridworld" then
-    Printf.printf ", Grid: %dx%d" grid_size grid_size;
+    Printf.printf ", Grid: %dx%d" grid_size grid_size
+  else if env_type = "verified-curriculum" then
+    Printf.printf ", Max steps: %d" max_steps;
   Printf.printf "\n\n";
 
   let algo_ref = ref "unset_algorithm" in
@@ -293,6 +300,9 @@ let () =
           stage_transitions = [];
         } in
         Slide11.create_curriculum_env curriculum_state
+    | "verified-curriculum" ->
+        (* Verified Sokoban with curriculum learning *)
+        Verified.sokoban_curriculum ~max_steps ()
     | _ ->
         Printf.eprintf "Unknown environment type: %s\n" env_type;
         exit 1
@@ -301,10 +311,11 @@ let () =
   (* Train selected algorithms *)
   let histories = ref [] in
 
-  (* Curriculum environment is always 5x5, Sokoban is 9x9 *)
+  (* Grid sizes must match what the environment observation space provides *)
   let effective_grid_size =
     match env_type with
-    | "curriculum" -> 5
+    | "curriculum" -> 5  (* Gridworld curriculum is always 5x5 *)
+    | "verified-curriculum" -> 10  (* Verified curriculum uses fixed 10x10 max *)
     | _ -> grid_size
   in
 
