@@ -280,6 +280,8 @@ let () =
     Printf.printf ", Grid: %dx%d" grid_size grid_size;
   Printf.printf "\n\n";
 
+  let algo_ref = ref "unset_algorithm" in
+
   let env = match env_type with
     | "gridworld" -> Slide1.create_simple_gridworld grid_size
     | "curriculum" ->
@@ -291,8 +293,6 @@ let () =
           stage_transitions = [];
         } in
         Slide11.create_curriculum_env curriculum_state
-    | "sokoban" ->
-        Workshop.Advanced_curriculum.create_sokoban_curriculum ()
     | _ ->
         Printf.eprintf "Unknown environment type: %s\n" env_type;
         exit 1
@@ -305,13 +305,13 @@ let () =
   let effective_grid_size =
     match env_type with
     | "curriculum" -> 5
-    | "sokoban" -> 9
     | _ -> grid_size
   in
 
   List.iter (fun algo ->
     match algo with
     | "reinforce" ->
+        algo_ref := "reinforce";
         print_endline "Training REINFORCE without baseline...";
         let _policy_net, _params, _episodes, history =
           Slide4.train_reinforce env n_episodes learning_rate gamma ~grid_size:effective_grid_size () in
@@ -323,6 +323,7 @@ let () =
         } :: !histories
 
     | "baseline" ->
+        algo_ref := "baseline";
         print_endline "Training REINFORCE with baseline...";
         let _policy_net, _params, history =
           Slide5.train_reinforce_with_baseline env n_episodes learning_rate gamma ~grid_size:effective_grid_size () in
@@ -334,6 +335,7 @@ let () =
         } :: !histories
 
     | "actor-critic" ->
+        algo_ref := "actor-critic";
         print_endline "Training Actor-Critic...";
         (* Actor-Critic uses different learning rates for actor and critic *)
         let lr_critic = learning_rate *. 0.5 in  (* Critic often trains slower *)
@@ -347,6 +349,7 @@ let () =
         } :: !histories
 
     | "reinforce++" ->
+        algo_ref := "reinforce++";
         print_endline "Training REINFORCE++...";
         (* REINFORCE++ with clipping and KL penalty *)
         let epsilon = 0.2 in  (* Clipping parameter *)
@@ -393,6 +396,8 @@ let () =
     let loss_type = if h.name = "Actor-Critic" then "value loss" else "policy loss" in
     Printf.printf "  Final %s: %.4f\n" loss_type h.losses.(n - 1);
   ) histories;
+
+  (* Episode generation is now done per-algorithm above *)
 
   print_endline "\n=== Analysis ===";
   print_endline "Expected observations:";
