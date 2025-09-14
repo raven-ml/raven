@@ -23,6 +23,10 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma ?(grid_size=5) ()
   (* History tracking *)
   let history_returns = Array.make n_episodes 0.0 in
   let history_losses = Array.make n_episodes 0.0 in
+
+  (* Collect episodes for visualization *)
+  let collected_episodes = ref [] in
+
   let rng = Rune.Rng.key 42 in
   (* Initialize actor (policy) and critic (value) networks *)
   let policy_net = create_policy_network grid_size 4 in
@@ -43,6 +47,10 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma ?(grid_size=5) ()
     (* Collect episode with value estimates *)
     let episode_data =
       collect_episode env policy_net policy_params 100 in
+
+    (* Store selected episodes *)
+    if episode mod (n_episodes / 10) = 0 || episode = n_episodes then
+      collected_episodes := episode_data :: !collected_episodes;
     let returns = compute_returns episode_data.rewards gamma in    
     (* Compute value estimates for states that have returns *)
     let n_steps = Array.length returns in
@@ -138,7 +146,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma ?(grid_size=5) ()
 
   (* Return with history *)
   (policy_net, policy_params, value_net, value_params,
-   {returns = history_returns; losses = history_losses})
+   {returns = history_returns; losses = history_losses; collected_episodes = List.rev !collected_episodes})
 (* Main function to test Actor-Critic *)
 let main () =
   print_endline "=== Slide 6: Actor-Critic ===";

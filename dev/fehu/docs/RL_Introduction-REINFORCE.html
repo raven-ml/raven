@@ -2385,6 +2385,7 @@ open Slide3
 type training_history = {
   returns: float array;
   losses: float array;
+  collected_episodes: Slide3.episode_data list;
 }
 
 (* REINFORCE training loop *)
@@ -2408,8 +2409,8 @@ let train_reinforce env n_episodes learning_rate gamma ?(grid_size=5) () =
     let episode_data =
       collect_episode env policy_net params 100 in
     
-    (* Store first and last episodes *)
-    if episode &amp;lt; 4 || episode = n_episodes then
+    (* Store selected episodes *)
+    if episode mod (n_episodes / 10) = 0 || episode = n_episodes then
       collected_episodes := episode_data :: !collected_episodes;
     
     (* Compute returns *)
@@ -2484,7 +2485,7 @@ let train_reinforce env n_episodes learning_rate gamma ?(grid_size=5) () =
 
   (* Return everything including history *)
   (policy_net, params, List.rev !collected_episodes,
-   {returns = history_returns; losses = history_losses})
+   {returns = history_returns; losses = history_losses; collected_episodes = List.rev !collected_episodes})
 (* Main function - just for slide consistency *)
 let main () =
   print_endline &amp;quot;REINFORCE training function defined.&amp;quot;
@@ -2589,10 +2590,17 @@ let train_reinforce_with_baseline env n_episodes learning_rate
   let history_returns = Array.make n_episodes 0.0 in
   let history_losses = Array.make n_episodes 0.0 in
 
+  (* Collect episodes for visualization *)
+  let collected_episodes = ref [] in
+
   for episode = 1 to n_episodes do
     (* Collect episode *)
     let episode_data =
       collect_episode env policy_net params 100 in
+
+    (* Store selected episodes *)
+    if episode mod (n_episodes / 10) = 0 || episode = n_episodes then
+      collected_episodes := episode_data :: !collected_episodes;
     let returns = compute_returns episode_data.rewards gamma in
     (* Update baseline (exponential moving average) *)
     let episode_return = if Array.length returns &amp;gt; 0 then returns.(0) else 0.0 in
@@ -2658,7 +2666,7 @@ let train_reinforce_with_baseline env n_episodes learning_rate
   done;
 
   (* Return with history *)
-  (policy_net, params, {returns = history_returns; losses = history_losses})
+  (policy_net, params, {returns = history_returns; losses = history_losses; collected_episodes = List.rev !collected_episodes})
 (* Main function to test REINFORCE with baseline *)
 let main () =
   print_endline &amp;quot;=== Slide 5: REINFORCE with Baseline ===&amp;quot;;
@@ -2737,6 +2745,10 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma ?(grid_size=5) ()
   (* History tracking *)
   let history_returns = Array.make n_episodes 0.0 in
   let history_losses = Array.make n_episodes 0.0 in
+
+  (* Collect episodes for visualization *)
+  let collected_episodes = ref [] in
+
   let rng = Rune.Rng.key 42 in
   (* Initialize actor (policy) and critic (value) networks *)
   let policy_net = create_policy_network grid_size 4 in
@@ -2757,6 +2769,10 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma ?(grid_size=5) ()
     (* Collect episode with value estimates *)
     let episode_data =
       collect_episode env policy_net policy_params 100 in
+
+    (* Store selected episodes *)
+    if episode mod (n_episodes / 10) = 0 || episode = n_episodes then
+      collected_episodes := episode_data :: !collected_episodes;
     let returns = compute_returns episode_data.rewards gamma in    
     (* Compute value estimates for states that have returns *)
     let n_steps = Array.length returns in
@@ -2852,7 +2868,7 @@ let train_actor_critic env n_episodes lr_actor lr_critic gamma ?(grid_size=5) ()
 
   (* Return with history *)
   (policy_net, policy_params, value_net, value_params,
-   {returns = history_returns; losses = history_losses})
+   {returns = history_returns; losses = history_losses; collected_episodes = List.rev !collected_episodes})
 (* Main function to test Actor-Critic *)
 let main () =
   print_endline &amp;quot;=== Slide 6: Actor-Critic ===&amp;quot;;
@@ -3132,6 +3148,9 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
   let history_returns = Array.make n_episodes 0.0 in
   let history_losses = Array.make n_episodes 0.0 in
 
+  (* Collect episodes for visualization *)
+  let collected_episodes = ref [] in
+
   (* Baseline for variance reduction *)
   let baseline = ref 0.0 in
   (* Exponential moving average factor *)
@@ -3144,6 +3163,10 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
     (* Collect episode with current policy *)
     let episode_data =
       collect_episode env policy_net params 100 in
+
+    (* Store selected episodes *)
+    if episode mod (n_episodes / 10) = 0 || episode = n_episodes then
+      collected_episodes := episode_data :: !collected_episodes;
     let returns = compute_returns episode_data.rewards gamma in
 
     (* Update baseline (exponential moving average) *)
@@ -3269,7 +3292,7 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
 
   (* Return with history *)
   (policy_net, params,
-   {returns = history_returns; losses = history_losses})
+   {returns = history_returns; losses = history_losses; collected_episodes = List.rev !collected_episodes})
 
 (* Main function to test REINFORCE++ *)
 let main () =

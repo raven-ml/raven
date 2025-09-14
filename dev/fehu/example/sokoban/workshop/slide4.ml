@@ -9,6 +9,7 @@ open Slide3
 type training_history = {
   returns: float array;
   losses: float array;
+  collected_episodes: Slide3.episode_data list;
 }
 
 (* REINFORCE training loop *)
@@ -32,7 +33,7 @@ let train_reinforce env n_episodes learning_rate gamma ?(grid_size=5) () =
     let episode_data =
       collect_episode env policy_net params 100 in
     
-    (* Store first and last episodes *)
+    (* Store selected episodes *)
     if episode mod (n_episodes / 10) = 0 || episode = n_episodes then
       collected_episodes := episode_data :: !collected_episodes;
     
@@ -108,7 +109,7 @@ let train_reinforce env n_episodes learning_rate gamma ?(grid_size=5) () =
 
   (* Return everything including history *)
   (policy_net, params, List.rev !collected_episodes,
-   {returns = history_returns; losses = history_losses})
+   {returns = history_returns; losses = history_losses; collected_episodes = List.rev !collected_episodes})
 (* Main function - just for slide consistency *)
 let main () =
   print_endline "REINFORCE training function defined."

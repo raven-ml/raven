@@ -19,10 +19,17 @@ let train_reinforce_with_baseline env n_episodes learning_rate
   let history_returns = Array.make n_episodes 0.0 in
   let history_losses = Array.make n_episodes 0.0 in
 
+  (* Collect episodes for visualization *)
+  let collected_episodes = ref [] in
+
   for episode = 1 to n_episodes do
     (* Collect episode *)
     let episode_data =
       collect_episode env policy_net params 100 in
+
+    (* Store selected episodes *)
+    if episode mod (n_episodes / 10) = 0 || episode = n_episodes then
+      collected_episodes := episode_data :: !collected_episodes;
     let returns = compute_returns episode_data.rewards gamma in
     (* Update baseline (exponential moving average) *)
     let episode_return = if Array.length returns > 0 then returns.(0) else 0.0 in
@@ -88,7 +95,7 @@ let train_reinforce_with_baseline env n_episodes learning_rate
   done;
 
   (* Return with history *)
-  (policy_net, params, {returns = history_returns; losses = history_losses})
+  (policy_net, params, {returns = history_returns; losses = history_losses; collected_episodes = List.rev !collected_episodes})
 (* Main function to test REINFORCE with baseline *)
 let main () =
   print_endline "=== Slide 5: REINFORCE with Baseline ===";

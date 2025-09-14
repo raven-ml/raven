@@ -22,6 +22,9 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
   let history_returns = Array.make n_episodes 0.0 in
   let history_losses = Array.make n_episodes 0.0 in
 
+  (* Collect episodes for visualization *)
+  let collected_episodes = ref [] in
+
   (* Baseline for variance reduction *)
   let baseline = ref 0.0 in
   (* Exponential moving average factor *)
@@ -34,6 +37,10 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
     (* Collect episode with current policy *)
     let episode_data =
       collect_episode env policy_net params 100 in
+
+    (* Store selected episodes *)
+    if episode mod (n_episodes / 10) = 0 || episode = n_episodes then
+      collected_episodes := episode_data :: !collected_episodes;
     let returns = compute_returns episode_data.rewards gamma in
 
     (* Update baseline (exponential moving average) *)
@@ -159,7 +166,7 @@ let train_reinforce_plus_plus env n_episodes learning_rate gamma
 
   (* Return with history *)
   (policy_net, params,
-   {returns = history_returns; losses = history_losses})
+   {returns = history_returns; losses = history_losses; collected_episodes = List.rev !collected_episodes})
 
 (* Main function to test REINFORCE++ *)
 let main () =

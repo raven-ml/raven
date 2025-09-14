@@ -1,7 +1,8 @@
-(** Backoff-Tabular Q-learning baseline for Sokoban 
+(** Backoff-Tabular Q-learning baseline for Sokoban
     Ported from sokoban-rl-playground to work with Fehu/Gymnasium API *)
 
 open Fehu
+open Slide3  (* For shared episode_data type *)
 
 module StateHash = struct
   type t = string
@@ -269,6 +270,7 @@ let create_agent ?(params=default_params) () =
 type training_history = {
   returns: float array;
   losses: float array;  (* For Q-learning, we'll track TD errors as "losses" *)
+  collected_episodes: episode_data list;  (* Uses episode_data from Slide3 *)
 }
 
 (** Train the backoff-tabular agent on a Fehu environment *)
@@ -289,6 +291,9 @@ let train_backoff env n_episodes learning_rate gamma ?(_grid_size=10) () =
   let history_returns = Array.make n_episodes 0.0 in
   let history_losses = Array.make n_episodes 0.0 in  (* Track TD errors *)
 
+  (* Collect episodes for visualization *)
+  let collected_episodes = ref [] in
+
   for episode = 1 to n_episodes do
     let obs, _info = env.Env.reset () in
     let obs_ref = ref obs in
@@ -297,14 +302,31 @@ let train_backoff env n_episodes learning_rate gamma ?(_grid_size=10) () =
     let is_done = ref false in
     let episode_td_errors = ref [] in
 
+    (* Storage for episode data *)
+    let episode_states = ref [] in
+    let episode_actions = ref [] in
+    let episode_rewards = ref [] in
+    (* Q-learning doesn't have log_probs, but we need to provide them for compatibility *)
+    let episode_log_probs = ref [] in
+
     while not !is_done && !episode_steps < 500 do
       let state = obs_to_state !obs_ref in
+
+      (* Store state *)
+      episode_states := !obs_ref :: !episode_states;
 
       let action = epsilon_greedy_action agent state in
       let action_tensor = Rune.scalar Rune.c Rune.float32 (float_of_int action) in
 
+      (* Store action and dummy log_prob *)
+      episode_actions := action_tensor :: !episode_actions;
+      episode_log_probs := (Rune.scalar Rune.c Rune.float32 0.0) :: !episode_log_probs;
+
       let next_obs, reward, terminated, truncated, _info = env.Env.step action_tensor in
       let next_state = obs_to_state next_obs in
+
+      (* Store reward *)
+      episode_rewards := reward :: !episode_rewards;
 
       (* Calculate TD error before update for tracking *)
       let old_q = get_q_value_backoff agent state action in
@@ -332,6 +354,17 @@ let train_backoff env n_episodes learning_rate gamma ?(_grid_size=10) () =
         is_done := true
     done;
 
+    (* Create episode data record if we need to collect this episode *)
+    if episode mod (n_episodes / 10) = 0 || episode = n_episodes then begin
+      let episode_data = {
+        states = Array.of_list (List.rev !episode_states);
+        actions = Array.of_list (List.rev !episode_actions);
+        rewards = Array.of_list (List.rev !episode_rewards);
+        log_probs = Array.of_list (List.rev !episode_log_probs);
+      } in
+      collected_episodes := episode_data :: !collected_episodes
+    end;
+
     (* Update epsilon *)
     agent.epsilon <- max agent.params.epsilon_end
       (agent.epsilon *. agent.params.epsilon_decay);
@@ -353,4 +386,4 @@ let train_backoff env n_episodes learning_rate gamma ?(_grid_size=10) () =
   done;
 
   (* Return agent and history in format compatible with plots.ml *)
-  agent, { returns = history_returns; losses = history_losses }
+  agent, { returns = history_returns; losses = history_losses; collected_episodes = List.rev !collected_episodes }
