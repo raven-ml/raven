@@ -217,7 +217,7 @@ let parse_args () =
 
   let spec = [
     ("-a", Arg.String (fun s -> algorithms := s :: !algorithms),
-     "ALGO  Add algorithm to comparison: reinforce, baseline, actor-critic, reinforce++, all (default: reinforce,baseline)");
+     "ALGO  Add algorithm to comparison: reinforce, baseline, actor-critic, reinforce++, backoff-tabular, all (default: reinforce,baseline)");
     ("-n", Arg.Set_int n_episodes,
      "N     Number of training episodes (default: 200)");
     ("-lr", Arg.Set_float learning_rate,
@@ -241,7 +241,7 @@ let parse_args () =
   if !help then begin
     Printf.printf "%s\n" usage;
     Printf.printf "  -a ALGO       Add algorithm to comparison\n";
-    Printf.printf "                Available: reinforce, baseline, actor-critic, reinforce++, all\n";
+    Printf.printf "                Available: reinforce, baseline, actor-critic, reinforce++, backoff-tabular, all\n";
     Printf.printf "  -n N          Number of training episodes (default: 200)\n";
     Printf.printf "  -lr LR        Learning rate (default: 0.01)\n";
     Printf.printf "  -gamma G      Discount factor (default: 0.99)\n";
@@ -264,7 +264,7 @@ let parse_args () =
 
   (* Handle "all" option *)
   let algos = if List.mem "all" algos then
-    ["reinforce"; "baseline"; "actor-critic"; "reinforce++"]
+    ["reinforce"; "baseline"; "actor-critic"; "reinforce++"; "backoff-tabular"]
   else
     algos in
 

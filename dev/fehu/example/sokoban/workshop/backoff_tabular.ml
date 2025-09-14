@@ -271,13 +271,6 @@ let train_backoff env ~episodes ~max_steps ~seed ~verbose ?(log_trajectories=fal
   let agent = create_agent () in
   
   let rewards_history = ref [] in
-  let wins_history = ref [] in
-  let total_wins = ref 0 in
-  let logged_episodes = ref [] in
-  
-  Printf.printf "Starting Backoff-Tabular training\n";
-  Printf.printf "Window sizes: %s\n" 
-    (String.concat ", " (List.map string_of_int agent.params.window_sizes));
   
   for episode = 1 to episodes do
     let obs, info = env.Env.reset () in
@@ -286,24 +279,7 @@ let train_backoff env ~episodes ~max_steps ~seed ~verbose ?(log_trajectories=fal
     let episode_steps = ref 0 in
     let is_done = ref false in
     let stage_info = ref info in
-    
-    (* For logging trajectories *)
-    let log_frames = ref [] in
-    let should_log = log_trajectories && (episode = 1 || episode mod 500 = 0) in
-    
-    (* Log initial state *)
-    if should_log then begin
-      let initial_state = obs_to_state obs in
-      let initial_frame = Fehu.Visualization.{
-        step = 0;
-        state_repr = state_to_key initial_state;
-        action = "Initial";
-        reward = 0.0;
-        value = None;
-      } in
-      log_frames := initial_frame :: !log_frames
-    end;
-    
+
     while not !is_done && !episode_steps < max_steps do
       let state = obs_to_state !obs_ref in
       
@@ -312,18 +288,6 @@ let train_backoff env ~episodes ~max_steps ~seed ~verbose ?(log_trajectories=fal
       
       let next_obs, reward, terminated, truncated, info = env.Env.step action_tensor in
       let next_state = obs_to_state next_obs in
-      
-      (* Log frame if needed - show next state after action *)
-      if should_log then begin
-        let frame = Fehu.Visualization.{
-          step = !episode_steps + 1;  (* Step number after taking action *)
-          state_repr = state_to_key next_state;  (* Show state AFTER action *)
-          action = Fehu.Visualization.action_to_string action;
-          reward = reward;
-          value = None;
-        } in
-        log_frames := frame :: !log_frames
-      end;
       
       (* Update Q-values *)
       update_q_values agent state action next_state reward (terminated || truncated);
@@ -337,98 +301,13 @@ let train_backoff env ~episodes ~max_steps ~seed ~verbose ?(log_trajectories=fal
         stage_info := info
       end
     done;
-    
-    (* Save trajectory if logging *)
-    if should_log && List.length !log_frames > 0 then begin
-      let won = !episode_reward > 50.0 in
-      let stage_str = match List.assoc_opt "stage" !stage_info with
-        | Some (`String s) -> Some s
-        | _ -> None
-      in
-      
-      let log = Fehu.Visualization.{
-        episode_num = episode;
-        frames = List.rev !log_frames;
-        total_reward = !episode_reward;
-        total_steps = !episode_steps;
-        won = won;
-        stage = stage_str;
-      } in
-      logged_episodes := log :: !logged_episodes;
-      
-      (* Save to file *)
-      let filename = Printf.sprintf "logs/backoff_episode_%d.json" episode in
-      (try Unix.mkdir "logs" 0o755 with Unix.Unix_error _ -> ());
-      Fehu.Visualization.save_episode_log log filename
-    end;
-    
+
     (* Update epsilon *)
     agent.epsilon <- max agent.params.epsilon_end 
       (agent.epsilon *. agent.params.epsilon_decay);
     agent.steps <- agent.steps + 1;
-    
-    let won = !episode_reward > 50.0 in
-    if won then incr total_wins;
-    rewards_history := !episode_reward :: !rewards_history;
-    wins_history := (if won then 1.0 else 0.0) :: !wins_history;
-    
-    (* Keep only recent history *)
-    if List.length !rewards_history > 100 then begin
-      rewards_history := List.filteri (fun i _ -> i < 100) !rewards_history;
-      wins_history := List.filteri (fun i _ -> i < 100) !wins_history
-    end;
-    
-    (* Print progress *)
-    if verbose && episode mod 100 = 0 then begin
-      let recent_rewards = !rewards_history in
-      let avg_reward = 
-        (List.fold_left (+.) 0.0 recent_rewards) /. 
-        float_of_int (List.length recent_rewards) in
-      let recent_wins = !wins_history in
-      let win_rate = 
-        (List.fold_left (+.) 0.0 recent_wins) /. 
-        float_of_int (List.length recent_wins) in
-      
-      let stage = 
-        match List.assoc_opt "stage" !stage_info with
-        | Some (`String s) -> s
-        | _ -> "N/A"
-      in
-      
-      Printf.printf "Backoff Episode %d: Avg Reward = %.2f, Win Rate = %.1f%%, Epsilon = %.3f, Steps = %d, Stage = %s\n%!"
-        episode avg_reward (win_rate *. 100.0) agent.epsilon !episode_steps stage;
-      flush stdout
-    end
-  done;
-  
-  Printf.printf "Training complete! Final win rate: %.1f%%\n"
-    (float_of_int !total_wins /. float_of_int episodes *. 100.0);
-  
-  agent, !logged_episodes
 
-(** Main entry point to test backoff-tabular as baseline *)
-let () =
-  (* Test on simple corridor *)
-  Printf.printf "\n=== Backoff-Tabular on Simple Corridor ===\n";
-  let initial_state = Sokoban.LevelGen.generate_corridor 3 in
-  let env = Sokoban.sokoban ~width:5 ~height:3 ~max_steps:50 
-    ~initial_state () in
-  
-  let _agent, _logs = train_backoff env
-    ~episodes:1000
-    ~max_steps:50
-    ~seed:42
-    ~verbose:true
-    ~log_trajectories:false () in
-  
-  Printf.printf "\n=== Backoff-Tabular with Curriculum ===\n";
-  let curriculum_env = Sokoban.sokoban_curriculum ~max_steps:200 () in
-  
-  let _agent, _logs = train_backoff curriculum_env
-    ~episodes:10000
-    ~max_steps:200
-    ~seed:43
-    ~verbose:true
-    ~log_trajectories:true () in
-  
-  Printf.printf "\nBackoff baseline testing complete!\n"
+    rewards_history := !episode_reward :: !rewards_history;
+  done;
+
+  agent, !rewards_history
