@@ -764,8 +764,13 @@ let sokoban_curriculum ?(max_steps=200) ?stages () =
     let won = Core.check_win !current_level in
     let truncated = !steps >= max_steps in
     
-    let reward = 
-      if won then 100.0
+    let reward =
+      if won then
+        (* Scale reward based on curriculum stage *)
+        let stage_idx = !(config.current_idx) in
+        let num_stages = List.length config.stages in
+        (* Reward increases with difficulty: 10 for stage 1, up to 100 for final stage *)
+        10.0 +. (90.0 *. (float_of_int stage_idx) /. (float_of_int (num_stages - 1)))
       else if not moved then -0.1
       else -0.01
     in
