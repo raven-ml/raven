@@ -3,6 +3,7 @@
 
 open Fehu
 open Slide3  (* For shared episode_data type *)
+open Slide4  (* For shared training_history type *)
 
 module StateHash = struct
   type t = string
@@ -266,12 +267,7 @@ let create_agent ?(params=default_params) () =
     steps = 0;
   }
 
-(* Training history type to match other algorithms *)
-type training_history = {
-  returns: float array;
-  losses: float array;  (* For Q-learning, we'll track TD errors as "losses" *)
-  collected_episodes: episode_data list;  (* Uses episode_data from Slide3 *)
-}
+(* Use shared training_history type from Slide4 *)
 
 (** Train the backoff-tabular agent on a Fehu environment *)
 let train_backoff env n_episodes learning_rate gamma ?(_grid_size=10) () =

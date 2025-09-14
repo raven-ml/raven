@@ -1,6 +1,7 @@
 (* Algorithm comparison plots for RL workshop *)
 
 open Workshop
+open Visualizations  (* For episode visualization *)
 
 (* Extended training history type for named plots *)
 type named_history = {
@@ -310,6 +311,7 @@ let () =
 
   (* Train selected algorithms *)
   let histories = ref [] in
+  let full_histories = ref [] in  (* Store full histories with episode data *)
 
   (* Grid sizes must match what the environment observation space provides *)
   let effective_grid_size =
@@ -326,6 +328,7 @@ let () =
         print_endline "Training REINFORCE without baseline...";
         let _policy_net, _params, _episodes, history =
           Slide4.train_reinforce env n_episodes learning_rate gamma ~grid_size:effective_grid_size () in
+        full_histories := ("reinforce", history) :: !full_histories;
         histories := {
           name = "REINFORCE (no baseline)";
           returns = history.returns;
@@ -338,6 +341,7 @@ let () =
         print_endline "Training REINFORCE with baseline...";
         let _policy_net, _params, history =
           Slide5.train_reinforce_with_baseline env n_episodes learning_rate gamma ~grid_size:effective_grid_size () in
+        full_histories := ("baseline", history) :: !full_histories;
         histories := {
           name = "REINFORCE with baseline";
           returns = history.returns;
@@ -352,6 +356,7 @@ let () =
         let lr_critic = learning_rate *. 0.5 in  (* Critic often trains slower *)
         let _policy_net, _policy_params, _value_net, _value_params, history =
           Slide6.train_actor_critic env n_episodes learning_rate lr_critic gamma ~grid_size:effective_grid_size () in
+        full_histories := ("actor-critic", history) :: !full_histories;
         histories := {
           name = "Actor-Critic";
           returns = history.returns;
@@ -367,6 +372,7 @@ let () =
         let beta = 0.01 in    (* KL penalty coefficient *)
         let _policy_net, _params, history =
           Slide9.train_reinforce_plus_plus env n_episodes learning_rate gamma epsilon beta ~grid_size:effective_grid_size () in
+        full_histories := ("reinforce++", history) :: !full_histories;
         histories := {
           name = "REINFORCE++";
           returns = history.returns;
@@ -379,6 +385,7 @@ let () =
         print_endline "Training Backoff-Tabular Q-learning...";
         let _agent, history =
           Backoff_tabular.train_backoff env n_episodes learning_rate gamma ~_grid_size:effective_grid_size () in
+        full_histories := ("backoff-tabular", history) :: !full_histories;
         histories := {
           name = "Backoff-Tabular Q-learning";
           returns = history.returns;
@@ -406,6 +413,18 @@ let () =
   print_endline "\nGenerating SVG plots...";
   generate_svg_plot histories "returns" "reinforce_returns.svg";
   generate_svg_plot histories "losses" "reinforce_losses.svg";
+
+  (* Visualize collected episodes *)
+  print_endline "\n=== Visualizing Episodes ===";
+  let env_category =
+    match env_type with
+    | "gridworld" | "curriculum" -> `Gridworld
+    | "verified-curriculum" | "sokoban" -> `Sokoban
+    | _ -> `Gridworld  (* Default *)
+  in
+  List.iter (fun (algo_name, full_history) ->
+    visualize_episodes full_history env_type algo_name env_category ~grid_size:effective_grid_size
+  ) (List.rev !full_histories);
 
   (* Print statistics *)
   Printf.printf "\n=== Final Statistics ===\n";
