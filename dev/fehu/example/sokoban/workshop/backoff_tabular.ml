@@ -265,49 +265,92 @@ let create_agent ?(params=default_params) () =
     steps = 0;
   }
 
+(* Training history type to match other algorithms *)
+type training_history = {
+  returns: float array;
+  losses: float array;  (* For Q-learning, we'll track TD errors as "losses" *)
+}
+
 (** Train the backoff-tabular agent on a Fehu environment *)
-let train_backoff env ~episodes ~max_steps ~seed ~verbose ?(log_trajectories=false) () =
-  Random.init seed;
-  let agent = create_agent () in
-  
-  let rewards_history = ref [] in
-  
-  for episode = 1 to episodes do
-    let obs, info = env.Env.reset () in
+let train_backoff env n_episodes learning_rate gamma ?(_grid_size=10) () =
+  (* Create agent with custom parameters *)
+  let params = {
+    learning_rate;
+    discount_factor = gamma;
+    epsilon_start = 1.0;
+    epsilon_end = 0.01;
+    epsilon_decay = 0.995;
+    max_steps = 500;
+    window_sizes = [3; 5; 7; -1];  (* Backoff window sizes *)
+  } in
+  let agent = create_agent ~params () in
+
+  (* History tracking *)
+  let history_returns = Array.make n_episodes 0.0 in
+  let history_losses = Array.make n_episodes 0.0 in  (* Track TD errors *)
+
+  for episode = 1 to n_episodes do
+    let obs, _info = env.Env.reset () in
     let obs_ref = ref obs in
     let episode_reward = ref 0.0 in
     let episode_steps = ref 0 in
     let is_done = ref false in
-    let stage_info = ref info in
+    let episode_td_errors = ref [] in
 
-    while not !is_done && !episode_steps < max_steps do
+    while not !is_done && !episode_steps < 500 do
       let state = obs_to_state !obs_ref in
-      
+
       let action = epsilon_greedy_action agent state in
       let action_tensor = Rune.scalar Rune.c Rune.float32 (float_of_int action) in
-      
-      let next_obs, reward, terminated, truncated, info = env.Env.step action_tensor in
+
+      let next_obs, reward, terminated, truncated, _info = env.Env.step action_tensor in
       let next_state = obs_to_state next_obs in
-      
+
+      (* Calculate TD error before update for tracking *)
+      let old_q = get_q_value_backoff agent state action in
+      let max_next_q =
+        if terminated || truncated then 0.0
+        else
+          let best_q = ref neg_infinity in
+          for a = 0 to 3 do
+            let q = get_q_value_backoff agent next_state a in
+            best_q := max !best_q q
+          done;
+          !best_q
+      in
+      let td_error = abs_float (reward +. gamma *. max_next_q -. old_q) in
+      episode_td_errors := td_error :: !episode_td_errors;
+
       (* Update Q-values *)
       update_q_values agent state action next_state reward (terminated || truncated);
-      
+
       obs_ref := next_obs;
       episode_reward := !episode_reward +. reward;
       incr episode_steps;
-      
-      if terminated || truncated then begin
-        is_done := true;
-        stage_info := info
-      end
+
+      if terminated || truncated then
+        is_done := true
     done;
 
     (* Update epsilon *)
-    agent.epsilon <- max agent.params.epsilon_end 
+    agent.epsilon <- max agent.params.epsilon_end
       (agent.epsilon *. agent.params.epsilon_decay);
     agent.steps <- agent.steps + 1;
 
-    rewards_history := !episode_reward :: !rewards_history;
+    (* Store history *)
+    history_returns.(episode - 1) <- !episode_reward;
+    (* Average TD error for the episode *)
+    let avg_td_error =
+      if !episode_td_errors = [] then 0.0
+      else List.fold_left (+.) 0.0 !episode_td_errors /.
+           float_of_int (List.length !episode_td_errors) in
+    history_losses.(episode - 1) <- avg_td_error;
+
+    (* Print progress *)
+    if episode mod 10 = 0 || episode = n_episodes then
+      Printf.printf "Episode %d: Return = %.2f, Epsilon = %.3f, Avg TD Error = %.4f\n"
+        episode !episode_reward agent.epsilon avg_td_error
   done;
 
-  agent, !rewards_history
+  (* Return agent and history in format compatible with plots.ml *)
+  agent, { returns = history_returns; losses = history_losses }

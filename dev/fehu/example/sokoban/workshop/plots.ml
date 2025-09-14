@@ -374,6 +374,18 @@ let () =
           color = "#ff7f0e"  (* Orange *)
         } :: !histories
 
+    | "backoff-tabular" ->
+        algo_ref := "backoff-tabular";
+        print_endline "Training Backoff-Tabular Q-learning...";
+        let _agent, history =
+          Backoff_tabular.train_backoff env n_episodes learning_rate gamma ~_grid_size:effective_grid_size () in
+        histories := {
+          name = "Backoff-Tabular Q-learning";
+          returns = history.returns;
+          losses = history.losses;  (* TD errors *)
+          color = "#9467bd"  (* Purple *)
+        } :: !histories
+
     | unknown ->
         Printf.eprintf "Warning: Unknown algorithm '%s', skipping\n" unknown
   ) algorithms;
@@ -387,7 +399,7 @@ let () =
 
   (* ASCII plots for terminal *)
   ascii_plot histories "returns" 10;
-  print_endline "\nNote: Actor-Critic shows value network loss, others show policy loss";
+  print_endline "\nNote: Actor-Critic shows value network loss, Backoff-Tabular shows TD errors, others show policy loss";
   ascii_plot histories "losses" 10;
 
   (* SVG plots for files *)
@@ -404,7 +416,10 @@ let () =
                      float_of_int (Array.length last_10_returns) in
     Printf.printf "%s:\n" h.name;
     Printf.printf "  Average last 10 returns: %.2f\n" avg_return;
-    let loss_type = if h.name = "Actor-Critic" then "value loss" else "policy loss" in
+    let loss_type =
+      if h.name = "Actor-Critic" then "value loss"
+      else if h.name = "Backoff-Tabular Q-learning" then "TD error"
+      else "policy loss" in
     Printf.printf "  Final %s: %.4f\n" loss_type h.losses.(n - 1);
   ) histories;
 
@@ -418,5 +433,7 @@ let () =
     print_endline "- Actor-Critic uses learned baseline for better variance reduction";
   if List.exists (fun h -> h.name = "REINFORCE++") histories then
     print_endline "- REINFORCE++ adds stability through clipping and KL regularization";
+  if List.exists (fun h -> h.name = "Backoff-Tabular Q-learning") histories then
+    print_endline "- Backoff-Tabular uses hierarchical state abstraction for efficient Q-learning";
   print_endline "- All methods should converge to similar final performance";
   print_endline "- Training stability varies: Actor-Critic > REINFORCE++ > Baseline > REINFORCE"
