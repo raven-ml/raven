@@ -45,36 +45,17 @@ This works for 10 states but becomes problematic for full episodes.
 
 ## Your Challenge
 
-### Option A: Debug the Root Cause (Advanced)
-1. Investigate why indexing operations fail in `rune/lib/autodiff.ml`
-2. Determine if this is a bug in Rune's autodiff implementation
-3. Propose or implement a fix in the Rune library itself
+### Part A: Debug the Root Cause
 
-### Option B: Implement a Workaround (Intermediate)
-Create a working solution that processes ALL states in an episode. Consider:
+### Part B: Implement batching
+Create a working solution that processes ALL states in an episode.
 
-1. **Batching approach**: Process all states in a single forward pass
+**Batching**: Process all states in a single forward pass
    ```ocaml
    (* Hint: Stack all states into shape [batch_size; 5; 5] *)
    let all_states = Rune.stack (Array.to_list episode_data.states) ~axis:0 in
    (* Compute all log_probs at once *)
    let all_logits = Kaun.apply policy_net p ~training:true all_states in
-   ```
-
-2. **Alternative loss formulation**: Use cross-entropy with one-hot encoded actions
-   ```ocaml
-   (* Create one-hot matrix for all actions at once *)
-   let actions_one_hot = (* your implementation *) in
-   let loss = cross_entropy_loss all_logits actions_one_hot returns
-   ```
-
-3. **Gradient accumulation**: Compute gradients outside the main loop
-   ```ocaml
-   (* Process in smaller batches if memory is an issue *)
-   let batch_size = 32 in
-   for batch_start = 0 to Array.length states - 1 step batch_size do
-     (* Process batch and accumulate gradients *)
-   done
    ```
 
 ## Success Criteria
@@ -98,22 +79,7 @@ Your solution should:
 ## Bonus Points
 
 - Benchmark the performance difference between processing 10 vs all states
-- Implement multiple approaches and compare their efficiency
 - Add unit tests for your gradient computation
 - Create a visualization showing which states receive gradient updates
-
-## Resources
-
-- Rune autodiff implementation: `rune/lib/autodiff.ml`
-- PyTorch gather operation (for comparison): https://pytorch.org/docs/stable/generated/torch.gather.html
-- REINFORCE algorithm: Sutton & Barto Chapter 13
-- Original paper: Williams (1992) "Simple Statistical Gradient-Following Algorithms"
-
-## Hints
-
-1. The issue might be related to how Rune handles dynamic indexing in computation graphs
-2. Consider that the mask approach works because it uses static operations
-3. Look at how other RL libraries (CleanRL, Stable-Baselines3) handle action selection in policy gradients
-4. The `Kaun.Loss.cross_entropy` function might provide inspiration
 
 Good luck! This is a real issue affecting the learning efficiency of our RL agent.
