@@ -45,6 +45,7 @@
    (>= 5.2.0))
   dune
   (dune-configurator :build)
+  stdlib-shims
   ; nx.metal - only on macOS
   (ctypes
    (and
@@ -72,6 +73,7 @@
    (>= 5.2.0))
   dune
   (dune-configurator :build)
+  stdlib-shims
   ocurl
   csv
   logs
@@ -91,6 +93,7 @@
    (>= 5.2.0))
   dune
   (dune-configurator :build)
+  stdlib-shims
   (nx
    (= :version))
   re
@@ -110,6 +113,7 @@
   ocaml
   dune
   (dune-configurator :build)
+  stdlib-shims
   (nx
    (>= 0.1.0))
   re
@@ -127,6 +131,7 @@
    (>= 5.2.0))
   dune
   (dune-configurator :build)
+  stdlib-shims
   (nx
    (= :version))
   (ctypes
@@ -145,6 +150,7 @@
    (>= 5.2.0))
   dune
   (dune-configurator :build)
+  stdlib-shims
   logs
   yojson
   domainslib
@@ -168,6 +174,7 @@
    (>= 5.2.0))
   dune
   (dune-configurator :build)
+  stdlib-shims
   (rune
    (= :version))
   (alcotest :with-test))
@@ -187,6 +194,7 @@
    (>= 5.2.0))
   dune
   (dune-configurator :build)
+  stdlib-shims
   (dune-site
    (>= 3.19.0))
   cmdliner
@@ -228,6 +236,7 @@
    (>= 5.2.0))
   dune
   (dune-configurator :build)
+  stdlib-shims
   conf-sdl2
   cairo2
   (nx

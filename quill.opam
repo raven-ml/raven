@@ -16,6 +16,7 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.19"}
   "dune-configurator" {build}
+  "stdlib-shims"
   "dune-site" {>= "3.19.0"}
   "cmdliner"
   "wasm_of_ocaml-compiler"
