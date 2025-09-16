@@ -3,14 +3,13 @@ module C = Configurator.V1
 let get_llvm_config c =
   (* Try different llvm-config names in order of preference *)
   let possible_names = [
-    "llvm-config";
     "llvm-config-20";
     "llvm-config-19";
     "llvm-config-18";
     "llvm-config-17";
     "llvm-config-16";
     "llvm-config-15";
-    "llvm-config-14";
+    "llvm-config";
   ] in
   
   let rec find_llvm_config = function
