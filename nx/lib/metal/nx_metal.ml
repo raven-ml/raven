@@ -389,3 +389,5 @@ let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
     (* Update result's view to match the requested shape *)
     let result_view = Lazy_view.reshape new_shape result.view in
     { result with view = result_view }
+
+let op_associative_scan = Obj.magic ()

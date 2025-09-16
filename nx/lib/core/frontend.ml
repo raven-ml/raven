@@ -6364,6 +6364,11 @@ module Make (B : Backend_intf.S) = struct
       ?dilation:(Option.map pair_to_array dilation)
       ~padding_spec ?output_size_opt ~num_spatial_dims:2
 
+  let cumsum ~axis t = B.op_associative_scan ~axis ~op:`Sum t
+  let cumprod ~axis t = B.op_associative_scan ~axis ~op:`Prod t
+  let cummin ~axis t = B.op_associative_scan ~axis ~op:`Min t
+  let cummax ~axis t = B.op_associative_scan ~axis ~op:`Max t
+
   (* ───── Display and Formatting ───── *)
 
   let pp_data (type a b) fmt (x : (a, b) t) =
