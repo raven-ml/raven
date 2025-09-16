@@ -42,7 +42,7 @@
   "Nx is the core component of the Raven ecosystem providing efficient numerical computation with multi-device support. It offers NumPy-like functionality with the benefits of OCaml's type system.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.3.0))
   dune
   (dune-configurator :build)
   stdlib-shims
@@ -70,7 +70,7 @@
   "A collection of common datasets for machine learning tasks, including image classification, regression, and more. This package provides easy access to popular datasets in a format compatible with Nx.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.3.0))
   dune
   (dune-configurator :build)
   stdlib-shims
@@ -90,7 +90,7 @@
   "Text processing library that extends Nx with natural language processing capabilities. Provides tokenization, encoding, and text manipulation functionality compatible with the Nx tensor library.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.3.0))
   dune
   (dune-configurator :build)
   stdlib-shims
@@ -128,7 +128,7 @@
   "Rune provides automatic differentiation capabilities and experimental JIT compilation for the Raven ecosystem. It enables gradient-based optimization and supports functional transformations like grad, value_and_grad, and vmap, making it the foundation for deep learning in OCaml.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.3.0))
   dune
   (dune-configurator :build)
   stdlib-shims
@@ -147,7 +147,7 @@
   "Kaun brings modern deep learning to OCaml with a flexible, type-safe API for building and training neural networks. It leverages Rune for automatic differentiation and computation graph optimization while maintaining OCaml's functional programming advantages.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.3.0))
   dune
   (dune-configurator :build)
   stdlib-shims
@@ -171,7 +171,7 @@
   "Computer vision operations and algorithms built on top of the Rune library. Provides image processing, feature extraction, and other vision-related functionality.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.3.0))
   dune
   (dune-configurator :build)
   stdlib-shims
@@ -191,7 +191,7 @@
   (lib toplevel_libs))
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.3.0))
   dune
   (dune-configurator :build)
   stdlib-shims
@@ -233,7 +233,7 @@
   "Hugin is a powerful visualization library for OCaml that produces publication-quality plots and charts. It integrates with the Raven ecosystem to provide visualization of Nx data.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.3.0))
   dune
   (dune-configurator :build)
   stdlib-shims
@@ -252,7 +252,7 @@
 ;   "OCaml bindings to Google's XLA compiler for machine learning computations. XLA optimizes linear algebra computations for various hardware accelerators including GPUs and TPUs.")
 ;  (depends
 ;   (ocaml
-;    (>= 5.2.0))
+;    (>= 5.3.0))
 ;   dune
 ;   ctypes
 ;   ctypes-foreign
