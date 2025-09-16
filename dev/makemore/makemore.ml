@@ -26,43 +26,8 @@ let build_vocab (names : string list) =
   (vocab_size, ch2idx, encode, decode)
 
 let make_dataset ~block_size ~batch_size ~vocab_size:_ ~encode names =
-  (* Materialize windows once so dataset can be iterated for multiple epochs *)
-  let wrapped = List.map (fun n -> "." ^ n ^ ".") names in
-  (* First pass: count total windows *)
-  let total =
-    List.fold_left
-      (fun acc s ->
-        let ids_len = List.length (encode s) in
-        acc + Stdlib.max 0 (ids_len - 1))
-      0 wrapped
-  in
-  let x_data = Array.make (total * block_size) 0.0 in
-  let y_idx = Array.make total 0.0 in
-  (* Second pass: fill arrays *)
-  let idx = ref 0 in
-  List.iter
-    (fun s ->
-      let ids = Array.of_list (encode s) in
-      let len = Array.length ids in
-      for i = 0 to len - 2 do
-        (* target is next id *)
-        y_idx.(!idx) <- float_of_int ids.(i + 1);
-        (* context: last [block_size] tokens up to i, left-padded with first
-           id *)
-        let pad = ids.(0) in
-        for k = 0 to block_size - 1 do
-          let src_pos = i - block_size + 1 + k in
-          let v = if src_pos < 0 then pad else ids.(src_pos) in
-          x_data.((!idx * block_size) + k) <- float_of_int v
-        done;
-        incr idx
-      done)
-    wrapped;
-  (* Build Rune tensors with float32 values; labels hold class indices as
-     floats *)
-  let x = Rune.create c Rune.float32 [| total; block_size |] x_data in
-  let y = Rune.create c Rune.float32 [| total |] y_idx in
-  Dataset.from_tensors (x, y)
+  let tokenize s = encode ("." ^ s ^ ".") in
+  Dataset.sliding_window ~block_size ~tokenize ~device:c names
   |> Dataset.batch batch_size
   |> Dataset.shuffle ~buffer_size:200
 

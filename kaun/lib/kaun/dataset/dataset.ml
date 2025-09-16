@@ -364,107 +364,46 @@ let from_text ~tokenizer path =
   from_array [| tokens |]
 
 let sliding_window ~block_size ~tokenize ~device texts =
-  (* First, tokenize all texts and create sliding windows *)
-  let pad_token = 0 in
-  (* Use 0 as padding token *)
-
-  (* Tokenize each text and collect all tokens *)
-  let all_tokens =
-    List.concat_map
-      (fun text ->
-        let tokens = tokenize text in
-        tokens)
-      texts
+  (* Efficient sliding windows over each text independently. For a tokenized
+     sequence ids with length L, we produce (L-1) windows: for i in 0..L-2,
+     context is last [block_size] tokens up to i, left-padded with the first id.
+     Target is ids[i+1]. *)
+  let to_array lst = Array.of_list lst in
+  (* First pass: tokenize and compute total windows *)
+  let token_arrays = List.map (fun s -> to_array (tokenize s)) texts in
+  let total =
+    List.fold_left
+      (fun acc ids -> acc + max 0 (Array.length ids - 1))
+      0 token_arrays
   in
-
-  (* Create sliding windows from the tokens *)
-  let windows = ref [] in
-
-  (* For each starting position, create a window *)
-  let rec create_windows tokens =
-    match tokens with
-    | [] -> ()
-    | _ :: rest ->
-        (* Create context of block_size *)
-
-        (* Take block_size tokens for context *)
-        let rec take n lst acc =
-          match (n, lst) with
-          | 0, _ | _, [] -> (List.rev acc, lst)
-          | n, h :: t -> take (n - 1) t (h :: acc)
-        in
-
-        let ctx_tokens, remaining = take block_size tokens [] in
-
-        (* Pad context if needed *)
-        let padded_ctx =
-          if List.length ctx_tokens < block_size then
-            let padding =
-              List.init
-                (block_size - List.length ctx_tokens)
-                (fun _ -> pad_token)
-            in
-            padding @ ctx_tokens
-          else ctx_tokens
-        in
-
-        (* Target is the next token after context (or pad if none) *)
-        let target_token =
-          match remaining with h :: _ -> h | [] -> pad_token
-        in
-
-        (* Add window to list *)
-        windows := (padded_ctx, target_token) :: !windows;
-
-        (* Continue with rest *)
-        create_windows rest
-  in
-
-  (* Create windows for all possible positions *)
-  for i = 0 to List.length all_tokens - 1 do
-    let tokens_from_i =
-      let rec drop n lst =
-        match (n, lst) with
-        | 0, l -> l
-        | _, [] -> []
-        | n, _ :: t -> drop (n - 1) t
-      in
-      drop i all_tokens
-    in
-
-    if tokens_from_i <> [] then create_windows tokens_from_i
-  done;
-
-  let windows_array = Array.of_list (List.rev !windows) in
-
-  (* Create dataset from windows *)
+  (* Allocate flat buffers *)
+  let x_data = Array.make (total * block_size) 0.0 in
+  let y_idx = Array.make total 0.0 in
+  (* Fill in a single pass *)
   let idx = ref 0 in
-  {
-    next =
-      (fun () ->
-        if !idx >= Array.length windows_array then None
-        else
-          let context, target = windows_array.(!idx) in
-          incr idx;
-
-          (* Convert to tensors - need device parameter from somewhere *)
-          (* For now, use CPU device as default *)
-          let ctx_array = Array.of_list (List.map float_of_int context) in
-          let tgt_array = [| float_of_int target |] in
-
-          let ctx_tensor =
-            Rune.create device Rune.float32 [| List.length context |] ctx_array
-          in
-          let tgt_tensor = Rune.create device Rune.float32 [| 1 |] tgt_array in
-
-          Some (ctx_tensor, tgt_tensor));
-    cardinality = (fun () -> Finite (Array.length windows_array));
-    reset = Some (fun () -> idx := 0);
-    spec =
-      (fun () ->
-        Tuple
-          [ Tensor ([| block_size |], "float32"); Tensor ([| 1 |], "float32") ]);
-  }
+  List.iter
+    (fun ids ->
+      let len = Array.length ids in
+      if len > 1 then
+        let pad = ids.(0) in
+        for i = 0 to len - 2 do
+          (* target is next id *)
+          y_idx.(!idx) <- float_of_int ids.(i + 1);
+          (* context: last [block_size] tokens up to i, left-padded with first
+             id *)
+          let start = i - block_size + 1 in
+          for k = 0 to block_size - 1 do
+            let src_pos = start + k in
+            let v = if src_pos < 0 then pad else ids.(src_pos) in
+            x_data.((!idx * block_size) + k) <- float_of_int v
+          done;
+          incr idx
+        done)
+    token_arrays;
+  (* Build Rune tensors and return a dataset of element pairs *)
+  let x = Rune.create device Rune.float32 [| total; block_size |] x_data in
+  let y = Rune.create device Rune.float32 [| total |] y_idx in
+  from_tensors (x, y)
 
 (** {1 Transformations} *)
 

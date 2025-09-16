@@ -82,8 +82,6 @@ let scaled_dot_product_attention ?attention_mask ?(dropout = 0.0) ?is_causal
   (* Return output and optionally attention weights *)
   (output, attn_weights)
 
-open Rune
-
 let multi_head_attention ~q_proj_w ~k_proj_w ~v_proj_w ~out_proj_w ?q_bias
     ?k_bias ?v_bias ?out_bias ?k_bias_kv ?v_bias_kv ~query ?key ?value
     ?attention_mask ?is_causal ?rngs ~embed_dim ~num_heads ~num_kv_heads

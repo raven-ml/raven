@@ -1100,7 +1100,11 @@ let positional_embedding_learned ~max_len ~embed_dim () =
             in
             let dev = Rune.device x in
             let pos = Rune.arange dev Rune.int32 0 s 1 in
-            let pos = Rune.reshape [| 1; s |] pos |> Rune.expand [| b; s |] in
+            let pos =
+              Rune.reshape [| 1; s |] pos
+              |> Rune.expand [| b; s |]
+              |> Rune.contiguous
+            in
             let pos_e =
               Ops.embedding ~embedding:table ~embed_dim ~scale:false pos
             in
