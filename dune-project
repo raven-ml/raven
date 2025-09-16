@@ -142,6 +142,8 @@
   logs
   yojson
   domainslib
+  (saga
+   (= :version))
   (rune
    (= :version))
   (nx-datasets
