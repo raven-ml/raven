@@ -570,17 +570,103 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       (Invalid_argument "tensordot: axes have different sizes") (fun () ->
         ignore (Nx.tensordot ~axes:([| 1 |], [| 0 |]) a b))
 
+  let test_einsum_error ctx () =
+    let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+    let b =
+      Nx.create ctx Nx.float32 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |]
+    in
+    check_raises "einsum no input operands"
+      (Invalid_argument "einsum: no input operands") (fun () ->
+        ignore (Nx.einsum "" [||]));
+    check_raises "einsum bad format"
+      (Invalid_argument
+         "einsum: subscript must be of form [a-z]+(,[a-z]+)*->[a-z]+")
+      (fun () -> ignore (Nx.einsum "IJ,JK-IK" [| a; b |]));
+    check_raises "einsum wrong inputs"
+      (Invalid_argument "einsum: number of inputs must equal number of operands")
+      (fun () -> ignore (Nx.einsum "ij->ij" [| a; b |]));
+    check_raises "einsum repeated index"
+      (Invalid_argument "einsum: operand 0 must have distinct a-z characters")
+      (fun () -> ignore (Nx.einsum "iij,jk->ik" [| a; b |]));
+    check_raises "einsum mismatched rank"
+      (Invalid_argument "einsum: rank of input 'ijl' must match operand 0")
+      (fun () -> ignore (Nx.einsum "ijl,jk->ik" [| a; b |]));
+    check_raises "einsum contracted vars mismatch"
+      (Invalid_argument
+         "einsum: contracted input vars 'il' must match output vars 'ki'")
+      (fun () -> ignore (Nx.einsum "ij,jl->ki" [| a; b |]));
+    check_raises "einsum dimension mismatch"
+      (Invalid_argument
+         "einsum: index var 'j' must have consistent dimensions (3 on the \
+          left, 2 on the right)") (fun () ->
+        ignore (Nx.einsum "ij,kj->ik" [| a; b |]))
+
   let test_einsum ctx () =
     let a = Nx.create ctx Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
     let b =
       Nx.create ctx Nx.float32 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |]
+    in
+    let c =
+      Nx.create ctx Nx.float32 [| 2; 2; 2 |]
+        [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
     in
     let res_matmul = Nx.einsum "ij,jk->ik" [| a; b |] in
     check_t "einsum matmul" [| 2; 2 |] [| 58.; 64.; 139.; 154. |] res_matmul;
     let res_diag = Nx.einsum "ii->i" [| a |] in
     check_t "einsum diag" [| 2 |] [| 1.; 5. |] res_diag;
     let res_trans = Nx.einsum "ij->ji" [| a |] in
-    check_t "einsum transpose" [| 3; 2 |] [| 1.; 4.; 2.; 5.; 3.; 6. |] res_trans
+    check_t "einsum transpose" [| 3; 2 |] [| 1.; 4.; 2.; 5.; 3.; 6. |] res_trans;
+    let res_three_way = Nx.einsum "xy,yz,zkw->xkw" [| a; b; c |] in
+    check_t "einsum three-way" [| 2; 2; 2 |]
+      [| 378.; 500.; 622.; 744.; 909.; 1202.; 1495.; 1788. |]
+      res_three_way;
+    (* let res_scalar = *)
+    (* let p = Nx.create ctx Nx.int [| 2 |] [| 1; 2 |] in *)
+    (* let q = Nx.create ctx Nx.int [| 2; 2 |] [| 3; 4; 5; 6 |] in *)
+    (* let r = Nx.create ctx Nx.int [| 2; 2 |] [| 7; 8; 9; 10 |] in *)
+    (* Nx.einsum "z,mz,zm->" [| p; q; r |] in *)
+    (* check_t "einsum scalar" [| 2 ; 2; 2 |] [| 253 |] res_scalar; *)
+    let res_outer = Nx.einsum "ij,km->ijkm" [| a; b |] in
+    check_t "einsum outer" [| 2; 3; 3; 2 |]
+      [|
+        7.;
+        8.;
+        9.;
+        10.;
+        11.;
+        12.;
+        14.;
+        16.;
+        18.;
+        20.;
+        22.;
+        24.;
+        21.;
+        24.;
+        27.;
+        30.;
+        33.;
+        36.;
+        28.;
+        32.;
+        36.;
+        40.;
+        44.;
+        48.;
+        35.;
+        40.;
+        45.;
+        50.;
+        55.;
+        60.;
+        42.;
+        48.;
+        54.;
+        60.;
+        66.;
+        72.;
+      |]
+      res_outer
 
   let test_kron ctx () =
     let a = Nx.create ctx Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
@@ -921,6 +1007,7 @@ module Make (Backend : Nx_core.Backend_intf.S) = struct
       ("outer", `Quick, test_outer ctx);
       ("tensordot", `Quick, test_tensordot ctx);
       ("tensordot mismatch", `Quick, test_tensordot_mismatch ctx);
+      ("einsum error", `Quick, test_einsum_error ctx);
       ("einsum", `Quick, test_einsum ctx);
       ("kron", `Quick, test_kron ctx);
       ("multi dot", `Quick, test_multi_dot ctx);
