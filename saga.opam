@@ -17,6 +17,7 @@ depends: [
   "re"
   "uutf"
   "uucp"
+  "yojson"
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]

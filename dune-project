@@ -93,6 +93,7 @@
   re
   uutf
   uucp
+  yojson
   (alcotest :with-test))
  (tags
   (text-processing nlp natural-language-processing tokenization)))
