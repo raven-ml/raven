@@ -44,6 +44,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (dune-configurator :build)
   ; nx.metal - only on macOS
   (ctypes
    (and
@@ -70,6 +71,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (dune-configurator :build)
   ocurl
   csv
   logs
@@ -88,6 +90,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (dune-configurator :build)
   (nx
    (= :version))
   re
@@ -106,6 +109,7 @@
  (depends
   ocaml
   dune
+  (dune-configurator :build)
   (nx
    (>= 0.1.0))
   re
@@ -122,6 +126,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (dune-configurator :build)
   (nx
    (= :version))
   (ctypes
@@ -139,6 +144,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (dune-configurator :build)
   logs
   yojson
   domainslib
@@ -161,6 +167,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (dune-configurator :build)
   (rune
    (= :version))
   (alcotest :with-test))
@@ -179,6 +186,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (dune-configurator :build)
   (dune-site
    (>= 3.19.0))
   cmdliner
@@ -219,6 +227,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  (dune-configurator :build)
   conf-sdl2
   cairo2
   (nx

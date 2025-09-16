@@ -12,6 +12,7 @@ bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.19"}
+  "dune-configurator" {build}
   "nx" {>= "0.1.0"}
   "re"
   "yojson"
