@@ -1,4 +1,4 @@
 (library
  (name rune)
  (public_name rune)
- (libraries ctypes rune_jit nx_c rune_metal nx_core nx bigarray_ext))
+ (libraries ctypes rune_jit nx_c nx_core nx bigarray_ext))
