@@ -729,8 +729,7 @@ let execute_compiled_fn (type kernel_native)
 
   match input with
   | Ocaml_tensor _ ->
-      Ocaml_tensor
-        (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
+      Ocaml_tensor (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
   | C_tensor _ -> C_tensor (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
   | Metal_tensor _ ->
       Metal_tensor
