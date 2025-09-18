@@ -2628,6 +2628,15 @@ CAMLprim value caml_nx_op_triangular_solve(value v_a, value v_b, value v_out,
   CAMLreturn(Val_unit);
 }
 
+// Bytecode wrapper for triangular_solve (6 arguments)
+CAMLprim value caml_nx_op_triangular_solve_bc(value *argv, int argn) {
+  CAMLparam0();
+  (void)argn;
+  value ret = caml_nx_op_triangular_solve(argv[0], argv[1], argv[2], argv[3],
+                                          argv[4], argv[5]);
+  CAMLreturn(ret);
+}
+
 CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
                              value v_reduced) {
   CAMLparam4(v_in, v_q, v_r, v_reduced);

@@ -45,18 +45,8 @@
    (>= 5.3.0))
   dune
   (dune-configurator :build)
+  ; camlzip
   stdlib-shims
-  ; nx.metal - only on macOS
-  (ctypes
-   (and
-    (>= 0.21.0)
-    (= :os macos)))
-  (ctypes-foreign
-   (and
-    (>= 0.21.0)
-    (= :os macos)))
-  (integers
-   (= :os macos))
   ; tests
   (alcotest :with-test)
   (mdx :with-test))
@@ -72,8 +62,6 @@
   (ocaml
    (>= 5.3.0))
   dune
-  (dune-configurator :build)
-  stdlib-shims
   ocurl
   csv
   logs
@@ -92,8 +80,6 @@
   (ocaml
    (>= 5.3.0))
   dune
-  (dune-configurator :build)
-  stdlib-shims
   (nx
    (= :version))
   re
@@ -112,8 +98,6 @@
  (depends
   ocaml
   dune
-  (dune-configurator :build)
-  stdlib-shims
   (nx
    (>= 0.1.0))
   re
@@ -131,13 +115,15 @@
    (>= 5.3.0))
   dune
   (dune-configurator :build)
-  stdlib-shims
   (nx
    (= :version))
   (ctypes
    (>= 0.21.0))
   (ctypes-foreign
    (>= 0.21.0))
+  ; rune.metal - only on macOS
+  (integers
+   (= :os macos))
   (alcotest :with-test)))
 
 (package
@@ -149,8 +135,6 @@
   (ocaml
    (>= 5.3.0))
   dune
-  (dune-configurator :build)
-  stdlib-shims
   logs
   yojson
   domainslib
@@ -173,8 +157,6 @@
   (ocaml
    (>= 5.3.0))
   dune
-  (dune-configurator :build)
-  stdlib-shims
   (rune
    (= :version))
   (alcotest :with-test))
@@ -193,8 +175,6 @@
   (ocaml
    (>= 5.3.0))
   dune
-  (dune-configurator :build)
-  stdlib-shims
   (dune-site
    (>= 3.19.0))
   cmdliner
@@ -236,7 +216,6 @@
    (>= 5.3.0))
   dune
   (dune-configurator :build)
-  stdlib-shims
   conf-sdl2
   cairo2
   (nx
@@ -244,22 +223,6 @@
   (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
-
-; (package
-;  (name xla)
-;  (synopsis "OCaml bindings to XLA (Accelerated Linear Algebra)")
-;  (description
-;   "OCaml bindings to Google's XLA compiler for machine learning computations. XLA optimizes linear algebra computations for various hardware accelerators including GPUs and TPUs.")
-;  (depends
-;   (ocaml
-;    (>= 5.3.0))
-;   dune
-;   ctypes
-;   ctypes-foreign
-;   (dune-configurator :build)
-;   (alcotest :with-test))
-;  (tags
-;   (xla compiler machine-learning accelerated-computing)))
 
 (package
  (name raven)

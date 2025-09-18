@@ -1,6 +1,6 @@
 (library
  (name metal)
- (public_name nx.metal.bindings)
+ (public_name rune.metal.bindings)
  (enabled_if
   (= %{system} "macosx"))
  (flags :standard -ccopt "-framework CoreGraphics" -ccopt "-framework Metal")

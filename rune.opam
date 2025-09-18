@@ -13,10 +13,10 @@ depends: [
   "ocaml" {>= "5.3.0"}
   "dune" {>= "3.19"}
   "dune-configurator" {build}
-  "stdlib-shims"
   "nx" {= version}
   "ctypes" {>= "0.21.0"}
   "ctypes-foreign" {>= "0.21.0"}
+  "integers" {os = "macos"}
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]

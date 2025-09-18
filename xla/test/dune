@@ -1,4 +1,0 @@
-(test
- (name test_xla)
- (build_if %{lib-available:xla})
- (libraries xla alcotest))

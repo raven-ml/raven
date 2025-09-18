@@ -4210,23 +4210,3 @@ val jit :
         compiled_f x |> item []
       - : float = 6.
     ]} *)
-
-val xla :
-  (('a, 'b, 'dev) t -> ('c, 'd, 'dev) t) -> ('a, 'b, 'dev) t -> ('c, 'd, 'dev) t
-(** [xla f t] compiles and executes the function [f] using the XLA (Accelerated
-    Linear Algebra) compiler.
-
-    This is an alternative to the standard (work-in-progress) [jit] function
-    that uses XLA's optimizing compiler. XLA can provide better performance for
-    certain workloads, especially those involving many linear algebra
-    operations.
-
-    Currently only single-input, single-output functions are supported. The
-    compiled function will execute on CPU by default.
-
-    {@ocaml[
-      # let x = create float32 [| 100 |] in
-        let f t = sin (mul t t) in
-        xla f x
-      - : (float, float32_elt, 'dev) t = <tensor>
-    ]} *)

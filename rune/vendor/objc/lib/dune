@@ -15,7 +15,7 @@
 
 (library
  (name objc)
- (public_name nx.metal.bindings.objc)
+ (public_name rune.metal.bindings.objc)
  (enabled_if
   (= %{system} "macosx"))
  (libraries objc_c integers ctypes ctypes-foreign)

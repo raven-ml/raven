@@ -13,7 +13,6 @@ goalpost: mnist notebook in quill with rune + hugin
   - fix tests
 - linear algebra functions  
   - fix tests
-- jit with xla
 - jit
 - vmap
 - jvp

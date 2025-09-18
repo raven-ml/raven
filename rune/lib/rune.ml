@@ -33,7 +33,6 @@ let is_device_available = function
 (* ───── JIT ───── *)
 
 let jit = Jit.jit
-let xla = Jit_xla.jit
 
 (* ───── Autodiff ───── *)
 

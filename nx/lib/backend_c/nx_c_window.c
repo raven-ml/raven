@@ -759,3 +759,26 @@ CAMLprim value caml_nx_op_fold(value v_in, value v_output_size,
 
   CAMLreturn(Val_unit);
 }
+
+// Bytecode wrappers for functions with >5 arguments
+// These forward to the native versions and let them manage GC roots.
+// OCaml expects these when the external is declared with two names
+// (bytecode stub first, native stub second).
+//
+// unfold: 6 arguments
+CAMLprim value caml_nx_op_unfold_bc(value *argv, int argn) {
+  CAMLparam0();
+  (void)argn;
+  value ret = caml_nx_op_unfold(argv[0], argv[1], argv[2], argv[3], argv[4],
+                                argv[5]);
+  CAMLreturn(ret);
+}
+
+// fold: 7 arguments
+CAMLprim value caml_nx_op_fold_bc(value *argv, int argn) {
+  CAMLparam0();
+  (void)argn;
+  value ret = caml_nx_op_fold(argv[0], argv[1], argv[2], argv[3], argv[4],
+                              argv[5], argv[6]);
+  CAMLreturn(ret);
+}

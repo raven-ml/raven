@@ -814,3 +814,12 @@ CAMLprim value caml_nx_op_scatter(value v_template, value v_indices,
                    v_mode, v_unique);
   CAMLreturn(Val_unit);
 }
+
+// Bytecode wrapper for scatter (7 arguments)
+CAMLprim value caml_nx_op_scatter_bc(value *argv, int argn) {
+  CAMLparam0();
+  (void)argn;
+  value ret = caml_nx_op_scatter(argv[0], argv[1], argv[2], argv[3], argv[4],
+                                 argv[5], argv[6]);
+  CAMLreturn(ret);
+}
