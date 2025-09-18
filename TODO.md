@@ -2,6 +2,11 @@
 
 goalpost: mnist notebook in quill with rune + hugin
 
+## simplify
+
+- remove bigarray_ext (what's the best way to implement our C backend?)
+- remove device type from rune interface
+
 ## current
 
 - gemma kaun example 
