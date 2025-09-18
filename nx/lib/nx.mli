@@ -24,7 +24,7 @@
 
 (** {2 Type Definitions} *)
 
-type ('a, 'b) t = ('a, 'b) Nx_native.t
+type ('a, 'b) t = ('a, 'b) Nx_c.t
 (** [('a, 'b) t] is a tensor with OCaml type ['a] and bigarray type ['b]. *)
 
 type float16_elt = Bigarray_ext.float16_elt

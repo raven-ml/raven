@@ -1,4 +1,0 @@
-(library
- (name nx_native)
- (public_name nx.native)
- (libraries bigarray_ext nx_core))

@@ -4,7 +4,6 @@
  (libraries
   ctypes
   rune_jit
-  nx_native
   nx_c
   rune_metal
   nx_core

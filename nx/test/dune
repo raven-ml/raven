@@ -1,23 +1,9 @@
 (test
- (name test_backend_native)
- (package nx)
- (modules test_backend_native)
- (libraries nx_native alcotest test_nx_unit))
-
-(test
  (name test_backend_c)
  (package nx)
  (modules test_backend_c)
  (build_if %{lib-available:nx.c})
  (libraries nx_c alcotest test_nx_unit))
-
-(test
- (name test_backend_metal)
- (package nx)
- (modules test_backend_metal)
- (libraries nx_metal alcotest test_nx_unit)
- (build_if
-  (= %{system} "macosx")))
 
 (test
  (name test_nx_io)

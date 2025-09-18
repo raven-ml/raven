@@ -5,10 +5,4 @@
   bug_gather_view_offset
   bug_logspace_division_by_zero
   bug_slice_batch_process_bounds)
- (libraries bigarray_ext nx_core nx_native nx))
-
-(executables
- (names bug_metal_reduce_stride)
- (enabled_if
-  (= %{system} "macosx"))
- (libraries nx_core nx_metal))
+ (libraries bigarray_ext nx))

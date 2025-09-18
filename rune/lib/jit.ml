@@ -664,7 +664,7 @@ let execute_compiled_fn (type kernel_native)
   in
   let input_ba =
     match input with
-    | Ocaml_tensor cpu_t -> Nx_native.data cpu_t
+    | Ocaml_tensor cpu_t -> Nx_c.data cpu_t
     | C_tensor c_t -> Nx_c.data c_t
     | Metal_tensor _ -> failwith "JIT: Metal tensor input not supported yet"
     | Symbolic_tensor _ -> failwith "JIT: Cannot execute with symbolic tensor"
@@ -730,7 +730,7 @@ let execute_compiled_fn (type kernel_native)
   match input with
   | Ocaml_tensor _ ->
       Ocaml_tensor
-        (Nx_native.op_const_array (Nx_native.create_context ()) out_ba)
+        (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
   | C_tensor _ -> C_tensor (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
   | Metal_tensor _ ->
       Metal_tensor

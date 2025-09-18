@@ -2,21 +2,3 @@
  (name bench_nx)
  (modules bench_nx)
  (libraries nx_core ubench str))
-
-(executable
- (name bench_nx_native)
- (modules bench_nx_native)
- (libraries nx_native bench_nx ubench))
-
-(executable
- (name bench_nx_c)
- (modules bench_nx_c)
- (optional)
- (libraries nx_c bench_nx ubench))
-
-(executable
- (name bench_nx_metal)
- (modules bench_nx_metal)
- (enabled_if
-  (= %{system} "macosx"))
- (libraries nx_metal bench_nx ubench))

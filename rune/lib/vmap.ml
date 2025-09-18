@@ -243,7 +243,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
    fun t ->
     let view =
       match t with
-      | Ocaml_tensor lt -> Nx_native.view lt
+      | Ocaml_tensor lt -> Nx_c.view lt
       | Metal_tensor lt -> Rune_metal.view lt
       | C_tensor lt -> Nx_c.view lt
       | Symbolic_tensor { shape; _ } ->
@@ -271,7 +271,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
   let phys_shrink : type a b. (a, b) t -> (int * int) array -> (a, b) t =
    fun t limits ->
     match t with
-    | Ocaml_tensor x -> Ocaml_tensor (Nx_native.op_shrink x limits)
+    | Ocaml_tensor x -> Ocaml_tensor (Nx_c.op_shrink x limits)
     | C_tensor x -> C_tensor (Nx_c.op_shrink x limits)
     | Metal_tensor x -> Metal_tensor (Rune_metal.op_shrink x limits)
     | Symbolic_tensor _ -> failwith "vmap: phys_shrink on symbolic tensor"
@@ -615,7 +615,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   (* Get the actual view from the backend *)
                   let actual_view =
                     match tensor with
-                    | Ocaml_tensor t -> Nx_native.view t
+                    | Ocaml_tensor t -> Nx_c.view t
                     | Metal_tensor t -> Rune_metal.view t
                     | C_tensor t -> Nx_c.view t
                     | Symbolic_tensor { shape; _ } ->
