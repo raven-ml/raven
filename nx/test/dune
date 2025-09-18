@@ -1,9 +1,14 @@
-(test
- (name test_backend_c)
- (package nx)
- (modules test_backend_c)
- (build_if %{lib-available:nx.c})
- (libraries nx_c alcotest test_nx_unit))
+(library
+ (name test_nx_support)
+ (modules test_nx_support)
+ (libraries nx_core nx alcotest))
+
+(tests
+ (names test_nx_indexing test_nx_sanity test_nx_linalg test_nx_sorting
+  test_nx_basics test_nx_manipulation test_nx_extended_dtypes
+  test_nx_neural_net test_nx_fft test_nx_ops)
+ (modules :standard \ test_nx_support)
+ (libraries bigarray_ext nx nx_core alcotest test_nx_support))
 
 (test
  (name test_nx_io)
