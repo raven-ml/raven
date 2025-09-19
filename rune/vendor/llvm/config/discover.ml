@@ -20,6 +20,7 @@ let get_llvm_config c =
           "/opt/homebrew/opt/llvm@20/bin/llvm-config";
           "/opt/homebrew/opt/llvm@19/bin/llvm-config";
           "/opt/homebrew/opt/llvm@18/bin/llvm-config";
+          "/usr/bin/llvm-config";
           "/usr/local/opt/llvm/bin/llvm-config";
           "/usr/local/opt/llvm@20/bin/llvm-config";
           "/usr/local/opt/llvm@19/bin/llvm-config";
