@@ -474,13 +474,16 @@ module Make (B : Backend_intf.S) = struct
   (* ───── Tensor Conversion ───── *)
 
   let to_bigarray x =
-    (* Only make a copy if the tensor is not already contiguous *)
-    let t_to_use = if is_c_contiguous x then x else contiguous x in
-    let array1 = data t_to_use in
-    let ba =
-      Bigarray.reshape (Bigarray.genarray_of_array1 array1) (shape t_to_use)
+    (* Ensure we have a materialized view with matching buffer size. *)
+    let ensure_contiguous_size t =
+      let t = if is_c_contiguous t && offset t = 0 then t else contiguous t in
+      let buffer = data t in
+      let buffer_elems = Bigarray_ext.Array1.dim buffer in
+      if buffer_elems = numel t then t else copy t
     in
-    ba
+    let t_to_use = ensure_contiguous_size x in
+    let array1 = data t_to_use in
+    Bigarray.reshape (Bigarray.genarray_of_array1 array1) (shape t_to_use)
 
   let of_bigarray ctx ba =
     let size = Array.fold_left ( * ) 1 (Genarray.dims ba) in

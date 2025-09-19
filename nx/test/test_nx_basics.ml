@@ -477,6 +477,20 @@ let test_to_bigarray () =
   check (float 1e-6) "after set [0,0]" 55.0
     (Bigarray_ext.Genarray.get ba [| 0; 0 |])
 
+let test_to_bigarray_partial_slice () =
+  let base = Nx.arange Nx_core.Dtype.float32 0 5 1 |> Nx.reshape [| 5; 1 |] in
+  let slice = Nx.slice [ Nx.R (0, 4); Nx.I 0 ] base in
+  let ba = Nx.to_bigarray slice in
+  check (array int) "slice dims" [| 4 |] (Bigarray_ext.Genarray.dims ba);
+  let expected = [| 0.0; 1.0; 2.0; 3.0 |] in
+  Array.iteri
+    (fun i value ->
+      check (float 1e-6)
+        (Printf.sprintf "slice[%d]" i)
+        value
+        (Bigarray_ext.Genarray.get ba [| i |]))
+    expected
+
 let test_copy () =
   let original = Nx.create Nx_core.Dtype.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let copy_arr = Nx.copy original in
@@ -665,6 +679,9 @@ let memory_and_views =
 let utility_operations =
   [
     ("to bigarray", `Quick, test_to_bigarray);
+    ( "to bigarray partial slice",
+      `Quick,
+      test_to_bigarray_partial_slice );
     ("copy", `Quick, test_copy);
     ("blit incompatible", `Quick, test_blit_incompatible);
     ("fill nan", `Quick, test_fill_nan);
