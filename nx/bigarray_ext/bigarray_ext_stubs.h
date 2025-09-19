@@ -148,7 +148,6 @@ static inline uint8_t float_to_fp8_e4m3(float f) {
 
   // Normalize mantissa for rounding (add implicit 1)
   mant |= (1 << 23);
-  exp -= 1;  // Adjust for implicit bit
 
   // Shift to 3-bit mantissa position (23 - 3 = 20 bits shift)
   uint32_t mant_shifted = mant >> 20;
@@ -249,35 +248,27 @@ static inline uint8_t float_to_fp8_e5m2(float f) {
 }
 
 static inline float fp8_e5m2_to_float(uint8_t fp8) {
-  uint32_t sign = (fp8 >> 7) ? 0x80000000 : 0;
+  bool negative = (fp8 & 0x80) != 0;
   uint32_t exp = (fp8 >> 2) & 0x1F;
   uint32_t mant = fp8 & 0x3;
 
   if (exp == 0x1F) {  // Inf/NaN
-    if (mant == 0) return sign ? -INFINITY : INFINITY;
+    if (mant == 0) return negative ? -INFINITY : INFINITY;
     return NAN;
   }
 
-  bool subnormal = (exp == 0);
-  int bias = 15;
-  if (subnormal) {
-    if (mant == 0) return sign ? -0.0f : 0.0f;
-    exp = 1 - bias;  // Subnormal exp
+  float value;
+  if (exp == 0) {
+    if (mant == 0) return negative ? -0.0f : 0.0f;
+    // Subnormal: mantissa has no implicit leading 1.
+    float frac = (float)mant / 4.0f;
+    value = ldexpf(frac, 1 - 15);  // 2^(1-bias)
   } else {
-    mant |= 0x4;  // Implicit 1 for 2-bit mant (1.m1 m0)
-    exp -= bias;
+    float frac = 1.0f + (float)mant / 4.0f;
+    value = ldexpf(frac, (int)exp - 15);
   }
 
-  exp += 127;
-  exp <<= 23;
-  mant <<= 21;  // Align to FP32 mantissa
-
-  union {
-    float f;
-    uint32_t i;
-  } u;
-  u.i = sign | exp | mant;
-  return u.f;
+  return negative ? -value : value;
 }
 
 #endif /* NX_BIGARRAY_EXT_H */

@@ -91,14 +91,14 @@ let test_arange_uint4 () =
 
 let test_create_float8_e4m3 () =
   let t = Nx.create Nx_core.Dtype.float8_e4m3 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-  check_t ~eps:0.1 "create float8_e4m3" [| 3 |] [| 0.5; 1.0; 1.5 |] t
+  check_t ~eps:0.1 "create float8_e4m3" [| 3 |] [| 1.0; 2.0; 3.0 |] t
 
 let test_scalar_float8_e4m3 () =
   (* Test with a value that can be exactly represented in Float8_e4m3. With
-     3-bit mantissa, we can represent 1.000 through 1.111 in binary. For
+     a 3-bit mantissa, we can represent 1.000 through 1.111 in binary. For
      example: 11.0 = 1.011 × 2^3 is exactly representable. *)
   let t = Nx.scalar Nx_core.Dtype.float8_e4m3 11.0 in
-  check_t ~eps:0.1 "scalar float8_e4m3" [||] [| 5.5 |] t
+  check_t ~eps:0.1 "scalar float8_e4m3" [||] [| 11.0 |] t
 
 let test_zeros_float8_e4m3 () =
   let t = Nx.zeros Nx_core.Dtype.float8_e4m3 [| 2; 2 |] in
@@ -106,13 +106,13 @@ let test_zeros_float8_e4m3 () =
 
 let test_ones_float8_e4m3 () =
   let t = Nx.ones Nx_core.Dtype.float8_e4m3 [| 2; 2 |] in
-  check_t ~eps:0.1 "ones float8_e4m3" [| 2; 2 |] [| 0.25; 0.25; 0.25; 0.25 |] t
+  check_t ~eps:0.1 "ones float8_e4m3" [| 2; 2 |] [| 1.0; 1.0; 1.0; 1.0 |] t
 
 (* ───── Float8_e5m2 Tests ───── *)
 
 let test_create_float8_e5m2 () =
   let t = Nx.create Nx_core.Dtype.float8_e5m2 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-  check_t ~eps:0.1 "create float8_e5m2" [| 3 |] [| 1.0; 4.0; 6.0 |] t
+  check_t ~eps:0.1 "create float8_e5m2" [| 3 |] [| 1.0; 2.0; 3.0 |] t
 
 let test_scalar_float8_e5m2 () =
   let t = Nx.scalar Nx_core.Dtype.float8_e5m2 20.0 in
