@@ -472,6 +472,9 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
       printf("IRFFT DEBUG: n_in=%zu, n_out=%zu, last_size=%d\\n", n_in, n_out, \
              last_size);                                                       \
     if (n_out == 0) return;                                                    \
+    size_t freq_len = n_out / 2 + 1;                                           \
+    if (freq_len > n_out) freq_len = n_out;                                    \
+    size_t copy_len = n_in < freq_len ? n_in : freq_len;                       \
     size_t total_elements = total_elements_safe(input);                        \
     if (num_axes == 1) {                                                       \
       size_t num_ffts = total_elements / n_in;                                 \
@@ -489,7 +492,7 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
             offset_out += coord * output->strides[d];                          \
           }                                                                    \
         }                                                                      \
-        for (size_t i = 0; i < n_in; i++) {                                    \
+        for (size_t i = 0; i < copy_len; i++) {                                \
           long idx = input->offset + offset_in +                               \
                      (long)i * input->strides[irfft_axis];                     \
           COMP_PREC _Complex *complex_in = (COMP_PREC _Complex *)input->data;  \
@@ -497,9 +500,13 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
           temp_re[i] = __real__(val);                                          \
           temp_im[i] = __imag__(val);                                          \
         }                                                                      \
-        for (size_t i = n_in; i < n_out; i++) {                                \
+        for (size_t i = copy_len; i < freq_len; i++) {                         \
+          temp_re[i] = (COMP_PREC)0.0;                                         \
+          temp_im[i] = (COMP_PREC)0.0;                                         \
+        }                                                                      \
+        for (size_t i = freq_len; i < n_out; i++) {                            \
           size_t mirror_idx = n_out - i;                                       \
-          if (mirror_idx > 0 && mirror_idx < n_in) {                           \
+          if (mirror_idx < freq_len) {                                         \
             temp_re[i] = temp_re[mirror_idx];                                  \
             temp_im[i] = -temp_im[mirror_idx];                                 \
           } else {                                                             \
@@ -508,7 +515,7 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
           }                                                                    \
         }                                                                      \
         temp_im[0] = (COMP_PREC)0.0;                                           \
-        if ((n_out % 2) == 0 && n_in > n_out / 2)                              \
+        if ((n_out % 2) == 0 && freq_len > n_out / 2)                          \
           temp_im[n_out / 2] = (COMP_PREC)0.0;                                 \
         fft_1d_##COMP_SUFFIX(temp_re, temp_im, n_out, 1, 0, true);             \
         for (size_t i = 0; i < n_out; i++) {                                   \
@@ -563,14 +570,18 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
             offset_out += coord * output->strides[d];                          \
           }                                                                    \
         }                                                                      \
-        for (size_t i = 0; i < n_in; i++) {                                    \
+        for (size_t i = 0; i < copy_len; i++) {                                \
           long idx_in = offset_inter + (long)i * input->strides[irfft_axis];   \
           temp_re[i] = inter_data[2 * idx_in];                                 \
           temp_im[i] = inter_data[2 * idx_in + 1];                             \
         }                                                                      \
-        for (size_t i = n_in; i < n_out; i++) {                                \
+        for (size_t i = copy_len; i < freq_len; i++) {                         \
+          temp_re[i] = (COMP_PREC)0.0;                                         \
+          temp_im[i] = (COMP_PREC)0.0;                                         \
+        }                                                                      \
+        for (size_t i = freq_len; i < n_out; i++) {                            \
           size_t mirror_idx = n_out - i;                                       \
-          if (mirror_idx > 0 && mirror_idx < n_in) {                           \
+          if (mirror_idx < freq_len) {                                         \
             temp_re[i] = temp_re[mirror_idx];                                  \
             temp_im[i] = -temp_im[mirror_idx];                                 \
           } else {                                                             \
@@ -579,7 +590,7 @@ LOW_PREC_FFT_MULTI_KERNEL(complex16)
           }                                                                    \
         }                                                                      \
         temp_im[0] = (COMP_PREC)0.0;                                           \
-        if ((n_out % 2) == 0 && n_in > n_out / 2)                              \
+        if ((n_out % 2) == 0 && freq_len > n_out / 2)                          \
           temp_im[n_out / 2] = (COMP_PREC)0.0;                                 \
         fft_1d_##COMP_SUFFIX(temp_re, temp_im, n_out, 1, 0, true);             \
         for (size_t i = 0; i < n_out; i++) {                                   \
