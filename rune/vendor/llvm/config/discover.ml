@@ -2,7 +2,7 @@ module C = Configurator.V1
 
 let get_llvm_config c =
   (* Try different llvm-config names in order of preference *)
-  let possible_names = [ "llvm-config-20"; "llvm-config-19" ] in
+  let possible_names = [ "llvm-config-21"; "llvm-config-20"; "llvm-config-19" ] in
 
   let rec find_llvm_config = function
     | [] -> None
@@ -17,10 +17,12 @@ let get_llvm_config c =
       let brew_paths =
         [
           "/opt/homebrew/opt/llvm/bin/llvm-config";
+          "/opt/homebrew/opt/llvm@21/bin/llvm-config";
           "/opt/homebrew/opt/llvm@20/bin/llvm-config";
           "/opt/homebrew/opt/llvm@19/bin/llvm-config";
           "/opt/homebrew/opt/llvm@18/bin/llvm-config";
           "/usr/local/opt/llvm/bin/llvm-config";
+          "/usr/local/opt/llvm@21/bin/llvm-config";
           "/usr/local/opt/llvm@20/bin/llvm-config";
           "/usr/local/opt/llvm@19/bin/llvm-config";
         ]
