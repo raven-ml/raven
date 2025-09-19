@@ -1,12 +1,11 @@
 open Rune
 
 let () =
-  let ctx = ocaml in
 
   (* Simple test case *)
-  let x = randn ctx Float32 [| 2; 1; 5; 5 |] in
+  let x = randn Float32 [| 2; 1; 5; 5 |] in
   (* batch=2, channels=1, 5x5 *)
-  let w = randn ctx Float32 [| 3; 1; 3; 3 |] in
+  let w = randn Float32 [| 3; 1; 3; 3 |] in
   (* 3 output channels, 3x3 kernel *)
 
   Printf.printf "Input shape: %s\n"

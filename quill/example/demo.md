@@ -5,7 +5,7 @@ This is a simple example of a markdown file that can be used with Quill.
 Support for **bold**, *italic*, and `inline code` is included.
 
 ```ocaml
-Rune.eye Rune.c Rune.float32 4
+Rune.eye Rune.float32 4
 ```
 <!-- quill=output_start -->
 ```

@@ -31,18 +31,15 @@
 
     Initialize and apply:
     {[
-      let params = Kaun.init network ~rngs ~device ~dtype in
+      let params = Kaun.init network ~rngs ~dtype in
       let output = Kaun.apply network params ~training:true input in
     ]} *)
 
 type module_ = {
   init :
-    'layout 'dev.
-    rngs:Rune.Rng.key ->
-    device:'dev Rune.device ->
-    dtype:(float, 'layout) Rune.dtype ->
-    ('layout, 'dev) Ptree.t;
-      (** [init ~rngs ~device ~dtype] initializes module parameters.
+    'layout.
+    rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t;
+      (** [init ~rngs ~dtype] initializes module parameters.
 
           Creates a parameter tree containing all trainable parameters for this
           module. The function is polymorphic over layout and device to support
@@ -56,12 +53,12 @@ type module_ = {
           The RNG key should be split appropriately for modules with multiple
           parameters to ensure independent initialization. *)
   apply :
-    'layout 'dev.
-    ('layout, 'dev) Ptree.t ->
+    'layout.
+    'layout Ptree.t ->
     training:bool ->
     ?rngs:Rune.Rng.key ->
-    (float, 'layout, 'dev) Rune.t ->
-    (float, 'layout, 'dev) Rune.t;
+    (float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t;
       (** [apply params ~training ?rngs input] performs forward computation.
 
           Executes the module's forward pass using the provided parameters and
@@ -526,9 +523,8 @@ val positional_embedding_learned :
 val positional_encoding_sinusoidal_table :
   max_len:int ->
   embed_dim:int ->
-  device:'dev Rune.device ->
   dtype:(float, 'layout) Rune.dtype ->
-  (float, 'layout, 'dev) Rune.t
+  (float, 'layout) Rune.t
 (** Create a [max_len; embed_dim] sinusoidal positional encoding table (not
     trainable). Can be added to token embeddings. *)
 

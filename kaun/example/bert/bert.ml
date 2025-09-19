@@ -3,12 +3,12 @@ module Bert = Kaun_models.Bert
 
 let () =
   (* Load BERT and tokenizer *)
-  let bert = Bert.from_pretrained ~device:c ~dtype:Float32 () in
+  let bert = Bert.from_pretrained ~dtype:Float32 () in
   let tokenizer = Bert.Tokenizer.create () in
   let sentence = "The bank is by the river" in
 
   (* Encode and run forward pass *)
-  let inputs = Bert.Tokenizer.encode tokenizer sentence ~device:c in
+  let inputs = Bert.Tokenizer.encode tokenizer sentence in
   let output = Bert.forward bert inputs () in
 
   (* Get CLS token embedding for sentence representation *)

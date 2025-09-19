@@ -27,7 +27,7 @@ let build_vocab (names : string list) =
 
 let make_dataset ~block_size ~batch_size ~vocab_size:_ ~encode names =
   let tokenize s = encode ("." ^ s ^ ".") in
-  Dataset.sliding_window ~block_size ~tokenize ~device:c names
+  Dataset.sliding_window ~block_size ~tokenize names
   |> Dataset.batch batch_size
   |> Dataset.shuffle ~buffer_size:200
 
@@ -101,7 +101,7 @@ let train_bigram ~vocab_size ~epochs ~lr ~weight_decay ~val_data train_data =
   let state, _ =
     Training.fit ~model ~optimizer
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~train_data ~val_data
-      ~epochs ~progress:true ~rngs:(Rng.key 42) ~device:c ~dtype:float32 ()
+      ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
   fun x -> apply model state.Training.State.params ~training:false x
@@ -124,7 +124,7 @@ let train_mlp ~vocab_size ~block_size ~n_embd ~n_embd2 ~epochs ~lr ~weight_decay
   let state, _ =
     Training.fit ~model ~optimizer
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~train_data ~val_data
-      ~epochs ~progress:true ~rngs:(Rng.key 42) ~device:c ~dtype:float32 ()
+      ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
   fun x -> apply model state.Training.State.params ~training:false x
@@ -140,7 +140,7 @@ let train_rnn ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
           ~learned_init:true ();
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -154,7 +154,7 @@ let train_rnn ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
   let state, _ =
     Training.fit ~model ~optimizer
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~train_data ~val_data
-      ~epochs ~progress:true ~rngs:(Rng.key 42) ~device:c ~dtype:float32 ()
+      ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
   fun x -> apply model state.Training.State.params ~training:false x
@@ -170,7 +170,7 @@ let train_lstm ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
           ~learned_init:true ();
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -184,7 +184,7 @@ let train_lstm ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
   let state, _ =
     Training.fit ~model ~optimizer
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~train_data ~val_data
-      ~epochs ~progress:true ~rngs:(Rng.key 42) ~device:c ~dtype:float32 ()
+      ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
   fun x -> apply model state.Training.State.params ~training:false x
@@ -200,7 +200,7 @@ let train_gru ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
           ~learned_init:true ();
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -214,7 +214,7 @@ let train_gru ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
   let state, _ =
     Training.fit ~model ~optimizer
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~train_data ~val_data
-      ~epochs ~progress:true ~rngs:(Rng.key 42) ~device:c ~dtype:float32 ()
+      ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
   fun x -> apply model state.Training.State.params ~training:false x
@@ -228,7 +228,7 @@ let train_cnn ~vocab_size ~block_size:_ ~epochs ~lr ~weight_decay ~val_data
         embedding ~vocab_size ~embed_dim:32 ();
         (* to [b; channels; length] for conv1d *)
         {
-          init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               Rune.transpose ~axes:[| 0; 2; 1 |] x);
@@ -237,14 +237,14 @@ let train_cnn ~vocab_size ~block_size:_ ~epochs ~lr ~weight_decay ~val_data
           ();
         (* back to [b; length; channels] *)
         {
-          init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               Rune.transpose ~axes:[| 0; 2; 1 |] x);
         };
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -258,7 +258,7 @@ let train_cnn ~vocab_size ~block_size:_ ~epochs ~lr ~weight_decay ~val_data
   let state, _ =
     Training.fit ~model ~optimizer
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~train_data ~val_data
-      ~epochs ~progress:true ~rngs:(Rng.key 42) ~device:c ~dtype:float32 ()
+      ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
   fun x -> apply model state.Training.State.params ~training:false x
@@ -284,7 +284,7 @@ let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
         ln_f;
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -299,7 +299,7 @@ let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
   let state, _ =
     Training.fit ~model ~optimizer
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~train_data ~val_data
-      ~epochs ~progress:true ~rngs:(Rng.key 42) ~device:c ~dtype:float32 ()
+      ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
   fun x -> apply model state.Training.State.params ~training:false x
@@ -308,17 +308,17 @@ let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
 let bow_block ~n_embd ~n_embd2 () : Layer.module_ =
   {
     Layer.init =
-      (fun ~rngs ~device ~dtype ->
+      (fun ~rngs ~dtype ->
         let glorot = (Initializers.glorot_uniform ()).f in
         let keys = Rune.Rng.split ~n:2 rngs in
         let w1 =
-          glorot (Rune.Rng.to_int keys.(0)) [| n_embd; n_embd2 |] device dtype
+          glorot (Rune.Rng.to_int keys.(0)) [| n_embd; n_embd2 |] dtype
         in
-        let b1 = Rune.zeros device dtype [| n_embd2 |] in
+        let b1 = Rune.zeros dtype [| n_embd2 |] in
         let w2 =
-          glorot (Rune.Rng.to_int keys.(1)) [| n_embd2; n_embd |] device dtype
+          glorot (Rune.Rng.to_int keys.(1)) [| n_embd2; n_embd |] dtype
         in
-        let b2 = Rune.zeros device dtype [| n_embd |] in
+        let b2 = Rune.zeros dtype [| n_embd |] in
         Ptree.record_of
           [
             ("w1", Ptree.Tensor w1);
@@ -339,17 +339,17 @@ let bow_block ~n_embd ~n_embd2 () : Layer.module_ =
             and b1 = get "b1"
             and w2 = get "w2"
             and b2 = get "b2" in
-            let dev = Rune.device x and dt = Rune.dtype x in
             let b, s, _ =
               match Rune.shape x with
               | [| b; s; c |] -> (b, s, c)
               | _ -> failwith "bow_block: expected [b; s; c]"
             in
             (* causal uniform attention weights *)
-            let ones = Rune.ones dev dt [| s; s |] in
+            let dt = Rune.dtype x in
+            let ones = Rune.ones dt [| s; s |] in
             let lower = Rune.tril ones in
             let counts =
-              Rune.arange dev Rune.int32 1 (s + 1) 1
+              Rune.arange Rune.int32 1 (s + 1) 1
               |> Rune.cast dt
               |> Rune.reshape [| 1; s; 1 |]
             in
@@ -381,7 +381,7 @@ let train_bow ~vocab_size ~block_size ~n_embd ~n_embd2 ~epochs ~lr ~weight_decay
         block;
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~device:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -395,7 +395,7 @@ let train_bow ~vocab_size ~block_size ~n_embd ~n_embd2 ~epochs ~lr ~weight_decay
   let state, _ =
     Training.fit ~model ~optimizer
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~train_data ~val_data
-      ~epochs ~progress:true ~rngs:(Rng.key 42) ~device:c ~dtype:float32 ()
+      ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
   fun x -> apply model state.Training.State.params ~training:false x
@@ -638,7 +638,7 @@ let main () =
         ctx
     in
     let input =
-      create c float32 [| 1; block_size |] (Array.map float_of_int ctx)
+      create float32 [| 1; block_size |] (Array.map float_of_int ctx)
     in
     fwd input |> to_array
   in

@@ -1,3 +1,0 @@
-(library
- (name test_nx_unit)
- (libraries bigarray_ext nx_core alcotest))

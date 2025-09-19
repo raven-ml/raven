@@ -5,11 +5,10 @@ open Kaun_models.GPT2
 let () =
   Printf.printf "=== Comparing GPT-2 Output with Python ===\n\n";
 
-  let device = Rune.c in
   let dtype = Rune.float32 in
 
   (* Load model *)
-  let gpt2 = from_pretrained ~model_id:"gpt2" ~device ~dtype () in
+  let gpt2 = from_pretrained ~model_id:"gpt2" ~dtype () in
 
   (* Create tokenizer *)
   let tokenizer = Tokenizer.create () in
@@ -19,7 +18,7 @@ let () =
   Printf.printf "Input: %S\n" test_text;
 
   (* Encode and run forward pass *)
-  let inputs = Tokenizer.encode tokenizer test_text ~device in
+  let inputs = Tokenizer.encode tokenizer test_text in
   let output = forward gpt2 inputs () in
 
   (* Get output values *)

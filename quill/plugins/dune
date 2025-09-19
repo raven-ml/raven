@@ -4,7 +4,6 @@
   %{lib:nx:nx.cmi}
   %{lib:nx:nx.cma}
   %{lib:nx.core:nx_core.cma}
-  %{lib:nx.native:nx_native.cma}
   %{lib:nx.c:nx_c.cma}
   ; nx-io
   %{lib:nx.io:nx_io.cmi}
@@ -53,14 +52,12 @@
    (copy %{lib:nx:nx.cmi} nx.cmi)
    (copy %{lib:nx:nx.cma} nx.cma)
    (copy %{lib:nx.core:nx_core.cma} nx_core.cma)
-   (copy %{lib:nx.native:nx_native.cma} nx_native.cma)
    (copy %{lib:nx.c:nx_c.cma} nx_c.cma)
    (copy %{lib:nx.io:nx_io.cmi} nx_io.cmi)
    (copy %{lib:nx.io:nx_io.cma} nx_io.cma)
    (copy %{lib:nx.io.npy:npy.cma} npy.cma)
    (copy %{lib:nx.io.stb_image:stb_image.cma} stb_image.cma)
-   (copy
-    %{lib:nx.io.stb_image_write:stb_image_write.cma}
+   (copy %{lib:nx.io.stb_image_write:stb_image_write.cma}
     stb_image_write.cma)
    (copy %{lib:nx-datasets:nx_datasets.cmi} nx_datasets.cmi)
    (copy %{lib:nx-datasets:nx_datasets.cma} nx_datasets.cma)
@@ -92,43 +89,21 @@
    (copy %{lib:logs:logs.cmi} logs.cmi))))
 
 (rule
- (targets
-  nx_metal.cma
-  metal.cma
-  bigarray_compat.cma
-  ctypes.cma
-  integers.cma
-  ctypes_foreign.cma
-  objc.cma
-  objc_c.cma
-  rune_jit_metal.cma
-  rune_metal.cma)
+ (targets bigarray_compat.cma ctypes.cma integers.cma ctypes_foreign.cma
+  rune_jit_metal.cma)
  (mode promote)
  (enabled_if
   (= %{system} "macosx"))
- (deps
-  %{lib:nx.metal:nx_metal.cma}
-  %{lib:nx.metal.bindings:metal.cma}
-  %{lib:bigarray-compat:bigarray_compat.cma}
-  %{lib:ctypes:ctypes.cma}
-  %{lib:ctypes-foreign:ctypes_foreign.cma}
-  %{lib:integers:integers.cma}
-  %{lib:nx.metal.bindings.objc:objc.cma}
-  %{lib:nx.metal.bindings.objc.c:objc_c.cma}
-  %{lib:rune.jit.metal:rune_jit_metal.cma}
-  %{lib:rune.metal:rune_metal.cma})
+ (deps %{lib:bigarray-compat:bigarray_compat.cma} %{lib:ctypes:ctypes.cma}
+  %{lib:ctypes-foreign:ctypes_foreign.cma} %{lib:integers:integers.cma}
+  %{lib:rune.jit.metal:rune_jit_metal.cma})
  (action
   (progn
-   (copy %{lib:nx.metal:nx_metal.cma} nx_metal.cma)
-   (copy %{lib:nx.metal.bindings:metal.cma} metal.cma)
    (copy %{lib:bigarray-compat:bigarray_compat.cma} bigarray_compat.cma)
    (copy %{lib:ctypes:ctypes.cma} ctypes.cma)
    (copy %{lib:ctypes-foreign:ctypes_foreign.cma} ctypes_foreign.cma)
    (copy %{lib:integers:integers.cma} integers.cma)
-   (copy %{lib:nx.metal.bindings.objc:objc.cma} objc.cma)
-   (copy %{lib:nx.metal.bindings.objc.c:objc_c.cma} objc_c.cma)
-   (copy %{lib:rune.jit.metal:rune_jit_metal.cma} rune_jit_metal.cma)
-   (copy %{lib:rune.metal:rune_metal.cma} rune_metal.cma))))
+   (copy %{lib:rune.jit.metal:rune_jit_metal.cma} rune_jit_metal.cma))))
 
 (install
  (section

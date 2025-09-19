@@ -1,0 +1,24 @@
+(rule
+ (targets
+  ccopts.sexp
+  cclibs.sexp
+  platform.ml
+  platform.mli
+  ccomp.ml
+  ccomp.mli
+  arch.ml
+  arch.mli)
+ (deps
+  (:discover ../config/discover.exe))
+ (action
+  (run %{discover})))
+
+(library
+ (name objc)
+ (public_name rune.metal.bindings.objc)
+ (enabled_if
+  (= %{system} "macosx"))
+ (libraries objc_c integers ctypes ctypes-foreign)
+ (c_library_flags
+  :standard
+  (:include cclibs.sexp)))

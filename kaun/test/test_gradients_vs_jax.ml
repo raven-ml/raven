@@ -32,11 +32,11 @@ let test_matmul_gradient () =
   (* Test case: y = x @ w, loss = mean(y) *)
 
   (* Input: [2, 3] *)
-  let x = create c float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let x = create float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
 
   (* Weight: [3, 4] *)
   let w =
-    create c float32 [| 3; 4 |]
+    create float32 [| 3; 4 |]
       [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8; 0.9; 1.0; 1.1; 1.2 |]
   in
 
@@ -60,7 +60,7 @@ let test_matmul_gradient () =
 
   (* Expected gradient from JAX *)
   let expected_grad =
-    create c float32 [| 3; 4 |]
+    create float32 [| 3; 4 |]
       [|
         0.625000;
         0.625000;
@@ -82,9 +82,9 @@ let test_matmul_gradient () =
 (* Test 2: Add with broadcasting *)
 let test_add_broadcast_gradient () =
   (* Test case: y = x + b (broadcast), loss = mean(y) *)
-  let x = create c float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let x = create float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
 
-  let b = create c float32 [| 3 |] [| 0.1; 0.2; 0.3 |] in
+  let b = create float32 [| 3 |] [| 0.1; 0.2; 0.3 |] in
 
   (* Compute gradient w.r.t bias *)
   let grad_b =
@@ -107,7 +107,7 @@ let test_add_broadcast_gradient () =
 
   (* Expected gradient from JAX *)
   let expected_grad =
-    create c float32 [| 3 |] [| 0.333333; 0.333333; 0.333333 |]
+    create float32 [| 3 |] [| 0.333333; 0.333333; 0.333333 |]
   in
 
   check_gradient_match ~eps:1e-6 "add broadcast gradient" expected_grad
@@ -115,7 +115,7 @@ let test_add_broadcast_gradient () =
 
 (* Test 3: ReLU activation gradient *)
 let test_relu_gradient () =
-  let x = create c float32 [| 2; 3 |] [| -1.0; 0.0; 1.0; -2.0; 2.0; 3.0 |] in
+  let x = create float32 [| 2; 3 |] [| -1.0; 0.0; 1.0; -2.0; 2.0; 3.0 |] in
 
   let grad_x =
     Kaun.grad
@@ -136,7 +136,7 @@ let test_relu_gradient () =
 
   (* Expected gradient from JAX *)
   let expected_grad =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 0.000000; 0.000000; 0.166667; 0.000000; 0.166667; 0.166667 |]
   in
 
@@ -144,7 +144,7 @@ let test_relu_gradient () =
 
 (* Test 4: GELU activation gradient *)
 let test_gelu_gradient () =
-  let x = create c float32 [| 2; 2 |] [| -1.0; 0.0; 1.0; 2.0 |] in
+  let x = create float32 [| 2; 2 |] [| -1.0; 0.0; 1.0; 2.0 |] in
 
   let grad_x =
     Kaun.grad
@@ -165,21 +165,21 @@ let test_gelu_gradient () =
 
   (* Expected gradient from JAX *)
   let expected_grad =
-    create c float32 [| 2; 2 |] [| -0.020829; 0.125000; 0.270829; 0.271308 |]
+    create float32 [| 2; 2 |] [| -0.020829; 0.125000; 0.270829; 0.271308 |]
   in
 
   check_gradient_match ~eps:1e-5 "gelu gradient" expected_grad computed_grad
 
 (* Test 5: Simple Linear layer (matmul + add) *)
 let test_linear_gradient () =
-  let x = create c float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let x = create float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
 
   let w =
-    create c float32 [| 3; 4 |]
+    create float32 [| 3; 4 |]
       [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8; 0.9; 1.0; 1.1; 1.2 |]
   in
 
-  let b = create c float32 [| 4 |] [| 0.01; 0.02; 0.03; 0.04 |] in
+  let b = create float32 [| 4 |] [| 0.01; 0.02; 0.03; 0.04 |] in
 
   (* Compute gradients for linear: y = x @ w + b *)
   let params =
@@ -222,7 +222,7 @@ let test_linear_gradient () =
 
   (* Expected gradients from JAX *)
   let expected_grad_w =
-    create c float32 [| 3; 4 |]
+    create float32 [| 3; 4 |]
       [|
         0.625000;
         0.625000;
@@ -240,7 +240,7 @@ let test_linear_gradient () =
   in
 
   let expected_grad_b =
-    create c float32 [| 4 |] [| 0.250000; 0.250000; 0.250000; 0.250000 |]
+    create float32 [| 4 |] [| 0.250000; 0.250000; 0.250000; 0.250000 |]
   in
 
   check_gradient_match ~eps:1e-6 "linear weight gradient" expected_grad_w grad_w;
@@ -249,15 +249,15 @@ let test_linear_gradient () =
 (* Test 6: Two-layer MLP *)
 let test_mlp_gradient () =
   (* Test case: two-layer MLP with ReLU activation *)
-  let x = create c float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
+  let x = create float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
 
-  let w1 = create c float32 [| 2; 3 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |] in
+  let w1 = create float32 [| 2; 3 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |] in
 
-  let b1 = create c float32 [| 3 |] [| 0.01; 0.02; 0.03 |] in
+  let b1 = create float32 [| 3 |] [| 0.01; 0.02; 0.03 |] in
 
-  let w2 = create c float32 [| 3; 2 |] [| 0.7; 0.8; 0.9; 1.0; 1.1; 1.2 |] in
+  let w2 = create float32 [| 3; 2 |] [| 0.7; 0.8; 0.9; 1.0; 1.1; 1.2 |] in
 
-  let b2 = create c float32 [| 2 |] [| 0.04; 0.05 |] in
+  let b2 = create float32 [| 2 |] [| 0.04; 0.05 |] in
 
   (* Compute gradients for MLP *)
   let params =
@@ -330,20 +330,20 @@ let test_mlp_gradient () =
 
   (* Expected gradients from JAX *)
   let expected_grad_w1 =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 1.500000; 1.900000; 2.300000; 2.250000; 2.850000; 3.450000 |]
   in
 
   let expected_grad_b1 =
-    create c float32 [| 3 |] [| 0.750000; 0.950000; 1.150000 |]
+    create float32 [| 3 |] [| 0.750000; 0.950000; 1.150000 |]
   in
 
   let expected_grad_w2 =
-    create c float32 [| 3; 2 |]
+    create float32 [| 3; 2 |]
       [| 0.705000; 0.705000; 0.960000; 0.960000; 1.215000; 1.215000 |]
   in
 
-  let expected_grad_b2 = create c float32 [| 2 |] [| 0.500000; 0.500000 |] in
+  let expected_grad_b2 = create float32 [| 2 |] [| 0.500000; 0.500000 |] in
 
   check_gradient_match ~eps:1e-5 "mlp w1 gradient" expected_grad_w1 grad_w1;
   check_gradient_match ~eps:1e-5 "mlp b1 gradient" expected_grad_b1 grad_b1;
@@ -352,7 +352,7 @@ let test_mlp_gradient () =
 
 (* Test 7: Reduction operations *)
 let test_reduction_gradients () =
-  let x = create c float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let x = create float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
 
   (* Test sum with axis=0 *)
   let grad_sum_axis0 =
@@ -373,7 +373,7 @@ let test_reduction_gradients () =
   in
 
   let expected_grad_axis0 =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 1.000000; 1.000000; 1.000000; 1.000000; 1.000000; 1.000000 |]
   in
 
@@ -399,7 +399,7 @@ let test_reduction_gradients () =
   in
 
   let expected_grad_axis1 =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 1.000000; 1.000000; 1.000000; 1.000000; 1.000000; 1.000000 |]
   in
 
@@ -425,7 +425,7 @@ let test_reduction_gradients () =
   in
 
   let expected_grad_keepdims =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 0.333333; 0.333333; 0.333333; 0.333333; 0.333333; 0.333333 |]
   in
 
@@ -434,7 +434,7 @@ let test_reduction_gradients () =
 
 (* Test 8: More activation functions *)
 let test_activation_gradients () =
-  let x = create c float32 [| 2; 3 |] [| -2.0; -1.0; 0.0; 1.0; 2.0; 3.0 |] in
+  let x = create float32 [| 2; 3 |] [| -2.0; -1.0; 0.0; 1.0; 2.0; 3.0 |] in
 
   (* Test sigmoid *)
   let grad_sigmoid =
@@ -455,7 +455,7 @@ let test_activation_gradients () =
   in
 
   let expected_grad_sigmoid =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 0.017499; 0.032769; 0.041667; 0.032769; 0.017499; 0.007529 |]
   in
 
@@ -481,7 +481,7 @@ let test_activation_gradients () =
   in
 
   let expected_grad_tanh =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 0.011775; 0.069996; 0.166667; 0.069996; 0.011775; 0.001644 |]
   in
 
@@ -490,7 +490,7 @@ let test_activation_gradients () =
 
 (* Test 9: Softmax *)
 let test_softmax_gradient () =
-  let x = create c float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 1.0; 3.0; 2.0 |] in
+  let x = create float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 1.0; 3.0; 2.0 |] in
 
   let grad_softmax =
     Kaun.grad
@@ -511,7 +511,7 @@ let test_softmax_gradient () =
 
   (* Note: Softmax gradients are very small, essentially 0 *)
   let expected_grad =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 0.000000; 0.000000; 0.000000; 0.000000; 0.000000; 0.000000 |]
   in
 
@@ -519,7 +519,7 @@ let test_softmax_gradient () =
 
 (* Test 10: Transpose and reshape *)
 let test_transpose_reshape_gradients () =
-  let x = create c float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let x = create float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
 
   (* Test transpose *)
   let grad_transpose =
@@ -540,7 +540,7 @@ let test_transpose_reshape_gradients () =
   in
 
   let expected_grad_transpose =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 0.166667; 0.166667; 0.166667; 0.166667; 0.166667; 0.166667 |]
   in
 
@@ -566,7 +566,7 @@ let test_transpose_reshape_gradients () =
   in
 
   let expected_grad_reshape =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| 0.166667; 0.166667; 0.166667; 0.166667; 0.166667; 0.166667 |]
   in
 
@@ -575,7 +575,7 @@ let test_transpose_reshape_gradients () =
 
 (* Test 11: Element-wise operations *)
 let test_elementwise_gradients () =
-  let x = create c float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
+  let x = create float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
 
   (* Test exp *)
   let grad_exp =
@@ -597,7 +597,7 @@ let test_elementwise_gradients () =
 
   (* Gradient of exp is exp(x) * grad_output / n *)
   let expected_grad_exp =
-    create c float32 [| 2; 2 |]
+    create float32 [| 2; 2 |]
       [|
         0.679570;
         1.847264;
@@ -631,7 +631,7 @@ let test_elementwise_gradients () =
 
   (* Gradient of log is 1/x * grad_output / n *)
   let expected_grad_log =
-    create c float32 [| 2; 2 |]
+    create float32 [| 2; 2 |]
       [|
         0.250000;
         0.125000;
@@ -665,7 +665,7 @@ let test_elementwise_gradients () =
 
   (* Gradient of sqrt is 0.5/sqrt(x) * grad_output / n *)
   let expected_grad_sqrt =
-    create c float32 [| 2; 2 |]
+    create float32 [| 2; 2 |]
       [|
         0.125000;
         0.088388;
@@ -681,9 +681,9 @@ let test_elementwise_gradients () =
 
 (* Test 12: Concatenation *)
 let test_concat_gradient () =
-  let x1 = create c float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
+  let x1 = create float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
 
-  let x2 = create c float32 [| 2; 2 |] [| 5.0; 6.0; 7.0; 8.0 |] in
+  let x2 = create float32 [| 2; 2 |] [| 5.0; 6.0; 7.0; 8.0 |] in
 
   (* Test concatenation along axis 1 *)
   let params =
@@ -725,7 +725,7 @@ let test_concat_gradient () =
 
   (* Gradients should be uniform 1/8 for all elements *)
   let expected_grad =
-    create c float32 [| 2; 2 |] [| 0.125000; 0.125000; 0.125000; 0.125000 |]
+    create float32 [| 2; 2 |] [| 0.125000; 0.125000; 0.125000; 0.125000 |]
   in
 
   check_gradient_match ~eps:1e-6 "concat x1 gradient" expected_grad grad_x1;
@@ -735,17 +735,17 @@ let test_concat_gradient () =
 let test_attention_gradient () =
   (* Small example: batch=1, seq_len=3, d_k=4 *)
   let q =
-    create c float32 [| 1; 3; 4 |]
+    create float32 [| 1; 3; 4 |]
       [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8; 0.9; 1.0; 1.1; 1.2 |]
   in
 
   let k =
-    create c float32 [| 1; 3; 4 |]
+    create float32 [| 1; 3; 4 |]
       [| 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8; 0.9; 1.0; 1.1; 1.2; 1.3 |]
   in
 
   let v =
-    create c float32 [| 1; 3; 4 |]
+    create float32 [| 1; 3; 4 |]
       [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8; 0.9; 1.0; 1.1; 1.2 |]
   in
 
@@ -810,7 +810,7 @@ let test_attention_gradient () =
   (* Expected gradients from JAX - reshape from [1,3,4] to [3,4] for
      comparison *)
   let expected_grad_q =
-    create c float32 [| 3; 4 |]
+    create float32 [| 3; 4 |]
       [|
         0.017427;
         0.017427;
@@ -828,7 +828,7 @@ let test_attention_gradient () =
   in
 
   let expected_grad_k =
-    create c float32 [| 3; 4 |]
+    create float32 [| 3; 4 |]
       [|
         -0.020475;
         -0.025273;
@@ -846,7 +846,7 @@ let test_attention_gradient () =
   in
 
   let expected_grad_v =
-    create c float32 [| 3; 4 |]
+    create float32 [| 3; 4 |]
       [|
         0.047161;
         0.047161;
@@ -878,12 +878,10 @@ let test_attention_gradient () =
 (* Test 14: Loss Functions *)
 let test_loss_functions () =
   let predictions =
-    create c float32 [| 2; 3 |] [| 0.7; 0.2; 0.1; 0.1; 0.8; 0.1 |]
+    create float32 [| 2; 3 |] [| 0.7; 0.2; 0.1; 0.1; 0.8; 0.1 |]
   in
 
-  let targets =
-    create c float32 [| 2; 3 |] [| 1.0; 0.0; 0.0; 0.0; 1.0; 0.0 |]
-  in
+  let targets = create float32 [| 2; 3 |] [| 1.0; 0.0; 0.0; 0.0; 1.0; 0.0 |] in
 
   (* Test MSE gradient *)
   let grad_mse =
@@ -905,7 +903,7 @@ let test_loss_functions () =
   in
 
   let expected_grad_mse =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| -0.100000; 0.066667; 0.033333; 0.033333; -0.066667; 0.033333 |]
   in
 
@@ -932,7 +930,7 @@ let test_loss_functions () =
   in
 
   let expected_grad_mae =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| -0.166667; 0.166667; 0.166667; 0.166667; -0.166667; 0.166667 |]
   in
 
@@ -941,7 +939,7 @@ let test_loss_functions () =
 
 (* Test 15: Cross-Entropy Loss *)
 let test_cross_entropy_gradient () =
-  let logits = create c float32 [| 2; 3 |] [| 2.0; 1.0; 0.1; 0.1; 2.5; 0.3 |] in
+  let logits = create float32 [| 2; 3 |] [| 2.0; 1.0; 0.1; 0.1; 2.5; 0.3 |] in
 
   let grad_ce =
     Kaun.grad
@@ -958,7 +956,7 @@ let test_cross_entropy_gradient () =
 
             (* Create one-hot labels - simplified for this test *)
             let one_hot =
-              create c float32 [| 2; 3 |]
+              create float32 [| 2; 3 |]
                 [|
                   1.0;
                   0.0;
@@ -986,7 +984,7 @@ let test_cross_entropy_gradient () =
   in
 
   let expected_grad =
-    create c float32 [| 2; 3 |]
+    create float32 [| 2; 3 |]
       [| -0.170499; 0.121216; 0.049283; 0.037751; -0.083861; 0.046110 |]
   in
 
@@ -996,12 +994,11 @@ let test_cross_entropy_gradient () =
 (* Test 16: BatchNorm *)
 let test_batchnorm_gradient () =
   let x =
-    create c float32 [| 3; 3 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0; 9.0 |]
+    create float32 [| 3; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0; 9.0 |]
   in
 
-  let gamma = create c float32 [| 3 |] [| 1.0; 1.0; 1.0 |] in
-  let beta = create c float32 [| 3 |] [| 0.0; 0.0; 0.0 |] in
+  let gamma = create float32 [| 3 |] [| 1.0; 1.0; 1.0 |] in
+  let beta = create float32 [| 3 |] [| 0.0; 0.0; 0.0 |] in
 
   let params =
     Kaun.Ptree.record_of
@@ -1057,7 +1054,7 @@ let test_batchnorm_gradient () =
 
   (* For BatchNorm, beta gradient is simpler to verify *)
   let expected_grad_beta =
-    create c float32 [| 3 |] [| 0.333333; 0.333333; 0.333333 |]
+    create float32 [| 3 |] [| 0.333333; 0.333333; 0.333333 |]
   in
 
   check_gradient_match ~eps:1e-5 "batchnorm beta gradient" expected_grad_beta

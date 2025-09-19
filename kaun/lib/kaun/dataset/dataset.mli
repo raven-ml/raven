@@ -17,7 +17,7 @@ type 'a t
     abstract. Use creation functions to build them and transformations to
     modify. *)
 
-type ('elt, 'kind, 'dev) tensor_dataset = ('elt, 'kind, 'dev) Rune.t t
+type ('elt, 'kind) tensor_dataset = ('elt, 'kind) Rune.t t
 (** Generalized dataset of tensors, parameterized over element, kind, and device
 *)
 
@@ -54,13 +54,13 @@ val from_list : 'a list -> 'a t
 val from_seq : 'a Seq.t -> 'a t
 (** [from_seq seq] creates a dataset from a sequence *)
 
-val from_tensor : ('elt, 'kind, 'dev) Rune.t -> ('elt, 'kind, 'dev) Rune.t t
+val from_tensor : ('elt, 'kind) Rune.t -> ('elt, 'kind) Rune.t t
 (** [from_tensor tensor] creates a dataset where each element is a slice of the
     first dimension *)
 
 val from_tensors :
-  ('elt, 'kind, 'dev) Rune.t * ('elt, 'kind, 'dev) Rune.t ->
-  (('elt, 'kind, 'dev) Rune.t * ('elt, 'kind, 'dev) Rune.t) t
+  ('elt, 'kind) Rune.t * ('elt, 'kind) Rune.t ->
+  (('elt, 'kind) Rune.t * ('elt, 'kind) Rune.t) t
 (** [from_tensors (x, y)] creates a dataset of (input, target) pairs *)
 
 val from_file : (string -> 'a) -> string -> 'a t
@@ -98,11 +98,8 @@ val from_jsonl : ?field:string -> string -> string t
 val sliding_window :
   block_size:int ->
   tokenize:(string -> int list) ->
-  device:'dev Rune.device ->
   string list ->
-  ((float, Rune.float32_elt, 'dev) Rune.t
-  * (float, Rune.float32_elt, 'dev) Rune.t)
-  t
+  ((float, Rune.float32_elt) Rune.t * (float, Rune.float32_elt) Rune.t) t
 (** [sliding_window ~block_size ~tokenize texts] creates a dataset of sliding
     window context/target pairs for language modeling.
 
@@ -199,8 +196,8 @@ val normalize :
 val batch :
   ?drop_remainder:bool ->
   int ->
-  ((float, 'layout, 'dev) Rune.t * (float, 'layout, 'dev) Rune.t) t ->
-  ((float, 'layout, 'dev) Rune.t * (float, 'layout, 'dev) Rune.t) t
+  ((float, 'layout) Rune.t * (float, 'layout) Rune.t) t ->
+  ((float, 'layout) Rune.t * (float, 'layout) Rune.t) t
 (** [batch ?drop_remainder size dataset] groups tensor pairs into batches and
     automatically stacks them along the batch dimension.
     - [drop_remainder]: Drop final batch if incomplete (default: false)
@@ -295,8 +292,8 @@ val prepare :
   ?prefetch:int ->
   ?cache:bool ->
   ?drop_remainder:bool ->
-  ((float, 'layout, 'dev) Rune.t * (float, 'layout, 'dev) Rune.t) t ->
-  ((float, 'layout, 'dev) Rune.t * (float, 'layout, 'dev) Rune.t) t
+  ((float, 'layout) Rune.t * (float, 'layout) Rune.t) t ->
+  ((float, 'layout) Rune.t * (float, 'layout) Rune.t) t
 (** [prepare ?shuffle_buffer ?batch_size ?prefetch ?cache ?drop_remainder
      dataset] applies common preprocessing pipeline for tensor datasets: 1.
     Cache (if enabled) 2. Shuffle (if buffer size provided) 3. Batch with
@@ -348,9 +345,8 @@ val text_classification_pipeline :
   ?batch_size:int ->
   ?shuffle_buffer:int ->
   ?num_workers:int ->
-  device:'dev Rune.device ->
   string t ->
-  (int32, Rune.int32_elt, 'dev) Rune.t t
+  (int32, Rune.int32_elt) Rune.t t
 (** Pre-configured pipeline for text classification tasks. Returns batched token
     tensors ready for embedding layers. *)
 
@@ -360,10 +356,8 @@ val language_model_pipeline :
   ?batch_size:int ->
   ?shuffle_buffer:int ->
   ?num_workers:int ->
-  device:'dev Rune.device ->
   string t ->
-  ((int32, Rune.int32_elt, 'dev) Rune.t * (int32, Rune.int32_elt, 'dev) Rune.t)
-  t
+  ((int32, Rune.int32_elt) Rune.t * (int32, Rune.int32_elt) Rune.t) t
 (** Pre-configured pipeline for language modeling. Returns batched (input,
     target) tensor pairs ready for training. *)
 

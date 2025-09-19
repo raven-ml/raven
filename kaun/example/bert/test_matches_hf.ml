@@ -9,7 +9,7 @@ let test_bert_matches_hf () =
 
   (* Load pretrained BERT - much simpler! *)
   Printf.printf "Loading pretrained BERT from HuggingFace...\n";
-  let bert = Bert.from_pretrained ~device:Rune.c ~dtype:Float32 () in
+  let bert = Bert.from_pretrained ~dtype:Float32 () in
 
   (* Test text *)
   let text = "Hello world" in
@@ -19,7 +19,7 @@ let test_bert_matches_hf () =
   let tokenizer = Bert.Tokenizer.create ~model_id:"bert-base-uncased" () in
 
   (* Encode text - now returns tensors directly! *)
-  let inputs = Bert.Tokenizer.encode tokenizer text ~device:Rune.c in
+  let inputs = Bert.Tokenizer.encode tokenizer text in
 
   (* Check tokenization *)
   let token_ids =

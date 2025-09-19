@@ -119,7 +119,6 @@ let load_plugins () =
       let project_cmas =
         [
           "nx_core.cma";
-          "nx_native.cma";
           "nx.cma";
           "nx_c.cma";
           "bigarray_compat.cma";
@@ -128,8 +127,6 @@ let load_plugins () =
           "ctypes_foreign.cma";
           "objc_c.cma";
           "objc.cma";
-          "metal.cma";
-          "nx_metal.cma";
           "zip.cma";
           "npy.cma";
           "stb_image.cma";

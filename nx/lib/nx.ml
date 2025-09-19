@@ -1,4 +1,4 @@
-module F = Nx_core.Make_frontend (Nx_native)
+module F = Nx_core.Make_frontend (Nx_c)
 include F
 
 (* Re-export extended type aliases *)
@@ -25,7 +25,7 @@ let quint8 = Nx_core.Dtype.quint8
 
 (* ───── Overriding functions with default context ───── *)
 
-let context = Lazy.from_fun Nx_native.create_context
+let context = Lazy.from_fun Nx_c.create_context
 let create dtype shape arr = F.create (Lazy.force context) dtype shape arr
 let init dtype shape f = F.init (Lazy.force context) dtype shape f
 let empty dtype shape = F.empty (Lazy.force context) dtype shape

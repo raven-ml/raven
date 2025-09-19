@@ -1,6 +1,6 @@
 (* JAX-style splittable random number generation *)
 
-open Tensor
+open Tensor_with_debug
 
 type key = int
 
@@ -37,48 +37,47 @@ let to_int key = key
 
 (* Random sampling functions *)
 
-let uniform key ctx dtype shape =
+let uniform key dtype shape =
   (* Use the key as seed for existing rand function *)
-  rand ctx dtype ~seed:key shape
+  rand dtype ~seed:key shape
 
-let normal key ctx dtype shape =
+let normal key dtype shape =
   (* Use the key as seed for existing randn function *)
-  randn ctx dtype ~seed:key shape
+  randn dtype ~seed:key shape
 
-let randint key ctx ~min ~max shape =
+let randint key ~min ~max shape =
   if min >= max then
     invalid_arg
       (Printf.sprintf "randint: min (%d) must be less than max (%d)" min max);
   let range = max - min in
-  let uniform_vals = uniform key ctx Tensor.Float32 shape in
+  let uniform_vals = uniform key Tensor.Float32 shape in
   let scaled =
-    mul uniform_vals (scalar ctx Tensor.Float32 (float_of_int range))
+    mul uniform_vals (scalar Tensor.Float32 (float_of_int range))
   in
-  let shifted = add scaled (scalar ctx Tensor.Float32 (float_of_int min)) in
+  let shifted = add scaled (scalar Tensor.Float32 (float_of_int min)) in
   astype Tensor.Int32 shifted
 
-let bernoulli key ctx ~p shape =
+let bernoulli key ~p shape =
   if p < 0. || p > 1. then
     invalid_arg (Printf.sprintf "bernoulli: p (%.2f) must be in [0, 1]" p);
-  let uniform_vals = uniform key ctx Tensor.Float32 shape in
-  let threshold = scalar ctx Float32 p in
+  let uniform_vals = uniform key Tensor.Float32 shape in
+  let threshold = scalar Float32 p in
   cmplt uniform_vals threshold
 
-let permutation key ctx n =
+let permutation key n =
   if n <= 0 then
     invalid_arg (Printf.sprintf "permutation: n (%d) must be positive" n);
   (* Generate random values for each index *)
-  let random_vals = uniform key ctx Tensor.Float32 [| n |] in
+  let random_vals = uniform key Tensor.Float32 [| n |] in
   (* Get argsort to create permutation *)
   argsort random_vals ~axis:0 ~descending:false
 
 let shuffle key x =
-  let ctx = Nx_rune.context x in
-  let shape_x = shape x in
+  let shape_x = Tensor.shape x in
   if Array.length shape_x = 0 then x
   else
     let n = shape_x.(0) in
-    let perm = permutation key ctx n in
+    let perm = permutation key n in
     (* Create shuffled tensor by indexing *)
     let perm_array = to_array perm |> Array.map Int32.to_int in
     let results = Array.map (fun i -> get [ i ] x) perm_array in
@@ -90,7 +89,7 @@ let shuffle key x =
    in
 
    (* Generate uniform random values with same shape *) let uniform_vals =
-   uniform key ctx Tensor.Float32 shape_array in
+   uniform key Tensor.Float32 shape_array in
 
    (* Apply softmax to get probabilities *) let probs = softmax logits ~axes:[|
    axis |] in
@@ -107,13 +106,13 @@ let shuffle key x =
 let categorical _key ?axis:(_ = -1) _logits =
   failwith "categorical: not implemented yet (requires cumsum)"
 
-let truncated_normal key ctx dtype ~lower ~upper shape =
+let truncated_normal key dtype ~lower ~upper shape =
   if lower >= upper then
     invalid_arg
       (Printf.sprintf "truncated_normal: lower must be less than upper");
 
   (* Simple clipping approach for now *)
-  let vals = normal key ctx dtype shape in
+  let vals = normal key dtype shape in
 
   (* Clip values to bounds *)
   clip vals ~min:lower ~max:upper

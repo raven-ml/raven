@@ -41,7 +41,7 @@ module Checkpointer : sig
   val save :
     t ->
     path:string ->
-    params:('layout, 'dev) Ptree.t ->
+    params:'layout Ptree.t ->
     ?metadata:metadata ->
     unit ->
     unit
@@ -52,12 +52,8 @@ module Checkpointer : sig
       @param metadata Optional metadata to store with checkpoint *)
 
   val restore :
-    t ->
-    path:string ->
-    device:'dev Rune.device ->
-    dtype:(float, 'layout) Rune.dtype ->
-    ('layout, 'dev) Ptree.t
-  (** [restore checkpointer ~path ~device ~dtype] loads parameters from disk.
+    t -> path:string -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t
+  (** [restore checkpointer ~path ~dtype] loads parameters from disk.
 
       @param path Directory path to load checkpoint from
       @param device Device to load tensors onto
@@ -67,7 +63,7 @@ module Checkpointer : sig
   val save_file :
     t ->
     path:string ->
-    params:('layout, 'dev) Ptree.t ->
+    params:'layout Ptree.t ->
     ?metadata:metadata ->
     unit ->
     unit
@@ -78,12 +74,8 @@ module Checkpointer : sig
   *)
 
   val restore_file :
-    t ->
-    path:string ->
-    device:'dev Rune.device ->
-    dtype:(float, 'layout) Rune.dtype ->
-    ('layout, 'dev) Ptree.t
-  (** [restore_file checkpointer ~path ~device ~dtype] loads from a single file.
+    t -> path:string -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t
+  (** [restore_file checkpointer ~path ~dtype] loads from a single file.
   *)
 end
 
@@ -125,7 +117,7 @@ module CheckpointManager : sig
   val save :
     t ->
     step:int ->
-    params:('layout, 'dev) Ptree.t ->
+    params:'layout Ptree.t ->
     ?metadata:metadata ->
     ?metrics:(string * float) list ->
     unit ->
@@ -142,12 +134,11 @@ module CheckpointManager : sig
 
   val restore :
     t ->
-    device:'dev Rune.device ->
     dtype:(float, 'layout) Rune.dtype ->
     ?step:int ->
     unit ->
-    ('layout, 'dev) Ptree.t * checkpoint_info
-  (** [restore manager ?step ~device ~dtype] restores a checkpoint.
+    'layout Ptree.t * checkpoint_info
+  (** [restore manager ?step ~dtype] restores a checkpoint.
 
       @param step Specific step to restore (default: latest)
       @param device Device to load tensors onto
@@ -155,11 +146,8 @@ module CheckpointManager : sig
       @return Restored parameters and checkpoint info *)
 
   val restore_best :
-    t ->
-    device:'dev Rune.device ->
-    dtype:(float, 'layout) Rune.dtype ->
-    ('layout, 'dev) Ptree.t * checkpoint_info
-  (** [restore_best manager ~device ~dtype] restores the best checkpoint.
+    t -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t * checkpoint_info
+  (** [restore_best manager ~dtype] restores the best checkpoint.
 
       Requires [best_fn] to be set in options.
       @raise Invalid_argument if no best_fn is configured *)
@@ -186,11 +174,7 @@ end
 (** {1 Utilities} *)
 
 val save_params :
-  path:string ->
-  params:('layout, 'dev) Ptree.t ->
-  ?metadata:metadata ->
-  unit ->
-  unit
+  path:string -> params:'layout Ptree.t -> ?metadata:metadata -> unit -> unit
 (** Convenience function to save parameters without a manager.
 
     @param path File or directory path for checkpoint
@@ -198,10 +182,7 @@ val save_params :
     @param metadata Optional metadata *)
 
 val load_params :
-  path:string ->
-  device:'dev Rune.device ->
-  dtype:(float, 'layout) Rune.dtype ->
-  ('layout, 'dev) Ptree.t
+  path:string -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t
 (** Convenience function to load parameters without a manager.
 
     @param path File or directory path to load from

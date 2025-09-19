@@ -61,11 +61,7 @@ module Registry : sig
             ["model.safetensors", "pytorch_model.bin"]) *)
     load_config : Yojson.Safe.t -> 'params;
         (** Parse config JSON into model parameters *)
-    build_params :
-      device:'dev Rune.device ->
-      dtype:(float, 'a) Rune.dtype ->
-      'params ->
-      ('a, 'dev) Kaun.params;
+    build_params : dtype:(float, 'a) Rune.dtype -> 'params -> 'a Kaun.params;
         (** Build parameter tree from config *)
   }
 
@@ -93,13 +89,11 @@ val load_safetensors :
   ?config:Config.t ->
   ?revision:revision ->
   model_id:model_id ->
-  device:'dev Rune.device ->
   dtype:(float, 'a) Rune.dtype ->
   unit ->
-  ('a, 'dev) Kaun.params download_result
-(** [load_safetensors ~model_id ~device ~dtype ()] downloads and loads
-    safetensors weights. Automatically tries common filenames like
-    "model.safetensors". *)
+  'a Kaun.params download_result
+(** [load_safetensors ~model_id ~dtype ()] downloads and loads safetensors
+    weights. Automatically tries common filenames like "model.safetensors". *)
 
 val load_config :
   ?config:Config.t ->
@@ -115,11 +109,10 @@ val from_pretrained :
   ?config:Config.t ->
   ?revision:revision ->
   model_id:model_id ->
-  device:'dev Rune.device ->
   dtype:(float, 'a) Rune.dtype ->
   unit ->
-  ('a, 'dev) Kaun.params
-(** [from_pretrained ~model_id ~device ~dtype ()] loads a complete model.
+  'a Kaun.params
+(** [from_pretrained ~model_id ~dtype ()] loads a complete model.
 
     This is the main entry point for loading models. It: 1. Downloads the model
     configuration 2. Downloads the model weights 3. Loads and returns the
@@ -130,8 +123,7 @@ val from_pretrained :
     Example:
     {[
       let gpt2_params =
-        Kaun_huggingface.from_pretrained ~model_id:"gpt2" ~device:Rune.c
-          ~dtype:Rune.Float32 ()
+        Kaun_huggingface.from_pretrained ~model_id:"gpt2" ~dtype:Rune.Float32 ()
     ]} *)
 
 (** {1 Utilities} *)

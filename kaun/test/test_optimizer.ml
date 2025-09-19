@@ -1,27 +1,23 @@
 open Kaun
 
-let device = Rune.c
 let eps = 1e-3
 
 (* Simple quadratic function for testing: f(x) = 0.5 * x^2 *)
 let quadratic_loss params =
   match params with
   | Ptree.Tensor x ->
-      let dev = Rune.device x in
       let dt = Rune.dtype x in
-      Rune.(mul (scalar dev dt 0.5) (sum (mul x x)))
+      Rune.(mul (scalar dt 0.5) (sum (mul x x)))
   | _ -> failwith "Expected tensor parameter"
 
 (* Test that optimizer reduces loss *)
 let test_optimizer_reduces_loss optimizer_fn name () =
   (* Initialize parameter *)
-  let x = Rune.create device Rune.float32 [| 2 |] [| 10.; -5. |] in
+  let x = Rune.create Rune.float32 [| 2 |] [| 10.; -5. |] in
   let params = Ptree.tensor x in
 
   (* Create optimizer *)
-  let optimizer : ('a, 'b) Optimizer.gradient_transformation =
-    optimizer_fn ()
-  in
+  let optimizer : 'a Optimizer.gradient_transformation = optimizer_fn () in
   let opt_state = ref (optimizer.Optimizer.init params) in
 
   (* Initial loss *)
@@ -84,13 +80,12 @@ let test_xor_convergence () =
 
   (* XOR dataset *)
   let x =
-    Rune.create device Rune.float32 [| 4; 2 |]
-      [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |]
+    Rune.create Rune.float32 [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |]
   in
-  let y = Rune.create device Rune.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
+  let y = Rune.create Rune.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
   (* Initialize model parameters *)
-  let params = Kaun.init model ~rngs ~device ~dtype:Rune.float32 in
+  let params = Kaun.init model ~rngs ~dtype:Rune.float32 in
 
   (* Create optimizer *)
   let optimizer = Optimizer.adam ~lr:0.01 () in
@@ -147,7 +142,7 @@ let test_xor_convergence () =
 (* Test that different optimizers produce different trajectories *)
 let test_optimizer_differences () =
   let test_optimizer opt_fn =
-    let x = Rune.create device Rune.float32 [| 2 |] [| 10.; -5. |] in
+    let x = Rune.create Rune.float32 [| 2 |] [| 10.; -5. |] in
     let params = Ptree.tensor x in
     let optimizer = opt_fn () in
     let opt_state = ref (optimizer.Optimizer.init params) in
@@ -185,7 +180,7 @@ let test_optimizer_differences () =
 
 (* Test optimizer state persistence *)
 let test_optimizer_state_persistence () =
-  let x = Rune.create device Rune.float32 [| 2 |] [| 10.; -5. |] in
+  let x = Rune.create Rune.float32 [| 2 |] [| 10.; -5. |] in
   let params = Ptree.tensor x in
 
   (* Create Adam optimizer (which has internal state) *)
@@ -231,7 +226,7 @@ let test_optimizer_state_persistence () =
 
 (* Test learning rate scheduling *)
 let test_learning_rate_schedule () =
-  let x = Rune.create device Rune.float32 [| 2 |] [| 10.; -5. |] in
+  let x = Rune.create Rune.float32 [| 2 |] [| 10.; -5. |] in
   let params = Ptree.tensor x in
 
   (* Create scheduler that decreases learning rate *)
@@ -280,7 +275,7 @@ let test_learning_rate_schedule () =
 
 (* Test gradient clipping *)
 let test_gradient_clipping () =
-  let x = Rune.create device Rune.float32 [| 2 |] [| 100.; -50. |] in
+  let x = Rune.create Rune.float32 [| 2 |] [| 100.; -50. |] in
   let params = Ptree.tensor x in
 
   (* Optimizer with gradient clipping *)

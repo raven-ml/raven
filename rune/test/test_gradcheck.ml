@@ -2,22 +2,20 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.c
-
 (* ───── Test finite differences ───── *)
 
 let test_finite_diff_simple () =
-  let x = T.scalar ctx T.float32 2.0 in
+  let x = T.scalar T.float32 2.0 in
   let f x = T.mul x x in
   let grad_fd = T.finite_diff f x in
   check_scalar ~eps:1e-2 "finite_diff(x²) at x=2" 4.0 (scalar_value grad_fd)
 
 let test_finite_diff_polynomial () =
-  let x = T.scalar ctx T.float32 3.0 in
+  let x = T.scalar T.float32 3.0 in
   let f x =
     let x2 = T.mul x x in
     let x3 = T.mul x2 x in
-    T.add x3 (T.mul (T.scalar ctx T.float32 2.0) x2)
+    T.add x3 (T.mul (T.scalar T.float32 2.0) x2)
   in
   let grad_fd = T.finite_diff f x in
   (* Derivative of x³ + 2x² is 3x² + 4x = 3*9 + 4*3 = 27 + 12 = 39 *)
@@ -25,14 +23,14 @@ let test_finite_diff_polynomial () =
     (scalar_value grad_fd)
 
 let test_finite_diff_vector () =
-  let x = T.create ctx T.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let f x = T.sum (T.mul x x) in
   let grad_fd = T.finite_diff f x in
-  let expected = T.create ctx T.float32 [| 3 |] [| 2.; 4.; 6. |] in
+  let expected = T.create T.float32 [| 3 |] [| 2.; 4.; 6. |] in
   check_rune ~eps:1e-2 "finite_diff vector gradient" expected grad_fd
 
 let test_finite_diff_methods () =
-  let x = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 1.0 in
   let f = T.exp in
 
   let grad_central = T.finite_diff ~method_:`Central f x in
@@ -50,7 +48,7 @@ let test_finite_diff_methods () =
 (* ───── Test gradient checking ───── *)
 
 let test_check_gradient_pass () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let f x = T.sum (T.mul x x) in
 
   match T.check_gradient ~verbose:false f x with
@@ -60,13 +58,13 @@ let test_check_gradient_pass () =
   | `Fail _ -> fail "Expected gradient check to pass"
 
 let test_check_gradient_fail () =
-  let x = T.scalar ctx T.float32 2.0 in
+  let x = T.scalar T.float32 2.0 in
   let f x =
-    let wrong_grad = T.mul x (T.scalar ctx T.float32 3.0) in
+    let wrong_grad = T.mul x (T.scalar T.float32 3.0) in
     wrong_grad
   in
 
-  let _grad_with_bug _f _x = T.scalar ctx T.float32 2.0 in
+  let _grad_with_bug _f _x = T.scalar T.float32 2.0 in
 
   let autodiff_grad = T.grad f x in
   let finite_diff_grad = T.finite_diff f x in
@@ -76,7 +74,7 @@ let test_check_gradient_fail () =
     (scalar_value finite_diff_grad)
 
 let test_check_gradient_tolerances () =
-  let x = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 1.0 in
   let f x = T.sin x in
 
   match T.check_gradient ~rtol:1e-4 ~atol:1e-5 f x with
@@ -88,7 +86,7 @@ let test_check_gradient_tolerances () =
       fail "Gradient check failed unexpectedly"
 
 let test_check_gradient_complex () =
-  let x = T.create ctx T.float32 [| 2 |] [| 0.5; 1.5 |] in
+  let x = T.create T.float32 [| 2 |] [| 0.5; 1.5 |] in
   let f x =
     let exp_x = T.exp x in
     let sin_x = T.sin x in
@@ -105,8 +103,8 @@ let test_check_gradient_complex () =
       fail "Complex gradient check failed"
 
 let test_check_gradients_multiple () =
-  let x1 = T.scalar ctx T.float32 2.0 in
-  let x2 = T.scalar ctx T.float32 3.0 in
+  let x1 = T.scalar T.float32 2.0 in
+  let x2 = T.scalar T.float32 3.0 in
   let f xs =
     match xs with [ a; b ] -> T.mul a b | _ -> failwith "Expected 2 inputs"
   in
@@ -120,7 +118,7 @@ let test_check_gradients_multiple () =
   | `Fail _ -> fail "Expected multiple gradients check to pass"
 
 let test_check_gradient_matrix () =
-  let x = T.create ctx T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let x = T.create T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let f x =
     let xt = T.transpose x in
     let result = T.matmul x xt in
@@ -137,7 +135,7 @@ let test_check_gradient_matrix () =
       fail "Matrix gradient check failed"
 
 let test_finite_diff_jacobian () =
-  let x = T.create ctx T.float32 [| 2 |] [| 1.; 2. |] in
+  let x = T.create T.float32 [| 2 |] [| 1.; 2. |] in
   let f x =
     (* Simple function that returns a 2-element vector *)
     (* f(x) = [x1 + x2, x1 * x2] where x = [x1, x2] *)
@@ -146,7 +144,7 @@ let test_finite_diff_jacobian () =
     let sum = T.add x1 x2 in
     let prod = T.mul x1 x2 in
     (* Create result manually without stack *)
-    let result = T.zeros ctx T.float32 [| 2 |] in
+    let result = T.zeros T.float32 [| 2 |] in
     T.set [ 0 ] result sum;
     T.set [ 1 ] result prod;
     result

@@ -21,13 +21,11 @@ let metrics =
   Metrics.Collection.create
     [ ("loss", Metrics.loss ()); ("accuracy", Metrics.accuracy ()) ]
 
-let device = Rune.c
-
 let train () =
   (* Datasets *)
   Printf.printf "Creating datasets...\n%!";
   let start = Unix.gettimeofday () in
-  let train_data = Kaun_datasets.mnist ~train:true ~flatten:false ~device () in
+  let train_data = Kaun_datasets.mnist ~train:true ~flatten:false () in
   Printf.printf "  MNIST train data loaded in %.2fs\n%!"
     (Unix.gettimeofday () -. start);
 
@@ -57,7 +55,7 @@ let train () =
 
   let start = Unix.gettimeofday () in
   let test_ds =
-    Kaun_datasets.mnist ~train:false ~flatten:false ~device ()
+    Kaun_datasets.mnist ~train:false ~flatten:false ()
     |> Kaun.Dataset.batch_map 100 (fun batch ->
            let images, labels = Array.split batch in
            let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
@@ -70,7 +68,7 @@ let train () =
   (* Initialize model with dummy input to get params *)
   Printf.printf "Initializing model...\n%!";
   let start = Unix.gettimeofday () in
-  let params = Kaun.init model ~rngs ~device ~dtype:Rune.float32 in
+  let params = Kaun.init model ~rngs ~dtype:Rune.float32 in
   let optimizer = Optimizer.adam ~lr:0.001 () in
   let opt_state = ref (optimizer.init params) in
   Printf.printf "Model initialized in %.2fs\n%!" (Unix.gettimeofday () -. start);

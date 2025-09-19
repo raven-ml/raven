@@ -15,9 +15,6 @@ depends: [
   "dune" {>= "3.19"}
   "dune-configurator" {build}
   "stdlib-shims"
-  "ctypes" {>= "0.21.0" & os = "macos"}
-  "ctypes-foreign" {>= "0.21.0" & os = "macos"}
-  "integers" {os = "macos"}
   "alcotest" {with-test}
   "mdx" {with-test}
   "odoc" {with-doc}

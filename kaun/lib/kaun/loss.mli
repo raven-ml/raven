@@ -20,7 +20,7 @@
     predicted and target values using different metrics. *)
 
 val softmax_cross_entropy :
-  (float, 'a, 'b) Rune.t -> (float, 'a, 'b) Rune.t -> (float, 'a, 'b) Rune.t
+  (float, 'a) Rune.t -> (float, 'a) Rune.t -> (float, 'a) Rune.t
 (** [softmax_cross_entropy logits labels] computes cross-entropy loss between softmax-normalized logits and one-hot encoded labels.
 
     The function applies softmax to [logits] internally and computes the cross-entropy loss: -sum(labels * log(softmax(logits))) / batch_size.
@@ -45,7 +45,7 @@ val softmax_cross_entropy :
     where N is batch size, y is one-hot labels, x is logits. *)
 
 val softmax_cross_entropy_with_indices :
-  (float, 'a, 'b) Rune.t -> ('c, 'd, 'b) Rune.t -> (float, 'a, 'b) Rune.t
+  (float, 'a) Rune.t -> ('c, 'd) Rune.t -> (float, 'a) Rune.t
 (** [softmax_cross_entropy_with_indices logits indices] computes cross-entropy
     loss using class indices instead of one-hot labels.
 
@@ -74,7 +74,7 @@ val softmax_cross_entropy_with_indices :
     ]} *)
 
 val binary_cross_entropy :
-  (float, 'a, 'b) Rune.t -> (float, 'a, 'b) Rune.t -> (float, 'a, 'b) Rune.t
+  (float, 'a) Rune.t -> (float, 'a) Rune.t -> (float, 'a) Rune.t
 (** [binary_cross_entropy predictions labels] computes binary cross-entropy loss
     between probability predictions and binary labels.
 
@@ -106,7 +106,7 @@ val binary_cross_entropy :
     p_i)) where N is batch size, y are labels, p are predictions. *)
 
 val sigmoid_binary_cross_entropy :
-  (float, 'a, 'b) Rune.t -> (float, 'a, 'b) Rune.t -> (float, 'a, 'b) Rune.t
+  (float, 'a) Rune.t -> (float, 'a) Rune.t -> (float, 'a) Rune.t
 (** [sigmoid_binary_cross_entropy logits labels] computes binary cross-entropy
     loss from raw logits.
 
@@ -135,7 +135,7 @@ val sigmoid_binary_cross_entropy :
       let mean_loss = Rune.mean loss_per_example
     ]} *)
 
-val mse : ('a, 'b, 'c) Rune.t -> ('a, 'b, 'c) Rune.t -> ('a, 'b, 'c) Rune.t
+val mse : ('a, 'b) Rune.t -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
 (** [mse predictions targets] computes mean squared error between predictions
     and targets.
 
@@ -161,7 +161,7 @@ val mse : ('a, 'b, 'c) Rune.t -> ('a, 'b, 'c) Rune.t -> ('a, 'b, 'c) Rune.t
     Mathematical formula: L = 1/N * sum_i (pred_i - target_i)^2 where N is the
     total number of elements. *)
 
-val mae : ('a, 'b, 'c) Rune.t -> ('a, 'b, 'c) Rune.t -> ('a, 'b, 'c) Rune.t
+val mae : ('a, 'based) Rune.t -> ('a, 'based) Rune.t -> ('a, 'based) Rune.t
 (** [mae predictions targets] computes mean absolute error between predictions
     and targets.
 

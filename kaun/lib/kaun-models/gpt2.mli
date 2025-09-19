@@ -56,30 +56,29 @@ val gpt2_xl : config
 val embeddings : config:config -> unit -> Kaun.module_
 (** GPT-2 embeddings combining token and position embeddings *)
 
-type ('a, 'dev) output = {
-  last_hidden_state : (float, 'a, 'dev) Rune.t;
+type 'a output = {
+  last_hidden_state : (float, 'a) Rune.t;
       (** Sequence of hidden states at the last layer
           [batch_size; seq_len; hidden_size] *)
-  hidden_states : (float, 'a, 'dev) Rune.t list option;
+  hidden_states : (float, 'a) Rune.t list option;
       (** Hidden states from all layers if output_hidden_states=true *)
-  attentions : (float, 'a, 'dev) Rune.t list option;
+  attentions : (float, 'a) Rune.t list option;
       (** Attention weights from all layers if output_attentions=true *)
 }
 (** Model outputs *)
 
-type ('a, 'dev) gpt2 = {
+type 'a gpt2 = {
   model : Kaun.module_;
-  params : ('a, 'dev) Kaun.params;
+  params : 'a Kaun.params;
   config : config;
-  device : 'dev device;
   dtype : (float, 'a) dtype;
 }
 (** Unified GPT-2 model type *)
 
-type 'dev inputs = {
-  input_ids : (int32, int32_elt, 'dev) Rune.t;
-  attention_mask : (int32, int32_elt, 'dev) Rune.t option;
-  position_ids : (int32, int32_elt, 'dev) Rune.t option;
+type inputs = {
+  input_ids : (int32, int32_elt) Rune.t;
+  attention_mask : (int32, int32_elt) Rune.t option;
+  position_ids : (int32, int32_elt) Rune.t option;
 }
 (** Input tensors for GPT-2 *)
 
@@ -94,14 +93,13 @@ val from_pretrained :
   ?model_id:string ->
   ?revision:Kaun_huggingface.revision ->
   ?cache_config:Kaun_huggingface.Config.t ->
-  device:'dev device ->
   dtype:(float, 'a) dtype ->
   unit ->
-  ('a, 'dev) gpt2
-(** [from_pretrained ?model_id ?device ?dtype ()] loads pretrained GPT-2.
+  'a gpt2
+(** [from_pretrained ?model_id ?dtype ()] loads pretrained GPT-2.
 
-    Default model_id is "gpt2", device is CPU, dtype is Float32. Returns a
-    unified gpt2 record with model, params, and config.
+    Default model_id is "gpt2" is CPU, dtype is Float32. Returns a unified gpt2
+    record with model, params, and config.
 
     Example:
     {[
@@ -112,13 +110,13 @@ val from_pretrained :
 
 (** Forward pass through GPT-2 *)
 val forward :
-  ('a, 'dev) gpt2 ->
-  'dev inputs ->
+  'a gpt2 ->
+  inputs ->
   ?training:bool ->
   ?output_hidden_states:bool ->
   ?output_attentions:bool ->
   unit ->
-  ('a, 'dev) output
+  'a output
 (** [forward ~model ~params ~input_ids ... ()] performs a forward pass.
 
     @param input_ids Token IDs [batch_size; seq_len]
@@ -137,14 +135,14 @@ module For_causal_lm : sig
 
   val forward :
     model:Kaun.module_ ->
-    params:('a, 'dev) Kaun.params ->
-    input_ids:(int32, int32_elt, 'dev) Rune.t ->
-    ?attention_mask:(int32, int32_elt, 'dev) Rune.t ->
-    ?position_ids:(int32, int32_elt, 'dev) Rune.t ->
-    ?labels:(int32, int32_elt, 'dev) Rune.t ->
+    params:'a Kaun.params ->
+    input_ids:(int32, int32_elt) Rune.t ->
+    ?attention_mask:(int32, int32_elt) Rune.t ->
+    ?position_ids:(int32, int32_elt) Rune.t ->
+    ?labels:(int32, int32_elt) Rune.t ->
     training:bool ->
     unit ->
-    (float, 'a, 'dev) Rune.t * (float, 'a, 'dev) Rune.t option
+    (float, 'a) Rune.t * (float, 'a) Rune.t option
   (** Returns (logits, loss) where logits has shape
       [batch_size; seq_len; vocab_size] *)
 end
@@ -164,16 +162,15 @@ module Tokenizer : sig
   val encode_to_array : t -> string -> int array
   (** Encode text to token IDs *)
 
-  val encode : t -> string -> device:'dev device -> 'dev inputs
+  val encode : t -> string -> inputs
   (** Encode text directly to input tensors ready for forward pass *)
 
   val encode_batch :
     t ->
     ?max_length:int ->
     ?padding:bool ->
-    device:'dev device ->
     string list ->
-    (int32, int32_elt, 'dev) Rune.t
+    (int32, int32_elt) Rune.t
   (** Encode multiple texts with optional padding *)
 
   val decode : t -> int array -> string
@@ -194,10 +191,10 @@ end
 
 (** {1 Utilities} *)
 
-val num_parameters : ('a, 'dev) Kaun.params -> int
+val num_parameters : 'a Kaun.params -> int
 (** Count total parameters in the model *)
 
-val parameter_stats : ('a, 'dev) Kaun.params -> string
+val parameter_stats : 'a Kaun.params -> string
 (** Get human-readable parameter statistics *)
 
 (** {1 GPT-2 Configuration Parsing} *)
@@ -207,18 +204,14 @@ val parse_gpt2_config : Yojson.Safe.t -> config
 
 (** {1 Common Model Configurations} *)
 
-val load_gpt2_small :
-  device:'dev device -> dtype:(float, 'a) dtype -> unit -> ('a, 'dev) gpt2
+val load_gpt2_small : dtype:(float, 'a) dtype -> unit -> 'a gpt2
 (** Load GPT-2 Small (124M parameters) *)
 
-val load_gpt2_medium :
-  device:'dev device -> dtype:(float, 'a) dtype -> unit -> ('a, 'dev) gpt2
+val load_gpt2_medium : dtype:(float, 'a) dtype -> unit -> 'a gpt2
 (** Load GPT-2 Medium (355M parameters) *)
 
-val load_gpt2_large :
-  device:'dev device -> dtype:(float, 'a) dtype -> unit -> ('a, 'dev) gpt2
+val load_gpt2_large : dtype:(float, 'a) dtype -> unit -> 'a gpt2
 (** Load GPT-2 Large (774M parameters) *)
 
-val load_gpt2_xl :
-  device:'dev device -> dtype:(float, 'a) dtype -> unit -> ('a, 'dev) gpt2
+val load_gpt2_xl : dtype:(float, 'a) dtype -> unit -> 'a gpt2
 (** Load GPT-2 XL (1.5B parameters) *)

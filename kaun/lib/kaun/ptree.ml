@@ -1,12 +1,12 @@
 (* ptree/ml *)
-open! Import
+
 open Rune
 module Record = Map.Make (String)
 
-type ('layout, 'dev) t =
-  | Tensor of ('layout, 'dev) tensor
-  | List of ('layout, 'dev) t list
-  | Record of ('layout, 'dev) t Record.t
+type 'layout t =
+  | Tensor of (float, 'layout) Rune.t
+  | List of 'layout t list
+  | Record of 'layout t Record.t
 
 type mask_tree =
   | Mask_tensor of bool
@@ -122,12 +122,8 @@ let rec apply_mask mask_tree tree =
 
 (* Tree Construction *)
 
-let zeros_like tree =
-  map (fun t -> Rune.zeros (device t) (dtype t) (shape t)) tree
-
-let ones_like tree =
-  map (fun t -> Rune.ones (device t) (dtype t) (shape t)) tree
-
+let zeros_like tree = map (fun t -> Rune.zeros (dtype t) (shape t)) tree
+let ones_like tree = map (fun t -> Rune.ones (dtype t) (shape t)) tree
 let copy tree = map Rune.copy tree
 
 (* Tree Inspection *)
@@ -151,9 +147,9 @@ let split_at n lst =
   in
   aux n [] lst
 
-let rec flatten : type layout dev.
-    (layout, dev) t ->
-    (layout, dev) tensor list * ((layout, dev) tensor list -> (layout, dev) t) =
+let rec flatten : type layout.
+    layout t ->
+    (float, layout) Rune.t list * ((float, layout) Rune.t list -> layout t) =
   function
   | Tensor t ->
       ( [ t ],
@@ -213,9 +209,8 @@ let div tree1 tree2 = map2 Rune.div tree1 tree2
 let scale alpha tree =
   map
     (fun t ->
-      let ctx = Rune.device t in
       let dtype = Rune.dtype t in
-      let alpha_t = Rune.scalar ctx dtype alpha in
+      let alpha_t = Rune.scalar dtype alpha in
       Rune.mul alpha_t t)
     tree
 

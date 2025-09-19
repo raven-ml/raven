@@ -1,19 +1,17 @@
-open! Import
-
 module State = struct
-  type ('layout, 'dev) t = {
+  type 'layout t = {
     step : int;
-    params : ('layout, 'dev) Ptree.t;
-    opt_state : ('layout, 'dev) Optimizer.opt_state;
-    metrics : ('layout, 'dev) Metrics.Collection.t option;
+    params : 'layout Ptree.t;
+    opt_state : 'layout Optimizer.opt_state;
+    metrics : 'layout Metrics.Collection.t option;
     rngs : Rune.Rng.key;
     model : Layer.module_;
-    optimizer : ('layout, 'dev) Optimizer.gradient_transformation;
+    optimizer : 'layout Optimizer.gradient_transformation;
   }
 
-  let create ~model ~optimizer ?metrics ~rngs ~device ~dtype () =
+  let create ~model ~optimizer ?metrics ~rngs ~dtype () =
     (* Always initialize with a dummy input *)
-    let params = model.Layer.init ~rngs ~device ~dtype in
+    let params = model.Layer.init ~rngs ~dtype in
     let opt_state = optimizer.Optimizer.init params in
     { step = 0; params; opt_state; metrics; rngs; model; optimizer }
 
@@ -52,7 +50,7 @@ module State = struct
 end
 
 module History = struct
-  type ('layout, 'dev) t = {
+  type 'layout t = {
     train_loss : float list;
     train_metrics : (string * float list) list;
     val_loss : float list option;
@@ -197,21 +195,21 @@ let train_epoch ~state ~dataset ~loss_fn ?(progress = false) () =
   (!state_ref, avg_loss, metric_values)
 
 module Callbacks = struct
-  type ('layout, 'dev) context = {
+  type 'layout context = {
     epoch : int;
-    state : ('layout, 'dev) State.t;
-    history : ('layout, 'dev) History.t;
+    state : 'layout State.t;
+    history : 'layout History.t;
     train_loss : float option;
     val_loss : float option;
     train_metrics : (string * float) list;
     val_metrics : (string * float) list;
   }
 
-  type ('layout, 'dev) t = {
-    on_epoch_begin : ('layout, 'dev) context -> bool;
-    on_epoch_end : ('layout, 'dev) context -> bool;
-    on_train_begin : ('layout, 'dev) context -> unit;
-    on_train_end : ('layout, 'dev) context -> unit;
+  type 'layout t = {
+    on_epoch_begin : 'layout context -> bool;
+    on_epoch_end : 'layout context -> bool;
+    on_train_begin : 'layout context -> unit;
+    on_train_end : 'layout context -> unit;
   }
 
   let early_stopping ?(monitor = "val_loss") ?(patience = 5) ?(mode = `Min)
@@ -516,9 +514,9 @@ let evaluate ~state ~dataset ~loss_fn ?(progress = false) () =
   (avg_loss, metric_values)
 
 let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
-    ?callbacks ?(progress = true) ~rngs ~device ~dtype () =
+    ?callbacks ?(progress = true) ~rngs ~dtype () =
   (* Create initial training state *)
-  let state = State.create ~model ~optimizer ?metrics ~rngs ~device ~dtype () in
+  let state = State.create ~model ~optimizer ?metrics ~rngs ~dtype () in
 
   (* Training history *)
   let history =

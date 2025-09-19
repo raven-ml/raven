@@ -1,17 +1,4 @@
 (library
  (name rune)
  (public_name rune)
- (libraries
-  ctypes
-  rune_jit
-  nx_native
-  nx_c
-  rune_metal
-  nx_core
-  nx
-  bigarray_ext
-  (select
-   jit_xla.ml
-   from
-   (xla -> jit_xla.xla.ml)
-   (-> jit_xla.missing.ml))))
+ (libraries ctypes rune_jit rune.jit.metal_or_missing rune.jit.llvm nx_c nx_core nx bigarray_ext))

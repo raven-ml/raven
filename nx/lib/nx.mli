@@ -24,7 +24,7 @@
 
 (** {2 Type Definitions} *)
 
-type ('a, 'b) t = ('a, 'b) Nx_native.t
+type ('a, 'b) t
 (** [('a, 'b) t] is a tensor with OCaml type ['a] and bigarray type ['b]. *)
 
 type float16_elt = Bigarray_ext.float16_elt
@@ -1648,6 +1648,9 @@ val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 
 val equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [equal t1 t2] is synonym for {!cmpeq}. *)
+
+val equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+(** [equal_s t scalar] compares each element with scalar for equality. *)
 
 val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
 (** [cmpgt t1 t2] returns 1 where t1 > t2, 0 elsewhere. *)

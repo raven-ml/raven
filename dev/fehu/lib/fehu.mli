@@ -9,19 +9,18 @@ module Space : sig
   type 'dev t =
     | Discrete of int  (** Discrete space with n possible actions *)
     | Box of {
-        low : (float, Rune.float32_elt, 'dev) Rune.t;
-        high : (float, Rune.float32_elt, 'dev) Rune.t;
+        low : (float, Rune.float32_elt) Rune.t;
+        high : (float, Rune.float32_elt) Rune.t;
         shape : int array;
       }  (** Continuous space with bounds *)
     | Multi_discrete of int array  (** Multiple discrete spaces *)
 
   val sample :
     rng:Rune.Rng.key ->
-    'dev Rune.device ->
     'dev t ->
-    (float, Rune.float32_elt, 'dev) Rune.t
+    (float, Rune.float32_elt) Rune.t
 
-  val contains : 'dev t -> (float, Rune.float32_elt, 'dev) Rune.t -> bool
+  val contains : 'dev t -> (float, Rune.float32_elt) Rune.t -> bool
   val shape : 'dev t -> int array
 end
 
@@ -33,10 +32,10 @@ module Env : sig
   type 'dev t = {
     observation_space : 'dev Space.t;
     action_space : 'dev Space.t;
-    reset : ?seed:int -> unit -> (float, Rune.float32_elt, 'dev) Rune.t * info;
+    reset : ?seed:int -> unit -> (float, Rune.float32_elt) Rune.t * info;
     step :
-      (float, Rune.float32_elt, 'dev) Rune.t ->
-      (float, Rune.float32_elt, 'dev) Rune.t * float * bool * bool * info;
+      (float, Rune.float32_elt) Rune.t ->
+      (float, Rune.float32_elt) Rune.t * float * bool * bool * info;
     (* Returns: observation, reward, terminated, truncated, info *)
     render : unit -> unit;
     close : unit -> unit;
@@ -45,10 +44,10 @@ module Env : sig
   val make :
     observation_space:'dev Space.t ->
     action_space:'dev Space.t ->
-    reset:(?seed:int -> unit -> (float, Rune.float32_elt, 'dev) Rune.t * info) ->
+    reset:(?seed:int -> unit -> (float, Rune.float32_elt) Rune.t * info) ->
     step:
-      ((float, Rune.float32_elt, 'dev) Rune.t ->
-      (float, Rune.float32_elt, 'dev) Rune.t * float * bool * bool * info) ->
+      ((float, Rune.float32_elt) Rune.t ->
+      (float, Rune.float32_elt) Rune.t * float * bool * bool * info) ->
     ?render:(unit -> unit) ->
     ?close:(unit -> unit) ->
     unit ->
@@ -59,10 +58,10 @@ end
 
 module Buffer : sig
   type 'dev transition = {
-    obs : (float, Rune.float32_elt, 'dev) Rune.t;
-    action : (float, Rune.float32_elt, 'dev) Rune.t;
+    obs : (float, Rune.float32_elt) Rune.t;
+    action : (float, Rune.float32_elt) Rune.t;
     reward : float;
-    next_obs : (float, Rune.float32_elt, 'dev) Rune.t;
+    next_obs : (float, Rune.float32_elt) Rune.t;
     terminated : bool;
   }
 
@@ -93,8 +92,8 @@ module Training : sig
   val evaluate :
     'dev Env.t ->
     policy:
-      ((float, Rune.float32_elt, 'dev) Rune.t ->
-      (float, Rune.float32_elt, 'dev) Rune.t) ->
+      ((float, Rune.float32_elt) Rune.t ->
+      (float, Rune.float32_elt) Rune.t) ->
     n_eval_episodes:int ->
     stats
 
@@ -112,10 +111,10 @@ module Training : sig
   (** Compute discounted returns *)
 
   val normalize :
-    (float, Rune.float32_elt, 'dev) Rune.t ->
+    (float, Rune.float32_elt) Rune.t ->
     ?eps:float ->
     unit ->
-    (float, Rune.float32_elt, 'dev) Rune.t
+    (float, Rune.float32_elt) Rune.t
   (** Normalize tensor to zero mean and unit variance *)
 end
 

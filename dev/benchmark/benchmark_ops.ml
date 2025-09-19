@@ -11,12 +11,11 @@ let hidden_dim = 64
 let vocab_size = 27
 let num_heads = 4
 
-(* Initialize device and dtype *)
-let device = c
+(* Initialize dtype *)
 let dtype = Rune.float32
 
 (* Helper to create random tensor *)
-let randn shape = Rune.randn device dtype shape
+let randn shape = Rune.randn dtype shape
 
 (* Benchmark matrix multiplication *)
 let bench_matmul () =
@@ -29,20 +28,20 @@ let bench_embedding () =
   (* Create random indices as float32 tensor with integer values *)
   (* Since randint doesn't work with float32, create random floats and floor them *)
   let indices =
-    Rune.rand device dtype [| batch_size; seq_len |]
-    |> Rune.mul (Rune.scalar device dtype (float_of_int vocab_size))
+    Rune.rand dtype [| batch_size; seq_len |]
+    |> Rune.mul (Rune.scalar dtype (float_of_int vocab_size))
     |> Rune.floor
   in
   (* Create embedding layer *)
   let emb_layer = Layer.embedding ~vocab_size ~embed_dim:hidden_dim () in
-  let params = emb_layer.init ~rngs:(Rng.key 42) ~device ~dtype in
+  let params = emb_layer.init ~rngs:(Rng.key 42) ~dtype in
   fun () -> apply emb_layer params ~training:false indices |> ignore
 
 (* Benchmark layer normalization *)
 let bench_layernorm () =
   let x = randn [| batch_size; seq_len; hidden_dim |] in
   let ln = Layer.layer_norm ~dim:hidden_dim () in
-  let params = ln.init ~rngs:(Rng.key 42) ~device ~dtype in
+  let params = ln.init ~rngs:(Rng.key 42) ~dtype in
   fun () -> apply ln params ~training:false x |> ignore
 
 (* Benchmark multi-head attention *)
@@ -58,9 +57,9 @@ let bench_attention () =
 
   (* Create causal mask *)
   let mask =
-    let ones = Rune.ones device dtype [| seq_len; seq_len |] in
+    let ones = Rune.ones dtype [| seq_len; seq_len |] in
     let upper = Rune.triu ~k:1 ones in
-    Rune.mul upper (Rune.scalar device dtype (-1e10))
+    Rune.mul upper (Rune.scalar dtype (-1e10))
   in
 
   fun () ->
@@ -84,8 +83,7 @@ let bench_attention () =
     (* Attention scores *)
     let scores =
       Rune.matmul q (Rune.transpose ~axes:[| 0; 1; 3; 2 |] k)
-      |> Rune.div
-           (Rune.scalar device dtype (Float.sqrt (float_of_int head_dim)))
+      |> Rune.div (Rune.scalar dtype (Float.sqrt (float_of_int head_dim)))
     in
 
     (* Apply mask *)
@@ -146,9 +144,7 @@ let bench_gru_cell () =
 
     (* Update hidden state *)
     let h_new =
-      Rune.add
-        (Rune.mul (Rune.sub (Rune.scalar device dtype 1.) z) n)
-        (Rune.mul z h)
+      Rune.add (Rune.mul (Rune.sub (Rune.scalar dtype 1.) z) n) (Rune.mul z h)
     in
     ignore h_new
 
@@ -159,7 +155,7 @@ let bench_gru_sequence () =
     Layer.gru ~input_size:hidden_dim ~hidden_size:hidden_dim
       ~return_sequences:true ~learned_init:true ()
   in
-  let params = gru.init ~rngs:(Rng.key 42) ~device ~dtype in
+  let params = gru.init ~rngs:(Rng.key 42) ~dtype in
   fun () -> apply gru params ~training:false x |> ignore
 
 (* Benchmark transformer block *)
@@ -172,7 +168,7 @@ let bench_transformer_block () =
       ~mlp_hidden:(4 * hidden_dim) ()
   in
 
-  let params = decoder.init ~rngs:(Rng.key 42) ~device ~dtype in
+  let params = decoder.init ~rngs:(Rng.key 42) ~dtype in
 
   fun () -> apply decoder params ~training:false x |> ignore
 

@@ -59,10 +59,10 @@ let gpt2_large =
 let gpt2_xl = { default_config with n_embd = 1600; n_layer = 48; n_head = 25 }
 
 (* Input type *)
-type 'dev inputs = {
-  input_ids : (int32, int32_elt, 'dev) Rune.t;
-  attention_mask : (int32, int32_elt, 'dev) Rune.t option;
-  position_ids : (int32, int32_elt, 'dev) Rune.t option;
+type inputs = {
+  input_ids : (int32, int32_elt) Rune.t;
+  attention_mask : (int32, int32_elt) Rune.t option;
+  position_ids : (int32, int32_elt) Rune.t option;
 }
 
 (* GPT-2 specific tokenizer with BPE *)
@@ -175,20 +175,19 @@ module Tokenizer = struct
     in
     Array.of_list token_ids
 
-  let encode t text ~device =
+  let encode t text =
     let token_ids = encode_to_array t text in
     let seq_len = Array.length token_ids in
 
     (* Convert to tensors *)
     let input_ids =
-      Rune.create device Int32 [| 1; seq_len |]
-        (Array.map Int32.of_int token_ids)
+      Rune.create Int32 [| 1; seq_len |] (Array.map Int32.of_int token_ids)
     in
 
     (* Return inputs record *)
     { input_ids; attention_mask = None; position_ids = None }
 
-  let encode_batch t ?(max_length = 1024) ?(padding = false) ~device texts =
+  let encode_batch t ?(max_length = 1024) ?(padding = false) texts =
     let encoded = List.map (encode_to_array t) texts in
 
     (* Find max length or use specified max_length *)
@@ -242,7 +241,7 @@ module Tokenizer = struct
       Nx.create Int32 [| batch_size; actual_max |] data
     in
     (* Convert to Rune tensor *)
-    Rune.of_nx device nx_tensor
+    Rune.of_nx nx_tensor
 
   let decode t token_ids =
     (* Decode token IDs back to text using BPE model *)
@@ -274,15 +273,14 @@ let embeddings ~config () =
   (* Custom module that applies both embeddings and sums them *)
   {
     Kaun.init =
-      (fun ~rngs ~device ~dtype ->
+      (fun ~rngs ~dtype ->
         let keys = Rune.Rng.split ~n:3 rngs in
         Kaun.Ptree.record_of
           [
-            ( "token_embeddings",
-              token_embeddings.init ~rngs:keys.(0) ~device ~dtype );
+            ("token_embeddings", token_embeddings.init ~rngs:keys.(0) ~dtype);
             ( "position_embeddings",
-              position_embeddings.init ~rngs:keys.(1) ~device ~dtype );
-            ("dropout", dropout.init ~rngs:keys.(2) ~device ~dtype);
+              position_embeddings.init ~rngs:keys.(1) ~dtype );
+            ("dropout", dropout.init ~rngs:keys.(2) ~dtype);
           ]);
     Kaun.apply =
       (fun params ~training ?rngs x ->
@@ -345,15 +343,12 @@ let embeddings ~config () =
               (Rune.shape input_ids).(Array.length (Rune.shape input_ids) - 1)
             in
             let batch_size = (Rune.shape input_ids).(0) in
-            let device = Rune.device input_ids in
             let position_ids =
-              let pos_ids =
-                Rune.zeros device Rune.int32 [| batch_size; seq_len |]
-              in
+              let pos_ids = Rune.zeros Rune.int32 [| batch_size; seq_len |] in
               for b = 0 to batch_size - 1 do
                 for s = 0 to seq_len - 1 do
                   Rune.set [ b; s ] pos_ids
-                    (Rune.scalar device Rune.int32 (Int32.of_int s))
+                    (Rune.scalar Rune.int32 (Int32.of_int s))
                 done
               done;
               pos_ids
@@ -376,25 +371,24 @@ let embeddings ~config () =
 
 (* Main Model *)
 
-type ('a, 'dev) gpt2 = {
+type 'a gpt2 = {
   model : Kaun.Layer.module_;
-  params : ('a, 'dev) Kaun.Ptree.t;
+  params : 'a Kaun.Ptree.t;
   config : config;
-  device : 'dev Rune.device;
   dtype : (float, 'a) Rune.dtype;
 }
 
-type ('a, 'dev) output = {
-  last_hidden_state : (float, 'a, 'dev) Rune.t;
-  hidden_states : (float, 'a, 'dev) Rune.t list option;
-  attentions : (float, 'a, 'dev) Rune.t list option;
+type 'a output = {
+  last_hidden_state : (float, 'a) Rune.t;
+  hidden_states : (float, 'a) Rune.t list option;
+  attentions : (float, 'a) Rune.t list option;
 }
 
 module Gpt2_block = struct
   (* Generate causal attention mask *)
-  let causal_mask ~seq_len ~device ~dtype =
+  let causal_mask ~seq_len ~dtype =
     (* Create a lower triangular matrix for causal masking *)
-    let mask = ones device dtype [| seq_len; seq_len |] in
+    let mask = ones dtype [| seq_len; seq_len |] in
     tril mask ~k:0
 
   (* GPT-2 uses GELU activation *)
@@ -408,7 +402,6 @@ module Gpt2_block = struct
     let batch_size = (shape x).(0) in
     let seq_len = (shape x).(1) in
     let head_dim = hidden_size / n_head in
-    let device = device x in
     let dtype = dtype x in
 
     (* Get Q, K, V weights and biases *)
@@ -451,11 +444,11 @@ module Gpt2_block = struct
     let scores = div_s scores (Float.sqrt (Float.of_int head_dim)) in
 
     (* Apply causal mask *)
-    let mask = causal_mask ~seq_len ~device ~dtype in
+    let mask = causal_mask ~seq_len ~dtype in
     (* Expand mask for batch and heads: [1, 1, seq_len, seq_len] *)
     let mask = reshape [| 1; 1; seq_len; seq_len |] mask in
     (* Where mask is 0, set score to large negative value *)
-    let neg_inf = full device dtype [| 1; 1; 1; 1 |] (-1e10) in
+    let neg_inf = full dtype [| 1; 1; 1; 1 |] (-1e10) in
     let scores = where (equal_s mask 0.0) neg_inf scores in
 
     (* Softmax over last dimension *)
@@ -554,12 +547,10 @@ let create ?(config = default_config) () =
   (* We'll implement it as a custom module *)
   {
     Kaun.init =
-      (fun ~rngs ~device ~dtype ->
+      (fun ~rngs ~dtype ->
         (* Initialize embeddings *)
         let embeddings_layer = embeddings ~config () in
-        let embeddings_params =
-          Kaun.init embeddings_layer ~rngs ~device ~dtype
-        in
+        let embeddings_params = Kaun.init embeddings_layer ~rngs ~dtype in
 
         (* Initialize transformer blocks *)
         let layer_params =
@@ -570,8 +561,8 @@ let create ?(config = default_config) () =
         in
 
         (* Initialize final layer norm *)
-        let ln_f_gamma = Rune.ones device dtype [| config.n_embd |] in
-        let ln_f_beta = Rune.zeros device dtype [| config.n_embd |] in
+        let ln_f_gamma = Rune.ones dtype [| config.n_embd |] in
+        let ln_f_beta = Rune.zeros dtype [| config.n_embd |] in
 
         (* Return params structure *)
         Kaun.Ptree.List
@@ -630,8 +621,7 @@ let create ?(config = default_config) () =
         | _ -> failwith "Invalid params structure");
   }
 
-let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~device ~dtype
-    () =
+let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
   (* Load config and weights from HuggingFace *)
   let cache_config =
     Option.value cache_config ~default:Kaun_huggingface.Config.default
@@ -707,7 +697,7 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~device ~dtype
   (* Load weights using HuggingFace infrastructure *)
   let hf_params =
     Kaun_huggingface.from_pretrained ~config:cache_config ~revision ~model_id
-      ~device ~dtype ()
+      ~dtype ()
   in
 
   (* Map HuggingFace parameter names to our expected structure *)
@@ -864,7 +854,7 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~device ~dtype
   let mapped_params = map_huggingface_to_kaun hf_params in
   let model = create ~config:gpt2_config () in
 
-  { model; params = mapped_params; config = gpt2_config; device; dtype }
+  { model; params = mapped_params; config = gpt2_config; dtype }
 
 let forward gpt2 inputs ?(training = false) ?(output_hidden_states = false)
     ?(output_attentions = false) () =
@@ -1048,14 +1038,10 @@ let parameter_stats params =
     (float_of_int total_bytes /. 1024. /. 1024.)
 
 (* Common GPT-2 model configurations *)
-let load_gpt2_small ~device ~dtype () =
-  from_pretrained ~model_id:"gpt2" ~device ~dtype ()
+let load_gpt2_small ~dtype () = from_pretrained ~model_id:"gpt2" ~dtype ()
 
-let load_gpt2_medium ~device ~dtype () =
-  from_pretrained ~model_id:"gpt2-medium" ~device ~dtype ()
+let load_gpt2_medium ~dtype () =
+  from_pretrained ~model_id:"gpt2-medium" ~dtype ()
 
-let load_gpt2_large ~device ~dtype () =
-  from_pretrained ~model_id:"gpt2-large" ~device ~dtype ()
-
-let load_gpt2_xl ~device ~dtype () =
-  from_pretrained ~model_id:"gpt2-xl" ~device ~dtype ()
+let load_gpt2_large ~dtype () = from_pretrained ~model_id:"gpt2-large" ~dtype ()
+let load_gpt2_xl ~dtype () = from_pretrained ~model_id:"gpt2-xl" ~dtype ()

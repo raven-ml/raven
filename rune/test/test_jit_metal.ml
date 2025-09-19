@@ -2,7 +2,6 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.ocaml
 let eps = 1e-6
 
 (* Basic JIT compilation tests *)
@@ -10,7 +9,7 @@ let test_jit_simple () =
   let f x = T.add x x in
   let jit_f = T.jit f in
 
-  let x = T.scalar ctx T.float32 3.0 in
+  let x = T.scalar T.float32 3.0 in
   let expected = scalar_value (f x) in
   let actual = scalar_value (jit_f x) in
 
@@ -20,7 +19,7 @@ let test_jit_multiple_ops () =
   let f x = T.add (T.mul x x) x in
   let jit_f = T.jit f in
 
-  let x = T.scalar ctx T.float32 2.0 in
+  let x = T.scalar T.float32 2.0 in
   let expected = scalar_value (f x) in
   let actual = scalar_value (jit_f x) in
 
@@ -28,12 +27,12 @@ let test_jit_multiple_ops () =
 
 let test_jit_with_constant () =
   let f x =
-    let c = T.scalar ctx T.float32 2.0 in
+    let c = T.scalar T.float32 2.0 in
     T.add (T.mul x c) c
   in
   let jit_f = T.jit f in
 
-  let x = T.scalar ctx T.float32 3.0 in
+  let x = T.scalar T.float32 3.0 in
   let expected = scalar_value (f x) in
   let actual = scalar_value (jit_f x) in
 
@@ -44,7 +43,7 @@ let test_jit_fixed_shape () =
   let f x = T.sum (T.mul x x) in
   let jit_f = T.jit f in
 
-  let x = T.ones ctx T.float32 [| 2; 3 |] in
+  let x = T.ones T.float32 [| 2; 3 |] in
   let expected = scalar_value (f x) in
   let actual = scalar_value (jit_f x) in
 
@@ -55,12 +54,12 @@ let test_jit_different_shapes () =
   let jit_f = T.jit f in
 
   (* First shape *)
-  let x1 = T.ones ctx T.float32 [| 2; 3 |] in
+  let x1 = T.ones T.float32 [| 2; 3 |] in
   let result1 = jit_f x1 in
   check_scalar ~eps "jit shape 1" 6.0 (scalar_value result1);
 
   (* Different shape - should recompile *)
-  let x2 = T.ones ctx T.float32 [| 3; 4 |] in
+  let x2 = T.ones T.float32 [| 3; 4 |] in
   let result2 = jit_f x2 in
   check_scalar ~eps "jit shape 2" 12.0 (scalar_value result2)
 
@@ -69,14 +68,14 @@ let test_jit_batch_dimensions () =
   let jit_f = T.jit f in
 
   (* Different batch sizes *)
-  let x1 = T.ones ctx T.float32 [| 2; 5 |] in
-  let x2 = T.ones ctx T.float32 [| 3; 5 |] in
+  let x1 = T.ones T.float32 [| 2; 5 |] in
+  let x2 = T.ones T.float32 [| 3; 5 |] in
 
   let result1 = jit_f x1 in
   let result2 = jit_f x2 in
 
-  check_rune "jit batch 1" (T.ones ctx T.float32 [| 2 |]) result1;
-  check_rune "jit batch 2" (T.ones ctx T.float32 [| 3 |]) result2
+  check_rune "jit batch 1" (T.ones T.float32 [| 2 |]) result1;
+  check_rune "jit batch 2" (T.ones T.float32 [| 3 |]) result2
 
 (* Autodiff integration tests *)
 let test_jit_of_grad () =
@@ -84,7 +83,7 @@ let test_jit_of_grad () =
   let grad_f x = T.grad f x in
   let jit_grad_f = T.jit grad_f in
 
-  let x = T.scalar ctx T.float32 2.0 in
+  let x = T.scalar T.float32 2.0 in
   let expected = scalar_value (grad_f x) in
   let actual = scalar_value (jit_grad_f x) in
 
@@ -94,7 +93,7 @@ let test_grad_of_jit () =
   let f x = T.add (T.mul x x) x in
   let jit_f = T.jit f in
 
-  let x = T.scalar ctx T.float32 3.0 in
+  let x = T.scalar T.float32 3.0 in
   let expected_grad = scalar_value (T.grad f x) in
   let actual_grad = scalar_value (T.grad jit_f x) in
 
@@ -105,7 +104,7 @@ let test_jit_grad_composition () =
   let f x = T.sum (T.mul x x) in
 
   let x =
-    T.create ctx T.float32 [| 3; 2 |] [| 0.1; 0.2; -0.3; 0.4; -0.5; 0.6 |]
+    T.create T.float32 [| 3; 2 |] [| 0.1; 0.2; -0.3; 0.4; -0.5; 0.6 |]
   in
 
   (* Regular gradient *)
@@ -129,7 +128,7 @@ let test_jit_reduction_ops () =
   let jit_f = T.jit f in
 
   let x =
-    T.create ctx T.float32 [| 4; 5 |]
+    T.create T.float32 [| 4; 5 |]
       [|
         -0.1;
         0.2;
@@ -161,7 +160,7 @@ let test_jit_reduction_ops () =
 (* TODO: Implement when jit2 is available let test_jit_broadcast_ops () = let f
    x y = T.add (T.mul x y) x in let jit_f = T.jit2 f in
 
-   let x = T.ones ctx T.float32 [|3; 1|] in let y = T.ones ctx T.float32 [|1;
+   let x = T.ones T.float32 [|3; 1|] in let y = T.ones T.float32 [|1;
    4|] in
 
    let expected = f x y in let actual = jit_f x y in

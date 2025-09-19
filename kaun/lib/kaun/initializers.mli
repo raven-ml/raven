@@ -7,11 +7,7 @@
 type t = {
   f :
     'layout 'dev.
-    int ->
-    int array ->
-    'dev Rune.device ->
-    (float, 'layout) Rune.dtype ->
-    (float, 'layout, 'dev) Rune.t;
+    int -> int array -> (float, 'layout) Rune.dtype -> (float, 'layout) Rune.t;
 }
 (** Type for initializer functions *)
 

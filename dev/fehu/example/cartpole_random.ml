@@ -27,7 +27,7 @@ let () =
 
     while not !finished do
       (* Take a random action *)
-      let action = Space.sample ~rng Rune.c env.action_space in
+      let action = Space.sample ~rng env.action_space in
 
       (* Step the environment *)
       let _next_obs, reward, terminated, truncated, _info = env.step action in

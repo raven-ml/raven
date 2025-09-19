@@ -42,12 +42,7 @@ val to_int : key -> int
 
 (** {2 Random Sampling Functions} *)
 
-val uniform :
-  key ->
-  Tensor.context ->
-  ('a, 'b) Tensor.dtype ->
-  int array ->
-  ('a, 'b) Tensor.t
+val uniform : key -> ('a, 'b) Tensor.dtype -> int array -> ('a, 'b) Tensor.t
 (** Generate uniform random values in [0, 1).
     
     [uniform key dtype shape] generates a tensor of the given shape with
@@ -58,12 +53,7 @@ val uniform :
     @param shape Shape of the output tensor
     @return Tensor with uniform random values *)
 
-val normal :
-  key ->
-  Tensor.context ->
-  ('a, 'b) Tensor.dtype ->
-  int array ->
-  ('a, 'b) Tensor.t
+val normal : key -> ('a, 'b) Tensor.dtype -> int array -> ('a, 'b) Tensor.t
 (** Generate standard normal random values.
 
     [normal key dtype shape] generates a tensor of the given shape with values
@@ -74,8 +64,7 @@ val normal :
     @param shape Shape of the output tensor
     @return Tensor with normal random values *)
 
-val randint :
-  key -> Tensor.context -> min:int -> max:int -> int array -> Tensor.int32_t
+val randint : key -> min:int -> max:int -> int array -> Tensor.int32_t
 (** Generate random integers in a range.
     
     [randint key ~min ~max shape] generates a tensor of integers uniformly
@@ -87,7 +76,7 @@ val randint :
     @param shape Shape of the output tensor
     @return Tensor with random integer values *)
 
-val bernoulli : key -> Tensor.context -> p:float -> int array -> Tensor.uint8_t
+val bernoulli : key -> p:float -> int array -> Tensor.uint8_t
 (** Generate Bernoulli random values.
 
     [bernoulli key ~p shape] generates a tensor of boolean values where each
@@ -98,7 +87,7 @@ val bernoulli : key -> Tensor.context -> p:float -> int array -> Tensor.uint8_t
     @param shape Shape of the output tensor
     @return Tensor with boolean random values *)
 
-val permutation : key -> Tensor.context -> int -> Tensor.int32_t
+val permutation : key -> int -> Tensor.int32_t
 (** Generate random permutation.
 
     [permutation key n] generates a random permutation of integers from 0 to
@@ -131,7 +120,6 @@ val categorical : key -> ?axis:int -> ('a, 'b) Tensor.t -> Tensor.int32_t
 
 val truncated_normal :
   key ->
-  Tensor.context ->
   ('a, 'b) Tensor.dtype ->
   lower:'a ->
   upper:'a ->

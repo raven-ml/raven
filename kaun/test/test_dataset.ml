@@ -498,10 +498,9 @@ let test_element_spec () =
 
 (** Test pipelines *)
 let test_text_classification_pipeline () =
-  let device = Rune.c in
   let dataset =
     from_list [ "hello world"; "foo bar baz" ]
-    |> text_classification_pipeline ~batch_size:2 ~device
+    |> text_classification_pipeline ~batch_size:2
   in
   let collected = collect_n 1 dataset in
   Alcotest.(check int) "got batch" 1 (List.length collected);
@@ -514,10 +513,9 @@ let test_text_classification_pipeline () =
   | _ -> Alcotest.fail "Expected one batch"
 
 let test_language_model_pipeline () =
-  let device = Rune.c in
   let dataset =
     from_list [ "one two three four" ]
-    |> language_model_pipeline ~sequence_length:4 ~batch_size:1 ~device
+    |> language_model_pipeline ~sequence_length:4 ~batch_size:1
   in
   let collected = collect_n 1 dataset in
   match collected with

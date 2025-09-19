@@ -2,6 +2,11 @@
 
 goalpost: mnist notebook in quill with rune + hugin
 
+## simplify
+
+- remove bigarray_ext (what's the best way to implement our C backend?)
+- remove device type from rune interface
+
 ## current
 
 - gemma kaun example 
@@ -13,7 +18,6 @@ goalpost: mnist notebook in quill with rune + hugin
   - fix tests
 - linear algebra functions  
   - fix tests
-- jit with xla
 - jit
 - vmap
 - jvp
@@ -29,7 +33,6 @@ feature requests:
 - complete linear algebra suite (cholesky, einsum, qr, svd, inv, solve, norm, eig, eigh, etc.)
 - forward mode ad (jvp)
 - vmap (that compose with jvp!)
-- nx cuda backend
 - fft for soundml
 
 fix:
@@ -42,8 +45,6 @@ docs
 
 notes
 - think of using effects for prngs, does it simplify ux?
-- bad smell: dummy input for init in kaun
-- bad smell: the fix for gc collection of tensors during blas operations is hacky, best would be to pass the tensor to the c code, so it can mark it as being used.
 
 ## post-alpha1
 
@@ -87,6 +88,3 @@ notes
 - (?) not sure we need non-polymorphic functions for perf of where, we should benchmark
 - add no_grad and detach
 - we can make jit composable by re raising all the effects (but what does it mean to write grad(jit(f)))?? What are the semantics in jax?
-
-new libs
-- dataframe library

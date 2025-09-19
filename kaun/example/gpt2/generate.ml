@@ -4,7 +4,7 @@ module Sampler = Saga.Sampler
 
 let () =
   Printf.printf "Loading GPT-2 model...\n";
-  let gpt2 = GPT2.from_pretrained ~device:c ~dtype:Float32 () in
+  let gpt2 = GPT2.from_pretrained ~dtype:Float32 () in
   let tokenizer = GPT2.Tokenizer.create () in
 
   let prompts =
@@ -33,7 +33,7 @@ let () =
           Bigarray.Array2.of_array Bigarray.int32 Bigarray.c_layout
             [| Array.map Int32.of_int !tokens |]
         in
-        let input_ids = of_bigarray c (Bigarray.genarray_of_array2 ba) in
+        let input_ids = of_bigarray (Bigarray.genarray_of_array2 ba) in
 
         (* Run forward pass *)
         let logits, _ =

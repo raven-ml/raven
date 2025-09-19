@@ -17,7 +17,7 @@ open Rune
     remain useful in specific contexts and serve as building blocks for modern
     variants. *)
 
-val relu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val relu : (float, 'a) t -> (float, 'a) t
 (** [relu x] applies Rectified Linear Unit activation.
 
     Outputs the input directly if positive, otherwise outputs zero. Simple and
@@ -48,7 +48,7 @@ val relu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Excellent for hidden layers in deep networks
     - Zero gradient for negative inputs can halt learning *)
 
-val relu6 : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val relu6 : (float, 'a) t -> (float, 'a) t
 (** [relu6 x] applies ReLU6 activation with upper bound.
 
     Caps the output at 6 to prevent activation explosion in mobile/embedded
@@ -78,7 +78,7 @@ val relu6 : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Used in MobileNet, EfficientNet architectures
     - Maintains ReLU's computational efficiency *)
 
-val sigmoid : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val sigmoid : (float, 'a) t -> (float, 'a) t
 (** [sigmoid x] applies sigmoid activation.
 
     Maps any real number to the range (0, 1). Smooth and differentiable
@@ -109,7 +109,7 @@ val sigmoid : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Ideal for binary classification output layers
     - Avoid in hidden layers of deep networks *)
 
-val tanh : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val tanh : (float, 'a) t -> (float, 'a) t
 (** [tanh x] applies hyperbolic tangent activation.
 
     Maps inputs to the range (-1, 1) with zero-centered outputs. Better than
@@ -140,7 +140,7 @@ val tanh : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Better than sigmoid for hidden layers
     - Used in LSTM/GRU gating mechanisms *)
 
-val softmax : ?axes:int array -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val softmax : ?axes:int array -> (float, 'a) t -> (float, 'a) t
 (** [softmax ?axes x] applies softmax normalization.
 
     Converts a vector of real numbers into a probability distribution. The
@@ -183,7 +183,7 @@ val softmax : ?axes:int array -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     classical functions. These typically provide better gradient flow, faster
     convergence, and improved performance on deep networks. *)
 
-val gelu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val gelu : (float, 'a) t -> (float, 'a) t
 (** [gelu x] applies Gaussian Error Linear Unit activation.
 
     Smooth approximation to ReLU that weights inputs by their percentile in a
@@ -216,7 +216,7 @@ val gelu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Non-zero gradient everywhere
     - Self-gating behavior based on input magnitude *)
 
-val silu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val silu : (float, 'a) t -> (float, 'a) t
 (** [silu x] applies Sigmoid Linear Unit (also known as Swish) activation.
 
     Multiplies input by its sigmoid, providing smooth behavior and better
@@ -247,7 +247,7 @@ val silu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Non-monotonic with minimum at x ≈ -0.278
     - Bounded below by -0.278x *)
 
-val swish : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val swish : (float, 'a) t -> (float, 'a) t
 (** [swish x] applies Swish activation (alias for {!silu}).
 
     Identical to SiLU - different names for the same function. Swish was the
@@ -260,7 +260,7 @@ val swish : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 
     See {!silu} for detailed documentation and examples. *)
 
-val mish : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val mish : (float, 'a) t -> (float, 'a) t
 (** [mish x] applies Mish activation function.
 
     Smooth, non-monotonic activation that combines benefits of ReLU and Swish.
@@ -298,8 +298,7 @@ val mish : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     training or be tuned for specific tasks. These offer more flexibility than
     fixed activations. *)
 
-val leaky_relu :
-  ?negative_slope:float -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val leaky_relu : ?negative_slope:float -> (float, 'a) t -> (float, 'a) t
 (** [leaky_relu ?negative_slope x] applies Leaky ReLU with configurable negative
     slope.
 
@@ -337,7 +336,7 @@ val leaky_relu :
     - Common slopes: 0.01 (default), 0.1, 0.2
     - Good alternative to ReLU in deep networks *)
 
-val elu : ?alpha:float -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val elu : ?alpha:float -> (float, 'a) t -> (float, 'a) t
 (** [elu ?alpha x] applies Exponential Linear Unit activation.
 
     Smooth function that approaches -α for large negative inputs. Provides
@@ -374,7 +373,7 @@ val elu : ?alpha:float -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Better gradient flow than ReLU
     - Reduces bias shift effect *)
 
-val selu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val selu : (float, 'a) t -> (float, 'a) t
 (** [selu x] applies Scaled Exponential Linear Unit activation.
 
     Self-normalizing activation that maintains zero mean and unit variance
@@ -406,7 +405,7 @@ val selu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Works best with dropout, not other normalization
     - Enables very deep networks without normalization *)
 
-val prelu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val prelu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
 (** [prelu alpha x] applies Parametric ReLU with learnable slope parameters.
 
     Generalizes Leaky ReLU by making the negative slope learnable. Different
@@ -453,7 +452,7 @@ val prelu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     through. Popular in transformer architectures and modern language models for
     their ability to control information flow dynamically. *)
 
-val glu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val glu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
 (** [glu x gate] applies Gated Linear Unit.
 
     Multiplies input by sigmoid-activated gate values, allowing selective
@@ -486,7 +485,7 @@ val glu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Enables dynamic feature selection
     - Computationally efficient gating mechanism *)
 
-val swiglu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val swiglu : (float, 'a) t -> (float, 'a) t
 (** [swiglu x] applies SwiGLU (Swish Gated Linear Unit).
 
     Self-gating variant where the input is split in half, with one half gating
@@ -522,7 +521,7 @@ val swiglu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Requires even-dimensional input
     - Combines gating with SiLU's smooth properties *)
 
-val geglu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val geglu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
 (** [geglu x gate] applies GeGLU (GELU Gated Linear Unit).
 
     Uses GELU activation for gating instead of sigmoid. Combines GELU's smooth
@@ -554,7 +553,7 @@ val geglu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Provides sophisticated gating mechanism
     - Popular in transformer feed-forward networks *)
 
-val reglu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val reglu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
 (** [reglu x gate] applies ReGLU (ReLU Gated Linear Unit).
 
     Uses ReLU activation for gating, providing sparse gating where only positive
@@ -589,7 +588,7 @@ val reglu : (float, 'a, 'dev) t -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
 
 (** {1 Other Activations} *)
 
-val softplus : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val softplus : (float, 'a) t -> (float, 'a) t
 (** [softplus x] applies softplus activation.
 
     Smooth approximation to ReLU that is differentiable everywhere. Always
@@ -620,7 +619,7 @@ val softplus : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Can cause numerical overflow for large x
     - Used in Mish and probabilistic models *)
 
-val softsign : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val softsign : (float, 'a) t -> (float, 'a) t
 (** [softsign x] applies softsign activation.
 
     Smooth alternative to tanh that saturates more gradually. Computationally
@@ -650,8 +649,7 @@ val softsign : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Polynomial rather than exponential function
     - Less commonly used than tanh or modern activations *)
 
-val hard_sigmoid :
-  ?alpha:float -> ?beta:float -> (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val hard_sigmoid : ?alpha:float -> ?beta:float -> (float, 'a) t -> (float, 'a) t
 (** [hard_sigmoid ?alpha ?beta x] applies hard sigmoid activation.
 
     Piecewise linear approximation to sigmoid that is computationally efficient
@@ -691,7 +689,7 @@ val hard_sigmoid :
     - Used in MobileNet architectures
     - Default parameters chosen to approximate sigmoid *)
 
-val hard_tanh : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val hard_tanh : (float, 'a) t -> (float, 'a) t
 (** [hard_tanh x] applies hard tanh activation.
 
     Piecewise linear approximation to tanh that clips values to [-1, 1]. Simple
@@ -722,7 +720,7 @@ val hard_tanh : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
     - Sharp transitions at boundaries
     - Simple clipping operation *)
 
-val hard_swish : (float, 'a, 'dev) t -> (float, 'a, 'dev) t
+val hard_swish : (float, 'a) t -> (float, 'a) t
 (** [hard_swish x] applies hard swish activation.
 
     Computationally efficient approximation to swish/SiLU using hard sigmoid

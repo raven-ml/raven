@@ -10,7 +10,7 @@ let () =
 
   let kernel =
     time_it "Get Structuring Element (Rect 5x5)" (fun () ->
-        get_structuring_element ~shape:Rect ~ksize:(5, 5) ~device:Rune.ocaml)
+        get_structuring_element ~shape:Rect ~ksize:(5, 5))
   in
 
   let img_eroded = time_it "Erode" (fun () -> erode ~kernel img_thresh) in

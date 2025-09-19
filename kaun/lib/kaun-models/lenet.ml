@@ -41,7 +41,7 @@ let cifar10_config =
 
 (* Model Definition *)
 
-type ('a, 'dev) t = Kaun.module_
+type t = Kaun.module_
 
 let create ?(config = default_config) () =
   let open Kaun.Layer in

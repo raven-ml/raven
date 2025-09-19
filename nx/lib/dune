@@ -2,7 +2,7 @@
  (name nx)
  (public_name nx)
  (modules :standard \ prelude)
- (libraries nx_core nx_native bigarray_ext))
+ (libraries nx_core nx_c bigarray_ext))
 
 (mdx
  (package nx)

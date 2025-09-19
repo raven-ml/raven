@@ -1,34 +1,36 @@
 module T = Tensor
 
+let ctx = Nx_rune.create_context ()
+
 (* Creation operations *)
 
-let full ctx dt target_shape fill_value =
+let full dt target_shape fill_value =
   Debug.with_context "full" (fun () -> T.full ctx dt target_shape fill_value)
 
-let zeros ctx dtype shape_arr =
+let zeros dtype shape_arr =
   Debug.with_context "zeros" (fun () -> T.zeros ctx dtype shape_arr)
 
-let ones ctx dtype shape_arr =
+let ones dtype shape_arr =
   Debug.with_context "ones" (fun () -> T.ones ctx dtype shape_arr)
 
-let empty ctx dtype shape_arr =
+let empty dtype shape_arr =
   Debug.with_context "empty" (fun () -> T.empty ctx dtype shape_arr)
 
-let scalar ctx dtype value =
+let scalar dtype value =
   Debug.with_context "scalar" (fun () -> T.scalar ctx dtype value)
 
-let create ctx dtype shape data =
+let create dtype shape data =
   Debug.with_context "create" (fun () -> T.create ctx dtype shape data)
 
-let init ctx dtype shape f =
+let init dtype shape f =
   Debug.with_context "init" (fun () -> T.init ctx dtype shape f)
 
 (* Random operations *)
 
-let rand ctx dtype ?seed shape =
+let rand dtype ?seed shape =
   Debug.with_context "rand" (fun () -> T.rand ctx dtype ?seed shape)
 
-let randn ctx dtype ?seed shape =
+let randn dtype ?seed shape =
   Debug.with_context "randn" (fun () -> T.randn ctx dtype ?seed shape)
 
 (* Binary operations *)
@@ -183,17 +185,17 @@ let fft ?axis ?n ?(norm = `Backward) x =
 let ifft ?axis ?n ?(norm = `Backward) x =
   Debug.with_context "ifft" (fun () -> T.ifft ?axis ?n ~norm x)
 
-let fft2 ?s ?axes ?(norm = `Backward) x =
-  Debug.with_context "fft2" (fun () -> T.fft2 ?s ?axes ~norm x)
+let fft2 ?axes ?s ?(norm = `Backward) x =
+  Debug.with_context "fft2" (fun () -> T.fft2 ?axes ?s ~norm x)
 
-let ifft2 ?s ?axes ?(norm = `Backward) x =
-  Debug.with_context "ifft2" (fun () -> T.ifft2 ?s ?axes ~norm x)
+let ifft2 ?axes ?s ?(norm = `Backward) x =
+  Debug.with_context "ifft2" (fun () -> T.ifft2 ?axes ?s ~norm x)
 
-let fftn ?s ?axes ?(norm = `Backward) x =
-  Debug.with_context "fftn" (fun () -> T.fftn ?s ?axes ~norm x)
+let fftn ?axes ?s ?(norm = `Backward) x =
+  Debug.with_context "fftn" (fun () -> T.fftn ?axes ?s ~norm x)
 
-let ifftn ?s ?axes ?(norm = `Backward) x =
-  Debug.with_context "ifftn" (fun () -> T.ifftn ?s ?axes ~norm x)
+let ifftn ?axes ?s ?(norm = `Backward) x =
+  Debug.with_context "ifftn" (fun () -> T.ifftn ?axes ?s ~norm x)
 
 let rfft ?axis ?n ?(norm = `Backward) x =
   Debug.with_context "rfft" (fun () -> T.rfft ?axis ?n ~norm x)
@@ -201,25 +203,23 @@ let rfft ?axis ?n ?(norm = `Backward) x =
 let irfft ?axis ?n ?(norm = `Backward) x =
   Debug.with_context "irfft" (fun () -> T.irfft ?axis ?n ~norm x)
 
-let rfft2 ?s ?axes ?(norm = `Backward) x =
-  Debug.with_context "rfft2" (fun () -> T.rfft2 ?s ?axes ~norm x)
+let rfft2 ?axes ?s ?(norm = `Backward) x =
+  Debug.with_context "rfft2" (fun () -> T.rfft2 ?axes ?s ~norm x)
 
 let irfft2 ?axes ?s ?(norm = `Backward) x =
   Debug.with_context "irfft2" (fun () -> T.irfft2 ?axes ?s ~norm x)
 
-let rfftn ?s ?axes ?(norm = `Backward) x =
-  Debug.with_context "rfftn" (fun () -> T.rfftn ?s ?axes ~norm x)
+let rfftn ?axes ?s ?(norm = `Backward) x =
+  Debug.with_context "rfftn" (fun () -> T.rfftn ?axes ?s ~norm x)
 
 let irfftn ?axes ?s ?(norm = `Backward) x =
   Debug.with_context "irfftn" (fun () -> T.irfftn ?axes ?s ~norm x)
 
-let hfft ~n ~axis x = Debug.with_context "hfft" (fun () -> T.hfft ~n ~axis x)
-let ihfft ~n ~axis x = Debug.with_context "ihfft" (fun () -> T.ihfft ~n ~axis x)
+let hfft ?axis ?n ?norm x = Debug.with_context "hfft" (fun () -> T.hfft ?axis ?n ?norm x)
+let ihfft ?axis ?n ?norm x = Debug.with_context "ihfft" (fun () -> T.ihfft ?axis ?n ?norm x)
+let fftfreq ?d n = Debug.with_context "fftfreq" (fun () -> T.fftfreq ctx ?d n)
 
-let fftfreq ctx ?d n =
-  Debug.with_context "fftfreq" (fun () -> T.fftfreq ctx ?d n)
-
-let rfftfreq ctx ?d n =
+let rfftfreq ?d n =
   Debug.with_context "rfftfreq" (fun () -> T.rfftfreq ctx ?d n)
 
 let fftshift ?axes x =
@@ -281,7 +281,7 @@ let fill x value = Debug.with_context "fill" (fun () -> T.fill x value)
 
 let to_bigarray t = T.to_bigarray t
 
-let of_bigarray ctx ba =
+let of_bigarray ba =
   Debug.with_context "of_bigarray" (fun () -> T.of_bigarray ctx ba)
 
 let to_array t = T.to_array t
@@ -458,27 +458,27 @@ let expand_dims axes x =
 
 (* Creation operations *)
 
-let eye ctx ?m ?k dtype n =
+let eye ?m ?k dtype n =
   Debug.with_context "eye" (fun () -> T.eye ctx ?m ?k dtype n)
 
-let identity ctx dtype n =
+let identity dtype n =
   Debug.with_context "identity" (fun () -> T.identity ctx dtype n)
 
-let arange ctx dtype start stop step =
+let arange dtype start stop step =
   Debug.with_context "arange" (fun () -> T.arange ctx dtype start stop step)
 
-let arange_f ctx dtype start stop step =
+let arange_f dtype start stop step =
   Debug.with_context "arange_f" (fun () -> T.arange_f ctx dtype start stop step)
 
-let linspace ctx dtype ?endpoint start stop count =
+let linspace dtype ?endpoint start stop count =
   Debug.with_context "linspace" (fun () ->
       T.linspace ctx dtype ?endpoint start stop count)
 
-let logspace ctx dtype ?endpoint ?base start stop count =
+let logspace dtype ?endpoint ?base start stop count =
   Debug.with_context "logspace" (fun () ->
       T.logspace ctx dtype ?base ?endpoint start stop count)
 
-let geomspace ctx dtype ?endpoint start stop count =
+let geomspace dtype ?endpoint start stop count =
   Debug.with_context "geomspace" (fun () ->
       T.geomspace ctx dtype ?endpoint start stop count)
 
@@ -525,7 +525,7 @@ let array_split ~axis t indices_or_sections =
 let split ~axis t indices_or_sections =
   Debug.with_context "split" (fun () -> T.split ~axis t indices_or_sections)
 
-let randint ctx dtype ?seed ?high shape low =
+let randint dtype ?seed ?high shape low =
   Debug.with_context "randint" (fun () ->
       T.randint ctx dtype ?seed ?high shape low)
 
