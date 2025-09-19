@@ -4296,53 +4296,6 @@ module Make (B : Backend_intf.S) = struct
         in
         multiply_all (Array.to_list arrays)
 
-  let matrix_power a n =
-    let shape_a = shape a in
-    let ndim_a = Array.length shape_a in
-    if ndim_a < 2 then
-      Error.invalid ~op:"matrix_power" ~what:"input"
-        ~reason:"requires at least 2D array" ();
-
-    let m = shape_a.(ndim_a - 2) in
-    let k = shape_a.(ndim_a - 1) in
-    if m <> k then
-      Error.invalid ~op:"matrix_power" ~what:"matrix"
-        ~reason:(Printf.sprintf "must be square, got %dx%d" m k)
-        ();
-
-    if n = 0 then eye (B.context a) (dtype a) m
-    else if n = 1 then copy a
-    else if n > 0 then
-      (* Use binary exponentiation for efficiency *)
-      let rec power acc base exp =
-        if exp = 0 then acc
-        else if exp mod 2 = 0 then power acc (matmul base base) (exp / 2)
-        else power (matmul acc base) (matmul base base) (exp / 2)
-      in
-      power a a (n - 1)
-    else
-      (* Negative power: compute inverse using solve with identity *)
-      try
-        let i = eye (B.context a) (dtype a) m in
-        (* Solve a * inv_a = i to get inv_a *)
-        let q, r = B.op_qr ~reduced:true a in
-        let y = matmul (matrix_transpose q) i in
-        let inv_a =
-          B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r
-            y
-        in
-
-        let pos_n = -n in
-        if pos_n = 1 then inv_a
-        else
-          let rec power acc base exp =
-            if exp = 0 then acc
-            else if exp mod 2 = 0 then power acc (matmul base base) (exp / 2)
-            else power (matmul acc base) (matmul base base) (exp / 2)
-          in
-          power inv_a inv_a (pos_n - 1)
-      with _ -> invalid_arg "matrix_power: singular for negative exponent"
-
   let cross ?axis a b =
     let axis = Option.value axis ~default:(-1) in
     let axis = if axis < 0 then ndim a + axis else axis in
@@ -4482,17 +4435,36 @@ module Make (B : Backend_intf.S) = struct
     | Some `Fro, _ -> sqrt (sum (square (abs x)) ?axes ~keepdims)
     | Some `One, None ->
         max (sum (abs x) ~axes:[| ndim x - 2 |] ~keepdims) ~keepdims
+    | Some `NegOne, None ->
+        if ndim x = 1 then min (abs x) ~keepdims
+        else
+          let column_sums = sum (abs x) ~axes:[| ndim x - 2 |] in
+          min column_sums ~keepdims
     | Some `Two, None ->
-        let s = svdvals x in
-        let s_cast = cast (dtype x) s in
-        max s_cast ~keepdims
+        let s = svdvals x |> cast (dtype x) in
+        max s ~keepdims
+    | Some `NegTwo, None ->
+        let s = svdvals x |> cast (dtype x) in
+        min s ~keepdims
     | Some `Inf, None ->
         (* For vectors, just max of absolute values *)
         if ndim x = 1 then max (abs x) ~keepdims
         else max (sum (abs x) ~axes:[| ndim x - 1 |] ~keepdims) ~keepdims
+    | Some `NegInf, None ->
+        if ndim x = 1 then min (abs x) ~keepdims
+        else
+          let row_sums = sum (abs x) ~axes:[| ndim x - 1 |] in
+          min row_sums ~keepdims
+    | Some `Nuc, None ->
+        if ndim x < 2 then
+          Error.invalid ~op:"norm" ~what:"input"
+            ~reason:"nuclear norm defined for matrices" ()
+        else
+          let s = svdvals x |> cast (dtype x) in
+          sum s ~keepdims
     | Some `NegOne, _ | Some `NegTwo, _ | Some `NegInf, _ | Some `Nuc, _ ->
         Error.failed ~op:"norm"
-          ~what:"negative and nuclear norms not yet implemented" ()
+          ~what:"this combination of ord and axis not implemented" ()
     | Some (`P p), _ ->
         (* General p-norm *)
         (* Special case for matrix 1-norm when axes is None *)
@@ -4513,74 +4485,77 @@ module Make (B : Backend_intf.S) = struct
         Error.failed ~op:"norm"
           ~what:"this combination of ord and axis not implemented" ()
 
-  let cond ?p x =
-    check_square ~op:"cond" x;
-    check_float_or_complex ~op:"cond" x;
-    let s = svdvals x in
-    let max_s = max s in
-    let min_s = min s in
-    let result = div max_s min_s in
-    match p with
-    | None | Some `Two -> cast (dtype x) result
-    | _ -> Error.failed ~op:"cond" ~what:"non-2 norms not implemented" ()
-
-  let det a =
-    check_square ~op:"det" a;
-    check_float_or_complex ~op:"det" a;
-
-    (* Use QR decomposition to compute determinant *)
-    (* For A = QR, det(A) = det(Q) * det(R) *)
-    (* Since Q is orthogonal, |det(Q)| = 1 *)
-    (* det(R) is the product of diagonal elements *)
-    let _q, r = B.op_qr ~reduced:false a in
-
-    (* Get the diagonal of R *)
-    let r_diag = diagonal r in
-
-    (* Product of diagonal elements along the last axis for batched inputs *)
-    let det_r =
-      if ndim r_diag > 1 then prod r_diag ~axes:[| -1 |] ~keepdims:false
-      else prod r_diag
-    in
-
-    (* Determine sign from Q *)
-    (* For an orthogonal matrix Q, det(Q) = ±1 *)
-    (* We can compute det(Q) by checking if it's a proper rotation (det = 1) *)
-    (* or includes a reflection (det = -1) *)
-    (* One way: compute det(Q) = det(Q * Q^T) ^ 0.5 with proper sign *)
-    (* Simpler: since A = QR, if we computed det(A) via another method, *)
-    (* we could get the sign. But for now, use the fact that *)
-    (* det(Q) = 1 if Q is from QR of a matrix with positive determinant *)
-
-    (* Actually, the sign of det(R) already gives us the sign of det(A) *)
-    (* because QR decomposition preserves the sign when properly implemented *)
-    det_r
-
-  let slogdet a =
+  let rec slogdet a =
     check_square ~op:"slogdet" a;
     check_float_or_complex ~op:"slogdet" a;
+    let dtype_a = dtype a in
+    let is_complex =
+      Dtype.equal dtype_a Dtype.complex32
+      || Dtype.equal dtype_a Dtype.complex64
+    in
+    let sh = shape a in
+    let rank = Array.length sh in
+    if (not is_complex) && sh.(rank - 1) = 2 && sh.(rank - 2) = 2 then (
+      let prefix = List.init (Stdlib.max 0 (rank - 2)) (fun _ -> A) in
+      let a11 = slice_internal (prefix @ [ I 0; I 0 ]) a in
+      let a12 = slice_internal (prefix @ [ I 0; I 1 ]) a in
+      let a21 = slice_internal (prefix @ [ I 1; I 0 ]) a in
+      let a22 = slice_internal (prefix @ [ I 1; I 1 ]) a in
+      let det64 = sub (mul a11 a22) (mul a12 a21) |> cast Dtype.float64 in
+      let zero = zeros (B.context det64) Dtype.float64 (shape det64) in
+      let sign_pos = greater det64 zero in
+      let sign_neg = less det64 zero in
+      let sign_pos_f = cast Dtype.float32 (cast Dtype.float64 sign_pos) in
+      let sign_neg_f = cast Dtype.float32 (cast Dtype.float64 sign_neg) in
+      let sign_float = sub sign_pos_f sign_neg_f in
+      let abs_det = abs det64 in
+      let logdet64 =
+        let is_zero = cmpeq abs_det zero in
+        let neg_inf =
+          full (B.context det64) Dtype.float64 (shape det64) Float.neg_infinity
+        in
+        where is_zero neg_inf (log abs_det)
+      in
+      let logdet = cast Dtype.float32 logdet64 in
+      (sign_float, logdet))
+    else (
+      let _q, r = B.op_qr ~reduced:false a in
+      let r_diag = diagonal r in
+      let signs = sign r_diag in
+      let sign_det =
+        if ndim signs > 1 then prod signs ~axes:[| -1 |] ~keepdims:false
+        else prod signs
+      in
+      let sign_float = cast Dtype.float32 (cast Dtype.float64 sign_det) in
+      let abs_diag = abs r_diag in
+      let abs_float64 = cast Dtype.float64 abs_diag in
+      let zero =
+        zeros (B.context abs_float64) Dtype.float64 (shape abs_float64)
+      in
+      let log_abs_diag =
+        let is_zero = cmpeq abs_float64 zero in
+        let neg_inf =
+          full (B.context abs_float64) Dtype.float64 (shape abs_float64)
+            Float.neg_infinity
+        in
+        where is_zero neg_inf (log abs_float64)
+      in
+      let logdet64 =
+        if ndim log_abs_diag > 1 then
+          sum log_abs_diag ~axes:[| -1 |] ~keepdims:false
+        else sum log_abs_diag
+      in
+      let logdet = cast Dtype.float32 logdet64 in
+      (sign_float, logdet))
 
-    (* Use QR decomposition similar to det *)
-    let _q, r = B.op_qr ~reduced:false a in
-
-    (* Get the diagonal of R *)
-    let r_diag = diagonal r in
-
-    (* Compute sign as product of signs of diagonal elements *)
-    (* For real matrices, sign is -1 if odd number of negative diagonal elements *)
-    let signs = sign r_diag in
-    let sign_det = prod signs in
-
-    (* Convert to float32 for output - we could make this configurable later *)
-    let sign_float = cast Dtype.float32 sign_det in
-
-    (* For log computation, handle abs and cast to float *)
-    let abs_diag = abs r_diag in
-    let abs_float = cast Dtype.float32 abs_diag in
-    let log_abs_diag = log abs_float in
-    let logdet = sum log_abs_diag in
-
-    (sign_float, logdet)
+  and det a =
+    check_square ~op:"det" a;
+    check_float_or_complex ~op:"det" a;
+    let sign, logabs = slogdet a in
+    let dtype_a = dtype a in
+    let abs_det = exp logabs |> cast dtype_a in
+    let sign_cast = cast dtype_a sign in
+    mul sign_cast abs_det
 
   let matrix_rank ?tol ?rtol ?hermitian a =
     check_float_or_complex ~op:"matrix_rank" a;
@@ -4605,8 +4580,10 @@ module Make (B : Backend_intf.S) = struct
       | None, Some r -> r *. max_s
       | None, None -> float_of_int (Stdlib.max m n) *. eps *. max_s
     in
-    let greater_tol = greater s (scalar (B.context a) (dtype s) tol) in
-    sum greater_tol |> unsafe_get []
+    let mask = greater s (scalar (B.context a) (dtype s) tol) in
+    let mask = cast (dtype s) mask in
+    let count = sum mask |> unsafe_get [] in
+    int_of_float (Float.round count)
 
   let trace ?offset a =
     let offset = Option.value offset ~default:0 in
@@ -4647,6 +4624,18 @@ module Make (B : Backend_intf.S) = struct
 
     (* Use QR decomposition *)
     let q, r = B.op_qr ~reduced:true a in
+    let r_diag = diagonal r |> cast Dtype.float64 in
+    let m = dim (-2) a in
+    let eps = if Dtype.equal (dtype a) Dtype.float32 then 1e-6 else 1e-12 in
+    let tol = eps *. float_of_int m in
+    let tol_tensor =
+      full (B.context r_diag) Dtype.float64 (shape r_diag) tol
+    in
+    let zero_mask = less (abs r_diag) tol_tensor in
+    let zero_count =
+      sum (cast Dtype.float64 zero_mask) |> unsafe_get []
+    in
+    if zero_count > 0. then invalid_arg "solve: matrix is singular";
     let y = matmul (matrix_transpose q) b_expanded in
     let result =
       B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r y
@@ -4716,6 +4705,80 @@ module Make (B : Backend_intf.S) = struct
     with Invalid_argument msg when String.sub msg 0 5 = "solve" ->
       invalid_arg ("inv" ^ String.sub msg 5 (String.length msg - 5))
 
+  let matrix_power a n =
+    let shape_a = shape a in
+    let ndim_a = Array.length shape_a in
+    if ndim_a < 2 then
+      Error.invalid ~op:"matrix_power" ~what:"input"
+        ~reason:"requires at least 2D array" ();
+
+    let m = shape_a.(ndim_a - 2) in
+    let k = shape_a.(ndim_a - 1) in
+    if m <> k then
+      Error.invalid ~op:"matrix_power" ~what:"matrix"
+        ~reason:(Printf.sprintf "must be square, got %dx%d" m k)
+        ();
+
+    if n = 0 then eye (B.context a) (dtype a) m
+    else if n = 1 then copy a
+    else if n > 0 then
+      let rec power acc base exp =
+        if exp = 0 then acc
+        else if exp mod 2 = 0 then power acc (matmul base base) (exp / 2)
+        else power (matmul acc base) (matmul base base) (exp / 2)
+      in
+      power a a (n - 1)
+    else
+      try
+        let inv_a = inv a in
+        let pos_n = -n in
+        if pos_n = 1 then inv_a
+        else
+          let rec power acc base exp =
+            if exp = 0 then acc
+            else if exp mod 2 = 0 then power acc (matmul base base) (exp / 2)
+            else power (matmul acc base) (matmul base base) (exp / 2)
+          in
+          power inv_a inv_a (pos_n - 1)
+      with Invalid_argument _ ->
+        invalid_arg "matrix_power: singular for negative exponent"
+
+  let cond ?p x =
+    check_square ~op:"cond" x;
+    check_float_or_complex ~op:"cond" x;
+    match p with
+    | None | Some `Two ->
+        let s = svdvals x in
+        let dtype_s = dtype s in
+        let max_s_tensor = max s in
+        let max_s = max_s_tensor |> unsafe_get [] in
+        let eps =
+          if Dtype.equal dtype_s Dtype.float32 then 1.2e-7
+          else if Dtype.equal dtype_s Dtype.float64 then 2.2e-16
+          else 1e-15
+        in
+        let tol = eps *. max_s in
+        let tol_tensor = scalar (B.context x) dtype_s tol in
+        let safe_s = where (greater s tol_tensor) s tol_tensor in
+        let min_s_tensor =
+          if ndim safe_s > 1 then
+            min safe_s ~axes:[| -1 |] ~keepdims:false
+          else min safe_s
+        in
+        let ratio = div max_s_tensor min_s_tensor in
+        cast (dtype x) ratio
+    | Some `One ->
+        let inv_x = inv x in
+        let norm_x = norm ~ord:`One x in
+        let norm_inv = norm ~ord:`One inv_x in
+        mul norm_x norm_inv
+    | Some `Inf ->
+        let inv_x = inv x in
+        let norm_x = norm ~ord:`Inf x in
+        let norm_inv = norm ~ord:`Inf inv_x in
+        mul norm_x norm_inv
+    | _ -> Error.failed ~op:"cond" ~what:"unsupported norm" ()
+
   let pinv (type a b) ?rtol:_ ?hermitian (a : (a, b) t) =
     check_float_or_complex ~op:"pinv" a;
     let _ = hermitian in
@@ -4743,8 +4806,10 @@ module Make (B : Backend_intf.S) = struct
 
     (* Compute pseudoinverse *)
     let ones_s = ones (B.context s) (dtype s) (shape s) in
-    let s_inv = div ones_s s in
-    let mask = greater s (scalar (B.context a) (dtype s) cutoff) in
+    let threshold = scalar (B.context a) (dtype s) cutoff in
+    let mask = greater s threshold in
+    let safe_s = where mask s ones_s in
+    let s_inv = div ones_s safe_s in
     let mask = cast (dtype s) mask in
     let s_inv = mul s_inv mask in
 
@@ -4760,14 +4825,111 @@ module Make (B : Backend_intf.S) = struct
     let vs = mul (matrix_transpose vh) s_inv_expanded in
     matmul vs (matrix_transpose u)
 
-  let tensorsolve ?axes _a _b =
-    let _ = axes in
-    Error.failed ~op:"tensorsolve"
-      ~what:"tensor equation solving not implemented" ()
+  let tensorsolve ?axes a b =
+    check_float_or_complex ~op:"tensorsolve" a;
+    check_float_or_complex ~op:"tensorsolve" b;
+    let a_shape = shape a in
+    let b_shape = shape b in
+    let a_rank = Array.length a_shape in
+    let b_rank = Array.length b_shape in
+    if b_rank = 0 then
+      Error.invalid ~op:"tensorsolve" ~what:"b"
+        ~reason:"must have at least one dimension" ();
+    if a_rank < b_rank then
+      Error.invalid ~op:"tensorsolve" ~what:"a"
+        ~reason:"rank must be >= rank of b" ();
 
-  let tensorinv ?ind _a =
-    let _ = ind in
-    Error.failed ~op:"tensorinv" ~what:"tensor inversion not implemented" ()
+    let axes_for_b =
+      match axes with
+      | None -> Array.init b_rank (fun i -> a_rank - b_rank + i)
+      | Some ax_arr ->
+          if Array.length ax_arr <> b_rank then
+            Error.invalid ~op:"tensorsolve" ~what:"axes"
+              ~reason:
+                (Printf.sprintf "expected %d entries, got %d" b_rank
+                   (Array.length ax_arr))
+              ();
+          let seen = Array.make a_rank false in
+          Array.map
+            (fun ax ->
+              let axis = if ax < 0 then ax + a_rank else ax in
+              if axis < 0 || axis >= a_rank then
+                Error.axis_out_of_bounds ~op:"tensorsolve" ~axis:ax ~ndim:a_rank ();
+              if seen.(axis) then
+                Error.invalid ~op:"tensorsolve"
+                  ~what:(Printf.sprintf "axis %d" ax)
+                  ~reason:"repeated" ();
+              seen.(axis) <- true;
+              axis)
+            ax_arr
+    in
+
+    let selected = Array.make a_rank false in
+    Array.iter (fun ax -> selected.(ax) <- true) axes_for_b;
+    let free_axes =
+      Array.init a_rank Fun.id
+      |> Array.to_list
+      |> List.filter (fun ax -> not selected.(ax))
+      |> Array.of_list
+    in
+    let permutation = Array.append free_axes axes_for_b in
+    let a_perm =
+      let rec is_identity idx =
+        if idx = a_rank then true
+        else if permutation.(idx) <> idx then false
+        else is_identity (idx + 1)
+      in
+      if is_identity 0 then a else transpose ~axes:permutation a
+    in
+    let perm_shape = shape a_perm in
+    let free_rank = Array.length free_axes in
+    let free_shape = Array.sub perm_shape 0 free_rank in
+    let rhs_shape = Array.sub perm_shape free_rank b_rank in
+    if rhs_shape <> b_shape then
+      Error.shape_mismatch ~op:"tensorsolve" ~expected:b_shape ~actual:rhs_shape ();
+
+    let rows = array_prod free_shape in
+    let cols = array_prod rhs_shape in
+    if rows <> cols then
+      Error.invalid ~op:"tensorsolve" ~what:"a"
+        ~reason:"leading dimensions must match trailing dimensions" ();
+
+    let a_mat = reshape [| rows; cols |] a_perm in
+    let b_vec = reshape [| rows |] b in
+    let solution =
+      try solve a_mat b_vec
+      with Invalid_argument _ ->
+        let pinv_a = pinv a_mat in
+        let b_col = reshape [| rows; 1 |] b_vec in
+        let x_col = matmul pinv_a b_col in
+        reshape [| cols |] x_col
+    in
+    reshape free_shape solution
+
+  let tensorinv ?ind a =
+    check_float_or_complex ~op:"tensorinv" a;
+    let shape_a = shape a in
+    let rank = Array.length shape_a in
+    if rank = 0 then
+      Error.invalid ~op:"tensorinv" ~what:"input"
+        ~reason:"must have at least one dimension" ();
+    let ind = Option.value ind ~default:(rank / 2) in
+    if ind <= 0 || ind >= rank then
+      Error.invalid ~op:"tensorinv" ~what:"ind"
+        ~reason:"must split dimensions into two non-empty groups" ();
+    let left_dims = Array.sub shape_a 0 ind in
+    let right_dims = Array.sub shape_a ind (rank - ind) in
+    let left_size = array_prod left_dims in
+    let right_size = array_prod right_dims in
+    if left_size <> right_size then
+      Error.invalid ~op:"tensorinv" ~what:"input"
+        ~reason:"leading and trailing dimensions must have equal product" ();
+    let a_mat = reshape [| left_size; right_size |] a in
+    let inv_mat =
+      try inv a_mat with Invalid_argument _ -> pinv a_mat
+    in
+    let out_shape = Array.append right_dims left_dims in
+    reshape out_shape inv_mat
 
   (* ───── Complex Operations and FFT ───── *)
 
