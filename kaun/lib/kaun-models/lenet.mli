@@ -27,11 +27,11 @@ val mnist_config : config
 val cifar10_config : config
 (** CIFAR-10 configuration (32x32 RGB input) *)
 
-type ('a, 'dev) t = Kaun.module_
+type t = Kaun.module_
 (** LeNet-5 model instance *)
 
 (** Create a new LeNet-5 model *)
-val create : ?config:config -> unit -> ('a, 'dev) t
+val create : ?config:config -> unit -> t
 (** [create ?config ()] creates a new LeNet-5 model.
 
     Architecture:
@@ -49,27 +49,27 @@ val create : ?config:config -> unit -> ('a, 'dev) t
     Example:
     {[
       let model = LeNet.create ~config:LeNet.mnist_config () in
-      let params = Kaun.init model ~rngs ~device:c ~dtype:Float32 in
+      let params = Kaun.init model ~rngs ~dtype:Float32 in
       let output = Kaun.apply model params ~training:false input in
     ]} *)
 
 (** Create model for MNIST *)
-val for_mnist : unit -> ('a, 'dev) t
+val for_mnist : unit -> t
 (** [for_mnist ()] creates a LeNet-5 model configured for MNIST digits.
     Equivalent to [create ~config:mnist_config ()]. *)
 
 (** Create model for CIFAR-10 *)
-val for_cifar10 : unit -> ('a, 'dev) t
+val for_cifar10 : unit -> t
 (** [for_cifar10 ()] creates a LeNet-5 model configured for CIFAR-10. Uses 3
     input channels for RGB images. *)
 
 (** Forward pass through the model *)
 val forward :
-  model:('a, 'dev) t ->
-  params:('a, 'dev) Kaun.params ->
+  model:t ->
+  params:'a Kaun.params ->
   training:bool ->
-  input:(float, 'a, 'dev) Rune.t ->
-  (float, 'a, 'dev) Rune.t
+  input:(float, 'a) Rune.t ->
+  (float, 'a) Rune.t
 (** [forward ~model ~params ~training ~input] performs a forward pass.
 
     @param model The LeNet-5 model
@@ -80,20 +80,20 @@ val forward :
 
 (** Extract feature representations *)
 val extract_features :
-  model:('a, 'dev) t ->
-  params:('a, 'dev) Kaun.params ->
-  input:(float, 'a, 'dev) Rune.t ->
-  (float, 'a, 'dev) Rune.t
+  model:t ->
+  params:'a Kaun.params ->
+  input:(float, 'a) Rune.t ->
+  (float, 'a) Rune.t
 (** [extract_features ~model ~params ~input] extracts feature representations
     from the second-to-last layer (FC2), useful for transfer learning or
     visualization. Returns features of shape [batch_size; 84]. *)
 
 (** Model statistics *)
-val num_parameters : ('a, 'dev) Kaun.params -> int
+val num_parameters : 'a Kaun.params -> int
 (** [num_parameters params] returns the total number of parameters in the model.
 *)
 
-val parameter_breakdown : ('a, 'dev) Kaun.params -> string
+val parameter_breakdown : 'a Kaun.params -> string
 (** [parameter_breakdown params] returns a detailed breakdown of parameters by
     layer. *)
 
@@ -113,9 +113,7 @@ val default_train_config : train_config
 
 (** Compute accuracy *)
 val accuracy :
-  predictions:(float, 'a, 'dev) Rune.t ->
-  labels:(int, int32_elt, 'dev) Rune.t ->
-  float
+  predictions:(float, 'a) Rune.t -> labels:(int, int32_elt) Rune.t -> float
 (** [accuracy ~predictions ~labels] computes classification accuracy.
     Predictions should be logits of shape [batch_size; num_classes], labels
     should be class indices of shape [batch_size]. *)

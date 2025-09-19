@@ -241,14 +241,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
   (* Helper to get physical shape (backend view) of a tensor *)
   let phys_shape_of : type a b. (a, b) t -> int array =
    fun t ->
-    let view =
-      match t with
-      | Ocaml_tensor lt -> Nx_c.view lt
-      | Metal_tensor lt -> Rune_metal.view lt
-      | C_tensor lt -> Nx_c.view lt
-      | Symbolic_tensor { shape; _ } ->
-          Lazy_view.create (Symbolic_shape.of_ints shape)
-    in
+    let view = Nx_rune.view t in
     match Symbolic_shape.eval (Lazy_view.shape view) with
     | Some arr -> arr
     | None -> failwith "vmap: cannot evaluate physical shape"
@@ -269,12 +262,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
   in
 
   let phys_shrink : type a b. (a, b) t -> (int * int) array -> (a, b) t =
-   fun t limits ->
-    match t with
-    | Ocaml_tensor x -> Ocaml_tensor (Nx_c.op_shrink x limits)
-    | C_tensor x -> C_tensor (Nx_c.op_shrink x limits)
-    | Metal_tensor x -> Metal_tensor (Rune_metal.op_shrink x limits)
-    | Symbolic_tensor _ -> failwith "vmap: phys_shrink on symbolic tensor"
+   fun t limits -> Nx_rune.op_shrink t limits
   in
 
   (* Effectful shape ops under suspension so AD can track duals *)
@@ -613,14 +601,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
               Some
                 (fun (k : (c, _) continuation) ->
                   (* Get the actual view from the backend *)
-                  let actual_view =
-                    match tensor with
-                    | Ocaml_tensor t -> Nx_c.view t
-                    | Metal_tensor t -> Rune_metal.view t
-                    | C_tensor t -> Nx_c.view t
-                    | Symbolic_tensor { shape; _ } ->
-                        Lazy_view.create (Symbolic_shape.of_ints shape)
-                  in
+                  let actual_view = Nx_rune.view tensor in
 
                   (* Collect ALL batch dims from outermost (0) to current
                      level *)

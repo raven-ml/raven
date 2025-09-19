@@ -56,33 +56,32 @@ val embeddings : config:config -> unit -> Kaun.module_
 
 val pooler : hidden_size:int -> unit -> Kaun.module_
 
-type ('a, 'dev) output = {
-  last_hidden_state : (float, 'a, 'dev) Rune.t;
+type 'a output = {
+  last_hidden_state : (float, 'a) Rune.t;
       (** Sequence of hidden states at the last layer
           [batch_size; seq_len; hidden_size] *)
-  pooler_output : (float, 'a, 'dev) Rune.t option;
+  pooler_output : (float, 'a) Rune.t option;
       (** Pooled [CLS] token representation [batch_size; hidden_size] *)
-  hidden_states : (float, 'a, 'dev) Rune.t list option;
+  hidden_states : (float, 'a) Rune.t list option;
       (** Hidden states from all layers if output_hidden_states=true *)
-  attentions : (float, 'a, 'dev) Rune.t list option;
+  attentions : (float, 'a) Rune.t list option;
       (** Attention weights from all layers if output_attentions=true *)
 }
 (** Model outputs *)
 
-type ('a, 'dev) bert = {
+type 'a bert = {
   model : Kaun.module_;
-  params : ('a, 'dev) Kaun.params;
+  params : 'a Kaun.params;
   config : config;
-  device : 'dev device;
   dtype : (float, 'a) dtype;
 }
 (** Unified BERT model type *)
 
-type 'dev inputs = {
-  input_ids : (int32, int32_elt, 'dev) Rune.t;
-  attention_mask : (int32, int32_elt, 'dev) Rune.t;
-  token_type_ids : (int32, int32_elt, 'dev) Rune.t option;
-  position_ids : (int32, int32_elt, 'dev) Rune.t option;
+type inputs = {
+  input_ids : (int32, int32_elt) Rune.t;
+  attention_mask : (int32, int32_elt) Rune.t;
+  token_type_ids : (int32, int32_elt) Rune.t option;
+  position_ids : (int32, int32_elt) Rune.t option;
 }
 (** Input tensors for BERT *)
 
@@ -99,11 +98,10 @@ val from_pretrained :
   ?model_id:string ->
   ?revision:Kaun_huggingface.revision ->
   ?cache_config:Kaun_huggingface.Config.t ->
-  device:'dev device ->
   dtype:(float, 'a) dtype ->
   unit ->
-  ('a, 'dev) bert
-(** [from_pretrained ?model_id ?device ?dtype ()] loads pretrained BERT.
+  'a bert
+(** [from_pretrained ?model_id ?dtype ()] loads pretrained BERT.
 
     Default model_id is "bert-base-uncased", device is CPU, dtype is Float32.
     Returns a unified bert record with model, params, and config.
@@ -117,13 +115,13 @@ val from_pretrained :
 
 (** Forward pass through BERT *)
 val forward :
-  ('a, 'dev) bert ->
-  'dev inputs ->
+  'a bert ->
+  inputs ->
   ?training:bool ->
   ?output_hidden_states:bool ->
   ?output_attentions:bool ->
   unit ->
-  ('a, 'dev) output
+  'a output
 (** [forward ~model ~params ~input_ids ... ()] performs a forward pass.
 
     @param input_ids Token IDs [batch_size; seq_len]
@@ -144,14 +142,14 @@ module For_masked_lm : sig
 
   val forward :
     model:Kaun.module_ ->
-    params:('a, 'dev) Kaun.params ->
-    input_ids:(int32, int32_elt, 'dev) Rune.t ->
-    ?attention_mask:(int32, int32_elt, 'dev) Rune.t ->
-    ?token_type_ids:(int32, int32_elt, 'dev) Rune.t ->
-    ?labels:(int32, int32_elt, 'dev) Rune.t ->
+    params:'a Kaun.params ->
+    input_ids:(int32, int32_elt) Rune.t ->
+    ?attention_mask:(int32, int32_elt) Rune.t ->
+    ?token_type_ids:(int32, int32_elt) Rune.t ->
+    ?labels:(int32, int32_elt) Rune.t ->
     training:bool ->
     unit ->
-    (float, 'a, 'dev) Rune.t * (float, 'a, 'dev) Rune.t option
+    (float, 'a) Rune.t * (float, 'a) Rune.t option
   (** Returns (logits, loss) where logits has shape
       [batch_size; seq_len; vocab_size] *)
 end
@@ -162,14 +160,14 @@ module For_sequence_classification : sig
 
   val forward :
     model:Kaun.module_ ->
-    params:('a, 'dev) Kaun.params ->
-    input_ids:(int32, int32_elt, 'dev) Rune.t ->
-    ?attention_mask:(int32, int32_elt, 'dev) Rune.t ->
-    ?token_type_ids:(int32, int32_elt, 'dev) Rune.t ->
-    ?labels:(int32, int32_elt, 'dev) Rune.t ->
+    params:'a Kaun.params ->
+    input_ids:(int32, int32_elt) Rune.t ->
+    ?attention_mask:(int32, int32_elt) Rune.t ->
+    ?token_type_ids:(int32, int32_elt) Rune.t ->
+    ?labels:(int32, int32_elt) Rune.t ->
     training:bool ->
     unit ->
-    (float, 'a, 'dev) Rune.t * (float, 'a, 'dev) Rune.t option
+    (float, 'a) Rune.t * (float, 'a) Rune.t option
   (** Returns (logits, loss) where logits has shape [batch_size; num_labels] *)
 end
 
@@ -179,14 +177,14 @@ module For_token_classification : sig
 
   val forward :
     model:Kaun.module_ ->
-    params:('a, 'dev) Kaun.params ->
-    input_ids:(int32, int32_elt, 'dev) Rune.t ->
-    ?attention_mask:(int32, int32_elt, 'dev) Rune.t ->
-    ?token_type_ids:(int32, int32_elt, 'dev) Rune.t ->
-    ?labels:(int32, int32_elt, 'dev) Rune.t ->
+    params:'a Kaun.params ->
+    input_ids:(int32, int32_elt) Rune.t ->
+    ?attention_mask:(int32, int32_elt) Rune.t ->
+    ?token_type_ids:(int32, int32_elt) Rune.t ->
+    ?labels:(int32, int32_elt) Rune.t ->
     training:bool ->
     unit ->
-    (float, 'a, 'dev) Rune.t * (float, 'a, 'dev) Rune.t option
+    (float, 'a) Rune.t * (float, 'a) Rune.t option
   (** Returns (logits, loss) where logits has shape
       [batch_size; seq_len; num_labels] *)
 end
@@ -207,16 +205,15 @@ module Tokenizer : sig
   val encode_to_array : t -> string -> int array
   (** Encode text to token IDs with [CLS] and [SEP] tokens *)
 
-  val encode : t -> string -> device:'dev device -> 'dev inputs
+  val encode : t -> string -> inputs
   (** Encode text directly to input tensors ready for forward pass *)
 
   val encode_batch :
     t ->
     ?max_length:int ->
     ?padding:bool ->
-    device:'dev device ->
     string list ->
-    (int32, int32_elt, 'dev) Rune.t
+    (int32, int32_elt) Rune.t
   (** Encode multiple texts with padding and special tokens *)
 
   val decode : t -> int array -> string
@@ -227,28 +224,28 @@ end
 
 (** Create attention mask from input IDs *)
 val create_attention_mask :
-  input_ids:(int32, int32_elt, 'dev) Rune.t ->
+  input_ids:(int32, int32_elt) Rune.t ->
   pad_token_id:int ->
   dtype:(float, 'a) dtype ->
-  (float, 'a, 'dev) Rune.t
+  (float, 'a) Rune.t
 (** Creates attention mask where 1.0 for real tokens and 0.0 for padding *)
 
 (** Get BERT embeddings for text analysis *)
 val get_embeddings :
   model:Kaun.module_ ->
-  params:('a, 'dev) Kaun.params ->
-  input_ids:(int32, int32_elt, 'dev) Rune.t ->
-  ?attention_mask:(int32, int32_elt, 'dev) Rune.t ->
+  params:'a Kaun.params ->
+  input_ids:(int32, int32_elt) Rune.t ->
+  ?attention_mask:(int32, int32_elt) Rune.t ->
   layer_index:int ->
   unit ->
-  (float, 'a, 'dev) Rune.t
+  (float, 'a) Rune.t
 (** Extract embeddings from a specific layer (0 = embeddings, 1..n = encoder
     layers) *)
 
-val num_parameters : ('a, 'dev) Kaun.params -> int
+val num_parameters : 'a Kaun.params -> int
 (** Count total parameters in the model *)
 
-val parameter_stats : ('a, 'dev) Kaun.params -> string
+val parameter_stats : 'a Kaun.params -> string
 (** Get human-readable parameter statistics *)
 
 (** {1 BERT Configuration Parsing} *)
@@ -258,18 +255,15 @@ val parse_bert_config : Yojson.Safe.t -> config
 
 (** {1 Common Model Configurations} *)
 
-val load_bert_base_uncased :
-  device:'dev device -> dtype:(float, 'a) dtype -> unit -> ('a, 'dev) bert
+val load_bert_base_uncased : dtype:(float, 'a) dtype -> unit -> 'a bert
 (** Load BERT Base Uncased (110M parameters) *)
 
-val load_bert_large_uncased :
-  device:'dev device -> dtype:(float, 'a) dtype -> unit -> ('a, 'dev) bert
+val load_bert_large_uncased : dtype:(float, 'a) dtype -> unit -> 'a bert
 (** Load BERT Large Uncased (340M parameters) *)
 
-val load_bert_base_cased :
-  device:'dev device -> dtype:(float, 'a) dtype -> unit -> ('a, 'dev) bert
+val load_bert_base_cased : dtype:(float, 'a) dtype -> unit -> 'a bert
 (** Load BERT Base Cased (110M parameters) *)
 
 val load_bert_base_multilingual_cased :
-  device:'dev device -> dtype:(float, 'a) dtype -> unit -> ('a, 'dev) bert
+  dtype:(float, 'a) dtype -> unit -> 'a bert
 (** Load Multilingual BERT Base Cased (110M parameters, 104 languages) *)

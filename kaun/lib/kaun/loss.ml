@@ -23,9 +23,8 @@ let softmax_cross_entropy_with_indices logits indices =
 let binary_cross_entropy predictions labels =
   Rune.debug_with_context "binary_cross_entropy" (fun () ->
       let dtype = Rune.dtype predictions in
-      let dev = Rune.device predictions in
-      let one = Rune.scalar dev dtype 1.0 in
-      let eps = Rune.scalar dev dtype 1e-7 in
+      let one = Rune.scalar dtype 1.0 in
+      let eps = Rune.scalar dtype 1e-7 in
       (* Clip predictions to avoid log(0) *)
       let predictions_clipped =
         Rune.maximum eps (Rune.minimum (Rune.sub one eps) predictions)
@@ -41,8 +40,7 @@ let binary_cross_entropy predictions labels =
 let sigmoid_binary_cross_entropy logits labels =
   Rune.debug_with_context "sigmoid_binary_cross_entropy" (fun () ->
       let dtype = Rune.dtype logits in
-      let dev = Rune.device logits in
-      let one = Rune.scalar dev dtype 1.0 in
+      let one = Rune.scalar dtype 1.0 in
       let log_sig = Rune.log_sigmoid logits in
       let log_sig_neg = Rune.log_sigmoid (Rune.neg logits) in
       let term1 = Rune.mul labels log_sig in

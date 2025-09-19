@@ -7,12 +7,9 @@ Welcome to Kaun! In this tutorial, you'll learn how to build and train a simple 
 Load and prepare the MNIST dataset:
 
 ```ocaml
-(* Set device - using CPU with C FFI for this tutorial *)
-let device = Rune.c
-
 (* Load MNIST datasets without normalization for visualization *)
-let train_data_raw = Kaun_datasets.mnist ~train:true ~flatten:false ~normalize:false ~device ()
-let test_data_raw = Kaun_datasets.mnist ~train:false ~flatten:false ~normalize:false ~device ()
+let train_data_raw = Kaun_datasets.mnist ~train:true ~flatten:false ~normalize:false ()
+let test_data_raw = Kaun_datasets.mnist ~train:false ~flatten:false ~normalize:false ()
 
 (* Get one sample to check the data shape *)
 (* For now, let's just get info about the dataset size *)

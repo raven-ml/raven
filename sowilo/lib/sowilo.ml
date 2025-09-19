@@ -1,6 +1,6 @@
-type 'dev uint8_t = 'dev Rune.uint8_t
-type 'dev int16_t = 'dev Rune.int16_t
-type 'dev float32_t = 'dev Rune.float32_t
+type uint8_t = Rune.uint8_t
+type int16_t = Rune.int16_t
+type float32_t = Rune.float32_t
 
 let get_dims img =
   match Rune.shape img with
@@ -94,11 +94,11 @@ let swap_channels img =
 let rgb_to_bgr = swap_channels
 let bgr_to_rgb = swap_channels
 
-let to_float (img : 'dev uint8_t) =
+let to_float (img : uint8_t) =
   if Rune.dtype img <> Rune.uint8 then failwith "to_float requires uint8 input"
   else Rune.div_s (Rune.astype Rune.float32 img) 255.0
 
-let to_uint8 (img : 'dev float32_t) =
+let to_uint8 (img : float32_t) =
   if Rune.dtype img <> Rune.float32 then
     failwith "to_uint8 requires float32 input"
   else
@@ -115,7 +115,7 @@ let resize ?(interpolation = Nearest) ~height:out_h ~width:out_w img =
   (* For now, just return the original image *)
   img
 
-let generate_gaussian_kernel device size sigma =
+let generate_gaussian_kernel size sigma =
   let sigma =
     if sigma <= 0.0 then (0.3 *. (float (size / 2) -. 1.0)) +. 0.8 else sigma
   in
@@ -123,7 +123,7 @@ let generate_gaussian_kernel device size sigma =
   let sigma2_sq = 2.0 *. sigma *. sigma in
 
   (* Create array of positions *)
-  let positions = Rune.arange_f device Rune.float32 0.0 (float size) 1.0 in
+  let positions = Rune.arange_f Rune.float32 0.0 (float size) 1.0 in
   let x = Rune.sub_s positions center in
 
   (* Compute gaussian values *)
@@ -190,17 +190,15 @@ let gaussian_blur : type a b.
     ksize:int * int ->
     sigmaX:float ->
     ?sigmaY:float ->
-    (a, b, 'dev) Rune.t ->
-    (a, b, 'dev) Rune.t =
+    (a, b) Rune.t ->
+    (a, b) Rune.t =
  fun ~ksize:(kh, kw) ~sigmaX ?sigmaY img ->
   if kh <= 0 || kh mod 2 = 0 || kw <= 0 || kw mod 2 = 0 then
     invalid_arg "Kernel dimensions must be positive and odd";
 
-  let device = Rune.device img in
-
   let sigmaY = match sigmaY with None -> sigmaX | Some sy -> sy in
-  let kernelX = generate_gaussian_kernel device kw sigmaX in
-  let kernelY = generate_gaussian_kernel device kh sigmaY in
+  let kernelX = generate_gaussian_kernel kw sigmaX in
+  let kernelY = generate_gaussian_kernel kh sigmaY in
 
   let img_f32 =
     match Rune.dtype img with
@@ -260,7 +258,7 @@ let gaussian_blur : type a b.
 
 type threshold_type = Binary | BinaryInv | Trunc | ToZero | ToZeroInv
 
-let threshold ~thresh ~maxval ~type_ (img : 'dev uint8_t) : 'dev uint8_t =
+let threshold ~thresh ~maxval ~type_ (img : uint8_t) : uint8_t =
   match get_dims img with
   | `Color _ ->
       failwith "Threshold currently only supports grayscale (2D) images"
@@ -287,8 +285,7 @@ let threshold ~thresh ~maxval ~type_ (img : 'dev uint8_t) : 'dev uint8_t =
       | ToZero -> Rune.where mask img zero_tensor
       | ToZeroInv -> Rune.where mask zero_tensor img)
 
-let box_filter : type a b.
-    ksize:int * int -> (a, b, 'dev) Rune.t -> (a, b, 'dev) Rune.t =
+let box_filter : type a b. ksize:int * int -> (a, b) Rune.t -> (a, b) Rune.t =
  fun ~ksize:(kh, kw) img ->
   if kh <= 0 || kw <= 0 then invalid_arg "Kernel dimensions must be positive";
 
@@ -348,7 +345,7 @@ let box_filter : type a b.
       | Rune.Float32 -> filtered_f32
       | _ -> failwith "Unsupported image type for box_filter")
 
-let median_blur ~ksize (img : 'dev uint8_t) : 'dev uint8_t =
+let median_blur ~ksize (img : uint8_t) : uint8_t =
   if Rune.dtype img <> Rune.uint8 then
     failwith "Median blur currently only supports uint8 images";
   if ksize <= 0 || ksize mod 2 = 0 then
@@ -359,9 +356,7 @@ let median_blur ~ksize (img : 'dev uint8_t) : 'dev uint8_t =
   | `Gray (_h, _w) ->
       (* Use uniform filter as approximation for median filter *)
       (* This is not a true median filter but avoids element-wise access *)
-      let kernel =
-        Rune.ones (Rune.device img) Rune.float32 [| ksize; ksize |]
-      in
+      let kernel = Rune.ones Rune.float32 [| ksize; ksize |] in
       let kernel_normalized =
         Rune.div_s kernel (float_of_int (ksize * ksize))
       in
@@ -373,24 +368,24 @@ let blur = box_filter
 
 type structuring_element_shape = Rect | Cross
 
-let get_structuring_element ~shape ~ksize:(kh, kw) ~device =
+let get_structuring_element ~shape ~ksize:(kh, kw) =
   if kh <= 0 || kw <= 0 then invalid_arg "Kernel dimensions must be positive";
 
   match shape with
-  | Rect -> Rune.ones device Rune.uint8 [| kh; kw |]
+  | Rect -> Rune.ones Rune.uint8 [| kh; kw |]
   | Cross ->
       (* Create cross pattern using tensor operations *)
       let center_h = kh / 2 in
       let center_w = kw / 2 in
 
       (* Create horizontal line *)
-      let h_line = Rune.ones device Rune.uint8 [| 1; kw |] in
+      let h_line = Rune.ones Rune.uint8 [| 1; kw |] in
       let h_line_padded =
         Rune.pad [| (center_h, kh - center_h - 1); (0, 0) |] 0 h_line
       in
 
       (* Create vertical line *)
-      let v_line = Rune.ones device Rune.uint8 [| kh; 1 |] in
+      let v_line = Rune.ones Rune.uint8 [| kh; 1 |] in
       let v_line_padded =
         Rune.pad [| (0, 0); (center_w, kw - center_w - 1) |] 0 v_line
       in
@@ -398,7 +393,7 @@ let get_structuring_element ~shape ~ksize:(kh, kw) ~device =
       (* Combine using logical or *)
       Rune.maximum h_line_padded v_line_padded
 
-let morph_op ~op ~kernel (img : 'dev uint8_t) : 'dev uint8_t =
+let morph_op ~op ~kernel (img : uint8_t) : uint8_t =
   if Rune.dtype img <> Rune.uint8 then
     failwith "Morphological operations currently require uint8 input";
 
@@ -436,7 +431,7 @@ let morph_op ~op ~kernel (img : 'dev uint8_t) : 'dev uint8_t =
 let erode ~kernel img = morph_op ~op:`Min ~kernel img
 let dilate ~kernel img = morph_op ~op:`Max ~kernel img
 
-let sobel : dx:int -> dy:int -> ?ksize:int -> 'dev uint8_t -> 'dev int16_t =
+let sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t =
  fun ~dx ~dy ?(ksize = 3) img ->
   if Rune.dtype img <> Rune.uint8 then
     failwith "Sobel currently requires uint8 input";
@@ -481,8 +476,7 @@ let sobel : dx:int -> dy:int -> ?ksize:int -> 'dev uint8_t -> 'dev int16_t =
 
       Rune.astype Rune.int16 result_f32
 
-let canny ~threshold1 ~threshold2 ?(ksize = 3) (img : 'dev uint8_t) :
-    'dev uint8_t =
+let canny ~threshold1 ~threshold2 ?(ksize = 3) (img : uint8_t) : uint8_t =
   if Rune.dtype img <> Rune.uint8 then
     failwith "Canny currently requires uint8 input";
   if threshold1 < 0.0 || threshold2 < 0.0 then
@@ -638,10 +632,7 @@ let canny ~threshold1 ~threshold2 ?(ksize = 3) (img : 'dev uint8_t) :
   let dilated = ref strong_only in
 
   (* Use morphological dilation to connect weak edges to strong edges *)
-  let kernel_3x3 =
-    get_structuring_element ~shape:Rect ~ksize:(3, 3)
-      ~device:(Rune.device !dilated)
-  in
+  let kernel_3x3 = get_structuring_element ~shape:Rect ~ksize:(3, 3) in
   for _ = 1 to 2 do
     dilated := dilate ~kernel:kernel_3x3 !dilated
   done;

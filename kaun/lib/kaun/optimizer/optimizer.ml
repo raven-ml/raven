@@ -1,12 +1,12 @@
-type ('layout, 'dev) opt_state = State : 'a -> ('layout, 'dev) opt_state
+type 'layout opt_state = State : 'a -> 'layout opt_state
 
-type ('layout, 'dev) gradient_transformation = {
-  init : ('layout, 'dev) Ptree.t -> ('layout, 'dev) opt_state;
+type 'layout gradient_transformation = {
+  init : 'layout Ptree.t -> 'layout opt_state;
   update :
-    ('layout, 'dev) opt_state ->
-    ('layout, 'dev) Ptree.t ->
-    ('layout, 'dev) Ptree.t ->
-    ('layout, 'dev) Ptree.t * ('layout, 'dev) opt_state;
+    'layout opt_state ->
+    'layout Ptree.t ->
+    'layout Ptree.t ->
+    'layout Ptree.t * 'layout opt_state;
 }
 
 (* Utility functions - using Kaun_ptree *)
@@ -31,8 +31,7 @@ let scale factor =
     update =
       (fun state _params grads ->
         let updates =
-          map_params grads (fun g ->
-              Rune.(mul g (scalar (device g) (dtype g) factor)))
+          map_params grads (fun g -> Rune.(mul g (scalar (dtype g) factor)))
         in
         (updates, state));
   }
@@ -46,9 +45,8 @@ let add_decayed_weights weight_decay =
       (fun state params grads ->
         let updates =
           map_params2 grads params (fun g p ->
-              let dev = Rune.device g in
               let dt = Rune.dtype g in
-              Rune.(add g (mul p (scalar dev dt weight_decay))))
+              Rune.(add g (mul p (scalar dt weight_decay))))
         in
         (updates, state));
   }
@@ -65,14 +63,13 @@ let clip_by_global_norm max_norm =
               let g_sq = Rune.sum (Rune.mul g g) in
               Rune.add acc g_sq)
             (let g0 = List.hd flat_grads in
-             Rune.scalar (Rune.device g0) (Rune.dtype g0) 0.)
+             Rune.scalar (Rune.dtype g0) 0.)
             flat_grads
         in
         let norm = Rune.sqrt norm_sq in
         let scale_factor =
-          let dev = Rune.device norm in
           let dt = Rune.dtype norm in
-          Rune.minimum norm (Rune.scalar dev dt max_norm)
+          Rune.minimum norm (Rune.scalar dt max_norm)
         in
         let scaled_grads =
           map_params grads (fun g -> Rune.div (Rune.mul g scale_factor) norm)
@@ -87,11 +84,10 @@ let clip max_delta =
       (fun state _params grads ->
         let clipped =
           map_params grads (fun g ->
-              let dev = Rune.device g in
               let dt = Rune.dtype g in
               Rune.maximum
-                (Rune.minimum g (Rune.scalar dev dt max_delta))
-                (Rune.scalar dev dt (-.max_delta)))
+                (Rune.minimum g (Rune.scalar dt max_delta))
+                (Rune.scalar dt (-.max_delta)))
         in
         (clipped, state));
   }
@@ -107,19 +103,17 @@ let trace ~decay ?(nesterov = false) () =
         match state with
         | State momentum ->
             (* Type annotation to help OCaml understand momentum is params *)
-            let momentum : ('a, 'b) Ptree.t = Obj.magic momentum in
+            let momentum : 'a Ptree.t = Obj.magic momentum in
             let new_momentum =
               map_params2 momentum grads (fun m g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
-                  Rune.(add (mul m (scalar dev dt decay)) g))
+                  Rune.(add (mul m (scalar dt decay)) g))
             in
             let updates =
               if nesterov then
                 map_params2 grads new_momentum (fun g m ->
-                    let dev = Rune.device g in
                     let dt = Rune.dtype g in
-                    Rune.(add g (mul m (scalar dev dt decay))))
+                    Rune.(add g (mul m (scalar dt decay))))
               else new_momentum
             in
             (updates, State new_momentum));
@@ -133,21 +127,19 @@ let scale_by_rms ?(decay = 0.999) ?(eps = 1e-8) () =
       (fun state _params grads ->
         match state with
         | State nu ->
-            let nu : ('a, 'b) Ptree.t = Obj.magic nu in
+            let nu : 'a Ptree.t = Obj.magic nu in
             let new_nu =
               map_params2 nu grads (fun v g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
                     add
-                      (mul v (scalar dev dt decay))
-                      (mul (mul g g) (scalar dev dt (1. -. decay)))))
+                      (mul v (scalar dt decay))
+                      (mul (mul g g) (scalar dt (1. -. decay)))))
             in
             let updates =
               map_params2 grads new_nu (fun g v ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
-                  Rune.(div g (add (sqrt v) (scalar dev dt eps))))
+                  Rune.(div g (add (sqrt v) (scalar dt eps))))
             in
             (updates, State new_nu));
   }
@@ -166,32 +158,27 @@ let scale_by_adam ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
             let count = count + 1 in
             let new_mu =
               map_params2 mu grads (fun m g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
-                    add
-                      (mul m (scalar dev dt b1))
-                      (mul g (scalar dev dt (1. -. b1)))))
+                    add (mul m (scalar dt b1)) (mul g (scalar dt (1. -. b1)))))
             in
             let new_nu =
               map_params2 nu grads (fun v g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
                     add
-                      (mul v (scalar dev dt b2))
-                      (mul (mul g g) (scalar dev dt (1. -. b2)))))
+                      (mul v (scalar dt b2))
+                      (mul (mul g g) (scalar dt (1. -. b2)))))
             in
             (* Bias correction *)
             let bc1 = 1. -. (b1 ** float_of_int count) in
             let bc2 = 1. -. (b2 ** float_of_int count) in
             let updates =
               map_params2 new_mu new_nu (fun m v ->
-                  let dev = Rune.device m in
                   let dt = Rune.dtype m in
-                  let m_hat = Rune.div m (Rune.scalar dev dt bc1) in
-                  let v_hat = Rune.div v (Rune.scalar dev dt bc2) in
-                  Rune.(div m_hat (add (sqrt v_hat) (scalar dev dt eps))))
+                  let m_hat = Rune.div m (Rune.scalar dt bc1) in
+                  let v_hat = Rune.div v (Rune.scalar dt bc2) in
+                  Rune.(div m_hat (add (sqrt v_hat) (scalar dt eps))))
             in
             (updates, State (new_mu, new_nu, count)));
   }
@@ -210,38 +197,31 @@ let scale_by_belief ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-16) () =
             let count = count + 1 in
             let new_mu =
               map_params2 mu grads (fun m g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
-                    add
-                      (mul m (scalar dev dt b1))
-                      (mul g (scalar dev dt (1. -. b1)))))
+                    add (mul m (scalar dt b1)) (mul g (scalar dt (1. -. b1)))))
             in
             (* AdaBelief: track variance of gradients from predictions *)
             let new_s =
               map_params2 s (map_params2 grads new_mu Rune.sub)
                 (fun s_old diff ->
-                  let dev = Rune.device s_old in
                   let dt = Rune.dtype s_old in
                   Rune.(
                     add
-                      (mul s_old (scalar dev dt b2))
-                      (mul (mul diff diff) (scalar dev dt (1. -. b2)))))
+                      (mul s_old (scalar dt b2))
+                      (mul (mul diff diff) (scalar dt (1. -. b2)))))
             in
             (* Bias correction *)
             let bc1 = 1. -. (b1 ** float_of_int count) in
             let bc2 = 1. -. (b2 ** float_of_int count) in
             let updates =
               map_params2 new_mu new_s (fun m s ->
-                  let dev = Rune.device m in
                   let dt = Rune.dtype m in
-                  let m_hat = Rune.div m (Rune.scalar dev dt bc1) in
-                  let s_hat = Rune.div s (Rune.scalar dev dt bc2) in
+                  let m_hat = Rune.div m (Rune.scalar dt bc1) in
+                  let s_hat = Rune.div s (Rune.scalar dt bc2) in
                   Rune.(
                     div m_hat
-                      (add
-                         (sqrt (add s_hat (scalar dev dt eps)))
-                         (scalar dev dt eps))))
+                      (add (sqrt (add s_hat (scalar dt eps))) (scalar dt eps))))
             in
             (updates, State (new_mu, new_s, count)));
   }
@@ -315,9 +295,8 @@ let scale_by_schedule schedule =
             let lr = schedule step in
             let updates =
               map_params grads (fun g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
-                  Rune.mul g (Rune.scalar dev dt lr))
+                  Rune.mul g (Rune.scalar dt lr))
             in
             (updates, State step));
   }
@@ -334,7 +313,7 @@ let chain transforms =
       (fun state params grads ->
         match state with
         | State states ->
-            let states : ('a, 'b) opt_state list = Obj.magic states in
+            let states : 'a opt_state list = Obj.magic states in
             let updates, new_states =
               List.fold_left2
                 (fun (updates, states_acc) transform state ->
@@ -370,7 +349,7 @@ let multi_transform ~transforms ~labels =
       (fun state params grads ->
         match state with
         | State states ->
-            let states : ('a, 'b) opt_state array = Obj.magic states in
+            let states : 'a opt_state array = Obj.magic states in
             (* Get labels for each parameter *)
             let label_tree = labels params in
 
@@ -380,12 +359,8 @@ let multi_transform ~transforms ~labels =
               Array.mapi
                 (fun idx transform ->
                   (* Apply transform only to parameters with matching label *)
-                  let rec filter_by_label : type a b.
-                      int ->
-                      label_tree ->
-                      (a, b) Ptree.t ->
-                      (a, b) Ptree.t ->
-                      (a, b) Ptree.t =
+                  let rec filter_by_label : type a.
+                      int -> label_tree -> a Ptree.t -> a Ptree.t -> a Ptree.t =
                    fun target_idx labels params grads ->
                     match (labels, params, grads) with
                     | LabelTensor label_idx, Ptree.Tensor _p, Ptree.Tensor g ->
@@ -444,8 +419,8 @@ let multi_transform ~transforms ~labels =
             (combined_updates, State new_states));
   }
 
-let rec apply_mask : type a b.
-    mask_tree -> (a, b) Ptree.t -> (a, b) Ptree.t -> (a, b) Ptree.t =
+let rec apply_mask : type a. mask_tree -> a Ptree.t -> a Ptree.t -> a Ptree.t
+    =
  fun mask_tree params grads ->
   match (mask_tree, params, grads) with
   | MaskTensor true, Ptree.Tensor _, Ptree.Tensor g -> Ptree.Tensor g
@@ -522,17 +497,16 @@ let adagrad ~lr ?(eps = 1e-8) () =
       (fun state _params grads ->
         match state with
         | State accum ->
-            let accum : ('a, 'b) Ptree.t = Obj.magic accum in
+            let accum : 'a Ptree.t = Obj.magic accum in
             let new_accum =
               map_params2 accum grads (fun acc g -> Rune.add acc (Rune.mul g g))
             in
             let updates =
               map_params2 grads new_accum (fun g acc ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
-                    mul (scalar dev dt (-.lr))
-                      (div g (add (sqrt acc) (scalar dev dt eps)))))
+                    mul (scalar dt (-.lr))
+                      (div g (add (sqrt acc) (scalar dt eps)))))
             in
             (updates, State new_accum));
   }
@@ -555,21 +529,17 @@ let lamb ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-6) ?(weight_decay = 0.01) () =
             (* Adam-style moments *)
             let new_mu =
               map_params2 mu grads (fun m g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
-                    add
-                      (mul m (scalar dev dt b1))
-                      (mul g (scalar dev dt (1. -. b1)))))
+                    add (mul m (scalar dt b1)) (mul g (scalar dt (1. -. b1)))))
             in
             let new_nu =
               map_params2 nu grads (fun v g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
                     add
-                      (mul v (scalar dev dt b2))
-                      (mul (mul g g) (scalar dev dt (1. -. b2)))))
+                      (mul v (scalar dt b2))
+                      (mul (mul g g) (scalar dt (1. -. b2)))))
             in
             (* Bias correction *)
             let bc1 = 1. -. (b1 ** float_of_int count) in
@@ -578,14 +548,13 @@ let lamb ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-6) ?(weight_decay = 0.01) () =
             let updates =
               map_params2
                 (map_params2 new_mu new_nu (fun m v ->
-                     let dev = Rune.device m in
                      let dt = Rune.dtype m in
-                     let m_hat = Rune.div m (Rune.scalar dev dt bc1) in
-                     let v_hat = Rune.div v (Rune.scalar dev dt bc2) in
+                     let m_hat = Rune.div m (Rune.scalar dt bc1) in
+                     let v_hat = Rune.div v (Rune.scalar dt bc2) in
                      Rune.(
                        add
-                         (div m_hat (add (sqrt v_hat) (scalar dev dt eps)))
-                         (mul (scalar dev dt weight_decay) m))))
+                         (div m_hat (add (sqrt v_hat) (scalar dt eps)))
+                         (mul (scalar dt weight_decay) m))))
                 params
                 (fun update p ->
                   (* Layer adaptation *)
@@ -594,17 +563,15 @@ let lamb ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-6) ?(weight_decay = 0.01) () =
                   in
                   let param_norm = Rune.sqrt (Rune.sum (Rune.mul p p)) in
                   let trust_ratio =
-                    let dev = Rune.device update_norm in
                     let dt = Rune.dtype update_norm in
                     Rune.(
                       where
-                        (greater param_norm (scalar dev dt 0.))
+                        (greater param_norm (scalar dt 0.))
                         (div param_norm update_norm)
-                        (scalar dev dt 1.))
+                        (scalar dt 1.))
                   in
-                  let dev = Rune.device update in
                   let dt = Rune.dtype update in
-                  Rune.(mul (mul (scalar dev dt (-.lr)) trust_ratio) update))
+                  Rune.(mul (mul (scalar dt (-.lr)) trust_ratio) update))
             in
             (updates, State (new_mu, new_nu, count)));
   }
@@ -623,21 +590,17 @@ let radam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
             let count = count + 1 in
             let new_mu =
               map_params2 mu grads (fun m g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
-                    add
-                      (mul m (scalar dev dt b1))
-                      (mul g (scalar dev dt (1. -. b1)))))
+                    add (mul m (scalar dt b1)) (mul g (scalar dt (1. -. b1)))))
             in
             let new_nu =
               map_params2 nu grads (fun v g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
                     add
-                      (mul v (scalar dev dt b2))
-                      (mul (mul g g) (scalar dev dt (1. -. b2)))))
+                      (mul v (scalar dt b2))
+                      (mul (mul g g) (scalar dt (1. -. b2)))))
             in
             (* Rectified Adam - compute length of approximated SMA *)
             let rho_inf = (2. /. (1. -. b2)) -. 1. in
@@ -659,22 +622,19 @@ let radam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
                     /. ((rho_inf -. 4.) *. (rho_inf -. 2.) *. rho_t))
                 in
                 map_params2 new_mu new_nu (fun m v ->
-                    let dev = Rune.device m in
                     let dt = Rune.dtype m in
-                    let m_hat = Rune.div m (Rune.scalar dev dt bc1) in
-                    let v_hat = Rune.div v (Rune.scalar dev dt bc2) in
+                    let m_hat = Rune.div m (Rune.scalar dt bc1) in
+                    let v_hat = Rune.div v (Rune.scalar dt bc2) in
                     Rune.(
                       mul
-                        (scalar dev dt (-.(lr *. rect_term)))
-                        (div m_hat (add (sqrt v_hat) (scalar dev dt eps)))))
+                        (scalar dt (-.(lr *. rect_term)))
+                        (div m_hat (add (sqrt v_hat) (scalar dt eps)))))
               else
                 (* Variance is not tractable - use simple moving average *)
                 let bc1 = 1. -. (b1 ** float_of_int count) in
                 map_params new_mu (fun m ->
-                    let dev = Rune.device m in
                     let dt = Rune.dtype m in
-                    Rune.(
-                      mul (scalar dev dt (-.lr)) (div m (scalar dev dt bc1))))
+                    Rune.(mul (scalar dt (-.lr)) (div m (scalar dt bc1))))
             in
             (updates, State (new_mu, new_nu, count)));
   }
@@ -693,33 +653,28 @@ let yogi ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-3) () =
             let count = count + 1 in
             let new_mu =
               map_params2 mu grads (fun m g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   Rune.(
-                    add
-                      (mul m (scalar dev dt b1))
-                      (mul g (scalar dev dt (1. -. b1)))))
+                    add (mul m (scalar dt b1)) (mul g (scalar dt (1. -. b1)))))
             in
             (* Yogi - additive increase, multiplicative decrease *)
             let new_nu =
               map_params2 nu grads (fun v g ->
-                  let dev = Rune.device g in
                   let dt = Rune.dtype g in
                   let g_sq = Rune.mul g g in
                   let sign_v_gsq = Rune.sign (Rune.sub v g_sq) in
                   Rune.(
-                    sub v (mul (scalar dev dt (1. -. b2)) (mul g_sq sign_v_gsq))))
+                    sub v (mul (scalar dt (1. -. b2)) (mul g_sq sign_v_gsq))))
             in
             (* Bias correction *)
             let bc1 = 1. -. (b1 ** float_of_int count) in
             let updates =
               map_params2 new_mu new_nu (fun m v ->
-                  let dev = Rune.device m in
                   let dt = Rune.dtype m in
-                  let m_hat = Rune.div m (Rune.scalar dev dt bc1) in
+                  let m_hat = Rune.div m (Rune.scalar dt bc1) in
                   Rune.(
-                    mul (scalar dev dt (-.lr))
-                      (div m_hat (add (sqrt (abs v)) (scalar dev dt eps)))))
+                    mul (scalar dt (-.lr))
+                      (div m_hat (add (sqrt (abs v)) (scalar dt eps)))))
             in
             (updates, State (new_mu, new_nu, count)));
   }
@@ -729,8 +684,7 @@ let yogi ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-3) () =
 let apply_updates params updates =
   map_params2 params updates (fun p u -> Rune.add p u)
 
-let rec apply_updates_inplace : type a b.
-    (a, b) Ptree.t -> (a, b) Ptree.t -> unit =
+let rec apply_updates_inplace : type a. a Ptree.t -> a Ptree.t -> unit =
  fun params updates ->
   match (params, updates) with
   | Tensor t, Tensor u -> ignore (Rune.iadd t u)
@@ -761,7 +715,7 @@ let global_norm params =
         let p_sq = Rune.sum (Rune.mul p p) in
         Rune.add acc p_sq)
       (let p0 = List.hd flat_params in
-       Rune.scalar (Rune.device p0) (Rune.dtype p0) 0.)
+       Rune.scalar (Rune.dtype p0) 0.)
       flat_params
   in
   Rune.item [] (Rune.sqrt norm_sq)
@@ -787,9 +741,8 @@ let multi_steps ~every transform =
               (* Apply accumulated gradients *)
               let avg_grads =
                 map_params new_grads_accum (fun g ->
-                    let dev = Rune.device g in
                     let dt = Rune.dtype g in
-                    Rune.div g (Rune.scalar dev dt (float_of_int every)))
+                    Rune.div g (Rune.scalar dt (float_of_int every)))
               in
               let updates, new_inner_state =
                 transform.update inner_state params avg_grads

@@ -6,7 +6,7 @@ let () =
   let epochs = 10 in
   let batch_size = 32 in
   let learning_rate = 0.001 in
-  let device = Rune.c in
+
   let dtype = Rune.float32 in
   let rngs = Rune.Rng.key 0 in
 
@@ -37,12 +37,12 @@ let () =
   Printf.printf "Loading datasets...\n%!";
 
   let train_data =
-    Kaun_datasets.mnist ~train:true ~flatten:false ~device ()
+    Kaun_datasets.mnist ~train:true ~flatten:false ()
     |> Dataset.prepare ~shuffle_buffer:60000 ~batch_size ~prefetch:2
   in
 
   let test_data =
-    Kaun_datasets.mnist ~train:false ~flatten:false ~device ()
+    Kaun_datasets.mnist ~train:false ~flatten:false ()
     |> Dataset.prepare ~batch_size:100 ~prefetch:2
   in
 
@@ -53,7 +53,7 @@ let () =
     Training.fit ~model
       ~optimizer:(Optimizer.adam ~lr:learning_rate ())
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~metrics ~train_data
-      ~val_data:test_data ~epochs ~progress:true ~rngs ~device ~dtype ()
+      ~val_data:test_data ~epochs ~progress:true ~rngs ~dtype ()
   in
 
   (* Print final results using new History API *)

@@ -41,9 +41,8 @@ let test_fold_in () =
 
 let test_uniform () =
   let key = Rng.key 42 in
-  let ctx = Rune.c in
   let shape = [| 3; 4 |] in
-  let t = Rng.uniform key ctx Float32 shape in
+  let t = Rng.uniform key Float32 shape in
 
   A.check (A.array A.int) "uniform produces correct shape" shape (Rune.shape t);
 
@@ -55,16 +54,15 @@ let test_uniform () =
     values;
 
   (* Check deterministic *)
-  let t2 = Rng.uniform key ctx Float32 shape in
+  let t2 = Rng.uniform key Float32 shape in
   let is_equal = Rune.all (Rune.equal t t2) in
   let is_equal_val = Rune.to_array is_equal in
   A.check A.bool "uniform is deterministic" true (is_equal_val.(0) > 0)
 
 let test_normal () =
   let key = Rng.key 42 in
-  let ctx = Rune.c in
   let shape = [| 100 |] in
-  let t = Rng.normal key ctx Float32 shape in
+  let t = Rng.normal key Float32 shape in
 
   A.check (A.array A.int) "normal produces correct shape" shape (Rune.shape t);
 
@@ -84,9 +82,8 @@ let test_normal () =
 
 let test_randint () =
   let key = Rng.key 42 in
-  let ctx = Rune.c in
   let shape = [| 10 |] in
-  let t = Rng.randint key ctx ~min:5 ~max:15 shape in
+  let t = Rng.randint key ~min:5 ~max:15 shape in
 
   A.check (A.array A.int) "randint produces correct shape" shape (Rune.shape t);
 
@@ -100,10 +97,9 @@ let test_randint () =
 
 let test_bernoulli () =
   let key = Rng.key 42 in
-  let ctx = Rune.c in
   let shape = [| 1000 |] in
   let p = 0.3 in
-  let t = Rng.bernoulli key ctx ~p shape in
+  let t = Rng.bernoulli key ~p shape in
 
   A.check (A.array A.int) "bernoulli produces correct shape" shape
     (Rune.shape t);
@@ -117,8 +113,7 @@ let test_bernoulli () =
   A.check (A.float 0.05) "bernoulli proportion ~p" p prop
 
 (* TODO: Enable when argsort works with lazy views let test_permutation () = let
-   key = Rng.key 42 in let ctx = Rune.c in let n = 10 in let perm =
-   Rng.permutation key ctx n in
+   Rng.permutation key n in
 
    A.check (A.array A.int) "permutation has correct shape" [| n |] (Rune.shape
    perm);
@@ -129,7 +124,6 @@ let test_bernoulli () =
    "permutation contains %d" i) i v) sorted *)
 
 (* TODO: Enable when argsort works with lazy views let test_shuffle () = let key
-   = Rng.key 42 in let ctx = Rune.c in let x = Rune.arange ctx Float32 0 10 1 in
    let x = Rune.reshape [| 10; 1 |] x in let shuffled = Rng.shuffle key x in
 
    A.check (A.array A.int) "shuffle preserves shape" (Rune.shape x) (Rune.shape
@@ -149,11 +143,10 @@ let test_bernoulli () =
 
 let test_truncated_normal () =
   let key = Rng.key 42 in
-  let ctx = Rune.c in
   let shape = [| 100 |] in
   let lower = -1.5 in
   let upper = 2.0 in
-  let t = Rng.truncated_normal key ctx Float32 ~lower ~upper shape in
+  let t = Rng.truncated_normal key Float32 ~lower ~upper shape in
 
   A.check (A.array A.int) "truncated_normal produces correct shape" shape
     (Rune.shape t);
@@ -170,22 +163,21 @@ let test_truncated_normal () =
     values
 
 let test_rng_with_autodiff () =
-  let ctx = Rune.c in
   let key = Rng.key 42 in
 
   (* Create a simple function that uses RNG *)
   let f x =
-    let noise = Rng.normal key ctx Float32 (Rune.shape x) in
+    let noise = Rng.normal key Float32 (Rune.shape x) in
     Rune.add x noise
   in
 
   (* Test gradient computation *)
-  let x = Rune.ones ctx Float32 [| 3; 3 |] in
+  let x = Rune.ones Float32 [| 3; 3 |] in
   let grad_fn = Rune.grad f in
   let dx = grad_fn x in
 
   (* Gradient of x should be ones (since we just add noise) *)
-  let expected = Rune.ones ctx Float32 [| 3; 3 |] in
+  let expected = Rune.ones Float32 [| 3; 3 |] in
   let is_equal = Rune.all (Rune.equal dx expected) in
   let is_equal_val = Rune.to_array is_equal in
   A.check A.bool "RNG works with autodiff" true (is_equal_val.(0) > 0)

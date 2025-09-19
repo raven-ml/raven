@@ -2,16 +2,15 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-let ctx = T.ocaml
 let eps = 1e-6
 
 (* ───── Binary Operations ───── *)
 
 let test_jvp_add () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let y = T.scalar ctx T.float32 3.0 in
-  let vx = T.scalar ctx T.float32 1.0 in
-  let vy = T.scalar ctx T.float32 0.5 in
+  let x = T.scalar T.float32 2.0 in
+  let y = T.scalar T.float32 3.0 in
+  let vx = T.scalar T.float32 1.0 in
+  let vy = T.scalar T.float32 0.5 in
 
   let f inputs =
     match inputs with
@@ -23,10 +22,10 @@ let test_jvp_add () =
   check_scalar ~eps "jvp(add) tangent" 1.5 (scalar_value tangent)
 
 let test_jvp_mul () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let y = T.scalar ctx T.float32 3.0 in
-  let vx = T.scalar ctx T.float32 1.0 in
-  let vy = T.scalar ctx T.float32 0.5 in
+  let x = T.scalar T.float32 2.0 in
+  let y = T.scalar T.float32 3.0 in
+  let vx = T.scalar T.float32 1.0 in
+  let vy = T.scalar T.float32 0.5 in
 
   let f inputs =
     match inputs with
@@ -39,10 +38,10 @@ let test_jvp_mul () =
   check_scalar ~eps "jvp(mul) tangent" 4.0 (scalar_value tangent)
 
 let test_jvp_sub () =
-  let x = T.scalar ctx T.float32 5.0 in
-  let y = T.scalar ctx T.float32 3.0 in
-  let vx = T.scalar ctx T.float32 1.0 in
-  let vy = T.scalar ctx T.float32 0.5 in
+  let x = T.scalar T.float32 5.0 in
+  let y = T.scalar T.float32 3.0 in
+  let vx = T.scalar T.float32 1.0 in
+  let vy = T.scalar T.float32 0.5 in
 
   let f inputs =
     match inputs with
@@ -54,10 +53,10 @@ let test_jvp_sub () =
   check_scalar ~eps "jvp(sub) tangent" 0.5 (scalar_value tangent)
 
 let test_jvp_div () =
-  let x = T.scalar ctx T.float32 6.0 in
-  let y = T.scalar ctx T.float32 2.0 in
-  let vx = T.scalar ctx T.float32 1.0 in
-  let vy = T.scalar ctx T.float32 0.5 in
+  let x = T.scalar T.float32 6.0 in
+  let y = T.scalar T.float32 2.0 in
+  let vx = T.scalar T.float32 1.0 in
+  let vy = T.scalar T.float32 0.5 in
 
   let f inputs =
     match inputs with
@@ -70,10 +69,10 @@ let test_jvp_div () =
   check_scalar ~eps "jvp(div) tangent" (-0.25) (scalar_value tangent)
 
 let test_jvp_pow () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let y = T.scalar ctx T.float32 3.0 in
-  let vx = T.scalar ctx T.float32 1.0 in
-  let vy = T.scalar ctx T.float32 0.0 in
+  let x = T.scalar T.float32 2.0 in
+  let y = T.scalar T.float32 3.0 in
+  let vx = T.scalar T.float32 1.0 in
+  let vy = T.scalar T.float32 0.0 in
 
   let f inputs =
     match inputs with
@@ -86,10 +85,10 @@ let test_jvp_pow () =
   check_scalar ~eps "jvp(pow) tangent" 12.0 (scalar_value tangent)
 
 let test_jvp_max () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let y = T.scalar ctx T.float32 3.0 in
-  let vx = T.scalar ctx T.float32 1.0 in
-  let vy = T.scalar ctx T.float32 0.5 in
+  let x = T.scalar T.float32 2.0 in
+  let y = T.scalar T.float32 3.0 in
+  let vx = T.scalar T.float32 1.0 in
+  let vy = T.scalar T.float32 0.5 in
 
   let f inputs =
     match inputs with
@@ -104,22 +103,22 @@ let test_jvp_max () =
 (* ───── Unary Operations ───── *)
 
 let test_jvp_exp () =
-  let x = T.scalar ctx T.float32 0.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 0.0 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.exp x v in
   check_scalar ~eps "jvp(exp) primal at x=0" 1.0 (scalar_value primal);
   check_scalar ~eps "jvp(exp) tangent at x=0" 1.0 (scalar_value tangent)
 
 let test_jvp_log () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 2.0 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.log x v in
   check_scalar ~eps "jvp(log) primal" (Stdlib.log 2.0) (scalar_value primal);
   check_scalar ~eps "jvp(log) tangent" 0.5 (scalar_value tangent)
 
 let test_jvp_sin_cos () =
-  let x = T.scalar ctx T.float32 0.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 0.0 in
+  let v = T.scalar T.float32 1.0 in
 
   let primal_sin, tangent_sin = T.jvp T.sin x v in
   check_scalar ~eps "jvp(sin) primal at x=0" 0.0 (scalar_value primal_sin);
@@ -130,32 +129,32 @@ let test_jvp_sin_cos () =
   check_scalar ~eps "jvp(cos) tangent at x=0" 0.0 (scalar_value tangent_cos)
 
 let test_jvp_sqrt () =
-  let x = T.scalar ctx T.float32 4.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 4.0 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.sqrt x v in
   check_scalar ~eps "jvp(sqrt) primal at x=4" 2.0 (scalar_value primal);
   (* d/dx sqrt(x) = 1/(2*sqrt(x)) = 1/4 = 0.25 *)
   check_scalar ~eps "jvp(sqrt) tangent at x=4" 0.25 (scalar_value tangent)
 
 let test_jvp_neg () =
-  let x = T.scalar ctx T.float32 1.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 1.0 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.neg x v in
   check_scalar ~eps "jvp(neg) primal" (-1.0) (scalar_value primal);
   check_scalar ~eps "jvp(neg) tangent" (-1.0) (scalar_value tangent)
 
 let test_jvp_relu () =
-  let x = T.create ctx T.float32 [| 4 |] [| -2.; -1.; 1.; 2. |] in
+  let x = T.create T.float32 [| 4 |] [| -2.; -1.; 1.; 2. |] in
   let v = T.ones_like x in
   let primal, tangent = T.jvp T.relu x v in
-  let expected_primal = T.create ctx T.float32 [| 4 |] [| 0.; 0.; 1.; 2. |] in
-  let expected_tangent = T.create ctx T.float32 [| 4 |] [| 0.; 0.; 1.; 1. |] in
+  let expected_primal = T.create T.float32 [| 4 |] [| 0.; 0.; 1.; 2. |] in
+  let expected_tangent = T.create T.float32 [| 4 |] [| 0.; 0.; 1.; 1. |] in
   check_rune ~eps "jvp(relu) primal" expected_primal primal;
   check_rune ~eps "jvp(relu) tangent" expected_tangent tangent
 
 let test_jvp_tanh () =
-  let x = T.scalar ctx T.float32 0.5 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 0.5 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.tanh x v in
   let tanh_val = scalar_value primal in
   let expected_tangent = 1.0 -. (tanh_val *. tanh_val) in
@@ -163,58 +162,56 @@ let test_jvp_tanh () =
     (scalar_value tangent)
 
 let test_jvp_abs () =
-  let x = T.create ctx T.float32 [| 4 |] [| -2.; -1.; 1.; 2. |] in
+  let x = T.create T.float32 [| 4 |] [| -2.; -1.; 1.; 2. |] in
   let v = T.ones_like x in
   let primal, tangent = T.jvp T.abs x v in
-  let expected_primal = T.create ctx T.float32 [| 4 |] [| 2.; 1.; 1.; 2. |] in
-  let expected_tangent =
-    T.create ctx T.float32 [| 4 |] [| -1.; -1.; 1.; 1. |]
-  in
+  let expected_primal = T.create T.float32 [| 4 |] [| 2.; 1.; 1.; 2. |] in
+  let expected_tangent = T.create T.float32 [| 4 |] [| -1.; -1.; 1.; 1. |] in
   check_rune ~eps "jvp(abs) primal" expected_primal primal;
   check_rune ~eps "jvp(abs) tangent" expected_tangent tangent
 
 let test_jvp_sigmoid () =
-  let x = T.scalar ctx T.float32 0.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 0.0 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.sigmoid x v in
   check_scalar ~eps "jvp(sigmoid) primal at x=0" 0.5 (scalar_value primal);
   (* sigmoid'(x) = sigmoid(x) * (1 - sigmoid(x)) = 0.5 * 0.5 = 0.25 *)
   check_scalar ~eps "jvp(sigmoid) tangent at x=0" 0.25 (scalar_value tangent)
 
 let test_jvp_square () =
-  let x = T.scalar ctx T.float32 3.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 3.0 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.square x v in
   check_scalar ~eps "jvp(square) primal" 9.0 (scalar_value primal);
   check_scalar ~eps "jvp(square) tangent" 6.0 (scalar_value tangent)
 
 let test_jvp_recip () =
-  let x = T.scalar ctx T.float32 2.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 2.0 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.recip x v in
   check_scalar ~eps "jvp(recip) primal" 0.5 (scalar_value primal);
   (* d/dx (1/x) = -1/x² = -0.25 *)
   check_scalar ~eps "jvp(recip) tangent" (-0.25) (scalar_value tangent)
 
 let test_jvp_rsqrt () =
-  let x = T.scalar ctx T.float32 4.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 4.0 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.rsqrt x v in
   check_scalar ~eps "jvp(rsqrt) primal" 0.5 (scalar_value primal);
   (* d/dx (1/sqrt(x)) = -1/(2*x^(3/2)) = -1/16 = -0.0625 *)
   check_scalar ~eps "jvp(rsqrt) tangent" (-0.0625) (scalar_value tangent)
 
 let test_jvp_tan () =
-  let x = T.scalar ctx T.float32 0.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 0.0 in
+  let v = T.scalar T.float32 1.0 in
   let primal, tangent = T.jvp T.tan x v in
   check_scalar ~eps "jvp(tan) primal at x=0" 0.0 (scalar_value primal);
   (* d/dx tan(x) = sec²(x) = 1/cos²(x) = 1 at x=0 *)
   check_scalar ~eps "jvp(tan) tangent at x=0" 1.0 (scalar_value tangent)
 
 let test_jvp_sinh_cosh () =
-  let x = T.scalar ctx T.float32 0.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 0.0 in
+  let v = T.scalar T.float32 1.0 in
 
   let primal_sinh, tangent_sinh = T.jvp T.sinh x v in
   check_scalar ~eps "jvp(sinh) primal at x=0" 0.0 (scalar_value primal_sinh);
@@ -227,39 +224,39 @@ let test_jvp_sinh_cosh () =
 (* ───── Reduction Operations ───── *)
 
 let test_jvp_sum () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let v = T.ones_like x in
   let primal, tangent = T.jvp T.sum x v in
   check_scalar ~eps "jvp(sum) primal" 10.0 (scalar_value primal);
   check_scalar ~eps "jvp(sum) tangent" 4.0 (scalar_value tangent)
 
 let test_jvp_mean () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let v = T.ones_like x in
   let primal, tangent = T.jvp T.mean x v in
   check_scalar ~eps "jvp(mean) primal" 2.5 (scalar_value primal);
   check_scalar ~eps "jvp(mean) tangent" 1.0 (scalar_value tangent)
 
 let test_jvp_max_reduction () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |] in
-  let v = T.create ctx T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let x = T.create T.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |] in
+  let v = T.create T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
   let primal, tangent = T.jvp T.max x v in
   check_scalar ~eps "jvp(max) primal" 4.0 (scalar_value primal);
   (* Only the max element (4.) contributes, with tangent 0.4 *)
   check_scalar ~eps "jvp(max) tangent" 0.4 (scalar_value tangent)
 
 let test_jvp_sum_with_axis () =
-  let x = T.create ctx T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
+  let x = T.create T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
   let v = T.ones_like x in
   let f x = T.sum x ~axes:[| 1 |] in
   let primal, tangent = T.jvp f x v in
-  let expected_primal = T.create ctx T.float32 [| 2 |] [| 3.; 12. |] in
-  let expected_tangent = T.create ctx T.float32 [| 2 |] [| 3.; 3. |] in
+  let expected_primal = T.create T.float32 [| 2 |] [| 3.; 12. |] in
+  let expected_tangent = T.create T.float32 [| 2 |] [| 3.; 3. |] in
   check_rune ~eps "jvp(sum axis=1) primal" expected_primal primal;
   check_rune ~eps "jvp(sum axis=1) tangent" expected_tangent tangent
 
 let test_jvp_prod () =
-  let x = T.create ctx T.float32 [| 3 |] [| 2.; 3.; 4. |] in
+  let x = T.create T.float32 [| 3 |] [| 2.; 3.; 4. |] in
   let v = T.ones_like x in
   let primal, tangent = T.jvp T.prod x v in
   check_scalar ~eps "jvp(prod) primal" 24.0 (scalar_value primal);
@@ -269,8 +266,8 @@ let test_jvp_prod () =
 (* ───── Broadcasting ───── *)
 
 let test_jvp_broadcast_add () =
-  let x = T.create ctx T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let bias = T.create ctx T.float32 [| 3 |] [| 0.1; 0.2; 0.3 |] in
+  let x = T.create T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let bias = T.create T.float32 [| 3 |] [| 0.1; 0.2; 0.3 |] in
   let vx = T.ones_like x in
   let vb = T.ones_like bias in
 
@@ -282,14 +279,14 @@ let test_jvp_broadcast_add () =
   let _primal, tangent = T.jvps f [ x; bias ] [ vx; vb ] in
   (* Each position gets vx[i,j] + vb[j] = 1 + 1 = 2 *)
   check_rune ~eps "jvp(broadcast add) tangent"
-    (T.full ctx T.float32 [| 2; 3 |] 2.0)
+    (T.full T.float32 [| 2; 3 |] 2.0)
     tangent
 
 let test_jvp_scalar_broadcast () =
-  let x = T.create ctx T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let scalar = T.scalar ctx T.float32 2.0 in
+  let x = T.create T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let scalar = T.scalar T.float32 2.0 in
   let vx = T.ones_like x in
-  let vs = T.scalar ctx T.float32 1.0 in
+  let vs = T.scalar T.float32 1.0 in
 
   let f inputs =
     match inputs with
@@ -298,13 +295,13 @@ let test_jvp_scalar_broadcast () =
   in
   let _primal, tangent = T.jvps f [ x; scalar ] [ vx; vs ] in
   (* d(x*s) = s*dx + x*ds = 2*1 + x*1 = 2 + x *)
-  let expected_tangent = T.add (T.full ctx T.float32 [| 2; 3 |] 2.0) x in
+  let expected_tangent = T.add (T.full T.float32 [| 2; 3 |] 2.0) x in
   check_rune ~eps "jvp(scalar mul broadcast) tangent" expected_tangent tangent
 
 (* ───── Shape Operations ───── *)
 
 let test_jvp_reshape () =
-  let x = T.create ctx T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
+  let x = T.create T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
   let v = T.ones_like x in
   let f x = T.reshape [| 3; 2 |] x in
   let primal, tangent = T.jvp f x v in
@@ -312,37 +309,37 @@ let test_jvp_reshape () =
   check_rune ~eps "jvp(reshape) tangent" (T.reshape [| 3; 2 |] v) tangent
 
 let test_jvp_transpose () =
-  let x = T.create ctx T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
+  let x = T.create T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
   let v = T.ones_like x in
   let primal, tangent = T.jvp T.transpose x v in
   check_rune ~eps "jvp(transpose) primal" (T.transpose x) primal;
   check_rune ~eps "jvp(transpose) tangent" (T.transpose v) tangent
 
 let test_jvp_squeeze () =
-  let x = T.create ctx T.float32 [| 1; 3; 1 |] [| 1.; 2.; 3. |] in
+  let x = T.create T.float32 [| 1; 3; 1 |] [| 1.; 2.; 3. |] in
   let v = T.ones_like x in
   let f x = T.squeeze ~axes:[| 0; 2 |] x in
   let primal, tangent = T.jvp f x v in
-  let expected_primal = T.create ctx T.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let expected_tangent = T.ones ctx T.float32 [| 3 |] in
+  let expected_primal = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let expected_tangent = T.ones T.float32 [| 3 |] in
   check_rune ~eps "jvp(squeeze) primal" expected_primal primal;
   check_rune ~eps "jvp(squeeze) tangent" expected_tangent tangent
 
 let test_jvp_expand_dims () =
-  let x = T.create ctx T.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let v = T.ones_like x in
   let f x = T.expand_dims [| 0 |] x in
   let primal, tangent = T.jvp f x v in
-  let expected_primal = T.create ctx T.float32 [| 1; 3 |] [| 1.; 2.; 3. |] in
-  let expected_tangent = T.ones ctx T.float32 [| 1; 3 |] in
+  let expected_primal = T.create T.float32 [| 1; 3 |] [| 1.; 2.; 3. |] in
+  let expected_tangent = T.ones T.float32 [| 1; 3 |] in
   check_rune ~eps "jvp(expand_dims) primal" expected_primal primal;
   check_rune ~eps "jvp(expand_dims) tangent" expected_tangent tangent
 
 let test_jvp_concatenate () =
-  let x1 = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let x2 = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let x1 = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let x2 = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
   let v1 = T.ones_like x1 in
-  let v2 = T.full ctx T.float32 [| 2; 2 |] 0.5 in
+  let v2 = T.full T.float32 [| 2; 2 |] 0.5 in
 
   let f inputs =
     match inputs with
@@ -351,10 +348,10 @@ let test_jvp_concatenate () =
   in
   let primal, tangent = T.jvps f [ x1; x2 ] [ v1; v2 ] in
   let expected_primal =
-    T.create ctx T.float32 [| 4; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+    T.create T.float32 [| 4; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
   in
   let expected_tangent =
-    T.create ctx T.float32 [| 4; 2 |] [| 1.; 1.; 1.; 1.; 0.5; 0.5; 0.5; 0.5 |]
+    T.create T.float32 [| 4; 2 |] [| 1.; 1.; 1.; 1.; 0.5; 0.5; 0.5; 0.5 |]
   in
   check_rune ~eps "jvp(concatenate) primal" expected_primal primal;
   check_rune ~eps "jvp(concatenate) tangent" expected_tangent tangent
@@ -362,7 +359,7 @@ let test_jvp_concatenate () =
 (* ───── Complex Compositions ───── *)
 
 let test_jvp_softmax () =
-  let x = T.create ctx T.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let v = T.ones_like x in
   let f x = T.softmax x ~axes:[| 0 |] in
   let _primal, tangent = T.jvp f x v in
@@ -372,13 +369,13 @@ let test_jvp_softmax () =
   check_scalar ~eps:1e-5 "jvp(softmax) tangent sum" 0.0 tangent_sum
 
 let test_jvp_layer_norm () =
-  let x = T.create ctx T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let x = T.create T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let v = T.ones_like x in
   let f x =
     let mean = T.mean x ~axes:[| 1 |] ~keepdims:true in
     let centered = T.sub x mean in
     let var = T.mean (T.square centered) ~axes:[| 1 |] ~keepdims:true in
-    let std = T.sqrt (T.add var (T.scalar ctx T.float32 1e-5)) in
+    let std = T.sqrt (T.add var (T.scalar T.float32 1e-5)) in
     T.div centered std
   in
   let _primal, tangent = T.jvp f x v in
@@ -390,8 +387,8 @@ let test_jvp_layer_norm () =
 
 let test_jvp_nested () =
   (* Test nested JVP calls *)
-  let x = T.scalar ctx T.float32 2.0 in
-  let v = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 2.0 in
+  let v = T.scalar T.float32 1.0 in
 
   (* f(x) = exp(sin(x²)) *)
   let f x = T.exp (T.sin (T.square x)) in
@@ -404,22 +401,22 @@ let test_jvp_nested () =
 
 let test_jvp_higher_order () =
   (* Second derivative via nested JVP *)
-  let x = T.scalar ctx T.float32 1.0 in
+  let x = T.scalar T.float32 1.0 in
 
   (* f(x) = x³ *)
   let f x = T.mul (T.square x) x in
 
   (* First derivative: 3x² *)
-  let _, first_deriv = T.jvp f x (T.scalar ctx T.float32 1.0) in
+  let _, first_deriv = T.jvp f x (T.scalar T.float32 1.0) in
   check_scalar ~eps "first derivative of x³ at x=1" 3.0
     (scalar_value first_deriv);
 
   (* Second derivative via JVP of JVP: 6x *)
   let f_jvp x =
-    let _, tangent = T.jvp f x (T.scalar ctx T.float32 1.0) in
+    let _, tangent = T.jvp f x (T.scalar T.float32 1.0) in
     tangent
   in
-  let _, second_deriv = T.jvp f_jvp x (T.scalar ctx T.float32 1.0) in
+  let _, second_deriv = T.jvp f_jvp x (T.scalar T.float32 1.0) in
   check_scalar ~eps "second derivative of x³ at x=1" 6.0
     (scalar_value second_deriv)
 
@@ -427,25 +424,25 @@ let test_jvp_higher_order () =
 
 let test_jvp_zero_tangent () =
   (* Zero tangent should give zero output tangent *)
-  let x = T.scalar ctx T.float32 2.0 in
-  let v = T.scalar ctx T.float32 0.0 in
+  let x = T.scalar T.float32 2.0 in
+  let v = T.scalar T.float32 0.0 in
   let f x = T.mul (T.exp x) (T.sin x) in
   let _primal, tangent = T.jvp f x v in
   check_scalar ~eps "jvp with zero tangent" 0.0 (scalar_value tangent)
 
 let test_jvp_constant_function () =
   (* Constant function should have zero tangent *)
-  let x = T.scalar ctx T.float32 2.0 in
-  let v = T.scalar ctx T.float32 1.0 in
-  let f _ = T.scalar ctx T.float32 42.0 in
+  let x = T.scalar T.float32 2.0 in
+  let v = T.scalar T.float32 1.0 in
+  let f _ = T.scalar T.float32 42.0 in
   let primal, tangent = T.jvp f x v in
   check_scalar ~eps "jvp(constant) primal" 42.0 (scalar_value primal);
   check_scalar ~eps "jvp(constant) tangent" 0.0 (scalar_value tangent)
 
 let test_jvp_identity () =
   (* Identity function should pass through tangent *)
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let v = T.create ctx T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let v = T.create T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
   let f x = x in
   let primal, tangent = T.jvp f x v in
   check_rune ~eps "jvp(identity) primal" x primal;

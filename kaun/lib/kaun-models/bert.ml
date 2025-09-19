@@ -61,11 +61,11 @@ let bert_base_multilingual =
   }
 
 (* Move inputs type definition before Tokenizer *)
-type 'dev inputs = {
-  input_ids : (int32, int32_elt, 'dev) Rune.t;
-  attention_mask : (int32, int32_elt, 'dev) Rune.t;
-  token_type_ids : (int32, int32_elt, 'dev) Rune.t option;
-  position_ids : (int32, int32_elt, 'dev) Rune.t option;
+type inputs = {
+  input_ids : (int32, int32_elt) Rune.t;
+  attention_mask : (int32, int32_elt) Rune.t;
+  token_type_ids : (int32, int32_elt) Rune.t option;
+  position_ids : (int32, int32_elt) Rune.t option;
 }
 
 module Tokenizer = struct
@@ -223,21 +223,20 @@ module Tokenizer = struct
     token_ids := !token_ids @ [ t.sep_token_id ];
     Array.of_list !token_ids
 
-  let encode t text ~device =
+  let encode t text =
     let token_ids = encode_to_array t text in
     let seq_len = Array.length token_ids in
 
     (* Convert to tensors *)
     let input_ids =
-      Rune.create device Int32 [| 1; seq_len |]
-        (Array.map Int32.of_int token_ids)
+      Rune.create Int32 [| 1; seq_len |] (Array.map Int32.of_int token_ids)
     in
-    let attention_mask = Rune.ones device Int32 [| 1; seq_len |] in
+    let attention_mask = Rune.ones Int32 [| 1; seq_len |] in
 
     (* Return inputs record *)
     { input_ids; attention_mask; token_type_ids = None; position_ids = None }
 
-  let encode_batch t ?(max_length = 512) ?(padding = true) ~device texts =
+  let encode_batch t ?(max_length = 512) ?(padding = true) texts =
     let encoded = List.map (encode_to_array t) texts in
 
     (* Find max length or use specified max_length *)
@@ -266,7 +265,7 @@ module Tokenizer = struct
       Nx.create Int32 [| batch_size; max_length |] data
     in
     (* Convert to Rune tensor *)
-    Rune.of_nx device nx_tensor
+    Rune.of_nx nx_tensor
 
   let decode t token_ids =
     let tokens = ref [] in
@@ -314,18 +313,17 @@ let embeddings ~config () =
   (* Custom module that applies all embeddings and sums them *)
   {
     Kaun.init =
-      (fun ~rngs ~device ~dtype ->
+      (fun ~rngs ~dtype ->
         let keys = Rune.Rng.split ~n:5 rngs in
         Kaun.Ptree.record_of
           [
-            ( "token_embeddings",
-              token_embeddings.init ~rngs:keys.(0) ~device ~dtype );
+            ("token_embeddings", token_embeddings.init ~rngs:keys.(0) ~dtype);
             ( "position_embeddings",
-              position_embeddings.init ~rngs:keys.(1) ~device ~dtype );
+              position_embeddings.init ~rngs:keys.(1) ~dtype );
             ( "token_type_embeddings",
-              token_type_embeddings.init ~rngs:keys.(2) ~device ~dtype );
-            ("layer_norm", layer_norm.init ~rngs:keys.(3) ~device ~dtype);
-            ("dropout", dropout.init ~rngs:keys.(4) ~device ~dtype);
+              token_type_embeddings.init ~rngs:keys.(2) ~dtype );
+            ("layer_norm", layer_norm.init ~rngs:keys.(3) ~dtype);
+            ("dropout", dropout.init ~rngs:keys.(4) ~dtype);
           ]);
     Kaun.apply =
       (fun params ~training ?rngs x ->
@@ -388,15 +386,12 @@ let embeddings ~config () =
               (Rune.shape input_ids).(Array.length (Rune.shape input_ids) - 1)
             in
             let batch_size = (Rune.shape input_ids).(0) in
-            let device = Rune.device input_ids in
             let position_ids =
-              let pos_ids =
-                Rune.zeros device Rune.int32 [| batch_size; seq_len |]
-              in
+              let pos_ids = Rune.zeros Rune.int32 [| batch_size; seq_len |] in
               for b = 0 to batch_size - 1 do
                 for s = 0 to seq_len - 1 do
                   Rune.set [ b; s ] pos_ids
-                    (Rune.scalar device Rune.int32 (Int32.of_int s))
+                    (Rune.scalar Rune.int32 (Int32.of_int s))
                 done
               done;
               pos_ids
@@ -406,9 +401,7 @@ let embeddings ~config () =
             in
 
             (* Create token type ids (all zeros for single sentence) *)
-            let token_type_ids =
-              Rune.zeros device Rune.int32 (Rune.shape input_ids)
-            in
+            let token_type_ids = Rune.zeros Rune.int32 (Rune.shape input_ids) in
             let token_type_embeds =
               lookup_embeddings token_type_embeddings_table token_type_ids
             in
@@ -435,14 +428,12 @@ let pooler ~hidden_size () =
   (* Create a module that extracts CLS token and applies dense + tanh *)
   {
     Kaun.init =
-      (fun ~rngs ~device ~dtype ->
+      (fun ~rngs ~dtype ->
         (* Initialize dense layer weights *)
         let key = Rune.Rng.to_int rngs in
         let init_fn = (Kaun.Initializers.normal ~stddev:0.02 ()).f in
-        let dense_weight =
-          init_fn key [| hidden_size; hidden_size |] device dtype
-        in
-        let dense_bias = Rune.zeros device dtype [| hidden_size |] in
+        let dense_weight = init_fn key [| hidden_size; hidden_size |] dtype in
+        let dense_bias = Rune.zeros dtype [| hidden_size |] in
         Kaun.Ptree.(
           Record
             (Record.of_seq
@@ -482,19 +473,18 @@ let pooler ~hidden_size () =
 
 (* Main Model *)
 
-type ('a, 'dev) bert = {
+type 'a bert = {
   model : Kaun.Layer.module_;
-  params : ('a, 'dev) Kaun.Ptree.t;
+  params : 'a Kaun.Ptree.t;
   config : config;
-  device : 'dev Rune.device;
   dtype : (float, 'a) Rune.dtype;
 }
 
-type ('a, 'dev) output = {
-  last_hidden_state : (float, 'a, 'dev) Rune.t;
-  pooler_output : (float, 'a, 'dev) Rune.t option;
-  hidden_states : (float, 'a, 'dev) Rune.t list option;
-  attentions : (float, 'a, 'dev) Rune.t list option;
+type 'a output = {
+  last_hidden_state : (float, 'a) Rune.t;
+  pooler_output : (float, 'a) Rune.t option;
+  hidden_states : (float, 'a) Rune.t list option;
+  attentions : (float, 'a) Rune.t list option;
 }
 
 let create_bert_layers ~config ~add_pooling_layer =
@@ -532,7 +522,7 @@ let create ?(config = default_config) ?(add_pooling_layer = true) () =
   sequential (create_bert_layers ~config ~add_pooling_layer)
 
 let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
-    ~device ~dtype () =
+    ~dtype () =
   (* Load config and weights from HuggingFace, but handle BERT-specific
      conversion here *)
   let cache_config =
@@ -590,7 +580,7 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
   (* Load weights using HuggingFace infrastructure *)
   let hf_params =
     Kaun_huggingface.from_pretrained ~config:cache_config ~revision ~model_id
-      ~device ~dtype ()
+      ~dtype ()
   in
 
   (* Map HuggingFace parameter names to our expected structure *)
@@ -771,7 +761,7 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
      separately *)
   let model = create ~config:bert_config ~add_pooling_layer:false () in
 
-  { model; params = mapped_params; config = bert_config; device; dtype }
+  { model; params = mapped_params; config = bert_config; dtype }
 
 let forward bert inputs ?(training = false) ?(output_hidden_states = false)
     ?(output_attentions = false) () =
@@ -790,9 +780,7 @@ let forward bert inputs ?(training = false) ?(output_hidden_states = false)
   let _token_type_ids =
     match token_type_ids with
     | Some ids -> ids
-    | None ->
-        let device = device input_ids in
-        zeros device int32 [| batch_size; seq_len |]
+    | None -> zeros int32 [| batch_size; seq_len |]
   in
 
   (* TODO: Handle attention_mask properly when Kaun supports it *)
@@ -1049,13 +1037,11 @@ let parse_bert_config json =
 
 (* Utilities *)
 
-let create_attention_mask (type a dev)
-    ~(input_ids : (int32, int32_elt, dev) Rune.t) ~pad_token_id
-    ~(dtype : (float, a) dtype) : (float, a, dev) Rune.t =
+let create_attention_mask (type a) ~(input_ids : (int32, int32_elt) Rune.t)
+    ~pad_token_id ~(dtype : (float, a) dtype) : (float, a) Rune.t =
   (* Create mask where 1.0 for real tokens, 0.0 for padding *)
-  let dev = Rune.device input_ids in
   let input_dtype = Rune.dtype input_ids in
-  let pad_tensor = Rune.scalar dev input_dtype (Int32.of_int pad_token_id) in
+  let pad_tensor = Rune.scalar input_dtype (Int32.of_int pad_token_id) in
   let mask = Rune.not_equal input_ids pad_tensor in
   (* Cast to the requested float dtype *)
   Rune.cast dtype mask
@@ -1079,14 +1065,14 @@ let parameter_stats params =
     (float_of_int total_bytes /. 1024. /. 1024.)
 
 (* Common BERT model configurations *)
-let load_bert_base_uncased ~device ~dtype () =
-  from_pretrained ~model_id:"bert-base-uncased" ~device ~dtype ()
+let load_bert_base_uncased ~dtype () =
+  from_pretrained ~model_id:"bert-base-uncased" ~dtype ()
 
-let load_bert_large_uncased ~device ~dtype () =
-  from_pretrained ~model_id:"bert-large-uncased" ~device ~dtype ()
+let load_bert_large_uncased ~dtype () =
+  from_pretrained ~model_id:"bert-large-uncased" ~dtype ()
 
-let load_bert_base_cased ~device ~dtype () =
-  from_pretrained ~model_id:"bert-base-cased" ~device ~dtype ()
+let load_bert_base_cased ~dtype () =
+  from_pretrained ~model_id:"bert-base-cased" ~dtype ()
 
-let load_bert_base_multilingual_cased ~device ~dtype () =
-  from_pretrained ~model_id:"bert-base-multilingual-cased" ~device ~dtype ()
+let load_bert_base_multilingual_cased ~dtype () =
+  from_pretrained ~model_id:"bert-base-multilingual-cased" ~dtype ()

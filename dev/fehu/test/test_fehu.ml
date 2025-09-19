@@ -4,7 +4,7 @@ module Rng = Rune.Rng
 let test_discrete_space () =
   let rng = Rng.key 42 in
   let space = Space.Discrete 5 in
-  let action = Space.sample ~rng Rune.c space in
+  let action = Space.sample ~rng space in
   let valid = Space.contains space action in
   Alcotest.(check bool) "discrete action is valid" true valid;
   let shape = Space.shape space in
@@ -12,10 +12,10 @@ let test_discrete_space () =
 
 let test_box_space () =
   let rng = Rng.key 42 in
-  let low = Rune.create Rune.c Rune.float32 [| 2 |] [| -1.0; -2.0 |] in
-  let high = Rune.create Rune.c Rune.float32 [| 2 |] [| 1.0; 2.0 |] in
+  let low = Rune.create Rune.float32 [| 2 |] [| -1.0; -2.0 |] in
+  let high = Rune.create Rune.float32 [| 2 |] [| 1.0; 2.0 |] in
   let space = Space.Box { low; high; shape = [| 2 |] } in
-  let sample = Space.sample ~rng Rune.c space in
+  let sample = Space.sample ~rng space in
   let valid = Space.contains space sample in
   Alcotest.(check bool) "box sample is valid" true valid;
   let shape = Space.shape space in
@@ -32,10 +32,10 @@ let test_buffer () =
     let transition =
       Buffer.
         {
-          obs = Rune.scalar Rune.c Rune.float32 (float_of_int i);
-          action = Rune.scalar Rune.c Rune.float32 0.0;
+          obs = Rune.scalar Rune.float32 (float_of_int i);
+          action = Rune.scalar Rune.float32 0.0;
           reward = 1.0;
-          next_obs = Rune.scalar Rune.c Rune.float32 (float_of_int (i + 1));
+          next_obs = Rune.scalar Rune.float32 (float_of_int (i + 1));
           terminated = false;
         }
     in
@@ -50,10 +50,10 @@ let test_buffer () =
     let transition =
       Buffer.
         {
-          obs = Rune.scalar Rune.c Rune.float32 (float_of_int i);
-          action = Rune.scalar Rune.c Rune.float32 0.0;
+          obs = Rune.scalar Rune.float32 (float_of_int i);
+          action = Rune.scalar Rune.float32 0.0;
           reward = 1.0;
-          next_obs = Rune.scalar Rune.c Rune.float32 (float_of_int (i + 1));
+          next_obs = Rune.scalar Rune.float32 (float_of_int (i + 1));
           terminated = false;
         }
     in
@@ -77,7 +77,7 @@ let test_cartpole_env () =
   Alcotest.(check (list pass)) "info is empty" [] info;
 
   (* Test step *)
-  let action = Rune.scalar Rune.c Rune.float32 0.0 in
+  let action = Rune.scalar Rune.float32 0.0 in
   let next_obs, reward, _terminated, _truncated, _info = env.step action in
   let next_obs_shape = Rune.shape next_obs in
   Alcotest.(check (array int)) "next observation shape" [| 4 |] next_obs_shape;
@@ -92,7 +92,7 @@ let test_mountain_car_env () =
   Alcotest.(check (array int)) "observation shape" [| 2 |] obs_shape;
 
   (* Test step *)
-  let action = Rune.scalar Rune.c Rune.float32 1.0 in
+  let action = Rune.scalar Rune.float32 1.0 in
   let next_obs, reward, _terminated, _truncated, _info = env.step action in
   let next_obs_shape = Rune.shape next_obs in
   Alcotest.(check (array int)) "next observation shape" [| 2 |] next_obs_shape;
@@ -107,7 +107,7 @@ let test_pendulum_env () =
   Alcotest.(check (array int)) "observation shape" [| 3 |] obs_shape;
 
   (* Test step with continuous action *)
-  let action = Rune.scalar Rune.c Rune.float32 0.5 in
+  let action = Rune.scalar Rune.float32 0.5 in
   let next_obs, _reward, terminated, truncated, _info = env.step action in
   let next_obs_shape = Rune.shape next_obs in
   Alcotest.(check (array int)) "next observation shape" [| 3 |] next_obs_shape;

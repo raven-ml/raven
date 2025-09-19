@@ -11,8 +11,8 @@ let infer_format_from_path path =
   else default_format
 
 (* Helper to get flattened tensors with names *)
-let get_named_tensors : type layout dev.
-    (layout, dev) Ptree.t -> (string * (float, layout, dev) t) list =
+let get_named_tensors : type layout.
+    layout Ptree.t -> (string * (float, layout) t) list =
  fun params -> Ptree.flatten_with_paths params
 
 module Checkpointer = struct
@@ -39,14 +39,14 @@ module Checkpointer = struct
     | Rune.Float64 -> Nx_io.as_float64 packed
     | _ -> failwith "Unsupported dtype"
 
-  let restore_safetensors ~path ~device ~dtype =
+  let restore_safetensors ~path ~dtype =
     let archive = Nx_io.load_safetensor path in
     let path_tensor_pairs =
       Hashtbl.fold
         (fun name packed acc ->
           match packed_nx_as ~dtype packed with
           | nx_tensor ->
-              let rune_tensor = Rune.of_nx device nx_tensor in
+              let rune_tensor = Rune.of_nx nx_tensor in
               (name, rune_tensor) :: acc
           | exception _ ->
               failwith
@@ -86,20 +86,20 @@ module Checkpointer = struct
     match t.format with
     | Safetensors -> save_safetensors ~path:params_path ~params ~metadata
 
-  let restore _t ~path ~device ~dtype =
+  let restore _t ~path ~dtype =
     let safetensors_path = Filename.concat path "params.safetensors" in
 
     if Sys.file_exists safetensors_path then
-      restore_safetensors ~path:safetensors_path ~device ~dtype
+      restore_safetensors ~path:safetensors_path ~dtype
     else failwith "No checkpoint found in directory"
 
   let save_file _t ~path ~params ?(metadata = []) () =
     let format = infer_format_from_path path in
     match format with Safetensors -> save_safetensors ~path ~params ~metadata
 
-  let restore_file _t ~path ~device ~dtype =
+  let restore_file _t ~path ~dtype =
     let format = infer_format_from_path path in
-    match format with Safetensors -> restore_safetensors ~path ~device ~dtype
+    match format with Safetensors -> restore_safetensors ~path ~dtype
 end
 
 module CheckpointManager = struct
@@ -273,7 +273,7 @@ module CheckpointManager = struct
     (* Cleanup old checkpoints *)
     cleanup t
 
-  let restore t ~device ~dtype ?step () =
+  let restore t ~dtype ?step () =
     let step =
       match step with
       | Some s -> s
@@ -284,12 +284,12 @@ module CheckpointManager = struct
     in
     let info = List.assoc step t.checkpoints in
     let path = checkpoint_dir t step in
-    let params = Checkpointer.restore t.checkpointer ~path ~device ~dtype in
+    let params = Checkpointer.restore t.checkpointer ~path ~dtype in
     (params, info)
 
-  let restore_best t ~device ~dtype =
+  let restore_best t ~dtype =
     match t.best_checkpoint with
-    | Some (step, _) -> restore t ~device ~dtype ~step ()
+    | Some (step, _) -> restore t ~dtype ~step ()
     | None -> failwith "No best checkpoint available (best_fn not configured)"
 
   let latest_step t =
@@ -322,8 +322,7 @@ let save_params ~path ~params ?(metadata = []) () =
     Checkpointer.save_file checkpointer ~path ~params ~metadata ()
   else Checkpointer.save checkpointer ~path ~params ~metadata ()
 
-let load_params ~path ~device ~dtype =
+let load_params ~path ~dtype =
   let checkpointer = Checkpointer.create () in
-  if Sys.is_directory path then
-    Checkpointer.restore checkpointer ~path ~device ~dtype
-  else Checkpointer.restore_file checkpointer ~path ~device ~dtype
+  if Sys.is_directory path then Checkpointer.restore checkpointer ~path ~dtype
+  else Checkpointer.restore_file checkpointer ~path ~dtype

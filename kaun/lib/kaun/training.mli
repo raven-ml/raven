@@ -1,105 +1,99 @@
 (** High-level training utilities for neural networks. *)
 
-open! Import
-
 (** Training state management for neural networks.
 
     This module provides a unified way to manage training state, combining model
     parameters, optimizer state, metrics, and other training metadata. Inspired
     by Flax's TrainState pattern. *)
 module State : sig
-  type ('layout, 'dev) t = {
+  type 'layout t = {
     step : int;  (** Current training step *)
-    params : ('layout, 'dev) Ptree.t;  (** Model parameters *)
-    opt_state : ('layout, 'dev) Optimizer.opt_state;  (** Optimizer state *)
-    metrics : ('layout, 'dev) Metrics.Collection.t option;
+    params : 'layout Ptree.t;  (** Model parameters *)
+    opt_state : 'layout Optimizer.opt_state;  (** Optimizer state *)
+    metrics : 'layout Metrics.Collection.t option;
         (** Optional metrics collection *)
     rngs : Rune.Rng.key;  (** Random number generator keys *)
     model : Layer.module_;  (** The model definition *)
-    optimizer : ('layout, 'dev) Optimizer.gradient_transformation;
-        (** The optimizer *)
+    optimizer : 'layout Optimizer.gradient_transformation;  (** The optimizer *)
   }
 
   val create :
     model:Layer.module_ ->
-    optimizer:('layout, 'dev) Optimizer.gradient_transformation ->
-    ?metrics:('layout, 'dev) Metrics.Collection.t ->
+    optimizer:'layout Optimizer.gradient_transformation ->
+    ?metrics:'layout Metrics.Collection.t ->
     rngs:Rune.Rng.key ->
-    device:'dev Rune.device ->
     dtype:(float, 'layout) Rune.dtype ->
     unit ->
-    ('layout, 'dev) t
-  (** [create ~model ~optimizer ?metrics ~rngs ~device ~dtype] creates a new
-      training state. *)
+    'layout t
+  (** [create ~model ~optimizer ?metrics ~rngs ~dtype] creates a new training
+      state. *)
 
-  val apply_gradients :
-    ('layout, 'dev) t -> grads:('layout, 'dev) Ptree.t -> ('layout, 'dev) t
+  val apply_gradients : 'layout t -> grads:'layout Ptree.t -> 'layout t
   (** [apply_gradients state ~grads] applies gradients to update parameters and
       optimizer state, incrementing the step counter. *)
 
-  val reset_metrics : ('layout, 'dev) t -> ('layout, 'dev) t
+  val reset_metrics : 'layout t -> 'layout t
   (** [reset_metrics state] resets all metrics in the state. *)
 
   val update_metrics :
-    ('layout, 'dev) t ->
-    predictions:('layout, 'dev) tensor ->
-    targets:('layout, 'dev) tensor ->
-    ?loss:('layout, 'dev) tensor ->
+    'layout t ->
+    predictions:(float, 'layout) Rune.t ->
+    targets:(float, 'layout) Rune.t ->
+    ?loss:(float, 'layout) Rune.t ->
     unit ->
     unit
   (** [update_metrics state ~predictions ~targets ?loss ()] updates metrics with
       new predictions and targets. *)
 
-  val compute_metrics :
-    ('layout, 'dev) t -> (string * ('layout, 'dev) tensor) list
+  val compute_metrics : 'layout t -> (string * (float, 'layout) Rune.t) list
   (** [compute_metrics state] computes current metric values. *)
 
-  val next_rng : ('layout, 'dev) t -> Rune.Rng.key * ('layout, 'dev) t
+  val next_rng : 'layout t -> Rune.Rng.key * 'layout t
   (** [next_rng state] splits the RNG key and returns a new key and updated
       state. *)
 end
 
 (** Helper functions for accessing training history *)
 module History : sig
-  type ('layout, 'dev) t = {
+  type 'layout t = {
     train_loss : float list;
     train_metrics : (string * float list) list;
     val_loss : float list option;
     val_metrics : (string * float list) list option;
   }
 
-  val final_train_loss : ('layout, 'dev) t -> float option
+  val final_train_loss : 'layout t -> float option
   (** Get the final training loss value *)
 
-  val final_val_loss : ('layout, 'dev) t -> float option
+  val final_val_loss : 'layout t -> float option
   (** Get the final validation loss value *)
 
-  val final_train_metrics : ('layout, 'dev) t -> (string * float) list
+  val final_train_metrics : 'layout t -> (string * float) list
   (** Get the final training metric values *)
 
-  val final_val_metrics : ('layout, 'dev) t -> (string * float) list
+  val final_val_metrics : 'layout t -> (string * float) list
   (** Get the final validation metric values *)
 
-  val best_train_loss : ('layout, 'dev) t -> float option
+  val best_train_loss : 'layout t -> float option
   (** Get the best (minimum) training loss value *)
 
-  val best_val_loss : ('layout, 'dev) t -> float option
+  val best_val_loss : 'layout t -> float option
   (** Get the best (minimum) validation loss value *)
 
-  val best_epoch : ?monitor:string -> ('layout, 'dev) t -> int option
+  val best_epoch : ?monitor:string -> 'layout t -> int option
   (** Get the epoch with the best value for the monitored metric (default:
       "val_loss") *)
 end
 
 (** Callback system for training hooks *)
 module Callbacks : sig
-  type ('layout, 'dev) t
+  type 'layout t
   (** Abstract callback type *)
 
-  type ('layout, 'dev) context = {
+  type 'layout context = {
     epoch : int;
-    state : ('layout, 'dev) State.t;
-    history : ('layout, 'dev) History.t;
+    state : 'layout State.t;
+    history : 'layout History.t;
     train_loss : float option;
     val_loss : float option;
     train_metrics : (string * float) list;
@@ -114,7 +108,7 @@ module Callbacks : sig
     ?min_delta:float ->
     ?baseline:float option ->
     unit ->
-    ('layout, 'dev) t
+    'layout t
   (** [early_stopping ?monitor ?patience ?mode ?min_delta ?baseline ()] creates
       an early stopping callback.
       - [monitor]: Metric to monitor (default: "val_loss")
@@ -131,7 +125,7 @@ module Callbacks : sig
     ?save_best_only:bool ->
     ?save_freq:[ `Epoch of int | `Best ] ->
     unit ->
-    ('layout, 'dev) t
+    'layout t
   (** [model_checkpoint ~filepath ?monitor ?mode ?save_best_only ?save_freq ()] creates a checkpoint callback.
       - [filepath]: Path pattern for saving checkpoints (can include {epoch} placeholder)
       - [monitor]: Metric to monitor for best model (default: "val_loss")
@@ -148,7 +142,7 @@ module Callbacks : sig
     ?cooldown:int ->
     ?min_lr:float ->
     unit ->
-    ('layout, 'dev) t
+    'layout t
   (** [reduce_lr_on_plateau ?monitor ?factor ?patience ?mode ?min_delta
        ?cooldown ?min_lr ()] creates a learning rate reduction callback.
       - [monitor]: Metric to monitor (default: "val_loss")
@@ -164,64 +158,72 @@ module Callbacks : sig
     log_dir:string ->
     ?update_freq:[ `Epoch | `Batch of int ] ->
     unit ->
-    ('layout, 'dev) t
+    'layout t
   (** [tensorboard ~log_dir ?update_freq ()] creates a TensorBoard logging
       callback.
       - [log_dir]: Directory where to save TensorBoard logs
       - [update_freq]: How often to write logs (default: `Epoch) *)
 
   val custom :
-    ?on_epoch_begin:(('layout, 'dev) context -> bool) ->
-    ?on_epoch_end:(('layout, 'dev) context -> bool) ->
-    ?on_train_begin:(('layout, 'dev) context -> unit) ->
-    ?on_train_end:(('layout, 'dev) context -> unit) ->
+    ?on_epoch_begin:('layout context -> bool) ->
+    ?on_epoch_end:('layout context -> bool) ->
+    ?on_train_begin:('layout context -> unit) ->
+    ?on_train_end:('layout context -> unit) ->
     unit ->
-    ('layout, 'dev) t
+    'layout t
   (** [custom ?on_epoch_begin ?on_epoch_end ?on_train_begin ?on_train_end ()]
       creates a custom callback with user-defined hooks. Returning false from
       epoch callbacks stops training. *)
 
-  val combine : ('layout, 'dev) t list -> ('layout, 'dev) t
+  val combine : 'layout t list -> 'layout t
   (** Combine multiple callbacks into one *)
 end
 
 val train_step :
-  state:('layout, 'dev) State.t ->
-  x:('layout, 'dev) tensor ->
-  y:('layout, 'dev) tensor ->
+  state:'layout State.t ->
+  x:(float, 'layout) Rune.t ->
+  y:(float, 'layout) Rune.t ->
   loss_fn:
-    (('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor) ->
-  ('layout, 'dev) State.t * float
+    ((float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t) ->
+  'layout State.t * float
 (** [train_step ~state ~x ~y ~loss_fn] performs a single training step,
     computing loss, gradients, and updating parameters. Returns updated state
     and loss value. *)
 
 val eval_step :
-  state:('layout, 'dev) State.t ->
-  x:('layout, 'dev) tensor ->
-  y:('layout, 'dev) tensor ->
+  state:'layout State.t ->
+  x:(float, 'layout) Rune.t ->
+  y:(float, 'layout) Rune.t ->
   loss_fn:
-    (('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor) ->
+    ((float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t) ->
   float
 (** [eval_step ~state ~x ~y ~loss_fn] performs evaluation without updating
     parameters. Returns loss value. *)
 
 val train_epoch :
-  state:('layout, 'dev) State.t ->
-  dataset:(('layout, 'dev) tensor * ('layout, 'dev) tensor) Dataset.t ->
+  state:'layout State.t ->
+  dataset:((float, 'layout) Rune.t * (float, 'layout) Rune.t) Dataset.t ->
   loss_fn:
-    (('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor) ->
+    ((float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t) ->
   ?progress:bool ->
   unit ->
-  ('layout, 'dev) State.t * float * (string * float) list
+  'layout State.t * float * (string * float) list
 (** [train_epoch ~state ~dataset ~loss_fn ?progress ()] trains for one epoch.
     Returns updated state, average loss, and metric values. *)
 
 val evaluate :
-  state:('layout, 'dev) State.t ->
-  dataset:(('layout, 'dev) tensor * ('layout, 'dev) tensor) Dataset.t ->
+  state:'layout State.t ->
+  dataset:((float, 'layout) Rune.t * (float, 'layout) Rune.t) Dataset.t ->
   loss_fn:
-    (('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor) ->
+    ((float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t) ->
   ?progress:bool ->
   unit ->
   float * (string * float) list
@@ -230,20 +232,21 @@ val evaluate :
 
 val fit :
   model:Layer.module_ ->
-  optimizer:('layout, 'dev) Optimizer.gradient_transformation ->
+  optimizer:'layout Optimizer.gradient_transformation ->
   loss_fn:
-    (('layout, 'dev) tensor -> ('layout, 'dev) tensor -> ('layout, 'dev) tensor) ->
-  ?metrics:('layout, 'dev) Metrics.Collection.t ->
-  train_data:(('layout, 'dev) tensor * ('layout, 'dev) tensor) Dataset.t ->
-  ?val_data:(('layout, 'dev) tensor * ('layout, 'dev) tensor) Dataset.t ->
+    ((float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t) ->
+  ?metrics:'layout Metrics.Collection.t ->
+  train_data:((float, 'layout) Rune.t * (float, 'layout) Rune.t) Dataset.t ->
+  ?val_data:((float, 'layout) Rune.t * (float, 'layout) Rune.t) Dataset.t ->
   epochs:int ->
-  ?callbacks:('layout, 'dev) Callbacks.t list ->
+  ?callbacks:'layout Callbacks.t list ->
   ?progress:bool ->
   rngs:Rune.Rng.key ->
-  device:'dev Rune.device ->
   dtype:(float, 'layout) Rune.dtype ->
   unit ->
-  ('layout, 'dev) State.t * ('layout, 'dev) History.t
+  'layout State.t * 'layout History.t
 (** [fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
-     ?callbacks ?progress ~rngs ~device ~dtype ()] trains a model for multiple
-    epochs. Returns final training state and training history. *)
+     ?callbacks ?progress ~rngs ~dtype ()] trains a model for multiple epochs.
+    Returns final training state and training history. *)

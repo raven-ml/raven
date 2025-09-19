@@ -2,12 +2,11 @@ module A = Alcotest
 module Ptree = Kaun.Ptree
 
 let test_save_and_load () =
-  let device = Rune.c in
   let dtype = Rune.float32 in
 
   (* Create some test parameters *)
-  let w = Rune.ones device dtype [| 3; 3 |] in
-  let b = Rune.zeros device dtype [| 3 |] in
+  let w = Rune.ones dtype [| 3; 3 |] in
+  let b = Rune.zeros dtype [| 3 |] in
   let params =
     Ptree.record_of [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ]
   in
@@ -19,7 +18,7 @@ let test_save_and_load () =
   C.save_params ~path ~params ~metadata:[ ("epoch", "10") ] ();
 
   (* Load checkpoint from file *)
-  let loaded_params = C.load_params ~path ~device ~dtype in
+  let loaded_params = C.load_params ~path ~dtype in
 
   (* Check parameters *)
   (match Ptree.find_in_record "weight" loaded_params with
@@ -43,12 +42,11 @@ let test_save_and_load () =
   | None -> A.fail "bias not found"
 
 let test_checkpoint_manager () =
-  let device = Rune.c in
   let dtype = Rune.float32 in
 
   (* Create test parameters *)
   let create_params value =
-    let w = Rune.full device dtype [| 2; 2 |] value in
+    let w = Rune.full dtype [| 2; 2 |] value in
     Ptree.record_of [ ("weight", Ptree.tensor w) ]
   in
 
@@ -75,7 +73,7 @@ let test_checkpoint_manager () =
   A.check (A.option A.int) "latest step" (Some 50) latest;
 
   (* Restore latest *)
-  let restored_params, info = CM.restore manager ~device ~dtype () in
+  let restored_params, info = CM.restore manager ~dtype () in
   A.check A.int "restored step" 50 info.step;
 
   (* Check restored value *)

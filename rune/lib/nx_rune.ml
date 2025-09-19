@@ -223,7 +223,6 @@ let to_device (target_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t =
   | Native_context _, Native_tensor _ -> t
   (* Symbolic tensors update their context *)
   | _, Symbolic_tensor _ -> failwith "Cannot transfer symbolic tensor to device"
-  | _ -> failwith "Device transfer is only supporting in JIT compilation"
 
 (* Lenses *)
 let view (type a b) (x : (a, b) t) : Lazy_view.t =
@@ -547,8 +546,7 @@ let op_matmul a b =
     | Native_tensor a_t, Native_tensor b_t ->
         Native_tensor (Nx_c.op_matmul a_t b_t)
     | Symbolic_tensor _, _ | _, Symbolic_tensor _ ->
-        failwith "todo: op_matmul for symbolic tensors"
-    | _ -> assert false)
+        failwith "todo: op_matmul for symbolic tensors")
 
 (* FFT operations *)
 let op_fft t ~axes ~s =

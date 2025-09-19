@@ -8,8 +8,7 @@
 
 (** {1 Core Types} *)
 
-type ('elt, 'kind, 'dev) tensor_dataset =
-  ('elt, 'kind, 'dev) Rune.t Kaun.Dataset.t
+type ('elt, 'kind) tensor_dataset = ('elt, 'kind) Rune.t Kaun.Dataset.t
 
 (** {1 Vision Datasets} *)
 
@@ -24,10 +23,8 @@ val mnist :
   (* default: `NCHW *)
   ?cache_dir:string ->
   (* Optional directory for caching *)
-  device:'dev Kaun.device ->
   unit ->
-  ((Bigarray.float32_elt, 'dev) Kaun.tensor
-  * (Bigarray.float32_elt, 'dev) Kaun.tensor)
+  (Bigarray.float32_elt Kaun.tensor * Bigarray.float32_elt Kaun.tensor)
   Kaun.Dataset.t
 (** MNIST handwritten digits dataset. Returns a dataset of (images, labels)
     pairs. *)
@@ -40,10 +37,8 @@ val cifar10 :
   ?augmentation:bool ->
   (* default: false - random crops/flips *)
   ?cache_dir:string ->
-  device:'dev Kaun.device ->
   unit ->
-  ((Bigarray.float32_elt, 'dev) Kaun.tensor
-  * (Bigarray.float32_elt, 'dev) Kaun.tensor)
+  (Bigarray.float32_elt Kaun.tensor * Bigarray.float32_elt Kaun.tensor)
   Kaun.Dataset.t
 (** CIFAR-10 image classification dataset *)
 
@@ -53,10 +48,8 @@ val fashion_mnist :
   ?normalize:bool ->
   ?data_format:[ `NCHW | `NHWC ] ->
   ?cache_dir:string ->
-  device:'dev Kaun.device ->
   unit ->
-  ((Bigarray.float32_elt, 'dev) Kaun.tensor
-  * (Bigarray.float32_elt, 'dev) Kaun.tensor)
+  (Bigarray.float32_elt Kaun.tensor * Bigarray.float32_elt Kaun.tensor)
   Kaun.Dataset.t
 (** Fashion-MNIST clothing classification dataset *)
 
@@ -69,9 +62,8 @@ val imdb :
   ?max_length:int ->
   (* default: 512 *)
   ?cache_dir:string ->
-  device:'dev Kaun.device ->
   unit ->
-  (int array * (Bigarray.float32_elt, 'dev) Kaun.tensor) Kaun.Dataset.t
+  (int array * Bigarray.float32_elt Kaun.tensor) Kaun.Dataset.t
 (** IMDB movie review sentiment dataset. Returns (token_ids, labels) where
     labels are 0 (negative) or 1 (positive) *)
 
@@ -82,7 +74,6 @@ val wikitext :
   ?sequence_length:int ->
   (* default: 1024 *)
   ?cache_dir:string ->
-  device:'dev Kaun.device ->
   unit ->
   (int array * int array) Kaun.Dataset.t
 (** WikiText language modeling dataset. Returns (input_ids, target_ids) for
@@ -95,20 +86,16 @@ val iris :
   ?train_split:float ->
   (* default: 0.8 *)
   ?shuffle_seed:int ->
-  device:'dev Kaun.device ->
   unit ->
-  ((Bigarray.float32_elt, 'dev) Kaun.tensor
-  * (Bigarray.float32_elt, 'dev) Kaun.tensor)
+  (Bigarray.float32_elt Kaun.tensor * Bigarray.float32_elt Kaun.tensor)
   Kaun.Dataset.t
 (** Iris flower classification dataset *)
 
 val boston_housing :
   ?normalize:bool ->
   ?train_split:float ->
-  device:'dev Kaun.device ->
   unit ->
-  ((Bigarray.float32_elt, 'dev) Kaun.tensor
-  * (Bigarray.float32_elt, 'dev) Kaun.tensor)
+  (Bigarray.float32_elt Kaun.tensor * Bigarray.float32_elt Kaun.tensor)
   Kaun.Dataset.t
 (** Boston housing price regression dataset *)
 
@@ -139,7 +126,7 @@ val train_test_split :
     {[
       (* Simple MNIST training loop *)
       let dataset =
-        Kaun_datasets.mnist ~train:true ~device ()
+        Kaun_datasets.mnist ~train:true ()
         |> Kaun.Dataset.shuffle ~buffer_size:60000
         |> Kaun.Dataset.batch 32
         |> Kaun.Dataset.prefetch ~buffer_size:2
@@ -152,7 +139,7 @@ val train_test_split :
 
       (* Text classification with IMDB *)
       let dataset =
-        Kaun_datasets.imdb ~train:true ~max_length:256 ~device ()
+        Kaun_datasets.imdb ~train:true ~max_length:256 ()
         |> Kaun_datasets.text_pipeline ~batch_size:16
              ~bucket_boundaries:[50; 100; 200]
       in

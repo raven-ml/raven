@@ -1,38 +1,36 @@
-open! Import
-
 (** Core types *)
 
 type reduction = Mean | Sum | None
 type averaging = Micro | Macro | Weighted | Samples
 
-type ('layout, 'dev) metric_state = {
-  mutable state_tensors : ('layout, 'dev) tensor list;
+type 'layout metric_state = {
+  mutable state_tensors : (float, 'layout) Rune.t list;
   name : string;
-  init_fn : unit -> ('layout, 'dev) tensor list;
+  init_fn : unit -> (float, 'layout) Rune.t list;
   update_fn :
-    ('layout, 'dev) tensor list ->
-    predictions:('layout, 'dev) tensor ->
-    targets:('layout, 'dev) tensor ->
-    ?weights:('layout, 'dev) tensor ->
+    (float, 'layout) Rune.t list ->
+    predictions:(float, 'layout) Rune.t ->
+    targets:(float, 'layout) Rune.t ->
+    ?weights:(float, 'layout) Rune.t ->
     unit ->
-    ('layout, 'dev) tensor list;
-  compute_fn : ('layout, 'dev) tensor list -> ('layout, 'dev) tensor;
-  reset_fn : ('layout, 'dev) tensor list -> ('layout, 'dev) tensor list;
+    (float, 'layout) Rune.t list;
+  compute_fn : (float, 'layout) Rune.t list -> (float, 'layout) Rune.t;
+  reset_fn : (float, 'layout) Rune.t list -> (float, 'layout) Rune.t list;
 }
 
-type ('layout, 'dev) t = ('layout, 'dev) metric_state
+type 'layout t = 'layout metric_state
 
-type ('layout, 'dev) metric_fn =
-  predictions:('layout, 'dev) tensor ->
-  targets:('layout, 'dev) tensor ->
-  ?weights:('layout, 'dev) tensor ->
+type 'layout metric_fn =
+  predictions:(float, 'layout) Rune.t ->
+  targets:(float, 'layout) Rune.t ->
+  ?weights:(float, 'layout) Rune.t ->
   unit ->
-  ('layout, 'dev) tensor
+  (float, 'layout) Rune.t
 
 (** Helper functions *)
 
-let scalar_tensor dev dtype value = Rune.scalar dev dtype value
-let ones_like t = Rune.ones (Rune.device t) (Rune.dtype t) (Rune.shape t)
+let scalar_tensor dtype value = Rune.scalar dtype value
+let ones_like t = Rune.ones (Rune.dtype t) (Rune.shape t)
 
 (** Core metric operations *)
 
@@ -73,7 +71,6 @@ let accuracy ?(threshold = 0.5) ?top_k ?(averaging = Micro) () =
          update *)
       [])
     ~update:(fun state ~predictions ~targets ?weights () ->
-      let dev = Rune.device predictions in
       let dtype = Rune.dtype predictions in
 
       let correct_count, total_count =
@@ -81,7 +78,7 @@ let accuracy ?(threshold = 0.5) ?top_k ?(averaging = Micro) () =
         | [ c; t ] -> (c, t)
         | _ ->
             (* First call - initialize *)
-            (scalar_tensor dev dtype 0.0, scalar_tensor dev dtype 0.0)
+            (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
       in
 
       let batch_correct, batch_total =
@@ -108,7 +105,7 @@ let accuracy ?(threshold = 0.5) ?top_k ?(averaging = Micro) () =
                 Rune.equal preds targets_int32
               else
                 (* Binary: threshold *)
-                let threshold_t = scalar_tensor dev dtype threshold in
+                let threshold_t = scalar_tensor dtype threshold in
                 let preds_binary = Rune.greater predictions threshold_t in
                 let targets_binary = Rune.greater targets threshold_t in
                 Rune.equal preds_binary targets_binary
@@ -139,17 +136,16 @@ let precision ?(threshold = 0.5) ?(averaging = Micro) ?(zero_division = 0.0) ()
   create_custom ~name:"precision"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
-      let dev = Rune.device predictions in
       let dtype = Rune.dtype predictions in
 
       let tp, fp =
         match state with
         | [ tp; fp ] -> (tp, fp)
-        | _ -> (scalar_tensor dev dtype 0.0, scalar_tensor dev dtype 0.0)
+        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
       in
 
       (* Binary predictions *)
-      let threshold_t = scalar_tensor dev dtype threshold in
+      let threshold_t = scalar_tensor dtype threshold in
       let preds = Rune.greater predictions threshold_t in
       let preds_float = Rune.cast dtype preds in
       let targets_float = Rune.cast dtype targets in
@@ -174,12 +170,11 @@ let precision ?(threshold = 0.5) ?(averaging = Micro) ?(zero_division = 0.0) ()
     ~compute:(fun state ->
       match state with
       | [ tp; fp ] ->
-          let dev = Rune.device tp in
           let dtype = Rune.dtype tp in
           let denominator = Rune.add tp fp in
-          let eps = scalar_tensor dev dtype 1e-7 in
+          let eps = scalar_tensor dtype 1e-7 in
           let is_zero = Rune.less denominator eps in
-          let zero_val = scalar_tensor dev dtype zero_division in
+          let zero_val = scalar_tensor dtype zero_division in
           let precision_val = Rune.div tp (Rune.add denominator eps) in
           Rune.where is_zero zero_val precision_val
       | _ -> failwith "Invalid precision state")
@@ -190,17 +185,16 @@ let recall ?(threshold = 0.5) ?(averaging = Micro) ?(zero_division = 0.0) () =
   create_custom ~name:"recall"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
-      let dev = Rune.device predictions in
       let dtype = Rune.dtype predictions in
 
       let tp, fn =
         match state with
         | [ tp; fn ] -> (tp, fn)
-        | _ -> (scalar_tensor dev dtype 0.0, scalar_tensor dev dtype 0.0)
+        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
       in
 
       (* Binary predictions *)
-      let threshold_t = scalar_tensor dev dtype threshold in
+      let threshold_t = scalar_tensor dtype threshold in
       let preds = Rune.greater predictions threshold_t in
       let preds_float = Rune.cast dtype preds in
       let targets_float = Rune.cast dtype targets in
@@ -225,12 +219,11 @@ let recall ?(threshold = 0.5) ?(averaging = Micro) ?(zero_division = 0.0) () =
     ~compute:(fun state ->
       match state with
       | [ tp; fn ] ->
-          let dev = Rune.device tp in
           let dtype = Rune.dtype tp in
           let denominator = Rune.add tp fn in
-          let eps = scalar_tensor dev dtype 1e-7 in
+          let eps = scalar_tensor dtype 1e-7 in
           let is_zero = Rune.less denominator eps in
-          let zero_val = scalar_tensor dev dtype zero_division in
+          let zero_val = scalar_tensor dtype zero_division in
           let recall_val = Rune.div tp (Rune.add denominator eps) in
           Rune.where is_zero zero_val recall_val
       | _ -> failwith "Invalid recall state")
@@ -242,20 +235,19 @@ let f1_score ?(threshold = 0.5) ?(averaging = Micro) ?(beta = 1.0) () =
     ~name:(Printf.sprintf "f%.1f_score" beta)
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
-      let dev = Rune.device predictions in
       let dtype = Rune.dtype predictions in
 
       let tp, fp, fn =
         match state with
         | [ tp; fp; fn ] -> (tp, fp, fn)
         | _ ->
-            ( scalar_tensor dev dtype 0.0,
-              scalar_tensor dev dtype 0.0,
-              scalar_tensor dev dtype 0.0 )
+            ( scalar_tensor dtype 0.0,
+              scalar_tensor dtype 0.0,
+              scalar_tensor dtype 0.0 )
       in
 
       (* Binary predictions *)
-      let threshold_t = scalar_tensor dev dtype threshold in
+      let threshold_t = scalar_tensor dtype threshold in
       let preds = Rune.greater predictions threshold_t in
       let preds_float = Rune.cast dtype preds in
       let targets_float = Rune.cast dtype targets in
@@ -282,15 +274,14 @@ let f1_score ?(threshold = 0.5) ?(averaging = Micro) ?(beta = 1.0) () =
     ~compute:(fun state ->
       match state with
       | [ tp; fp; fn ] ->
-          let dev = Rune.device tp in
           let dtype = Rune.dtype tp in
           let beta_sq = beta *. beta in
-          let beta_sq_t = scalar_tensor dev dtype beta_sq in
-          let one_plus_beta_sq = scalar_tensor dev dtype (1.0 +. beta_sq) in
+          let beta_sq_t = scalar_tensor dtype beta_sq in
+          let one_plus_beta_sq = scalar_tensor dtype (1.0 +. beta_sq) in
 
           let precision_denom = Rune.add tp fp in
           let recall_denom = Rune.add tp fn in
-          let eps = scalar_tensor dev dtype 1e-7 in
+          let eps = scalar_tensor dtype 1e-7 in
 
           let precision = Rune.div tp (Rune.add precision_denom eps) in
           let recall = Rune.div tp (Rune.add recall_denom eps) in
@@ -340,13 +331,12 @@ let mse ?(reduction = Mean) () =
   create_custom ~name:"mse"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
-      let dev = Rune.device predictions in
       let dtype = Rune.dtype predictions in
 
       let sse, count =
         match state with
         | [ s; c ] -> (s, c)
-        | _ -> (scalar_tensor dev dtype 0.0, scalar_tensor dev dtype 0.0)
+        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
       in
 
       let diff = Rune.sub predictions targets in
@@ -358,7 +348,7 @@ let mse ?(reduction = Mean) () =
         | Some w -> (Rune.mul squared_diff w, Rune.sum w)
         | None ->
             let n = float_of_int (Rune.numel squared_diff) in
-            (squared_diff, scalar_tensor dev dtype n)
+            (squared_diff, scalar_tensor dtype n)
       in
 
       let new_sse = Rune.add sse (Rune.sum squared_diff) in
@@ -384,13 +374,12 @@ let mae ?(reduction = Mean) () =
   create_custom ~name:"mae"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
-      let dev = Rune.device predictions in
       let dtype = Rune.dtype predictions in
 
       let sae, count =
         match state with
         | [ s; c ] -> (s, c)
-        | _ -> (scalar_tensor dev dtype 0.0, scalar_tensor dev dtype 0.0)
+        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
       in
 
       let diff = Rune.sub predictions targets in
@@ -402,7 +391,7 @@ let mae ?(reduction = Mean) () =
         | Some w -> (Rune.mul abs_diff w, Rune.sum w)
         | None ->
             let n = float_of_int (Rune.numel abs_diff) in
-            (abs_diff, scalar_tensor dev dtype n)
+            (abs_diff, scalar_tensor dtype n)
       in
 
       let new_sae = Rune.add sae (Rune.sum abs_diff) in
@@ -421,9 +410,9 @@ let loss () =
     ~init:(fun () -> [])
     ~update:(fun state ~predictions:_ ~targets:_ ?weights () ->
       (* The loss value should be passed via weights parameter *)
-      let dev, dtype =
+      let dtype =
         match weights with
-        | Some w -> (Rune.device w, Rune.dtype w)
+        | Some w -> Rune.dtype w
         | None ->
             failwith "loss metric requires loss value in weights parameter"
       in
@@ -431,14 +420,14 @@ let loss () =
       let sum_loss, count =
         match state with
         | [ s; c ] -> (s, c)
-        | _ -> (scalar_tensor dev dtype 0.0, scalar_tensor dev dtype 0.0)
+        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
       in
 
       match weights with
       | Some loss_value ->
           (* Accumulate loss value *)
           let new_sum = Rune.add sum_loss loss_value in
-          let new_count = Rune.add count (scalar_tensor dev dtype 1.0) in
+          let new_count = Rune.add count (scalar_tensor dtype 1.0) in
           [ new_sum; new_count ]
       | None -> state)
     ~compute:(fun state ->
@@ -479,20 +468,19 @@ let cross_entropy ?(from_logits = true) () =
   create_custom ~name:"cross_entropy"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
-      let dev = Rune.device predictions in
       let dtype = Rune.dtype predictions in
 
       let sum_ce, count =
         match state with
         | [ s; c ] -> (s, c)
-        | _ -> (scalar_tensor dev dtype 0.0, scalar_tensor dev dtype 0.0)
+        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
       in
 
       let ce =
         if from_logits then Loss.softmax_cross_entropy predictions targets
         else
           (* Assume predictions are probabilities *)
-          let eps = scalar_tensor dev dtype 1e-7 in
+          let eps = scalar_tensor dtype 1e-7 in
           let safe_preds = Rune.add predictions eps in
           let log_preds = Rune.log safe_preds in
           Rune.neg
@@ -500,7 +488,7 @@ let cross_entropy ?(from_logits = true) () =
       in
 
       (* For batch accumulation *)
-      let batch_count = scalar_tensor dev dtype 1.0 in
+      let batch_count = scalar_tensor dtype 1.0 in
 
       (* Apply weights if provided *)
       let ce, batch_count =
@@ -524,13 +512,12 @@ let binary_cross_entropy ?(from_logits = true) () =
   create_custom ~name:"binary_cross_entropy"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
-      let dev = Rune.device predictions in
       let dtype = Rune.dtype predictions in
 
       let sum_bce, count =
         match state with
         | [ s; c ] -> (s, c)
-        | _ -> (scalar_tensor dev dtype 0.0, scalar_tensor dev dtype 0.0)
+        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
       in
 
       let bce =
@@ -542,7 +529,7 @@ let binary_cross_entropy ?(from_logits = true) () =
         else Loss.binary_cross_entropy predictions targets
       in
 
-      let batch_count = scalar_tensor dev dtype 1.0 in
+      let batch_count = scalar_tensor dtype 1.0 in
 
       (* Apply weights if provided *)
       let bce, batch_count =
@@ -574,9 +561,8 @@ let perplexity ?(base = 2.71828) () =
     ~update:ce_metric.update_fn
     ~compute:(fun state ->
       let ce = ce_metric.compute_fn state in
-      let dev = Rune.device ce in
       let dtype = Rune.dtype ce in
-      let base_t = scalar_tensor dev dtype base in
+      let base_t = scalar_tensor dtype base in
       Rune.pow base_t ce)
     ~reset:ce_metric.reset_fn
 
@@ -640,17 +626,16 @@ let psnr ?(max_val = 1.0) () =
     ~update:mse_metric.update_fn
     ~compute:(fun state ->
       let mse_val = mse_metric.compute_fn state in
-      let dev = Rune.device mse_val in
       let dtype = Rune.dtype mse_val in
       let max_val_sq = max_val *. max_val in
-      let max_val_sq_t = scalar_tensor dev dtype max_val_sq in
+      let max_val_sq_t = scalar_tensor dtype max_val_sq in
       let ratio = Rune.div max_val_sq_t mse_val in
-      let ten = scalar_tensor dev dtype 10.0 in
+      let ten = scalar_tensor dtype 10.0 in
       (* log10(x) = log(x) / log(10) *)
       let log_ratio = Rune.log ratio in
       let log10_val = 2.302585093 in
       (* log(10) *)
-      let log10_t = scalar_tensor dev dtype log10_val in
+      let log10_t = scalar_tensor dtype log10_val in
       Rune.mul ten (Rune.div log_ratio log10_t))
     ~reset:mse_metric.reset_fn
 
@@ -692,11 +677,8 @@ let outer_compute = compute
 let outer_reset = reset
 
 module Collection = struct
-  type ('layout, 'dev) metric = ('layout, 'dev) t
-
-  type ('layout, 'dev) t = {
-    mutable metrics : (string * ('layout, 'dev) metric) list;
-  }
+  type 'layout metric = 'layout t
+  type 'layout t = { mutable metrics : (string * 'layout metric) list }
 
   let create metrics = { metrics }
 

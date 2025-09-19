@@ -7,13 +7,12 @@ module Log = (val Logs.src_log src : Logs.LOG)
 
 (** {1 Core Types} *)
 
-type ('elt, 'kind, 'dev) tensor_dataset =
-  ('elt, 'kind, 'dev) Rune.t Kaun.Dataset.t
+type ('elt, 'kind) tensor_dataset = ('elt, 'kind) Rune.t Kaun.Dataset.t
 
 (** {1 Vision Datasets} *)
 
 let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
-    ?(data_format = `NCHW) ?cache_dir:_ ~device () =
+    ?(data_format = `NCHW) ?cache_dir:_ () =
   (* Load from nx-datasets *)
   let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_mnist () in
 
@@ -25,12 +24,12 @@ let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
   let y = Nx.cast Nx.float32 y in
 
   (* Convert to Rune tensors *)
-  let x = Rune.of_bigarray device (Nx.to_bigarray x) in
-  let y = Rune.of_bigarray device (Nx.to_bigarray y) in
+  let x = Rune.of_bigarray (Nx.to_bigarray x) in
+  let y = Rune.of_bigarray (Nx.to_bigarray y) in
 
   (* Normalize to [0, 1] if requested *)
   let x =
-    if normalize then Rune.div x (Rune.scalar device Rune.float32 255.0) else x
+    if normalize then Rune.div x (Rune.scalar Rune.float32 255.0) else x
   in
 
   (* Handle data format *)
@@ -63,7 +62,7 @@ let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
   Kaun.Dataset.from_tensors (x, y)
 
 let cifar10 ?(train = true) ?(normalize = true) ?(data_format = `NCHW)
-    ?(augmentation = false) ?cache_dir:_ ~device () =
+    ?(augmentation = false) ?cache_dir:_ () =
   (* Load from nx-datasets *)
   let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_cifar10 () in
 
@@ -75,8 +74,8 @@ let cifar10 ?(train = true) ?(normalize = true) ?(data_format = `NCHW)
   let y = Nx.cast Nx.float32 y in
 
   (* Convert to Rune tensors *)
-  let x = Rune.of_bigarray device (Nx.to_bigarray x) in
-  let y = Rune.of_bigarray device (Nx.to_bigarray y) in
+  let x = Rune.of_bigarray (Nx.to_bigarray x) in
+  let y = Rune.of_bigarray (Nx.to_bigarray y) in
 
   (* Normalize with ImageNet stats if requested *)
   let x =
@@ -89,11 +88,9 @@ let cifar10 ?(train = true) ?(normalize = true) ?(data_format = `NCHW)
         Bigarray.Array1.of_array Bigarray.float32 Bigarray.c_layout
           [| 0.229; 0.224; 0.225 |]
       in
-      let mean =
-        Rune.of_bigarray device (Bigarray.genarray_of_array1 mean_arr)
-      in
-      let std = Rune.of_bigarray device (Bigarray.genarray_of_array1 std_arr) in
-      let x = Rune.div x (Rune.scalar device Rune.float32 255.0) in
+      let mean = Rune.of_bigarray (Bigarray.genarray_of_array1 mean_arr) in
+      let std = Rune.of_bigarray (Bigarray.genarray_of_array1 std_arr) in
+      let x = Rune.div x (Rune.scalar Rune.float32 255.0) in
       let mean = Rune.reshape [| 1; 3; 1; 1 |] mean in
       let std = Rune.reshape [| 1; 3; 1; 1 |] std in
       Rune.div (Rune.sub x mean) std
@@ -120,7 +117,7 @@ let cifar10 ?(train = true) ?(normalize = true) ?(data_format = `NCHW)
   else dataset
 
 let fashion_mnist ?(train = true) ?(flatten = false) ?(normalize = true)
-    ?(data_format = `NCHW) ?cache_dir:_ ~device () =
+    ?(data_format = `NCHW) ?cache_dir:_ () =
   (* Load from nx-datasets *)
   let (x_train, y_train), (x_test, y_test) =
     Nx_datasets.load_fashion_mnist ()
@@ -134,12 +131,12 @@ let fashion_mnist ?(train = true) ?(flatten = false) ?(normalize = true)
   let y = Nx.cast Nx.float32 y in
 
   (* Convert to Rune tensors *)
-  let x = Rune.of_bigarray device (Nx.to_bigarray x) in
-  let y = Rune.of_bigarray device (Nx.to_bigarray y) in
+  let x = Rune.of_bigarray (Nx.to_bigarray x) in
+  let y = Rune.of_bigarray (Nx.to_bigarray y) in
 
   (* Normalize to [0, 1] if requested *)
   let x =
-    if normalize then Rune.div x (Rune.scalar device Rune.float32 255.0) else x
+    if normalize then Rune.div x (Rune.scalar Rune.float32 255.0) else x
   in
 
   (* Handle data format *)
@@ -172,7 +169,7 @@ let fashion_mnist ?(train = true) ?(flatten = false) ?(normalize = true)
 
 (** {1 Text Datasets} *)
 
-let imdb ?(train = true) ?tokenizer ?(max_length = 512) ?cache_dir:_ ~device ()
+let imdb ?(train = true) ?tokenizer ?(max_length = 512) ?cache_dir:_ ()
     =
   (* TODO: Load actual IMDB data when available in nx-datasets *)
   (* For now, create a placeholder with synthetic data *)
@@ -187,7 +184,7 @@ let imdb ?(train = true) ?tokenizer ?(max_length = 512) ?cache_dir:_ ~device ()
   (* Create labels *)
   let labels =
     Array.init num_samples (fun i ->
-        Rune.scalar device Rune.float32 (float_of_int (i mod 2)))
+        Rune.scalar Rune.float32 (float_of_int (i mod 2)))
   in
 
   (* Create text dataset *)
@@ -211,7 +208,7 @@ let imdb ?(train = true) ?tokenizer ?(max_length = 512) ?cache_dir:_ ~device ()
   Kaun.Dataset.zip tokenized label_dataset
 
 let wikitext ?(dataset_name = `Wikitext2) ?tokenizer ?(sequence_length = 1024)
-    ?cache_dir:_ ~device:_ () =
+    ?cache_dir:_ () =
   let _ = dataset_name in
   (* Mark as intentionally unused *)
   (* TODO: Load actual WikiText data when available in nx-datasets *)
@@ -250,7 +247,7 @@ let wikitext ?(dataset_name = `Wikitext2) ?tokenizer ?(sequence_length = 1024)
 
 (** {1 Structured Data} *)
 
-let iris ?(normalize = true) ?(train_split = 0.8) ?shuffle_seed ~device () =
+let iris ?(normalize = true) ?(train_split = 0.8) ?shuffle_seed () =
   let _ = train_split in
   (* Mark as intentionally unused - will use train_test_split *)
 
@@ -262,16 +259,15 @@ let iris ?(normalize = true) ?(train_split = 0.8) ?shuffle_seed ~device () =
   let y = Nx.cast Nx.float32 y in
 
   (* Convert to Rune tensors *)
-  let x = Rune.of_bigarray device (Nx.to_bigarray x) in
-  let y = Rune.of_bigarray device (Nx.to_bigarray y) in
+  let x = Rune.of_bigarray (Nx.to_bigarray x) in
+  let y = Rune.of_bigarray (Nx.to_bigarray y) in
 
   (* Normalize if requested *)
   let x =
     if normalize then
       let mean = Rune.mean x ~axes:[| 0 |] ~keepdims:true in
       let std = Rune.std x ~axes:[| 0 |] ~keepdims:true in
-      Rune.div (Rune.sub x mean)
-        (Rune.add std (Rune.scalar device Rune.float32 1e-8))
+      Rune.div (Rune.sub x mean) (Rune.add std (Rune.scalar Rune.float32 1e-8))
     else x
   in
 
@@ -285,7 +281,7 @@ let iris ?(normalize = true) ?(train_split = 0.8) ?shuffle_seed ~device () =
       Kaun.Dataset.shuffle ~rng:key dataset
   | None -> dataset
 
-let boston_housing ?(normalize = true) ?(train_split = 0.8) ~device () =
+let boston_housing ?(normalize = true) ?(train_split = 0.8) () =
   let _ = train_split in
   (* Mark as intentionally unused - will use train_test_split *)
 
@@ -298,16 +294,15 @@ let boston_housing ?(normalize = true) ?(train_split = 0.8) ~device () =
   let y = Nx.cast Nx.float32 y in
 
   (* Convert to Rune tensors *)
-  let x = Rune.of_bigarray device (Nx.to_bigarray x) in
-  let y = Rune.of_bigarray device (Nx.to_bigarray y) in
+  let x = Rune.of_bigarray (Nx.to_bigarray x) in
+  let y = Rune.of_bigarray (Nx.to_bigarray y) in
 
   (* Normalize if requested *)
   let x =
     if normalize then
       let mean = Rune.mean x ~axes:[| 0 |] ~keepdims:true in
       let std = Rune.std x ~axes:[| 0 |] ~keepdims:true in
-      Rune.div (Rune.sub x mean)
-        (Rune.add std (Rune.scalar device Rune.float32 1e-8))
+      Rune.div (Rune.sub x mean) (Rune.add std (Rune.scalar Rune.float32 1e-8))
     else x
   in
 

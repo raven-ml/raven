@@ -18,19 +18,17 @@
     - Multi-task learning with metric collections
     - Distributed training aggregation *)
 
-open! Import
-
 (** {1 Core Types} *)
 
-type ('layout, 'dev) t
+type 'layout t
 (** A stateful metric accumulator *)
 
-type ('layout, 'dev) metric_fn =
-  predictions:('layout, 'dev) tensor ->
-  targets:('layout, 'dev) tensor ->
-  ?weights:('layout, 'dev) tensor ->
+type 'layout metric_fn =
+  predictions:(float, 'layout) Rune.t ->
+  targets:(float, 'layout) Rune.t ->
+  ?weights:(float, 'layout) Rune.t ->
   unit ->
-  ('layout, 'dev) tensor
+  (float, 'layout) Rune.t
 (** Function signature for metric computations *)
 
 type reduction =
@@ -54,11 +52,7 @@ type averaging =
 (** {2 Classification Metrics} *)
 
 val accuracy :
-  ?threshold:float ->
-  ?top_k:int ->
-  ?averaging:averaging ->
-  unit ->
-  ('layout, 'dev) t
+  ?threshold:float -> ?top_k:int -> ?averaging:averaging -> unit -> 'layout t
 (** [accuracy ?threshold ?top_k ?averaging ()] creates an accuracy metric.
 
     @param threshold
@@ -79,7 +73,7 @@ val precision :
   ?averaging:averaging ->
   ?zero_division:float ->
   unit ->
-  ('layout, 'dev) t
+  'layout t
 (** [precision ?threshold ?averaging ?zero_division ()] creates a precision
     metric.
 
@@ -100,7 +94,7 @@ val recall :
   ?averaging:averaging ->
   ?zero_division:float ->
   unit ->
-  ('layout, 'dev) t
+  'layout t
 (** [recall ?threshold ?averaging ?zero_division ()] creates a recall metric.
 
     Recall = True Positives / (True Positives + False Negatives)
@@ -111,11 +105,7 @@ val recall :
       Value to return when there are no actual positives (default: 0.0) *)
 
 val f1_score :
-  ?threshold:float ->
-  ?averaging:averaging ->
-  ?beta:float ->
-  unit ->
-  ('layout, 'dev) t
+  ?threshold:float -> ?averaging:averaging -> ?beta:float -> unit -> 'layout t
 (** [f1_score ?threshold ?averaging ?beta ()] creates an F-score metric.
 
     F-score = (1 + β²) * (Precision * Recall) / (β² * Precision + Recall)
@@ -124,7 +114,7 @@ val f1_score :
     @param averaging Multi-class averaging strategy (default: Micro)
     @param beta Weight of recall vs precision (default: 1.0 for F1) *)
 
-val auc_roc : ?num_thresholds:int -> ?curve:bool -> unit -> ('layout, 'dev) t
+val auc_roc : ?num_thresholds:int -> ?curve:bool -> unit -> 'layout t
 (** [auc_roc ?num_thresholds ?curve ()] creates an AUC-ROC metric.
 
     Area Under the Receiver Operating Characteristic Curve.
@@ -133,7 +123,7 @@ val auc_roc : ?num_thresholds:int -> ?curve:bool -> unit -> ('layout, 'dev) t
       Number of thresholds for curve computation (default: 200)
     @param curve If true, also return the ROC curve points (default: false) *)
 
-val auc_pr : ?num_thresholds:int -> ?curve:bool -> unit -> ('layout, 'dev) t
+val auc_pr : ?num_thresholds:int -> ?curve:bool -> unit -> 'layout t
 (** [auc_pr ?num_thresholds ?curve ()] creates an AUC-PR metric.
 
     Area Under the Precision-Recall Curve. *)
@@ -142,7 +132,7 @@ val confusion_matrix :
   num_classes:int ->
   ?normalize:[ `None | `True | `Pred | `All ] ->
   unit ->
-  ('layout, 'dev) t
+  'layout t
 (** [confusion_matrix ~num_classes ?normalize ()] creates a confusion matrix
     accumulator.
 
@@ -151,22 +141,22 @@ val confusion_matrix :
 
 (** {2 Regression Metrics} *)
 
-val mse : ?reduction:reduction -> unit -> ('layout, 'dev) t
+val mse : ?reduction:reduction -> unit -> 'layout t
 (** [mse ?reduction ()] creates a Mean Squared Error metric.
 
     MSE = mean((predictions - targets)²) *)
 
-val rmse : ?reduction:reduction -> unit -> ('layout, 'dev) t
+val rmse : ?reduction:reduction -> unit -> 'layout t
 (** [rmse ?reduction ()] creates a Root Mean Squared Error metric.
 
     RMSE = sqrt(mean((predictions - targets)²)) *)
 
-val mae : ?reduction:reduction -> unit -> ('layout, 'dev) t
+val mae : ?reduction:reduction -> unit -> 'layout t
 (** [mae ?reduction ()] creates a Mean Absolute Error metric.
 
     MAE = mean(|predictions - targets|) *)
 
-val loss : unit -> ('layout, 'dev) t
+val loss : unit -> 'layout t
 (** [loss ()] creates a loss metric that tracks the running average of loss
     values.
 
@@ -174,14 +164,14 @@ val loss : unit -> ('layout, 'dev) t
     metrics. The loss value should be passed via the weights parameter in
     update. *)
 
-val mape : ?eps:float -> unit -> ('layout, 'dev) t
+val mape : ?eps:float -> unit -> 'layout t
 (** [mape ?eps ()] creates a Mean Absolute Percentage Error metric.
 
     MAPE = mean(|predictions - targets| / (|targets| + eps)) * 100
 
     @param eps Small value to avoid division by zero (default: 1e-7) *)
 
-val r2_score : ?adjusted:bool -> ?num_features:int -> unit -> ('layout, 'dev) t
+val r2_score : ?adjusted:bool -> ?num_features:int -> unit -> 'layout t
 (** [r2_score ?adjusted ?num_features ()] creates an R² coefficient of
     determination.
 
@@ -190,32 +180,32 @@ val r2_score : ?adjusted:bool -> ?num_features:int -> unit -> ('layout, 'dev) t
     @param adjusted If true, compute adjusted R² (requires num_features)
     @param num_features Number of features (required for adjusted R²) *)
 
-val explained_variance : unit -> ('layout, 'dev) t
+val explained_variance : unit -> 'layout t
 (** [explained_variance ()] creates an explained variance metric.
 
     EV = 1 - Var(targets - predictions) / Var(targets) *)
 
 (** {2 Probabilistic Metrics} *)
 
-val cross_entropy : ?from_logits:bool -> unit -> ('layout, 'dev) t
+val cross_entropy : ?from_logits:bool -> unit -> 'layout t
 (** [cross_entropy ?from_logits ()] creates a cross-entropy metric.
 
     @param from_logits If true, apply softmax to predictions (default: true) *)
 
-val binary_cross_entropy : ?from_logits:bool -> unit -> ('layout, 'dev) t
+val binary_cross_entropy : ?from_logits:bool -> unit -> 'layout t
 (** [binary_cross_entropy ?from_logits ()] creates a binary cross-entropy
     metric.
 
     @param from_logits If true, apply sigmoid to predictions (default: true) *)
 
-val kl_divergence : ?eps:float -> unit -> ('layout, 'dev) t
+val kl_divergence : ?eps:float -> unit -> 'layout t
 (** [kl_divergence ?eps ()] creates a KL divergence metric.
 
     KL(P||Q) = sum(P * log(P / Q))
 
     @param eps Small value for numerical stability (default: 1e-7) *)
 
-val perplexity : ?base:float -> unit -> ('layout, 'dev) t
+val perplexity : ?base:float -> unit -> 'layout t
 (** [perplexity ?base ()] creates a perplexity metric for language models.
 
     Perplexity = base^(cross_entropy)
@@ -224,17 +214,17 @@ val perplexity : ?base:float -> unit -> ('layout, 'dev) t
 
 (** {2 Ranking Metrics} *)
 
-val ndcg : ?k:int -> unit -> ('layout, 'dev) t
+val ndcg : ?k:int -> unit -> 'layout t
 (** [ndcg ?k ()] creates a Normalized Discounted Cumulative Gain metric.
 
     @param k Consider only top-k items (default: all) *)
 
-val map : ?k:int -> unit -> ('layout, 'dev) t
+val map : ?k:int -> unit -> 'layout t
 (** [map ?k ()] creates a Mean Average Precision metric for ranking.
 
     @param k Consider only top-k items (default: all) *)
 
-val mrr : unit -> ('layout, 'dev) t
+val mrr : unit -> 'layout t
 (** [mrr ()] creates a Mean Reciprocal Rank metric.
 
     MRR = mean(1 / rank_of_first_relevant_item) *)
@@ -247,7 +237,7 @@ val bleu :
   ?smoothing:bool ->
   tokenizer:(string -> int array) ->
   unit ->
-  ('layout, 'dev) t
+  'layout t
 (** [bleu ?max_n ?weights ?smoothing ~tokenizer ()] creates a BLEU score metric.
 
     @param max_n Maximum n-gram order (default: 4)
@@ -260,7 +250,7 @@ val rouge :
   ?use_stemmer:bool ->
   tokenizer:(string -> int array) ->
   unit ->
-  ('layout, 'dev) t
+  'layout t
 (** [rouge ~variant ?use_stemmer ~tokenizer ()] creates a ROUGE score metric.
 
     @param variant Which ROUGE variant to compute
@@ -273,7 +263,7 @@ val meteor :
   ?gamma:float ->
   tokenizer:(string -> int array) ->
   unit ->
-  ('layout, 'dev) t
+  'layout t
 (** [meteor ?alpha ?beta ?gamma ~tokenizer ()] creates a METEOR score metric.
 
     @param alpha Parameter for recall weight (default: 0.9)
@@ -282,15 +272,14 @@ val meteor :
 
 (** {2 Image Metrics} *)
 
-val psnr : ?max_val:float -> unit -> ('layout, 'dev) t
+val psnr : ?max_val:float -> unit -> 'layout t
 (** [psnr ?max_val ()] creates a Peak Signal-to-Noise Ratio metric.
 
     PSNR = 10 * log10(max_val² / MSE)
 
     @param max_val Maximum possible pixel value (default: 1.0) *)
 
-val ssim :
-  ?window_size:int -> ?k1:float -> ?k2:float -> unit -> ('layout, 'dev) t
+val ssim : ?window_size:int -> ?k1:float -> ?k2:float -> unit -> 'layout t
 (** [ssim ?window_size ?k1 ?k2 ()] creates a Structural Similarity Index metric.
 
     @param window_size Size of the gaussian window (default: 11)
@@ -298,11 +287,7 @@ val ssim :
     @param k2 Constant for contrast (default: 0.03) *)
 
 val iou :
-  ?threshold:float ->
-  ?per_class:bool ->
-  num_classes:int ->
-  unit ->
-  ('layout, 'dev) t
+  ?threshold:float -> ?per_class:bool -> num_classes:int -> unit -> 'layout t
 (** [iou ?threshold ?per_class ~num_classes ()] creates an Intersection over
     Union metric.
 
@@ -311,11 +296,7 @@ val iou :
     @param num_classes Number of segmentation classes *)
 
 val dice :
-  ?threshold:float ->
-  ?per_class:bool ->
-  num_classes:int ->
-  unit ->
-  ('layout, 'dev) t
+  ?threshold:float -> ?per_class:bool -> num_classes:int -> unit -> 'layout t
 (** [dice ?threshold ?per_class ~num_classes ()] creates a Dice coefficient
     metric.
 
@@ -324,10 +305,10 @@ val dice :
 (** {1 Metric Operations} *)
 
 val update :
-  ('layout, 'dev) t ->
-  predictions:('layout, 'dev) tensor ->
-  targets:('layout, 'dev) tensor ->
-  ?weights:('layout, 'dev) tensor ->
+  'layout t ->
+  predictions:(float, 'layout) Rune.t ->
+  targets:(float, 'layout) Rune.t ->
+  ?weights:(float, 'layout) Rune.t ->
   unit ->
   unit
 (** [update metric ~predictions ~targets ?weights ()] updates the metric state.
@@ -336,63 +317,62 @@ val update :
     @param targets Ground truth targets
     @param weights Optional sample weights for weighted metrics *)
 
-val compute : ('layout, 'dev) t -> ('layout, 'dev) tensor
+val compute : 'layout t -> (float, 'layout) Rune.t
 (** [compute metric] computes the final metric value from accumulated state.
 
     @return Scalar tensor with the metric value *)
 
-val reset : ('layout, 'dev) t -> unit
+val reset : 'layout t -> unit
 (** [reset metric] resets the metric state for a new epoch or evaluation. *)
 
-val clone : ('layout, 'dev) t -> ('layout, 'dev) t
+val clone : 'layout t -> 'layout t
 (** [clone metric] creates a copy of the metric with fresh state. *)
 
 (** {1 Metric Collections} *)
 
 module Collection : sig
-  type ('layout, 'dev) metric = ('layout, 'dev) t
+  type 'layout metric = 'layout t
 
-  type ('layout, 'dev) t
+  type 'layout t
   (** A collection of metrics computed together *)
 
-  val create : (string * ('layout, 'dev) metric) list -> ('layout, 'dev) t
+  val create : (string * 'layout metric) list -> 'layout t
   (** [create metrics] creates a metric collection from named metrics. *)
 
   val update :
-    ('layout, 'dev) t ->
-    predictions:('layout, 'dev) tensor ->
-    targets:('layout, 'dev) tensor ->
-    ?weights:('layout, 'dev) tensor ->
+    'layout t ->
+    predictions:(float, 'layout) Rune.t ->
+    targets:(float, 'layout) Rune.t ->
+    ?weights:(float, 'layout) Rune.t ->
     unit ->
     unit
   (** [update collection ~predictions ~targets ?weights ()] updates all metrics.
   *)
 
   val update_with_loss :
-    ('layout, 'dev) t ->
-    loss:('layout, 'dev) tensor ->
-    predictions:('layout, 'dev) tensor ->
-    targets:('layout, 'dev) tensor ->
+    'layout t ->
+    loss:(float, 'layout) Rune.t ->
+    predictions:(float, 'layout) Rune.t ->
+    targets:(float, 'layout) Rune.t ->
     unit ->
     unit
   (** [update_with_loss collection ~loss ~predictions ~targets ()] updates all
       metrics including loss tracking. The loss value is automatically passed to
       the loss metric if present in the collection. *)
 
-  val compute : ('layout, 'dev) t -> (string * ('layout, 'dev) tensor) list
+  val compute : 'layout t -> (string * (float, 'layout) Rune.t) list
   (** [compute collection] computes all metric values. *)
 
-  val compute_dict :
-    ('layout, 'dev) t -> (string, ('layout, 'dev) tensor) Hashtbl.t
+  val compute_dict : 'layout t -> (string, (float, 'layout) Rune.t) Hashtbl.t
   (** [compute_dict collection] computes metrics as a hash table. *)
 
-  val reset : ('layout, 'dev) t -> unit
+  val reset : 'layout t -> unit
   (** [reset collection] resets all metrics. *)
 
-  val add : ('layout, 'dev) t -> string -> ('layout, 'dev) metric -> unit
+  val add : 'layout t -> string -> 'layout metric -> unit
   (** [add collection name metric] adds a new metric to the collection. *)
 
-  val remove : ('layout, 'dev) t -> string -> unit
+  val remove : 'layout t -> string -> unit
   (** [remove collection name] removes a metric from the collection. *)
 end
 
@@ -400,17 +380,17 @@ end
 
 val create_custom :
   name:string ->
-  init:(unit -> ('layout, 'dev) tensor list) ->
+  init:(unit -> (float, 'layout) Rune.t list) ->
   update:
-    (('layout, 'dev) tensor list ->
-    predictions:('layout, 'dev) tensor ->
-    targets:('layout, 'dev) tensor ->
-    ?weights:('layout, 'dev) tensor ->
+    ((float, 'layout) Rune.t list ->
+    predictions:(float, 'layout) Rune.t ->
+    targets:(float, 'layout) Rune.t ->
+    ?weights:(float, 'layout) Rune.t ->
     unit ->
-    ('layout, 'dev) tensor list) ->
-  compute:(('layout, 'dev) tensor list -> ('layout, 'dev) tensor) ->
-  reset:(('layout, 'dev) tensor list -> ('layout, 'dev) tensor list) ->
-  ('layout, 'dev) t
+    (float, 'layout) Rune.t list) ->
+  compute:((float, 'layout) Rune.t list -> (float, 'layout) Rune.t) ->
+  reset:((float, 'layout) Rune.t list -> (float, 'layout) Rune.t list) ->
+  'layout t
 (** [create_custom ~name ~init ~update ~compute ~reset] creates a custom metric.
 
     @param name Metric name for debugging
@@ -455,15 +435,11 @@ val create_custom :
 
 (** {1 Utilities} *)
 
-val name : ('layout, 'dev) t -> string
+val name : 'layout t -> string
 (** [name metric] returns the metric's name for logging. *)
 
 val is_better :
-  ('layout, 'dev) t ->
-  higher_better:bool ->
-  old_val:float ->
-  new_val:float ->
-  bool
+  'layout t -> higher_better:bool -> old_val:float -> new_val:float -> bool
 (** [is_better metric ~higher_better ~old_val ~new_val] checks if new value is
     better.
 
@@ -471,5 +447,5 @@ val is_better :
     @param old_val Previous metric value
     @param new_val Current metric value *)
 
-val format : ('layout, 'dev) t -> ('layout, 'dev) tensor -> string
+val format : 'layout t -> (float, 'layout) Rune.t -> string
 (** [format metric value] formats the metric value for display. *)

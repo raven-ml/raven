@@ -3,7 +3,7 @@ open Nx_rune
 open Bigarray_ext
 module Ir = Rune_jit.Ir
 module Var = Ir.Var
-module Rune_jit_metal = Rune_metal.Jit_backend
+(* Backends are selected at the JIT boundary. Outside JIT we are host-only. *)
 
 let shape_prod = Array.fold_left ( * ) 1
 
@@ -618,10 +618,17 @@ let trace _ctx f input =
 (* ───── Compilation and Execution ───── *)
 
 (* Helper to get Metal backend module *)
-let metal_backend_module () =
-  (module Rune_jit_metal : Rune_jit.Backend_intf.S
-    with type callable_kernel_native = Rune_jit_metal.callable_kernel_native
-     and type device_buffer_native = Rune_jit_metal.device_buffer_native)
+(* Backend selection. Default is Metal if available; LLVM is a CPU JIT fallback. *)
+type jit_device = [ `metal | `llvm ]
+
+let backend_module (device : jit_device) =
+  match device with
+  | `metal ->
+      let module M = Rune_jit_metal_or_missing in
+      (module M : Rune_jit.Backend_intf.S)
+  | `llvm ->
+      let module L = Rune_jit_llvm in
+      (module L : Rune_jit.Backend_intf.S)
 
 let compile_graph (type kernel_native)
     ~(backend :
@@ -664,9 +671,7 @@ let execute_compiled_fn (type kernel_native)
   in
   let input_ba =
     match input with
-    | Ocaml_tensor cpu_t -> Nx_c.data cpu_t
-    | C_tensor c_t -> Nx_c.data c_t
-    | Metal_tensor _ -> failwith "JIT: Metal tensor input not supported yet"
+    | Native_tensor cpu_t -> Nx_c.data cpu_t
     | Symbolic_tensor _ -> failwith "JIT: Cannot execute with symbolic tensor"
   in
 
@@ -727,63 +732,114 @@ let execute_compiled_fn (type kernel_native)
   | Ok () -> ()
   | Error e -> failwith (Printf.sprintf "Copy from device failed: %s" e));
 
+  (* Return a host (CPU) tensor. Outside JIT we are host-only. *)
   match input with
-  | Ocaml_tensor _ ->
-      Ocaml_tensor (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
-  | C_tensor _ -> C_tensor (Nx_c.op_const_array (Nx_c.create_context ()) out_ba)
-  | Metal_tensor _ ->
-      Metal_tensor
-        (Rune_metal.op_const_array (Rune_metal.create_context ()) out_ba)
+  | Native_tensor _ ->
+      let cpu_ctx = Nx_rune.create_context () in
+      Nx_rune.op_const_array cpu_ctx out_ba
   | Symbolic_tensor _ -> assert false
 
 (* ───── Main JIT Function ───── *)
 
-let jit (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
-  (* Create separate caches for each backend type *)
-  let metal_cache = Hashtbl.create 8 in
+let jit ?(device : jit_device = `metal)
+    (f : ('a, 'b) Nx_rune.t -> ('c, 'd) Nx_rune.t) =
+  (* Separate caches per backend device, with concrete native types. *)
+  let metal_cache =
+    let module M = Rune_jit_metal_or_missing in
+    (Hashtbl.create 8
+      : (int array, M.callable_kernel_native compiled_state) Hashtbl.t)
+  in
+  let llvm_cache =
+    let module L = Rune_jit_llvm in
+    (Hashtbl.create 8
+      : (int array, L.callable_kernel_native compiled_state) Hashtbl.t)
+  in
 
   fun (input : ('a, 'b) Nx_rune.t) ->
-    match input with
-    | Metal_tensor _ -> (
-        let module B = (val metal_backend_module ()) in
+    (* All inputs are expected to be CPU tensors outside JIT. *)
+    (match input with
+    | Native_tensor _ -> ()
+    | Symbolic_tensor _ -> failwith "JIT: Cannot execute with symbolic tensor");
+
+    let input_shape = get_shape (view input) in
+    match device with
+    | `metal ->
+        let module M = Rune_jit_metal_or_missing in
         let backend =
-          (module B : Rune_jit.Backend_intf.S
-            with type callable_kernel_native = _)
+          (module M : Rune_jit.Backend_intf.S
+            with type callable_kernel_native = M.callable_kernel_native)
         in
-        let input_shape = get_shape (view input) in
-        match Hashtbl.find_opt metal_cache input_shape with
-        | Some state -> execute_compiled_fn ~backend state input
-        | None -> (
-            try
-              let _ = B.Device_info.get_default () in
-              let ctx = Nx_rune.create_context ~device:Metal () in
-              let graph, symbolic_result = trace ctx f input in
-              Printf.eprintf "JIT: Compiling graph for shape %s with %d nodes\n"
-                (Array.fold_left
-                   (fun acc x -> acc ^ " " ^ string_of_int x)
-                   "[" input_shape
-                ^ " ]")
-                (List.length graph.nodes);
-              let executable = compile_graph ~backend graph in
-              let state =
-                {
-                  executable;
-                  input_vars = graph.input_vars;
-                  output_vars = graph.output_vars;
-                  output_shape = get_shape (view symbolic_result);
-                  output_dtype =
-                    nx_dtype_to_ir_any_dtype (dtype symbolic_result);
-                }
-              in
-              Hashtbl.add metal_cache input_shape state;
-              execute_compiled_fn ~backend state input
-            with e ->
-              Printf.eprintf
-                "JIT: Compilation failed (%s), falling back to eager\n"
-                (Printexc.to_string e);
-              f input))
-    | Ocaml_tensor _ | C_tensor _ ->
-        (* For CPU backends, we just use eager execution for now *)
-        f input
-    | Symbolic_tensor _ ->
-        failwith "Cannot execute JIT function with symbolic tensor"
+        begin
+          match Hashtbl.find_opt metal_cache input_shape with
+          | Some state -> execute_compiled_fn ~backend state input
+          | None -> (
+              try
+                let _ = M.Device_info.get_default () in
+                let ctx = Nx_rune.create_context () in
+                let graph, symbolic_result = trace ctx f input in
+                Printf.eprintf
+                  "JIT: Compiling graph for shape %s with %d nodes\n"
+                  (Array.fold_left
+                     (fun acc x -> acc ^ " " ^ string_of_int x)
+                     "[" input_shape
+                  ^ " ]")
+                  (List.length graph.nodes);
+                let executable = compile_graph ~backend graph in
+                let state : M.callable_kernel_native compiled_state =
+                  {
+                    executable;
+                    input_vars = graph.input_vars;
+                    output_vars = graph.output_vars;
+                    output_shape = get_shape (view symbolic_result);
+                    output_dtype =
+                      nx_dtype_to_ir_any_dtype (dtype symbolic_result);
+                  }
+                in
+                Hashtbl.add metal_cache input_shape state;
+                execute_compiled_fn ~backend state input
+              with e ->
+                Printf.eprintf
+                  "JIT: Backend %s unavailable or compilation failed (%s); falling back to eager\n"
+                  M.name (Printexc.to_string e);
+                f input)
+        end
+    | `llvm ->
+        let module L = Rune_jit_llvm in
+        let backend =
+          (module L : Rune_jit.Backend_intf.S
+            with type callable_kernel_native = L.callable_kernel_native)
+        in
+        begin
+          match Hashtbl.find_opt llvm_cache input_shape with
+          | Some state -> execute_compiled_fn ~backend state input
+          | None -> (
+              try
+                let _ = L.Device_info.get_default () in
+                let ctx = Nx_rune.create_context () in
+                let graph, symbolic_result = trace ctx f input in
+                Printf.eprintf
+                  "JIT: Compiling graph for shape %s with %d nodes\n"
+                  (Array.fold_left
+                     (fun acc x -> acc ^ " " ^ string_of_int x)
+                     "[" input_shape
+                  ^ " ]")
+                  (List.length graph.nodes);
+                let executable = compile_graph ~backend graph in
+                let state : L.callable_kernel_native compiled_state =
+                  {
+                    executable;
+                    input_vars = graph.input_vars;
+                    output_vars = graph.output_vars;
+                    output_shape = get_shape (view symbolic_result);
+                    output_dtype =
+                      nx_dtype_to_ir_any_dtype (dtype symbolic_result);
+                  }
+                in
+                Hashtbl.add llvm_cache input_shape state;
+                execute_compiled_fn ~backend state input
+              with e ->
+                Printf.eprintf
+                  "JIT: Backend %s unavailable or compilation failed (%s); falling back to eager\n"
+                  L.name (Printexc.to_string e);
+                f input)
+        end

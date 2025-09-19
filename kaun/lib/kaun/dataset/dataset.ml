@@ -22,7 +22,7 @@ type 'a t = {
   spec : unit -> element_spec; (* Element type specification *)
 }
 
-type ('elt, 'kind, 'dev) tensor_dataset = ('elt, 'kind, 'dev) Rune.t t
+type ('elt, 'kind) tensor_dataset = ('elt, 'kind) Rune.t t
 type tokenizer = string -> int array
 
 (* Create a stateless whitespace tokenizer *)
@@ -363,7 +363,7 @@ let from_text ~tokenizer path =
   (* Create a single-element dataset containing all tokens *)
   from_array [| tokens |]
 
-let sliding_window ~block_size ~tokenize ~device texts =
+let sliding_window ~block_size ~tokenize texts =
   (* Efficient sliding windows over each text independently. For a tokenized
      sequence ids with length L, we produce (L-1) windows: for i in 0..L-2,
      context is last [block_size] tokens up to i, left-padded with the first id.
@@ -401,8 +401,8 @@ let sliding_window ~block_size ~tokenize ~device texts =
         done)
     token_arrays;
   (* Build Rune tensors and return a dataset of element pairs *)
-  let x = Rune.create device Rune.float32 [| total; block_size |] x_data in
-  let y = Rune.create device Rune.float32 [| total |] y_idx in
+  let x = Rune.create Rune.float32 [| total; block_size |] x_data in
+  let y = Rune.create Rune.float32 [| total |] y_idx in
   from_tensors (x, y)
 
 (** {1 Transformations} *)
@@ -1468,7 +1468,7 @@ let reset dataset = match dataset.reset with Some f -> f () | None -> ()
 (** {1 Common Pipelines} *)
 
 let text_classification_pipeline ?tokenizer ?max_length ?(batch_size = 32)
-    ?(shuffle_buffer = 10000) ?num_workers ~device text_dataset =
+    ?(shuffle_buffer = 10000) ?num_workers text_dataset =
   let tok = Option.value tokenizer ~default:whitespace_tokenizer in
   (* Use Dynamic padding when batching to ensure all sequences in a batch have
      same length *)
@@ -1493,7 +1493,7 @@ let text_classification_pipeline ?tokenizer ?max_length ?(batch_size = 32)
                 else arr
               in
               let int32_arr = Array.map Int32.of_int padded_arr in
-              Rune.create device Rune.int32 [| max_len |] int32_arr)
+              Rune.create Rune.int32 [| max_len |] int32_arr)
             batch
         in
         Rune.stack ~axis:0 (Array.to_list tensors))
@@ -1505,8 +1505,7 @@ let text_classification_pipeline ?tokenizer ?max_length ?(batch_size = 32)
   | Some n -> parallel_map ~num_workers:n (fun x -> x) prefetched
 
 let language_model_pipeline ?tokenizer ?(sequence_length = 512)
-    ?(batch_size = 32) ?(shuffle_buffer = 10000) ?num_workers ~device
-    text_dataset =
+    ?(batch_size = 32) ?(shuffle_buffer = 10000) ?num_workers text_dataset =
   let tok = Option.value tokenizer ~default:whitespace_tokenizer in
   (* Use padding to ensure consistent length *)
   let tokenized =
@@ -1545,7 +1544,7 @@ let language_model_pipeline ?tokenizer ?(sequence_length = 512)
                 else arr
               in
               let int32_arr = Array.map Int32.of_int padded_arr in
-              Rune.create device Rune.int32 [| max_len |] int32_arr)
+              Rune.create Rune.int32 [| max_len |] int32_arr)
             inputs
         in
         let target_tensors =
@@ -1557,7 +1556,7 @@ let language_model_pipeline ?tokenizer ?(sequence_length = 512)
                 else arr
               in
               let int32_arr = Array.map Int32.of_int padded_arr in
-              Rune.create device Rune.int32 [| max_len |] int32_arr)
+              Rune.create Rune.int32 [| max_len |] int32_arr)
             targets
         in
         ( Rune.stack ~axis:0 (Array.to_list input_tensors),

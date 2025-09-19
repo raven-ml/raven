@@ -1,14 +1,12 @@
 open Rune
 
 let () =
-  let ctx = ocaml in
-
   (* Simulate MNIST-like input: batch=2, channels=1, 28x28 *)
-  let x = randn ctx Float32 [| 2; 1; 28; 28 |] in
+  let x = randn Float32 [| 2; 1; 28; 28 |] in
 
   (* Conv1: 1 -> 6 channels, 5x5 kernel *)
-  let conv1_w = randn ctx Float32 [| 6; 1; 5; 5 |] in
-  let conv1_b = zeros ctx Float32 [| 6 |] in
+  let conv1_w = randn Float32 [| 6; 1; 5; 5 |] in
+  let conv1_b = zeros Float32 [| 6 |] in
 
   Printf.printf "Input shape: %s\n"
     (Array.to_list (shape x) |> List.map string_of_int |> String.concat ", ");

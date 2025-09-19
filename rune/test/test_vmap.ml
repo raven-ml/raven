@@ -1,24 +1,21 @@
 open Test_rune_support
 module T = Rune
 
-let ctx = T.c
 let eps = 1e-6
 
 (* Test basic vmap functionality *)
 let test_vmap_simple () =
-  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let f t = T.mul_s t 2. in
   let vmapped_f = T.vmap f in
   let result = vmapped_f x in
-  let expected =
-    T.create ctx T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |]
-  in
+  let expected = T.create T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |] in
   check_rune ~eps "vmap simple" expected result
 
 (* Test vmap with matrix multiplication *)
 let test_vmap_matmul () =
   let batch_x =
-    T.create ctx T.float32 [| 2; 3; 3 |]
+    T.create T.float32 [| 2; 3; 3 |]
       [|
         1.;
         2.;
@@ -40,7 +37,7 @@ let test_vmap_matmul () =
         18.;
       |]
   in
-  let w = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let w = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let batched_matmul = T.vmap (fun x -> T.matmul x w) in
   let result = batched_matmul batch_x in
 
@@ -55,7 +52,7 @@ let test_vmap_matmul () =
 
 (* Test vmap with different axis *)
 let test_vmap_axis () =
-  let x = T.create ctx T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
+  let x = T.create T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
   let f = T.vmap ~in_axes:(T.Single (T.Map 1)) (fun t -> T.sum t) in
   let result = f x in
   let expected_shape = [| 3 |] in
@@ -65,7 +62,7 @@ let test_vmap_axis () =
 let test_vmap_no_out_axis () =
   (* JAX semantics: out_axes=None only works with constant functions. For
      non-constant outputs, JAX would error. We take first element. *)
-  let x = T.create ctx T.float32 [| 5; 3 |] (Array.init 15 float_of_int) in
+  let x = T.create T.float32 [| 5; 3 |] (Array.init 15 float_of_int) in
   let f = T.vmap ~out_axes:(T.OutSingle None) (fun t -> T.sum t) in
   let result = f x in
   (* First row sum: 0+1+2 = 3 *)
@@ -73,18 +70,18 @@ let test_vmap_no_out_axis () =
 
 (* Test vmap with broadcasting *)
 let test_vmap_broadcast () =
-  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let y = T.create ctx T.float32 [| 2 |] [| 10.; 20. |] in
+  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let y = T.create T.float32 [| 2 |] [| 10.; 20. |] in
   let f = T.vmap (fun t -> T.add t y) in
   let result = f x in
   let expected =
-    T.create ctx T.float32 [| 3; 2 |] [| 11.; 22.; 13.; 24.; 15.; 26. |]
+    T.create T.float32 [| 3; 2 |] [| 11.; 22.; 13.; 24.; 15.; 26. |]
   in
   check_rune ~eps "vmap broadcast" expected result
 
 (* Test nested vmap *)
 let test_nested_vmap () =
-  let x = T.create ctx T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
+  let x = T.create T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
   let inner_vmap = T.vmap (fun t -> T.mul_s t 2.) in
   let outer_vmap = T.vmap inner_vmap in
   let result = outer_vmap x in
@@ -97,7 +94,7 @@ let test_nested_vmap () =
 
 (* Test vmap with reduction *)
 let test_vmap_reduction () =
-  let x = T.create ctx T.float32 [| 4; 3; 2 |] (Array.init 24 float_of_int) in
+  let x = T.create T.float32 [| 4; 3; 2 |] (Array.init 24 float_of_int) in
   let f = T.vmap (fun t -> T.sum t ~axes:[| 1 |]) in
   let result = f x in
   let expected_shape = [| 4; 3 |] in
@@ -106,11 +103,9 @@ let test_vmap_reduction () =
 (* Test vmap with where operation *)
 let test_vmap_where () =
   (* JAX semantics: captured tensors are broadcast, not co-iterated *)
-  let cond = T.create ctx T.uint8 [| 3; 2 |] [| 1; 0; 1; 1; 0; 1 |] in
-  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let y =
-    T.create ctx T.float32 [| 3; 2 |] [| 10.; 20.; 30.; 40.; 50.; 60. |]
-  in
+  let cond = T.create T.uint8 [| 3; 2 |] [| 1; 0; 1; 1; 0; 1 |] in
+  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let y = T.create T.float32 [| 3; 2 |] [| 10.; 20.; 30.; 40.; 50.; 60. |] in
   let f = T.vmap (fun c -> T.where c x y) in
   let result = f cond in
   (* With broadcast semantics, result shape should be [3, 3, 2] Each batch
@@ -121,7 +116,7 @@ let test_vmap_where () =
 
 (* Test vmap with transpose *)
 let test_vmap_transpose () =
-  let x = T.create ctx T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
+  let x = T.create T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
   let f = T.vmap (fun t -> T.transpose t) in
   let result = f x in
   let expected_shape = [| 2; 4; 3 |] in
@@ -130,11 +125,11 @@ let test_vmap_transpose () =
 (* Test vmap with elementwise operations *)
 let test_vmap_elementwise () =
   let x =
-    T.create ctx T.float32 [| 3; 4 |]
+    T.create T.float32 [| 3; 4 |]
       (Array.init 12 (fun i -> float_of_int (i + 1)))
   in
   let y =
-    T.create ctx T.float32 [| 3; 4 |]
+    T.create T.float32 [| 3; 4 |]
       (Array.init 12 (fun i -> float_of_int (i + 1)))
   in
 
@@ -149,10 +144,8 @@ let test_vmap_elementwise () =
 
 (* Test composition: jvp (vmap f) *)
 let test_jvp_vmap_composition () =
-  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let v =
-    T.create ctx T.float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |]
-  in
+  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let v = T.create T.float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |] in
 
   (* Define f: sum of squares *)
   let f t = T.sum (T.mul t t) in
@@ -163,18 +156,16 @@ let test_jvp_vmap_composition () =
   (* jvp of vmapped f *)
   let primals, tangents = T.jvp vmapped_f x v in
 
-  let expected_primals = T.create ctx T.float32 [| 3 |] [| 5.; 25.; 61. |] in
-  let expected_tangents = T.create ctx T.float32 [| 3 |] [| 1.; 5.; 12.2 |] in
+  let expected_primals = T.create T.float32 [| 3 |] [| 5.; 25.; 61. |] in
+  let expected_tangents = T.create T.float32 [| 3 |] [| 1.; 5.; 12.2 |] in
 
   check_rune ~eps:1e-5 "jvp(vmap(f)) primals" expected_primals primals;
   check_rune ~eps:1e-5 "jvp(vmap(f)) tangents" expected_tangents tangents
 
 (* Test composition: vmap (jvp f) *)
 let test_vmap_jvp_composition () =
-  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let v =
-    T.create ctx T.float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |]
-  in
+  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let v = T.create T.float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |] in
 
   (* Define f: sum of squares *)
   let f t = T.sum (T.mul t t) in
@@ -203,15 +194,15 @@ let test_vmap_jvp_composition () =
   let primals = vmapped_jvp_f_primals [ x; v ] in
   let tangents = vmapped_jvp_f_tangents [ x; v ] in
 
-  let expected_primals = T.create ctx T.float32 [| 3 |] [| 5.; 25.; 61. |] in
-  let expected_tangents = T.create ctx T.float32 [| 3 |] [| 1.; 5.; 12.2 |] in
+  let expected_primals = T.create T.float32 [| 3 |] [| 5.; 25.; 61. |] in
+  let expected_tangents = T.create T.float32 [| 3 |] [| 1.; 5.; 12.2 |] in
 
   check_rune ~eps:1e-5 "vmap(jvp(f)) primals" expected_primals primals;
   check_rune ~eps:1e-5 "vmap(jvp(f)) tangents" expected_tangents tangents
 
 (* Test composition: grad (vmap f) *)
 let test_grad_vmap_composition () =
-  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
 
   (* Define f: sum of squares *)
   let f t = T.sum (T.mul t t) in
@@ -227,14 +218,14 @@ let test_grad_vmap_composition () =
   let grads = grad_sum_vmapped_f x in
 
   let expected_grads =
-    T.create ctx T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |]
+    T.create T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |]
   in
 
   check_rune ~eps:1e-5 "grad(sum(vmap(f)))" expected_grads grads
 
 (* Test composition: vmap (grad f) *)
 let test_vmap_grad_composition () =
-  let x = T.create ctx T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
 
   (* Define f: sum of squares *)
   let f t = T.sum (T.mul t t) in
@@ -247,17 +238,17 @@ let test_vmap_grad_composition () =
   let grads = vmapped_grad_f x in
 
   let expected_grads =
-    T.create ctx T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |]
+    T.create T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |]
   in
 
   check_rune ~eps:1e-5 "vmap(grad(f))" expected_grads grads
 
 (* Test composition with two-argument function: jvp (vmap g) *)
 let test_jvp_vmap_composition_two_args () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let y = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
-  let v_x = T.create ctx T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
-  let v_y = T.create ctx T.float32 [| 2; 2 |] [| 0.5; 0.6; 0.7; 0.8 |] in
+  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let y = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let v_x = T.create T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let v_y = T.create T.float32 [| 2; 2 |] [| 0.5; 0.6; 0.7; 0.8 |] in
 
   (* Define g: sum of element-wise product *)
   let g inputs =
@@ -272,18 +263,18 @@ let test_jvp_vmap_composition_two_args () =
   (* jvp of vmapped g *)
   let primals, tangents = T.jvps vmapped_g [ x; y ] [ v_x; v_y ] in
 
-  let expected_primals = T.create ctx T.float32 [| 2 |] [| 17.; 53. |] in
-  let expected_tangents = T.create ctx T.float32 [| 2 |] [| 3.4; 10.6 |] in
+  let expected_primals = T.create T.float32 [| 2 |] [| 17.; 53. |] in
+  let expected_tangents = T.create T.float32 [| 2 |] [| 3.4; 10.6 |] in
 
   check_rune ~eps:1e-5 "jvp(vmap(g)) primals" expected_primals primals;
   check_rune ~eps:1e-5 "jvp(vmap(g)) tangents" expected_tangents tangents
 
 (* Test composition with two-argument function: vmap (jvp g) *)
 let test_vmap_jvp_composition_two_args () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let y = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
-  let v_x = T.create ctx T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
-  let v_y = T.create ctx T.float32 [| 2; 2 |] [| 0.5; 0.6; 0.7; 0.8 |] in
+  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let y = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let v_x = T.create T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let v_y = T.create T.float32 [| 2; 2 |] [| 0.5; 0.6; 0.7; 0.8 |] in
 
   (* Define g: sum of element-wise product *)
   let g inputs =
@@ -316,16 +307,16 @@ let test_vmap_jvp_composition_two_args () =
   let primals = vmapped_jvp_g_primals [ x; y; v_x; v_y ] in
   let tangents = vmapped_jvp_g_tangents [ x; y; v_x; v_y ] in
 
-  let expected_primals = T.create ctx T.float32 [| 2 |] [| 17.; 53. |] in
-  let expected_tangents = T.create ctx T.float32 [| 2 |] [| 3.4; 10.6 |] in
+  let expected_primals = T.create T.float32 [| 2 |] [| 17.; 53. |] in
+  let expected_tangents = T.create T.float32 [| 2 |] [| 3.4; 10.6 |] in
 
   check_rune ~eps:1e-5 "vmap(jvp(g)) primals" expected_primals primals;
   check_rune ~eps:1e-5 "vmap(jvp(g)) tangents" expected_tangents tangents
 
 (* Test composition with two-argument function: grad (vmap g) *)
 let test_grad_vmap_composition_two_args () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let y = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let y = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
 
   (* Define g: sum of element-wise product *)
   let g inputs =
@@ -344,14 +335,14 @@ let test_grad_vmap_composition_two_args () =
   let grads_list = T.grads sum_vmapped_g [ x; y ] in
   let grad_x = List.nth grads_list 0 in
 
-  let expected_grads = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let expected_grads = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
 
   check_rune ~eps:1e-5 "grad(sum(vmap(g)), argnums=0)" expected_grads grad_x
 
 (* Test composition with two-argument function: vmap (grad g) *)
 let test_vmap_grad_composition_two_args () =
-  let x = T.create ctx T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let y = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let y = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
 
   (* Define g: sum of element-wise product *)
   let g inputs =
@@ -373,7 +364,7 @@ let test_vmap_grad_composition_two_args () =
   let vmapped_grad_g = T.vmaps grad_g in
   let grads = vmapped_grad_g [ x; y ] in
 
-  let expected_grads = T.create ctx T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let expected_grads = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
 
   check_rune ~eps:1e-5 "vmap(grad(g), argnums=0)" expected_grads grads
 

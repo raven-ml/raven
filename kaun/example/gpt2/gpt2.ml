@@ -3,12 +3,12 @@ module GPT2 = Kaun_models.GPT2
 
 let () =
   (* Load GPT-2 and tokenizer *)
-  let gpt2 = GPT2.from_pretrained ~device:c ~dtype:Float32 () in
+  let gpt2 = GPT2.from_pretrained ~dtype:Float32 () in
   let tokenizer = GPT2.Tokenizer.create () in
   let prompt = "The future of AI is" in
 
   (* Encode the prompt *)
-  let inputs = GPT2.Tokenizer.encode tokenizer prompt ~device:c in
+  let inputs = GPT2.Tokenizer.encode tokenizer prompt in
 
   (* Run forward pass - for causal LM we need the full model *)
   let logits, _ =

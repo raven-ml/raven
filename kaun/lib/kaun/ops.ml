@@ -2,7 +2,6 @@ open Rune
 
 let scaled_dot_product_attention ?attention_mask ?(dropout = 0.0) ?is_causal
     ?scale ?rngs q k v =
-  let device = device q in
   let dtype = dtype q in
   let shape_q = shape q in
   let shape_k = shape k in
@@ -36,11 +35,11 @@ let scaled_dot_product_attention ?attention_mask ?(dropout = 0.0) ?is_causal
            seq_len_k";
       (* Create lower triangular mask using tril *)
       let mask_shape = [| 1; 1; seq_len_q; seq_len_k |] in
-      let ones_matrix = ones device dtype [| seq_len_q; seq_len_k |] in
+      let ones_matrix = ones dtype [| seq_len_q; seq_len_k |] in
       let causal_mask = tril ones_matrix in
       let causal_mask = reshape mask_shape causal_mask in
       let causal_mask = cast uint8 causal_mask in
-      let neg_inf = scalar device dtype (-1e9) in
+      let neg_inf = scalar dtype (-1e9) in
       where causal_mask scores neg_inf)
     else scores
   in
@@ -49,7 +48,7 @@ let scaled_dot_product_attention ?attention_mask ?(dropout = 0.0) ?is_causal
   let scores =
     match attention_mask with
     | Some m ->
-        let neg_inf = scalar device dtype (-1e9) in
+        let neg_inf = scalar dtype (-1e9) in
         where m scores neg_inf
     | None -> scores
   in
@@ -66,10 +65,10 @@ let scaled_dot_product_attention ?attention_mask ?(dropout = 0.0) ?is_causal
         | Some rng ->
             let seed = Rune.Rng.to_int rng in
             let rand_fn = Rune.rand ~seed in
-            rand_fn device dtype (shape attn_weights)
-        | None -> rand device dtype (shape attn_weights)
+            rand_fn dtype (shape attn_weights)
+        | None -> rand dtype (shape attn_weights)
       in
-      let threshold = scalar device dtype dropout in
+      let threshold = scalar dtype dropout in
       let mask = greater dropout_mask threshold in
       let mask_float = cast dtype mask in
       mul attn_weights (mul_s mask_float (1.0 /. keep_prob))
@@ -196,15 +195,14 @@ let dropout ~rate ?rngs x =
     match rngs with
     | Some rng ->
         let key = (Rng.split rng).(0) in
-        let dev = device x in
         let dtype_x = dtype x in
         let shape_x = shape x in
-        let mask = Rng.uniform key dev dtype_x shape_x in
+        let mask = Rng.uniform key dtype_x shape_x in
         let keep_prob = 1.0 -. rate in
-        let threshold = scalar dev dtype_x keep_prob in
+        let threshold = scalar dtype_x keep_prob in
         let binary_mask = less mask threshold in
         let binary_mask_float = cast dtype_x binary_mask in
-        let scale = scalar dev dtype_x (1.0 /. keep_prob) in
+        let scale = scalar dtype_x (1.0 /. keep_prob) in
         mul x (mul binary_mask_float scale)
     | None -> failwith "dropout requires RNG if rate > 0.0"
   else x
@@ -221,8 +219,7 @@ let batch_norm ~scale ~bias ~num_features x =
   let variance = var x ~axes ~keepdims:true in
   let eps = 1e-5 in
   let dtype_x = dtype x in
-  let dev = device x in
-  let epsilon = scalar dev dtype_x eps in
+  let epsilon = scalar dtype_x eps in
   let x_normalized = div (sub x mean) (sqrt (add variance epsilon)) in
   let scale_shape =
     match Array.length (shape x) with
@@ -236,19 +233,19 @@ let batch_norm ~scale ~bias ~num_features x =
 
 let rms_norm ~scale ~dim ?(eps = 1e-6) x =
   let var = mean (square x) ~axes:[| -1 |] ~keepdims:true in
-  let normed = mul x (rsqrt (add var (scalar (device x) (dtype x) eps))) in
+  let normed = mul x (rsqrt (add var (scalar (dtype x) eps))) in
   let scale_expanded =
     let x_dims = Array.length (shape x) in
     let scale_shape = Array.make x_dims 1 in
     scale_shape.(x_dims - 1) <- dim;
     reshape scale_shape scale
   in
-  mul normed (add (scalar (device x) (dtype x) 1.0) scale_expanded)
+  mul normed (add (scalar (dtype x) 1.0) scale_expanded)
 
 let layer_norm ?gamma ?beta ~dim ?(eps = 1e-5) ~elementwise_affine x =
   let mean = mean x ~axes:[| -1 |] ~keepdims:true in
   let var = var x ~axes:[| -1 |] ~keepdims:true in
-  let eps_scalar = scalar (device x) (dtype x) eps in
+  let eps_scalar = scalar (dtype x) eps in
   let normalized = div (sub x mean) (sqrt (add var eps_scalar)) in
   if elementwise_affine then
     match (gamma, beta) with
@@ -278,10 +275,9 @@ let embedding ~embedding ~embed_dim ?(scale = true) x =
   let embedded = reshape output_shape gathered in
 
   if scale then
-    let device_emb = device embedding in
     let dtype_emb = dtype embedding in
     let scale_factor = Stdlib.sqrt (float_of_int embed_dim) in
-    mul embedded (scalar device_emb dtype_emb scale_factor)
+    mul embedded (scalar dtype_emb scale_factor)
   else embedded
 
 let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight

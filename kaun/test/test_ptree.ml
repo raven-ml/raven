@@ -1,23 +1,21 @@
 open Alcotest
 module Ptree = Kaun.Ptree
 
-let ctx = Rune.c
-
 let test_map () =
   let tree =
     Ptree.record_of
       [
-        ("layer1", Ptree.tensor (Rune.ones ctx Rune.float32 [| 2; 3 |]));
+        ("layer1", Ptree.tensor (Rune.ones Rune.float32 [| 2; 3 |]));
         ( "layer2",
           Ptree.list_of
             [
-              Ptree.tensor (Rune.ones ctx Rune.float32 [| 4 |]);
-              Ptree.tensor (Rune.ones ctx Rune.float32 [| 5 |]);
+              Ptree.tensor (Rune.ones Rune.float32 [| 4 |]);
+              Ptree.tensor (Rune.ones Rune.float32 [| 5 |]);
             ] );
       ]
   in
   let doubled =
-    Ptree.map (fun t -> Rune.mul t (Rune.scalar ctx Rune.float32 2.0)) tree
+    Ptree.map (fun t -> Rune.mul t (Rune.scalar Rune.float32 2.0)) tree
   in
 
   (* Check that all tensors are doubled *)
@@ -28,8 +26,8 @@ let test_map () =
     doubled
 
 let test_map2 () =
-  let tree1 = Ptree.Tensor (Rune.ones ctx Rune.float32 [| 3 |]) in
-  let tree2 = Ptree.Tensor (Rune.full ctx Rune.float32 [| 3 |] 2.0) in
+  let tree1 = Ptree.Tensor (Rune.ones Rune.float32 [| 3 |]) in
+  let tree2 = Ptree.Tensor (Rune.full Rune.float32 [| 3 |] 2.0) in
   let sum = Ptree.add tree1 tree2 in
 
   match sum with
@@ -42,13 +40,13 @@ let test_count () =
   let tree =
     Ptree.record_of
       [
-        ("a", Ptree.Tensor (Rune.zeros ctx Rune.float32 [| 2; 3 |]));
-        ("b", Ptree.Tensor (Rune.zeros ctx Rune.float32 [| 4; 5 |]));
+        ("a", Ptree.Tensor (Rune.zeros Rune.float32 [| 2; 3 |]));
+        ("b", Ptree.Tensor (Rune.zeros Rune.float32 [| 4; 5 |]));
         ( "c",
           Ptree.List
             [
-              Ptree.Tensor (Rune.zeros ctx Rune.float32 [| 6 |]);
-              Ptree.Tensor (Rune.zeros ctx Rune.float32 [| 7 |]);
+              Ptree.Tensor (Rune.zeros Rune.float32 [| 6 |]);
+              Ptree.Tensor (Rune.zeros Rune.float32 [| 7 |]);
             ] );
       ]
   in
@@ -60,8 +58,8 @@ let test_flat_list () =
   let tree =
     Ptree.List
       [
-        Ptree.Tensor (Rune.full ctx Rune.float32 [| 2 |] 1.0);
-        Ptree.Tensor (Rune.full ctx Rune.float32 [| 3 |] 2.0);
+        Ptree.Tensor (Rune.full Rune.float32 [| 2 |] 1.0);
+        Ptree.Tensor (Rune.full Rune.float32 [| 3 |] 2.0);
       ]
   in
 
@@ -70,7 +68,7 @@ let test_flat_list () =
 
   (* Modify the flat list *)
   let modified =
-    List.map (fun t -> Rune.add t (Rune.scalar ctx Rune.float32 10.0)) flat
+    List.map (fun t -> Rune.add t (Rune.scalar Rune.float32 10.0)) flat
   in
 
   (* Reconstruct the tree *)
@@ -86,28 +84,27 @@ let test_equal_structure () =
   let tree1 =
     Ptree.record_of
       [
-        ("a", Ptree.Tensor (Rune.zeros ctx Rune.float32 [| 2 |]));
+        ("a", Ptree.Tensor (Rune.zeros Rune.float32 [| 2 |]));
         ("b", Ptree.List []);
       ]
   in
   let tree2 =
     Ptree.record_of
       [
-        ("a", Ptree.Tensor (Rune.ones ctx Rune.float32 [| 3 |]));
+        ("a", Ptree.Tensor (Rune.ones Rune.float32 [| 3 |]));
         ("b", Ptree.List []);
       ]
   in
   let tree3 =
-    Ptree.record_of
-      [ ("a", Ptree.Tensor (Rune.zeros ctx Rune.float32 [| 2 |])) ]
+    Ptree.record_of [ ("a", Ptree.Tensor (Rune.zeros Rune.float32 [| 2 |])) ]
   in
 
   check bool "same structure" true (Ptree.equal_structure tree1 tree2);
   check bool "different structure" false (Ptree.equal_structure tree1 tree3)
 
 let test_arithmetic () =
-  let a = Ptree.Tensor (Rune.full ctx Rune.float32 [| 2 |] 10.0) in
-  let b = Ptree.Tensor (Rune.full ctx Rune.float32 [| 2 |] 3.0) in
+  let a = Ptree.Tensor (Rune.full Rune.float32 [| 2 |] 10.0) in
+  let b = Ptree.Tensor (Rune.full Rune.float32 [| 2 |] 3.0) in
 
   let test_op name op expected =
     match op a b with

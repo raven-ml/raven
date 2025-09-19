@@ -1,30 +1,26 @@
-type ('layout, 'dev) tensor = (float, 'layout, 'dev) Rune.t
+type 'layout tensor = (float, 'layout) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
-type 'dev device = 'dev Rune.device
 
 (* Parameter tree - alias for Ptree.t *)
-type ('layout, 'dev) params = ('layout, 'dev) Ptree.t =
-  | Tensor of ('layout, 'dev) tensor
-  | List of ('layout, 'dev) params list
-  | Record of ('layout, 'dev) params Ptree.Record.t
+type 'layout params = 'layout Ptree.t =
+  | Tensor of 'layout tensor
+  | List of 'layout params list
+  | Record of 'layout params Ptree.Record.t
 
 type module_ = Layer.module_ = {
   init :
     'layout 'dev.
-    rngs:Rune.Rng.key ->
-    device:'dev Rune.device ->
-    dtype:(float, 'layout) Rune.dtype ->
-    ('layout, 'dev) Ptree.t;
+    rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t;
   apply :
     'layout 'dev.
-    ('layout, 'dev) Ptree.t ->
+    'layout Ptree.t ->
     training:bool ->
     ?rngs:Rune.Rng.key ->
-    ('layout, 'dev) tensor ->
-    ('layout, 'dev) tensor;
+    'layout tensor ->
+    'layout tensor;
 }
 
-let init m ~rngs ~device ~dtype = m.init ~rngs ~device ~dtype
+let init m ~rngs ~dtype = m.init ~rngs ~dtype
 let apply m params ~training ?rngs x = m.apply params ~training ?rngs x
 let value_and_grad = Transformations.value_and_grad
 let grad = Transformations.grad

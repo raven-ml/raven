@@ -7,12 +7,12 @@ module Rng = Rune.Rng
 module DQN = struct
   type t = {
     q_network : Kaun.module_;
-    mutable q_params : (Rune.float32_elt, [ `c ]) Kaun.params;
+    mutable q_params : (Rune.float32_elt) Kaun.params;
     target_network : Kaun.module_;
-    mutable target_params : (Rune.float32_elt, [ `c ]) Kaun.params;
+    mutable target_params : (Rune.float32_elt) Kaun.params;
     optimizer :
-      (Rune.float32_elt, [ `c ]) Kaun.Optimizer.gradient_transformation;
-    mutable opt_state : (Rune.float32_elt, [ `c ]) Kaun.Optimizer.opt_state;
+      (Rune.float32_elt) Kaun.Optimizer.gradient_transformation;
+    mutable opt_state : (Rune.float32_elt) Kaun.Optimizer.opt_state;
     buffer : [ `c ] Buffer.t;
     rng : Rng.key;
     mutable epsilon : float;
@@ -46,11 +46,11 @@ module DQN = struct
     let target_network = create_q_network obs_dim n_actions in
 
     (* Initialize parameters *)
-    let device = Rune.c in
+    
     let dtype = Rune.float32 in
-    let q_params = Kaun.init q_network ~rngs:keys.(0) ~device ~dtype in
+    let q_params = Kaun.init q_network ~rngs:keys.(0) ~dtype in
     let target_params =
-      Kaun.init target_network ~rngs:keys.(1) ~device ~dtype
+      Kaun.init target_network ~rngs:keys.(1) ~dtype
     in
 
     (* Create optimizer *)
@@ -89,7 +89,7 @@ module DQN = struct
         | [| n |] -> n
         | _ -> failwith "Unexpected Q-values shape"
       in
-      Rune.scalar Rune.c Rune.float32 (float_of_int (Random.int n_actions))
+      Rune.scalar Rune.float32 (float_of_int (Random.int n_actions))
     else
       (* Exploitation: greedy action *)
       let q_values = Kaun.apply t.q_network t.q_params ~training:false obs in
@@ -119,10 +119,10 @@ module DQN = struct
       let next_obs_tensor = Rune.stack (Array.to_list next_obs_batch) ~axis:0 in
       let _action_tensor = Rune.stack (Array.to_list action_batch) ~axis:0 in
       let reward_tensor =
-        Rune.create Rune.c Rune.float32 [| t.batch_size |] reward_batch
+        Rune.create Rune.float32 [| t.batch_size |] reward_batch
       in
       let terminated_tensor =
-        Rune.create Rune.c Rune.float32 [| t.batch_size |]
+        Rune.create Rune.float32 [| t.batch_size |]
           (Array.map (fun b -> if b then 1.0 else 0.0) terminated_batch)
       in
 
@@ -152,7 +152,7 @@ module DQN = struct
                   if j = action_indices.(i) then 1.0 else 0.0))
         in
         let one_hot_tensor =
-          Rune.create Rune.c Rune.float32
+          Rune.create Rune.float32
             [| t.batch_size; n_actions |]
             (Array.concat (Array.to_list one_hot))
         in
@@ -169,12 +169,12 @@ module DQN = struct
         in
         let max_next_q = Rune.max next_q_values ~axes:[| 1 |] ~keepdims:false in
         let not_terminated =
-          Rune.sub (Rune.scalar Rune.c Rune.float32 1.0) terminated_tensor
+          Rune.sub (Rune.scalar Rune.float32 1.0) terminated_tensor
         in
         let targets =
           Rune.add reward_tensor
             (Rune.mul
-               (Rune.mul (Rune.scalar Rune.c Rune.float32 t.gamma) max_next_q)
+               (Rune.mul (Rune.scalar Rune.float32 t.gamma) max_next_q)
                not_terminated)
         in
 

@@ -37,7 +37,7 @@ let () =
   
   while not !finished do
     (* Sample random action *)
-    let action = Space.sample ~rng Rune.c env.action_space in
+    let action = Space.sample ~rng env.action_space in
     
     (* Step environment *)
     let next_obs, reward, terminated, truncated, _ = env.step action in
@@ -66,7 +66,7 @@ let train_dqn env =
   
   (* Initialize parameters *)
   let rng = Rune.Rng.key 42 in
-  let dummy_input = Rune.zeros Rune.c Rune.float32 [|4|] in
+  let dummy_input = Rune.zeros Rune.float32 [|4|] in
   let params = Kaun.init q_network ~rngs:rng dummy_input in
   let opt_state = optimizer.init params in
   
@@ -87,13 +87,13 @@ let action_space = Space.Discrete 2
 
 (* Continuous box space *)
 let observation_space = Space.Box {
-  low = Rune.create Rune.c Rune.float32 [|2|] [| -1.0; -1.0 |];
-  high = Rune.create Rune.c Rune.float32 [|2|] [| 1.0; 1.0 |];
+  low = Rune.create Rune.float32 [|2|] [| -1.0; -1.0 |];
+  high = Rune.create Rune.float32 [|2|] [| 1.0; 1.0 |];
   shape = [|2|];
 }
 
 (* Sample from space *)
-let action = Space.sample ~rng Rune.c action_space
+let action = Space.sample ~rng action_space
 ```
 
 ### Environments

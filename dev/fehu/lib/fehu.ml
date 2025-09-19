@@ -2,19 +2,19 @@ module Space = struct
   type 'dev t =
     | Discrete of int
     | Box of {
-        low : (float, Rune.float32_elt, 'dev) Rune.t;
-        high : (float, Rune.float32_elt, 'dev) Rune.t;
+        low : (float, Rune.float32_elt) Rune.t;
+        high : (float, Rune.float32_elt) Rune.t;
         shape : int array;
       }
     | Multi_discrete of int array
 
-  let sample ~rng device space =
+  let sample ~rng space =
     match space with
     | Discrete n ->
-        let action_tensor = Rune.Rng.randint rng device ~min:0 ~max:n [| 1 |] in
+        let action_tensor = Rune.Rng.randint rng ~min:0 ~max:n [| 1 |] in
         Rune.cast Rune.float32 action_tensor
     | Box { low; high; shape } ->
-        let uniform = Rune.Rng.uniform rng device Rune.float32 shape in
+        let uniform = Rune.Rng.uniform rng Rune.float32 shape in
         let range = Rune.sub high low in
         Rune.add low (Rune.mul uniform range)
     | Multi_discrete dims ->
@@ -23,13 +23,13 @@ module Space = struct
             (fun i d ->
               let key = Rune.Rng.fold_in rng i in
               let action_tensor =
-                Rune.Rng.randint key device ~min:0 ~max:d [| 1 |]
+                Rune.Rng.randint key ~min:0 ~max:d [| 1 |]
               in
               let action_array = Rune.to_array action_tensor in
               Int32.to_float action_array.(0))
             dims
         in
-        Rune.create device Rune.float32 [| Array.length dims |] actions
+        Rune.create Rune.float32 [| Array.length dims |] actions
 
   let contains space x =
     match space with
@@ -59,10 +59,10 @@ module Env = struct
   type 'dev t = {
     observation_space : 'dev Space.t;
     action_space : 'dev Space.t;
-    reset : ?seed:int -> unit -> (float, Rune.float32_elt, 'dev) Rune.t * info;
+    reset : ?seed:int -> unit -> (float, Rune.float32_elt) Rune.t * info;
     step :
-      (float, Rune.float32_elt, 'dev) Rune.t ->
-      (float, Rune.float32_elt, 'dev) Rune.t * float * bool * bool * info;
+      (float, Rune.float32_elt) Rune.t ->
+      (float, Rune.float32_elt) Rune.t * float * bool * bool * info;
     render : unit -> unit;
     close : unit -> unit;
   }
@@ -74,10 +74,10 @@ end
 
 module Buffer = struct
   type 'dev transition = {
-    obs : (float, Rune.float32_elt, 'dev) Rune.t;
-    action : (float, Rune.float32_elt, 'dev) Rune.t;
+    obs : (float, Rune.float32_elt) Rune.t;
+    action : (float, Rune.float32_elt) Rune.t;
     reward : float;
-    next_obs : (float, Rune.float32_elt, 'dev) Rune.t;
+    next_obs : (float, Rune.float32_elt) Rune.t;
     terminated : bool;
   }
 
@@ -100,7 +100,7 @@ module Buffer = struct
   let sample t ~rng ~batch_size =
     if t.size < batch_size then failwith "Buffer: Not enough samples";
     let indices =
-      Rune.Rng.randint rng Rune.c ~min:0 ~max:t.size [| batch_size |]
+      Rune.Rng.randint rng ~min:0 ~max:t.size [| batch_size |]
     in
     let indices_array = Rune.to_array indices |> Array.map Int32.to_int in
     Array.map (fun idx -> t.buffer.(idx)) indices_array
@@ -197,7 +197,7 @@ module Training = struct
   let normalize x ?(eps = 1e-8) () =
     let mean = Rune.mean x ~axes:[| 0 |] ~keepdims:true in
     let std = Rune.std x ~axes:[| 0 |] ~keepdims:true in
-    let std_eps = Rune.add std (Rune.scalar (Rune.device x) Rune.float32 eps) in
+    let std_eps = Rune.add std (Rune.scalar Rune.float32 eps) in
     Rune.div (Rune.sub x mean) std_eps
 end
 
@@ -212,16 +212,16 @@ module Envs = struct
     let force_mag = 10.0 in
     let tau = 0.02 in
 
-    let state = ref (Rune.zeros Rune.c Rune.float32 [| 4 |]) in
+    let state = ref (Rune.zeros Rune.float32 [| 4 |]) in
 
     let observation_space =
       Space.Box
         {
           low =
-            Rune.create Rune.c Rune.float32 [| 4 |]
+            Rune.create Rune.float32 [| 4 |]
               [| -4.8; -.Float.max_float; -0.42; -.Float.max_float |];
           high =
-            Rune.create Rune.c Rune.float32 [| 4 |]
+            Rune.create Rune.float32 [| 4 |]
               [| 4.8; Float.max_float; 0.42; Float.max_float |];
           shape = [| 4 |];
         }
@@ -233,7 +233,7 @@ module Envs = struct
       let () = match seed with Some s -> Random.init s | None -> () in
       (* Generate uniform values between -0.05 and 0.05 *)
       let uniform_vals = Array.init 4 (fun _ -> Random.float 0.1 -. 0.05) in
-      state := Rune.create Rune.c Rune.float32 [| 4 |] uniform_vals;
+      state := Rune.create Rune.float32 [| 4 |] uniform_vals;
       (!state, [])
     in
 
@@ -271,7 +271,7 @@ module Envs = struct
       let theta_dot' = theta_dot +. (tau *. thetaacc) in
 
       state :=
-        Rune.create Rune.c Rune.float32 [| 4 |]
+        Rune.create Rune.float32 [| 4 |]
           [| x'; x_dot'; theta'; theta_dot' |];
 
       let terminated =
@@ -289,16 +289,16 @@ module Envs = struct
     let max_speed = 0.07 in
     let goal_position = 0.5 in
 
-    let state = ref (Rune.zeros Rune.c Rune.float32 [| 2 |]) in
+    let state = ref (Rune.zeros Rune.float32 [| 2 |]) in
 
     let observation_space =
       Space.Box
         {
           low =
-            Rune.create Rune.c Rune.float32 [| 2 |]
+            Rune.create Rune.float32 [| 2 |]
               [| min_position; -.max_speed |];
           high =
-            Rune.create Rune.c Rune.float32 [| 2 |]
+            Rune.create Rune.float32 [| 2 |]
               [| max_position; max_speed |];
           shape = [| 2 |];
         }
@@ -310,7 +310,7 @@ module Envs = struct
       let () = match seed with Some s -> Random.init s | None -> () in
       let position = Random.float 0.2 -. 0.6 in
       let velocity = 0.0 in
-      state := Rune.create Rune.c Rune.float32 [| 2 |] [| position; velocity |];
+      state := Rune.create Rune.float32 [| 2 |] [| position; velocity |];
       (!state, [])
     in
 
@@ -337,7 +337,7 @@ module Envs = struct
       in
 
       state :=
-        Rune.create Rune.c Rune.float32 [| 2 |] [| position'; velocity' |];
+        Rune.create Rune.float32 [| 2 |] [| position'; velocity' |];
 
       let terminated = position' >= goal_position in
       let reward = if terminated then 0.0 else -1.0 in
@@ -355,16 +355,16 @@ module Envs = struct
     let m = 1.0 in
     let l = 1.0 in
 
-    let state = ref (Rune.zeros Rune.c Rune.float32 [| 2 |]) in
+    let state = ref (Rune.zeros Rune.float32 [| 2 |]) in
 
     let observation_space =
       Space.Box
         {
           low =
-            Rune.create Rune.c Rune.float32 [| 3 |]
+            Rune.create Rune.float32 [| 3 |]
               [| -1.0; -1.0; -.max_speed |];
           high =
-            Rune.create Rune.c Rune.float32 [| 3 |] [| 1.0; 1.0; max_speed |];
+            Rune.create Rune.float32 [| 3 |] [| 1.0; 1.0; max_speed |];
           shape = [| 3 |];
         }
     in
@@ -372,8 +372,8 @@ module Envs = struct
     let action_space =
       Space.Box
         {
-          low = Rune.scalar Rune.c Rune.float32 (-.max_torque);
-          high = Rune.scalar Rune.c Rune.float32 max_torque;
+          low = Rune.scalar Rune.float32 (-.max_torque);
+          high = Rune.scalar Rune.float32 max_torque;
           shape = [| 1 |];
         }
     in
@@ -382,9 +382,9 @@ module Envs = struct
       let () = match seed with Some s -> Random.init s | None -> () in
       let theta = Random.float (2.0 *. Float.pi) -. Float.pi in
       let theta_dot = Random.float 2.0 -. 1.0 in
-      state := Rune.create Rune.c Rune.float32 [| 2 |] [| theta; theta_dot |];
+      state := Rune.create Rune.float32 [| 2 |] [| theta; theta_dot |];
       let obs =
-        Rune.create Rune.c Rune.float32 [| 3 |]
+        Rune.create Rune.float32 [| 3 |]
           [| cos theta; sin theta; theta_dot |]
       in
       (obs, [])
@@ -412,10 +412,10 @@ module Envs = struct
       let theta_dot' = max (-.max_speed) (min max_speed theta_dot') in
       let theta' = theta +. (theta_dot' *. dt) in
 
-      state := Rune.create Rune.c Rune.float32 [| 2 |] [| theta'; theta_dot' |];
+      state := Rune.create Rune.float32 [| 2 |] [| theta'; theta_dot' |];
 
       let obs =
-        Rune.create Rune.c Rune.float32 [| 3 |]
+        Rune.create Rune.float32 [| 3 |]
           [| cos theta'; sin theta'; theta_dot' |]
       in
 

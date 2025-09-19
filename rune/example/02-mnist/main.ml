@@ -21,44 +21,38 @@ let get_batch x y batch_size batch_idx =
     (x_batch, y_batch)
 
 (* Initialize parameters for LeNet *)
-let init_lenet_params ctx =
+let init_lenet_params =
   (* Conv1: 1 input channel, 6 output channels, 5x5 kernel *)
   let conv1_w =
-    div
-      (randn ctx Float32 [| 6; 1; 5; 5 |])
-      (scalar ctx Float32 (Stdlib.sqrt 25.0))
+    div (randn Float32 [| 6; 1; 5; 5 |]) (scalar Float32 (Stdlib.sqrt 25.0))
   in
-  let conv1_b = zeros ctx Float32 [| 6 |] in
+  let conv1_b = zeros Float32 [| 6 |] in
 
   (* Conv2: 6 input channels, 16 output channels, 5x5 kernel *)
   let conv2_w =
     div
-      (randn ctx Float32 [| 16; 6; 5; 5 |])
-      (scalar ctx Float32 (Stdlib.sqrt (6.0 *. 25.0)))
+      (randn Float32 [| 16; 6; 5; 5 |])
+      (scalar Float32 (Stdlib.sqrt (6.0 *. 25.0)))
   in
-  let conv2_b = zeros ctx Float32 [| 16 |] in
+  let conv2_b = zeros Float32 [| 16 |] in
 
   (* FC1: 16*4*4 = 256 inputs, 120 outputs *)
   let fc1_w =
-    div
-      (randn ctx Float32 [| 256; 120 |])
-      (scalar ctx Float32 (Stdlib.sqrt 256.0))
+    div (randn Float32 [| 256; 120 |]) (scalar Float32 (Stdlib.sqrt 256.0))
   in
-  let fc1_b = zeros ctx Float32 [| 120 |] in
+  let fc1_b = zeros Float32 [| 120 |] in
 
   (* FC2: 120 inputs, 84 outputs *)
   let fc2_w =
-    div
-      (randn ctx Float32 [| 120; 84 |])
-      (scalar ctx Float32 (Stdlib.sqrt 120.0))
+    div (randn Float32 [| 120; 84 |]) (scalar Float32 (Stdlib.sqrt 120.0))
   in
-  let fc2_b = zeros ctx Float32 [| 84 |] in
+  let fc2_b = zeros Float32 [| 84 |] in
 
   (* FC3: 84 inputs, 10 outputs *)
   let fc3_w =
-    div (randn ctx Float32 [| 84; 10 |]) (scalar ctx Float32 (Stdlib.sqrt 84.0))
+    div (randn Float32 [| 84; 10 |]) (scalar Float32 (Stdlib.sqrt 84.0))
   in
-  let fc3_b = zeros ctx Float32 [| 10 |] in
+  let fc3_b = zeros Float32 [| 10 |] in
 
   [
     conv1_w; conv1_b; conv2_w; conv2_b; fc1_w; fc1_b; fc2_w; fc2_b; fc3_w; fc3_b;
@@ -107,7 +101,7 @@ let forward_lenet params inputs =
 let cross_entropy_loss logits y_true =
   let epsilon = 1e-10 in
   let probs = softmax logits ~axes:[| 1 |] in
-  let log_probs = log (add probs (scalar (device logits) Float32 epsilon)) in
+  let log_probs = log (add probs (scalar Float32 epsilon)) in
   let mul_term = mul y_true log_probs in
   let sum_term = sum mul_term ~axes:[| 1 |] in
   let neg_term = neg sum_term in
@@ -125,10 +119,8 @@ let accuracy predictions labels =
 (* Training function *)
 let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
     y_test_labels batch_size learning_rate epochs =
-  let ctx = ocaml in
-
   (* Initialize parameters *)
-  let params = init_lenet_params ctx in
+  let params = init_lenet_params in
 
   (* Training loop *)
   let num_samples = dim 0 x_train in
@@ -178,7 +170,7 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
       |> List.iter (fun (param, grad) ->
              (* Clip gradients to prevent NaN *)
              let grad_clipped = clip grad ~min:(-1.0) ~max:1.0 in
-             isub param (mul (scalar ctx Float32 learning_rate) grad_clipped)
+             isub param (mul (scalar Float32 learning_rate) grad_clipped)
              |> ignore);
 
       (* Print progress *)
@@ -205,19 +197,18 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
 let () =
   (* Load MNIST dataset *)
   let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_mnist () in
-  let ctx = ocaml in
 
   (* Convert to Rune tensors and preprocess *)
-  let x_train = of_bigarray ctx (Nx.to_bigarray x_train) in
-  let y_train = of_bigarray ctx (Nx.to_bigarray y_train) in
-  let x_test = of_bigarray ctx (Nx.to_bigarray x_test) in
-  let y_test = of_bigarray ctx (Nx.to_bigarray y_test) in
+  let x_train = of_bigarray (Nx.to_bigarray x_train) in
+  let y_train = of_bigarray (Nx.to_bigarray y_train) in
+  let x_test = of_bigarray (Nx.to_bigarray x_test) in
+  let y_test = of_bigarray (Nx.to_bigarray y_test) in
 
   (* Normalize and reshape to NCHW format (batch, channels, height, width) *)
-  let x_train = div (astype Float32 x_train) (scalar ctx Float32 255.0) in
+  let x_train = div (astype Float32 x_train) (scalar Float32 255.0) in
   let x_train = reshape [| 60000; 1; 28; 28 |] x_train in
 
-  let x_test = div (astype Float32 x_test) (scalar ctx Float32 255.0) in
+  let x_test = div (astype Float32 x_test) (scalar Float32 255.0) in
   let x_test = reshape [| 10000; 1; 28; 28 |] x_test in
 
   (* Prepare labels *)

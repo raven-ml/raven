@@ -12,17 +12,17 @@ let image_path = "sowilo/example/lena.png"
 (* Helper to load image as Rune tensor *)
 let load_image_rune path =
   let nx_img = Nx_io.load_image path in
-  Rune.of_bigarray Rune.ocaml (Nx.to_bigarray nx_img)
+  Rune.of_bigarray (Nx.to_bigarray nx_img)
 
 (* Helper to convert Rune tensor to Nx tensor for plotting *)
-let rune_to_nx (rune_tensor : ('a, 'b, 'dev) Rune.t) : ('a, 'b) Nx.t =
+let rune_to_nx (rune_tensor : ('a, 'b) Rune.t) : ('a, 'b) Nx.t =
   let data = Rune.to_bigarray rune_tensor in
   let nx_tensor = Nx.of_bigarray data in
   let shape = Rune.shape rune_tensor in
   Nx.reshape shape nx_tensor
 
 (* Helper to visualize Sobel output (int16) as uint8 *)
-let visualize_sobel (sobel_img : 'dev int16_t) : 'dev uint8_t =
+let visualize_sobel (sobel_img : int16_t) : uint8_t =
   (* Calculate absolute values *)
   let abs_sobel = Rune.abs sobel_img in
 
@@ -43,11 +43,11 @@ let visualize_sobel (sobel_img : 'dev int16_t) : 'dev uint8_t =
 
   let range = max_val -. min_val in
   if range <= 1e-6 then (* Avoid division by zero if image is flat *)
-    Rune.zeros Rune.ocaml Rune.uint8 (Rune.shape sobel_img)
+    Rune.zeros Rune.uint8 (Rune.shape sobel_img)
   else
     (* Scale to 0.0 - 1.0 *)
-    let range_scalar = Rune.scalar Rune.ocaml Rune.float32 range in
-    let min_scalar = Rune.scalar Rune.ocaml Rune.float32 min_val in
+    let range_scalar = Rune.scalar Rune.float32 range in
+    let min_scalar = Rune.scalar Rune.float32 min_val in
     let scaled_f = Rune.div (Rune.sub abs_sobel_f min_scalar) range_scalar in
     (* Convert to uint8 [0, 255] *)
     Sowilo.to_uint8 scaled_f
