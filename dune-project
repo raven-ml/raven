@@ -115,6 +115,8 @@
    (>= 5.3.0))
   dune
   (dune-configurator :build)
+  (conf-llvm-static
+   (= 19))
   (nx
    (= :version))
   (ctypes
