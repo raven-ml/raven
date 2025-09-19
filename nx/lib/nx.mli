@@ -125,8 +125,8 @@ val quint8 : (int, quint8_elt) dtype
 (** Index specification for tensor slicing *)
 type index =
   | I of int  (** Single index: [I 2] selects index 2 *)
-  | L of int list  (** List of indices: [L [0; 2; 5]] selects indices 0, 2, 5 *)
-  | R of int * int  (** Range [start, stop): [R (1, 4)] selects 1, 2, 3 *)
+  | L of int list  (** List of indices: [L \[0; 2; 5\]] selects indices 0, 2, 5 *)
+  | R of int * int  (** Range \[start, stop): [R (1, 4)] selects 1, 2, 3 *)
   | Rs of int * int * int
       (** Range with step: [Rs (0, 10, 2)] selects 0, 2, 4, 6, 8 *)
   | A  (** All indices: [A] selects entire axis *)
@@ -1083,8 +1083,8 @@ val slice : index list -> ('a, 'b) t -> ('a, 'b) t
 
     Each element in specs corresponds to an axis from left to right:
     - [I i]: single index (reduces dimension; negative from end)
-    - [L [i1;i2;...]]: fancy indexing with list of indices
-    - [R (start, stop)]: range [start, stop) with step 1
+    - [L \[i1;i2;...\]]: fancy indexing with list of indices
+    - [R (start, stop)]: range \[start, stop) with step 1
     - [Rs (start, stop, step)]: range with step
     - [A]: full axis (default for missing specs)
     - [M mask]: boolean mask (shape must match axis)

@@ -4,22 +4,25 @@
  (libraries bigarray_ext nx_core)
  (foreign_stubs
   (language c)
-  (names
-   nx_c_binary
-   nx_c_unary
-   nx_c_reduce
-   nx_c_scan
-   nx_c_ternary
-   nx_c_cast
-   nx_c_memory
-   nx_c_index
-   nx_c_random
-   nx_c_shape
-   nx_c_window
-   nx_c_matmul
-   nx_c_fft
-   nx_c_linalg
-   nx_c_svd)
+   (names
+    nx_c_binary
+    nx_c_unary
+    nx_c_reduce
+    nx_c_scan
+    nx_c_ternary
+    nx_c_cast
+    nx_c_memory
+    nx_c_index
+    nx_c_random
+    nx_c_shape
+    nx_c_window
+    nx_c_matmul
+    nx_c_fft
+    nx_c_cholesky
+    nx_c_qr
+    nx_c_eig
+    nx_c_solve
+    nx_c_svd)
   (flags
    (:include c_flags.sexp)))
  (c_library_flags

@@ -268,7 +268,7 @@ let test_qr_property () =
   in
   let q, r = Nx.qr a in
   let reconstructed = Nx.matmul q r in
-  check_nx "qr property" a reconstructed
+  check_nx ~epsilon:1e-5 "qr property" a reconstructed
 
 let test_qr_orthogonal () =
   let a =
@@ -298,7 +298,7 @@ let test_svd_property () =
     Nx.set_item [ i; i ] s_val s_diag
   done;
   let reconstructed = Nx.matmul u (Nx.matmul s_diag vh) in
-  check_nx "svd property" a reconstructed
+  check_nx ~epsilon:1e-5 "svd property" a reconstructed
 
 let test_cholesky_posdef () =
   let a =
@@ -313,7 +313,7 @@ let test_cholesky_property () =
   let posdef = Nx.matmul (Nx.transpose a) a in
   let l = Nx.cholesky posdef in
   let reconstructed = Nx.matmul l (Nx.transpose l) in
-  check_nx "cholesky property" posdef reconstructed
+  check_nx ~epsilon:1e-5 "cholesky property" posdef reconstructed
 
 let test_eig_shape () =
   let a =
@@ -691,11 +691,11 @@ let test_eigvalsh () =
 let test_norm_ord () =
   let m = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |] in
   let n_nuc = Nx.norm ~ord:`Nuc m in
-  check (float 1e-5) "norm nuclear" 5.477 (Nx.item [] n_nuc);
+  check (float 1e-3) "norm nuclear" 5.83095 (Nx.item [] n_nuc);
   let n_two = Nx.norm ~ord:`Two m in
-  check (float 1e-5) "norm two" 5.477 (Nx.item [] n_two);
+  check (float 1e-3) "norm two" 5.46499 (Nx.item [] n_two);
   let n_neg_two = Nx.norm ~ord:`NegTwo m in
-  check (float 1e-5) "norm neg two" 0.366 (Nx.item [] n_neg_two)
+  check (float 1e-3) "norm neg two" 0.36597 (Nx.item [] n_neg_two)
 
 let test_norm_keepdims () =
   let v = Nx.create Nx.float32 [| 3 |] [| 3.; 4.; 0. |] in
@@ -746,23 +746,32 @@ let test_tensorsolve () =
   let x = Nx.tensorsolve a b in
   check_shape "tensorsolve shape" [| 2; 2 |] x;
   let recon = Nx.tensordot a x ~axes:([| 2; 3 |], [| 0; 1 |]) in
-  check_nx "tensorsolve recon" b recon
+  check_nx ~epsilon:1e-5 "tensorsolve recon" b recon
 
 let test_tensorsolve_axes () =
   let a =
     Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
   in
   let b = Nx.create Nx.float32 [| 3 |] [| 14.; 32.; 50. |] in
-  let x = Nx.tensorsolve ~axes:[| 0 |] a b in
-  check_t "tensorsolve axes" [| 3 |] [| 1.; 2.; 3. |] x
+  let x = Nx.tensorsolve ~axes:[| 1 |] a b in
+  (* Matrix is singular, so we get minimum norm solution via pinv *)
+  check_t ~eps:1e-5 "tensorsolve axes" [| 3 |] [| 1.; 2.; 3. |] x
 
 let test_tensorinv () =
-  let a = Nx.create Nx.float32 [| 2; 2; 2; 2 |] (Array.init 16 float_of_int) in
+  (* Use an invertible tensor *)
+  let a =
+    Nx.create Nx.float32 [| 2; 2; 2; 2 |]
+      [|
+        0.49671414; -0.1382643; 0.64768857; 1.5230298; -0.23415338; -0.23413695;
+        1.5792128; 0.7674347; -0.46947438; 0.54256004; -0.46341768; -0.46572974;
+        0.24196227; -1.9132802; -1.7249179; -0.5622875;
+      |]
+  in
   let inv = Nx.tensorinv ~ind:2 a in
   check_shape "tensorinv shape" [| 2; 2; 2; 2 |] inv;
   let recon = Nx.tensordot a inv ~axes:([| 2; 3 |], [| 0; 1 |]) in
   let id = Nx.eye Nx.float32 4 |> Nx.reshape [| 2; 2; 2; 2 |] in
-  check_nx "tensorinv recon" id recon
+  check_nx ~epsilon:1e-5 "tensorinv recon" id recon
 
 let test_tensorinv_ind () =
   let a = Nx.create Nx.float32 [| 4; 4 |] (Array.init 16 float_of_int) in

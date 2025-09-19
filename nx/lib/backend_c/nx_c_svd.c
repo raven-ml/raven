@@ -6,6 +6,7 @@
 #include <caml/threads.h>
 #include <complex.h>
 #include <float.h>
+#include <lapacke.h>
 
 #include "nx_c_shared.h"
 
@@ -527,136 +528,58 @@ static void svd_iterate_float64(double* diag, double* superdiag, double* u,
 // SVD implementations
 static void svd_float32(float* a, float* u, float* s, float* vt, int m, int n,
                         int full_matrices) {
+  // LAPACK destroys the input matrix, so we need to make a copy
+  float* a_copy = (float*)malloc(m * n * sizeof(float));
+  if (!a_copy) return;
+  memcpy(a_copy, a, m * n * sizeof(float));
+
+  char jobu = full_matrices ? 'A' : 'S';
+  char jobvt = full_matrices ? 'A' : 'S';
   int minmn = m < n ? m : n;
-  float* diag = (float*)malloc(minmn * sizeof(float));
-  float* superdiag = (float*)malloc((minmn - 1) * sizeof(float));
-  float* u_work = (float*)malloc(m * m * sizeof(float));
-  float* v_work = (float*)malloc(n * n * sizeof(float));
-  if (!diag || !superdiag || !u_work || !v_work) {
-    free(diag);
-    free(superdiag);
-    free(u_work);
-    free(v_work);
+  // ldu: U is [m, m] (full) or [m, minmn] (econ), leading dim is # cols
+  lapack_int ldu = full_matrices ? m : minmn;
+  // ldvt: VT is [n, n] (full) or [minmn, n] (econ), leading dim is # cols = n
+  lapack_int ldvt = n;
+
+  // Allocate space for superbidiagonal elements (not used in our interface)
+  float* superb = (float*)malloc((minmn - 1) * sizeof(float));
+  if (!superb) {
+    free(a_copy);
     return;
   }
-  bidiagonalize_float32(a, u_work, v_work, diag, superdiag, m, n);
-  svd_iterate_float32(diag, superdiag, u_work, v_work, m, n);
-  for (int i = 0; i < minmn; i++) s[i] = fabsf(diag[i]);
-  for (int i = 0; i < minmn - 1; i++) {
-    int max_idx = i;
-    for (int j = i + 1; j < minmn; j++)
-      if (s[j] > s[max_idx]) max_idx = j;
-    if (max_idx != i) {
-      float temp = s[i];
-      s[i] = s[max_idx];
-      s[max_idx] = temp;
-#pragma omp parallel for if (m > 100)
-      for (int kk = 0; kk < m; kk++) {
-        temp = u_work[kk * m + i];
-        u_work[kk * m + i] = u_work[kk * m + max_idx];
-        u_work[kk * m + max_idx] = temp;
-      }
-#pragma omp parallel for if (n > 100)
-      for (int kk = 0; kk < n; kk++) {
-        temp = v_work[kk * n + i];
-        v_work[kk * n + i] = v_work[kk * n + max_idx];
-        v_work[kk * n + max_idx] = temp;
-      }
-    }
-  }
-  if (full_matrices) {
-    memcpy(u, u_work, m * m * sizeof(float));
-#pragma omp parallel for if (n > 100)
-    for (int ii = 0; ii < n; ii++) {
-      for (int jj = 0; jj < n; jj++) {
-        vt[ii * n + jj] = v_work[jj * n + ii];
-      }
-    }
-  } else {
-#pragma omp parallel for if (m > 100)
-    for (int ii = 0; ii < m; ii++) {
-      for (int jj = 0; jj < minmn; jj++) {
-        u[ii * minmn + jj] = u_work[ii * m + jj];
-      }
-    }
-#pragma omp parallel for if (minmn > 100)
-    for (int ii = 0; ii < minmn; ii++) {
-      for (int jj = 0; jj < n; jj++) {
-        vt[ii * n + jj] = v_work[jj * n + ii];
-      }
-    }
-  }
-  free(diag);
-  free(superdiag);
-  free(u_work);
-  free(v_work);
+
+  lapack_int info = LAPACKE_sgesvd(LAPACK_ROW_MAJOR, jobu, jobvt, m, n, a_copy, n, s, u, ldu, vt, ldvt, superb);
+  free(a_copy);
+  free(superb);
+  // Note: LAPACK returns singular values in descending order, which matches our expectation
 }
 
 static void svd_float64(double* a, double* u, double* s, double* vt, int m,
                         int n, int full_matrices) {
+  // LAPACK destroys the input matrix, so we need to make a copy
+  double* a_copy = (double*)malloc(m * n * sizeof(double));
+  if (!a_copy) return;
+  memcpy(a_copy, a, m * n * sizeof(double));
+
+  char jobu = full_matrices ? 'A' : 'S';
+  char jobvt = full_matrices ? 'A' : 'S';
   int minmn = m < n ? m : n;
-  double* diag = (double*)malloc(minmn * sizeof(double));
-  double* superdiag = (double*)malloc((minmn - 1) * sizeof(double));
-  double* u_work = (double*)malloc(m * m * sizeof(double));
-  double* v_work = (double*)malloc(n * n * sizeof(double));
-  if (!diag || !superdiag || !u_work || !v_work) {
-    free(diag);
-    free(superdiag);
-    free(u_work);
-    free(v_work);
+  // ldu: U is [m, m] (full) or [m, minmn] (econ), leading dim is # cols
+  lapack_int ldu = full_matrices ? m : minmn;
+  // ldvt: VT is [n, n] (full) or [minmn, n] (econ), leading dim is # cols = n
+  lapack_int ldvt = n;
+
+  // Allocate space for superbidiagonal elements (not used in our interface)
+  double* superb = (double*)malloc((minmn - 1) * sizeof(double));
+  if (!superb) {
+    free(a_copy);
     return;
   }
-  bidiagonalize_float64(a, u_work, v_work, diag, superdiag, m, n);
-  svd_iterate_float64(diag, superdiag, u_work, v_work, m, n);
-  for (int i = 0; i < minmn; i++) s[i] = fabs(diag[i]);
-  for (int i = 0; i < minmn - 1; i++) {
-    int max_idx = i;
-    for (int j = i + 1; j < minmn; j++)
-      if (s[j] > s[max_idx]) max_idx = j;
-    if (max_idx != i) {
-      double temp = s[i];
-      s[i] = s[max_idx];
-      s[max_idx] = temp;
-#pragma omp parallel for if (m > 100)
-      for (int kk = 0; kk < m; kk++) {
-        temp = u_work[kk * m + i];
-        u_work[kk * m + i] = u_work[kk * m + max_idx];
-        u_work[kk * m + max_idx] = temp;
-      }
-#pragma omp parallel for if (n > 100)
-      for (int kk = 0; kk < n; kk++) {
-        temp = v_work[kk * n + i];
-        v_work[kk * n + i] = v_work[kk * n + max_idx];
-        v_work[kk * n + max_idx] = temp;
-      }
-    }
-  }
-  if (full_matrices) {
-    memcpy(u, u_work, m * m * sizeof(double));
-#pragma omp parallel for if (n > 100)
-    for (int ii = 0; ii < n; ii++) {
-      for (int jj = 0; jj < n; jj++) {
-        vt[ii * n + jj] = v_work[jj * n + ii];
-      }
-    }
-  } else {
-#pragma omp parallel for if (m > 100)
-    for (int ii = 0; ii < m; ii++) {
-      for (int jj = 0; jj < minmn; jj++) {
-        u[ii * minmn + jj] = u_work[ii * m + jj];
-      }
-    }
-#pragma omp parallel for if (minmn > 100)
-    for (int ii = 0; ii < minmn; ii++) {
-      for (int jj = 0; jj < n; jj++) {
-        vt[ii * n + jj] = v_work[jj * n + ii];
-      }
-    }
-  }
-  free(diag);
-  free(superdiag);
-  free(u_work);
-  free(v_work);
+
+  lapack_int info = LAPACKE_dgesvd(LAPACK_ROW_MAJOR, jobu, jobvt, m, n, a_copy, n, s, u, ldu, vt, ldvt, superb);
+  free(a_copy);
+  free(superb);
+  // Note: LAPACK returns singular values in descending order, which matches our expectation
 }
 
 // Complex SVD helpers (similar structure, with conj and cabs)
@@ -1027,136 +950,84 @@ static void svd_iterate_complex64(double* diag, double* superdiag, complex64* u,
 
 static void svd_complex32(complex32* a, complex32* u, float* s, complex32* vt,
                           int m, int n, int full_matrices) {
+  // LAPACK destroys the input matrix, so we need to make a copy
+  complex32* a_copy = (complex32*)malloc(m * n * sizeof(complex32));
+  if (!a_copy) return;
+  memcpy(a_copy, a, m * n * sizeof(complex32));
+
+  char jobu = full_matrices ? 'A' : 'S';
+  char jobvt = full_matrices ? 'A' : 'S';
   int minmn = m < n ? m : n;
-  float* diag = (float*)malloc(minmn * sizeof(float));
-  float* superdiag = (float*)malloc((minmn - 1) * sizeof(float));
-  complex32* u_work = (complex32*)malloc(m * m * sizeof(complex32));
-  complex32* v_work = (complex32*)malloc(n * n * sizeof(complex32));
-  if (!diag || !superdiag || !u_work || !v_work) {
-    free(diag);
-    free(superdiag);
-    free(u_work);
-    free(v_work);
+  lapack_int ldu = full_matrices ? m : minmn;
+  lapack_int ldvt = full_matrices ? n : minmn;
+
+  // Allocate space for superbidiagonal elements (not used in our interface)
+  float* superb = (float*)malloc((minmn - 1) * sizeof(float));
+  if (!superb) {
+    free(a_copy);
     return;
   }
-  bidiagonalize_complex32(a, u_work, v_work, diag, superdiag, m, n);
-  svd_iterate_complex32(diag, superdiag, u_work, v_work, m, n);
-  for (int i = 0; i < minmn; i++) s[i] = diag[i];
-  for (int i = 0; i < minmn - 1; i++) {
-    int max_idx = i;
-    for (int j = i + 1; j < minmn; j++)
-      if (s[j] > s[max_idx]) max_idx = j;
-    if (max_idx != i) {
-      float temp = s[i];
-      s[i] = s[max_idx];
-      s[max_idx] = temp;
-#pragma omp parallel for if (m > 100)
-      for (int kk = 0; kk < m; kk++) {
-        complex32 ctemp = u_work[kk * m + i];
-        u_work[kk * m + i] = u_work[kk * m + max_idx];
-        u_work[kk * m + max_idx] = ctemp;
-      }
-#pragma omp parallel for if (n > 100)
-      for (int kk = 0; kk < n; kk++) {
-        complex32 ctemp = v_work[kk * n + i];
-        v_work[kk * n + i] = v_work[kk * n + max_idx];
-        v_work[kk * n + max_idx] = ctemp;
-      }
-    }
-  }
+
+  lapack_int info = LAPACKE_cgesvd(LAPACK_ROW_MAJOR, jobu, jobvt, m, n, a_copy, n, s, u, ldu, vt, ldvt, superb);
+  free(a_copy);
+  free(superb);
+  // Note: LAPACK returns singular values in descending order, which matches our expectation
+  // Note: For complex SVD, LAPACK returns V^H (conjugate transpose), but our interface expects V^T
+  // We need to conjugate the result to match our expected output
   if (full_matrices) {
-    memcpy(u, u_work, m * m * sizeof(complex32));
-#pragma omp parallel for if (n > 100)
-    for (int ii = 0; ii < n; ii++) {
-      for (int jj = 0; jj < n; jj++) {
-        vt[ii * n + jj] = conj(v_work[jj * n + ii]);
+    for (int i = 0; i < n; i++) {
+      for (int j = 0; j < n; j++) {
+        vt[i * n + j] = conj(vt[i * n + j]);
       }
     }
   } else {
-#pragma omp parallel for if (m > 100)
-    for (int ii = 0; ii < m; ii++) {
-      for (int jj = 0; jj < minmn; jj++) {
-        u[ii * minmn + jj] = u_work[ii * m + jj];
-      }
-    }
-#pragma omp parallel for if (minmn > 100)
-    for (int ii = 0; ii < minmn; ii++) {
-      for (int jj = 0; jj < n; jj++) {
-        vt[ii * n + jj] = conj(v_work[jj * n + ii]);
+    for (int i = 0; i < minmn; i++) {
+      for (int j = 0; j < n; j++) {
+        vt[i * n + j] = conj(vt[i * n + j]);
       }
     }
   }
-  free(diag);
-  free(superdiag);
-  free(u_work);
-  free(v_work);
 }
 
 static void svd_complex64(complex64* a, complex64* u, double* s, complex64* vt,
                           int m, int n, int full_matrices) {
+  // LAPACK destroys the input matrix, so we need to make a copy
+  complex64* a_copy = (complex64*)malloc(m * n * sizeof(complex64));
+  if (!a_copy) return;
+  memcpy(a_copy, a, m * n * sizeof(complex64));
+
+  char jobu = full_matrices ? 'A' : 'S';
+  char jobvt = full_matrices ? 'A' : 'S';
   int minmn = m < n ? m : n;
-  double* diag = (double*)malloc(minmn * sizeof(double));
-  double* superdiag = (double*)malloc((minmn - 1) * sizeof(double));
-  complex64* u_work = (complex64*)malloc(m * m * sizeof(complex64));
-  complex64* v_work = (complex64*)malloc(n * n * sizeof(complex64));
-  if (!diag || !superdiag || !u_work || !v_work) {
-    free(diag);
-    free(superdiag);
-    free(u_work);
-    free(v_work);
+  lapack_int ldu = full_matrices ? m : minmn;
+  lapack_int ldvt = full_matrices ? n : minmn;
+
+  // Allocate space for superbidiagonal elements (not used in our interface)
+  double* superb = (double*)malloc((minmn - 1) * sizeof(double));
+  if (!superb) {
+    free(a_copy);
     return;
   }
-  bidiagonalize_complex64(a, u_work, v_work, diag, superdiag, m, n);
-  svd_iterate_complex64(diag, superdiag, u_work, v_work, m, n);
-  for (int i = 0; i < minmn; i++) s[i] = diag[i];
-  for (int i = 0; i < minmn - 1; i++) {
-    int max_idx = i;
-    for (int j = i + 1; j < minmn; j++)
-      if (s[j] > s[max_idx]) max_idx = j;
-    if (max_idx != i) {
-      double temp = s[i];
-      s[i] = s[max_idx];
-      s[max_idx] = temp;
-#pragma omp parallel for if (m > 100)
-      for (int kk = 0; kk < m; kk++) {
-        complex64 ctemp = u_work[kk * m + i];
-        u_work[kk * m + i] = u_work[kk * m + max_idx];
-        u_work[kk * m + max_idx] = ctemp;
-      }
-#pragma omp parallel for if (n > 100)
-      for (int kk = 0; kk < n; kk++) {
-        complex64 ctemp = v_work[kk * n + i];
-        v_work[kk * n + i] = v_work[kk * n + max_idx];
-        v_work[kk * n + max_idx] = ctemp;
-      }
-    }
-  }
+
+  lapack_int info = LAPACKE_zgesvd(LAPACK_ROW_MAJOR, jobu, jobvt, m, n, a_copy, n, s, u, ldu, vt, ldvt, superb);
+  free(a_copy);
+  free(superb);
+  // Note: LAPACK returns singular values in descending order, which matches our expectation
+  // Note: For complex SVD, LAPACK returns V^H (conjugate transpose), but our interface expects V^T
+  // We need to conjugate the result to match our expected output
   if (full_matrices) {
-    memcpy(u, u_work, m * m * sizeof(complex64));
-#pragma omp parallel for if (n > 100)
-    for (int ii = 0; ii < n; ii++) {
-      for (int jj = 0; jj < n; jj++) {
-        vt[ii * n + jj] = conj(v_work[jj * n + ii]);
+    for (int i = 0; i < n; i++) {
+      for (int j = 0; j < n; j++) {
+        vt[i * n + j] = conj(vt[i * n + j]);
       }
     }
   } else {
-#pragma omp parallel for if (m > 100)
-    for (int ii = 0; ii < m; ii++) {
-      for (int jj = 0; jj < minmn; jj++) {
-        u[ii * minmn + jj] = u_work[ii * m + jj];
-      }
-    }
-#pragma omp parallel for if (minmn > 100)
-    for (int ii = 0; ii < minmn; ii++) {
-      for (int jj = 0; jj < n; jj++) {
-        vt[ii * n + jj] = conj(v_work[jj * n + ii]);
+    for (int i = 0; i < minmn; i++) {
+      for (int j = 0; j < n; j++) {
+        vt[i * n + j] = conj(vt[i * n + j]);
       }
     }
   }
-  free(diag);
-  free(superdiag);
-  free(u_work);
-  free(v_work);
 }
 
 static void svd_float16(uint16_t* a, uint16_t* u, uint16_t* s, uint16_t* vt,
@@ -1380,7 +1251,7 @@ CAMLprim value caml_nx_op_svd(value v_in, value v_u, value v_s, value v_vt,
       case CAML_BA_FLOAT32: {
         float* base_in = (float*)ba_in->data + off_in;
         float* base_u = (float*)ba_u->data + off_u;
-        float* base_s = (float*)ba_s->data + off_s;
+        double* base_s = (double*)ba_s->data + off_s;  // S is always float64
         float* base_vt = (float*)ba_vt->data + off_vt;
         float* A = (float*)malloc((size_t)m * n * sizeof(float));
         float* U = (float*)malloc((size_t)m * u_cols * sizeof(float));
@@ -1396,7 +1267,8 @@ CAMLprim value caml_nx_op_svd(value v_in, value v_u, value v_s, value v_vt,
         nx_pack_f32(A, base_in, m, n, s_in_row, s_in_col);
         svd_float32(A, U, S, VT, m, n, full_matrices);
         nx_unpack_f32(base_u, U, m, u_cols, s_u_row, s_u_col);
-        for (int i = 0; i < minmn; i++) base_s[i * s_s_stride] = S[i];
+        // Convert S from float32 to float64
+        for (int i = 0; i < minmn; i++) base_s[i * s_s_stride] = (double)S[i];
         nx_unpack_f32(base_vt, VT, vt_rows, n, s_vt_row, s_vt_col);
         free(A);
         free(U);
@@ -1434,7 +1306,7 @@ CAMLprim value caml_nx_op_svd(value v_in, value v_u, value v_s, value v_vt,
       case CAML_BA_COMPLEX32: {
         complex32* base_in = (complex32*)ba_in->data + off_in;
         complex32* base_u = (complex32*)ba_u->data + off_u;
-        float* base_s = (float*)ba_s->data + off_s;
+        double* base_s = (double*)ba_s->data + off_s;  // S is always float64
         complex32* base_vt = (complex32*)ba_vt->data + off_vt;
         complex32* A = (complex32*)malloc((size_t)m * n * sizeof(complex32));
         complex32* U =
@@ -1452,7 +1324,8 @@ CAMLprim value caml_nx_op_svd(value v_in, value v_u, value v_s, value v_vt,
         nx_pack_c32(A, base_in, m, n, s_in_row, s_in_col);
         svd_complex32(A, U, S, VT, m, n, full_matrices);
         nx_unpack_c32(base_u, U, m, u_cols, s_u_row, s_u_col);
-        for (int i = 0; i < minmn; i++) base_s[i * s_s_stride] = S[i];
+        // Convert S from float32 to float64
+        for (int i = 0; i < minmn; i++) base_s[i * s_s_stride] = (double)S[i];
         nx_unpack_c32(base_vt, VT, vt_rows, n, s_vt_row, s_vt_col);
         free(A);
         free(U);

@@ -71,6 +71,19 @@ let approx_equal (type b) ?(epsilon = 1e-6) (a : (float, b) Nx.t)
     let max_diff = Nx.item [] (Nx.max abs_diff) in
     max_diff < epsilon
 
+(* Approximate equality for complex numbers *)
+let approx_equal_complex (type b) ?(epsilon = 1e-6) (a : (Complex.t, b) Nx.t)
+    (b : (Complex.t, b) Nx.t) =
+  if Nx.shape a <> Nx.shape b then false
+  else
+    let a_arr = Nx.to_array a in
+    let b_arr = Nx.to_array b in
+    Array.for_all2
+      (fun x y ->
+        Float.abs (x.Complex.re -. y.Complex.re) < epsilon
+        && Float.abs (x.Complex.im -. y.Complex.im) < epsilon)
+      a_arr b_arr
+
 (* Common check functions *)
 let check_nx (type a b) ?epsilon msg (expected : (a, b) Nx.t)
     (actual : (a, b) Nx.t) =
@@ -87,10 +100,19 @@ let check_nx (type a b) ?epsilon msg (expected : (a, b) Nx.t)
         Alcotest.failf "%s: tensors not equal\nExpected:\n%s\nActual:\n%s" msg
           (Nx.to_string expected) (Nx.to_string actual)
     in
+    let test_complex expected actual =
+      let approx_equal_complex = approx_equal_complex ?epsilon in
+      if not (approx_equal_complex expected actual) then
+        Alcotest.failf "%s: tensors not equal\nExpected:\n%s\nActual:\n%s" msg
+          (Nx.to_string expected) (Nx.to_string actual)
+    in
     match Nx.dtype expected with
     | Float16 -> test_float expected actual
     | Float32 -> test_float expected actual
     | Float64 -> test_float expected actual
+    | Complex16 -> test_complex expected actual
+    | Complex32 -> test_complex expected actual
+    | Complex64 -> test_complex expected actual
     | _ ->
         let equal = Nx.array_equal expected actual in
         if not (equal |> Nx.item [] = 0) then
