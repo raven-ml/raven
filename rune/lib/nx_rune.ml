@@ -98,6 +98,12 @@ type _ Effect.t +=
       keepdims : bool;
     }
       -> ('a, 'b) t Effect.t
+  | E_associative_scan : {
+      t_in : ('a, 'b) t;
+      axis : int;
+      op : [ `Sum | `Prod | `Max | `Min ];
+    }
+      -> ('a, 'b) t Effect.t
   | E_permute : { t_in : ('a, 'b) t; axes : int array } -> ('a, 'b) t Effect.t
   | E_reshape : {
       t_in : ('a, 'b) t;
@@ -378,6 +384,14 @@ let op_reduce_prod ~axes ~keepdims t_in =
   reduce_op
     (fun () -> E_reduce_prod { t_in; axes; keepdims })
     Nx_c.op_reduce_prod ~axes ~keepdims t_in
+
+let op_associative_scan ~axis ~op t_in =
+  try Effect.perform (E_associative_scan { t_in; axis; op })
+  with Effect.Unhandled _ -> (
+    match to_device (context t_in) t_in with
+    | Native_tensor t -> Native_tensor (Nx_c.op_associative_scan ~axis ~op t)
+    | Symbolic_tensor _ ->
+        failwith "Cannot perform associative_scan on symbolic tensor")
 
 (* Shape operations *)
 let op_reshape t_in new_shape =

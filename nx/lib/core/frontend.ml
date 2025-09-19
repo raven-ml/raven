@@ -1232,6 +1232,46 @@ module Make (B : Backend_intf.S) = struct
   let prod ?axes ?(keepdims = false) x =
     reduce_op B.op_reduce_prod ?axes ~keepdims x
 
+  let associative_scan ~axis op x =
+    let x_shape = shape x in
+    let rank = Array.length x_shape in
+    if rank = 0 then
+      let normalized_axis = if axis < 0 then axis + 1 else axis in
+      if normalized_axis = 0 then x
+      else
+        Error.invalid ~op:"associative_scan" ~what:"axis"
+          ~reason:
+            (Printf.sprintf
+               "axis %d out of bounds for rank 0 tensor (only axis 0 valid)"
+               axis)
+          ()
+    else
+      let normalized_axis = if axis < 0 then axis + rank else axis in
+      if normalized_axis < 0 || normalized_axis >= rank then
+        Error.invalid ~op:"associative_scan" ~what:"axis"
+          ~reason:
+            (Printf.sprintf "axis %d out of bounds for rank %d" axis rank)
+          ()
+      else B.op_associative_scan ~axis:normalized_axis ~op x
+
+  let cumulative_scan ?axis op x =
+    let orig_shape = shape x in
+    match axis with
+    | Some axis -> associative_scan ~axis op x
+    | None ->
+        let numel = array_prod orig_shape in
+        let flattened = reshape [| numel |] x in
+        let scanned = associative_scan ~axis:0 op flattened in
+        if Array.length orig_shape = 0 then
+          (* Reshape to scalar shape *)
+          reshape [||] scanned
+        else reshape orig_shape scanned
+
+  let cumsum ?axis x = cumulative_scan ?axis `Sum x
+  let cumprod ?axis x = cumulative_scan ?axis `Prod x
+  let cummax ?axis x = cumulative_scan ?axis `Max x
+  let cummin ?axis x = cumulative_scan ?axis `Min x
+
   let mean ?axes ?(keepdims = false) x =
     let x_dtype = B.dtype x in
     let num_for_sum = sum ?axes ~keepdims x in

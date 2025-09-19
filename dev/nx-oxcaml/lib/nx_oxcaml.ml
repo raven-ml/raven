@@ -268,6 +268,10 @@ let op_reduce_prod ~axes ~keepdims input =
   (* TODO: Implement reduction operations *)
   failwith "op_reduce_prod: not implemented yet"
 
+let op_associative_scan ~axis ~op:_ input =
+  ignore axis;
+  failwith "op_associative_scan: not implemented yet"
+
 (* Movement Operations *)
 let op_expand input new_shape =
   { input with view = View.broadcast input.view new_shape }

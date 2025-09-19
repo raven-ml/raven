@@ -194,27 +194,6 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
 #define COMPLEX_SUB(x, y) ((x) - (y))
 #define COMPLEX_DIV(x, y) ((x) / (y))
 
-// Complex min/max using lexicographic ordering (match NumPy)
-// Compare real parts first, then imaginary if real parts are equal
-// complex_max is defined in nx_c_shared.h, but with slightly different
-// comparison We need to keep this version for compatibility
-
-static inline complex32 complex_min(complex32 x, complex32 y) {
-  float x_re = crealf(x), y_re = crealf(y);
-  float x_im = cimagf(x), y_im = cimagf(y);
-  if (x_re < y_re || (x_re == y_re && x_im < y_im)) return x;
-  return y;
-}
-
-// complex64_max is defined in nx_c_shared.h
-
-static inline complex64 complex64_min(complex64 x, complex64 y) {
-  double x_re = creal(x), y_re = creal(y);
-  double x_im = cimag(x), y_im = cimag(y);
-  if (x_re < y_re || (x_re == y_re && x_im < y_im)) return x;
-  return y;
-}
-
 // Complex16 conversion helpers are defined in nx_c_shared.h
 
 // Helper macros for int4 saturation

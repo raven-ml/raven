@@ -141,6 +141,56 @@ let deriv_max_wrt_op1 op1 op2 op1_dtype = T.cast op1_dtype (T.greater op1 op2)
 let deriv_max_wrt_op2 op1 op2 op2_dtype =
   T.cast op2_dtype (T.greater_equal op2 op1)
 
+let normalize_axis axis shape =
+  let rank = Array.length shape in
+  let axis = if axis < 0 then axis + rank else axis in
+  if axis < 0 || axis >= rank then
+    invalid_arg (Printf.sprintf "axis %d out of bounds for rank %d" axis rank)
+  else axis
+
+let reverse_cumsum tensor axis =
+  let flipped = T.flip tensor ~axes:[| axis |] in
+  let scanned = T.cumsum ~axis flipped in
+  T.flip scanned ~axes:[| axis |]
+
+let prefix_exclusive axis tensor =
+  let shape = T.shape tensor in
+  let pad_config =
+    Array.mapi (fun i _ -> if i = axis then (1, 0) else (0, 0)) shape
+  in
+  let one = Dtype.one (T.dtype tensor) in
+  let padded = T.pad pad_config one tensor in
+  let cumprod_padded = T.cumprod ~axis padded in
+  let slice_specs =
+    Array.mapi (fun i dim -> if i = axis then T.R (0, dim) else T.R (0, dim))
+      shape
+  in
+  T.slice (Array.to_list slice_specs) cumprod_padded
+
+let suffix_exclusive axis tensor =
+  let shape = T.shape tensor in
+  let one = Dtype.one (T.dtype tensor) in
+  let flipped = T.flip tensor ~axes:[| axis |] in
+  let flipped_cumprod = T.cumprod ~axis flipped in
+  let suffix_inclusive = T.flip flipped_cumprod ~axes:[| axis |] in
+  let pad_config =
+    Array.mapi (fun i _ -> if i = axis then (0, 1) else (0, 0)) shape
+  in
+  let padded = T.pad pad_config one suffix_inclusive in
+  let slice_specs =
+    Array.mapi (fun i dim -> if i = axis then T.R (1, dim + 1) else T.R (0, dim))
+      shape
+  in
+  T.slice (Array.to_list slice_specs) padded
+
+let divide_no_nan num denom =
+  let zero_scalar = Dtype.zero (T.dtype denom) in
+  let zero_tensor = T.full (context denom) (T.dtype denom) (T.shape denom) zero_scalar in
+  let zero_mask = T.equal denom zero_tensor in
+  let safe_denom = T.where zero_mask (T.ones_like denom) denom in
+  let base = T.div num safe_denom in
+  T.where zero_mask (T.zeros_like base) base
+
 let prepare_grad_for_broadcast grad_output input_tensor_val axes op_keepdims
     reduction_op_for_shape =
   if op_keepdims then grad_output
@@ -537,6 +587,37 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   T.mul d_loss_d_result_broadcasted d_result_d_input_term
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            forward_val)
+    | E_associative_scan { t_in = t_in_val; axis; op } ->
+        Some
+          (fun k ->
+            let result_val = op_associative_scan ~axis ~op t_in_val in
+            let forward_val = continue k result_val in
+            let shape_in = T.shape t_in_val in
+            let axis_norm = normalize_axis axis shape_in in
+            Debug.with_context "∇associative_scan" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let grad_contrib =
+                  match op with
+                  | `Sum -> reverse_cumsum d_loss_d_result axis_norm
+                  | `Prod ->
+                      let prefix = prefix_exclusive axis_norm t_in_val in
+                      let suffix = suffix_exclusive axis_norm t_in_val in
+                      let h = divide_no_nan d_loss_d_result suffix in
+                      let tail_sum =
+                        T.sub (reverse_cumsum h axis_norm) h
+                      in
+                      let inner =
+                        T.add d_loss_d_result (T.mul suffix tail_sum)
+                      in
+                      T.mul prefix inner
+                  | `Max | `Min ->
+                      failwith
+                        "autodiff: cummax/cummin gradients not supported"
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib);
             forward_val)
     | E_permute { t_in = t_in_val; axes = permute_axes } ->
         Some
@@ -1467,6 +1548,37 @@ let make_forward_handler primal_to_dual_map =
               { primal = result_val; tangent = result_tangent }
             in
             PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
+            forward_val)
+    | E_associative_scan { t_in; axis; op } ->
+        Some
+          (fun k ->
+            let result_val = op_associative_scan ~axis ~op t_in in
+            let dual_in = get_dual t_in in
+            let shape_in = T.shape t_in in
+            let axis_norm = normalize_axis axis shape_in in
+            let result_tangent =
+              match op with
+              | `Sum -> T.cumsum ~axis:axis_norm dual_in.tangent
+              | `Prod ->
+                  let prefix = prefix_exclusive axis_norm t_in in
+                  let dx_over_x = divide_no_nan dual_in.tangent t_in in
+                  let cum = T.cumsum ~axis:axis_norm dx_over_x in
+                  let inner = T.mul result_val cum in
+                  let zero_tensor =
+                    T.full (context t_in) (T.dtype t_in) shape_in
+                      (Dtype.zero (T.dtype t_in))
+                  in
+                  let zero_mask = T.equal t_in zero_tensor in
+                  let fallback = T.mul prefix dual_in.tangent in
+                  T.where zero_mask fallback inner
+              | `Max | `Min ->
+                  failwith "autodiff JVP: cummax/cummin not supported"
+            in
+            let result_dual =
+              { primal = result_val; tangent = result_tangent }
+            in
+            PhysicalTbl.add primal_to_dual_map result_val (Any_dual result_dual);
+            let forward_val = continue k result_val in
             forward_val)
     | E_permute { t_in; axes } ->
         Some

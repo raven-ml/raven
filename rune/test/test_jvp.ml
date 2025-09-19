@@ -170,6 +170,24 @@ let test_jvp_abs () =
   check_rune ~eps "jvp(abs) primal" expected_primal primal;
   check_rune ~eps "jvp(abs) tangent" expected_tangent tangent
 
+let test_jvp_cumsum () =
+  let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let v = T.create T.float32 [| 3 |] [| 0.1; 0.2; 0.3 |] in
+  let primal, tangent = T.jvp (fun x -> T.cumsum ~axis:0 x) x v in
+  let expected_primal = T.create T.float32 [| 3 |] [| 1.; 3.; 6. |] in
+  let expected_tangent = T.create T.float32 [| 3 |] [| 0.1; 0.3; 0.6 |] in
+  check_rune ~eps "jvp(cumsum) primal" expected_primal primal;
+  check_rune ~eps "jvp(cumsum) tangent" expected_tangent tangent
+
+let test_jvp_cumprod () =
+  let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let v = T.create T.float32 [| 3 |] [| 0.1; 0.2; 0.3 |] in
+  let primal, tangent = T.jvp (fun x -> T.cumprod ~axis:0 x) x v in
+  let expected_primal = T.create T.float32 [| 3 |] [| 1.; 2.; 6. |] in
+  let expected_tangent = T.create T.float32 [| 3 |] [| 0.1; 0.4; 1.8 |] in
+  check_rune ~eps "jvp(cumprod) primal" expected_primal primal;
+  check_rune ~eps "jvp(cumprod) tangent" expected_tangent tangent
+
 let test_jvp_sigmoid () =
   let x = T.scalar T.float32 0.0 in
   let v = T.scalar T.float32 1.0 in
@@ -471,6 +489,8 @@ let () =
           test_case "relu" `Quick test_jvp_relu;
           test_case "tanh" `Quick test_jvp_tanh;
           test_case "abs" `Quick test_jvp_abs;
+          test_case "cumsum" `Quick test_jvp_cumsum;
+          test_case "cumprod" `Quick test_jvp_cumprod;
           test_case "sigmoid" `Quick test_jvp_sigmoid;
           test_case "square" `Quick test_jvp_square;
           test_case "recip" `Quick test_jvp_recip;

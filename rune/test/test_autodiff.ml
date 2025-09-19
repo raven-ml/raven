@@ -423,6 +423,18 @@ let test_grad_leaky_relu () =
   let expected = T.create T.float32 [| 4 |] [| 0.01; 0.01; 1.; 1. |] in
   check_rune ~eps "leaky_relu gradient" expected grad
 
+let test_grad_cumsum () =
+  let x = T.create T.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let grad = T.grad (fun x -> T.sum (T.cumsum ~axis:0 x)) x in
+  let expected = T.create T.float32 [| 4 |] [| 4.; 3.; 2.; 1. |] in
+  check_rune ~eps "cumsum gradient" expected grad
+
+let test_grad_cumprod () =
+  let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let grad = T.grad (fun x -> T.sum (T.cumprod ~axis:0 x)) x in
+  let expected = T.create T.float32 [| 3 |] [| 9.; 4.; 2. |] in
+  check_rune ~eps "cumprod gradient" expected grad
+
 let test_grad_elu () =
   (* ELU gradient *)
   let x = T.create T.float32 [| 2 |] [| -1.; 1. |] in
@@ -876,6 +888,11 @@ let suite =
         test_case "leaky_relu" `Quick test_grad_leaky_relu;
         test_case "elu" `Quick test_grad_elu;
         test_case "selu" `Quick test_grad_selu;
+      ] );
+    ( "cumulative",
+      [
+        test_case "cumsum" `Quick test_grad_cumsum;
+        test_case "cumprod" `Quick test_grad_cumprod;
       ] );
     ( "compound operations",
       [

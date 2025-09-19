@@ -736,6 +736,69 @@ end
 
 (* ───── Bitwise Operation Tests ───── *)
 
+module Cumulative_tests = struct
+  let tests =
+    [
+      ( "cumsum default axis",
+        `Quick,
+        fun () ->
+          let t =
+            Nx.create Nx_core.Dtype.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
+          in
+          let result = Nx.cumsum t in
+          check_t ~eps:1e-6 "cumsum flatten" [| 2; 2 |]
+            [| 1.; 3.; 6.; 10. |]
+            result );
+      ( "cumsum axis=1",
+        `Quick,
+        fun () ->
+          let t =
+            Nx.create Nx_core.Dtype.float32 [| 2; 3 |]
+              [| 1.; 2.; 3.; 4.; 5.; 6. |]
+          in
+          let result = Nx.cumsum ~axis:1 t in
+          check_t ~eps:1e-6 "cumsum axis=1" [| 2; 3 |]
+            [| 1.; 3.; 6.; 4.; 9.; 15. |]
+            result );
+      ( "cumprod axis=-1",
+        `Quick,
+        fun () ->
+          let t =
+            Nx.create Nx_core.Dtype.int32 [| 2; 3 |]
+              [| 1l; 2l; 3l; 2l; 2l; 2l |]
+          in
+          let result = Nx.cumprod ~axis:(-1) t in
+          check_t "cumprod axis=-1" [| 2; 3 |]
+            [| 1l; 2l; 6l; 2l; 4l; 8l |]
+            result );
+      ( "cummax nan propagation",
+        `Quick,
+        fun () ->
+          let t =
+            Nx.create Nx_core.Dtype.float32 [| 4 |]
+              [| 1.; Float.nan; 2.; 3. |]
+          in
+          let result = Nx.cummax t in
+          check bool "cummax nan[1]" true
+            (Float.is_nan (Nx.item [ 1 ] result));
+          check bool "cummax nan[2]" true
+            (Float.is_nan (Nx.item [ 2 ] result)) );
+      ( "cummin axis option",
+        `Quick,
+        fun () ->
+          let t =
+            Nx.create Nx_core.Dtype.int32 [| 2; 4 |]
+              [| 4l; 2l; 3l; 1l; 5l; 6l; 2l; 7l |]
+          in
+          let result = Nx.cummin ~axis:0 t in
+          check_t "cummin axis=0" [| 2; 4 |]
+            [| 4l; 2l; 3l; 1l; 4l; 2l; 2l; 1l |]
+            result );
+    ]
+end
+
+(* ───── Bitwise Operation Tests ───── *)
+
 module Bitwise_tests = struct
   let tests =
     [
@@ -839,6 +902,7 @@ let suite =
     ("Ops :: Reduction", Reduction_tests.tests);
     ("Ops :: Min/Max", MinMax_tests.tests);
     ("Ops :: Rounding", Rounding_tests.tests);
+    ("Ops :: Cumulative", Cumulative_tests.tests);
     ("Ops :: Bitwise", Bitwise_tests.tests);
     ("Ops :: Broadcasting", Broadcasting_tests.tests);
   ]

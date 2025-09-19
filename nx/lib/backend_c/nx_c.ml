@@ -114,6 +114,10 @@ external caml_reduce_prod :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int array -> bool -> unit
   = "caml_nx_reduce_prod"
 
+external caml_associative_scan :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int -> int -> unit
+  = "caml_nx_associative_scan"
+
 (* Cast operation FFI declaration *)
 external caml_cast : ('a, 'b) ffi_tensor -> ('c, 'd) ffi_tensor -> unit
   = "caml_nx_cast"
@@ -539,6 +543,33 @@ let op_reduce_max ~axes ~keepdims x =
 
 let op_reduce_prod ~axes ~keepdims x =
   reduce_op "reduce_prod" caml_reduce_prod ~axes ~keepdims x
+
+let op_associative_scan ~axis ~op x =
+  let x_shape = shape x in
+  let rank = Array.length x_shape in
+  if rank = 0 then
+    Error.invalid ~op:"associative_scan" ~what:"tensor"
+      ~reason:"requires rank >= 1" ()
+  else
+    let axis = if axis < 0 then axis + rank else axis in
+    if axis < 0 || axis >= rank then
+      Error.invalid ~op:"associative_scan" ~what:"axis"
+        ~reason:(Printf.sprintf "axis %d out of bounds for rank %d" axis rank)
+        ()
+    else
+      let x' = ensure_materializable x in
+      let out = create_tensor x.context x.dtype x_shape in
+      let x_ffi = to_ffi_tensor x' in
+      let out_ffi = to_ffi_tensor out in
+      let op_tag =
+        match op with
+        | `Sum -> 0
+        | `Prod -> 1
+        | `Max -> 2
+        | `Min -> 3
+      in
+      caml_associative_scan x_ffi out_ffi axis op_tag;
+      out
 
 (* Movement Ops - These are view-only operations *)
 let op_expand x shape = { x with view = Lazy_view.expand shape x.view }

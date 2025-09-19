@@ -8,6 +8,7 @@
    nx_c_binary
    nx_c_unary
    nx_c_reduce
+   nx_c_scan
    nx_c_ternary
    nx_c_cast
    nx_c_memory

@@ -2077,6 +2077,22 @@ val prod : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
       - : (int32, int32_elt) t = [3, 8]
     ]} *)
 
+val cumsum : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
+(** [cumsum ?axis t] computes the inclusive cumulative sum. Defaults to
+    flattening the tensor (row-major order) when [axis] is omitted. *)
+
+val cumprod : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
+(** [cumprod ?axis t] computes the inclusive cumulative product. Defaults to
+    flattening the tensor when [axis] is omitted. *)
+
+val cummax : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
+(** [cummax ?axis t] computes the inclusive cumulative maximum. NaNs propagate
+    for floating-point dtypes. Defaults to flattening when [axis] is omitted. *)
+
+val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
+(** [cummin ?axis t] computes the inclusive cumulative minimum. NaNs propagate
+    for floating-point dtypes. Defaults to flattening when [axis] is omitted. *)
+
 val mean : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [mean ?axes ?keepdims t] computes arithmetic mean along axes.
 

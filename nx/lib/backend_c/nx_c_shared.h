@@ -57,6 +57,38 @@ static inline caml_ba_complex16 complex32_to_complex16(complex32 c32) {
 #define CLAMP_I4(x) ((x) < -8 ? -8 : ((x) > 7 ? 7 : (x)))
 #define CLAMP_U4(x) ((x) < 0 ? 0 : ((x) > 15 ? 15 : (x)))
 
+static inline int int4_get(const uint8_t *data, long offset, bool is_signed) {
+  long byte_off = offset / 2;
+  int nibble_off = offset % 2;
+  uint8_t byte = data[byte_off];
+  if (is_signed) {
+    if (nibble_off) {
+      return (int8_t)(byte & 0xF0) >> 4;
+    } else {
+      return (int8_t)((byte & 0x0F) << 4) >> 4;
+    }
+  } else {
+    if (nibble_off) {
+      return (byte >> 4) & 0x0F;
+    } else {
+      return byte & 0x0F;
+    }
+  }
+}
+
+static inline void int4_set(uint8_t *data, long offset, int value,
+                            bool is_signed) {
+  int clamped = is_signed ? CLAMP_I4(value) : CLAMP_U4(value);
+  uint8_t nibble = (uint8_t)(clamped & 0x0F);
+  long byte_off = offset / 2;
+  int nibble_off = offset % 2;
+  if (nibble_off) {
+    data[byte_off] = (data[byte_off] & 0x0F) | (nibble << 4);
+  } else {
+    data[byte_off] = (data[byte_off] & 0xF0) | nibble;
+  }
+}
+
 // Complex arithmetic operations
 #define COMPLEX_ADD(a, b) ((a) + (b))
 #define COMPLEX_MUL(a, b) ((a) * (b))
@@ -76,6 +108,22 @@ static inline complex64 complex64_max(complex64 a, complex64 b) {
   if (a_real > b_real) return a;
   if (a_real < b_real) return b;
   return (a_imag >= b_imag) ? a : b;
+}
+
+static inline complex32 complex_min(complex32 a, complex32 b) {
+  float a_real = crealf(a), a_imag = cimagf(a);
+  float b_real = crealf(b), b_imag = cimagf(b);
+  if (a_real < b_real) return a;
+  if (a_real > b_real) return b;
+  return (a_imag < b_imag) ? a : b;
+}
+
+static inline complex64 complex64_min(complex64 a, complex64 b) {
+  double a_real = creal(a), a_imag = cimag(a);
+  double b_real = creal(b), b_imag = cimag(b);
+  if (a_real < b_real) return a;
+  if (a_real > b_real) return b;
+  return (a_imag < b_imag) ? a : b;
 }
 
 // Core ndarray structure for strided array operations
