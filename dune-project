@@ -166,6 +166,22 @@
   (computer-vision image-processing feature-detection machine-learning)))
 
 (package
+ (name fehu)
+ (synopsis "Reinforcement learning framework for OCaml")
+ (description
+  "Fehu is a reinforcement learning framework built on Raven's ecosystem, providing environments, algorithms, and training utilities")
+ (depends
+  (ocaml
+   (>= 5.3.0))
+  dune
+  (rune
+   (= :version))
+  (kaun
+   (= :version))
+  yojson
+  (alcotest :with-test)))
+
+(package
  (name quill)
  (allow_empty)
  (synopsis "Interactive notebook for OCaml data science")
@@ -244,6 +260,8 @@
   (kaun
    (= :version))
   (sowilo
+   (= :version))
+  (fehu
    (= :version))
   (quill
    (= :version))

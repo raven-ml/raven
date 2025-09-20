@@ -230,8 +230,7 @@ let train_cnn ~vocab_size ~block_size:_ ~epochs ~lr ~weight_decay ~val_data
         {
           init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
-            (fun _ ~training:_ ?rngs:_ x ->
-              Rune.transpose ~axes:[ 0; 2; 1 ] x);
+            (fun _ ~training:_ ?rngs:_ x -> Rune.transpose ~axes:[ 0; 2; 1 ] x);
         };
         conv1d ~in_channels:32 ~out_channels:64 ~kernel_size:3 ~padding:`Causal
           ();
@@ -239,8 +238,7 @@ let train_cnn ~vocab_size ~block_size:_ ~epochs ~lr ~weight_decay ~val_data
         {
           init = (fun ~rngs:_ ~dtype:_ -> List []);
           apply =
-            (fun _ ~training:_ ?rngs:_ x ->
-              Rune.transpose ~axes:[ 0; 2; 1 ] x);
+            (fun _ ~training:_ ?rngs:_ x -> Rune.transpose ~axes:[ 0; 2; 1 ] x);
         };
         (* take last time step *)
         {

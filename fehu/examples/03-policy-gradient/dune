@@ -1,0 +1,3 @@
+(executable
+ (name policy_gradient)
+ (libraries kaun rune fehu fehu.envs fehu.algorithms))

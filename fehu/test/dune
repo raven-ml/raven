@@ -1,0 +1,13 @@
+(tests
+ (names
+  test_space
+  test_env
+  test_wrapper
+  test_vector_env
+  test_envs
+  test_buffer
+  test_training
+  test_trajectory
+  test_reinforce
+  test_dqn)
+ (libraries fehu fehu.envs fehu.algorithms kaun rune alcotest))

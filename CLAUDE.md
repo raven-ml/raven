@@ -1,10 +1,20 @@
-# CLAUDE.md
+# AGENTS.md
 
 ## Project Overview
 
 Raven: OCaml ML ecosystem. Pre-alpha.
 
 **Libraries:** nx (tensors), hugin (plotting), quill (notebooks), rune (autodiff+JIT), sowilo (vision)
+
+- **Philosophy**: Unix-style - do one thing well, fail loudly, clarity over cleverness
+- **Commit messages**: Use conventional commit prefixes: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `style:`, `perf:`
+  - Include scope prefix if useful (e.g., `feat(rune):`)
+  - Start the commit with a capital letter (e.g., `feat(rune): Add ...`)
+- When creating commits, only commit what's in the staged area if there's anything there, the user would have prepared the changes to commit themselves.
+- When you run a dune command, if there is an instance of dune running, it means we're running in watch mode, DO NOT kill dune, and do not remove the lock. You should be able to build while dune is running.
+- You can read the documentation of installed dependencies in `_build/_private/default/.pkg/<library>`, located at the root of the project (make sure your current working directory is at the root of the project)
+- NEVER delete the build directory _build, the lock directory dune.lock, or the dune lock when running in watch mode. NEVER kill dune when running in watch mode.
+- NEVER hide warnings with `[@warning -69"]`, and NEVER hide unused variables by adding an underscore. Warnings is the compiler telling us that the code is wrong, the implementation is incomplete, so ALWAYS understand what the issue is, whether we need to fix the implementation to use the variable, or remove the variable.
 
 ## Workflow
 

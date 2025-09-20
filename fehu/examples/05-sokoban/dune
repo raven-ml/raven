@@ -1,0 +1,4 @@
+(executables
+ (names reinforce_sokoban)
+ (libraries fehu fehu.algorithms kaun rune unix)
+ (modules reinforce_sokoban sokoban_env visualization))

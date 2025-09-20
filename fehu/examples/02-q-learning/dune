@@ -1,0 +1,3 @@
+(executable
+ (name q_learning)
+ (libraries rune fehu fehu.envs))

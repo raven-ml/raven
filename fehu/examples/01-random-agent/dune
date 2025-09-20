@@ -1,0 +1,3 @@
+(executable
+ (name random_agent)
+ (libraries fehu fehu.envs rune))
