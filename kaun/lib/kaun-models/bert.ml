@@ -710,7 +710,7 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
                 (* Transpose weight matrices if needed (HuggingFace stores them
                    transposed) *)
                 let final_tensor =
-                  if needs_transpose then Rune.transpose tensor ~axes:[| 1; 0 |]
+                  if needs_transpose then Rune.transpose tensor ~axes:[ 1; 0 ]
                   else tensor
                 in
                 layer_params :=
@@ -721,7 +721,7 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
         | s when String.starts_with ~prefix:"pooler.dense.weight" s ->
             (* Transpose the pooler weight too (HuggingFace stores it
                transposed) *)
-            let transposed_tensor = Rune.transpose tensor ~axes:[| 1; 0 |] in
+            let transposed_tensor = Rune.transpose tensor ~axes:[ 1; 0 ] in
             pooler_params :=
               Kaun.Ptree.Record.add "dense_weight"
                 (Kaun.Ptree.Tensor transposed_tensor) !pooler_params

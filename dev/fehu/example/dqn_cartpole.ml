@@ -159,7 +159,7 @@ module DQN = struct
         let current_q_values =
           Rune.sum
             (Rune.mul q_values one_hot_tensor)
-            ~axes:[| 1 |] ~keepdims:false
+            ~axes:[ 1 ] ~keepdims:false
         in
 
         (* Target Q-values using target network *)
@@ -167,7 +167,7 @@ module DQN = struct
           Kaun.apply t.target_network t.target_params ~training:false
             next_obs_tensor
         in
-        let max_next_q = Rune.max next_q_values ~axes:[| 1 |] ~keepdims:false in
+        let max_next_q = Rune.max next_q_values ~axes:[ 1 ] ~keepdims:false in
         let not_terminated =
           Rune.sub (Rune.scalar Rune.float32 1.0) terminated_tensor
         in
@@ -181,7 +181,7 @@ module DQN = struct
         (* MSE loss *)
         let diff = Rune.sub current_q_values targets in
         let loss =
-          Rune.mean (Rune.mul diff diff) ~axes:[| 0 |] ~keepdims:false
+          Rune.mean (Rune.mul diff diff) ~axes:[ 1 ] ~keepdims:false
         in
         loss
       in

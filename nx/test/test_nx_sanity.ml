@@ -596,7 +596,7 @@ let shape_manipulation_tests =
         |> check_t "squeeze_axis" [| 3; 1 |] [| 1.; 1.; 1. |]);
     test_case "unsqueeze" `Quick (fun () ->
         let a = Nx.ones Nx.float32 [| 3 |] in
-        Nx.unsqueeze ~axes:[| 0; 2 |] a
+        Nx.unsqueeze ~axes:[ 0; 2 ] a
         |> check_t "unsqueeze" [| 1; 3; 1 |] [| 1.; 1.; 1. |]);
     test_case "unsqueeze_axis" `Quick (fun () ->
         let a = Nx.ones Nx.float32 [| 3 |] in
@@ -604,7 +604,7 @@ let shape_manipulation_tests =
         |> check_t "unsqueeze_axis" [| 1; 3 |] [| 1.; 1.; 1. |]);
     test_case "expand_dims" `Quick (fun () ->
         let a = Nx.ones Nx.float32 [| 3 |] in
-        Nx.expand_dims [| 0 |] a
+        Nx.expand_dims [ 0 ] a
         |> check_t "expand_dims" [| 1; 3 |] [| 1.; 1.; 1. |]);
     test_case "transpose" `Quick (fun () ->
         let a = Nx.create Nx.float32 shape_2x3 test_array in

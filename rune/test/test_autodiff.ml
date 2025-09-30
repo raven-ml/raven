@@ -102,7 +102,7 @@ let test_grad_sigmoid () =
 let test_grad_softmax () =
   (* Softmax gradient *)
   let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let grad = T.grad (fun x -> T.sum (T.softmax x ~axes:[| 0 |])) x in
+  let grad = T.grad (fun x -> T.sum (T.softmax x ~axes:[ 1 ])) x in
   (* Sum of softmax is 1, so gradient should sum to 0 *)
   let grad_sum = T.sum grad |> scalar_value in
   check_scalar ~eps:1e-5 "softmax gradient sum" 0.0 grad_sum
@@ -174,7 +174,7 @@ let test_grad_max () =
 let test_grad_sum_with_axis () =
   (* Sum with axis specified *)
   let x = T.create T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
-  let grad = T.grad (fun x -> T.sum (T.sum x ~axes:[| 1 |])) x in
+  let grad = T.grad (fun x -> T.sum (T.sum x ~axes:[ 1 ])) x in
   check_rune ~eps "sum with axis gradient" (T.ones_like x) grad
 
 let test_grad_min () =
@@ -647,13 +647,13 @@ let test_grad_cross_entropy () =
   let targets = T.create T.float32 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 0.; 1. |] in
 
   let f_ce logits =
-    let probs = T.softmax logits ~axes:[| 1 |] in
+    let probs = T.softmax logits ~axes:[ 1 ] in
     let log_probs = T.log probs in
     T.neg (T.sum (T.mul targets log_probs))
   in
 
   let grad_ce = T.grad f_ce logits in
-  let expected_ce = T.sub (T.softmax logits ~axes:[| 1 |]) targets in
+  let expected_ce = T.sub (T.softmax logits ~axes:[ 1 ]) targets in
   check_rune ~eps:1e-5 "cross-entropy gradient" expected_ce grad_ce
 
 let test_grad_binary_cross_entropy () =

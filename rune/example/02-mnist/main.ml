@@ -100,10 +100,10 @@ let forward_lenet params inputs =
 (* Cross-entropy loss *)
 let cross_entropy_loss logits y_true =
   let epsilon = 1e-10 in
-  let probs = softmax logits ~axes:[| 1 |] in
+  let probs = softmax logits ~axes:[ 1 ] in
   let log_probs = log (add probs (scalar Float32 epsilon)) in
   let mul_term = mul y_true log_probs in
-  let sum_term = sum mul_term ~axes:[| 1 |] in
+  let sum_term = sum mul_term ~axes:[ 1 ] in
   let neg_term = neg sum_term in
   let loss = mean neg_term in
   loss

@@ -21,7 +21,7 @@ let () =
   let last_logits = slice [ A; I (seq_len - 1); A ] logits in
 
   (* Get top prediction *)
-  let probs = softmax ~axes:[| 1 |] last_logits in
+  let probs = softmax ~axes:[ 1 ] last_logits in
   let top_prob = max probs |> item [] in
   let predicted_id = argmax ~axis:1 last_logits |> item [] |> Int32.to_int in
 

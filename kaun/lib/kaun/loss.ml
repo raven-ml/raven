@@ -1,14 +1,14 @@
 let softmax_cross_entropy logits labels =
   Rune.debug_with_context "softmax_cross_entropy" (fun () ->
       (* Assumes labels are one-hot encoded *)
-      let max_logits = Rune.max logits ~axes:[| -1 |] ~keepdims:true in
+      let max_logits = Rune.max logits ~axes:[ -1 ] ~keepdims:true in
       let exp_logits = Rune.exp (Rune.sub logits max_logits) in
-      let sum_exp = Rune.sum exp_logits ~axes:[| -1 |] ~keepdims:true in
+      let sum_exp = Rune.sum exp_logits ~axes:[ -1 ] ~keepdims:true in
       let log_softmax =
         Rune.sub logits (Rune.add max_logits (Rune.log sum_exp))
       in
       let loss =
-        Rune.neg (Rune.sum (Rune.mul labels log_softmax) ~axes:[| -1 |])
+        Rune.neg (Rune.sum (Rune.mul labels log_softmax) ~axes:[ -1 ])
       in
       Rune.mean loss)
 

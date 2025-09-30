@@ -230,11 +230,10 @@ let orthogonal ?(scale = 1.0) ?(column_axis = -1) () =
         let q =
           if !rows < !cols then
             (* Wide matrix: make rows orthonormal *)
-            let q_t = Rune.transpose ~axes:[| 1; 0 |] a in
+            let q_t = Rune.transpose ~axes:[ 1; 0 ] a in
             (* Normalize each row *)
             let norms =
-              Rune.sqrt
-                (Rune.sum (Rune.mul q_t q_t) ~axes:[| 1 |] ~keepdims:true)
+              Rune.sqrt (Rune.sum (Rune.mul q_t q_t) ~axes:[ 1 ] ~keepdims:true)
             in
             let q_normalized =
               Rune.div q_t (Rune.add norms (Rune.scalar dtype 1e-10))
@@ -243,12 +242,12 @@ let orthogonal ?(scale = 1.0) ?(column_axis = -1) () =
             (* Apply Gram-Schmidt-like orthogonalization *)
             (* This is a simplified version - full Gram-Schmidt would be iterative *)
             (* For now, just ensure rows have unit norm *)
-            Rune.transpose ~axes:[| 1; 0 |] q_normalized
+            Rune.transpose ~axes:[ 1; 0 ] q_normalized
           else
             (* Tall matrix: make columns orthonormal *)
             (* Normalize each column *)
             let norms =
-              Rune.sqrt (Rune.sum (Rune.mul a a) ~axes:[| 0 |] ~keepdims:true)
+              Rune.sqrt (Rune.sum (Rune.mul a a) ~axes:[ 1 ] ~keepdims:true)
             in
             let q_normalized =
               Rune.div a (Rune.add norms (Rune.scalar dtype 1e-10))

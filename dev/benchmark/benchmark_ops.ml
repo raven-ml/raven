@@ -67,22 +67,22 @@ let bench_attention () =
     let q =
       Rune.matmul x wq
       |> Rune.reshape [| batch_size; seq_len; num_heads; head_dim |]
-      |> Rune.transpose ~axes:[| 0; 2; 1; 3 |]
+      |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
     in
     let k =
       Rune.matmul x wk
       |> Rune.reshape [| batch_size; seq_len; num_heads; head_dim |]
-      |> Rune.transpose ~axes:[| 0; 2; 1; 3 |]
+      |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
     in
     let v =
       Rune.matmul x wv
       |> Rune.reshape [| batch_size; seq_len; num_heads; head_dim |]
-      |> Rune.transpose ~axes:[| 0; 2; 1; 3 |]
+      |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
     in
 
     (* Attention scores *)
     let scores =
-      Rune.matmul q (Rune.transpose ~axes:[| 0; 1; 3; 2 |] k)
+      Rune.matmul q (Rune.transpose ~axes:[ 0; 1; 3; 2 ] k)
       |> Rune.div (Rune.scalar dtype (Float.sqrt (float_of_int head_dim)))
     in
 
@@ -92,12 +92,12 @@ let bench_attention () =
     in
 
     (* Softmax *)
-    let attn_weights = Rune.softmax ~axes:[| 3 |] scores in
+    let attn_weights = Rune.softmax ~axes:[ 3 ] scores in
 
     (* Apply attention *)
     let out =
       Rune.matmul attn_weights v
-      |> Rune.transpose ~axes:[| 0; 2; 1; 3 |]
+      |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
       |> Rune.contiguous
       |> Rune.reshape [| batch_size; seq_len; hidden_dim |]
     in

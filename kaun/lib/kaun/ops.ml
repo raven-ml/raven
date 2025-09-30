@@ -20,7 +20,7 @@ let scaled_dot_product_attention ?attention_mask ?(dropout = 0.0) ?is_causal
   in
 
   (* Compute attention scores: Q @ K^T *)
-  let k_transposed = transpose ~axes:[| 0; 1; 3; 2 |] k in
+  let k_transposed = transpose ~axes:[ 0; 1; 3; 2 ] k in
   let scores = matmul q k_transposed in
 
   (* Apply scaling *)
@@ -54,7 +54,7 @@ let scaled_dot_product_attention ?attention_mask ?(dropout = 0.0) ?is_causal
   in
 
   (* Apply softmax *)
-  let attn_weights = softmax ~axes:[| 3 |] scores in
+  let attn_weights = softmax ~axes:[ 3 ] scores in
 
   (* Apply dropout if specified *)
   let attn_weights =
@@ -138,7 +138,7 @@ let multi_head_attention ~q_proj_w ~k_proj_w ~v_proj_w ~out_proj_w ?q_bias
     let seq_len = x_shape.(1) in
     let head_dim_x = x_shape.(2) / num_heads_x in
     let x = reshape [| batch_size; seq_len; num_heads_x; head_dim_x |] x in
-    transpose ~axes:[| 0; 2; 1; 3 |] x
+    transpose ~axes:[ 0; 2; 1; 3 ] x
   in
 
   let q = reshape_for_attention q num_heads in
@@ -152,7 +152,7 @@ let multi_head_attention ~q_proj_w ~k_proj_w ~v_proj_w ~out_proj_w ?q_bias
       let repeat_kv tensor =
         let shape_t = shape tensor in
         (* [batch, heads_kv, seq, head_dim] *)
-        let expanded = expand_dims [| 2 |] tensor in
+        let expanded = expand_dims [ 2 ] tensor in
         (* [batch, heads_kv, 1, seq, head_dim] *)
         let repeated =
           broadcast_to
@@ -175,7 +175,7 @@ let multi_head_attention ~q_proj_w ~k_proj_w ~v_proj_w ~out_proj_w ?q_bias
 
   (* Transpose and reshape back: [batch, heads, seq, head_dim] -> [batch, seq,
      embed] *)
-  let attn_output = transpose ~axes:[| 0; 2; 1; 3 |] attn_output in
+  let attn_output = transpose ~axes:[ 0; 2; 1; 3 ] attn_output in
   let attn_output = contiguous attn_output in
   let attn_output =
     reshape [| batch_size; tgt_seq_len; embed_dim |] attn_output
@@ -210,9 +210,9 @@ let dropout ~rate ?rngs x =
 let batch_norm ~scale ~bias ~num_features x =
   let axes =
     match Array.length (shape x) with
-    | 2 -> [| 0 |] (* (batch, features) *)
-    | 4 -> [| 0; 2; 3 |] (* (batch, channels, height, width) *)
-    | _ -> [| 0 |]
+    | 2 -> [ 0 ] (* (batch, features) *)
+    | 4 -> [ 0; 2; 3 ] (* (batch, channels, height, width) *)
+    | _ -> [ 0 ]
     (* Default to first axis *)
   in
   let mean = mean x ~axes ~keepdims:true in
@@ -232,7 +232,7 @@ let batch_norm ~scale ~bias ~num_features x =
   add (mul x_normalized scale_reshaped) bias_reshaped
 
 let rms_norm ~scale ~dim ?(eps = 1e-6) x =
-  let var = mean (square x) ~axes:[| -1 |] ~keepdims:true in
+  let var = mean (square x) ~axes:[ -1 ] ~keepdims:true in
   let normed = mul x (rsqrt (add var (scalar (dtype x) eps))) in
   let scale_expanded =
     let x_dims = Array.length (shape x) in
@@ -243,8 +243,8 @@ let rms_norm ~scale ~dim ?(eps = 1e-6) x =
   mul normed (add (scalar (dtype x) 1.0) scale_expanded)
 
 let layer_norm ?gamma ?beta ~dim ?(eps = 1e-5) ~elementwise_affine x =
-  let mean = mean x ~axes:[| -1 |] ~keepdims:true in
-  let var = var x ~axes:[| -1 |] ~keepdims:true in
+  let mean = mean x ~axes:[ -1 ] ~keepdims:true in
+  let var = var x ~axes:[ -1 ] ~keepdims:true in
   let eps_scalar = scalar (dtype x) eps in
   let normalized = div (sub x mean) (sqrt (add var eps_scalar)) in
   if elementwise_affine then
@@ -319,7 +319,7 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
     let reshape_for_attention x =
       let x = contiguous x in
       let x = reshape [| batch_size; seq_len; num_heads; head_dim |] x in
-      transpose x ~axes:[| 0; 2; 1; 3 |]
+      transpose x ~axes:[ 0; 2; 1; 3 ]
     in
 
     let q = reshape_for_attention q in
@@ -328,9 +328,9 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
 
     (* Scaled dot-product attention *)
     let scale = 1.0 /. Float.sqrt (float_of_int head_dim) in
-    let scores = matmul q (transpose k ~axes:[| 0; 1; 3; 2 |]) in
+    let scores = matmul q (transpose k ~axes:[ 0; 1; 3; 2 ]) in
     let scores = mul_s scores scale in
-    let attn_weights = softmax scores ~axes:[| 3 |] in
+    let attn_weights = softmax scores ~axes:[ 3 ] in
 
     (* Apply attention dropout if training *)
     let attn_weights =
@@ -341,7 +341,7 @@ let transformer_encoder_layer ~q_weight ~k_weight ~v_weight ~attn_out_weight
 
     (* Apply attention to values *)
     let context = matmul attn_weights v in
-    let context = transpose context ~axes:[| 0; 2; 1; 3 |] in
+    let context = transpose context ~axes:[ 0; 2; 1; 3 ] in
     let context = contiguous context in
     let context = reshape [| batch_size; seq_len; hidden_size |] context in
 

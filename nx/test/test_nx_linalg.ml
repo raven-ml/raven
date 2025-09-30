@@ -365,7 +365,7 @@ let test_norm_matrix_1 () =
 
 let test_norm_axis () =
   let m = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let result = Nx.norm ~axes:[| 1 |] m in
+  let result = Nx.norm ~axes:[ 1 ] m in
   check_t ~eps:1e-5 "norm along axis" [| 2 |] [| 3.741657; 8.774964 |] result
 
 let test_norm_empty () =
@@ -528,7 +528,7 @@ let test_tensordot () =
   let b = Nx.create Nx.float32 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |] in
   let res = Nx.tensordot a b in
   check_t "tensordot default" [| 2; 2 |] [| 58.; 64.; 139.; 154. |] res;
-  let res_axes = Nx.tensordot ~axes:([| 0 |], [| 1 |]) a b in
+  let res_axes = Nx.tensordot ~axes:([ 0 ], [ 1 ]) a b in
   check_shape "tensordot custom axes" [| 3; 3 |] res_axes
 
 let test_tensordot_mismatch () =
@@ -536,7 +536,7 @@ let test_tensordot_mismatch () =
   let b = Nx.create Nx.float32 [| 4; 2 |] (Array.init 8 float_of_int) in
   check_raises "tensordot mismatch"
     (Invalid_argument "tensordot: axes have different sizes") (fun () ->
-      ignore (Nx.tensordot ~axes:([| 1 |], [| 0 |]) a b))
+      ignore (Nx.tensordot ~axes:([ 1 ], [ 0 ]) a b))
 
 let test_einsum_error () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -590,7 +590,7 @@ let test_einsum () =
   let res_diag_sum = Nx.einsum "ii" [| square |] in
   check_t "einsum diag sum" [||] [| 15. |] res_diag_sum;
   let res_reduce = Nx.einsum "ij->i" [| a |] in
-  let sum_reduce = Nx.sum ~axes:[| 1 |] a in
+  let sum_reduce = Nx.sum ~axes:[ 1 ] a in
   check_nx "einsum reduce axis" sum_reduce res_reduce;
   let res_total = Nx.einsum "ij->" [| a |] in
   let sum_total = Nx.sum a in
@@ -672,7 +672,7 @@ let test_einsum () =
   let weighted = Nx.einsum "...i,i->..." [| a; vec |] in
   let expected_weighted =
     let mul = Nx.mul a (Nx.reshape [| 1; 3 |] vec) in
-    Nx.sum ~axes:[| 1 |] mul
+    Nx.sum ~axes:[ 1 ] mul
   in
   check_nx "einsum broadcast dot" expected_weighted weighted;
   let dot_scalar = Nx.einsum "i,i->" [| vec; vec |] in
@@ -881,7 +881,7 @@ let test_tensorsolve () =
   let b = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let x = Nx.tensorsolve a b in
   check_shape "tensorsolve shape" [| 2; 2 |] x;
-  let recon = Nx.tensordot a x ~axes:([| 2; 3 |], [| 0; 1 |]) in
+  let recon = Nx.tensordot a x ~axes:([ 2; 3 ], [ 0; 1 ]) in
   check_nx ~epsilon:1e-5 "tensorsolve recon" b recon
 
 let test_tensorsolve_axes () =
@@ -889,7 +889,7 @@ let test_tensorsolve_axes () =
     Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
   in
   let b = Nx.create Nx.float32 [| 3 |] [| 14.; 32.; 50. |] in
-  let x = Nx.tensorsolve ~axes:[| 1 |] a b in
+  let x = Nx.tensorsolve ~axes:[ 1 ] a b in
   (* Matrix is singular, so we get minimum norm solution via pinv *)
   check_t ~eps:1e-5 "tensorsolve axes" [| 3 |] [| 1.; 2.; 3. |] x
 
@@ -918,7 +918,7 @@ let test_tensorinv () =
   in
   let inv = Nx.tensorinv ~ind:2 a in
   check_shape "tensorinv shape" [| 2; 2; 2; 2 |] inv;
-  let recon = Nx.tensordot a inv ~axes:([| 2; 3 |], [| 0; 1 |]) in
+  let recon = Nx.tensordot a inv ~axes:([ 2; 3 ], [ 0; 1 ]) in
   let id = Nx.eye Nx.float32 4 |> Nx.reshape [| 2; 2; 2; 2 |] in
   check_nx ~epsilon:1e-5 "tensorinv recon" id recon
 

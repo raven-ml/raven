@@ -572,7 +572,7 @@ module Reduction_tests = struct
           let t =
             Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
-          let result = Nx.sum ~axes:[| 0 |] t in
+          let result = Nx.sum ~axes:[ 0 ] t in
           check_t "sum axis=0" [| 3 |] [| 5.; 7.; 9. |] result );
       ( "sum axis=1 keepdims",
         `Quick,
@@ -580,7 +580,7 @@ module Reduction_tests = struct
           let t =
             Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
-          let result = Nx.sum ~axes:[| 1 |] ~keepdims:true t in
+          let result = Nx.sum ~axes:[ 1 ] ~keepdims:true t in
           check_t "sum axis=1 keepdims" [| 2; 1 |] [| 6.; 15. |] result );
       ( "prod all",
         `Quick,

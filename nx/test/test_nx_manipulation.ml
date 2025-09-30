@@ -93,7 +93,7 @@ let test_transpose_high_d () =
 
 let test_transpose_axes () =
   let t = Nx.create Nx.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
-  let tr = Nx.transpose ~axes:[| 1; 2; 0 |] t in
+  let tr = Nx.transpose ~axes:[ 1; 2; 0 ] t in
   check_shape "transpose custom axes" [| 3; 4; 2 |] tr;
   check (float 1e-6) "transpose[0,0,0]" 0.0 (Nx.item [ 0; 0; 0 ] tr);
   check (float 1e-6) "transpose[0,0,1]" 12.0 (Nx.item [ 0; 0; 1 ] tr)
@@ -103,7 +103,7 @@ let test_transpose_invalid_axes () =
   check_invalid_arg "invalid axes length"
     "transpose: invalid axes (length 3) (expected rank 2, got 3)\n\
      hint: provide exactly one axis per dimension" (fun () ->
-      Nx.transpose ~axes:[| 0; 1; 2 |] t)
+      Nx.transpose ~axes:[ 0; 1; 2 ] t)
 
 let test_transpose_view () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -260,7 +260,7 @@ let test_squeeze_all () =
 
 let test_squeeze_specific () =
   let t = Nx.create Nx.float32 [| 1; 3; 1; 4 |] (Array.init 12 float_of_int) in
-  let s = Nx.squeeze ~axes:[| 0; 2 |] t in
+  let s = Nx.squeeze ~axes:[ 0; 2 ] t in
   check_shape "squeeze specific axes" [| 3; 4 |] s
 
 let test_squeeze_no_ones () =
@@ -272,29 +272,29 @@ let test_squeeze_invalid_axis () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   check_invalid_arg "squeeze invalid axis"
     "squeeze: cannot remove dimension axis 1 (size 3) to squeezed (size \
-     3\226\137\1601)" (fun () -> ignore (Nx.squeeze ~axes:[| 1 |] t))
+     3\226\137\1601)" (fun () -> ignore (Nx.squeeze ~axes:[ 1 ] t))
 
 let test_expand_dims_various () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
 
   (* Add dim at position 0 *)
-  let e0 = Nx.expand_dims [| 0 |] t in
+  let e0 = Nx.expand_dims [ 0 ] t in
   check_shape "expand_dims at 0" [| 1; 3 |] e0;
 
   (* Add dim at position -1 (end) *)
-  let e_end = Nx.expand_dims [| -1 |] t in
+  let e_end = Nx.expand_dims [ -1 ] t in
   check_shape "expand_dims at -1" [| 3; 1 |] e_end;
 
   (* Add dim in middle *)
   let t2 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let e_mid = Nx.expand_dims [| 1 |] t2 in
+  let e_mid = Nx.expand_dims [ 1 ] t2 in
   check_shape "expand_dims in middle" [| 2; 1; 3 |] e_mid
 
 let test_expand_dims_invalid_axis () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   check_invalid_arg "expand_dims invalid axis"
     "unsqueeze: invalid axis 2 (out of bounds for output rank 2)\n\
-     hint: valid range is [-2, 2)" (fun () -> Nx.expand_dims [| 2 |] t)
+     hint: valid range is [-2, 2)" (fun () -> Nx.expand_dims [ 2 ] t)
 
 (* ───── Broadcasting Tests ───── *)
 
@@ -439,7 +439,7 @@ let test_pad_invalid () =
 
 let test_flip_axis () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let f = Nx.flip ~axes:[| 1 |] t in
+  let f = Nx.flip ~axes:[ 1 ] t in
   check_t "flip axis 1" [| 2; 3 |] [| 3.0; 2.0; 1.0; 6.0; 5.0; 4.0 |] f
 
 let test_flip_view () =

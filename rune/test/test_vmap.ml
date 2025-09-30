@@ -95,7 +95,7 @@ let test_nested_vmap () =
 (* Test vmap with reduction *)
 let test_vmap_reduction () =
   let x = T.create T.float32 [| 4; 3; 2 |] (Array.init 24 float_of_int) in
-  let f = T.vmap (fun t -> T.sum t ~axes:[| 1 |]) in
+  let f = T.vmap (fun t -> T.sum t ~axes:[ 1 ]) in
   let result = f x in
   let expected_shape = [| 4; 3 |] in
   check_shape "vmap reduction shape" expected_shape result

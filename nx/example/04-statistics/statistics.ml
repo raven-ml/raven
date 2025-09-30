@@ -38,23 +38,23 @@ let () =
   Printf.printf "2. Statistics Along Axes\n";
 
   (* Along axis 0 (column-wise) *)
-  let sum_cols = sum ~axes:[| 0 |] data in
+  let sum_cols = sum ~axes:[ 0 ] data in
   Printf.printf "Sum along columns (axis 0):\n%s\n" (to_string sum_cols);
 
-  let mean_cols = mean ~axes:[| 0 |] data in
+  let mean_cols = mean ~axes:[ 0 ] data in
   Printf.printf "Mean along columns (axis 0):\n%s\n" (to_string mean_cols);
 
-  let min_cols = min ~axes:[| 0 |] data in
+  let min_cols = min ~axes:[ 0 ] data in
   Printf.printf "Min along columns (axis 0):\n%s\n" (to_string min_cols);
 
-  let max_cols = max ~axes:[| 0 |] data in
+  let max_cols = max ~axes:[ 0 ] data in
   Printf.printf "Max along columns (axis 0):\n%s\n" (to_string max_cols);
 
   (* Along axis 1 (row-wise) *)
-  let sum_rows = sum ~axes:[| 1 |] data in
+  let sum_rows = sum ~axes:[ 1 ] data in
   Printf.printf "Sum along rows (axis 1):\n%s\n" (to_string sum_rows);
 
-  let mean_rows = mean ~axes:[| 1 |] data in
+  let mean_rows = mean ~axes:[ 1 ] data in
   Printf.printf "Mean along rows (axis 1):\n%s\n" (to_string mean_rows);
 
   print_separator ();
@@ -68,10 +68,10 @@ let () =
   let std_all = std data in
   Printf.printf "Standard deviation of all elements: %s\n" (to_string std_all);
 
-  let var_cols = var ~axes:[| 0 |] data in
+  let var_cols = var ~axes:[ 0 ] data in
   Printf.printf "Variance along columns (axis 0):\n%s\n" (to_string var_cols);
 
-  let std_cols = std ~axes:[| 0 |] data in
+  let std_cols = std ~axes:[ 0 ] data in
   Printf.printf "Standard deviation along columns (axis 0):\n%s\n"
     (to_string std_cols);
 

@@ -183,7 +183,7 @@ let test_convolve2d_non_contiguous_input () =
   let input =
     Nx.create Nx.float32 [| 1; 4; 4; 1 |] (Array.init 16 float_of_int)
   in
-  let input_transposed = Nx.transpose ~axes:[| 0; 3; 1; 2 |] input in
+  let input_transposed = Nx.transpose ~axes:[ 0; 3; 1; 2 ] input in
   (* Now [1; 1; 4; 4] but non-contiguous *)
   let kernel = Nx.create Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
 
@@ -268,7 +268,7 @@ let test_convolve2d_dilated_non_contiguous () =
   let input =
     Nx.create Nx.float32 [| 1; 5; 5; 1 |] (Array.init 25 float_of_int)
   in
-  let input_perm = Nx.transpose ~axes:[| 0; 3; 1; 2 |] input in
+  let input_perm = Nx.transpose ~axes:[ 0; 3; 1; 2 ] input in
   (* Now [1; 1; 5; 5] non-contiguous *)
   let kernel =
     Nx.create Nx.float32 [| 1; 1; 3; 3 |]

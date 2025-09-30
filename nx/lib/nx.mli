@@ -667,7 +667,7 @@ val ravel : ('a, 'b) t -> ('a, 'b) t
       - : bool = true
     ]} *)
 
-val squeeze : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
+val squeeze : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [squeeze ?axes t] removes dimensions of size 1.
 
     If [axes] specified, only removes those dimensions. Negative indices count
@@ -678,13 +678,13 @@ val squeeze : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
     {@ocaml[
       # squeeze (ones float32 [| 1; 3; 1; 4 |]) |> shape
       - : int array = [|3; 4|]
-      # squeeze ~axes:[| 0; 2 |] (ones float32 [| 1; 3; 1; 4 |]) |> shape
+      # squeeze ~axes:[ 0; 2 ] (ones float32 [| 1; 3; 1; 4 |]) |> shape
       - : int array = [|3; 4|]
-      # squeeze ~axes:[| -1 |] (ones float32 [| 3; 4; 1 |]) |> shape
+      # squeeze ~axes:[ -1 ] (ones float32 [| 3; 4; 1 |]) |> shape
       - : int array = [|3; 4|]
     ]} *)
 
-val unsqueeze : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
+val unsqueeze : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [unsqueeze ?axes t] inserts dimensions of size 1 at specified positions.
 
     Axes refer to positions in result tensor. Must be in range [0, ndim].
@@ -693,9 +693,9 @@ val unsqueeze : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
       if [axes] not specified, out of bounds, or contains duplicates
 
     {@ocaml[
-      # unsqueeze ~axes:[| 0; 2 |] (create float32 [| 3 |] [| 1.; 2.; 3. |]) |> shape
+      # unsqueeze ~axes:[ 0; 2 ] (create float32 [| 3 |] [| 1.; 2.; 3. |]) |> shape
       - : int array = [|1; 3; 1|]
-      # unsqueeze ~axes:[| 1 |] (create float32 [| 2 |] [| 5.; 6. |]) |> shape
+      # unsqueeze ~axes:[ 1 ] (create float32 [| 2 |] [| 5.; 6. |]) |> shape
       - : int array = [|2; 1|]
     ]} *)
 
@@ -707,10 +707,10 @@ val squeeze_axis : int -> ('a, 'b) t -> ('a, 'b) t
 val unsqueeze_axis : int -> ('a, 'b) t -> ('a, 'b) t
 (** [unsqueeze_axis axis t] inserts dimension of size 1 at [axis]. *)
 
-val expand_dims : int array -> ('a, 'b) t -> ('a, 'b) t
+val expand_dims : int list -> ('a, 'b) t -> ('a, 'b) t
 (** [expand_dims axes t] is synonym for {!unsqueeze}. *)
 
-val transpose : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
+val transpose : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [transpose ?axes t] permutes dimensions.
 
     Default reverses all dimensions. [axes] must be permutation of [0..ndim-1].
@@ -724,14 +724,14 @@ val transpose : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
       - : (int32, int32_elt) t = [[1, 4],
                                   [2, 5],
                                   [3, 6]]
-      # transpose ~axes:[| 2; 0; 1 |] (zeros float32 [| 2; 3; 4 |]) |> shape
+      # transpose ~axes:[ 2; 0; 1 ] (zeros float32 [| 2; 3; 4 |]) |> shape
       - : int array = [|4; 2; 3|]
-      # let id = transpose ~axes:[| 1; 0 |] in
+      # let id = transpose ~axes:[ 1; 0 ] in
         id == transpose
       - : bool = false
     ]} *)
 
-val flip : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
+val flip : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [flip ?axes t] reverses order along specified dimensions.
 
     Default flips all dimensions.
@@ -742,7 +742,7 @@ val flip : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
       - : (int32, int32_elt) t = [[6, 5, 4],
                                   [3, 2, 1]]
       # let x = create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
-        flip ~axes:[| 1 |] x
+        flip ~axes:[ 1 ] x
       - : (int32, int32_elt) t = [[3, 2, 1],
                                   [6, 5, 4]]
     ]} *)
@@ -1235,7 +1235,7 @@ val take_along_axis :
       - : (float, float32_elt) t = [[1],
                                     [3]]
       # let x = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
-        let indices = expand_dims [| 0 |] (argmax ~axis:0 x) in  (* Shape [1, 3] *)
+        let indices = expand_dims [ 0 ] (argmax ~axis:0 x) in  (* Shape [1, 3] *)
         take_along_axis ~axis:0 indices x  (* Max per column *)
       - : (float, float32_elt) t = [[7, 8, 9]]
     ]} *)
@@ -1307,7 +1307,7 @@ val put_along_axis :
       - : (float, float32_elt) t = [[0, 10, 0],
                                     [20, 0, 0]]
       # let x = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
-        let indices = expand_dims [| 0 |] (argmax ~axis:0 x) in  (* Shape [1, 3] *)
+        let indices = expand_dims [ 0 ] (argmax ~axis:0 x) in  (* Shape [1, 3] *)
         put_along_axis ~axis:0 ~indices ~values:(ones float32 [| 1; 3 |]) x;
         x  (* Set max per column to 1 *)
       - : (float, float32_elt) t = [[1, 2, 3],
@@ -2072,7 +2072,7 @@ end
 
     Functions that reduce array dimensions. *)
 
-val sum : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [sum ?axes ?keepdims t] sums elements along specified axes.
 
     Default sums all axes (returns scalar). If [keepdims] is true, retains
@@ -2085,17 +2085,17 @@ val sum : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
         sum x |> item []
       - : float = 10.
       # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        sum ~axes:[| 0 |] x
+        sum ~axes:[ 0 ] x
       - : (float, float32_elt) t = [4, 6]
       # let x = create float32 [| 1; 2 |] [| 1.; 2. |] in
-        sum ~axes:[| 1 |] ~keepdims:true x
+        sum ~axes:[ 1 ] ~keepdims:true x
       - : (float, float32_elt) t = [[3]]
       # let x = create float32 [| 1; 3 |] [| 1.; 2.; 3. |] in
-        sum ~axes:[| -1 |] x
+        sum ~axes:[ -1 ] x
       - : (float, float32_elt) t = [6]
     ]} *)
 
-val max : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [max ?axes ?keepdims t] finds maximum along axes.
 
     Default reduces all axes. NaN propagates (any NaN input gives NaN output).
@@ -2105,14 +2105,14 @@ val max : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
         max x |> item []
       - : float = 6.
       # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        max ~axes:[| 0 |] x
+        max ~axes:[ 0 ] x
       - : (float, float32_elt) t = [3, 4]
       # let x = create float32 [| 1; 2 |] [| 1.; 2. |] in
-        max ~axes:[| 1 |] ~keepdims:true x
+        max ~axes:[ 1 ] ~keepdims:true x
       - : (float, float32_elt) t = [[2]]
     ]} *)
 
-val min : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+val min : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [min ?axes ?keepdims t] finds minimum along axes.
 
     Default reduces all axes. NaN propagates (any NaN input gives NaN output).
@@ -2122,11 +2122,11 @@ val min : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
         min x |> item []
       - : float = 1.
       # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        min ~axes:[| 0 |] x
+        min ~axes:[ 0 ] x
       - : (float, float32_elt) t = [1, 2]
     ]} *)
 
-val prod : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [prod ?axes ?keepdims t] computes product along axes.
 
     Default multiplies all elements. Empty axes give 1.
@@ -2136,7 +2136,7 @@ val prod : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
         prod x |> item []
       - : int32 = 24l
       # let x = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-        prod ~axes:[| 0 |] x
+        prod ~axes:[ 0 ] x
       - : (int32, int32_elt) t = [3, 8]
     ]} *)
 
@@ -2156,7 +2156,7 @@ val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cummin ?axis t] computes the inclusive cumulative minimum. NaNs propagate
     for floating-point dtypes. Defaults to flattening when [axis] is omitted. *)
 
-val mean : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+val mean : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [mean ?axes ?keepdims t] computes arithmetic mean along axes.
 
     Sum of elements divided by count. NaN propagates.
@@ -2166,12 +2166,12 @@ val mean : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
         mean x |> item []
       - : float = 2.5
       # let x = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        mean ~axes:[| 1 |] x
+        mean ~axes:[ 1 ] x
       - : (float, float32_elt) t = [2, 5]
     ]} *)
 
 val var :
-  ?axes:int array -> ?keepdims:bool -> ?ddof:int -> ('a, 'b) t -> ('a, 'b) t
+  ?axes:int list -> ?keepdims:bool -> ?ddof:int -> ('a, 'b) t -> ('a, 'b) t
 (** [var ?axes ?keepdims ?ddof t] computes variance along axes.
 
     [ddof] is delta degrees of freedom. Default 0 (population variance). Use 1
@@ -2189,7 +2189,7 @@ val var :
     ]} *)
 
 val std :
-  ?axes:int array -> ?keepdims:bool -> ?ddof:int -> ('a, 'b) t -> ('a, 'b) t
+  ?axes:int list -> ?keepdims:bool -> ?ddof:int -> ('a, 'b) t -> ('a, 'b) t
 (** [std ?axes ?keepdims ?ddof t] computes standard deviation.
 
     Square root of variance: sqrt(var(t, ddof)). See {!var} for ddof meaning.
@@ -2203,7 +2203,7 @@ val std :
       - : float = 2.
     ]} *)
 
-val all : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
+val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
 (** [all ?axes ?keepdims t] tests if all elements are true (non-zero).
 
     Returns 1 if all elements along axes are non-zero, 0 otherwise.
@@ -2216,11 +2216,11 @@ val all : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
         all x |> item []
       - : int = 0
       # let x = create int32 [| 2; 2 |] [| 1l; 0l; 1l; 1l |] in
-        all ~axes:[| 1 |] x
+        all ~axes:[ 1 ] x
       - : (int, uint8_elt) t = [0, 1]
     ]} *)
 
-val any : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
+val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
 (** [any ?axes ?keepdims t] tests if any element is true (non-zero).
 
     Returns 1 if any element along axes is non-zero, 0 if all are zero.
@@ -2233,7 +2233,7 @@ val any : ?axes:int array -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
         any x |> item []
       - : int = 0
       # let x = create int32 [| 2; 2 |] [| 0l; 0l; 0l; 1l |] in
-        any ~axes:[| 1 |] x
+        any ~axes:[ 1 ] x
       - : (int, uint8_elt) t = [0, 1]
     ]} *)
 
@@ -2484,10 +2484,10 @@ val outer : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val tensordot :
-  ?axes:int array * int array -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  ?axes:int list * int list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [tensordot ?axes a b] computes tensor contraction along specified axes.
 
-    - [axes]: pair of axis arrays to contract (default: last of a, first of b)
+    - [axes]: pair of axis lists to contract (default: last of a, first of b)
 
     Generalizes matrix multiplication to arbitrary dimensions.
 
@@ -2643,7 +2643,7 @@ val norm :
     | `NegTwo
     | `NegInf
     | `P of float ] ->
-  ?axes:int array ->
+  ?axes:int list ->
   ?keepdims:bool ->
   ('a, 'b) t ->
   ('a, 'b) t
@@ -2660,7 +2660,7 @@ val norm :
     - [`NegInf]: min row sum
     - [`P p]: p-norm for vectors
     - [axes]: axes to compute norm over. For matrix norms, must be 2-element
-      array
+      list
     - [keepdims]: keep reduced dimensions as size 1
 
     @raise Invalid_argument if ord requires float/complex input *)
@@ -2758,7 +2758,7 @@ val pinv : ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> ('a, 'b) t
 
     @raise Invalid_argument if input is not float or complex *)
 
-val tensorsolve : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+val tensorsolve : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [tensorsolve ?axes a b] solves tensor equation a x = b for x.
 
     - [axes]: axes in [a] to reorder to end (default: product of b.ndim
@@ -2825,8 +2825,8 @@ val ifft :
     - [norm]: normalization mode (default: [`Backward]) *)
 
 val fft2 :
-  ?axes:int array ->
-  ?s:int array ->
+  ?axes:int list ->
+  ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
@@ -2847,8 +2847,8 @@ val fft2 :
     ]} *)
 
 val ifft2 :
-  ?axes:int array ->
-  ?s:int array ->
+  ?axes:int list ->
+  ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
@@ -2857,8 +2857,8 @@ val ifft2 :
     @raise Invalid_argument if input has less than 2 dimensions *)
 
 val fftn :
-  ?axes:int array ->
-  ?s:int array ->
+  ?axes:int list ->
+  ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
@@ -2867,8 +2867,8 @@ val fftn :
     Transforms all axes by default. *)
 
 val ifftn :
-  ?axes:int array ->
-  ?s:int array ->
+  ?axes:int list ->
+  ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
@@ -2912,8 +2912,8 @@ val irfft :
     - [norm]: normalization mode (default: [`Backward]) *)
 
 val rfft2 :
-  ?axes:int array ->
-  ?s:int array ->
+  ?axes:int list ->
+  ?s:int list ->
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
@@ -2922,8 +2922,8 @@ val rfft2 :
     @raise Invalid_argument if input has less than 2 dimensions *)
 
 val irfft2 :
-  ?axes:int array ->
-  ?s:int array ->
+  ?axes:int list ->
+  ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
@@ -2933,16 +2933,16 @@ val irfft2 :
       if input has less than 2 dimensions or if [s] not specified *)
 
 val rfftn :
-  ?axes:int array ->
-  ?s:int array ->
+  ?axes:int list ->
+  ?s:int list ->
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
 (** [rfftn ?axes ?s ?norm x] computes N-dimensional FFT of real input. *)
 
 val irfftn :
-  ?axes:int array ->
-  ?s:int array ->
+  ?axes:int list ->
+  ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
@@ -2986,7 +2986,7 @@ val rfftfreq : ?d:float -> int -> (float, float64_elt) t
 
     Returns [0, 1, ..., n/2] / (d*n). *)
 
-val fftshift : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
+val fftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [fftshift x ?axes] shifts zero-frequency component to center.
 
     Shifts all axes by default. For visualization of frequency spectra.
@@ -2998,7 +2998,7 @@ val fftshift : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float64_elt) t = [-0.4, -0.2, 0, 0.2, 0.4]
     ]} *)
 
-val ifftshift : ?axes:int array -> ('a, 'b) t -> ('a, 'b) t
+val ifftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [ifftshift x ?axes] undoes fftshift. *)
 
 (** {2 Activation Functions}
@@ -3139,7 +3139,7 @@ val selu : (float, 'a) t -> (float, 'a) t
       - : float = 1.
     ]} *)
 
-val softmax : ?axes:int array -> (float, 'a) t -> (float, 'a) t
+val softmax : ?axes:int list -> (float, 'a) t -> (float, 'a) t
 (** [softmax ?axes t] applies softmax normalization.
 
     Default axis -1. Computes exp(x - max) / sum(exp(x - max)) for numerical

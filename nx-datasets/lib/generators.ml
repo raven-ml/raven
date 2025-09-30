@@ -239,7 +239,7 @@ let make_gaussian_quantiles ?mean ?(cov = 1.0) ?(n_samples = 100)
   let x = Nx.mul_s x (sqrt cov) in
   let x = Nx.add x (Nx.broadcast_to [| n_samples; n_features |] mean_tensor) in
 
-  let distances_sq = Nx.sum ~axes:[| 1 |] (Nx.square x) in
+  let distances_sq = Nx.sum ~axes:[ 1 ] (Nx.square x) in
   let distances_arr = Nx.to_array (Nx.sqrt distances_sq) in
 
   let indices = Array.init n_samples (fun i -> i) in
@@ -264,7 +264,7 @@ let make_gaussian_quantiles ?mean ?(cov = 1.0) ?(n_samples = 100)
 let make_hastie_10_2 ?(n_samples = 12000) ?random_state () =
   let state = Rng.init_state random_state in
   let x = Rng.standard_normal state [| n_samples; 10 |] in
-  let chi2 = Nx.sum ~axes:[| 1 |] (Nx.square x) in
+  let chi2 = Nx.sum ~axes:[ 1 ] (Nx.square x) in
   let y = Nx.cast Int32 (Nx.cmpgt chi2 (Nx.scalar Float32 9.34)) in
   (x, y)
 
@@ -374,7 +374,7 @@ let make_multilabel_classification ?(n_samples = 100) ?(n_features = 20)
   let p_c = Nx.div p_c (Nx.sum p_c) in
 
   let p_w_c = Rng.uniform state [| n_features; n_classes |] in
-  let p_w_c = Nx.div p_w_c (Nx.sum p_w_c ~axes:[| 0 |]) in
+  let p_w_c = Nx.div p_w_c (Nx.sum p_w_c ~axes:[ 0 ]) in
 
   let y_indicator = Array.make_matrix n_samples n_classes false in
   let doc_topics = Array.make n_samples [] in
@@ -688,7 +688,7 @@ let make_sparse_coded_signal ~n_samples ~n_components ~n_features
   let state = Rng.init_state random_state in
 
   let d = Rng.standard_normal state [| n_features; n_components |] in
-  let d = Nx.div d (Nx.sqrt (Nx.sum ~axes:[| 0 |] (Nx.square d))) in
+  let d = Nx.div d (Nx.sqrt (Nx.sum ~axes:[ 0 ] (Nx.square d))) in
 
   let x = Nx.init Float32 [| n_components; n_samples |] (fun _ -> 0.) in
   let indices = Array.init n_components (fun j -> j) in
@@ -728,9 +728,9 @@ let make_sparse_spd_matrix ?(n_dim = 30) ?(alpha = 0.95) ?(norm_diag = false)
         else 0.)
   in
   (* Make symmetric by averaging with transpose *)
-  let a_sym = Nx.mul_s (Nx.add a (Nx.transpose ~axes:[| 1; 0 |] a)) 0.5 in
+  let a_sym = Nx.mul_s (Nx.add a (Nx.transpose ~axes:[ 1; 0 ] a)) 0.5 in
   (* Make positive definite by A^T * A *)
-  let spd = Nx.matmul (Nx.transpose ~axes:[| 1; 0 |] a_sym) a_sym in
+  let spd = Nx.matmul (Nx.transpose ~axes:[ 1; 0 ] a_sym) a_sym in
   (* Add diagonal to ensure positive definiteness *)
   Nx.add spd (Nx.mul_s (Nx.eye Float32 n_dim) (smallest_coef *. float n_dim))
 

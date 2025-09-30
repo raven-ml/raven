@@ -10,7 +10,7 @@ let array_approx_equal ?(eps = 1e-6) a b =
     let diff = Nx.sub a_flat b_flat in
     let abs_diff = Nx.abs diff in
     (* Get maximum value - reshape to scalar and extract *)
-    let max_diff = Nx.max abs_diff ~axes:[| 0 |] ~keepdims:false in
+    let max_diff = Nx.max abs_diff ~axes:[ 1 ] ~keepdims:false in
     let max_val = Nx.item [] max_diff in
     max_val < eps
   with _ -> false
@@ -278,7 +278,7 @@ let test_large_arrays () =
   check (array int) "large array shape" [| 100; 100 |] (Nx.shape loaded_f32);
 
   (* Verify all values are 1 - sum and check *)
-  let sum = Nx.sum loaded_f32 ~axes:[| 0; 1 |] ~keepdims:false in
+  let sum = Nx.sum loaded_f32 ~axes:[ 0; 1 ] ~keepdims:false in
   let sum_val = Nx.item [] sum in
   check (float 1e-3) "large array sum" 10000.0 sum_val;
 

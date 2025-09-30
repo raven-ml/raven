@@ -266,7 +266,7 @@ let test_jvp_max_reduction () =
 let test_jvp_sum_with_axis () =
   let x = T.create T.float32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
   let v = T.ones_like x in
-  let f x = T.sum x ~axes:[| 1 |] in
+  let f x = T.sum x ~axes:[ 1 ] in
   let primal, tangent = T.jvp f x v in
   let expected_primal = T.create T.float32 [| 2 |] [| 3.; 12. |] in
   let expected_tangent = T.create T.float32 [| 2 |] [| 3.; 3. |] in
@@ -336,7 +336,7 @@ let test_jvp_transpose () =
 let test_jvp_squeeze () =
   let x = T.create T.float32 [| 1; 3; 1 |] [| 1.; 2.; 3. |] in
   let v = T.ones_like x in
-  let f x = T.squeeze ~axes:[| 0; 2 |] x in
+  let f x = T.squeeze ~axes:[ 0; 2 ] x in
   let primal, tangent = T.jvp f x v in
   let expected_primal = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let expected_tangent = T.ones T.float32 [| 3 |] in
@@ -346,7 +346,7 @@ let test_jvp_squeeze () =
 let test_jvp_expand_dims () =
   let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let v = T.ones_like x in
-  let f x = T.expand_dims [| 0 |] x in
+  let f x = T.expand_dims [ 0 ] x in
   let primal, tangent = T.jvp f x v in
   let expected_primal = T.create T.float32 [| 1; 3 |] [| 1.; 2.; 3. |] in
   let expected_tangent = T.ones T.float32 [| 1; 3 |] in
@@ -379,7 +379,7 @@ let test_jvp_concatenate () =
 let test_jvp_softmax () =
   let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let v = T.ones_like x in
-  let f x = T.softmax x ~axes:[| 0 |] in
+  let f x = T.softmax x ~axes:[ 1 ] in
   let _primal, tangent = T.jvp f x v in
   (* Softmax Jacobian is diag(s) - s*s^T, where s = softmax(x) *)
   (* For uniform tangent v=[1,1,1], result is 0 (sum preserved) *)
@@ -390,16 +390,16 @@ let test_jvp_layer_norm () =
   let x = T.create T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let v = T.ones_like x in
   let f x =
-    let mean = T.mean x ~axes:[| 1 |] ~keepdims:true in
+    let mean = T.mean x ~axes:[ 1 ] ~keepdims:true in
     let centered = T.sub x mean in
-    let var = T.mean (T.square centered) ~axes:[| 1 |] ~keepdims:true in
+    let var = T.mean (T.square centered) ~axes:[ 1 ] ~keepdims:true in
     let std = T.sqrt (T.add var (T.scalar T.float32 1e-5)) in
     T.div centered std
   in
   let _primal, tangent = T.jvp f x v in
   (* Layer norm preserves zero mean in tangent space - check total sum is
      small *)
-  let total_row_sum = T.sum (T.sum tangent ~axes:[| 1 |]) |> scalar_value in
+  let total_row_sum = T.sum (T.sum tangent ~axes:[ 1 ]) |> scalar_value in
   check_scalar ~eps:1e-3 "jvp(layer_norm) total row sum" 0.0
     (Float.abs total_row_sum)
 

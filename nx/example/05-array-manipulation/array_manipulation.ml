@@ -54,7 +54,7 @@ let () =
   let array_3d = reshape [| 2; 3; 2 |] (arange float64 0 12 1) in
   Printf.printf "3D array (2x3x2):\n%s\n" (to_string array_3d);
 
-  let permuted = transpose ~axes:[| 2; 0; 1 |] array_3d in
+  let permuted = transpose ~axes:[ 2; 0; 1 ] array_3d in
   Printf.printf "Permuted axes [2,0,1]:\n%s\n" (to_string permuted);
 
   print_separator ();
@@ -117,10 +117,10 @@ let () =
   let vector = arange float64 0 5 1 in
   Printf.printf "Original vector (1D):\n%s\n" (to_string vector);
 
-  let expanded = expand_dims [| 0 |] vector in
+  let expanded = expand_dims [ 0 ] vector in
   Printf.printf "Expanded at axis 0 (row vector):\n%s\n" (to_string expanded);
 
-  let expanded_col = expand_dims [| 1 |] vector in
+  let expanded_col = expand_dims [ 1 ] vector in
   Printf.printf "Expanded at axis 1 (column vector):\n%s\n"
     (to_string expanded_col);
 
@@ -171,10 +171,10 @@ let () =
   let to_flip = reshape [| 3; 3 |] (arange float64 1 10 1) in
   Printf.printf "Original array (3x3):\n%s\n" (to_string to_flip);
 
-  let flipped_ud = flip ~axes:[| 0 |] to_flip in
+  let flipped_ud = flip ~axes:[ 0 ] to_flip in
   Printf.printf "Flipped up-down (axis 0):\n%s\n" (to_string flipped_ud);
 
-  let flipped_lr = flip ~axes:[| 1 |] to_flip in
+  let flipped_lr = flip ~axes:[ 1 ] to_flip in
   Printf.printf "Flipped left-right (axis 1):\n%s\n" (to_string flipped_lr);
 
   let rolled = roll 1 to_flip in

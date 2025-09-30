@@ -140,7 +140,7 @@ val tanh : (float, 'a) t -> (float, 'a) t
     - Better than sigmoid for hidden layers
     - Used in LSTM/GRU gating mechanisms *)
 
-val softmax : ?axes:int array -> (float, 'a) t -> (float, 'a) t
+val softmax : ?axes:int list -> (float, 'a) t -> (float, 'a) t
 (** [softmax ?axes x] applies softmax normalization.
 
     Converts a vector of real numbers into a probability distribution. The

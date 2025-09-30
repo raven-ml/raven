@@ -149,9 +149,9 @@ let normalize_axis axis shape =
   else axis
 
 let reverse_cumsum tensor axis =
-  let flipped = T.flip tensor ~axes:[| axis |] in
+  let flipped = T.flip tensor ~axes:[ axis ] in
   let scanned = T.cumsum ~axis flipped in
-  T.flip scanned ~axes:[| axis |]
+  T.flip scanned ~axes:[ axis ]
 
 let prefix_exclusive axis tensor =
   let shape = T.shape tensor in
@@ -171,9 +171,9 @@ let prefix_exclusive axis tensor =
 let suffix_exclusive axis tensor =
   let shape = T.shape tensor in
   let one = Dtype.one (T.dtype tensor) in
-  let flipped = T.flip tensor ~axes:[| axis |] in
+  let flipped = T.flip tensor ~axes:[ axis ] in
   let flipped_cumprod = T.cumprod ~axis flipped in
-  let suffix_inclusive = T.flip flipped_cumprod ~axes:[| axis |] in
+  let suffix_inclusive = T.flip flipped_cumprod ~axes:[ axis ] in
   let pad_config =
     Array.mapi (fun i _ -> if i = axis then (0, 1) else (0, 0)) shape
   in
@@ -482,7 +482,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     let summed_grad =
                       if !axes_to_sum_list <> [] then
                         T.sum d_loss_d_expanded_result
-                          ~axes:(Array.of_list (List.rev !axes_to_sum_list))
+                          ~axes:(List.rev !axes_to_sum_list)
                           ~keepdims:true
                       else d_loss_d_expanded_result
                     in
@@ -504,7 +504,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 let original_input_shape = T.shape (value_of twg_in) in
                 let grad_prepared_for_broadcast =
                   prepare_grad_for_broadcast d_loss_d_result (value_of twg_in)
-                    axes keepdims (fun t ~axes ~keepdims ->
+                    (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
                       T.sum t ~axes ~keepdims)
                 in
                 let grad_contrib_to_input =
@@ -526,8 +526,9 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 let original_input_shape = T.shape val_in in
 
                 let grad_prepared_for_broadcast =
-                  prepare_grad_for_broadcast d_loss_d_result val_in axes
-                    keepdims (fun t ~axes ~keepdims -> T.max t ~axes ~keepdims)
+                  prepare_grad_for_broadcast d_loss_d_result val_in
+                    (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
+                      T.max t ~axes ~keepdims)
                 in
                 let d_loss_d_result_broadcasted =
                   T.broadcast_to original_input_shape
@@ -535,8 +536,9 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 in
 
                 let result_val_prepared_for_broadcast =
-                  prepare_grad_for_broadcast result_val val_in axes keepdims
-                    (fun t ~axes ~keepdims -> T.max t ~axes ~keepdims)
+                  prepare_grad_for_broadcast result_val val_in
+                    (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
+                      T.max t ~axes ~keepdims)
                 in
                 let result_val_broadcasted_for_compare =
                   T.broadcast_to original_input_shape
@@ -565,8 +567,9 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 let original_input_shape = T.shape val_in in
 
                 let grad_prepared_for_broadcast =
-                  prepare_grad_for_broadcast d_loss_d_result val_in axes
-                    keepdims (fun t ~axes ~keepdims -> T.prod t ~axes ~keepdims)
+                  prepare_grad_for_broadcast d_loss_d_result val_in
+                    (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
+                      T.prod t ~axes ~keepdims)
                 in
                 let d_loss_d_result_broadcasted =
                   T.broadcast_to original_input_shape
@@ -574,8 +577,9 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 in
 
                 let result_val_prepared_for_broadcast =
-                  prepare_grad_for_broadcast result_val val_in axes keepdims
-                    (fun t ~axes ~keepdims -> T.prod t ~axes ~keepdims)
+                  prepare_grad_for_broadcast result_val val_in
+                    (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
+                      T.prod t ~axes ~keepdims)
                 in
                 let result_val_broadcasted =
                   T.broadcast_to original_input_shape
@@ -637,7 +641,8 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                   permute_axes;
 
                 let grad_contrib_to_input =
-                  T.transpose d_loss_d_result ~axes:un_permute_axes
+                  T.transpose d_loss_d_result
+                    ~axes:(Array.to_list un_permute_axes)
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
             forward_val)
@@ -727,7 +732,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                 let twg_res = get_or_init_twg result_val in
                 let d_loss_d_result = grad_of twg_res in
                 let grad_contrib_to_input =
-                  T.flip d_loss_d_result ~axes:axes_to_flip
+                  T.flip d_loss_d_result ~axes:(Array.to_list axes_to_flip)
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
             forward_val)
@@ -1038,12 +1043,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     (* For C = A @ B where A:[m,k] B:[b,k,n] -> C:[b,m,n] *)
                     (* grad_A = sum(grad_C @ B^T, axis=0) *)
                     (* grad_B = A^T @ grad_C *)
-                    let b_transposed = T.transpose ~axes:[| 0; 2; 1 |] b_val in
+                    let b_transposed = T.transpose ~axes:[ 0; 2; 1 ] b_val in
                     let grad_a_3d = T.matmul d_loss_d_result b_transposed in
-                    let grad_a = T.sum grad_a_3d ~axes:[| 0 |] in
-                    let a_expanded = T.expand_dims [| 0 |] a_val in
+                    let grad_a = T.sum grad_a_3d ~axes:[ 1 ] in
+                    let a_expanded = T.expand_dims [ 0 ] a_val in
                     let a_transposed =
-                      T.transpose ~axes:[| 0; 2; 1 |] a_expanded
+                      T.transpose ~axes:[ 0; 2; 1 ] a_expanded
                     in
                     let grad_b = T.matmul a_transposed d_loss_d_result in
                     (grad_a, grad_b)
@@ -1053,9 +1058,9 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                     (* grad_A = grad_C @ B^T *)
                     (* grad_B = sum(A^T @ grad_C, axis=0) *)
                     let grad_a = T.matmul d_loss_d_result (T.transpose b_val) in
-                    let a_transposed = T.transpose ~axes:[| 0; 2; 1 |] a_val in
+                    let a_transposed = T.transpose ~axes:[ 0; 2; 1 ] a_val in
                     let grad_b_3d = T.matmul a_transposed d_loss_d_result in
-                    let grad_b = T.sum grad_b_3d ~axes:[| 0 |] in
+                    let grad_b = T.sum grad_b_3d ~axes:[ 1 ] in
                     (grad_a, grad_b)
                   else
                     (* Standard case - both same dimensionality *)
@@ -1067,7 +1072,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                         (* Swap last two dimensions *)
                         axes.(ndim - 2) <- ndim - 1;
                         axes.(ndim - 1) <- ndim - 2;
-                        T.transpose ~axes tensor)
+                        T.transpose ~axes:(Array.to_list axes) tensor)
                       else T.transpose tensor
                     in
                     let grad_a =
@@ -1488,7 +1493,9 @@ let make_forward_handler primal_to_dual_map =
           (fun k ->
             let result_val = op_reduce_sum ~axes ~keepdims t_in in
             let dual_in = get_dual t_in in
-            let result_tangent = T.sum dual_in.tangent ~axes ~keepdims in
+            let result_tangent =
+              T.sum dual_in.tangent ~axes:(Array.to_list axes) ~keepdims
+            in
             let result_dual =
               { primal = result_val; tangent = result_tangent }
             in
@@ -1507,7 +1514,8 @@ let make_forward_handler primal_to_dual_map =
               else
                 let dummy = T.zeros_like t_in in
                 let shape_with_dims =
-                  T.shape (T.max dummy ~axes ~keepdims:true)
+                  T.shape
+                    (T.max dummy ~axes:(Array.to_list axes) ~keepdims:true)
                 in
                 let reshaped = T.reshape shape_with_dims result_val in
                 T.broadcast_to original_shape reshaped
@@ -1515,7 +1523,9 @@ let make_forward_handler primal_to_dual_map =
             let mask = T.equal t_in result_broadcasted in
             let mask_float = T.cast (dtype dual_in.tangent) mask in
             let masked_tangent = T.mul dual_in.tangent mask_float in
-            let result_tangent = T.sum masked_tangent ~axes ~keepdims in
+            let result_tangent =
+              T.sum masked_tangent ~axes:(Array.to_list axes) ~keepdims
+            in
             let result_dual =
               { primal = result_val; tangent = result_tangent }
             in
@@ -1535,7 +1545,8 @@ let make_forward_handler primal_to_dual_map =
               else
                 let dummy = T.zeros_like t_in in
                 let shape_with_dims =
-                  T.shape (T.prod dummy ~axes ~keepdims:true)
+                  T.shape
+                    (T.prod dummy ~axes:(Array.to_list axes) ~keepdims:true)
                 in
                 let reshaped = T.reshape shape_with_dims result_val in
                 T.broadcast_to original_shape reshaped
@@ -1544,7 +1555,9 @@ let make_forward_handler primal_to_dual_map =
             let safe_input = T.add t_in epsilon in
             let grad_term = T.div result_broadcasted safe_input in
             let result_tangent_full = T.mul dual_in.tangent grad_term in
-            let result_tangent = T.sum result_tangent_full ~axes ~keepdims in
+            let result_tangent =
+              T.sum result_tangent_full ~axes:(Array.to_list axes) ~keepdims
+            in
             let result_dual =
               { primal = result_val; tangent = result_tangent }
             in
@@ -1586,7 +1599,9 @@ let make_forward_handler primal_to_dual_map =
           (fun k ->
             let result_val = op_permute t_in axes in
             let dual_in = get_dual t_in in
-            let result_tangent = T.transpose dual_in.tangent ~axes in
+            let result_tangent =
+              T.transpose dual_in.tangent ~axes:(Array.to_list axes)
+            in
             let result_dual =
               { primal = result_val; tangent = result_tangent }
             in
@@ -1644,7 +1659,9 @@ let make_forward_handler primal_to_dual_map =
               |> List.mapi (fun i flip -> if flip then Some i else None)
               |> List.filter_map Fun.id |> Array.of_list
             in
-            let result_tangent = T.flip dual_in.tangent ~axes:axes_to_flip in
+            let result_tangent =
+              T.flip dual_in.tangent ~axes:(Array.to_list axes_to_flip)
+            in
             let result_dual =
               { primal = result_val; tangent = result_tangent }
             in

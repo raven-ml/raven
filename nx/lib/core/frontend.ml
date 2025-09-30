@@ -1232,7 +1232,8 @@ module Make (B : Backend_intf.S) = struct
       match axes with
       | None -> Array.init rank Fun.id
       | Some ax_list ->
-          Array.map (fun ax -> if ax < 0 then ax + rank else ax) ax_list
+          Array.of_list
+            (List.map (fun ax -> if ax < 0 then ax + rank else ax) ax_list)
     in
     backend_op ~axes:axes_to_reduce ~keepdims x
 
@@ -1297,7 +1298,8 @@ module Make (B : Backend_intf.S) = struct
       match axes with
       | None -> Array.init r_orig Fun.id
       | Some ax_list ->
-          Array.map (fun ax -> if ax < 0 then ax + r_orig else ax) ax_list
+          Array.of_list
+            (List.map (fun ax -> if ax < 0 then ax + r_orig else ax) ax_list)
     in
     let num_elements_in_reduced_dims =
       if Array.length actual_axes_to_reduce = 0 then 1
@@ -1331,7 +1333,8 @@ module Make (B : Backend_intf.S) = struct
       match axes with
       | None -> Array.init r_orig Fun.id
       | Some ax_list ->
-          Array.map (fun ax -> if ax < 0 then ax + r_orig else ax) ax_list
+          Array.of_list
+            (List.map (fun ax -> if ax < 0 then ax + r_orig else ax) ax_list)
     in
     let num_elements_in_reduced_dims =
       if Array.length actual_axes_to_reduce = 0 then 1
@@ -1520,17 +1523,17 @@ module Make (B : Backend_intf.S) = struct
         else if Array.length new_shape = 0 && Array.length sh = 0 then x
           (* scalar to scalar *)
         else reshape new_shape x
-    | Some axes_arr ->
+    | Some axes_list ->
         if r = 0 then x (* Cannot squeeze a scalar *)
         else
           (* Normalize negative indices and validate *)
           let normalized_axes =
-            Array.map (fun ax -> if ax < 0 then ax + r else ax) axes_arr
+            List.map (fun ax -> if ax < 0 then ax + r else ax) axes_list
           in
 
           (* Check for duplicates *)
           let seen = Array.make r false in
-          Array.iter
+          List.iter
             (fun ax ->
               if ax < 0 || ax >= r then
                 Error.axis_out_of_bounds ~op:"squeeze" ~axis:ax ~ndim:r ();
@@ -1542,7 +1545,7 @@ module Make (B : Backend_intf.S) = struct
             normalized_axes;
 
           (* Check that all specified axes have size 1 *)
-          Array.iter
+          List.iter
             (fun ax ->
               if sh.(ax) <> 1 then
                 Error.cannot ~op:"squeeze" ~what:"remove dimension"
@@ -1554,7 +1557,7 @@ module Make (B : Backend_intf.S) = struct
 
           (* Build new shape by filtering out squeezed dimensions *)
           let axes_set =
-            Array.fold_left
+            List.fold_left
               (fun set ax -> IntSet.add ax set)
               IntSet.empty normalized_axes
           in
@@ -1578,26 +1581,26 @@ module Make (B : Backend_intf.S) = struct
     let sh = shape x in
     let r = Array.length sh in
 
-    let axes_arr =
+    let axes_list =
       match axes with
       | None ->
           Error.invalid ~op:"unsqueeze" ~what:"axes" ~reason:"must be specified"
             ()
-      | Some arr -> arr
+      | Some lst -> lst
     in
 
-    if Array.length axes_arr = 0 then x (* No dimensions to add *)
+    if List.length axes_list = 0 then x (* No dimensions to add *)
     else
-      let output_rank = r + Array.length axes_arr in
+      let output_rank = r + List.length axes_list in
 
       (* Normalize negative indices (relative to output shape) *)
       let normalized_axes =
-        Array.map (fun ax -> if ax < 0 then ax + output_rank else ax) axes_arr
+        List.map (fun ax -> if ax < 0 then ax + output_rank else ax) axes_list
       in
 
       (* Validate axes *)
       let seen = Array.make output_rank false in
-      Array.iter
+      List.iter
         (fun ax ->
           if ax < 0 || ax >= output_rank then
             Error.invalid ~op:"unsqueeze"
@@ -1616,12 +1619,11 @@ module Make (B : Backend_intf.S) = struct
         normalized_axes;
 
       (* Sort axes to process in order *)
-      let sorted_axes = Array.copy normalized_axes in
-      Array.sort compare sorted_axes;
+      (* let sorted_axes = List.sort compare normalized_axes in *)
 
       (* Build mapping from output position to input position *)
       let axes_set =
-        Array.fold_left
+        List.fold_left
           (fun set ax -> IntSet.add ax set)
           IntSet.empty normalized_axes
       in
@@ -1646,10 +1648,10 @@ module Make (B : Backend_intf.S) = struct
      functions: *)
 
   (* squeeze a single axis *)
-  let squeeze_axis axis x = squeeze ~axes:[| axis |] x
+  let squeeze_axis axis x = squeeze ~axes:[ axis ] x
 
   (* unsqueeze a single axis *)
-  let unsqueeze_axis axis x = unsqueeze ~axes:[| axis |] x
+  let unsqueeze_axis axis x = unsqueeze ~axes:[ axis ] x
 
   (* expand_dims is an alias for unsqueeze *)
   let expand_dims axes x = unsqueeze ~axes x
@@ -1659,16 +1661,16 @@ module Make (B : Backend_intf.S) = struct
     let resolved_axes =
       match axes with
       | None -> Array.init r (fun i -> r - 1 - i) (* Reverse dimensions *)
-      | Some ax_arr ->
-          if Array.length ax_arr <> r then
+      | Some ax_list ->
+          if List.length ax_list <> r then
             Error.invalid ~op:"transpose"
-              ~what:(Printf.sprintf "axes (length %d)" (Array.length ax_arr))
+              ~what:(Printf.sprintf "axes (length %d)" (List.length ax_list))
               ~reason:
                 (Printf.sprintf "expected rank %d, got %d" r
-                   (Array.length ax_arr))
+                   (List.length ax_list))
               ~hint:"provide exactly one axis per dimension" ();
           let seen = Array.make r false in
-          Array.iter
+          List.iter
             (fun ax_val ->
               let ax = if ax_val < 0 then ax_val + r else ax_val in
               if ax < 0 || ax >= r then
@@ -1678,14 +1680,15 @@ module Make (B : Backend_intf.S) = struct
                   ~what:(Printf.sprintf "axis %d" ax_val)
                   ~reason:"repeated" ();
               seen.(ax) <- true)
-            ax_arr;
+            ax_list;
           if not (Array.for_all Fun.id seen) then
             Error.invalid ~op:"transpose" ~what:"axes"
               ~reason:"do not form a permutation" ();
           (* Normalize negative axes *)
-          Array.map
-            (fun ax_val -> if ax_val < 0 then ax_val + r else ax_val)
-            ax_arr
+          Array.of_list
+            (List.map
+               (fun ax_val -> if ax_val < 0 then ax_val + r else ax_val)
+               ax_list)
     in
     let result = B.op_permute x resolved_axes in
     result
@@ -1695,14 +1698,14 @@ module Make (B : Backend_intf.S) = struct
     let flip_bools = Array.make r false in
     (match axes with
     | None -> Array.fill flip_bools 0 r true (* Flip all axes *)
-    | Some ax_arr ->
-        Array.iter
+    | Some ax_list ->
+        List.iter
           (fun ax_val ->
             let ax = if ax_val < 0 then ax_val + r else ax_val in
             if ax < 0 || ax >= r then
               Error.axis_out_of_bounds ~op:"flip" ~axis:ax_val ~ndim:r ();
             flip_bools.(ax) <- true)
-          ax_arr);
+          ax_list);
     B.op_flip x flip_bools
 
   let as_strided shape strides ~offset x =
@@ -2005,7 +2008,7 @@ module Make (B : Backend_intf.S) = struct
         in
 
         (* Add new dimension to each array *)
-        let expanded = List.map (fun x -> unsqueeze ~axes:[| axis |] x) ts in
+        let expanded = List.map (fun x -> unsqueeze ~axes:[ axis ] x) ts in
 
         (* Concatenate along the new axis *)
         concatenate ~axis expanded
@@ -2643,7 +2646,7 @@ module Make (B : Backend_intf.S) = struct
                               if i = dim then (idx', idx' + 1)
                               else (0, (shape tensor).(i)))
                         in
-                        (squeeze ~axes:[| dim |] (shrink config tensor), dim)
+                        (squeeze ~axes:[ dim ] (shrink config tensor), dim)
                         (* Don't increment dim since we removed a dimension *)
                     | A -> (tensor, dim + 1) (* Take all *)
                     | R (start_idx, stop_idx) ->
@@ -2684,7 +2687,7 @@ module Make (B : Backend_intf.S) = struct
                                 else (0, (shape tensor).(i)))
                           in
                           let sliced = shrink config tensor in
-                          ( (if step < 0 then flip ~axes:[| dim |] sliced
+                          ( (if step < 0 then flip ~axes:[ dim ] sliced
                              else sliced),
                             dim + 1 )
                     | Rs (start_idx, stop_idx, step_val) ->
@@ -2729,7 +2732,7 @@ module Make (B : Backend_intf.S) = struct
                                 else (0, (shape tensor).(i)))
                           in
                           let sliced = shrink config tensor in
-                          ( (if step < 0 then flip ~axes:[| dim |] sliced
+                          ( (if step < 0 then flip ~axes:[ dim ] sliced
                              else sliced),
                             dim + 1 )
                     | _ -> assert false
@@ -2767,7 +2770,7 @@ module Make (B : Backend_intf.S) = struct
                               new_shape.(working_dim) <- 0;
                               empty (B.context tensor) (dtype tensor) new_shape)
                             else if List.length indices = 1 then
-                              squeeze ~axes:[| working_dim |]
+                              squeeze ~axes:[ working_dim ]
                                 (shrink
                                    (Array.init
                                       (Array.length (shape tensor))
@@ -2808,7 +2811,7 @@ module Make (B : Backend_intf.S) = struct
     in
     (* Apply expand_dims for each N (new axis) spec *)
     List.fold_left
-      (fun tensor axis_pos -> expand_dims [| axis_pos |] tensor)
+      (fun tensor axis_pos -> expand_dims [ axis_pos ] tensor)
       sliced_result new_axis_positions
 
   (* Efficient set_slice_internal using scatter operations *)
@@ -3370,7 +3373,7 @@ module Make (B : Backend_intf.S) = struct
 
         (* Count true values *)
         let n_true =
-          sum ~axes:[| 0 |] (astype Int32 cond_flat)
+          sum ~axes:[ 0 ] (astype Int32 cond_flat)
           |> squeeze |> unsafe_get [] |> Int32.to_int
         in
 
@@ -3798,7 +3801,6 @@ module Make (B : Backend_intf.S) = struct
              Array.init n_dims_to_flip (fun i -> ndim green_box - 1 - i)
              |> Array.to_list
              |> List.filter (fun i -> i >= 0 && i < ndim green_box)
-             |> Array.of_list
            in
            let green_box_flipped = flip green_box ~axes:flip_axes in
 
@@ -3841,7 +3843,6 @@ module Make (B : Backend_intf.S) = struct
             Array.init n_dims_to_flip (fun i -> ndim flipped_green_box - 1 - i)
             |> Array.to_list
             |> List.filter (fun i -> i >= 0 && i < ndim flipped_green_box)
-            |> Array.of_list
           in
           let green_box = flip ~axes:flip_axes flipped_green_box in
 
@@ -3872,26 +3873,26 @@ module Make (B : Backend_intf.S) = struct
       (* Compute counts for handling duplicates *)
       let compute_counts tensor =
         (* Count how many elements <= current index with same value *)
-        let t_exp_new = unsqueeze tensor ~axes:[| axis + 1 |] in
-        let t_exp_orig = unsqueeze tensor ~axes:[| axis |] in
-        let idx_exp_new = unsqueeze idx ~axes:[| axis + 1 |] in
-        let idx_exp_orig = unsqueeze idx ~axes:[| axis |] in
+        let t_exp_new = unsqueeze tensor ~axes:[ axis + 1 ] in
+        let t_exp_orig = unsqueeze tensor ~axes:[ axis ] in
+        let idx_exp_new = unsqueeze idx ~axes:[ axis + 1 ] in
+        let idx_exp_orig = unsqueeze idx ~axes:[ axis ] in
 
         let le_mask = less_equal idx_exp_orig idx_exp_new in
         let eq_mask = equal t_exp_orig t_exp_new in
         let mask = logical_and le_mask eq_mask in
-        sum mask ~axes:[| axis + 1 |] ~keepdims:false
+        sum mask ~axes:[ axis + 1 ] ~keepdims:false
       in
 
       let count_orig = compute_counts x_for_sort in
       let count_sorted = compute_counts x_sorted in
 
       (* Find where each original element ended up *)
-      let self_exp = unsqueeze ~axes:[| axis + 1 |] x_for_sort in
-      let sorted_exp = unsqueeze x_sorted ~axes:[| axis |] in
-      let count_orig_exp = unsqueeze count_orig ~axes:[| axis + 1 |] in
-      let count_sorted_exp = unsqueeze count_sorted ~axes:[| axis |] in
-      let idx_exp = unsqueeze idx ~axes:[| axis + 1 |] in
+      let self_exp = unsqueeze ~axes:[ axis + 1 ] x_for_sort in
+      let sorted_exp = unsqueeze x_sorted ~axes:[ axis ] in
+      let count_orig_exp = unsqueeze count_orig ~axes:[ axis + 1 ] in
+      let count_sorted_exp = unsqueeze count_sorted ~axes:[ axis ] in
+      let idx_exp = unsqueeze idx ~axes:[ axis + 1 ] in
 
       (* Match by value and count *)
       let value_match = equal self_exp sorted_exp in
@@ -3901,7 +3902,7 @@ module Make (B : Backend_intf.S) = struct
       (* Extract indices where matches occur *)
       let matches_int = cast Dtype.int32 matches in
       let weighted_idx = mul matches_int idx_exp in
-      let final_idx = sum weighted_idx ~axes:[| axis |] ~keepdims:false in
+      let final_idx = sum weighted_idx ~axes:[ axis ] ~keepdims:false in
 
       (* Restore original NaN values in sorted output *)
       let x_sorted_final =
@@ -3933,11 +3934,13 @@ module Make (B : Backend_intf.S) = struct
     let t_ndim = ndim x in
     let reduction_axis =
       match axis with
-      | None -> Array.init t_ndim Fun.id (* Flatten behavior: reduce all axes *)
-      | Some ax -> [| resolve_single_axis ~ndim_opt:t_ndim x ax |]
+      | None -> List.init t_ndim Fun.id (* Flatten behavior: reduce all axes *)
+      | Some ax -> [ resolve_single_axis ~ndim_opt:t_ndim x ax ]
     in
     let t_for_reduce = if axis = None then flatten x else x in
-    let current_axis_idx = if axis = None then 0 else reduction_axis.(0) in
+    let current_axis_idx =
+      if axis = None then 0 else List.nth reduction_axis 0
+    in
     let axis_len = dim current_axis_idx t_for_reduce in
 
     if axis_len = 0 then (* Edge case: empty dimension *)
@@ -4040,17 +4043,17 @@ module Make (B : Backend_intf.S) = struct
     | 1, _ ->
         (* 1D x ND -> contract on first axis of w *)
         (* Reshape x to (1, k) and use matmul *)
-        let x_2d = unsqueeze ~axes:[| 0 |] x_tensor in
+        let x_2d = unsqueeze ~axes:[ 0 ] x_tensor in
         let result = B.op_matmul x_2d w_tensor in
         (* Result has shape (..., 1, n) -> squeeze the 1 *)
-        squeeze ~axes:[| ndim result - 2 |] result
+        squeeze ~axes:[ ndim result - 2 ] result
     | _, 1 ->
         (* ND x 1D -> contract on last axis of x *)
         (* Reshape w to (k, 1) and use matmul *)
-        let w_2d = unsqueeze ~axes:[| 1 |] w_tensor in
+        let w_2d = unsqueeze ~axes:[ 1 ] w_tensor in
         let result = B.op_matmul x_tensor w_2d in
         (* Result has shape (..., m, 1) -> squeeze the 1 *)
-        squeeze ~axes:[| ndim result - 1 |] result
+        squeeze ~axes:[ ndim result - 1 ] result
     | _ ->
         (* ND x ND -> use matmul directly *)
         B.op_matmul x_tensor w_tensor
@@ -4066,13 +4069,13 @@ module Make (B : Backend_intf.S) = struct
     let a, b =
       if ndim_a_orig = 1 && ndim_b_orig = 1 then
         (* (k), (k) -> a becomes (1,k), b becomes (k,1) *)
-        (unsqueeze ~axes:[| 0 |] a_orig, unsqueeze ~axes:[| 1 |] b_orig)
+        (unsqueeze ~axes:[ 0 ] a_orig, unsqueeze ~axes:[ 1 ] b_orig)
       else if ndim_a_orig = 1 then
         (* (k), (...,k,n) -> a becomes (1,k) *)
-        (unsqueeze ~axes:[| 0 |] a_orig, b_orig)
+        (unsqueeze ~axes:[ 0 ] a_orig, b_orig)
       else if ndim_b_orig = 1 then
         (* (...,m,k), (k) -> b becomes (k,1) *)
-        (a_orig, unsqueeze ~axes:[| 1 |] b_orig)
+        (a_orig, unsqueeze ~axes:[ 1 ] b_orig)
       else
         (* Both are >= 2D, no promotion needed for matmul semantics *)
         (a_orig, b_orig)
@@ -4089,11 +4092,11 @@ module Make (B : Backend_intf.S) = struct
     else if ndim_a_orig = 1 then
       (* Original (k) @ (...,k,n) -> result (...,1,n) from backend -> squeeze
          first matrix dim *)
-      squeeze ~axes:[| ndim result_intermediate - 2 |] result_intermediate
+      squeeze ~axes:[ ndim result_intermediate - 2 ] result_intermediate
     else if ndim_b_orig = 1 then
       (* Original (...,m,k) @ (k) -> result (...,m,1) from backend -> squeeze
          last matrix dim *)
-      squeeze ~axes:[| ndim result_intermediate - 1 |] result_intermediate
+      squeeze ~axes:[ ndim result_intermediate - 1 ] result_intermediate
     else
       (* Both original inputs were >= 2D, result from backend is already
          (...,m,n) *)
@@ -4190,7 +4193,7 @@ module Make (B : Backend_intf.S) = struct
       let masked = mul sliced eye_broadcasted in
 
       (* Sum along last axis to extract diagonal *)
-      sum masked ~axes:[| ndim_a - 1 |] ~keepdims:false
+      sum masked ~axes:[ ndim_a - 1 ] ~keepdims:false
 
   let matrix_transpose x =
     let nd = ndim x in
@@ -4248,10 +4251,9 @@ module Make (B : Backend_intf.S) = struct
     let b_row = reshape [| 1; numel flat_b |] flat_b in
     let result = matmul a_col b_row in
     (* For scalar inputs, squeeze the resulting dimensions *)
-    let result = if ndim a = 0 then squeeze ~axes:[| 0 |] result else result in
+    let result = if ndim a = 0 then squeeze ~axes:[ 0 ] result else result in
     let result =
-      if ndim b = 0 then
-        squeeze ~axes:[| (if ndim a = 0 then 0 else 1) |] result
+      if ndim b = 0 then squeeze ~axes:[ (if ndim a = 0 then 0 else 1) ] result
       else result
     in
     result
@@ -4263,18 +4265,20 @@ module Make (B : Backend_intf.S) = struct
         matmul a b
     | Some (axes_a, axes_b) ->
         (* Validate axes have same length *)
-        let n_axes = Array.length axes_a in
-        if n_axes <> Array.length axes_b then
+        let n_axes = List.length axes_a in
+        if n_axes <> List.length axes_b then
           invalid_arg "tensordot: axes lists must have same length";
 
         (* Normalize negative axes *)
         let ndim_a = ndim a in
         let ndim_b = ndim b in
         let axes_a =
-          Array.map (fun ax -> if ax < 0 then ndim_a + ax else ax) axes_a
+          Array.of_list
+            (List.map (fun ax -> if ax < 0 then ndim_a + ax else ax) axes_a)
         in
         let axes_b =
-          Array.map (fun ax -> if ax < 0 then ndim_b + ax else ax) axes_b
+          Array.of_list
+            (List.map (fun ax -> if ax < 0 then ndim_b + ax else ax) axes_b)
         in
 
         (* Check axes dimensions match *)
@@ -4315,10 +4319,14 @@ module Make (B : Backend_intf.S) = struct
 
         (* Transpose tensors *)
         let a_transposed =
-          if Array.length perm_a > 1 then transpose ~axes:perm_a a else a
+          if Array.length perm_a > 1 then
+            transpose ~axes:(Array.to_list perm_a) a
+          else a
         in
         let b_transposed =
-          if Array.length perm_b > 1 then transpose ~axes:perm_b b else b
+          if Array.length perm_b > 1 then
+            transpose ~axes:(Array.to_list perm_b) b
+          else b
         in
         let a_transposed = contiguous a_transposed in
         let b_transposed = contiguous b_transposed in
@@ -4517,7 +4525,8 @@ module Make (B : Backend_intf.S) = struct
       in
       let perm = Array.of_list (others @ [ axis1; axis2 ]) in
       let tensor_permuted =
-        if same_as_identity perm then tensor else transpose ~axes:perm tensor
+        if same_as_identity perm then tensor
+        else transpose ~axes:(Array.to_list perm) tensor
       in
       let shape_perm = shape tensor_permuted in
       if
@@ -4541,7 +4550,7 @@ module Make (B : Backend_intf.S) = struct
              target_order)
       in
       if Array.length axes_reorder <= 1 then diag_tensor
-      else transpose ~axes:axes_reorder diag_tensor
+      else transpose ~axes:(Array.to_list axes_reorder) diag_tensor
 
     let find_duplicate_named labels =
       let seen = Hashtbl.create 16 in
@@ -4645,7 +4654,7 @@ module Make (B : Backend_intf.S) = struct
       in
       let tensor' =
         if Array.length insert_axes = 0 then tensor
-        else unsqueeze ~axes:insert_axes tensor
+        else unsqueeze ~axes:(Array.to_list insert_axes) tensor
       in
       (tensor', axis_labels)
 
@@ -4870,7 +4879,7 @@ module Make (B : Backend_intf.S) = struct
 
       let reorder_if_needed tensor perm =
         if Array.length perm <= 1 || is_identity perm then tensor
-        else transpose ~axes:perm tensor
+        else transpose ~axes:(Array.to_list perm) tensor
       in
 
       let op_a_perm = reorder_if_needed op_a perm_left |> contiguous in
@@ -4966,7 +4975,7 @@ module Make (B : Backend_intf.S) = struct
               Array.init total_dims (fun i ->
                   if i < total_left then perm_left_reorder.(i) else i)
             in
-            transpose ~axes:axes_perm result_preorder)
+            transpose ~axes:(Array.to_list axes_perm) result_preorder)
       in
       let result_reordered = contiguous result_reordered in
       if same_shape (shape result_reordered) target_shape then result_reordered
@@ -5176,7 +5185,7 @@ module Make (B : Backend_intf.S) = struct
 
       let result_tensor =
         List.fold_left
-          (fun acc axis_idx -> sum ~axes:[| axis_idx |] acc)
+          (fun acc axis_idx -> sum ~axes:[ axis_idx ] acc)
           result_tensor axes_to_reduce
       in
 
@@ -5215,7 +5224,8 @@ module Make (B : Backend_intf.S) = struct
           not (check 0)
       in
       let result_tensor =
-        if need_transpose then transpose ~axes:axes_perm result_tensor
+        if need_transpose then
+          transpose ~axes:(Array.to_list axes_perm) result_tensor
         else result_tensor
       in
       result_tensor
@@ -5287,7 +5297,7 @@ module Make (B : Backend_intf.S) = struct
         Array.init (ndim tensor) (fun i ->
             if i = ax then R (idx, idx + 1) else A)
       in
-      squeeze ~axes:[| ax |] (slice_internal (Array.to_list slices) tensor)
+      squeeze ~axes:[ ax ] (slice_internal (Array.to_list slices) tensor)
     in
 
     (* Extract components *)
@@ -5405,11 +5415,11 @@ module Make (B : Backend_intf.S) = struct
         sqrt (sum (square (abs x)) ?axes ~keepdims)
     | Some `Fro, _ -> sqrt (sum (square (abs x)) ?axes ~keepdims)
     | Some `One, None ->
-        max (sum (abs x) ~axes:[| ndim x - 2 |] ~keepdims) ~keepdims
+        max (sum (abs x) ~axes:[ ndim x - 2 ] ~keepdims) ~keepdims
     | Some `NegOne, None ->
         if ndim x = 1 then min (abs x) ~keepdims
         else
-          let column_sums = sum (abs x) ~axes:[| ndim x - 2 |] in
+          let column_sums = sum (abs x) ~axes:[ ndim x - 2 ] in
           min column_sums ~keepdims
     | Some `Two, None ->
         let s = svdvals x |> cast (dtype x) in
@@ -5420,11 +5430,11 @@ module Make (B : Backend_intf.S) = struct
     | Some `Inf, None ->
         (* For vectors, just max of absolute values *)
         if ndim x = 1 then max (abs x) ~keepdims
-        else max (sum (abs x) ~axes:[| ndim x - 1 |] ~keepdims) ~keepdims
+        else max (sum (abs x) ~axes:[ ndim x - 1 ] ~keepdims) ~keepdims
     | Some `NegInf, None ->
         if ndim x = 1 then min (abs x) ~keepdims
         else
-          let row_sums = sum (abs x) ~axes:[| ndim x - 1 |] in
+          let row_sums = sum (abs x) ~axes:[ ndim x - 1 ] in
           min row_sums ~keepdims
     | Some `Nuc, None ->
         if ndim x < 2 then
@@ -5440,7 +5450,7 @@ module Make (B : Backend_intf.S) = struct
         (* General p-norm *)
         (* Special case for matrix 1-norm when axes is None *)
         if p = 1.0 && axes = None && ndim x = 2 then
-          max (sum (abs x) ~axes:[| ndim x - 2 |] ~keepdims) ~keepdims
+          max (sum (abs x) ~axes:[ ndim x - 2 ] ~keepdims) ~keepdims
         else
           let abs_x = abs x in
           let p_val = Dtype.of_float (dtype x) p in
@@ -5493,7 +5503,7 @@ module Make (B : Backend_intf.S) = struct
       let r_diag = diagonal r in
       let signs = sign r_diag in
       let sign_det =
-        if ndim signs > 1 then prod signs ~axes:[| -1 |] ~keepdims:false
+        if ndim signs > 1 then prod signs ~axes:[ -1 ] ~keepdims:false
         else prod signs
       in
       let sign_float = cast Dtype.float32 (cast Dtype.float64 sign_det) in
@@ -5512,7 +5522,7 @@ module Make (B : Backend_intf.S) = struct
       in
       let logdet64 =
         if ndim log_abs_diag > 1 then
-          sum log_abs_diag ~axes:[| -1 |] ~keepdims:false
+          sum log_abs_diag ~axes:[ -1 ] ~keepdims:false
         else sum log_abs_diag
       in
       let logdet = cast Dtype.float32 logdet64 in
@@ -5565,7 +5575,7 @@ module Make (B : Backend_intf.S) = struct
 
     (* Extract diagonal and sum it *)
     let diag = diagonal ~offset a in
-    sum diag ~axes:[| -1 |] ~keepdims:false
+    sum diag ~axes:[ -1 ] ~keepdims:false
 
   (* Solving Linear Systems *)
 
@@ -5587,7 +5597,7 @@ module Make (B : Backend_intf.S) = struct
         in
         if b_shape.(0) = a_batch_size && b_shape.(1) = a_shape.(a_ndim - 2) then
           (* Expand b from [batch, n] to [batch, n, 1] *)
-          expand_dims [| -1 |] b
+          expand_dims [ -1 ] b
         else b
       else b
     in
@@ -5608,8 +5618,7 @@ module Make (B : Backend_intf.S) = struct
     in
 
     (* Squeeze result if we expanded b *)
-    if b_expanded != b then squeeze ~axes:[| ndim result - 1 |] result
-    else result
+    if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
   let lstsq ?rcond a b =
     check_float_or_complex ~op:"lstsq" a;
@@ -5648,7 +5657,7 @@ module Make (B : Backend_intf.S) = struct
     let residuals =
       if m > n then
         let res = sub b (matmul a x) in
-        sum (square res) ~axes:[| ndim res - 2 |] ~keepdims:false
+        sum (square res) ~axes:[ ndim res - 2 ] ~keepdims:false
       else zeros (B.context a) (dtype b) [||]
     in
 
@@ -5727,7 +5736,7 @@ module Make (B : Backend_intf.S) = struct
         let tol_tensor = scalar (B.context x) dtype_s tol in
         let safe_s = where (greater s tol_tensor) s tol_tensor in
         let min_s_tensor =
-          if ndim safe_s > 1 then min safe_s ~axes:[| -1 |] ~keepdims:false
+          if ndim safe_s > 1 then min safe_s ~axes:[ -1 ] ~keepdims:false
           else min safe_s
         in
         let ratio = div max_s_tensor min_s_tensor in
@@ -5785,7 +5794,7 @@ module Make (B : Backend_intf.S) = struct
     (* We need to multiply each column of vh.T by corresponding s_inv element *)
     (* vh.T has shape [n, k], s_inv has shape [k] *)
     (* We want broadcasting [n, k] * [1, k] -> [n, k] *)
-    let s_inv_expanded = unsqueeze ~axes:[| 0 |] s_inv in
+    let s_inv_expanded = unsqueeze ~axes:[ 0 ] s_inv in
     (* Shape [1, k] *)
     let vs = mul (matrix_transpose vh) s_inv_expanded in
     matmul vs (matrix_transpose u)
@@ -5807,13 +5816,14 @@ module Make (B : Backend_intf.S) = struct
     let axes_for_b =
       match axes with
       | None -> Array.init b_rank (fun i -> a_rank - b_rank + i)
-      | Some ax_arr ->
-          if Array.length ax_arr <> b_rank then
+      | Some axes ->
+          if List.length axes <> b_rank then
             Error.invalid ~op:"tensorsolve" ~what:"axes"
               ~reason:
                 (Printf.sprintf "expected %d entries, got %d" b_rank
-                   (Array.length ax_arr))
+                   (List.length axes))
               ();
+          let ax_arr = Array.of_list axes in
           let seen = Array.make a_rank false in
           Array.map
             (fun ax ->
@@ -5844,7 +5854,7 @@ module Make (B : Backend_intf.S) = struct
         else if permutation.(idx) <> idx then false
         else is_identity (idx + 1)
       in
-      if is_identity 0 then a else transpose ~axes:permutation a
+      if is_identity 0 then a else transpose ~axes:(Array.to_list permutation) a
     in
     let perm_shape = shape a_perm in
     let free_rank = Array.length free_axes in
@@ -6003,9 +6013,9 @@ module Make (B : Backend_intf.S) = struct
   let pad_or_truncate_for_fft x axes s =
     if s = None then x
     else
-      let s_arr = Option.get s in
+      let s_arr = Array.of_list (Option.get s) in
       let x_padded = ref x in
-      Array.iteri
+      List.iteri
         (fun i ax ->
           let ax = if ax < 0 then ndim !x_padded + ax else ax in
           let cur_size = dim ax !x_padded in
@@ -6031,21 +6041,21 @@ module Make (B : Backend_intf.S) = struct
   let fftn (type a) ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
       (Complex.t, a) t =
     let ndim_x = ndim x in
-    let axes_arr =
+    let axes_list =
       match axes with
-      | None -> Array.init ndim_x Fun.id
-      | Some a -> Array.map (fun ax -> if ax < 0 then ndim_x + ax else ax) a
+      | None -> List.init ndim_x Fun.id
+      | Some a -> List.map (fun ax -> if ax < 0 then ndim_x + ax else ax) a
     in
 
     (* Validate s parameter *)
     (match s with
-    | Some sizes when Array.length sizes <> Array.length axes_arr ->
+    | Some sizes when List.length sizes <> List.length axes_list ->
         Error.invalid ~op:"fft" ~what:"s parameter"
           ~reason:"must have same length as axes" ()
     | _ -> ());
 
     (* Pad or truncate if needed *)
-    let x_padded = pad_or_truncate_for_fft x axes_arr s in
+    let x_padded = pad_or_truncate_for_fft x axes_list s in
 
     (* Compute normalization scale *)
     let norm_scale =
@@ -6053,17 +6063,17 @@ module Make (B : Backend_intf.S) = struct
       | `Backward -> 1.0 (* No scaling on forward *)
       | `Forward ->
           let n =
-            Array.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_arr
+            List.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_list
           in
           1.0 /. float_of_int n
       | `Ortho ->
           let n =
-            Array.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_arr
+            List.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_list
           in
           1.0 /. Stdlib.sqrt (float_of_int n)
     in
 
-    let result = B.op_fft x_padded ~axes:axes_arr ~s:None in
+    let result = B.op_fft x_padded ~axes:(Array.of_list axes_list) ~s:None in
 
     (* Apply normalization if needed *)
     if norm_scale <> 1.0 then
@@ -6081,15 +6091,15 @@ module Make (B : Backend_intf.S) = struct
   let ifftn (type a) ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
       (Complex.t, a) t =
     let ndim_x = ndim x in
-    let axes_arr =
+    let axes_list =
       match axes with
-      | None -> Array.init ndim_x Fun.id
-      | Some a -> Array.map (fun ax -> if ax < 0 then ndim_x + ax else ax) a
+      | None -> List.init ndim_x Fun.id
+      | Some a -> List.map (fun ax -> if ax < 0 then ndim_x + ax else ax) a
     in
 
     (* Validate s parameter *)
     (match s with
-    | Some sizes when Array.length sizes <> Array.length axes_arr ->
+    | Some sizes when List.length sizes <> List.length axes_list ->
         Error.invalid ~op:"ifft" ~what:"s parameter"
           ~reason:"must have same length as axes" ()
     | _ -> ());
@@ -6103,36 +6113,38 @@ module Make (B : Backend_intf.S) = struct
             match norm with
             | `Backward ->
                 let n =
-                  Array.fold_left (fun acc ax -> acc * dim ax x) 1 axes_arr
+                  List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list
                 in
                 1.0 /. float_of_int n
             | `Forward -> 1.0
             | `Ortho ->
                 let n =
-                  Array.fold_left (fun acc ax -> acc * dim ax x) 1 axes_arr
+                  List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list
                 in
                 1.0 /. Stdlib.sqrt (float_of_int n)
           in
-          let result = B.op_ifft x ~axes:axes_arr ~s:None in
+          let result = B.op_ifft x ~axes:(Array.of_list axes_list) ~s:None in
           (result, norm_scale)
-      | Some sizes ->
+      | Some _sizes ->
           (* Size specified - we need to handle this carefully *)
           (* First pad/truncate the input in frequency domain, then do IFFT *)
-          let x_padded = pad_or_truncate_for_fft x axes_arr s in
+          let x_padded = pad_or_truncate_for_fft x axes_list s in
           let norm_scale =
             match norm with
             | `Backward ->
                 (* Use the OUTPUT size for normalization (after truncation) *)
                 let n = ref 1 in
-                Array.iteri (fun i _ -> n := !n * sizes.(i)) axes_arr;
+                List.iter (fun size -> n := !n * size) axes_list;
                 1.0 /. float_of_int !n
             | `Forward -> 1.0
             | `Ortho ->
                 let n = ref 1 in
-                Array.iteri (fun i _ -> n := !n * sizes.(i)) axes_arr;
+                List.iter (fun size -> n := !n * size) axes_list;
                 1.0 /. Stdlib.sqrt (float_of_int !n)
           in
-          let result = B.op_ifft x_padded ~axes:axes_arr ~s:None in
+          let result =
+            B.op_ifft x_padded ~axes:(Array.of_list axes_list) ~s:None
+          in
           (result, norm_scale)
     in
     let result, norm_scale = result_with_size in
@@ -6156,10 +6168,10 @@ module Make (B : Backend_intf.S) = struct
 
   let rfftn ?axes ?s ?(norm = `Backward) x =
     let ndim_x = ndim x in
-    let axes_arr = match axes with None -> [| ndim_x - 1 |] | Some ax -> ax in
+    let axes_list = match axes with None -> [ ndim_x - 1 ] | Some ax -> ax in
 
     (* Pad or truncate if needed *)
-    let x_padded = pad_or_truncate_for_fft x axes_arr s in
+    let x_padded = pad_or_truncate_for_fft x axes_list s in
 
     (* Compute normalization scale *)
     let norm_scale =
@@ -6167,19 +6179,20 @@ module Make (B : Backend_intf.S) = struct
       | `Backward -> 1.0
       | `Forward ->
           let n =
-            Array.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_arr
+            List.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_list
           in
           1.0 /. float_of_int n
       | `Ortho ->
           let n =
-            Array.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_arr
+            List.fold_left (fun acc ax -> acc * dim ax x_padded) 1 axes_list
           in
           1.0 /. Stdlib.sqrt (float_of_int n)
     in
 
     (* Use Complex64 as default - matches NumPy behavior *)
     let result =
-      B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:axes_arr ~s:None
+      B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:(Array.of_list axes_list)
+        ~s:None
     in
 
     if norm_scale <> 1.0 then
@@ -6192,7 +6205,7 @@ module Make (B : Backend_intf.S) = struct
 
   let irfftn ?axes ?s ?(norm = `Backward) x =
     let ndim_x = ndim x in
-    let axes_arr = match axes with None -> [| ndim_x - 1 |] | Some ax -> ax in
+    let axes_list = match axes with None -> [ ndim_x - 1 ] | Some ax -> ax in
 
     (* Determine output sizes *)
     let output_sizes =
@@ -6201,14 +6214,14 @@ module Make (B : Backend_intf.S) = struct
       | None ->
           (* Infer sizes from input shape *)
           let input_shape = shape x in
-          Array.mapi
+          List.mapi
             (fun i axis ->
               let axis = if axis < 0 then ndim_x + axis else axis in
-              if i = Array.length axes_arr - 1 then
+              if i = List.length axes_list - 1 then
                 (* Last axis: reconstruct full size from hermitian input *)
                 (input_shape.(axis) - 1) * 2
               else input_shape.(axis))
-            axes_arr
+            axes_list
     in
 
     (* For normalization: when output size is specified and smaller than what
@@ -6216,15 +6229,15 @@ module Make (B : Backend_intf.S) = struct
        This handles the case of truncation in frequency domain. *)
     let norm_sizes =
       let input_shape = shape x in
-      Array.mapi
+      List.mapi
         (fun i axis ->
           let axis = if axis < 0 then ndim_x + axis else axis in
-          if i = Array.length axes_arr - 1 then
+          if i = List.length axes_list - 1 then
             (* Last axis: use specified size if provided, else infer *)
             match s with
             | Some sizes ->
                 (* Use the specified output size for normalization *)
-                sizes.(i)
+                List.nth sizes i
             | None ->
                 (* No size specified: use inferred size *)
                 let inferred_size = (input_shape.(axis) - 1) * 2 in
@@ -6232,20 +6245,20 @@ module Make (B : Backend_intf.S) = struct
           else
             (* Other axes: use output size if specified, else input size *)
             match s with
-            | Some sizes -> sizes.(i)
+            | Some sizes -> List.nth sizes i
             | None -> input_shape.(axis))
-        axes_arr
+        axes_list
     in
 
     (* Compute normalization scale based on the actual FFT size *)
     let norm_scale =
       match norm with
       | `Backward ->
-          let n = Array.fold_left (fun acc size -> acc * size) 1 norm_sizes in
+          let n = List.fold_left (fun acc size -> acc * size) 1 norm_sizes in
           1.0 /. float_of_int n
       | `Forward -> 1.0
       | `Ortho ->
-          let n = Array.fold_left (fun acc size -> acc * size) 1 norm_sizes in
+          let n = List.fold_left (fun acc size -> acc * size) 1 norm_sizes in
           1.0 /. Stdlib.sqrt (float_of_int n)
     in
 
@@ -6253,8 +6266,13 @@ module Make (B : Backend_intf.S) = struct
     let backend_scale = 1.0 in
 
     (* Use Float64 as default - matches NumPy behavior *)
-    let s_param = match s with None -> None | Some _ -> Some output_sizes in
-    let result = B.op_irfft x ~dtype:Dtype.Float64 ~axes:axes_arr ~s:s_param in
+    let s_param =
+      match s with None -> None | Some _ -> Some (Array.of_list output_sizes)
+    in
+    let result =
+      B.op_irfft x ~dtype:Dtype.Float64 ~axes:(Array.of_list axes_list)
+        ~s:s_param
+    in
 
     let total_scale = backend_scale *. norm_scale in
     if total_scale <> 1.0 then
@@ -6266,20 +6284,20 @@ module Make (B : Backend_intf.S) = struct
 
   (* 1D FFT operations - convenience functions *)
   let fft ?(axis = -1) ?n ?(norm = `Backward) x =
-    let n_param = match n with None -> None | Some size -> Some [| size |] in
-    fftn x ~axes:[| axis |] ?s:n_param ~norm
+    let n_param = match n with None -> None | Some size -> Some [ size ] in
+    fftn x ~axes:[ axis ] ?s:n_param ~norm
 
   let ifft ?(axis = -1) ?n ?(norm = `Backward) x =
-    let n_param = match n with None -> None | Some size -> Some [| size |] in
-    ifftn x ~axes:[| axis |] ?s:n_param ~norm
+    let n_param = match n with None -> None | Some size -> Some [ size ] in
+    ifftn x ~axes:[ axis ] ?s:n_param ~norm
 
   let rfft ?(axis = -1) ?n ?(norm = `Backward) x =
-    let n_param = match n with None -> None | Some size -> Some [| size |] in
-    rfftn x ~axes:[| axis |] ?s:n_param ~norm
+    let n_param = match n with None -> None | Some size -> Some [ size ] in
+    rfftn x ~axes:[ axis ] ?s:n_param ~norm
 
   let irfft ?(axis = -1) ?n ?(norm = `Backward) x =
-    let n_param = match n with None -> None | Some size -> Some [| size |] in
-    irfftn x ~axes:[| axis |] ?s:n_param ~norm
+    let n_param = match n with None -> None | Some size -> Some [ size ] in
+    irfftn x ~axes:[ axis ] ?s:n_param ~norm
 
   (* 2D FFT operations *)
   let fft2 ?axes ?s ?(norm = `Backward) x =
@@ -6288,11 +6306,13 @@ module Make (B : Backend_intf.S) = struct
       Error.invalid ~op:"fft2" ~what:"input"
         ~reason:(Printf.sprintf "requires at least 2D array, got %dD" n)
         ();
-    let axes = match axes with None -> [| n - 2; n - 1 |] | Some ax -> ax in
-    if Array.length axes <> 2 then
+    let axes_list =
+      match axes with None -> [ n - 2; n - 1 ] | Some ax -> ax
+    in
+    if List.length axes_list <> 2 then
       Error.invalid ~op:"fft2" ~what:"axes"
         ~reason:"must specify exactly 2 axes" ();
-    fftn x ~axes ?s ~norm
+    fftn x ~axes:axes_list ?s ~norm
 
   let ifft2 ?axes ?s ?(norm = `Backward) x =
     let n = ndim x in
@@ -6300,24 +6320,26 @@ module Make (B : Backend_intf.S) = struct
       Error.invalid ~op:"ifft2" ~what:"input"
         ~reason:(Printf.sprintf "requires at least 2D array, got %dD" n)
         ();
-    let axes = match axes with None -> [| n - 2; n - 1 |] | Some ax -> ax in
-    if Array.length axes <> 2 then
+    let axes_list =
+      match axes with None -> [ n - 2; n - 1 ] | Some ax -> ax
+    in
+    if List.length axes_list <> 2 then
       Error.invalid ~op:"ifft2" ~what:"axes"
         ~reason:"must specify exactly 2 axes" ();
-    ifftn x ~axes ?s ~norm
+    ifftn x ~axes:axes_list ?s ~norm
 
   (* N-dimensional FFT operations *)
   let fftn ?axes ?s ?(norm = `Backward) x =
-    let axes =
-      match axes with None -> Array.init (ndim x) Fun.id | Some ax -> ax
+    let axes_list =
+      match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax
     in
-    fftn x ~axes ?s ~norm
+    fftn x ~axes:axes_list ?s ~norm
 
   let ifftn ?axes ?s ?(norm = `Backward) x =
-    let axes =
-      match axes with None -> Array.init (ndim x) Fun.id | Some ax -> ax
+    let axes_list =
+      match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax
     in
-    ifftn x ~axes ?s ~norm
+    ifftn x ~axes:axes_list ?s ~norm
 
   (* 2D Real FFT operations *)
   let rfft2 ?axes ?s ?(norm = `Backward) x =
@@ -6326,11 +6348,13 @@ module Make (B : Backend_intf.S) = struct
       Error.invalid ~op:"rfft2" ~what:"input"
         ~reason:(Printf.sprintf "requires at least 2D array, got %dD" n)
         ();
-    let axes = match axes with None -> [| n - 2; n - 1 |] | Some ax -> ax in
-    if Array.length axes <> 2 then
+    let axes_list =
+      match axes with None -> [ n - 2; n - 1 ] | Some ax -> ax
+    in
+    if List.length axes_list <> 2 then
       Error.invalid ~op:"rfft2" ~what:"axes"
         ~reason:"must specify exactly 2 axes" ();
-    rfftn x ~axes ?s ~norm
+    rfftn x ~axes:axes_list ?s ~norm
 
   let irfft2 ?axes ?s ?(norm = `Backward) x =
     let n = ndim x in
@@ -6338,35 +6362,37 @@ module Make (B : Backend_intf.S) = struct
       Error.invalid ~op:"irfft2" ~what:"input"
         ~reason:(Printf.sprintf "requires at least 2D array, got %dD" n)
         ();
-    let axes = match axes with None -> [| n - 2; n - 1 |] | Some ax -> ax in
-    if Array.length axes <> 2 then
+    let axes_list =
+      match axes with None -> [ n - 2; n - 1 ] | Some ax -> ax
+    in
+    if List.length axes_list <> 2 then
       Error.invalid ~op:"irfft2" ~what:"axes"
         ~reason:"must specify exactly 2 axes" ();
-    irfftn x ~axes ?s ~norm
+    irfftn x ~axes:axes_list ?s ~norm
 
   (* N-dimensional Real FFT operations *)
   let rfftn ?axes ?s ?(norm = `Backward) x =
-    let axes =
-      match axes with None -> Array.init (ndim x) Fun.id | Some ax -> ax
+    let axes_list =
+      match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax
     in
-    rfftn x ~axes ?s ~norm
+    rfftn x ~axes:axes_list ?s ~norm
 
   let irfftn ?axes ?s ?(norm = `Backward) x =
-    let axes =
-      match axes with None -> Array.init (ndim x) Fun.id | Some ax -> ax
+    let axes_list =
+      match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax
     in
-    irfftn x ~axes ?s ~norm
+    irfftn x ~axes:axes_list ?s ~norm
 
   (* Hermitian FFT operations *)
   let hfft ?(axis = -1) ?n ?norm x =
     let n = match n with None -> 2 * (dim axis x - 1) | Some n -> n in
     let axis = resolve_single_axis x axis in
-    irfftn x ~axes:[| axis |] ~s:[| n |] ?norm
+    irfftn x ~axes:[ axis ] ~s:[ n ] ?norm
 
   let ihfft ?(axis = -1) ?n ?norm x =
     let n = match n with None -> dim axis x | Some n -> n in
     let axis = resolve_single_axis x axis in
-    rfftn x ~axes:[| axis |] ~s:[| n |] ?norm
+    rfftn x ~axes:[ axis ] ~s:[ n ] ?norm
 
   (* FFT helper functions *)
   let fftfreq ctx ?(d = 1.0) n =
@@ -6399,33 +6425,33 @@ module Make (B : Backend_intf.S) = struct
     (* Shift the zero-frequency component to the center of the spectrum *)
     let shape_x = shape x in
     let ndim_x = Array.length shape_x in
-    let axes =
-      match axes with None -> Array.init ndim_x Fun.id | Some ax -> ax
+    let axes_list =
+      match axes with None -> List.init ndim_x Fun.id | Some ax -> ax
     in
     (* For each axis, roll by shape[axis] // 2 *)
-    Array.fold_left
+    List.fold_left
       (fun acc axis ->
         let axis = resolve_single_axis acc axis in
         let n = shape_x.(axis) in
         let shift = n / 2 in
         roll shift acc ~axis)
-      x axes
+      x axes_list
 
   let ifftshift ?axes x =
     (* The inverse of fftshift *)
     let shape_x = shape x in
     let ndim_x = Array.length shape_x in
-    let axes =
-      match axes with None -> Array.init ndim_x Fun.id | Some ax -> ax
+    let axes_list =
+      match axes with None -> List.init ndim_x Fun.id | Some ax -> ax
     in
     (* For each axis, roll by -(shape[axis] // 2) *)
-    Array.fold_left
+    List.fold_left
       (fun acc axis ->
         let axis = resolve_single_axis acc axis in
         let n = shape_x.(axis) in
         let shift = -(n / 2) in
         roll shift acc ~axis)
-      x axes
+      x axes_list
 
   (* ───── Neural Network Operations ───── *)
 
@@ -6525,13 +6551,15 @@ module Make (B : Backend_intf.S) = struct
     mul lambda_scalar elu_x
 
   (* Softmax: exp(x - max(x)) / sum(exp(x - max(x))) along specified axes *)
-  let softmax ?(axes = [| -1 |]) x =
+  let softmax ?(axes = [ -1 ]) x =
     let ndim = Array.length (shape x) in
-    let axes = Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes in
-    let max_x = max x ~axes ~keepdims:true in
+    let axes_normalized =
+      List.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
+    in
+    let max_x = max x ~axes:axes_normalized ~keepdims:true in
     let x_shifted = sub x max_x in
     let exp_x = exp x_shifted in
-    let sum_exp = sum exp_x ~axes ~keepdims:true in
+    let sum_exp = sum exp_x ~axes:axes_normalized ~keepdims:true in
     div exp_x sum_exp
 
   (* Approximated Gaussian Error Linear Unit: 0.5 * x * (1 + tanh(x *
@@ -6822,7 +6850,7 @@ module Make (B : Backend_intf.S) = struct
           in
 
           (* Expand weights to match batch*groups dimension *)
-          let w_expanded = unsqueeze ~axes:[| 0 |] w_batched in
+          let w_expanded = unsqueeze ~axes:[ 0 ] w_batched in
           let w_expanded =
             expand
               [| bs; groups; rcout; cin_per_group * kernel_elements |]
@@ -7069,7 +7097,7 @@ module Make (B : Backend_intf.S) = struct
 
     (* Compute sum over kernel elements *)
     let sum_pooled =
-      sum x_reshaped ~axes:[| Array.length (shape x_reshaped) - 2 |]
+      sum x_reshaped ~axes:[ Array.length (shape x_reshaped) - 2 ]
     in
 
     (* Reshape back to original layout *)
@@ -7098,17 +7126,18 @@ module Make (B : Backend_intf.S) = struct
           ones_unfolded
       in
       let count =
-        sum ones_reshaped ~axes:[| Array.length (shape ones_reshaped) - 2 |]
+        sum ones_reshaped ~axes:[ Array.length (shape ones_reshaped) - 2 ]
       in
       let count_reshaped = reshape result_shape count in
       let count_corrected =
         if num_spatial_dims = 2 then
           transpose
             ~axes:
-              (Array.init x_ndim (fun i ->
-                   if i = x_ndim - 2 then x_ndim - 1
-                   else if i = x_ndim - 1 then x_ndim - 2
-                   else i))
+              (Array.to_list
+                 (Array.init x_ndim (fun i ->
+                      if i = x_ndim - 2 then x_ndim - 1
+                      else if i = x_ndim - 1 then x_ndim - 2
+                      else i)))
             count_reshaped
         else count_reshaped
       in
@@ -7223,7 +7252,7 @@ module Make (B : Backend_intf.S) = struct
 
         (* Find which kernel position has the max value *)
         let max_expanded =
-          unsqueeze ~axes:[| Array.length (shape x_reshaped) - 2 |] max_pooled
+          unsqueeze ~axes:[ Array.length (shape x_reshaped) - 2 ] max_pooled
         in
         let max_broadcast = broadcast_to (shape x_reshaped) max_expanded in
         let is_max = equal x_reshaped max_broadcast in
@@ -7241,7 +7270,7 @@ module Make (B : Backend_intf.S) = struct
         (* Get the minimum index (first occurrence of max) *)
         let kernel_idx =
           min masked_indices
-            ~axes:[| Array.length (shape masked_indices) - 2 |]
+            ~axes:[ Array.length (shape masked_indices) - 2 ]
             ~keepdims:false
         in
 
@@ -7415,7 +7444,7 @@ module Make (B : Backend_intf.S) = struct
         ~what:(Printf.sprintf "dtype %s" (Dtype.to_string index_dt))
         ~reason:"indices must be integer type" ();
 
-    let index_expanded = unsqueeze index_tensor ~axes:[| ndim index_tensor |] in
+    let index_expanded = unsqueeze index_tensor ~axes:[ ndim index_tensor ] in
     (* Add new last dim *)
 
     let arange_x = arange (B.context index_tensor) index_dt 0 num_classes 1 in
@@ -7465,12 +7494,14 @@ module Make (B : Backend_intf.S) = struct
       one_hot indices_x ~num_classes:prod_output_spatial_size
     in
 
-    let input_expanded = unsqueeze input_x ~axes:[| ndim input_x |] in
+    let input_expanded = unsqueeze input_x ~axes:[ ndim input_x ] in
 
     let multiplied = mul one_hot_mask_for_indices input_expanded in
 
     let sum_axes = Array.init num_spatial_dims (fun i -> 2 + i) in
-    let result_flat_spatial = sum multiplied ~axes:sum_axes ~keepdims:false in
+    let result_flat_spatial =
+      sum multiplied ~axes:(Array.to_list sum_axes) ~keepdims:false
+    in
 
     let final_shape = Array.concat [ [| bs; c |]; output_spatial_shape ] in
     reshape final_shape result_flat_spatial

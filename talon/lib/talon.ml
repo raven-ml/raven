@@ -702,8 +702,8 @@ module Row = struct
             let nan_mask = Nx.isnan stacked in
             let zeros = Nx.zeros_like stacked in
             let cleaned = Nx.where nan_mask zeros stacked in
-            Nx.sum cleaned ~axes:[| 0 |]
-          else Nx.sum stacked ~axes:[| 0 |]
+            Nx.sum cleaned ~axes:[ 1 ]
+          else Nx.sum stacked ~axes:[ 1 ]
         in
         Col.of_tensor result
 
@@ -720,15 +720,15 @@ module Row = struct
             let cleaned = Nx.where nan_mask zeros stacked in
             let ones = Nx.ones_like stacked in
             let valid_mask = Nx.where nan_mask zeros ones in
-            let sum = Nx.sum cleaned ~axes:[| 0 |] in
-            let count = Nx.sum valid_mask ~axes:[| 0 |] in
+            let sum = Nx.sum cleaned ~axes:[ 1 ] in
+            let count = Nx.sum valid_mask ~axes:[ 1 ] in
             (* Avoid division by zero *)
             let safe_count = Nx.maximum count (Nx.ones_like count) in
             let mean = Nx.div sum safe_count in
             (* Set to NaN where all values were NaN *)
             let all_nan = Nx.equal count (Nx.zeros_like count) in
             Nx.where all_nan (Nx.full_like mean Float.nan) mean
-          else Nx.mean stacked ~axes:[| 0 |]
+          else Nx.mean stacked ~axes:[ 1 ]
         in
         Col.of_tensor result
 
@@ -743,13 +743,13 @@ module Row = struct
             let nan_mask = Nx.isnan stacked in
             let inf = Nx.full_like stacked Float.infinity in
             let cleaned = Nx.where nan_mask inf stacked in
-            let min_vals = Nx.min cleaned ~axes:[| 0 |] in
+            let min_vals = Nx.min cleaned ~axes:[ 1 ] in
             (* Set to NaN where all values were NaN *)
             let is_inf =
               Nx.equal min_vals (Nx.full_like min_vals Float.infinity)
             in
             Nx.where is_inf (Nx.full_like min_vals Float.nan) min_vals
-          else Nx.min stacked ~axes:[| 0 |]
+          else Nx.min stacked ~axes:[ 1 ]
         in
         Col.of_tensor result
 
@@ -764,13 +764,13 @@ module Row = struct
             let nan_mask = Nx.isnan stacked in
             let neg_inf = Nx.full_like stacked Float.neg_infinity in
             let cleaned = Nx.where nan_mask neg_inf stacked in
-            let max_vals = Nx.max cleaned ~axes:[| 0 |] in
+            let max_vals = Nx.max cleaned ~axes:[ 1 ] in
             (* Set to NaN where all values were NaN *)
             let is_neg_inf =
               Nx.equal max_vals (Nx.full_like max_vals Float.neg_infinity)
             in
             Nx.where is_neg_inf (Nx.full_like max_vals Float.nan) max_vals
-          else Nx.max stacked ~axes:[| 0 |]
+          else Nx.max stacked ~axes:[ 1 ]
         in
         Col.of_tensor result
 
@@ -786,10 +786,10 @@ module Row = struct
           Nx.create Nx.float64 [| Array.length weights; 1 |] weights
         in
         (* Transpose stacked to [n_rows, n_cols], then matrix multiply *)
-        let transposed = Nx.transpose stacked ~axes:[| 1; 0 |] in
+        let transposed = Nx.transpose stacked ~axes:[ 1; 0 ] in
         let result = Nx.matmul transposed weights_tensor in
         (* Squeeze to remove the extra dimension *)
-        let squeezed = Nx.squeeze result ~axes:[| 1 |] in
+        let squeezed = Nx.squeeze result ~axes:[ 1 ] in
         Col.of_tensor squeezed
 
     let all t ~names =

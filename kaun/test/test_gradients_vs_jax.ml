@@ -360,7 +360,7 @@ let test_reduction_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = sum x_t ~axes:[| 0 |] in
+            let y = sum x_t ~axes:[ 1 ] in
             sum y
         | _ -> failwith "Expected tensor")
       (Kaun.Ptree.Tensor x)
@@ -386,7 +386,7 @@ let test_reduction_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = sum x_t ~axes:[| 1 |] in
+            let y = sum x_t ~axes:[ 1 ] in
             sum y
         | _ -> failwith "Expected tensor")
       (Kaun.Ptree.Tensor x)
@@ -412,7 +412,7 @@ let test_reduction_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = mean x_t ~axes:[| 1 |] ~keepdims:true in
+            let y = mean x_t ~axes:[ 1 ] ~keepdims:true in
             sum y
         | _ -> failwith "Expected tensor")
       (Kaun.Ptree.Tensor x)
@@ -497,7 +497,7 @@ let test_softmax_gradient () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = softmax x_t ~axes:[| -1 |] in
+            let y = softmax x_t ~axes:[ -1 ] in
             mean y
         | _ -> failwith "Expected tensor")
       (Kaun.Ptree.Tensor x)
@@ -782,9 +782,9 @@ let test_attention_gradient () =
             let shape_q = shape q_t in
             let d_k = Float.of_int shape_q.(Array.length shape_q - 1) in
             let scale = scalar_like q_t (1.0 /. Float.sqrt d_k) in
-            let scores = matmul q_t (transpose ~axes:[| 0; 2; 1 |] k_t) in
+            let scores = matmul q_t (transpose ~axes:[ 0; 2; 1 ] k_t) in
             let scores = mul scores scale in
-            let attention_weights = softmax scores ~axes:[| -1 |] in
+            let attention_weights = softmax scores ~axes:[ -1 ] in
             let output = matmul attention_weights v_t in
             mean output
         | _ -> failwith "Expected record")
@@ -947,10 +947,10 @@ let test_cross_entropy_gradient () =
         match logits_param with
         | Kaun.Ptree.Tensor logits_t ->
             (* Compute log_softmax *)
-            let max_logits = max logits_t ~axes:[| -1 |] ~keepdims:true in
+            let max_logits = max logits_t ~axes:[ -1 ] ~keepdims:true in
             let shifted = sub logits_t max_logits in
             let exp_shifted = exp shifted in
-            let sum_exp = sum exp_shifted ~axes:[| -1 |] ~keepdims:true in
+            let sum_exp = sum exp_shifted ~axes:[ -1 ] ~keepdims:true in
             let log_sum_exp = log sum_exp in
             let log_probs = sub shifted log_sum_exp in
 
@@ -971,7 +971,7 @@ let test_cross_entropy_gradient () =
 
             (* Compute cross-entropy loss *)
             let ce = mul one_hot log_probs in
-            let ce_sum = sum ce ~axes:[| -1 |] in
+            let ce_sum = sum ce ~axes:[ -1 ] in
             neg (mean ce_sum)
         | _ -> failwith "Expected tensor")
       (Kaun.Ptree.Tensor logits)
@@ -1031,10 +1031,10 @@ let test_batchnorm_gradient () =
             in
             (* BatchNorm computation *)
             let eps = scalar_like x_t 1e-5 in
-            let mean_val = mean x_t ~axes:[| 0 |] ~keepdims:true in
+            let mean_val = mean x_t ~axes:[ 1 ] ~keepdims:true in
             let x_centered = sub x_t mean_val in
             let var =
-              mean (mul x_centered x_centered) ~axes:[| 0 |] ~keepdims:true
+              mean (mul x_centered x_centered) ~axes:[ 1 ] ~keepdims:true
             in
             let std = sqrt (add var eps) in
             let x_normalized = div x_centered std in

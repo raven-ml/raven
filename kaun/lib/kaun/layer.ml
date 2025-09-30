@@ -1092,8 +1092,8 @@ let positional_encoding_sinusoidal_table ~max_len ~embed_dim ~dtype =
   let angle = Rune.div position angle_rate in
   let sin_term = Rune.sin angle in
   let cos_term = Rune.cos angle in
-  let sin_e = Rune.expand_dims [| 2 |] sin_term in
-  let cos_e = Rune.expand_dims [| 2 |] cos_term in
+  let sin_e = Rune.expand_dims [ 2 ] sin_term in
+  let cos_e = Rune.expand_dims [ 2 ] cos_term in
   let stacked = Rune.stack ~axis:2 [ sin_e; cos_e ] in
   (* [L; d2; 2] *)
   Rune.reshape [| max_len; d2 * 2 |] stacked

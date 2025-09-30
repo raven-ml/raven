@@ -40,7 +40,7 @@ let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
         let shape = Rune.shape x in
         let n, h, w, _ = (shape.(0), shape.(1), shape.(2), shape.(3)) in
         let x_reshaped = Rune.reshape [| n; h; w; 1 |] x in
-        Rune.transpose x_reshaped ~axes:[| 0; 3; 1; 2 |]
+        Rune.transpose x_reshaped ~axes:[ 0; 3; 1; 2 ]
     | `NHWC ->
         (* Keep original shape [N, H, W, 1] *)
         x
@@ -56,7 +56,7 @@ let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
   in
 
   (* Keep labels as class indices *)
-  let y = Rune.squeeze y ~axes:[| 1 |] in
+  let y = Rune.squeeze y ~axes:[ 1 ] in
 
   (* Create the dataset using Kaun_dataset *)
   Kaun.Dataset.from_tensors (x, y)
@@ -103,11 +103,11 @@ let cifar10 ?(train = true) ?(normalize = true) ?(data_format = `NCHW)
     | `NCHW -> x (* CIFAR-10 is already in NCHW format *)
     | `NHWC ->
         (* Convert from [N, C, H, W] to [N, H, W, C] *)
-        Rune.transpose x ~axes:[| 0; 2; 3; 1 |]
+        Rune.transpose x ~axes:[ 0; 2; 3; 1 ]
   in
 
   (* Keep labels as class indices *)
-  let y = Rune.squeeze y ~axes:[| 1 |] in
+  let y = Rune.squeeze y ~axes:[ 1 ] in
 
   (* Create dataset and apply augmentation if requested *)
   let dataset = Kaun.Dataset.from_tensors (x, y) in
@@ -147,7 +147,7 @@ let fashion_mnist ?(train = true) ?(flatten = false) ?(normalize = true)
         let shape = Rune.shape x in
         let n, h, w, _ = (shape.(0), shape.(1), shape.(2), shape.(3)) in
         let x_reshaped = Rune.reshape [| n; h; w; 1 |] x in
-        Rune.transpose x_reshaped ~axes:[| 0; 3; 1; 2 |]
+        Rune.transpose x_reshaped ~axes:[ 0; 3; 1; 2 ]
     | `NHWC ->
         (* Keep original shape [N, H, W, 1] *)
         x
@@ -163,7 +163,7 @@ let fashion_mnist ?(train = true) ?(flatten = false) ?(normalize = true)
   in
 
   (* Keep labels as class indices *)
-  let y = Rune.squeeze y ~axes:[| 1 |] in
+  let y = Rune.squeeze y ~axes:[ 1 ] in
 
   Kaun.Dataset.from_tensors (x, y)
 
@@ -264,8 +264,8 @@ let iris ?(normalize = true) ?(train_split = 0.8) ?shuffle_seed () =
   (* Normalize if requested *)
   let x =
     if normalize then
-      let mean = Rune.mean x ~axes:[| 0 |] ~keepdims:true in
-      let std = Rune.std x ~axes:[| 0 |] ~keepdims:true in
+      let mean = Rune.mean x ~axes:[ 1 ] ~keepdims:true in
+      let std = Rune.std x ~axes:[ 1 ] ~keepdims:true in
       Rune.div (Rune.sub x mean) (Rune.add std (Rune.scalar Rune.float32 1e-8))
     else x
   in
@@ -299,8 +299,8 @@ let boston_housing ?(normalize = true) ?(train_split = 0.8) () =
   (* Normalize if requested *)
   let x =
     if normalize then
-      let mean = Rune.mean x ~axes:[| 0 |] ~keepdims:true in
-      let std = Rune.std x ~axes:[| 0 |] ~keepdims:true in
+      let mean = Rune.mean x ~axes:[ 1 ] ~keepdims:true in
+      let std = Rune.std x ~axes:[ 1 ] ~keepdims:true in
       Rune.div (Rune.sub x mean) (Rune.add std (Rune.scalar Rune.float32 1e-8))
     else x
   in

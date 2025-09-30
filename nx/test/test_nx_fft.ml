@@ -220,7 +220,7 @@ let test_rfft_irfft () =
     "rfft2 shape"
     [| m; (n / 2) + 1 |]
     (Nx.shape rfft_2d);
-  let irfft_2d = Nx.irfft2 rfft_2d ~s:[| m; n |] in
+  let irfft_2d = Nx.irfft2 rfft_2d ~s:[ m; n ] in
   check_t "rfft2 reconstruct" shape_2d signal_2d irfft_2d;
 
   (* ND last axis transform *)
@@ -228,10 +228,10 @@ let test_rfft_irfft () =
   let size_nd = 2 * 3 * 8 in
   let signal_nd = Array.init size_nd (fun i -> Float.of_int i) in
   let input_nd = Nx.create Nx.float64 shape_nd signal_nd in
-  let rfft_nd = Nx.rfftn input_nd ~axes:[| 2 |] in
+  let rfft_nd = Nx.rfftn input_nd ~axes:[ 2 ] in
   Alcotest.(check (array int))
     "rfftn last axis shape" [| 2; 3; 5 |] (Nx.shape rfft_nd);
-  let irfft_nd = Nx.irfftn rfft_nd ~axes:[| 2 |] ~s:[| 8 |] in
+  let irfft_nd = Nx.irfftn rfft_nd ~axes:[ 2 ] ~s:[ 8 ] in
   check_t "rfftn last axis reconstruct" shape_nd signal_nd irfft_nd
 
 let test_rfft_axes () =
@@ -241,16 +241,16 @@ let test_rfft_axes () =
   let input = Nx.create Nx.float64 shape signal in
 
   (* Specific axis *)
-  let rfft_axis1 = Nx.rfftn input ~axes:[| 1 |] in
+  let rfft_axis1 = Nx.rfftn input ~axes:[ 1 ] in
   Alcotest.(check (array int)) "rfft axis 1" [| 4; 4; 8 |] (Nx.shape rfft_axis1);
 
   (* Multiple axes, last is halved *)
-  let rfft_axes_01 = Nx.rfftn input ~axes:[| 0; 1 |] in
+  let rfft_axes_01 = Nx.rfftn input ~axes:[ 0; 1 ] in
   Alcotest.(check (array int))
     "rfft axes [0;1]" [| 4; 4; 8 |] (Nx.shape rfft_axes_01);
 
   (* Negative axis *)
-  let rfft_neg1 = Nx.rfftn input ~axes:[| -1 |] in
+  let rfft_neg1 = Nx.rfftn input ~axes:[ -1 ] in
   Alcotest.(check (array int)) "rfft axis -1" [| 4; 6; 5 |] (Nx.shape rfft_neg1)
 
 let test_rfft_size () =
@@ -389,7 +389,7 @@ let test_fftshift () =
   let x2d_shape = [| 3; 3 |] in
   let x2d_data = Array.init 9 Float.of_int in
   let x2d = Nx.create Nx.float64 x2d_shape x2d_data in
-  let shifted2d = Nx.fftshift x2d ~axes:[| 0; 1 |] in
+  let shifted2d = Nx.fftshift x2d ~axes:[ 0; 1 ] in
   let expected2d_data = [| 8.0; 6.0; 7.0; 2.0; 0.0; 1.0; 5.0; 3.0; 4.0 |] in
   check_t "fftshift 2D" x2d_shape expected2d_data shifted2d;
 

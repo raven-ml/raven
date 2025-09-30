@@ -16,7 +16,7 @@ let flip_axis img axis =
   let shape = Rune.shape img in
   if Array.length shape <= axis || shape.(axis) <= 1 then img
   else
-    let axes = [| axis |] in
+    let axes = [ axis ] in
     Rune.flip ~axes img
 
 let flip_vertical img = if Rune.ndim img < 1 then img else flip_axis img 0
@@ -163,7 +163,7 @@ let convolve2d_safe kernel img =
   | `Color (h, w, c) ->
       (* Process all channels at once using grouped convolution *)
       (* Reshape to [batch=1, channels=c, h, w] *)
-      let img_transposed = Rune.transpose ~axes:[| 2; 0; 1 |] img in
+      let img_transposed = Rune.transpose ~axes:[ 2; 0; 1 ] img in
       let img_4d = Rune.reshape [| 1; c; h; w |] img_transposed in
 
       (* Create kernel for each channel: [out_channels=c, in_channels=1, kh,
@@ -181,7 +181,7 @@ let convolve2d_safe kernel img =
 
       (* Reshape back to [h, w, c] *)
       let result_chw = Rune.reshape [| c; h; w |] result_4d in
-      let result = Rune.transpose ~axes:[| 1; 2; 0 |] result_chw in
+      let result = Rune.transpose ~axes:[ 1; 2; 0 ] result_chw in
 
       if Rune.dtype img = Rune.Float32 then result
       else Rune.astype (Rune.dtype img) result

@@ -64,7 +64,7 @@ let test_jit_different_shapes () =
   check_scalar ~eps "jit shape 2" 12.0 (scalar_value result2)
 
 let test_jit_batch_dimensions () =
-  let f x = T.mean x ~axes:[| 1 |] in
+  let f x = T.mean x ~axes:[ 1 ] in
   let jit_f = T.jit f in
 
   (* Different batch sizes *)
@@ -107,7 +107,7 @@ let test_jit_grad_composition () =
 
 (* Complex operations *)
 let test_jit_reduction_ops () =
-  let f x = T.mean (T.relu x) ~axes:[| 1 |] in
+  let f x = T.mean (T.relu x) ~axes:[ 1 ] in
   let jit_f = T.jit f in
 
   let x =

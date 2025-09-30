@@ -195,8 +195,8 @@ module Training = struct
     returns
 
   let normalize x ?(eps = 1e-8) () =
-    let mean = Rune.mean x ~axes:[| 0 |] ~keepdims:true in
-    let std = Rune.std x ~axes:[| 0 |] ~keepdims:true in
+    let mean = Rune.mean x ~axes:[ 1 ] ~keepdims:true in
+    let std = Rune.std x ~axes:[ 1 ] ~keepdims:true in
     let std_eps = Rune.add std (Rune.scalar Rune.float32 eps) in
     Rune.div (Rune.sub x mean) std_eps
 end

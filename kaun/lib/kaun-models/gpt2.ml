@@ -430,7 +430,7 @@ module Gpt2_block = struct
     let reshape_for_heads t =
       let t = reshape [| batch_size; seq_len; n_head; head_dim |] t in
       (* Transpose to [batch, n_head, seq, head_dim] *)
-      transpose ~axes:[| 0; 2; 1; 3 |] t
+      transpose ~axes:[ 0; 2; 1; 3 ] t
     in
 
     let query = reshape_for_heads query in
@@ -439,7 +439,7 @@ module Gpt2_block = struct
 
     (* Scaled dot-product attention with causal mask *)
     (* scores = Q @ K^T / sqrt(head_dim) *)
-    let key_t = transpose ~axes:[| 0; 1; 3; 2 |] key in
+    let key_t = transpose ~axes:[ 0; 1; 3; 2 ] key in
     let scores = matmul query key_t in
     let scores = div_s scores (Float.sqrt (Float.of_int head_dim)) in
 
@@ -452,13 +452,13 @@ module Gpt2_block = struct
     let scores = where (equal_s mask 0.0) neg_inf scores in
 
     (* Softmax over last dimension *)
-    let attn_weights = softmax scores ~axes:[| 3 |] in
+    let attn_weights = softmax scores ~axes:[ 3 ] in
 
     (* Apply attention to values *)
     let attn_output = matmul attn_weights value in
 
     (* Transpose back and reshape *)
-    let attn_output = transpose ~axes:[| 0; 2; 1; 3 |] attn_output in
+    let attn_output = transpose ~axes:[ 0; 2; 1; 3 ] attn_output in
     (* Make contiguous before reshaping - force a copy to ensure it's
        contiguous *)
     let attn_output = copy attn_output in
@@ -931,7 +931,7 @@ module For_causal_lm = struct
                   (* Token embeddings have shape [vocab_size, hidden_size] We
                      need to use them as [hidden_size, vocab_size] for the LM
                      head *)
-                  let wte_transposed = transpose ~axes:[| 1; 0 |] wte in
+                  let wte_transposed = transpose ~axes:[ 1; 0 ] wte in
                   matmul hidden_states wte_transposed
               | _ -> hidden_states)
           | _ -> hidden_states)

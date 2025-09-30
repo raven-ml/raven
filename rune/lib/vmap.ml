@@ -107,13 +107,13 @@ let move_axis (tensor : ('a, 'b) t) ~from_axis ~to_axis : ('a, 'b) t =
             Array.sub temp_axes to_axis (Array.length temp_axes - to_axis);
           ]
     in
-    T.transpose tensor ~axes:new_axes
+    T.transpose tensor ~axes:(Array.to_list new_axes)
 
 (* Helper to add a batch dimension to a tensor at a specific position *)
 let _add_batch_dim_at (tensor : ('a, 'b) t) ~batch_pos ~size : ('a, 'b) t =
   let shape = T.shape tensor in
   let new_shape = insert_at shape batch_pos size in
-  let expanded = T.expand_dims [| batch_pos |] tensor in
+  let expanded = T.expand_dims [ batch_pos ] tensor in
   T.broadcast_to new_shape expanded
 
 (* Custom hashtable module that uses physical equality to distinguish tensors *)

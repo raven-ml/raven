@@ -484,7 +484,7 @@ let cross_entropy ?(from_logits = true) () =
           let safe_preds = Rune.add predictions eps in
           let log_preds = Rune.log safe_preds in
           Rune.neg
-            (Rune.mean (Rune.sum (Rune.mul targets log_preds) ~axes:[| -1 |]))
+            (Rune.mean (Rune.sum (Rune.mul targets log_preds) ~axes:[ -1 ]))
       in
 
       (* For batch accumulation *)
