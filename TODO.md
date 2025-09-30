@@ -1,52 +1,24 @@
 # todo
 
-goalpost: mnist notebook in quill with rune + hugin
+## alpha1 (gpt2 on cpu)
 
-## simplify
+- pocketfft integration
 
-- remove bigarray_ext (what's the best way to implement our C backend?)
-- remove device type from rune interface
+## beta (jit)
 
-## current
-
-- gemma kaun example 
-- add bf16, fp8, bool data types
-  - add actual support in operations
-  - replace mask and cond operations with bool tensors
-- fft
-  - update backend ops to support given dtype
-  - fix tests
-- linear algebra functions  
-  - fix tests
-- jit
-- vmap
-- jvp
-
-## alpha1
-
-docs
-- website examples tested with mdx
-- review website+docs examples systematically.
+goalpost: jit-compiled gpt2 matching pytorch performance
 
 feature requests:
-- make nx c backend usable with nx (global backend?)
-- complete linear algebra suite (cholesky, einsum, qr, svd, inv, solve, norm, eig, eigh, etc.)
-- forward mode ad (jvp)
 - vmap (that compose with jvp!)
-- fft for soundml
 
 fix:
 - near-zero formatting issues on some platform (opam-ci)
 - hang/deadlock during opam-ci (need to test commited fix with opam-ci)
 - rune debug handler causing malloc in opam-ci
 
-docs
-- generate docs with odoc3 + dream-style html rewriting to integrate in www/
+## v1 (devex+docs)
 
-notes
-- think of using effects for prngs, does it simplify ux?
-
-## post-alpha1
+goalpost: mnist notebook in quill with rune + hugin
 
 hugin
 - fix plot3d
@@ -67,24 +39,16 @@ quill
 - run button
 - run all
 
-## next
-
-roadmap
-- jit support in rune
-  - placeholder? not in tinygrad
-  - test for kernelize (see kernelize.md)
-  - clang jit backend
-  - cuda jit backend
-- symbolic shapes for jit
-- memory planner during lowering (scheduling)
-- pmap support in rune
-
 docs/website
+- generate docs with odoc3 + dream-style html rewriting to integrate in www/
 - favicon
 - more tutorials
 
-notes
+## notes
+
 - use upstream metal library when insulated from camlkit
 - (?) not sure we need non-polymorphic functions for perf of where, we should benchmark
 - add no_grad and detach
 - we can make jit composable by re raising all the effects (but what does it mean to write grad(jit(f)))?? What are the semantics in jax?
+- (?) remove bigarray_ext (what's the best way to implement our C backend?)
+- (?) think of using effects for prngs, does it simplify ux?
