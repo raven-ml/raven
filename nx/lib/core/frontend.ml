@@ -2502,14 +2502,33 @@ module Make (B : Backend_intf.S) = struct
     let x_shape = shape x in
     let ndim = Array.length x_shape in
 
+    (* Separate N (new axis) specs from regular specs, tracking output positions *)
+    let new_axis_positions = ref [] in
+    let regular_specs = ref [] in
+    let output_dim = ref 0 in  (* Track output dimension index *)
+    List.iter (fun spec ->
+      match spec with
+      | N ->
+          new_axis_positions := !output_dim :: !new_axis_positions;
+          output_dim := !output_dim + 1  (* N adds a dimension *)
+      | I _ ->
+          regular_specs := spec :: !regular_specs
+          (* I doesn't add to output, it's squeezed *)
+      | _ ->
+          regular_specs := spec :: !regular_specs;
+          output_dim := !output_dim + 1  (* Other specs preserve or add dims *)
+    ) slice_def;
+    let new_axis_positions = List.rev !new_axis_positions in
+    let regular_specs = List.rev !regular_specs in
+
     (* Pad slice definition *)
     let full_slice =
-      let n = List.length slice_def in
+      let n = List.length regular_specs in
       if n > ndim then
         Error.invalid ~op:"slice" ~what:"indices"
           ~reason:(Printf.sprintf "too many (%d > %d)" n ndim)
           ()
-      else slice_def @ List.init (ndim - n) (fun _ -> A)
+      else regular_specs @ List.init (ndim - n) (fun _ -> A)
     in
 
     (* Analyze slice pattern *)
@@ -2537,7 +2556,7 @@ module Make (B : Backend_intf.S) = struct
           if is_c_contiguous then `ContiguousRanges else `Mixed
     in
 
-    match analyze_pattern full_slice with
+    let sliced_result = match analyze_pattern full_slice with
     | `Empty -> x
     | `AllSingles ->
         (* Direct element access *)
@@ -2731,6 +2750,11 @@ module Make (B : Backend_intf.S) = struct
               result
         in
         batch_process x 0 full_slice
+    in
+    (* Apply expand_dims for each N (new axis) spec *)
+    List.fold_left (fun tensor axis_pos ->
+      expand_dims [| axis_pos |] tensor
+    ) sliced_result new_axis_positions
 
   (* Efficient set_slice_internal using scatter operations *)
   let set_slice_internal slice_def x y =
