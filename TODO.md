@@ -1,9 +1,5 @@
 # todo
 
-## alpha1 (gpt2 on cpu)
-
-- pocketfft integration
-
 ## beta (jit)
 
 goalpost: jit-compiled gpt2 matching pytorch performance
