@@ -12,12 +12,12 @@ let image_path = "sowilo/example/lena.png"
 (* Helper to load image as Rune tensor *)
 let load_image_rune path =
   let nx_img = Nx_io.load_image path in
-  Rune.of_bigarray (Nx.to_bigarray nx_img)
+  Rune.of_bigarray_ext (Nx.to_bigarray_ext nx_img)
 
 (* Helper to convert Rune tensor to Nx tensor for plotting *)
 let rune_to_nx (rune_tensor : ('a, 'b) Rune.t) : ('a, 'b) Nx.t =
-  let data = Rune.to_bigarray rune_tensor in
-  let nx_tensor = Nx.of_bigarray data in
+  let data = Rune.to_bigarray_ext rune_tensor in
+  let nx_tensor = Nx.of_bigarray_ext data in
   let shape = Rune.shape rune_tensor in
   Nx.reshape shape nx_tensor
 

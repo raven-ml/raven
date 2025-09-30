@@ -34,7 +34,7 @@ module Rng = struct
         data.{!i} <- z1;
         incr i)
     done;
-    Nx.reshape shape (Nx.of_bigarray (genarray_of_array1 data))
+    Nx.reshape shape (Nx.of_bigarray_ext (genarray_of_array1 data))
 
   let uniform state ?(low = 0.) ?(high = 1.) shape =
     let total = Array.fold_left ( * ) 1 shape in
@@ -43,7 +43,7 @@ module Rng = struct
     for i = 0 to total - 1 do
       data.{i} <- low +. Random.State.float state range
     done;
-    Nx.reshape shape (Nx.of_bigarray (genarray_of_array1 data))
+    Nx.reshape shape (Nx.of_bigarray_ext (genarray_of_array1 data))
 
   let randint state ?(low = 0) high shape =
     let total = Array.fold_left ( * ) 1 shape in
@@ -52,7 +52,7 @@ module Rng = struct
     for i = 0 to total - 1 do
       data.{i} <- Int32.of_int (low + Random.State.int state range)
     done;
-    Nx.reshape shape (Nx.of_bigarray (genarray_of_array1 data))
+    Nx.reshape shape (Nx.of_bigarray_ext (genarray_of_array1 data))
 
   let shuffle state arr =
     let n = Array.length arr in
@@ -439,7 +439,7 @@ let make_multilabel_classification ?(n_samples = 100) ?(n_features = 20)
         with Exit -> ()
       done
   done;
-  let x = Nx.of_bigarray (genarray_of_array1 x_data) in
+  let x = Nx.of_bigarray_ext (genarray_of_array1 x_data) in
   let x = Nx.reshape [| n_samples; n_features |] x in
 
   let y =

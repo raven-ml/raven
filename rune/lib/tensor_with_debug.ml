@@ -215,8 +215,12 @@ let rfftn ?axes ?s ?(norm = `Backward) x =
 let irfftn ?axes ?s ?(norm = `Backward) x =
   Debug.with_context "irfftn" (fun () -> T.irfftn ?axes ?s ~norm x)
 
-let hfft ?axis ?n ?norm x = Debug.with_context "hfft" (fun () -> T.hfft ?axis ?n ?norm x)
-let ihfft ?axis ?n ?norm x = Debug.with_context "ihfft" (fun () -> T.ihfft ?axis ?n ?norm x)
+let hfft ?axis ?n ?norm x =
+  Debug.with_context "hfft" (fun () -> T.hfft ?axis ?n ?norm x)
+
+let ihfft ?axis ?n ?norm x =
+  Debug.with_context "ihfft" (fun () -> T.ihfft ?axis ?n ?norm x)
+
 let fftfreq ?d n = Debug.with_context "fftfreq" (fun () -> T.fftfreq ctx ?d n)
 
 let rfftfreq ?d n =
@@ -283,6 +287,11 @@ let to_bigarray t = T.to_bigarray t
 
 let of_bigarray ba =
   Debug.with_context "of_bigarray" (fun () -> T.of_bigarray ctx ba)
+
+let to_bigarray_ext t = T.to_bigarray_ext t
+
+let of_bigarray_ext ba =
+  Debug.with_context "of_bigarray_ext" (fun () -> T.of_bigarray_ext ctx ba)
 
 let to_array t = T.to_array t
 

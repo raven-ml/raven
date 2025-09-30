@@ -52,6 +52,9 @@ let geomspace dtype ?endpoint start stop num =
   F.geomspace (Lazy.force context) dtype ?endpoint start stop num
 
 let of_bigarray ba = F.of_bigarray (Lazy.force context) ba
+let of_bigarray_ext ba = F.of_bigarray_ext (Lazy.force context) ba
+let to_bigarray = F.to_bigarray
+let to_bigarray_ext = F.to_bigarray_ext
 let rand dtype ?seed shape = F.rand (Lazy.force context) dtype ?seed shape
 let randn dtype ?seed shape = F.randn (Lazy.force context) dtype ?seed shape
 

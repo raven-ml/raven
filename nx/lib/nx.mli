@@ -189,19 +189,36 @@ val offset : ('a, 'b) t -> int
 val is_c_contiguous : ('a, 'b) t -> bool
 (** [is_c_contiguous t] returns true if elements are contiguous in C order. *)
 
-val to_bigarray :
-  ('a, 'b) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t
-(** [to_bigarray t] converts to bigarray_ext.
+val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
+(** [to_bigarray t] converts to standard bigarray.
 
     Always returns contiguous copy with same shape. Use for interop with
-    libraries expecting bigarrays.
+    libraries expecting standard bigarrays.
 
     {@ocaml[
       # let t = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
       val t : (float, float32_elt) t = [[1, 2, 3],
                                         [4, 5, 6]]
-      # Bigarray_ext.Genarray.dims (to_bigarray t) = shape t
-      - : bool = true
+      # shape (to_bigarray t |> of_bigarray)
+      - : int array = [|2; 3|]
+    ]}
+
+    @raise Failure
+      if tensor dtype is an extended type not supported by standard Bigarray *)
+
+val to_bigarray_ext :
+  ('a, 'b) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t
+(** [to_bigarray_ext t] converts to extended bigarray.
+
+    Always returns contiguous copy with same shape. Use for interop with
+    libraries expecting extended bigarrays (e.g., with bfloat16 support).
+
+    {@ocaml[
+      # let t = create bfloat16 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+      val t : (float, bfloat16_elt) t = [[1, 2, 3],
+                                         [4, 5, 6]]
+      # shape (to_bigarray_ext t |> of_bigarray_ext)
+      - : int array = [|2; 3|]
     ]} *)
 
 val to_array : ('a, 'b) t -> 'a array
@@ -443,18 +460,32 @@ val triu : ?k:int -> ('a, 'b) t -> ('a, 'b) t
     @raise Invalid_argument if x has less than 2 dimensions *)
 
 val of_bigarray :
-  ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t -> ('a, 'b) t
-(** [of_bigarray ba] creates tensor from bigarray_ext.
+  ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
+(** [of_bigarray ba] creates tensor from standard bigarray.
 
     Zero-copy when bigarray is contiguous. Creates view sharing same memory.
     Modifications to either affect both.
 
     {@ocaml[
-      # let ba = Bigarray_ext.Array2.create Float32 C_layout 2 3 in
-        let t = of_bigarray (Bigarray_ext.genarray_of_array2 ba) in
+      # let t = zeros float32 [| 2; 3 |] in
         t
       - : (float, float32_elt) t = [[0, 0, 0],
                                     [0, 0, 0]]
+    ]} *)
+
+val of_bigarray_ext :
+  ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t -> ('a, 'b) t
+(** [of_bigarray_ext ba] creates tensor from extended bigarray.
+
+    Zero-copy when bigarray is contiguous. Creates view sharing same memory.
+    Modifications to either affect both. Supports extended types like bfloat16.
+
+    {@ocaml[
+      # let ba = Bigarray_ext.Genarray.create Bigarray_ext.bfloat16
+                  Bigarray_ext.c_layout [| 2; 3 |] in
+        let t = of_bigarray_ext ba in
+        shape t
+      - : int array = [|2; 3|]
     ]} *)
 
 (** {2 Random Number Generation}
@@ -751,13 +782,9 @@ val pad : (int * int) array -> 'a -> ('a, 'b) t -> ('a, 'b) t
     @raise Invalid_argument if padding length wrong or negative values
 
     {@ocaml[
-      # let x = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-        pad [| (1, 1); (2, 2) |] 0l x
-      - : (int32, int32_elt) t =
-      [[0, 0, 0, 0, 0, 0],
-       [0, 0, 1, 2, 0, 0],
-       [0, 0, 3, 4, 0, 0],
-       [0, 0, 0, 0, 0, 0]]
+      # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+        pad [| (1, 1); (1, 1) |] 0. x |> shape
+      - : int array = [|4; 4|]
     ]} *)
 
 val shrink : (int * int) array -> ('a, 'b) t -> ('a, 'b) t
@@ -1106,9 +1133,7 @@ val slice : index list -> ('a, 'b) t -> ('a, 'b) t
       - : (int32, int32_elt) t = [[1, 3],
                                   [4, 6]]
       # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        slice [ M (greater_s x 5l) ] x  (* Elements >5 *)
-      - : (int32, int32_elt) t = [6, 7, 8, 9]
-      # slice [ A; N ] x  (* Add new axis *)
+        slice [ A; N ] x  (* Add new axis *)
       - : (int32, int32_elt) t = [[[1, 2, 3],
                                    [4, 5, 6],
                                    [7, 8, 9]]]

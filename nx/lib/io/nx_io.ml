@@ -38,7 +38,7 @@ module Safe = struct
           let w = Stb_image.width img in
           let c = Stb_image.channels img in
           let buffer = Stb_image.data img in
-          let nd = Nx.of_bigarray (genarray_of_array1 buffer) in
+          let nd = Nx.of_bigarray_ext (genarray_of_array1 buffer) in
           let shape = if c = 1 then [| h; w |] else [| h; w; c |] in
           Ok (Nx.reshape shape nd)
       | Error (`Msg msg) -> Error (Format_error msg)
@@ -58,7 +58,7 @@ module Safe = struct
           | `Color (h, w, c) -> (h, w, c)
         in
         (* Ensure the input array is uint8 *)
-        let data_gen = Nx.to_bigarray img in
+        let data_gen = Nx.to_bigarray_ext img in
         let data =
           match Genarray.kind data_gen with
           | Int8_unsigned -> array1_of_genarray data_gen

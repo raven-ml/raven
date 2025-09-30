@@ -472,23 +472,23 @@ let test_to_bigarray () =
   let t = Nx.create Nx_core.Dtype.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let ba = Nx.to_bigarray t in
   check (float 1e-6) "initial [0,0]" 1.0
-    (Bigarray_ext.Genarray.get ba [| 0; 0 |]);
+    (Bigarray.Genarray.get ba [| 0; 0 |]);
   Nx.set_item [ 0; 0 ] 55.0 t;
   check (float 1e-6) "after set [0,0]" 55.0
-    (Bigarray_ext.Genarray.get ba [| 0; 0 |])
+    (Bigarray.Genarray.get ba [| 0; 0 |])
 
 let test_to_bigarray_partial_slice () =
   let base = Nx.arange Nx_core.Dtype.float32 0 5 1 |> Nx.reshape [| 5; 1 |] in
   let slice = Nx.slice [ Nx.R (0, 4); Nx.I 0 ] base in
   let ba = Nx.to_bigarray slice in
-  check (array int) "slice dims" [| 4 |] (Bigarray_ext.Genarray.dims ba);
+  check (array int) "slice dims" [| 4 |] (Bigarray.Genarray.dims ba);
   let expected = [| 0.0; 1.0; 2.0; 3.0 |] in
   Array.iteri
     (fun i value ->
       check (float 1e-6)
         (Printf.sprintf "slice[%d]" i)
         value
-        (Bigarray_ext.Genarray.get ba [| i |]))
+        (Bigarray.Genarray.get ba [| i |]))
     expected
 
 let test_copy () =

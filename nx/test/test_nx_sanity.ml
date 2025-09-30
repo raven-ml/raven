@@ -789,17 +789,17 @@ let type_conversion_tests =
     test_case "to_bigarray" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
         let ba = Nx.to_bigarray a in
-        check int "bigarray dims" 1 (Bigarray_ext.Genarray.num_dims ba);
+        check int "bigarray dims" 1 (Bigarray.Genarray.num_dims ba);
         check (float 1e-6) "bigarray value" 2.0
-          (Bigarray_ext.Genarray.get ba [| 1 |]));
+          (Bigarray.Genarray.get ba [| 1 |]));
     test_case "of_bigarray" `Quick (fun () ->
         let ba =
-          Bigarray_ext.Genarray.create Bigarray_ext.float32
-            Bigarray_ext.c_layout [| 3 |]
+          Bigarray.Genarray.create Bigarray.float32
+            Bigarray.c_layout [| 3 |]
         in
-        Bigarray_ext.Genarray.set ba [| 0 |] 4.0;
-        Bigarray_ext.Genarray.set ba [| 1 |] 5.0;
-        Bigarray_ext.Genarray.set ba [| 2 |] 6.0;
+        Bigarray.Genarray.set ba [| 0 |] 4.0;
+        Bigarray.Genarray.set ba [| 1 |] 5.0;
+        Bigarray.Genarray.set ba [| 2 |] 6.0;
         Nx.of_bigarray ba |> check_t "of_bigarray" [| 3 |] [| 4.; 5.; 6. |]);
     test_case "to_array" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 7.; 8.; 9. |] in

@@ -37,7 +37,7 @@ let load_safetensor path =
                 in
                 Array1.unsafe_set ba i (Int32.float_of_bits bits)
               done;
-              let nx_arr = Nx.of_bigarray (genarray_of_array1 ba) in
+              let nx_arr = Nx.of_bigarray_ext (genarray_of_array1 ba) in
               Nx.reshape shape nx_arr
             in
 
@@ -48,7 +48,7 @@ let load_safetensor path =
                 let bits = Safetensors.read_u64_le view.data offset in
                 Array1.unsafe_set ba i (Int64.float_of_bits bits)
               done;
-              let nx_arr = Nx.of_bigarray (genarray_of_array1 ba) in
+              let nx_arr = Nx.of_bigarray_ext (genarray_of_array1 ba) in
               Nx.reshape shape nx_arr
             in
 
@@ -70,7 +70,7 @@ let load_safetensor path =
                 in
                 Array1.unsafe_set ba i bits
               done;
-              let nx_arr = Nx.of_bigarray (genarray_of_array1 ba) in
+              let nx_arr = Nx.of_bigarray_ext (genarray_of_array1 ba) in
               Nx.reshape shape nx_arr
             in
 
@@ -87,7 +87,7 @@ let load_safetensor path =
                   (* TODO: Convert bits to float16 properly *)
                   Array1.unsafe_set ba i 0.0
                 done;
-                let nx_arr = Nx.of_bigarray (genarray_of_array1 ba) in
+                let nx_arr = Nx.of_bigarray_ext (genarray_of_array1 ba) in
                 Hashtbl.add result name (P (Nx.reshape shape nx_arr))
             | BF16 ->
                 let ba = Array1.create Bfloat16 c_layout num_elems in
@@ -98,7 +98,7 @@ let load_safetensor path =
                   (* TODO: Convert bits to bfloat16 properly *)
                   Array1.unsafe_set ba i 0.0
                 done;
-                let nx_arr = Nx.of_bigarray (genarray_of_array1 ba) in
+                let nx_arr = Nx.of_bigarray_ext (genarray_of_array1 ba) in
                 Hashtbl.add result name (P (Nx.reshape shape nx_arr))
             | _ ->
                 Printf.eprintf
@@ -121,7 +121,7 @@ let save_safetensor ?(overwrite = true) path items =
         List.map
           (fun (name, P arr) ->
             let shape = Array.to_list (Nx.shape arr) in
-            let ba = Nx.to_bigarray arr in
+            let ba = Nx.to_bigarray_ext arr in
             let num_elems = Array.fold_left ( * ) 1 (Nx.shape arr) in
 
             (* Create data buffer and determine dtype based on Nx array type *)
@@ -129,7 +129,7 @@ let save_safetensor ?(overwrite = true) path items =
               match Genarray.kind ba with
               | Float32 ->
                   let bytes = Bytes.create (num_elems * 4) in
-                  let ba_flat = Nx.to_bigarray (Nx.flatten arr) in
+                  let ba_flat = Nx.to_bigarray_ext (Nx.flatten arr) in
                   let ba1 = array1_of_genarray ba_flat in
                   for i = 0 to num_elems - 1 do
                     let bits = Int32.bits_of_float (Array1.unsafe_get ba1 i) in
@@ -152,7 +152,7 @@ let save_safetensor ?(overwrite = true) path items =
                   (Safetensors.F32, Bytes.unsafe_to_string bytes)
               | Float64 ->
                   let bytes = Bytes.create (num_elems * 8) in
-                  let ba_flat = Nx.to_bigarray (Nx.flatten arr) in
+                  let ba_flat = Nx.to_bigarray_ext (Nx.flatten arr) in
                   let ba1 = array1_of_genarray ba_flat in
                   for i = 0 to num_elems - 1 do
                     let bits = Int64.bits_of_float (Array1.unsafe_get ba1 i) in
@@ -161,7 +161,7 @@ let save_safetensor ?(overwrite = true) path items =
                   (Safetensors.F64, Bytes.unsafe_to_string bytes)
               | Int32 ->
                   let bytes = Bytes.create (num_elems * 4) in
-                  let ba_flat = Nx.to_bigarray (Nx.flatten arr) in
+                  let ba_flat = Nx.to_bigarray_ext (Nx.flatten arr) in
                   let ba1 = array1_of_genarray ba_flat in
                   for i = 0 to num_elems - 1 do
                     let value = Array1.unsafe_get ba1 i in

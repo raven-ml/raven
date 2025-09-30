@@ -7,7 +7,7 @@ let load_npy path =
     match Npy.read_copy path with
     | P genarray ->
         let genarray = Genarray.change_layout genarray c_layout in
-        Ok (P (Nx.of_bigarray genarray))
+        Ok (P (Nx.of_bigarray_ext genarray))
   with
   | Unix.Unix_error (e, _, _) -> Error (Io_error (Unix.error_message e))
   | Sys_error msg -> Error (Io_error msg)
@@ -19,7 +19,7 @@ let save_npy ?(overwrite = true) path arr =
     if (not overwrite) && Sys.file_exists path then
       Error (Io_error (Printf.sprintf "File '%s' already exists" path))
     else
-      let genarray = Nx.to_bigarray arr in
+      let genarray = Nx.to_bigarray_ext arr in
       Npy.write genarray path;
       Ok ()
   with
@@ -40,7 +40,7 @@ let load_npz path =
         match Npy.Npz.read zi name with
         | Npy.P genarray ->
             let genarray = Genarray.change_layout genarray c_layout in
-            Hashtbl.add archive name (P (Nx.of_bigarray genarray)))
+            Hashtbl.add archive name (P (Nx.of_bigarray_ext genarray)))
       entries;
     Npy.Npz.close_in zi;
     Ok archive
@@ -76,7 +76,7 @@ let load_npz_member ~name path =
       match packed_npy with
       | Npy.P genarray ->
           let genarray = Genarray.change_layout genarray c_layout in
-          P (Nx.of_bigarray genarray)
+          P (Nx.of_bigarray_ext genarray)
     in
     Npy.Npz.close_in zi;
     Ok result
@@ -112,7 +112,7 @@ let save_npz ?(overwrite = true) path items =
         zip_out := Some zo;
         List.iter
           (fun (name, P nx) ->
-            let genarray = Nx.to_bigarray nx in
+            let genarray = Nx.to_bigarray_ext nx in
             Npy.Npz.write zo name genarray)
           items;
         Npy.Npz.close_out zo;

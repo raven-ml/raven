@@ -473,7 +473,7 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Tensor Conversion ───── *)
 
-  let to_bigarray x =
+  let to_bigarray_ext x =
     (* Ensure we have a materialized view with matching buffer size. *)
     let ensure_contiguous_size t =
       let t = if is_c_contiguous t && offset t = 0 then t else contiguous t in
@@ -483,15 +483,29 @@ module Make (B : Backend_intf.S) = struct
     in
     let t_to_use = ensure_contiguous_size x in
     let array1 = data t_to_use in
-    Bigarray.reshape (Bigarray.genarray_of_array1 array1) (shape t_to_use)
+    Bigarray_ext.reshape (Bigarray_ext.genarray_of_array1 array1) (shape t_to_use)
 
-  let of_bigarray ctx ba =
-    let size = Array.fold_left ( * ) 1 (Genarray.dims ba) in
-    let arr = reshape_1 ba size in
-    let shape = Genarray.dims ba in
+  let to_bigarray x =
+    let ba_ext = to_bigarray_ext x in
+    (* Verify dtype is supported by standard Bigarray *)
+    let _ = Dtype.to_bigarray_kind (B.dtype x) in
+    (* Cast to standard Bigarray - safe because they have same memory layout *)
+    (Obj.magic ba_ext : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t)
+
+  let of_bigarray_ext ctx ba =
+    let size = Array.fold_left ( * ) 1 (Bigarray_ext.Genarray.dims ba) in
+    let arr = Bigarray_ext.reshape_1 ba size in
+    let shape = Bigarray_ext.Genarray.dims ba in
     let flat_xensor = B.op_const_array ctx arr in
     reshape shape flat_xensor
 
+  let of_bigarray ctx ba =
+    (* Cast to Bigarray_ext - safe because they have same memory layout *)
+    let ba_ext : ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t =
+      Obj.magic ba
+    in
+    of_bigarray_ext ctx ba_ext
+  
   let to_array x =
     let t_contiguous = contiguous x in
     let ba = data t_contiguous in
