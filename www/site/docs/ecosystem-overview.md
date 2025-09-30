@@ -13,30 +13,30 @@ The Raven ecosystem is organized around three core layers:
 Alongside these core layers, Raven includes **supporting tools** for the development experience: **Hugin** for publication-quality plotting and **Quill** for interactive notebooks, making it easy to visualize results and explore ideas.
 
 ```
-     ┌─────────────────────────────────────────────┐
-     │         Domain-Specific Frameworks          │
-     │     ┌──────────┐        ┌───────────┐       │
-     │     │   Kaun   │        │   Sowilo  │       │
-     │     │   (DL)   │        │  (Vision) │       │
-     │     └────┬─────┘        └────┬──────┘       │
-     └──────────┼───────────────────┼──────────────┘
-                │                   │
-     ┌──────────▼───────────────────▼────────────┐
-     │        Differentiable Computing           │
-     │              ┌────────────┐               │
-     │              │    Rune    │               │
-     │              │ (Autodiff) │               │
-     │              └─────┬──────┘               │
-     └──────────────────┼────────────────────────┘
-                        │
-     ┌──────────────────▼─────────────────────┐
-     │       Foundation Libraries             │
-     │  ┌────┐  ┌─────────────┐  ┌─────────┐  │
-     │  │ Nx │  │ Nx_datasets │  │  Saga   │  │
-     │  └────┘  └─────────────┘  └─────────┘  │
-     └────────────────────────────────────────┘
+     ┌──────────────────────────────────────────────────────┐
+     │            Domain-Specific Frameworks                │
+     │  ┌──────────┐    ┌───────────┐    ┌──────────┐       │
+     │  │   Kaun   │    │   Sowilo  │    │   Fehu   │       │
+     │  │   (DL)   │    │  (Vision) │    │   (RL)   │       │
+     │  └────┬─────┘    └────┬──────┘    └────┬─────┘       │
+     └───────┼───────────────┼─────────────────┼────────────┘
+             │               │                 │
+     ┌───────▼───────────────▼─────────────────▼──────────┐
+     │           Differentiable Computing                 │
+     │                 ┌────────────┐                     │
+     │                 │    Rune    │                     │
+     │                 │ (Autodiff) │                     │
+     │                 └─────┬──────┘                     │
+     └─────────────────────┼──────────────────────────────┘
+                           │
+     ┌─────────────────────▼────────────────────────┐
+     │          Foundation Libraries                │
+     │  ┌────┐  ┌─────────────┐  ┌─────────┐        │
+     │  │ Nx │  │ Nx_datasets │  │  Saga   │        │
+     │  └────┘  └─────────────┘  └─────────┘        │
+     └──────────────────────────────────────────────┘
 
-         Supporting Tools & Visualization
+            Supporting Tools & Visualization
      ┌──────────────┐         ┌─────────────┐
      │    Hugin     │         │    Quill    │
      │  (Plotting)  │         │ (Notebooks) │
@@ -137,6 +137,23 @@ let nx_array = Nx.of_bigarray_ext (Rune.to_bigarray_ext rune_tensor)
 - Color space conversions
 - Morphological operations
 - Compatible with Rune's autodiff for end-to-end training
+
+### Fehu: Reinforcement Learning
+
+**What it is**: RL environments and algorithms built on Rune and Kaun, our Gymnasium + Stable Baselines3 equivalent.
+
+**When to use it**:
+- Training reinforcement learning agents
+- Benchmarking RL algorithms
+- Creating custom RL environments
+- Comparing against standard RL baselines
+
+**Key features**:
+- Standard environments (CartPole, MountainCar, GridWorld)
+- Algorithms (REINFORCE, DQN with experience replay)
+- Type-safe environment API (observation/action space mismatches caught at compile time)
+- Functional agents (immutable policy updates)
+- Training and evaluation utilities
 
 ## Tooling Stack
 

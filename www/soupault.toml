@@ -51,6 +51,12 @@
   include_subsections = true
   content_selector = "main"
 
+[templates.docs_fehu_config]
+  file = "templates/layout_docs_fehu.html"
+  section = "docs/fehu/"
+  include_subsections = true
+  content_selector = "main"
+
 [templates.docs_sowilo_config]
   file = "templates/layout_docs_sowilo.html"
   section = "docs/sowilo/"

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>fehu - Reinforcement learning for OCaml | raven</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="main-content">
+    <nav class="fehu-nav nav-breadcrumb">
+      <a href="/">raven</a> / fehu <span class="color-teal rune-symbol">ᚠ</span>
+      [ <a href="/docs/fehu/">docs</a> |
+      <a href="https://github.com/raven-ml/raven/tree/main/fehu">source</a> ]
+    </nav>
+
+    <div class="fehu-hero hero">
+      <h1>fehu <span style="font-size: 48px; margin-left: -20px; opacity: 0.6;" class="color-teal">ᚠ</span></h1>
+      <p class="tagline">Gymnasium's ease. Stable Baselines' algorithms. OCaml's type safety.</p>
+    </div>
+
+    <hr>
+
+    <h2>why fehu?</h2>
+
+    <div class="feature-grid">
+      <div>
+        <h3 class="color-teal">type-safe environments</h3>
+        <p>Environment APIs catch shape mismatches at compile time. Never debug observation space errors at runtime.</p>
+      </div>
+      <div>
+        <h3 class="color-teal">functional RL</h3>
+        <p>Agents are immutable. Experience replay is just data. Everything composes naturally.</p>
+      </div>
+      <div>
+        <h3 class="color-teal">built on rune</h3>
+        <p>Policy gradients and Q-learning with automatic differentiation. Neural networks from Kaun.</p>
+      </div>
+      <div>
+        <h3 class="color-teal">standard benchmarks</h3>
+        <p>CartPole, MountainCar, and more. Compare directly with Gymnasium and Stable Baselines3.</p>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>show me the code</h2>
+
+    <div class="code-compare">
+      <div>
+        <h4>Python (Gymnasium)</h4>
+        <pre><span class="keyword">import</span> <span class="type">gymnasium</span> <span class="keyword">as</span> <span class="type">gym</span>
+
+<span class="comment"># Create environment</span>
+<span class="keyword">env</span> <span class="operator">=</span> <span class="type">gym</span>.<span class="function">make</span>(<span class="string">'CartPole-v1'</span>)
+<span class="keyword">obs</span>, <span class="keyword">info</span> <span class="operator">=</span> <span class="keyword">env</span>.<span class="function">reset</span>()
+
+<span class="comment"># Run episode</span>
+<span class="keyword">done</span> <span class="operator">=</span> <span class="keyword">False</span>
+<span class="keyword">while</span> <span class="operator">not</span> <span class="keyword">done</span>:
+    <span class="keyword">action</span> <span class="operator">=</span> <span class="keyword">env</span>.<span class="keyword">action_space</span>.<span class="function">sample</span>()
+    <span class="keyword">obs</span>, <span class="keyword">reward</span>, <span class="keyword">term</span>, <span class="keyword">trunc</span>, <span class="keyword">info</span> <span class="operator">=</span> \
+        <span class="keyword">env</span>.<span class="function">step</span>(<span class="keyword">action</span>)
+    <span class="keyword">done</span> <span class="operator">=</span> <span class="keyword">term</span> <span class="operator">or</span> <span class="keyword">trunc</span></pre>
+      </div>
+      <div>
+        <h4>FEHU</h4>
+        <pre><span class="keyword">open</span> <span class="type">Fehu</span>
+
+<span class="comment">(* Create environment *)</span>
+<span class="keyword">let</span> <span class="keyword">rng</span> <span class="operator">=</span> <span class="type">Rune.Rng</span>.<span class="function">key</span> <span class="number">42</span> <span class="keyword">in</span>
+<span class="keyword">let</span> <span class="keyword">env</span> <span class="operator">=</span> <span class="type">Fehu_envs.Cartpole</span>.<span class="function">make</span> <span class="operator">~</span><span class="keyword">rng</span> ()
+
+<span class="comment">(* Run episode *)</span>
+<span class="keyword">let</span> <span class="keyword">obs</span>, <span class="keyword">_info</span> <span class="operator">=</span> <span class="type">Env</span>.<span class="function">reset</span> <span class="keyword">env</span> () <span class="keyword">in</span>
+<span class="keyword">let</span> <span class="keyword">done_</span> <span class="operator">=</span> <span class="keyword">ref</span> <span class="keyword">false</span> <span class="keyword">in</span>
+<span class="keyword">while</span> <span class="operator">not</span> !<span class="keyword">done_</span> <span class="keyword">do</span>
+  <span class="keyword">let</span> <span class="keyword">action</span> <span class="operator">=</span> <span class="type">Space</span>.<span class="function">sample</span> (<span class="type">Env</span>.<span class="function">action_space</span> <span class="keyword">env</span>) <span class="keyword">in</span>
+  <span class="keyword">let</span> <span class="keyword">t</span> <span class="operator">=</span> <span class="type">Env</span>.<span class="function">step</span> <span class="keyword">env</span> <span class="keyword">action</span> <span class="keyword">in</span>
+  <span class="keyword">done_</span> <span class="operator">:=</span> <span class="keyword">t</span>.<span class="keyword">terminated</span> <span class="operator">||</span> <span class="keyword">t</span>.<span class="keyword">truncated</span>
+<span class="keyword">done</span></pre>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>train an agent</h2>
+
+    <pre><span class="keyword">open</span> <span class="type">Fehu</span>
+<span class="keyword">open</span> <span class="type">Kaun</span>
+
+<span class="comment">(* Create policy network *)</span>
+<span class="keyword">let</span> <span class="keyword">policy</span> <span class="operator">=</span> <span class="type">Layer</span>.<span class="function">sequential</span> [
+  <span class="type">Layer</span>.<span class="function">linear</span> <span class="operator">~</span><span class="keyword">in_features</span><span class="operator">:</span><span class="number">4</span> <span class="operator">~</span><span class="keyword">out_features</span><span class="operator">:</span><span class="number">128</span> ();
+  <span class="type">Layer</span>.<span class="function">relu</span> ();
+  <span class="type">Layer</span>.<span class="function">linear</span> <span class="operator">~</span><span class="keyword">in_features</span><span class="operator">:</span><span class="number">128</span> <span class="operator">~</span><span class="keyword">out_features</span><span class="operator">:</span><span class="number">2</span> ();
+]
+
+<span class="comment">(* Train with REINFORCE *)</span>
+<span class="keyword">let</span> <span class="keyword">agent</span> <span class="operator">=</span> <span class="type">Fehu_algorithms.Reinforce</span>.<span class="function">create</span>
+  <span class="operator">~</span><span class="keyword">policy_network</span><span class="operator">:</span><span class="keyword">policy</span>
+  <span class="operator">~</span><span class="keyword">n_actions</span><span class="operator">:</span><span class="number">2</span>
+  <span class="operator">~</span><span class="keyword">rng</span>
+  { <span class="keyword">learning_rate</span> <span class="operator">=</span> <span class="number">0.001</span>; <span class="keyword">gamma</span> <span class="operator">=</span> <span class="number">0.99</span>; ... }
+
+<span class="keyword">let</span> <span class="keyword">agent</span> <span class="operator">=</span> <span class="type">Fehu_algorithms.Reinforce</span>.<span class="function">learn</span>
+  <span class="keyword">agent</span> <span class="operator">~</span><span class="keyword">env</span> <span class="operator">~</span><span class="keyword">total_timesteps</span><span class="operator">:</span><span class="number">100_000</span>
+  <span class="operator">~</span><span class="keyword">callback</span><span class="operator">:</span>(<span class="keyword">fun</span> <span class="operator">~</span><span class="keyword">iteration</span> <span class="operator">~</span><span class="keyword">metrics</span> <span class="operator">-></span>
+    <span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"Episode %d: Return = %.2f\n"</span>
+      <span class="keyword">iteration</span> <span class="keyword">metrics</span>.<span class="keyword">episode_return</span>; <span class="keyword">true</span>)
+  ()</pre>
+
+    <hr>
+
+    <h2>what's implemented</h2>
+
+    <p>Fehu is in active development. Here's what works today:</p>
+
+    <div class="feature-grid">
+      <div>
+        <h3 class="color-teal">environments</h3>
+        <ul style="list-style: none; padding: 0;">
+          <li>✓ CartPole-v1</li>
+          <li>✓ MountainCar-v0</li>
+          <li>✓ GridWorld (custom)</li>
+          <li>✓ RandomWalk (custom)</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-teal">algorithms</h3>
+        <ul style="list-style: none; padding: 0;">
+          <li>✓ REINFORCE (policy gradient)</li>
+          <li>✓ DQN (deep Q-network)</li>
+          <li>✓ Experience replay buffers</li>
+          <li>⏳ PPO, A2C (coming soon)</li>
+        </ul>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>design principles</h2>
+
+    <p><b>Type-safe environments.</b> Observation and action spaces are strongly typed. The compiler catches dimension mismatches before you run your training loop.</p>
+
+    <p><b>Functional agents.</b> Agents are immutable values. Policy updates return new agents. Experience replay is just an array of transitions.</p>
+
+    <p><b>Leverage the Raven ecosystem.</b> Use Kaun for neural networks, Rune for autodiff, and Nx for tensor operations. Fehu is thin glue code over powerful primitives.</p>
+
+    <hr>
+
+    <h2>get started</h2>
+
+    <p>Fehu isn't released yet. For now, check out the <a href="/docs/fehu/">documentation</a> to learn more.</p>
+
+    <p>When it's ready:</p>
+
+    <pre>
+<span class="comment"># Install</span>
+<span class="function">opam</span> install fehu
+
+<span class="comment"># Train CartPole</span>
+<span class="keyword">open</span> <span class="type">Fehu</span>
+
+<span class="keyword">let</span> <span class="keyword">rng</span> <span class="operator">=</span> <span class="type">Rune.Rng</span>.<span class="function">key</span> <span class="number">42</span> <span class="keyword">in</span>
+<span class="keyword">let</span> <span class="keyword">env</span> <span class="operator">=</span> <span class="type">Fehu_envs.Cartpole</span>.<span class="function">make</span> <span class="operator">~</span><span class="keyword">rng</span> ()
+
+<span class="comment">(* Create and train your agent *)</span>
+<span class="keyword">let</span> <span class="keyword">agent</span> <span class="operator">=</span> <span class="function">train_cartpole</span> <span class="keyword">env</span> <span class="operator">~</span><span class="keyword">episodes</span><span class="operator">:</span><span class="number">500</span>
+    </pre>
+  </main>
+</body>
+</html>
