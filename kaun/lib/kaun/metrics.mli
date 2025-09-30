@@ -151,7 +151,7 @@ val rmse : ?reduction:reduction -> unit -> 'layout t
 
     RMSE = sqrt(mean((predictions - targets)²)) *)
 
-val mae : ?reduction:reduction -> unit -> 'layout t
+val mae : ?reduction:reduction -> unit -> Bigarray.float32_elt t
 (** [mae ?reduction ()] creates a Mean Absolute Error metric.
 
     MAE = mean(|predictions - targets|) *)

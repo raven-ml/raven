@@ -317,11 +317,67 @@ let auc_pr ?(num_thresholds = 200) ?(curve = false) () =
 
 let confusion_matrix ~num_classes ?(normalize = `None) () =
   let _ = normalize in
-  let _ = num_classes in
   create_custom ~name:"confusion_matrix"
     ~init:(fun () -> [])
-    ~update:(fun state ~predictions:_ ~targets:_ ?weights:_ () -> state)
-    ~compute:(fun _ -> failwith "Confusion matrix not yet implemented")
+    ~update:(fun state ~predictions ~targets ?weights () ->
+      let dtype = Rune.dtype predictions in
+
+      let matrix =
+        match state with
+        | [ m ] -> m
+        | _ ->
+            (* Initialize matrix with zeros *)
+            Rune.zeros dtype [| num_classes; num_classes |]
+      in
+
+      (* Convert predictions and targets to int32 for indexing *)
+      let preds_int = Rune.cast Rune.int32 predictions in
+      let targets_int = Rune.cast Rune.int32 targets in
+
+      (* Flatten to 1D *)
+      let preds_flat = Rune.reshape [| -1 |] preds_int in
+      let targets_flat = Rune.reshape [| -1 |] targets_int in
+
+      (* Compute linear indices for the confusion matrix *)
+      (* index = target * num_classes + prediction *)
+      let num_classes_t = Rune.scalar Rune.int32 (Int32.of_int num_classes) in
+      let linear_indices =
+        Rune.add (Rune.mul targets_flat num_classes_t) preds_flat
+      in
+
+      (* Create one-hot encoding of the linear indices *)
+      let total_bins = num_classes * num_classes in
+
+      (* Use scatter to accumulate counts *)
+      (* For each sample, increment the corresponding bin *)
+      let ones = Rune.ones dtype (Rune.shape preds_flat) in
+      let weighted_ones =
+        match weights with
+        | Some w -> Rune.mul ones (Rune.reshape [| -1 |] w)
+        | None -> ones
+      in
+
+      (* Manual bincount implementation using a loop *)
+      (* Since we don't have a scatter operation, we'll use item access *)
+      let counts_array = Array.make total_bins 0.0 in
+      let n_samples = (Rune.shape preds_flat).(0) in
+      for i = 0 to n_samples - 1 do
+        let idx = Rune.item [ i ] linear_indices |> Int32.to_int in
+        let weight = Rune.item [ i ] weighted_ones in
+        counts_array.(idx) <- counts_array.(idx) +. weight
+      done;
+
+      let counts = Rune.create dtype [| total_bins |] counts_array in
+      let counts_2d =
+        Rune.reshape [| num_classes; num_classes |] counts
+      in
+
+      let new_matrix = Rune.add matrix counts_2d in
+      [ new_matrix ])
+    ~compute:(fun state ->
+      match state with
+      | [ matrix ] -> matrix
+      | _ -> failwith "Invalid confusion_matrix state")
     ~reset:(fun _ -> [])
 
 (** Regression Metrics *)
@@ -400,6 +456,7 @@ let mae ?(reduction = Mean) () =
     ~compute:(fun state ->
       match state with
       | [ sae; count ] -> Rune.div sae count
+      | [] -> Rune.scalar Rune.float32 Float.nan
       | _ -> failwith "Invalid mae state")
     ~reset:(fun _ -> [])
 
@@ -451,8 +508,63 @@ let r2_score ?(adjusted = false) ?num_features () =
   let _ = num_features in
   create_custom ~name:"r2_score"
     ~init:(fun () -> [])
-    ~update:(fun state ~predictions:_ ~targets:_ ?weights:_ () -> state)
-    ~compute:(fun _ -> failwith "R2 score not yet implemented")
+    ~update:(fun state ~predictions ~targets ?weights () ->
+      let dtype = Rune.dtype predictions in
+
+      let ss_res, sum_targets, sum_sq_targets, count =
+        match state with
+        | [ ssr; st; sst; c ] -> (ssr, st, sst, c)
+        | _ ->
+            ( scalar_tensor dtype 0.0,
+              scalar_tensor dtype 0.0,
+              scalar_tensor dtype 0.0,
+              scalar_tensor dtype 0.0 )
+      in
+
+      (* Compute residuals *)
+      let residuals = Rune.sub targets predictions in
+      let squared_residuals = Rune.mul residuals residuals in
+
+      (* Compute sum of squared targets for SS_tot *)
+      let squared_targets = Rune.mul targets targets in
+
+      (* Apply weights if provided *)
+      let squared_residuals, targets_weighted, squared_targets, batch_count =
+        match weights with
+        | Some w ->
+            ( Rune.mul squared_residuals w,
+              Rune.mul targets w,
+              Rune.mul squared_targets w,
+              Rune.sum w )
+        | None ->
+            let n = float_of_int (Rune.numel targets) in
+            (squared_residuals, targets, squared_targets, scalar_tensor dtype n)
+      in
+
+      let new_ss_res = Rune.add ss_res (Rune.sum squared_residuals) in
+      let new_sum_targets = Rune.add sum_targets (Rune.sum targets_weighted) in
+      let new_sum_sq_targets =
+        Rune.add sum_sq_targets (Rune.sum squared_targets)
+      in
+      let new_count = Rune.add count batch_count in
+      [ new_ss_res; new_sum_targets; new_sum_sq_targets; new_count ])
+    ~compute:(fun state ->
+      match state with
+      | [ ss_res; sum_targets; sum_sq_targets; count ] ->
+          (* mean = sum_targets / count *)
+          let mean_targets = Rune.div sum_targets count in
+          (* SS_tot = sum(y^2) - n * mean^2 *)
+          let mean_sq = Rune.mul mean_targets mean_targets in
+          let ss_tot =
+            Rune.sub sum_sq_targets (Rune.mul count mean_sq)
+          in
+          (* R² = 1 - SS_res / SS_tot *)
+          let dtype = Rune.dtype ss_res in
+          let one = scalar_tensor dtype 1.0 in
+          let eps = scalar_tensor dtype 1e-7 in
+          let r2 = Rune.sub one (Rune.div ss_res (Rune.add ss_tot eps)) in
+          r2
+      | _ -> failwith "Invalid r2_score state")
     ~reset:(fun _ -> [])
 
 let explained_variance () =
@@ -477,7 +589,19 @@ let cross_entropy ?(from_logits = true) () =
       in
 
       let ce =
-        if from_logits then Loss.softmax_cross_entropy predictions targets
+        if from_logits then
+          (* Check if targets are indices or one-hot encoded *)
+          let target_shape = Rune.shape targets in
+          if
+            Array.length target_shape = 1
+            || (Array.length target_shape > 0
+               && target_shape.(Array.length target_shape - 1) = 1)
+          then
+            (* Targets are class indices *)
+            Loss.softmax_cross_entropy_with_indices predictions targets
+          else
+            (* Targets are one-hot encoded *)
+            Loss.softmax_cross_entropy predictions targets
         else
           (* Assume predictions are probabilities *)
           let eps = scalar_tensor dtype 1e-7 in
@@ -723,7 +847,6 @@ let is_better _metric ~higher_better ~old_val ~new_val =
   if higher_better then new_val > old_val else new_val < old_val
 
 let format metric value =
-  (* Extract scalar value - this is a placeholder *)
-  (* In practice, would need to copy to CPU and extract *)
-  let _ = value in
-  Printf.sprintf "%s: <value>" (name metric)
+  (* Extract scalar value *)
+  let scalar_val = Rune.item [] value in
+  Printf.sprintf "%s: %.4f" (name metric) scalar_val
