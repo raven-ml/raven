@@ -190,18 +190,6 @@ external caml_svd :
   bool ->
   unit = "caml_nx_op_svd"
 
-(* FFT operation FFI declarations *)
-external caml_fft :
-  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int list -> bool -> unit
-  = "caml_nx_op_fft"
-
-external caml_rfft :
-  ('a, 'b) ffi_tensor -> ('c, 'd) ffi_tensor -> int list -> unit
-  = "caml_nx_op_rfft"
-
-external caml_irfft :
-  ('a, 'b) ffi_tensor -> ('c, 'd) ffi_tensor -> int list -> int -> unit
-  = "caml_nx_op_irfft"
 
 (* Shape operation FFI declarations *)
 external caml_cat :
@@ -874,68 +862,84 @@ let op_matmul x y =
   caml_matmul x_ffi y_ffi out_ffi;
   out
 
-(* Fourier transforms *)
-let op_fft x ~axes ~s =
+(* Helper to compute contiguous strides in bytes *)
+let contiguous_strides shape elem_size =
+  let ndim = Array.length shape in
+  if ndim = 0 then [||]
+  else
+    let strides = Array.make ndim 1 in
+    for i = ndim - 2 downto 0 do
+      strides.(i) <- strides.(i + 1) * shape.(i + 1)
+    done;
+    Array.map (fun s -> s * elem_size) strides
+
+(* Fourier transforms using PocketFFT *)
+let op_fft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
   ignore s;
-
-  (* Size parameter not yet supported *)
-
-  (* Ensure input is materializable *)
-  let x' = ensure_materializable x in
-
-  (* Create output tensor with same shape and dtype *)
-  let out_shape = shape x in
+  let x' = materialize x in
+  let out_shape = shape x' in
   let out = create_tensor x.context x.dtype out_shape in
 
-  (* Convert to FFI tensors *)
-  let x_ffi = to_ffi_tensor x' in
-  let out_ffi = to_ffi_tensor out in
+  let shape_arr = out_shape in
+  let elem_size = Dtype.itemsize x.dtype in
+  let strides_in = contiguous_strides out_shape elem_size in
+  let strides_out = contiguous_strides out_shape elem_size in
+  (* Normalize negative axes *)
+  let ndim = Array.length out_shape in
+  let axes_arr =
+    Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
+  in
 
-  (* Convert axes to list *)
-  let axes_list = Array.to_list axes in
-
-  (* Call FFI function *)
-  caml_fft x_ffi out_ffi axes_list false;
+  (match (x.dtype : (a, b) Dtype.t) with
+  | Dtype.Complex32 ->
+      Pocketfft.c2c_f32 ~shape:shape_arr ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_arr ~forward:true ~fct:1.0
+        ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
+  | Dtype.Complex64 ->
+      Pocketfft.c2c_f64 ~shape:shape_arr ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_arr ~forward:true ~fct:1.0
+        ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
+  | _ -> Error.failed ~op:"op_fft" ~what:"unsupported dtype" ());
 
   out
 
-let op_ifft x ~axes ~s =
+let op_ifft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
   ignore s;
-
-  (* Size parameter not yet supported *)
-
-  (* Ensure input is materializable *)
-  let x' = ensure_materializable x in
-
-  (* Create output tensor with same shape and dtype *)
-  let out_shape = shape x in
+  let x' = materialize x in
+  let out_shape = shape x' in
   let out = create_tensor x.context x.dtype out_shape in
 
-  (* Convert to FFI tensors *)
-  let x_ffi = to_ffi_tensor x' in
-  let out_ffi = to_ffi_tensor out in
+  let shape_arr = out_shape in
+  let elem_size = Dtype.itemsize x.dtype in
+  let strides_in = contiguous_strides out_shape elem_size in
+  let strides_out = contiguous_strides out_shape elem_size in
+  (* Normalize negative axes *)
+  let ndim = Array.length out_shape in
+  let axes_arr =
+    Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
+  in
 
-  (* Convert axes to list *)
-  let axes_list = Array.to_list axes in
-
-  (* Call FFI function (inverse=true) *)
-  caml_fft x_ffi out_ffi axes_list true;
+  (match (x.dtype : (a, b) Dtype.t) with
+  | Dtype.Complex32 ->
+      Pocketfft.c2c_f32 ~shape:shape_arr ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_arr ~forward:false ~fct:1.0
+        ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
+  | Dtype.Complex64 ->
+      Pocketfft.c2c_f64 ~shape:shape_arr ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_arr ~forward:false ~fct:1.0
+        ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
+  | _ -> Error.failed ~op:"op_ifft" ~what:"unsupported dtype" ());
 
   out
 
-let op_rfft x ~dtype ~axes ~s =
+let op_rfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s
+    : (c, d) t =
   ignore s;
-
-  (* Size parameter not yet supported *)
-
-  (* Ensure input is materializable *)
-  let x' = ensure_materializable x in
+  let x' = materialize x in
 
   (* Calculate output shape for rfft *)
-  let in_shape = shape x in
+  let in_shape = shape x' in
   let out_shape = Array.copy in_shape in
-
-  (* RFFT: last axis becomes n//2 + 1 for the complex output *)
   let last_axis = Array.length axes - 1 in
   (if last_axis >= 0 then
      let axis_idx =
@@ -944,71 +948,88 @@ let op_rfft x ~dtype ~axes ~s =
      in
      out_shape.(axis_idx) <- (in_shape.(axis_idx) / 2) + 1);
 
-  (* Create output tensor with complex dtype *)
   let out = create_tensor x.context dtype out_shape in
 
-  (* Convert to FFI tensors *)
-  let x_ffi = to_ffi_tensor x' in
-  let out_ffi = to_ffi_tensor out in
+  let strides_in = contiguous_strides in_shape (Dtype.itemsize x.dtype) in
+  let strides_out = contiguous_strides out_shape (Dtype.itemsize dtype) in
 
-  (* Convert axes to list *)
-  let axes_list = Array.to_list axes in
+  (* Normalize negative axes *)
+  let ndim = Array.length in_shape in
+  let axes_normalized =
+    Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
+  in
 
-  (* Call FFI function *)
-  caml_rfft x_ffi out_ffi axes_list;
+  (match (x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t) with
+  | Dtype.Float32, Dtype.Complex32 ->
+      let data_in : (float, Dtype.float32_elt, c_layout) Array1.t = x'.buffer in
+      let data_out : (Complex.t, Dtype.complex32_elt, c_layout) Array1.t =
+        out.buffer
+      in
+      Pocketfft.r2c_f32 ~shape_in:in_shape ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_normalized ~forward:true ~fct:1.0
+        ~data_in ~data_out ~nthreads:1
+  | Dtype.Float64, Dtype.Complex64 ->
+      let data_in : (float, Dtype.float64_elt, c_layout) Array1.t = x'.buffer in
+      let data_out : (Complex.t, Dtype.complex64_elt, c_layout) Array1.t =
+        out.buffer
+      in
+      Pocketfft.r2c_f64 ~shape_in:in_shape ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_normalized ~forward:true ~fct:1.0
+        ~data_in ~data_out ~nthreads:1
+  | _ -> Error.failed ~op:"op_rfft" ~what:"unsupported dtype combination" ());
 
   out
 
-let op_irfft x ~dtype ~axes ~s =
-  (* Ensure input is materializable *)
-  let x' = ensure_materializable x in
+let op_irfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s
+    : (c, d) t =
+  let x' = materialize x in
 
   (* Calculate output shape for irfft *)
-  let in_shape = shape x in
+  let in_shape = shape x' in
   let out_shape = Array.copy in_shape in
-
-  (* IRFFT: transforms complex input to real output *)
-  (* The last axis in axes becomes the full real dimension *)
   let last_axis = Array.length axes - 1 in
-  let last_dim_size =
-    if last_axis >= 0 then (
-      let axis_idx =
-        if axes.(last_axis) < 0 then Array.length in_shape + axes.(last_axis)
-        else axes.(last_axis)
-      in
 
-      (* Determine output size for the real axis *)
-      let size =
-        match s with
-        | None ->
-            (* Default: for RFFT output of size m, the original size could be: -
-               2*(m-1) for even original size - 2*(m-1) or 2*(m-1)+1 for odd
-               original size Since we don't know which, default to even case:
-               2*(m-1) *)
-            (in_shape.(axis_idx) - 1) * 2
-        | Some sizes ->
-            (* Use the specified size for the last axis *)
-            sizes.(last_axis)
-      in
-      out_shape.(axis_idx) <- size;
-      size)
-    else
-      (* No valid axes, shouldn't happen *)
-      out_shape.(Array.length out_shape - 1) * 2
-  in
+  if last_axis >= 0 then (
+    let axis_idx =
+      if axes.(last_axis) < 0 then Array.length in_shape + axes.(last_axis)
+      else axes.(last_axis)
+    in
+    let size =
+      match s with
+      | None -> (in_shape.(axis_idx) - 1) * 2
+      | Some sizes -> sizes.(last_axis)
+    in
+    out_shape.(axis_idx) <- size);
 
-  (* Create output tensor with real dtype *)
   let out = create_tensor x.context dtype out_shape in
 
-  (* Convert to FFI tensors *)
-  let x_ffi = to_ffi_tensor x' in
-  let out_ffi = to_ffi_tensor out in
+  let strides_in = contiguous_strides in_shape (Dtype.itemsize x.dtype) in
+  let strides_out = contiguous_strides out_shape (Dtype.itemsize dtype) in
 
-  (* Convert axes to list *)
-  let axes_list = Array.to_list axes in
+  (* Normalize negative axes *)
+  let ndim = Array.length in_shape in
+  let axes_normalized =
+    Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
+  in
 
-  (* Call FFI function *)
-  caml_irfft x_ffi out_ffi axes_list last_dim_size;
+  (match (x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t) with
+  | Dtype.Complex32, Dtype.Float32 ->
+      let data_in : (Complex.t, Dtype.complex32_elt, c_layout) Array1.t =
+        x'.buffer
+      in
+      let data_out : (float, Dtype.float32_elt, c_layout) Array1.t = out.buffer in
+      Pocketfft.c2r_f32 ~shape_out:out_shape ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_normalized ~forward:false ~fct:1.0
+        ~data_in ~data_out ~nthreads:1
+  | Dtype.Complex64, Dtype.Float64 ->
+      let data_in : (Complex.t, Dtype.complex64_elt, c_layout) Array1.t =
+        x'.buffer
+      in
+      let data_out : (float, Dtype.float64_elt, c_layout) Array1.t = out.buffer in
+      Pocketfft.c2r_f64 ~shape_out:out_shape ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_normalized ~forward:false ~fct:1.0
+        ~data_in ~data_out ~nthreads:1
+  | _ -> Error.failed ~op:"op_irfft" ~what:"unsupported dtype combination" ());
 
   out
 

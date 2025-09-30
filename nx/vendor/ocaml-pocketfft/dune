@@ -1,0 +1,23 @@
+(library
+ (public_name nx.pocketfft)
+ (name pocketfft)
+ (foreign_stubs
+  (language cxx)
+  (names pocketfft_stubs)
+  (flags
+   (:standard
+    -O3
+    -march=native
+    -mtune=native
+    -flto
+    -ffast-math
+    -DNDEBUG
+    -funroll-loops
+    -fomit-frame-pointer
+    -finline-functions
+    -fno-rtti
+    -std=c++17
+    -I.
+    -DPOCKETFFT_NO_MULTITHREADING=0
+    -DPOCKETFFT_CACHE_SIZE=32768))
+  (include_dirs pocketfft)))

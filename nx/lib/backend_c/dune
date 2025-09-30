@@ -1,7 +1,7 @@
 (library
  (name nx_c)
  (public_name nx.c)
- (libraries bigarray_ext nx_core)
+ (libraries bigarray_ext nx_core nx.pocketfft)
  (foreign_stubs
   (language c)
   (names
@@ -17,7 +17,6 @@
    nx_c_shape
    nx_c_window
    nx_c_matmul
-   nx_c_fft
    nx_c_cholesky
    nx_c_qr
    nx_c_eig
