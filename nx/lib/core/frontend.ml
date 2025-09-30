@@ -2127,6 +2127,52 @@ module Make (B : Backend_intf.S) = struct
 
   let identity ctx dtype n = eye ctx ~m:n ~k:0 dtype n
 
+  let diag ?(k = 0) v =
+    let v_shape = shape v in
+    let v_ndim = Array.length v_shape in
+    if v_ndim = 1 then
+      (* Construct 2D array with v on the k-th diagonal *)
+      let n = v_shape.(0) in
+      let size = n + Int.abs k in
+      let v_arr = to_array v in
+      init (B.context v) (dtype v) [| size; size |] (fun indices ->
+          let row = indices.(0) in
+          let col = indices.(1) in
+          let diag_idx =
+            if k >= 0 then
+              (* Diagonal above main: col = row + k, so row = col - k *)
+              if col = row + k && row >= 0 && row < n then row else -1
+            else if
+              (* Diagonal below main: row = col - k, so row = col - k *)
+              row = col - k && col >= 0 && col < n
+            then col
+            else -1
+          in
+          if diag_idx >= 0 && diag_idx < n then v_arr.(diag_idx)
+          else Dtype.zero (dtype v))
+    else if v_ndim >= 2 then
+      (* Extract k-th diagonal from 2D array *)
+      let rows = v_shape.(0) in
+      let cols = v_shape.(1) in
+      let diag_len =
+        if k >= 0 then Int.min rows (cols - k) else Int.min (rows + k) cols
+      in
+      let diag_len = Int.max 0 diag_len in
+      if diag_len = 0 then empty (B.context v) (dtype v) [| 0 |]
+      else
+        let v_arr = to_array v in
+        init (B.context v) (dtype v) [| diag_len |] (fun indices ->
+            let i = indices.(0) in
+            let row = if k >= 0 then i else i - k in
+            let col = if k >= 0 then i + k else i in
+            (* Calculate linear index in row-major order *)
+            let linear_idx = (row * cols) + col in
+            v_arr.(linear_idx))
+    else
+      Error.invalid ~op:"diag" ~what:"input"
+        ~reason:(Printf.sprintf "expected 1D or 2D array, got %dD" v_ndim)
+        ()
+
   let arange (type a b) ctx (dtype : (a, b) Dtype.t) start stop step =
     if start >= stop && step > 0 then
       Error.invalid ~op:"arange"

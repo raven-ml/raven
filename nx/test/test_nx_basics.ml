@@ -133,6 +133,21 @@ let test_eye_k_out_of_range () =
     [| 0.; 0.; 0.; 0.; 0.; 0.; 0.; 0.; 0. |]
     t2
 
+let test_diag_extract () =
+  let x = Nx.arange Nx.int32 0 9 1 |> Nx.reshape [| 3; 3 |] in
+  check_t "diag main" [| 3 |] [| 0l; 4l; 8l |] (Nx.diag x);
+  check_t "diag k=1" [| 2 |] [| 1l; 5l |] (Nx.diag ~k:1 x);
+  check_t "diag k=-1" [| 2 |] [| 3l; 7l |] (Nx.diag ~k:(-1) x)
+
+let test_diag_construct () =
+  let v = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in
+  check_t "diag 1D" [| 3; 3 |]
+    [| 1l; 0l; 0l; 0l; 2l; 0l; 0l; 0l; 3l |]
+    (Nx.diag v);
+  check_t "diag k=1" [| 4; 4 |]
+    [| 0l; 1l; 0l; 0l; 0l; 0l; 2l; 0l; 0l; 0l; 0l; 3l; 0l; 0l; 0l; 0l |]
+    (Nx.diag ~k:1 v)
+
 (* ───── Range Generation Tests ───── *)
 
 let test_arange_empty () =
@@ -548,6 +563,8 @@ let eye_identity_tests =
     ("eye 3x3 k=-1 int32", `Quick, test_eye_3x3_km1_int32);
     ("eye 0x0", `Quick, test_eye_0x0);
     ("eye k out of range", `Quick, test_eye_k_out_of_range);
+    ("diag extract", `Quick, test_diag_extract);
+    ("diag construct", `Quick, test_diag_construct);
   ]
 
 let range_generation =

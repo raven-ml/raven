@@ -339,6 +339,33 @@ val identity : ('a, 'b) dtype -> int -> ('a, 'b) t
                                   [0, 0, 1]]
     ]} *)
 
+val diag : ?k:int -> ('a, 'b) t -> ('a, 'b) t
+(** [diag ?k v] extracts diagonal or constructs diagonal array.
+
+    If [v] is 1D, returns 2D array with [v] on the k-th diagonal. If [v] is 2D,
+    returns 1D array containing the k-th diagonal. Use [k > 0] for diagonals
+    above the main diagonal, [k < 0] for diagonals below.
+
+    @param k Diagonal offset (default 0 = main diagonal)
+    @raise Failure if [v] is 0D
+
+    {@ocaml[
+      # let x = arange int32 0 9 1 |> reshape [|3; 3|]
+      val x : (int32, int32_elt) t = [[0, 1, 2],
+                                      [3, 4, 5],
+                                      [6, 7, 8]]
+      # diag x
+      - : (int32, int32_elt) t = [0, 4, 8]
+      # diag ~k:1 x
+      - : (int32, int32_elt) t = [1, 5]
+      # let v = create int32 [|3|] [|1l; 2l; 3l|]
+      val v : (int32, int32_elt) t = [1, 2, 3]
+      # diag v
+      - : (int32, int32_elt) t = [[1, 0, 0],
+                                  [0, 2, 0],
+                                  [0, 0, 3]]
+    ]} *)
+
 val arange : ('a, 'b) dtype -> int -> int -> int -> ('a, 'b) t
 (** [arange dtype start stop step] generates values from [start] to [\[stop)].
 
