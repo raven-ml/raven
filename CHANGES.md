@@ -60,6 +60,18 @@ We've expanded Kaun with high-level APIs for deep learning. These APIs are inspi
 - Model zoo: Reference implementations of classic and modern architectures (LeNet5 for basic CNNs, BERT for masked language modeling, GPT2 for autoregressive generation) including reusable transformer components
 - Ecosystem integration: Load HuggingFace model architectures (`kaun.huggingface`), access common datasets like MNIST and CIFAR-10 (`kaun.datasets`), and use standardized model definitions (`kaun.models`)
 
+### Contributors
+
+Thanks to everyone who contributed to this release:
+
+- @adamchol (Adam Cholewi) - Implemented the initial `associative_scan` native backend operation for cumulative operations
+- @akshay-gulab (Akshay Gulabrao)
+- @dhruvmakwana (Dhruv Makwana) - Implemented `einsum` for Einstein summation notation
+- @gabyfle (Gabriel Santamaria) - Built PocketFFT bindings that replaced our custom FFT kernels
+- @lukstafi (Lukasz Stafiniak) - Major contributions to Fehu and FunOCaml workshop on training Sokoban agents
+- @nickbetteridge
+- @sidkshatriya (Sidharth Kshatriya)
+
 ## [1.0.0~alpha0] - 2025-07-05
 
 ### Initial Alpha Release
@@ -135,3 +147,4 @@ And to our early sponsors:
 @sabine
 
 [1.0.0~alpha0]: https://github.com/raven-ocaml/raven/releases/tag/v1.0.0~alpha0
+[1.0.0~alpha1]: https://github.com/raven-ocaml/raven/releases/tag/v1.0.0~alpha1
