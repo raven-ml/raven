@@ -687,10 +687,10 @@ CAMLprim value caml_nx_pad(value v_input, value v_pads, value v_fill,
       fill_c.u16 = (uint16_t)Long_val(v_fill);
       break;
     case CAML_BA_INT32:
-      fill_c.i32 = (int32_t)Long_val(v_fill);
+      fill_c.i32 = Int32_val(v_fill);
       break;
     case CAML_BA_INT64:
-      fill_c.i64 = Long_val(v_fill);
+      fill_c.i64 = Int64_val(v_fill);
       break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
