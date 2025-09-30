@@ -53,20 +53,15 @@
       let transition = Env.step env action in
 
       (* Store in buffer *)
-      Dqn.add_transition agent
-        ~observation:obs
-        ~action
-        ~reward:transition.reward
-        ~next_observation:transition.observation
-        ~terminated:transition.terminated
-        ~truncated:transition.truncated;
+      Dqn.add_transition agent ~observation:obs ~action
+        ~reward:transition.reward ~next_observation:transition.observation
+        ~terminated:transition.terminated ~truncated:transition.truncated;
 
       (* Update Q-network *)
       let loss, avg_q = Dqn.update agent in
 
       (* Periodically update target network *)
-      if episode mod 10 = 0 then
-        Dqn.update_target_network agent
+      if episode mod 10 = 0 then Dqn.update_target_network agent
     ]}
 
     {1 Key Features}
@@ -98,11 +93,12 @@ type config = {
   epsilon_end : float;
       (** Final exploration rate (default: 0.01 = mostly greedy) *)
   epsilon_decay : float;
-      (** Decay rate for epsilon. Epsilon decays as: epsilon_end + (epsilon_start
+      (** Decay rate for epsilon. Epsilon decays as: epsilon_end +
+          (epsilon_start
           - epsilon_end) * exp(-timesteps / epsilon_decay) (default: 1000.0) *)
-  batch_size : int;  (** Number of transitions to sample per update (default: 32) *)
-  buffer_capacity : int;
-      (** Maximum size of replay buffer (default: 10_000) *)
+  batch_size : int;
+      (** Number of transitions to sample per update (default: 32) *)
+  buffer_capacity : int;  (** Maximum size of replay buffer (default: 10_000) *)
   target_update_freq : int;
       (** Update target network every N episodes (default: 10) *)
 }
@@ -158,7 +154,8 @@ type update_metrics = {
     - [avg_q_value] should stabilize as Q-values converge
     - [loss] should decrease and stabilize (though may fluctuate) *)
 
-val create : q_network:Kaun.module_ -> n_actions:int -> rng:Rune.Rng.key -> config -> t
+val create :
+  q_network:Kaun.module_ -> n_actions:int -> rng:Rune.Rng.key -> config -> t
 (** [create ~q_network ~n_actions ~rng config] creates a DQN agent.
 
     Parameters:
@@ -168,39 +165,50 @@ val create : q_network:Kaun.module_ -> n_actions:int -> rng:Rune.Rng.key -> conf
     - [rng]: Random number generator key for initialization and exploration.
     - [config]: DQN configuration (learning rate, gamma, epsilon, etc).
 
-    The Q-network should be a standard feedforward network. For image observations,
-    use convolutional layers. For vector observations, use fully-connected layers.
+    The Q-network should be a standard feedforward network. For image
+    observations, use convolutional layers. For vector observations, use
+    fully-connected layers.
 
     Example Q-network architectures:
     {[
       (* For vector observations *)
-      let q_net = Kaun.Layer.sequential [
-        Kaun.Layer.linear ~in_features:4 ~out_features:128 ();
-        Kaun.Layer.relu ();
-        Kaun.Layer.linear ~in_features:128 ~out_features:128 ();
-        Kaun.Layer.relu ();
-        Kaun.Layer.linear ~in_features:128 ~out_features:n_actions ();
-      ]
+      let q_net =
+        Kaun.Layer.sequential
+          [
+            Kaun.Layer.linear ~in_features:4 ~out_features:128 ();
+            Kaun.Layer.relu ();
+            Kaun.Layer.linear ~in_features:128 ~out_features:128 ();
+            Kaun.Layer.relu ();
+            Kaun.Layer.linear ~in_features:128 ~out_features:n_actions ();
+          ]
 
       (* For image observations *)
-      let q_net = Kaun.Layer.sequential [
-        Kaun.Layer.conv2d ~in_channels:4 ~out_channels:32 ~kernel_size:8 ~stride:4 ();
-        Kaun.Layer.relu ();
-        Kaun.Layer.conv2d ~in_channels:32 ~out_channels:64 ~kernel_size:4 ~stride:2 ();
-        Kaun.Layer.relu ();
-        Kaun.Layer.flatten ();
-        Kaun.Layer.linear ~in_features:3136 ~out_features:512 ();
-        Kaun.Layer.relu ();
-        Kaun.Layer.linear ~in_features:512 ~out_features:n_actions ();
-      ]
+      let q_net =
+        Kaun.Layer.sequential
+          [
+            Kaun.Layer.conv2d ~in_channels:4 ~out_channels:32 ~kernel_size:8
+              ~stride:4 ();
+            Kaun.Layer.relu ();
+            Kaun.Layer.conv2d ~in_channels:32 ~out_channels:64 ~kernel_size:4
+              ~stride:2 ();
+            Kaun.Layer.relu ();
+            Kaun.Layer.flatten ();
+            Kaun.Layer.linear ~in_features:3136 ~out_features:512 ();
+            Kaun.Layer.relu ();
+            Kaun.Layer.linear ~in_features:512 ~out_features:n_actions ();
+          ]
     ]} *)
 
 val predict :
-  t -> (float, Bigarray.float32_elt) Rune.t -> epsilon:float -> (int32, Bigarray.int32_elt) Rune.t
+  t ->
+  (float, Bigarray.float32_elt) Rune.t ->
+  epsilon:float ->
+  (int32, Bigarray.int32_elt) Rune.t
 (** [predict agent obs ~epsilon] selects an action using epsilon-greedy policy.
 
     With probability [epsilon], selects a random action (exploration). With
-    probability [1 - epsilon], selects the action with highest Q-value (exploitation).
+    probability [1 - epsilon], selects the action with highest Q-value
+    (exploitation).
 
     Parameters:
     - [agent]: DQN agent.
@@ -231,7 +239,7 @@ val add_transition :
   truncated:bool ->
   unit
 (** [add_transition agent ~observation ~action ~reward ~next_observation
-    ~terminated ~truncated] stores a transition in the replay buffer.
+     ~terminated ~truncated] stores a transition in the replay buffer.
 
     Parameters:
     - [agent]: DQN agent.
@@ -239,14 +247,16 @@ val add_transition :
     - [action]: Action taken (int32 scalar).
     - [reward]: Immediate reward received.
     - [next_observation]: Resulting next state (without batch dimension).
-    - [terminated]: Whether episode ended naturally (reached goal/failure state).
+    - [terminated]: Whether episode ended naturally (reached goal/failure
+      state).
     - [truncated]: Whether episode was artificially truncated (timeout).
 
     Transitions are stored in a circular buffer. When the buffer is full, oldest
     transitions are overwritten.
 
-    The distinction between [terminated] and [truncated] matters for bootstrapping:
-    terminal states have value 0, while truncated states may have non-zero value. *)
+    The distinction between [terminated] and [truncated] matters for
+    bootstrapping: terminal states have value 0, while truncated states may have
+    non-zero value. *)
 
 val update : t -> float * float
 (** [update agent] performs a single gradient update on the Q-network.
@@ -259,8 +269,8 @@ val update : t -> float * float
     - [loss]: Mean squared TD error for the batch
     - [avg_q_value]: Average Q-value predicted for the batch
 
-    If the replay buffer has fewer samples than [batch_size], returns [(0.0, 0.0)]
-    without performing an update.
+    If the replay buffer has fewer samples than [batch_size], returns
+    [(0.0, 0.0)] without performing an update.
 
     The TD target is computed as:
     {v y = r + γ max_a' Q_target(s', a') v}
@@ -269,8 +279,8 @@ val update : t -> float * float
     Call this function after each environment step during training. *)
 
 val update_target_network : t -> unit
-(** [update_target_network agent] updates the target network by copying Q-network
-    parameters.
+(** [update_target_network agent] updates the target network by copying
+    Q-network parameters.
 
     Should be called periodically (every [config.target_update_freq] episodes)
     to keep the target network stable. Frequent updates can cause instability,
@@ -297,38 +307,38 @@ val learn :
 (** [learn agent ~env ~total_timesteps ~callback ~warmup_steps ()] trains the
     DQN agent on an environment.
 
-    Runs episodes until [total_timesteps] is reached. Each episode:
-    1. Resets environment
-    2. Collects transitions using epsilon-greedy policy
-    3. Stores transitions in replay buffer
-    4. Samples batches and updates Q-network
-    5. Periodically updates target network
+    Runs episodes until [total_timesteps] is reached. Each episode: 1. Resets
+    environment 2. Collects transitions using epsilon-greedy policy 3. Stores
+    transitions in replay buffer 4. Samples batches and updates Q-network 5.
+    Periodically updates target network
 
     Parameters:
     - [agent]: DQN agent to train.
     - [env]: Environment to train on.
     - [total_timesteps]: Total number of environment steps to train for.
-    - [callback]: Optional callback called after each episode with episode number
-      and metrics. Return [false] to stop training early. Default always returns
-      [true].
-    - [warmup_steps]: Number of initial steps to collect before starting training
-      (filling replay buffer). Default: [batch_size].
+    - [callback]: Optional callback called after each episode with episode
+      number and metrics. Return [false] to stop training early. Default always
+      returns [true].
+    - [warmup_steps]: Number of initial steps to collect before starting
+      training (filling replay buffer). Default: [batch_size].
 
     Returns the trained agent.
 
     Example with callback:
     {[
-      let agent = Dqn.learn agent ~env ~total_timesteps:100_000
-        ~callback:(fun ~episode ~metrics ->
-          if episode mod 10 = 0 then
-            Printf.printf "Episode %d: Return = %.2f, Loss = %.4f\n"
-              episode metrics.episode_return metrics.loss;
-          true (* continue training *))
-        ()
+      let agent =
+        Dqn.learn agent ~env ~total_timesteps:100_000
+          ~callback:(fun ~episode ~metrics ->
+            if episode mod 10 = 0 then
+              Printf.printf "Episode %d: Return = %.2f, Loss = %.4f\n" episode
+                metrics.episode_return metrics.loss;
+            true (* continue training *))
+          ()
     ]}
 
     The warmup phase collects random experiences before training begins. This
-    ensures the replay buffer has diverse samples before Q-network updates start. *)
+    ensures the replay buffer has diverse samples before Q-network updates
+    start. *)
 
 val save : t -> string -> unit
 (** [save agent path] saves agent to disk.

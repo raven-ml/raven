@@ -62,7 +62,7 @@ module Reinforce = Reinforce
 module Dqn = Dqn
 (** {!Dqn} algorithm implementation.
 
-    DQN (Deep Q-Network) is an off-policy value-based method that uses experience
-    replay and target networks for stable training. It learns Q-values for
-    discrete actions and selects actions greedily. See {!Dqn} for detailed
-    documentation. *)
+    DQN (Deep Q-Network) is an off-policy value-based method that uses
+    experience replay and target networks for stable training. It learns
+    Q-values for discrete actions and selects actions greedily. See {!Dqn} for
+    detailed documentation. *)

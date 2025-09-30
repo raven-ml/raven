@@ -190,7 +190,6 @@ external caml_svd :
   bool ->
   unit = "caml_nx_op_svd"
 
-
 (* Shape operation FFI declarations *)
 external caml_cat :
   ('a, 'b) ffi_tensor list -> int -> ('a, 'b) ffi_tensor -> unit = "caml_nx_cat"
@@ -885,9 +884,7 @@ let op_fft (type a b) (x : (a, b) t) ~axes : (a, b) t =
   let strides_out = contiguous_strides out_shape elem_size in
   (* Normalize negative axes *)
   let ndim = Array.length out_shape in
-  let axes_arr =
-    Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
-  in
+  let axes_arr = Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes in
 
   (match (x.dtype : (a, b) Dtype.t) with
   | Dtype.Complex32 ->
@@ -913,9 +910,7 @@ let op_ifft (type a b) (x : (a, b) t) ~axes : (a, b) t =
   let strides_out = contiguous_strides out_shape elem_size in
   (* Normalize negative axes *)
   let ndim = Array.length out_shape in
-  let axes_arr =
-    Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
-  in
+  let axes_arr = Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes in
 
   (match (x.dtype : (a, b) Dtype.t) with
   | Dtype.Complex32 ->
@@ -956,7 +951,7 @@ let op_rfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
     Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
   in
 
-  (match (x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t) with
+  (match ((x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t)) with
   | Dtype.Float32, Dtype.Complex32 ->
       let data_in : (float, Dtype.float32_elt, c_layout) Array1.t = x'.buffer in
       let data_out : (Complex.t, Dtype.complex32_elt, c_layout) Array1.t =
@@ -977,8 +972,8 @@ let op_rfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
 
   out
 
-let op_irfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s
-    : (c, d) t =
+let op_irfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s :
+    (c, d) t =
   let x' = materialize x in
 
   (* Calculate output shape for irfft *)
@@ -986,17 +981,17 @@ let op_irfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s
   let out_shape = Array.copy in_shape in
   let last_axis = Array.length axes - 1 in
 
-  if last_axis >= 0 then (
-    let axis_idx =
-      if axes.(last_axis) < 0 then Array.length in_shape + axes.(last_axis)
-      else axes.(last_axis)
-    in
-    let size =
-      match s with
-      | None -> (in_shape.(axis_idx) - 1) * 2
-      | Some sizes -> sizes.(last_axis)
-    in
-    out_shape.(axis_idx) <- size);
+  (if last_axis >= 0 then
+     let axis_idx =
+       if axes.(last_axis) < 0 then Array.length in_shape + axes.(last_axis)
+       else axes.(last_axis)
+     in
+     let size =
+       match s with
+       | None -> (in_shape.(axis_idx) - 1) * 2
+       | Some sizes -> sizes.(last_axis)
+     in
+     out_shape.(axis_idx) <- size);
 
   let out = create_tensor x.context dtype out_shape in
 
@@ -1009,12 +1004,14 @@ let op_irfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s
     Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
   in
 
-  (match (x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t) with
+  (match ((x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t)) with
   | Dtype.Complex32, Dtype.Float32 ->
       let data_in : (Complex.t, Dtype.complex32_elt, c_layout) Array1.t =
         x'.buffer
       in
-      let data_out : (float, Dtype.float32_elt, c_layout) Array1.t = out.buffer in
+      let data_out : (float, Dtype.float32_elt, c_layout) Array1.t =
+        out.buffer
+      in
       Pocketfft.c2r_f32 ~shape_out:out_shape ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_normalized ~forward:false ~fct:1.0
         ~data_in ~data_out ~nthreads:1
@@ -1022,7 +1019,9 @@ let op_irfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s
       let data_in : (Complex.t, Dtype.complex64_elt, c_layout) Array1.t =
         x'.buffer
       in
-      let data_out : (float, Dtype.float64_elt, c_layout) Array1.t = out.buffer in
+      let data_out : (float, Dtype.float64_elt, c_layout) Array1.t =
+        out.buffer
+      in
       Pocketfft.c2r_f64 ~shape_out:out_shape ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_normalized ~forward:false ~fct:1.0
         ~data_in ~data_out ~nthreads:1

@@ -6152,9 +6152,7 @@ module Make (B : Backend_intf.S) = struct
                 List.iter (fun size -> n := !n * size) sizes;
                 1.0 /. Stdlib.sqrt (float_of_int !n)
           in
-          let result =
-            B.op_ifft x_padded ~axes:(Array.of_list axes_list)
-          in
+          let result = B.op_ifft x_padded ~axes:(Array.of_list axes_list) in
           (result, norm_scale)
     in
     let result, norm_scale = result_with_size in
@@ -6202,7 +6200,6 @@ module Make (B : Backend_intf.S) = struct
     (* Use Complex64 as default - matches NumPy behavior *)
     let result =
       B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:(Array.of_list axes_list)
-      
     in
 
     if norm_scale <> 1.0 then

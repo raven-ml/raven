@@ -240,7 +240,9 @@ let test_learn () =
       ]
   in
 
-  let config = Dqn.{ default_config with batch_size = 4; buffer_capacity = 50 } in
+  let config =
+    Dqn.{ default_config with batch_size = 4; buffer_capacity = 50 }
+  in
 
   let agent = Dqn.create ~q_network:q_net ~n_actions:2 ~rng config in
 
@@ -281,7 +283,9 @@ let test_learn_early_stop () =
       ~step:(fun _env _action ->
         step_count := !step_count + 1;
         let terminated = !step_count >= 3 in
-        let obs = Rune.create Rune.float32 [| 1 |] [| float_of_int !step_count |] in
+        let obs =
+          Rune.create Rune.float32 [| 1 |] [| float_of_int !step_count |]
+        in
         Env.transition ~observation:obs ~reward:1.0 ~terminated ())
       ()
   in

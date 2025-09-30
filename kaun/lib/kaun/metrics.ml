@@ -368,9 +368,7 @@ let confusion_matrix ~num_classes ?(normalize = `None) () =
       done;
 
       let counts = Rune.create dtype [| total_bins |] counts_array in
-      let counts_2d =
-        Rune.reshape [| num_classes; num_classes |] counts
-      in
+      let counts_2d = Rune.reshape [| num_classes; num_classes |] counts in
 
       let new_matrix = Rune.add matrix counts_2d in
       [ new_matrix ])
@@ -555,9 +553,7 @@ let r2_score ?(adjusted = false) ?num_features () =
           let mean_targets = Rune.div sum_targets count in
           (* SS_tot = sum(y^2) - n * mean^2 *)
           let mean_sq = Rune.mul mean_targets mean_targets in
-          let ss_tot =
-            Rune.sub sum_sq_targets (Rune.mul count mean_sq)
-          in
+          let ss_tot = Rune.sub sum_sq_targets (Rune.mul count mean_sq) in
           (* R² = 1 - SS_res / SS_tot *)
           let dtype = Rune.dtype ss_res in
           let one = scalar_tensor dtype 1.0 in
@@ -594,8 +590,8 @@ let cross_entropy ?(from_logits = true) () =
           let target_shape = Rune.shape targets in
           if
             Array.length target_shape = 1
-            || (Array.length target_shape > 0
-               && target_shape.(Array.length target_shape - 1) = 1)
+            || Array.length target_shape > 0
+               && target_shape.(Array.length target_shape - 1) = 1
           then
             (* Targets are class indices *)
             Loss.softmax_cross_entropy_with_indices predictions targets

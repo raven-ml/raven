@@ -61,7 +61,9 @@ let create ~q_network ~n_actions ~rng config =
   let opt_state = optimizer.init q_params in
 
   (* Create replay buffer *)
-  let replay_buffer = Fehu.Buffer.Replay.create ~capacity:config.buffer_capacity in
+  let replay_buffer =
+    Fehu.Buffer.Replay.create ~capacity:config.buffer_capacity
+  in
 
   {
     q_network;
@@ -94,7 +96,7 @@ let predict t obs ~epsilon =
   let uniform_sample = Rune.Rng.uniform sample_rng Rune.float32 [| 1 |] in
   let r = (Rune.to_array uniform_sample).(0) in
 
-  if r < epsilon then
+  if r < epsilon then (
     (* Random action *)
     let keys = Rune.Rng.split t.rng ~n:2 in
     t.rng <- keys.(0);
@@ -102,7 +104,7 @@ let predict t obs ~epsilon =
     let action_tensor =
       Rune.Rng.randint action_rng ~min:0 ~max:t.n_actions [| 1 |]
     in
-    Rune.reshape [||] (Rune.cast Rune.int32 action_tensor)
+    Rune.reshape [||] (Rune.cast Rune.int32 action_tensor))
   else
     (* Greedy action - select action with highest Q-value *)
     let q_values = apply t.q_network t.q_params ~training:false obs_batched in
@@ -182,7 +184,9 @@ let update t =
               in
 
               (* Current Q-value: Q(s, a) *)
-              let q_values = apply t.q_network params ~training:true obs_batched in
+              let q_values =
+                apply t.q_network params ~training:true obs_batched
+              in
               let action_idx = Int32.to_int (Rune.to_array trans.action).(0) in
               let current_q = Rune.item [ 0; action_idx ] q_values in
 
@@ -205,7 +209,9 @@ let update t =
                     apply t.target_network t.target_params ~training:false
                       next_obs_batched
                   in
-                  let next_q_flat = Rune.reshape [| t.n_actions |] next_q_values in
+                  let next_q_flat =
+                    Rune.reshape [| t.n_actions |] next_q_values
+                  in
                   let next_q_array = Rune.to_array next_q_flat in
 
                   (* Find max Q-value *)
@@ -249,29 +255,29 @@ let learn t ~env ~total_timesteps
   let episode = ref 0 in
 
   (* Warmup phase: collect initial experiences *)
-  if warmup_steps > 0 then (
-    let obs, _info = Env.reset env () in
-    let current_obs = ref obs in
-    let warmup_done = ref false in
+  (if warmup_steps > 0 then
+     let obs, _info = Env.reset env () in
+     let current_obs = ref obs in
+     let warmup_done = ref false in
 
-    while !timesteps < warmup_steps && not !warmup_done do
-      (* Random action during warmup *)
-      let action = predict t !current_obs ~epsilon:1.0 in
-      let transition = Env.step env action in
+     while !timesteps < warmup_steps && not !warmup_done do
+       (* Random action during warmup *)
+       let action = predict t !current_obs ~epsilon:1.0 in
+       let transition = Env.step env action in
 
-      add_transition t ~observation:!current_obs ~action
-        ~reward:transition.Env.reward
-        ~next_observation:transition.Env.observation
-        ~terminated:transition.Env.terminated
-        ~truncated:transition.Env.truncated;
+       add_transition t ~observation:!current_obs ~action
+         ~reward:transition.Env.reward
+         ~next_observation:transition.Env.observation
+         ~terminated:transition.Env.terminated
+         ~truncated:transition.Env.truncated;
 
-      current_obs := transition.Env.observation;
-      timesteps := !timesteps + 1;
+       current_obs := transition.Env.observation;
+       timesteps := !timesteps + 1;
 
-      if transition.Env.terminated || transition.Env.truncated then (
-        let obs, _info = Env.reset env () in
-        current_obs := obs)
-    done);
+       if transition.Env.terminated || transition.Env.truncated then
+         let obs, _info = Env.reset env () in
+         current_obs := obs
+     done);
 
   (* Training loop *)
   while !timesteps < total_timesteps do
