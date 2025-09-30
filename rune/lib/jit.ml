@@ -587,17 +587,17 @@ let make_jit_handler (state : jit_tracer_state) =
                       dtype = ir_dtype;
                     }));
             continue k (create_symbolic_tensor state out_var dt shape))
-    | E_fft { t = _; axes = _; s = _ } ->
+    | E_fft { t = _; axes = _; } ->
         Some
           (fun _k ->
             (* FFT operations are not supported in JIT yet *)
             failwith "JIT: FFT operations not yet supported")
-    | E_ifft { t = _; axes = _; s = _ } ->
+    | E_ifft { t = _; axes = _; } ->
         Some
           (fun _k ->
             (* IFFT operations are not supported in JIT yet *)
             failwith "JIT: IFFT operations not yet supported")
-    | E_rfft { t = _; axes = _; s = _ } ->
+    | E_rfft { t = _; axes = _; } ->
         Some
           (fun _k ->
             (* RFFT operations are not supported in JIT yet *)

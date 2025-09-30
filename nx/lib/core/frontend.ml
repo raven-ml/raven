@@ -6083,7 +6083,7 @@ module Make (B : Backend_intf.S) = struct
           1.0 /. Stdlib.sqrt (float_of_int n)
     in
 
-    let result = B.op_fft x_padded ~axes:(Array.of_list axes_list) ~s:None in
+    let result = B.op_fft x_padded ~axes:(Array.of_list axes_list) in
 
     (* Apply normalization if needed *)
     if norm_scale <> 1.0 then
@@ -6133,9 +6133,9 @@ module Make (B : Backend_intf.S) = struct
                 in
                 1.0 /. Stdlib.sqrt (float_of_int n)
           in
-          let result = B.op_ifft x ~axes:(Array.of_list axes_list) ~s:None in
+          let result = B.op_ifft x ~axes:(Array.of_list axes_list) in
           (result, norm_scale)
-      | Some _sizes ->
+      | Some sizes ->
           (* Size specified - we need to handle this carefully *)
           (* First pad/truncate the input in frequency domain, then do IFFT *)
           let x_padded = pad_or_truncate_for_fft x axes_list s in
@@ -6144,16 +6144,16 @@ module Make (B : Backend_intf.S) = struct
             | `Backward ->
                 (* Use the OUTPUT size for normalization (after truncation) *)
                 let n = ref 1 in
-                List.iter (fun size -> n := !n * size) axes_list;
+                List.iter (fun size -> n := !n * size) sizes;
                 1.0 /. float_of_int !n
             | `Forward -> 1.0
             | `Ortho ->
                 let n = ref 1 in
-                List.iter (fun size -> n := !n * size) axes_list;
+                List.iter (fun size -> n := !n * size) sizes;
                 1.0 /. Stdlib.sqrt (float_of_int !n)
           in
           let result =
-            B.op_ifft x_padded ~axes:(Array.of_list axes_list) ~s:None
+            B.op_ifft x_padded ~axes:(Array.of_list axes_list)
           in
           (result, norm_scale)
     in
@@ -6202,7 +6202,7 @@ module Make (B : Backend_intf.S) = struct
     (* Use Complex64 as default - matches NumPy behavior *)
     let result =
       B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:(Array.of_list axes_list)
-        ~s:None
+      
     in
 
     if norm_scale <> 1.0 then

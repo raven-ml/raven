@@ -240,18 +240,10 @@ module type S = sig
 
   (* Fourier transforms *)
 
-  val op_fft :
-    (Complex.t, 'b) t ->
-    axes:int array ->
-    s:int array option ->
-    (Complex.t, 'b) t
+  val op_fft : (Complex.t, 'b) t -> axes:int array -> (Complex.t, 'b) t
   (** Compute the discrete Fourier transform (DFT) of the input tensor. *)
 
-  val op_ifft :
-    (Complex.t, 'b) t ->
-    axes:int array ->
-    s:int array option ->
-    (Complex.t, 'b) t
+  val op_ifft : (Complex.t, 'b) t -> axes:int array -> (Complex.t, 'b) t
   (** Compute the inverse discrete Fourier transform (IDFT) of the input tensor.
   *)
 
@@ -259,7 +251,6 @@ module type S = sig
     (float, 'a) t ->
     dtype:(Complex.t, 'b) Dtype.t ->
     axes:int array ->
-    s:int array option ->
     (Complex.t, 'b) t
   (** Compute the real-valued discrete Fourier transform (RDFT) of the input
       tensor. *)

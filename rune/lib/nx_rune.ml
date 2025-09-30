@@ -191,19 +191,16 @@ type _ Effect.t +=
   | E_fft : {
       t : (Complex.t, 'b) t;
       axes : int array;
-      s : int array option;
     }
       -> (Complex.t, 'b) t Effect.t
   | E_ifft : {
       t : (Complex.t, 'b) t;
       axes : int array;
-      s : int array option;
     }
       -> (Complex.t, 'b) t Effect.t
   | E_rfft : {
       t : (float, 'b) t;
       axes : int array;
-      s : int array option;
     }
       -> (Complex.t, Dtype.complex64_elt) t Effect.t
   | E_irfft : {
@@ -563,25 +560,25 @@ let op_matmul a b =
         failwith "todo: op_matmul for symbolic tensors")
 
 (* FFT operations *)
-let op_fft t ~axes ~s =
-  try Effect.perform (E_fft { t; axes; s })
+let op_fft t ~axes =
+  try Effect.perform (E_fft { t; axes })
   with Effect.Unhandled _ -> (
     match t with
-    | Native_tensor t -> Native_tensor (Nx_c.op_fft t ~axes ~s)
+    | Native_tensor t -> Native_tensor (Nx_c.op_fft t ~axes)
     | Symbolic_tensor _ -> failwith "todo: op_fft for symbolic tensors")
 
-let op_ifft t ~axes ~s =
-  try Effect.perform (E_ifft { t; axes; s })
+let op_ifft t ~axes =
+  try Effect.perform (E_ifft { t; axes })
   with Effect.Unhandled _ -> (
     match t with
-    | Native_tensor t -> Native_tensor (Nx_c.op_ifft t ~axes ~s)
+    | Native_tensor t -> Native_tensor (Nx_c.op_ifft t ~axes)
     | Symbolic_tensor _ -> failwith "todo: op_ifft for symbolic tensors")
 
 let op_rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t)
-    ~axes ~s : (Complex.t, c) t =
+    ~axes : (Complex.t, c) t =
   match t with
   | Native_tensor t ->
-      let result = Nx_c.op_rfft t ~dtype ~axes ~s in
+      let result = Nx_c.op_rfft t ~dtype ~axes in
       (Native_tensor result : (Complex.t, c) t)
   | Symbolic_tensor _ -> failwith "todo: op_rfft for symbolic tensors"
 

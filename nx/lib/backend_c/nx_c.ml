@@ -874,8 +874,7 @@ let contiguous_strides shape elem_size =
     Array.map (fun s -> s * elem_size) strides
 
 (* Fourier transforms using PocketFFT *)
-let op_fft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
-  ignore s;
+let op_fft (type a b) (x : (a, b) t) ~axes : (a, b) t =
   let x' = materialize x in
   let out_shape = shape x' in
   let out = create_tensor x.context x.dtype out_shape in
@@ -903,8 +902,7 @@ let op_fft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
 
   out
 
-let op_ifft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
-  ignore s;
+let op_ifft (type a b) (x : (a, b) t) ~axes : (a, b) t =
   let x' = materialize x in
   let out_shape = shape x' in
   let out = create_tensor x.context x.dtype out_shape in
@@ -932,9 +930,8 @@ let op_ifft (type a b) (x : (a, b) t) ~axes ~s : (a, b) t =
 
   out
 
-let op_rfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s
-    : (c, d) t =
-  ignore s;
+let op_rfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
+    (c, d) t =
   let x' = materialize x in
 
   (* Calculate output shape for rfft *)
