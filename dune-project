@@ -19,7 +19,7 @@
 
 (using mdx 0.4)
 
-(version 1.0.0~alpha0)
+(version 1.0.0~alpha1)
 
 (implicit_transitive_deps false)
 
