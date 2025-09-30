@@ -1,5 +1,0 @@
-(executable
- (public_name benchmark_ops)
- (name benchmark_ops)
- (package dev)
- (libraries rune kaun ubench))
