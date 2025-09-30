@@ -538,15 +538,151 @@ let test_tensordot_mismatch () =
     (Invalid_argument "tensordot: axes have different sizes") (fun () ->
       ignore (Nx.tensordot ~axes:([| 1 |], [| 0 |]) a b))
 
+let test_einsum_error () =
+  let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let b = Nx.create Nx.float32 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |] in
+  check_raises "einsum no input operands"
+    (Invalid_argument "einsum: no input operands") (fun () ->
+      ignore (Nx.einsum "" [||]));
+  check_raises "einsum bad format"
+    (Invalid_argument "einsum: invalid character '-' in subscript") (fun () ->
+      ignore (Nx.einsum "IJ,JK-IK" [| a; b |]));
+  check_raises "einsum wrong inputs"
+    (Invalid_argument "einsum: number of inputs must equal number of operands")
+    (fun () -> ignore (Nx.einsum "ij->ij" [| a; b |]));
+  check_raises "einsum rectangular diagonal"
+    (Invalid_argument
+       "einsum: index var 'i' must have consistent dimensions (2 vs 3)")
+    (fun () -> ignore (Nx.einsum "ii->i" [| a |]));
+  check_raises "einsum mismatched rank"
+    (Invalid_argument "einsum: operand rank too small for subscripts")
+    (fun () -> ignore (Nx.einsum "ijl,jk->ik" [| a; b |]));
+  check_raises "einsum contracted vars mismatch"
+    (Invalid_argument "einsum: output index 'k' not found in inputs") (fun () ->
+      ignore (Nx.einsum "ij,jl->ki" [| a; b |]));
+  check_raises "einsum dimension mismatch"
+    (Invalid_argument
+       "einsum: index var 'j' must have consistent dimensions (3 vs 2)")
+    (fun () -> ignore (Nx.einsum "ij,kj->ik" [| a; b |]));
+
+  check_raises "einsum output ell without input"
+    (Invalid_argument "einsum: output ellipsis requires ellipsis in inputs")
+    (fun () -> ignore (Nx.einsum "ij->..." [| a |]));
+  check_raises "einsum multi ellipsis"
+    (Invalid_argument "einsum: multiple ellipsis in operand") (fun () ->
+      ignore (Nx.einsum "i...j...->ij" [| a |]))
+
 let test_einsum () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let b = Nx.create Nx.float32 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |] in
+  let square =
+    Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+  in
+  let c =
+    Nx.create Nx.float32 [| 2; 2; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+  in
   let res_matmul = Nx.einsum "ij,jk->ik" [| a; b |] in
   check_t "einsum matmul" [| 2; 2 |] [| 58.; 64.; 139.; 154. |] res_matmul;
-  let res_diag = Nx.einsum "ii->i" [| a |] in
-  check_t "einsum diag" [| 2 |] [| 1.; 5. |] res_diag;
+  let res_matmul_implicit = Nx.einsum "ij,jk" [| a; b |] in
+  check_nx "einsum implicit matmul" res_matmul res_matmul_implicit;
+  let res_diag = Nx.einsum "ii->i" [| square |] in
+  check_t "einsum diag" [| 3 |] [| 1.; 5.; 9. |] res_diag;
+  let res_diag_sum = Nx.einsum "ii" [| square |] in
+  check_t "einsum diag sum" [||] [| 15. |] res_diag_sum;
+  let res_reduce = Nx.einsum "ij->i" [| a |] in
+  let sum_reduce = Nx.sum ~axes:[| 1 |] a in
+  check_nx "einsum reduce axis" sum_reduce res_reduce;
+  let res_total = Nx.einsum "ij->" [| a |] in
+  let sum_total = Nx.sum a in
+  check_nx "einsum reduce all" sum_total res_total;
   let res_trans = Nx.einsum "ij->ji" [| a |] in
-  check_t "einsum transpose" [| 3; 2 |] [| 1.; 4.; 2.; 5.; 3.; 6. |] res_trans
+  check_t "einsum transpose" [| 3; 2 |] [| 1.; 4.; 2.; 5.; 3.; 6. |] res_trans;
+  let res_three_way = Nx.einsum "xy,yz,zkw->xkw" [| a; b; c |] in
+  check_t "einsum three-way" [| 2; 2; 2 |]
+    [| 378.; 500.; 622.; 744.; 909.; 1202.; 1495.; 1788. |]
+    res_three_way;
+  (* let res_scalar = *)
+  (* let p = Nx.create Nx.int [| 2 |] [| 1; 2 |] in *)
+  (* let q = Nx.create Nx.int [| 2; 2 |] [| 3; 4; 5; 6 |] in *)
+  (* let r = Nx.create Nx.int [| 2; 2 |] [| 7; 8; 9; 10 |] in *)
+  (* Nx.einsum "z,mz,zm->" [| p; q; r |] in *)
+  (* check_t "einsum scalar" [| 2 ; 2; 2 |] [| 253 |] res_scalar; *)
+  let res_outer = Nx.einsum "ij,km->ijkm" [| a; b |] in
+  check_t "einsum outer" [| 2; 3; 3; 2 |]
+    [|
+      7.;
+      8.;
+      9.;
+      10.;
+      11.;
+      12.;
+      14.;
+      16.;
+      18.;
+      20.;
+      22.;
+      24.;
+      21.;
+      24.;
+      27.;
+      30.;
+      33.;
+      36.;
+      28.;
+      32.;
+      36.;
+      40.;
+      44.;
+      48.;
+      35.;
+      40.;
+      45.;
+      50.;
+      55.;
+      60.;
+      42.;
+      48.;
+      54.;
+      60.;
+      66.;
+      72.;
+    |]
+    res_outer;
+  let lhs =
+    Nx.create Nx.float32 [| 2; 3; 4 |]
+      (Array.init (2 * 3 * 4) (fun i -> float_of_int (i + 1)))
+  in
+  let rhs =
+    Nx.create Nx.float32 [| 1; 4; 5 |]
+      (Array.init (1 * 4 * 5) (fun i -> float_of_int (i + 1)))
+  in
+  let einsum_ell = Nx.einsum "...ij,...jk->...ik" [| lhs; rhs |] in
+  let rhs_broadcast = Nx.broadcast_to [| 2; 4; 5 |] rhs in
+  let expected_ell = Nx.matmul lhs rhs_broadcast in
+  check_nx "einsum ellipsis" expected_ell einsum_ell;
+  let batched =
+    Nx.create Nx.float32 [| 2; 3; 3 |]
+      (Array.init (2 * 3 * 3) (fun i -> float_of_int (i + 1)))
+  in
+  let diag_batch = Nx.einsum "...ii->...i" [| batched |] in
+  check_t "einsum batch diag" [| 2; 3 |]
+    [| 1.; 5.; 9.; 10.; 14.; 18. |]
+    diag_batch;
+  let vec = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let weighted = Nx.einsum "...i,i->..." [| a; vec |] in
+  let expected_weighted =
+    let mul = Nx.mul a (Nx.reshape [| 1; 3 |] vec) in
+    Nx.sum ~axes:[| 1 |] mul
+  in
+  check_nx "einsum broadcast dot" expected_weighted weighted;
+  let dot_scalar = Nx.einsum "i,i->" [| vec; vec |] in
+  check_t "einsum scalar" [||] [| 14. |] dot_scalar;
+  let c_mat =
+    Nx.create Nx.float32 [| 2; 4 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+  in
+  let chain = Nx.einsum "ab,bc,cd->ad" [| a; b; c_mat |] in
+  let expected_chain = Nx.matmul (Nx.matmul a b) c_mat in
+  check_nx "einsum chain" expected_chain chain
 
 let test_kron () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
@@ -883,6 +1019,7 @@ let product_tests =
     ("outer", `Quick, test_outer);
     ("tensordot", `Quick, test_tensordot);
     ("tensordot mismatch", `Quick, test_tensordot_mismatch);
+    ("einsum error", `Quick, test_einsum_error);
     ("einsum", `Quick, test_einsum);
     ("kron", `Quick, test_kron);
     ("multi dot", `Quick, test_multi_dot);
