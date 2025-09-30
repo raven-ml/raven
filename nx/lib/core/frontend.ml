@@ -1235,6 +1235,16 @@ module Make (B : Backend_intf.S) = struct
           Array.of_list
             (List.map (fun ax -> if ax < 0 then ax + rank else ax) ax_list)
     in
+    (* Validate axes are in bounds *)
+    Array.iter
+      (fun ax ->
+        if ax < 0 || ax >= rank then
+          Error.invalid ~op:"reduce" ~what:"axis"
+            ~reason:
+              (Printf.sprintf "axis %d out of bounds for tensor of rank %d" ax
+                 rank)
+            ())
+      axes_to_reduce;
     backend_op ~axes:axes_to_reduce ~keepdims x
 
   let sum ?axes ?(keepdims = false) x =

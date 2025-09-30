@@ -10,7 +10,7 @@ let array_approx_equal ?(eps = 1e-6) a b =
     let diff = Nx.sub a_flat b_flat in
     let abs_diff = Nx.abs diff in
     (* Get maximum value - reshape to scalar and extract *)
-    let max_diff = Nx.max abs_diff ~axes:[ 1 ] ~keepdims:false in
+    let max_diff = Nx.max abs_diff ~axes:[ 0 ] ~keepdims:false in
     let max_val = Nx.item [] max_diff in
     max_val < eps
   with _ -> false

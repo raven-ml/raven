@@ -904,6 +904,19 @@ static void dispatch_reduce_op(value v_input, value v_output, int *axes,
   ndarray_t input = extract_ndarray(v_input);
   ndarray_t output = extract_ndarray(v_output);
 
+  // Validate axes before entering blocking section
+  // (Cannot call caml_failwith from within blocking section)
+  for (int i = 0; i < num_axes; ++i) {
+    if (axes[i] < 0 || axes[i] >= input.ndim) {
+      char msg[256];
+      snprintf(msg, sizeof(msg), "%s: axis %d out of bounds for tensor of rank %d",
+               op_name, axes[i], input.ndim);
+      cleanup_ndarray(&input);
+      cleanup_ndarray(&output);
+      caml_failwith(msg);
+    }
+  }
+
   // Sort axes for consistency
   qsort(axes, num_axes, sizeof(int), cmp_int);
 
