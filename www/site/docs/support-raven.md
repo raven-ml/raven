@@ -48,7 +48,16 @@ We're also open to discussing custom sponsorship packages based on your needs.
 
 ## Current Sponsors
 
-_Be the first to support Raven! Early sponsors will be prominently featured here and in our documentation._
+We're grateful for the support of our sponsors:
+
+### Corporate Sponsors
+
+- [**Ahrefs**](https://ahrefs.com) - Building tools to help you grow your search traffic
+- [**Tarides**](https://tarides.com) - Secure-by-design infrastructure and tooling for a better digital world
+
+### Individual Sponsors
+
+Thank you to all our individual sponsors for their support!
 
 ## Get in Touch
 

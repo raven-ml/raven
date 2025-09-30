@@ -73,6 +73,13 @@ Your sponsorship helps us release a stable V1 with GPU backends, achieve NumPy/P
 
 **[Support Raven →](https://raven-ml.dev/docs/support-raven/)**
 
+### Corporate Sponsors
+
+We're grateful for the support of our corporate sponsors:
+
+- [**Ahrefs**](https://ahrefs.com) - Building tools to help you grow your search traffic
+- [**Tarides**](https://tarides.com) - Secure-by-design infrastructure and tooling for a better digital world
+
 ## License
 
 Raven is available under the [ISC License](LICENSE), making it free for both personal and commercial use.
