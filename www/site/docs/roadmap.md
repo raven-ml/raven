@@ -1,50 +1,65 @@
 # Roadmap
 
-Raven is in pre-alpha. We're building towards our first milestone: an end-to-end demo of training MNIST with visualizations in a Quill notebook.
+Raven is currently in alpha. We've focused on the core infrastructure to train large language models. We're successfully training GPT2 on CPU using the full Raven stack (Kaun → Rune → Nx).
 
-## Alpha Release
+## Alpha Releases ✅ 
 
-Our immediate goal is demonstrating the complete ML workflow in OCaml:
+**alpha1** has been released with three new libraries (Talon, Saga, Fehu) and major enhancements to Nx, Rune, and Kaun. This represents the complete scope for alpha.
 
-- Train a neural network on MNIST using Kaun
-- Visualize training metrics with Hugin
-- Run everything in a Quill notebook
-- Achieve reasonable performance on CPU
+**Future alpha releases** will focus exclusively on bug fixes and stability improvements. No new features are planned for the alpha cycle.
 
-Once we hit this milestone, we'll stabilize the APIs and cut v1.0.
+Key achievements:
+- Complete Nx numerical computing capabilities (linear algebra, FFT, extended dtypes)
+- Expanded Kaun with high-level training APIs inspired by PyTorch and Flax
+- Successfully trained GPT2 using the full Raven stack on CPU
+- Added DataFrame processing (Talon), NLP (Saga), and reinforcement learning (Fehu)
 
-## Post-Alpha: Training Large Models
+## Beta: JIT Compilation & Performance (Current Stage)
 
-After v1.0, we'll shift the goalpost to training large models. Our focus will become mostly performance, as the requirement for real-world ML workflows.
+The beta cycle will have a single focus: **JIT compilation with performance close to PyTorch**.
 
-**JIT Compilation** (!!)
-- Build JIT compiler for Rune
-- Target LLVM, CUDA, and Metal for hardware acceleration
+- Complete LLVM-based JIT compiler for Rune
+- Target CPU, CUDA, and Metal for hardware acceleration
+- Optimize compilation pipeline and runtime performance
+- Benchmark against PyTorch on standard workloads
+- Achieve competitive performance on common deep learning tasks
 
-**Accelerated Backends**
-- Metal backend for Nx (macOS GPU support)
-- CUDA backend for Nx (NVIDIA GPU support)
-- Seamless integration with the JIT
+## V1: Developer Experience
 
-**Deep Learning at Scale**
-- Complete Kaun with all features needed for modern LLMs
-- Train and run inference for Llama 3 as our benchmark
-- Enable distributed training across multiple GPUs
+Once performance is competitive using JIT compilation, V1 will focus on **developer experience and documentation**:
 
-## Beyond
+**Developer Tooling**
+- Complete Hugin (plotting library) with publication-quality visualizations
+- Complete Quill (notebook environment) for interactive data science
+- Integrated workflows for data scientists coming from Python
 
-Future development depends on community adoption and potential sponsorship. If we achieve sustainable development, priorities include:
+**Documentation**
+- Comprehensive tutorials and getting-started guides
+- Complete API reference documentation
+- Migration guides for NumPy/PyTorch users
+- Real-world examples and case studies
 
-**Performance Parity with Python**
-- Match NumPy/PyTorch performance through JIT optimization
-- Prove OCaml can compete on raw compute, not just developer experience
+**API Stability**
+- Finalize and stabilize all public APIs
+- Ensure backward compatibility guarantees
 
-**Expanded Ecosystem (based on community feedback)**
-- Dataframe manipulation library 
-- Domain-specific libraries for common workflows
+## Post-V1: Production Scale
 
-**Distributed Computing**
-- First-class distributed training support
-- Tools for deploying models at scale
+After V1, we'll focus on **scaling for real-world production constraints**:
 
-But first, we need to prove the concept works. That starts with MNIST in a notebook.
+**Distributed Training**
+- Multi-GPU training on a single machine
+- Distributed training across multiple machines
+- Efficient data parallelism and model parallelism
+
+**Deployment**
+- Model serving infrastructure
+- Optimization for inference workloads
+- Integration with deployment platforms
+
+**Production Readiness**
+- Monitoring and observability tools
+- Performance profiling and optimization
+- Enterprise support and stability guarantees
+
+The path is clear: alpha proves the concept, beta matches Python's performance, V1 delivers great developer experience, and post-V1 enables production ML at scale.
