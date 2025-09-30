@@ -6,6 +6,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/threads.h>
+#include <cblas.h>
 
 #include "nx_c_shared.h"
 
@@ -315,9 +316,9 @@ GENERATE_MATMUL_OP(qu8, caml_ba_quint8, uint64_t, (caml_ba_quint8))
 GENERATE_MATMUL_OP(bool_, caml_ba_bool, uint64_t, (caml_ba_bool))
 
 // Float types with same-type accumulation
-/* Optimized blocked kernels for float32/float64. These improve cache locality
-   by computing NB outputs in a column tile at a time, reusing A(i,p) across
-   a small block of B(p, j..j+NB-1). Works with arbitrary strides. */
+/* BLAS-based GEMM kernels for float32/float64 using CBLAS.
+   These use optimized BLAS routines when possible, falling back to
+   packing for non-contiguous strides. */
 static void nx_c_matmul_f32_kernel(void *a_data, long a_off, long a_rs,
                                    long a_cs, void *b_data, long b_off,
                                    long b_rs, long b_cs, void *c_data,
@@ -326,47 +327,72 @@ static void nx_c_matmul_f32_kernel(void *a_data, long a_off, long a_rs,
   float *restrict a = (float *)a_data;
   float *restrict b = (float *)b_data;
   float *restrict c = (float *)c_data;
-  /* Small-GEMM microkernel for attention-sized multiplies */
-  if (m <= 16 && n <= 16 && k <= 64) {
-    float acc[16][16];
-    for (int ii = 0; ii < m; ++ii)
-      for (int jj = 0; jj < n; ++jj) acc[ii][jj] = 0.0f;
-    float bcol[16];
-    for (long p = 0; p < k; ++p) {
-      long bbase = b_off + p * b_rs;
-      for (int jj = 0; jj < n; ++jj) bcol[jj] = b[bbase + (long)jj * b_cs];
-      for (int ii = 0; ii < m; ++ii) {
-        float aval = a[a_off + (long)ii * a_rs + p * a_cs];
-        for (int jj = 0; jj < n; ++jj) acc[ii][jj] += aval * bcol[jj];
-      }
-    }
-    for (int ii = 0; ii < m; ++ii) {
-      long cbase = c_off + (long)ii * c_rs;
-      for (int jj = 0; jj < n; ++jj) c[cbase + (long)jj * c_cs] = acc[ii][jj];
-    }
-    return;
-  }
-  const int NB = 64; /* tile width along N (columns) */
 
-  _Pragma("omp parallel for collapse(2) if(m * n > 1024)")
-  for (long i = 0; i < m; i++) {
-    for (long j0 = 0; j0 < n; j0 += NB) {
-      int jb = (int)((j0 + NB) < n ? NB : (n - j0));
-      float acc[64];
-      /* process one row of C for a tile of columns */
-      for (int jj = 0; jj < jb; jj++) acc[jj] = 0.0f;
-      for (long p = 0; p < k; p++) {
-        float aval = a[a_off + i * a_rs + p * a_cs];
-        long bbase = b_off + p * b_rs + j0 * b_cs;
-        for (int jj = 0; jj < jb; jj++) {
-          acc[jj] += aval * b[bbase + (long)jj * b_cs];
-        }
-      }
-      long cbase = c_off + i * c_rs + j0 * c_cs;
-      for (int jj = 0; jj < jb; jj++) {
-        c[cbase + (long)jj * c_cs] = acc[jj];
+  /* Check if we can use BLAS directly (row-major with compatible strides) */
+  int use_blas_direct = 0;
+  CBLAS_ORDER order;
+  CBLAS_TRANSPOSE trans_a = CblasNoTrans;
+  CBLAS_TRANSPOSE trans_b = CblasNoTrans;
+  int lda, ldb, ldc;
+
+  /* Check for row-major layout: inner stride is 1 */
+  if (a_cs == 1 && b_cs == 1 && c_cs == 1 && a_rs >= k && b_rs >= n && c_rs >= n) {
+    /* Row-major A, B, C - leading dimension is the row stride */
+    order = CblasRowMajor;
+    lda = a_rs;  /* A is m x k, leading dimension is row stride */
+    ldb = b_rs;  /* B is k x n, leading dimension is row stride */
+    ldc = c_rs;  /* C is m x n, leading dimension is row stride */
+    use_blas_direct = 1;
+  } else if (a_rs == 1 && b_rs == 1 && c_rs == 1 && a_cs >= m && b_cs >= k && c_cs >= m) {
+    /* Column-major A, B, C - leading dimension is the column stride */
+    order = CblasColMajor;
+    lda = a_cs;  /* A is m x k, leading dimension is column stride */
+    ldb = b_cs;  /* B is k x n, leading dimension is column stride */
+    ldc = c_cs;  /* C is m x n, leading dimension is column stride */
+    use_blas_direct = 1;
+  }
+
+  if (use_blas_direct) {
+    cblas_sgemm(order, trans_a, trans_b, m, n, k, 1.0f,
+                a + a_off, lda, b + b_off, ldb, 0.0f, c + c_off, ldc);
+  } else {
+    /* Non-contiguous layout: pack matrices first */
+    float *a_packed = (float *)malloc(m * k * sizeof(float));
+    float *b_packed = (float *)malloc(k * n * sizeof(float));
+    float *c_packed = (float *)malloc(m * n * sizeof(float));
+    if (!a_packed || !b_packed || !c_packed) {
+      free(a_packed);
+      free(b_packed);
+      free(c_packed);
+      return;
+    }
+
+    /* Pack A and B */
+    for (long i = 0; i < m; i++) {
+      for (long j = 0; j < k; j++) {
+        a_packed[i * k + j] = a[a_off + i * a_rs + j * a_cs];
       }
     }
+    for (long i = 0; i < k; i++) {
+      for (long j = 0; j < n; j++) {
+        b_packed[i * n + j] = b[b_off + i * b_rs + j * b_cs];
+      }
+    }
+
+    /* Compute using BLAS */
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0f,
+                a_packed, k, b_packed, n, 0.0f, c_packed, n);
+
+    /* Unpack C */
+    for (long i = 0; i < m; i++) {
+      for (long j = 0; j < n; j++) {
+        c[c_off + i * c_rs + j * c_cs] = c_packed[i * n + j];
+      }
+    }
+
+    free(a_packed);
+    free(b_packed);
+    free(c_packed);
   }
 }
 
@@ -378,45 +404,72 @@ static void nx_c_matmul_f64_kernel(void *a_data, long a_off, long a_rs,
   double *restrict a = (double *)a_data;
   double *restrict b = (double *)b_data;
   double *restrict c = (double *)c_data;
-  if (m <= 16 && n <= 16 && k <= 64) {
-    double acc[16][16];
-    for (int ii = 0; ii < m; ++ii)
-      for (int jj = 0; jj < n; ++jj) acc[ii][jj] = 0.0;
-    double bcol[16];
-    for (long p = 0; p < k; ++p) {
-      long bbase = b_off + p * b_rs;
-      for (int jj = 0; jj < n; ++jj) bcol[jj] = b[bbase + (long)jj * b_cs];
-      for (int ii = 0; ii < m; ++ii) {
-        double aval = a[a_off + (long)ii * a_rs + p * a_cs];
-        for (int jj = 0; jj < n; ++jj) acc[ii][jj] += aval * bcol[jj];
-      }
-    }
-    for (int ii = 0; ii < m; ++ii) {
-      long cbase = c_off + (long)ii * c_rs;
-      for (int jj = 0; jj < n; ++jj) c[cbase + (long)jj * c_cs] = acc[ii][jj];
-    }
-    return;
-  }
-  const int NB = 32; /* smaller tile for doubles to fit caches */
 
-  _Pragma("omp parallel for collapse(2) if(m * n > 1024)")
-  for (long i = 0; i < m; i++) {
-    for (long j0 = 0; j0 < n; j0 += NB) {
-      int jb = (int)((j0 + NB) < n ? NB : (n - j0));
-      double acc[32];
-      for (int jj = 0; jj < jb; jj++) acc[jj] = 0.0;
-      for (long p = 0; p < k; p++) {
-        double aval = a[a_off + i * a_rs + p * a_cs];
-        long bbase = b_off + p * b_rs + j0 * b_cs;
-        for (int jj = 0; jj < jb; jj++) {
-          acc[jj] += aval * b[bbase + (long)jj * b_cs];
-        }
-      }
-      long cbase = c_off + i * c_rs + j0 * c_cs;
-      for (int jj = 0; jj < jb; jj++) {
-        c[cbase + (long)jj * c_cs] = acc[jj];
+  /* Check if we can use BLAS directly (row-major with compatible strides) */
+  int use_blas_direct = 0;
+  CBLAS_ORDER order;
+  CBLAS_TRANSPOSE trans_a = CblasNoTrans;
+  CBLAS_TRANSPOSE trans_b = CblasNoTrans;
+  int lda, ldb, ldc;
+
+  /* Check for row-major layout: inner stride is 1 */
+  if (a_cs == 1 && b_cs == 1 && c_cs == 1 && a_rs >= k && b_rs >= n && c_rs >= n) {
+    /* Row-major A, B, C - leading dimension is the row stride */
+    order = CblasRowMajor;
+    lda = a_rs;  /* A is m x k, leading dimension is row stride */
+    ldb = b_rs;  /* B is k x n, leading dimension is row stride */
+    ldc = c_rs;  /* C is m x n, leading dimension is row stride */
+    use_blas_direct = 1;
+  } else if (a_rs == 1 && b_rs == 1 && c_rs == 1 && a_cs >= m && b_cs >= k && c_cs >= m) {
+    /* Column-major A, B, C - leading dimension is the column stride */
+    order = CblasColMajor;
+    lda = a_cs;  /* A is m x k, leading dimension is column stride */
+    ldb = b_cs;  /* B is k x n, leading dimension is column stride */
+    ldc = c_cs;  /* C is m x n, leading dimension is column stride */
+    use_blas_direct = 1;
+  }
+
+  if (use_blas_direct) {
+    cblas_dgemm(order, trans_a, trans_b, m, n, k, 1.0,
+                a + a_off, lda, b + b_off, ldb, 0.0, c + c_off, ldc);
+  } else {
+    /* Non-contiguous layout: pack matrices first */
+    double *a_packed = (double *)malloc(m * k * sizeof(double));
+    double *b_packed = (double *)malloc(k * n * sizeof(double));
+    double *c_packed = (double *)malloc(m * n * sizeof(double));
+    if (!a_packed || !b_packed || !c_packed) {
+      free(a_packed);
+      free(b_packed);
+      free(c_packed);
+      return;
+    }
+
+    /* Pack A and B */
+    for (long i = 0; i < m; i++) {
+      for (long j = 0; j < k; j++) {
+        a_packed[i * k + j] = a[a_off + i * a_rs + j * a_cs];
       }
     }
+    for (long i = 0; i < k; i++) {
+      for (long j = 0; j < n; j++) {
+        b_packed[i * n + j] = b[b_off + i * b_rs + j * b_cs];
+      }
+    }
+
+    /* Compute using BLAS */
+    cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0,
+                a_packed, k, b_packed, n, 0.0, c_packed, n);
+
+    /* Unpack C */
+    for (long i = 0; i < m; i++) {
+      for (long j = 0; j < n; j++) {
+        c[c_off + i * c_rs + j * c_cs] = c_packed[i * n + j];
+      }
+    }
+
+    free(a_packed);
+    free(b_packed);
+    free(c_packed);
   }
 }
 
@@ -424,9 +477,169 @@ static void nx_c_matmul_f64_kernel(void *a_data, long a_off, long a_rs,
 MATMUL_OP_IMPL(f32, sizeof(float))
 MATMUL_OP_IMPL(f64, sizeof(double))
 
-// Complex types with same-type accumulation
-GENERATE_MATMUL_OP(c32, complex32, complex32, )
-GENERATE_MATMUL_OP(c64, complex64, complex64, )
+// Complex types with BLAS GEMM
+static void nx_c_matmul_c32_kernel(void *a_data, long a_off, long a_rs,
+                                   long a_cs, void *b_data, long b_off,
+                                   long b_rs, long b_cs, void *c_data,
+                                   long c_off, long c_rs, long c_cs, long m,
+                                   long k, long n) {
+  complex32 *restrict a = (complex32 *)a_data;
+  complex32 *restrict b = (complex32 *)b_data;
+  complex32 *restrict c = (complex32 *)c_data;
+
+  /* Check if we can use BLAS directly (row-major with compatible strides) */
+  int use_blas_direct = 0;
+  CBLAS_ORDER order;
+  CBLAS_TRANSPOSE trans_a = CblasNoTrans;
+  CBLAS_TRANSPOSE trans_b = CblasNoTrans;
+  int lda, ldb, ldc;
+
+  /* Check for row-major layout: inner stride is 1 */
+  if (a_cs == 1 && b_cs == 1 && c_cs == 1 && a_rs >= k && b_rs >= n && c_rs >= n) {
+    /* Row-major A, B, C - leading dimension is the row stride */
+    order = CblasRowMajor;
+    lda = a_rs;  /* A is m x k, leading dimension is row stride */
+    ldb = b_rs;  /* B is k x n, leading dimension is row stride */
+    ldc = c_rs;  /* C is m x n, leading dimension is row stride */
+    use_blas_direct = 1;
+  } else if (a_rs == 1 && b_rs == 1 && c_rs == 1 && a_cs >= m && b_cs >= k && c_cs >= m) {
+    /* Column-major A, B, C - leading dimension is the column stride */
+    order = CblasColMajor;
+    lda = a_cs;  /* A is m x k, leading dimension is column stride */
+    ldb = b_cs;  /* B is k x n, leading dimension is column stride */
+    ldc = c_cs;  /* C is m x n, leading dimension is column stride */
+    use_blas_direct = 1;
+  }
+
+  complex32 alpha = 1.0f + 0.0f * I;
+  complex32 beta = 0.0f + 0.0f * I;
+
+  if (use_blas_direct) {
+    cblas_cgemm(order, trans_a, trans_b, m, n, k, &alpha,
+                a + a_off, lda, b + b_off, ldb, &beta, c + c_off, ldc);
+  } else {
+    /* Non-contiguous layout: pack matrices first */
+    complex32 *a_packed = (complex32 *)malloc(m * k * sizeof(complex32));
+    complex32 *b_packed = (complex32 *)malloc(k * n * sizeof(complex32));
+    complex32 *c_packed = (complex32 *)malloc(m * n * sizeof(complex32));
+    if (!a_packed || !b_packed || !c_packed) {
+      free(a_packed);
+      free(b_packed);
+      free(c_packed);
+      return;
+    }
+
+    /* Pack A and B */
+    for (long i = 0; i < m; i++) {
+      for (long j = 0; j < k; j++) {
+        a_packed[i * k + j] = a[a_off + i * a_rs + j * a_cs];
+      }
+    }
+    for (long i = 0; i < k; i++) {
+      for (long j = 0; j < n; j++) {
+        b_packed[i * n + j] = b[b_off + i * b_rs + j * b_cs];
+      }
+    }
+
+    /* Compute using BLAS */
+    cblas_cgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, &alpha,
+                a_packed, k, b_packed, n, &beta, c_packed, n);
+
+    /* Unpack C */
+    for (long i = 0; i < m; i++) {
+      for (long j = 0; j < n; j++) {
+        c[c_off + i * c_rs + j * c_cs] = c_packed[i * n + j];
+      }
+    }
+
+    free(a_packed);
+    free(b_packed);
+    free(c_packed);
+  }
+}
+
+static void nx_c_matmul_c64_kernel(void *a_data, long a_off, long a_rs,
+                                   long a_cs, void *b_data, long b_off,
+                                   long b_rs, long b_cs, void *c_data,
+                                   long c_off, long c_rs, long c_cs, long m,
+                                   long k, long n) {
+  complex64 *restrict a = (complex64 *)a_data;
+  complex64 *restrict b = (complex64 *)b_data;
+  complex64 *restrict c = (complex64 *)c_data;
+
+  /* Check if we can use BLAS directly (row-major with compatible strides) */
+  int use_blas_direct = 0;
+  CBLAS_ORDER order;
+  CBLAS_TRANSPOSE trans_a = CblasNoTrans;
+  CBLAS_TRANSPOSE trans_b = CblasNoTrans;
+  int lda, ldb, ldc;
+
+  /* Check for row-major layout: inner stride is 1 */
+  if (a_cs == 1 && b_cs == 1 && c_cs == 1 && a_rs >= k && b_rs >= n && c_rs >= n) {
+    /* Row-major A, B, C - leading dimension is the row stride */
+    order = CblasRowMajor;
+    lda = a_rs;  /* A is m x k, leading dimension is row stride */
+    ldb = b_rs;  /* B is k x n, leading dimension is row stride */
+    ldc = c_rs;  /* C is m x n, leading dimension is row stride */
+    use_blas_direct = 1;
+  } else if (a_rs == 1 && b_rs == 1 && c_rs == 1 && a_cs >= m && b_cs >= k && c_cs >= m) {
+    /* Column-major A, B, C - leading dimension is the column stride */
+    order = CblasColMajor;
+    lda = a_cs;  /* A is m x k, leading dimension is column stride */
+    ldb = b_cs;  /* B is k x n, leading dimension is column stride */
+    ldc = c_cs;  /* C is m x n, leading dimension is column stride */
+    use_blas_direct = 1;
+  }
+
+  complex64 alpha = 1.0 + 0.0 * I;
+  complex64 beta = 0.0 + 0.0 * I;
+
+  if (use_blas_direct) {
+    cblas_zgemm(order, trans_a, trans_b, m, n, k, &alpha,
+                a + a_off, lda, b + b_off, ldb, &beta, c + c_off, ldc);
+  } else {
+    /* Non-contiguous layout: pack matrices first */
+    complex64 *a_packed = (complex64 *)malloc(m * k * sizeof(complex64));
+    complex64 *b_packed = (complex64 *)malloc(k * n * sizeof(complex64));
+    complex64 *c_packed = (complex64 *)malloc(m * n * sizeof(complex64));
+    if (!a_packed || !b_packed || !c_packed) {
+      free(a_packed);
+      free(b_packed);
+      free(c_packed);
+      return;
+    }
+
+    /* Pack A and B */
+    for (long i = 0; i < m; i++) {
+      for (long j = 0; j < k; j++) {
+        a_packed[i * k + j] = a[a_off + i * a_rs + j * a_cs];
+      }
+    }
+    for (long i = 0; i < k; i++) {
+      for (long j = 0; j < n; j++) {
+        b_packed[i * n + j] = b[b_off + i * b_rs + j * b_cs];
+      }
+    }
+
+    /* Compute using BLAS */
+    cblas_zgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, &alpha,
+                a_packed, k, b_packed, n, &beta, c_packed, n);
+
+    /* Unpack C */
+    for (long i = 0; i < m; i++) {
+      for (long j = 0; j < n; j++) {
+        c[c_off + i * c_rs + j * c_cs] = c_packed[i * n + j];
+      }
+    }
+
+    free(a_packed);
+    free(b_packed);
+    free(c_packed);
+  }
+}
+
+MATMUL_OP_IMPL(c32, sizeof(complex32))
+MATMUL_OP_IMPL(c64, sizeof(complex64))
 
 // Low-precision floats
 LOW_PREC_MATMUL_KERNEL(f16, uint16_t, half_to_float, float_to_half)
