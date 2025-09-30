@@ -4,24 +4,61 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~alpha1] - TBD
 
-- Support for FFT operations in Nx
-- Support for symbolic shapes in Nx (for now only internally, the frontend only accepts static shapes)
-- Support for lazy views in Nx, views now only materialize when needed (strides need memory re-ordering)
-- Add a complete linear algebra suite to Nx, matching NumPy
-- New Talon package that provides an equivalent for Pandas/Polars to work with dataframes
-- New Saga package providing tokenizers, text generation and other NLP functionalities (e.g. Ngram models)
-- New Fehu package for reinforcement learning with support for environments, agents, and training loops
-- Support for new and machine-learning-specific data types, including boolean, bfloat16, complex16, float8, etc.
-- Support for forward mode differenciation through `Rune.jvp`
-- Major expansion of Kaun deep learning framework, bringing it closer to PyTorch/Flax in scope and API:
-  - High-level training API mimicking Keras for easy model training
-  - Comprehensive metrics API for automatic metrics collection during training
-  - Checkpoint API for loading and saving model weights
-  - Data pipeline API equivalent to TensorFlow's dataset for efficient data loading
-  - HuggingFace integration library (kaun.huggingface) for model compatibility
-  - Datasets library for loading common ML datasets (MNIST, ImageNet, etc.)
-  - Model zoo (kaun.models) with standard architectures: LeNet5, BERT, GPT2
-  - Complete transformer blocks with working BERT and GPT2 implementations
+This release expands the Raven ecosystem with three new libraries (Talon, Saga, Fehu) and significant enhancements to existing ones. `alpha1` focuses on breadth—adding foundational capabilities across data processing, NLP, and reinforcement learning—while continuing to iterate on core infrastructure.
+
+### New Libraries
+
+#### Talon - DataFrame Processing
+We've added Talon, a new DataFrame library inspired by pandas and polars:
+- Columnar data structures that support mixed types (integers, floats, strings, etc.) within a single table (aka heterogeneous datasets)
+- Operations: filter rows, group by columns, join tables, compute aggregates
+- Load and save data in CSV and JSON formats
+- Seamless conversion to/from Nx arrays for numerical operations
+
+#### Saga - NLP & Text Processing
+Saga is a new text processing library for building language models. It provides:
+- Tokenizers: Byte-pair encoding (BPE), WordPiece subword tokenization, and character-level splitting
+- Text generation: Control output with temperature scaling, top-k filtering, nucleus (top-p) sampling, and custom sampling strategies
+- Language models: Train and generate text with statistical n-gram models (bigrams, trigrams, etc.)
+- I/O: Read large text files line-by-line and batch-process corpora
+
+#### Fehu - Reinforcement Learning
+Fehu brings reinforcement learning to Raven, with an API inspired by Gymnasium and Stable-Baselines3:
+- Standard RL environment interface (reset, step, render) with example environments like Random Walk and CartPole
+- Environment wrappers to modify observations, rewards, or episode termination conditions
+- Vectorized environments to collect experience from multiple parallel rollouts
+- Training utilities: Generalized advantage estimation (GAE), trajectory collection and management
+- RL algorithms: Policy gradient method (REINFORCE), deep Q-learning (DQN) with replay buffer
+- Use Kaun neural networks as function approximators for policies and value functions
+
+### Major Enhancements
+
+#### Nx - Array Computing
+We've significantly expanded Nx's following early user feedback from alpha0:
+- Complete linear algebra suite: LAPACK-backed operations matching NumPy including singular value decomposition (SVD), QR factorization, Cholesky decomposition, eigenvalue/eigenvector computation, matrix inverse, and solving linear systems
+- FFT operations: Fast Fourier transforms (FFT/IFFT) for frequency domain analysis and signal processing
+- Advanced operations: Einstein summation notation (`einsum`) for complex tensor operations, extract/construct diagonal matrices (`diag`), cumulative sums and products along axes
+- Extended dtypes: Machine learning-focused types including bfloat16 (brain floating point), complex16, and float8 for reduced-precision training
+- Symbolic shapes: Internal infrastructure for symbolic shape inference to enable dynamic shapes in future releases (not yet exposed in public API)
+- Lazy views: Array views only copy and reorder memory when stride patterns require it, avoiding unnecessary allocations
+
+#### Rune - Autodiff & JIT
+We've continued iterating on Rune's autodiff capabilities, and made progress on upcoming features:
+- Forward-mode AD: Compute Jacobian-vector products (`jvp`) for forward-mode automatic differentiation, complementing existing reverse-mode
+- JIT: Ongoing development of LLVM-based just-in-time compilation for Rune computations (currently in prototype stage)
+- vmap: Experimental support for vectorized mapping to automatically batch operations (work-in-progress, not yet stable)
+- LLVM backend: Added compilation backend with support for LLVM versions 19, 20, and 21
+- Metal backend: Continued work on GPU acceleration for macOS using Metal compute shaders
+
+#### Kaun - Deep Learning
+We've expanded Kaun with high-level APIs for deep learning. These APIs are inspired by popular Python frameworks like TensorFlow, PyTorch, and Flax, and should feel familiar to users building models in Python:
+- High-level training: Keras-style `fit()` function to train models with automatic batching, gradient computation, and parameter updates
+- Training state: Encapsulated training state (TrainState) holding parameters, optimizer state, and step count; automatic history tracking of loss and metrics
+- Checkpoints: Save and load model weights to disk for model persistence and transfer learning
+- Metrics: Automatic metric computation during training including accuracy, precision, recall, F1 score, mean absolute error (MAE), and mean squared error (MSE)
+- Data pipeline: Composable dataset operations (map, filter, batch, shuffle, cache) inspired by TensorFlow's `tf.data` for building input pipelines
+- Model zoo: Reference implementations of classic and modern architectures (LeNet5 for basic CNNs, BERT for masked language modeling, GPT2 for autoregressive generation) including reusable transformer components
+- Ecosystem integration: Load HuggingFace model architectures (`kaun.huggingface`), access common datasets like MNIST and CIFAR-10 (`kaun.datasets`), and use standardized model definitions (`kaun.models`)
 
 ## [1.0.0~alpha0] - 2025-07-05
 
