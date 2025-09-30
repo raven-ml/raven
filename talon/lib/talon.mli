@@ -15,11 +15,49 @@
 
     {2 Null Handling}
 
-    Talon provides consistent null semantics across all column types:
-    - Numeric columns: NaN for floats, Int32.min_int/Int64.min_int for integers
-    - String/Boolean columns: [None] values represent nulls
+    Talon provides first-class null semantics with explicit null masks for
+    numeric columns, ensuring accurate tracking of missing values:
+
+    {3 Null Representation}
+
+    - {b Numeric columns}: Optional boolean mask tracks null entries explicitly.
+      When no mask exists, sentinel values (NaN for floats,
+      Int32.min_int/Int64.min_int for integers) indicate nulls. The mask takes
+      precedence when present.
+    - {b String/Boolean columns}: [None] values represent nulls explicitly
+
+    {3 Creating Nullable Columns}
+
+    Use the [_opt] constructors to create columns with explicit null support:
+    {[
+      (* Nullable numeric columns *)
+      Col.float64_opt
+        [| Some 1.0; None; Some 3.0 |]
+        Col.int32_opt
+        [| Some 42l; None; Some 100l |]
+        (* String/bool columns preserve None directly *)
+        Col.string_opt
+        [| Some "hello"; None; Some "world" |]
+        Col.bool_opt
+        [| Some true; None; Some false |]
+    ]}
+
+    {3 Accessing Values with Null Awareness}
+
+    Use option-based accessors to distinguish nulls from sentinel values:
+    {[
+      (* Row-wise option accessors *)
+      Row.float64_opt "score" (* Returns None for nulls *) Row.int32_opt
+        "count" (* Distinguishes None from Int32.min_int *)
+        (* Extract as option arrays *)
+        to_float64_options df "score" (* float option array *)
+    ]}
+
+    {3 Null Propagation}
+
     - Operations propagate nulls: [null + x = null]
     - Aggregations skip nulls by default (configurable with [skipna] parameter)
+    - Mask-aware aggregations properly exclude masked entries from computations
 
     {2 Type Safety}
 
@@ -108,19 +146,24 @@ module Col : sig
       homogeneous array of values with consistent null handling. *)
 
   type t =
-    | P : ('a, 'b) Nx.dtype * ('a, 'b) Nx.t -> t
+    | P : ('a, 'b) Nx.dtype * ('a, 'b) Nx.t * bool array option -> t
     | S : string option array -> t
     | B : bool option array -> t
         (** Heterogeneous column representation with explicit null support.
 
             Variants:
-            - [P (dtype, tensor)]: Numeric data stored as 1D Nx tensors
+            - [P (dtype, tensor, mask)]: Numeric data stored as 1D Nx tensors
+              with an optional null mask indicating which entries are missing
             - [S arr]: String data with explicit [None] for nulls
             - [B arr]: Boolean data with explicit [None] for nulls
 
             Null representation:
-            - Float columns: NaN values indicate nulls
-            - Integer columns: [Int32.min_int]/[Int64.min_int] indicate nulls
+            - Float columns: NaN values indicate nulls; nullable builders also
+              track an explicit null mask to distinguish genuine NaNs from
+              missing values
+            - Integer columns: [Int32.min_int]/[Int64.min_int] remain sentinel
+              defaults in the tensor, while the explicit mask disambiguates
+              missing entries from legitimate sentinel values
             - String/Boolean columns: [None] values indicate nulls
 
             Invariants:
@@ -286,6 +329,12 @@ module Col : sig
   (** [string_list lst] creates a string column from list.
 
       Time complexity: O(n) where n is list length. *)
+
+  val null_mask : t -> bool array option
+  (** [null_mask col] returns the explicit null mask tracked for numeric columns
+      constructed via nullable builders.
+
+      Returns [Some mask] when an explicit mask exists, [None] otherwise. *)
 
   (** {3 From tensors}
 
@@ -738,6 +787,54 @@ val to_string_array : t -> string -> string array option
 
     @param name Column name to extract *)
 
+val to_float32_options : t -> string -> float option array option
+(** [to_float32_options df name] extracts column as float option array.
+
+    Returns [Some array] if the column exists and is float32 type, [None]
+    otherwise. Null values (NaN or masked) become [None] in the array.
+
+    @param name Column name to extract *)
+
+val to_float64_options : t -> string -> float option array option
+(** [to_float64_options df name] extracts column as float option array.
+
+    Returns [Some array] if the column exists and is float64 type, [None]
+    otherwise. Null values (NaN or masked) become [None] in the array.
+
+    @param name Column name to extract *)
+
+val to_int32_options : t -> string -> int32 option array option
+(** [to_int32_options df name] extracts column as int32 option array.
+
+    Returns [Some array] if the column exists and is int32 type, [None]
+    otherwise. Null values (Int32.min_int or masked) become [None] in the array.
+
+    @param name Column name to extract *)
+
+val to_int64_options : t -> string -> int64 option array option
+(** [to_int64_options df name] extracts column as int64 option array.
+
+    Returns [Some array] if the column exists and is int64 type, [None]
+    otherwise. Null values (Int64.min_int or masked) become [None] in the array.
+
+    @param name Column name to extract *)
+
+val to_bool_options : t -> string -> bool option array option
+(** [to_bool_options df name] extracts column as bool option array.
+
+    Returns [Some array] if the column exists and is bool type, [None]
+    otherwise. Null values are represented as [None] in the array.
+
+    @param name Column name to extract *)
+
+val to_string_options : t -> string -> string option array option
+(** [to_string_options df name] extracts column as string option array.
+
+    Returns [Some array] if the column exists and is string type, [None]
+    otherwise. Null values are represented as [None] in the array.
+
+    @param name Column name to extract *)
+
 val has_column : t -> string -> bool
 (** [has_column df name] returns true if column exists.
 
@@ -1133,6 +1230,85 @@ module Row : sig
   val strings : string list -> string row list
   (** [strings names] creates string accessors for all column names. *)
 
+  (** {2 Option-based accessors}
+
+      These accessors return [None] for null values instead of using sentinel
+      values or defaults. Use these when you need to distinguish genuine values
+      from missing data. *)
+
+  val float32_opt : string -> float option row
+  (** [float32_opt name] extracts float32 values as options from column.
+
+      Returns [None] for null values (NaN or explicitly masked). Use this
+      instead of [float32] when you need to distinguish null values from valid
+      data.
+
+      @raise Not_found if column doesn't exist.
+      @raise Invalid_argument if column is not float32 type. *)
+
+  val float64_opt : string -> float option row
+  (** [float64_opt name] extracts float64 values as options from column.
+
+      Returns [None] for null values (NaN or explicitly masked).
+
+      @raise Not_found if column doesn't exist.
+      @raise Invalid_argument if column is not float64 type. *)
+
+  val int32_opt : string -> int32 option row
+  (** [int32_opt name] extracts int32 values as options from column.
+
+      Returns [None] for null values (Int32.min_int or explicitly masked).
+
+      @raise Not_found if column doesn't exist.
+      @raise Invalid_argument if column is not int32 type. *)
+
+  val int64_opt : string -> int64 option row
+  (** [int64_opt name] extracts int64 values as options from column.
+
+      Returns [None] for null values (Int64.min_int or explicitly masked).
+
+      @raise Not_found if column doesn't exist.
+      @raise Invalid_argument if column is not int64 type. *)
+
+  val string_opt : string -> string option row
+  (** [string_opt name] extracts string values as options from column.
+
+      Returns [None] for null values. Use this instead of [string] when you need
+      to distinguish null strings from empty strings.
+
+      @raise Not_found if column doesn't exist.
+      @raise Invalid_argument if column is not string type. *)
+
+  val bool_opt : string -> bool option row
+  (** [bool_opt name] extracts boolean values as options from column.
+
+      Returns [None] for null values. Use this instead of [bool] when you need
+      to distinguish null values from false.
+
+      @raise Not_found if column doesn't exist.
+      @raise Invalid_argument if column is not boolean type. *)
+
+  val float32s_opt : string list -> float option row list
+  (** [float32s_opt names] creates float32 option accessors for all column
+      names. *)
+
+  val float64s_opt : string list -> float option row list
+  (** [float64s_opt names] creates float64 option accessors for all column
+      names. *)
+
+  val int32s_opt : string list -> int32 option row list
+  (** [int32s_opt names] creates int32 option accessors for all column names. *)
+
+  val int64s_opt : string list -> int64 option row list
+  (** [int64s_opt names] creates int64 option accessors for all column names. *)
+
+  val bools_opt : string list -> bool option row list
+  (** [bools_opt names] creates bool option accessors for all column names. *)
+
+  val strings_opt : string list -> string option row list
+  (** [strings_opt names] creates string option accessors for all column names.
+  *)
+
   (** {2 Row-wise Aggregations}
 
       Efficient horizontal aggregations across columns within each row. These
@@ -1342,6 +1518,82 @@ val filter : t -> bool array -> t
 
 val filter_by : t -> bool row -> t
 (** [filter_by df pred] filters rows where predicate returns true. *)
+
+val drop_nulls : ?subset:string list -> t -> t
+(** [drop_nulls ?subset df] removes rows containing any null values.
+
+    If [subset] is provided, only checks those columns for nulls. Otherwise
+    checks all columns. A row is dropped if any value in the checked columns is
+    null.
+
+    Null definitions:
+    - Float columns: NaN values or entries with mask bit set
+    - Integer columns: Int32.min_int/Int64.min_int or entries with mask bit set
+    - String/Boolean columns: [None] values
+
+    @param subset Columns to check for nulls (default: all columns)
+
+    Example:
+    {[
+      let df =
+        create
+          [
+            ("a", Col.float64_opt [| Some 1.0; None; Some 3.0 |]);
+            ("b", Col.int32 [| 10l; 20l; 30l |]);
+          ]
+      in
+      let cleaned = drop_nulls df in
+      (* Result: 2 rows (indices 0 and 2) *)
+
+      let partial = drop_nulls df ~subset:[ "b" ] in
+      (* Result: all 3 rows kept (no nulls in "b") *)
+    ]} *)
+
+val fill_missing :
+  t ->
+  string ->
+  with_value:
+    [ `Float of float
+    | `Int32 of int32
+    | `Int64 of int64
+    | `String of string
+    | `Bool of bool ] ->
+  t
+(** [fill_missing df col_name ~with_value] replaces null values in a column.
+
+    Creates a new dataframe with null values in the specified column replaced by
+    the given value. The value type must match the column type.
+
+    @param col_name Column to fill
+    @param with_value Replacement value (must match column type)
+
+    @raise Invalid_argument
+      if column doesn't exist or value type doesn't match column type.
+
+    Example:
+    {[
+      let df = create [ ("x", Col.float64_opt [| Some 1.0; None; Some 3.0 |]) ] in
+      let filled = fill_missing df "x" ~with_value:(`Float 0.0) in
+      (* "x" now contains [1.0; 0.0; 3.0] *)
+    ]} *)
+
+val has_nulls : t -> string -> bool
+(** [has_nulls df col_name] checks if a column contains any null values.
+
+    @param col_name Column to check
+
+    @raise Invalid_argument if column doesn't exist.
+
+    Time complexity: O(n) in worst case. *)
+
+val null_count : t -> string -> int
+(** [null_count df col_name] returns the number of null values in a column.
+
+    @param col_name Column to count nulls in
+
+    @raise Invalid_argument if column doesn't exist.
+
+    Time complexity: O(n). *)
 
 val drop_duplicates : ?subset:string list -> t -> t
 (** [drop_duplicates ?subset df] removes duplicate rows.
@@ -1694,18 +1946,18 @@ module Agg : sig
         Time complexity: O(n) where n is the number of rows. *)
 
     val std : t -> string -> float
-    (** [std df name] returns the sample standard deviation.
+    (** [std df name] returns the population standard deviation.
 
-        Uses Bessel's correction (divides by n-1). Returns NaN if fewer than 2
-        non-null values exist.
+        Computes standard deviation over non-null values, dividing by n. Returns
+        NaN if no non-null values exist.
 
         Time complexity: O(n) - requires two passes over the data. *)
 
     val var : t -> string -> float
-    (** [var df name] returns the sample variance.
+    (** [var df name] returns the population variance.
 
-        Uses Bessel's correction (divides by n-1). The standard deviation is the
-        square root of this value.
+        Computes variance over non-null values, dividing by n. The standard
+        deviation is the square root of this value.
 
         Time complexity: O(n) - requires two passes over the data. *)
 

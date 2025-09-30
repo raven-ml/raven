@@ -6,6 +6,10 @@ let check_bool = Alcotest.(check bool)
 let check_string = Alcotest.(check string)
 let check_option_float = Alcotest.(check (option (float 1e-6)))
 let check_option_string = Alcotest.(check (option string))
+let check_option_bool_array = Alcotest.(check (option (array bool)))
+
+let mask_of_column df name =
+  match get_column_exn df name with Col.P (_, _, mask) -> mask | _ -> None
 
 (* Test column creation *)
 let test_col_creation () =
@@ -32,6 +36,34 @@ let test_col_nulls () =
   let df = create [ ("c", c2) ] in
   check_int "after drop_nulls" 2 (num_rows df);
   check_bool "no nulls after drop" false (Col.has_nulls c2)
+
+let test_col_null_mask () =
+  let col = Col.float32_opt [| Some 1.0; None |] in
+  check_option_bool_array "mask kept"
+    (Some [| false; true |])
+    (Col.null_mask col);
+  let plain = Col.float32 [| 1.0; 2.0 |] in
+  check_option_bool_array "no mask" None (Col.null_mask plain)
+
+let test_drop_nulls_preserves_data_with_mask () =
+  let col = Col.int32_opt [| Some Int32.min_int; None |] in
+  let dropped = Col.drop_nulls col in
+  match dropped with
+  | Col.P (Nx.Int32, tensor, _) ->
+      let arr : int32 array = Nx.to_array tensor in
+      check_int "length after drop" 1 (Array.length arr);
+      check_bool "sentinel retained" true (arr.(0) = Int32.min_int);
+      check_option_bool_array "mask cleared" None (Col.null_mask dropped)
+  | _ -> Alcotest.fail "expected int32 column"
+
+let test_fill_nulls_respects_mask () =
+  let col = Col.int32_opt [| Some 42l; None |] in
+  match Col.fill_nulls_int32 col ~value:0l with
+  | Col.P (Nx.Int32, tensor, _) ->
+      let arr : int32 array = Nx.to_array tensor in
+      check_bool "first value untouched" true (arr.(0) = 42l);
+      check_bool "null filled" true (arr.(1) = 0l)
+  | _ -> Alcotest.fail "expected int32 column"
 
 (* Test dataframe creation *)
 let test_df_creation () =
@@ -138,6 +170,44 @@ let test_filter () =
   let mask = [| true; false; true; false |] in
   let filtered = filter df mask in
   check_int "filtered rows" 2 (num_rows filtered)
+
+let test_mask_projection_ops () =
+  let df =
+    create [ ("x", Col.float32_opt [| Some 1.0; None; Some 3.0; None |]) ]
+  in
+  let head_df = head ~n:3 df in
+  check_option_bool_array "head mask"
+    (Some [| false; true; false |])
+    (mask_of_column head_df "x");
+  let slice_df = slice df ~start:1 ~stop:4 in
+  check_option_bool_array "slice mask"
+    (Some [| true; false; true |])
+    (mask_of_column slice_df "x");
+  let filtered = filter df [| false; true; false; true |] in
+  check_option_bool_array "filter mask"
+    (Some [| true; true |])
+    (mask_of_column filtered "x")
+
+let test_concat_mask_combines () =
+  let df1 = create [ ("x", Col.float32_opt [| Some 1.0; None |]) ] in
+  let df2 = create [ ("x", Col.float32_opt [| None; Some 4.0 |]) ] in
+  let combined = concat ~axis:`Rows [ df1; df2 ] in
+  check_option_bool_array "concat mask"
+    (Some [| false; true; true; false |])
+    (mask_of_column combined "x")
+
+let test_cast_preserves_mask () =
+  let df = create [ ("x", Col.float32_opt [| Some 1.0; None |]) ] in
+  let df_cast = cast_column df "x" Nx.float64 in
+  check_option_bool_array "cast mask"
+    (Some [| false; true |])
+    (mask_of_column df_cast "x")
+
+let test_pct_change_has_no_mask () =
+  let df = create [ ("x", Col.float32_opt [| Some 1.0; Some 2.0; None |]) ] in
+  match Agg.pct_change df "x" () with
+  | Col.P (_, _, mask) -> check_option_bool_array "pct_change mask" None mask
+  | _ -> Alcotest.fail "expected numeric column"
 
 let test_filter_by () =
   let df =
@@ -383,7 +453,13 @@ let test_cast_column () =
 
 (* Test suites *)
 let col_tests =
-  [ ("creation", `Quick, test_col_creation); ("nulls", `Quick, test_col_nulls) ]
+  [
+    ("creation", `Quick, test_col_creation);
+    ("nulls", `Quick, test_col_nulls);
+    ("null mask", `Quick, test_col_null_mask);
+    ("drop_nulls mask", `Quick, test_drop_nulls_preserves_data_with_mask);
+    ("fill_nulls mask", `Quick, test_fill_nulls_respects_mask);
+  ]
 
 let creation_tests =
   [ ("basic", `Quick, test_df_creation); ("empty", `Quick, test_df_empty) ]
@@ -394,6 +470,137 @@ let column_tests =
     ("add_drop", `Quick, test_column_add_drop);
     ("rename", `Quick, test_rename_column);
     ("select", `Quick, test_select);
+  ]
+
+(* Test option-based accessors *)
+let test_row_opt_accessors () =
+  let df =
+    create
+      [
+        ("float_col", Col.float64_opt [| Some 1.0; None; Some 3.0 |]);
+        ("int_col", Col.int32_opt [| Some 10l; None; Some 30l |]);
+        ("string_col", Col.string_opt [| Some "a"; None; Some "c" |]);
+        ("bool_col", Col.bool_opt [| Some true; None; Some false |]);
+      ]
+  in
+  (* Test float64_opt *)
+  let float_values =
+    map df Nx.float64
+      (Row.map (Row.float64_opt "float_col") ~f:(function
+        | Some v -> v
+        | None -> -1.0))
+  in
+  check_float "float_opt row 0" 1.0 (Nx.to_array float_values).(0);
+  check_float "float_opt row 1 (null)" (-1.0) (Nx.to_array float_values).(1);
+  check_float "float_opt row 2" 3.0 (Nx.to_array float_values).(2);
+  (* Test int32_opt *)
+  let int_values =
+    map df Nx.int32
+      (Row.map (Row.int32_opt "int_col") ~f:(function
+        | Some v -> v
+        | None -> -1l))
+  in
+  check_int "int_opt row 0" 10 (Int32.to_int (Nx.to_array int_values).(0));
+  check_int "int_opt row 1 (null)" (-1)
+    (Int32.to_int (Nx.to_array int_values).(1));
+  check_int "int_opt row 2" 30 (Int32.to_int (Nx.to_array int_values).(2))
+
+let test_to_options () =
+  let df =
+    create
+      [
+        ("float_col", Col.float64_opt [| Some 1.0; None; Some 3.0 |]);
+        ("int_col", Col.int32_opt [| Some 10l; None; Some 30l |]);
+      ]
+  in
+  (* Test to_float64_options *)
+  (match to_float64_options df "float_col" with
+  | Some arr ->
+      check_option_float "float opt 0" (Some 1.0) arr.(0);
+      check_option_float "float opt 1 (null)" None arr.(1);
+      check_option_float "float opt 2" (Some 3.0) arr.(2)
+  | None -> Alcotest.fail "Expected Some array");
+  (* Test to_int32_options *)
+  match to_int32_options df "int_col" with
+  | Some arr ->
+      Alcotest.(check (option int32)) "int opt 0" (Some 10l) arr.(0);
+      Alcotest.(check (option int32)) "int opt 1 (null)" None arr.(1);
+      Alcotest.(check (option int32)) "int opt 2" (Some 30l) arr.(2)
+  | None -> Alcotest.fail "Expected Some array"
+
+let test_drop_nulls_helper () =
+  let df =
+    create
+      [
+        ("a", Col.float64_opt [| Some 1.0; None; Some 3.0; Some 4.0 |]);
+        ("b", Col.int32 [| 10l; 20l; 30l; 40l |]);
+      ]
+  in
+  (* Drop rows with any nulls *)
+  let cleaned = drop_nulls df in
+  check_int "drop_nulls all" 3 (num_rows cleaned);
+  (* Drop only checking column "b" (which has no nulls) *)
+  let partial = drop_nulls df ~subset:[ "b" ] in
+  check_int "drop_nulls subset" 4 (num_rows partial)
+
+let test_fill_missing_helper () =
+  let df = create [ ("x", Col.float64_opt [| Some 1.0; None; Some 3.0 |]) ] in
+  let filled = fill_missing df "x" ~with_value:(`Float 0.0) in
+  match to_float64_array filled "x" with
+  | Some arr ->
+      check_float "filled 0" 1.0 arr.(0);
+      check_float "filled 1 (was null)" 0.0 arr.(1);
+      check_float "filled 2" 3.0 arr.(2)
+  | None -> Alcotest.fail "Expected float array"
+
+let test_null_count_helper () =
+  let df =
+    create
+      [
+        ("a", Col.float64_opt [| Some 1.0; None; Some 3.0 |]);
+        ("b", Col.int32 [| 10l; 20l; 30l |]);
+      ]
+  in
+  check_int "null_count a" 1 (null_count df "a");
+  check_int "null_count b" 0 (null_count df "b");
+  check_bool "has_nulls a" true (has_nulls df "a");
+  check_bool "has_nulls b" false (has_nulls df "b")
+
+let test_mask_aware_aggregations () =
+  let df =
+    create
+      [ ("values", Col.float64_opt [| Some 1.0; None; Some 3.0; Some 5.0 |]) ]
+  in
+  (* Sum should skip the null *)
+  let sum_result = Agg.Float.sum df "values" in
+  check_float "masked sum" 9.0 sum_result;
+  (* Mean should compute over non-null values only *)
+  let mean_result = Agg.Float.mean df "values" in
+  check_float "masked mean" 3.0 mean_result;
+  (* Min/max should skip nulls *)
+  (match Agg.Float.min df "values" with
+  | Some v -> check_float "masked min" 1.0 v
+  | None -> Alcotest.fail "Expected Some min");
+  match Agg.Float.max df "values" with
+  | Some v -> check_float "masked max" 5.0 v
+  | None -> Alcotest.fail "Expected Some max"
+
+let option_tests =
+  [
+    ("row_opt_accessors", `Quick, test_row_opt_accessors);
+    ("to_options", `Quick, test_to_options);
+    ("drop_nulls", `Quick, test_drop_nulls_helper);
+    ("fill_missing", `Quick, test_fill_missing_helper);
+    ("null_count", `Quick, test_null_count_helper);
+    ("mask_aware_agg", `Quick, test_mask_aware_aggregations);
+  ]
+
+let mask_tests =
+  [
+    ("projection", `Quick, test_mask_projection_ops);
+    ("concat", `Quick, test_concat_mask_combines);
+    ("cast", `Quick, test_cast_preserves_mask);
+    ("pct_change", `Quick, test_pct_change_has_no_mask);
   ]
 
 let row_tests =
@@ -1013,6 +1220,8 @@ let () =
       ("Col", col_tests);
       ("Creation", creation_tests);
       ("Columns", column_tests);
+      ("Null masks", mask_tests);
+      ("Option accessors", option_tests);
       ("Rows", row_tests);
       ("Concatenation", concat_tests);
       ("Row module", row_module_tests);

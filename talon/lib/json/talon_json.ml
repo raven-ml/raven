@@ -4,7 +4,7 @@ open Yojson.Basic
 (* Helper to convert a column value to JSON *)
 let value_to_json col idx =
   match col with
-  | Col.P (dtype, tensor) -> (
+  | Col.P (dtype, tensor, _) -> (
       match dtype with
       | Nx.Float32 ->
           let arr : float array = Nx.to_array tensor in

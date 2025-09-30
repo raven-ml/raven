@@ -203,7 +203,7 @@ let to_string ?(sep = ',') ?(header = true) ?(na_repr = "") df =
         (fun col_name ->
           let col = get_column_exn df col_name in
           match col with
-          | Col.P (dtype, tensor) -> (
+          | Col.P (dtype, tensor, _) -> (
               match dtype with
               | Nx.Float32 ->
                   let arr : float array = Nx.to_array tensor in
