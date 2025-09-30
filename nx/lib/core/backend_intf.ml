@@ -128,10 +128,7 @@ module type S = sig
   (** Product over [axes]. Keeps reduced dimensions if [keepdims] is true. *)
 
   val op_associative_scan :
-    axis:int ->
-    op:[ `Sum | `Prod | `Max | `Min ] ->
-    ('a, 'b) t ->
-    ('a, 'b) t
+    axis:int -> op:[ `Sum | `Prod | `Max | `Min ] -> ('a, 'b) t -> ('a, 'b) t
   (** Inclusive scan along [axis] using the associative operation [op]. *)
 
   (* Movement Ops - manipulate view metadata *)

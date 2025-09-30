@@ -2,8 +2,12 @@ let load_mnist_like_dataset ~fashion_mnist =
   let (x_train_ba, y_train_ba), (x_test_ba, y_test_ba) =
     Mnist.load ~fashion_mnist
   in
-  let x_train = Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array3 x_train_ba) in
-  let y_train = Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array1 y_train_ba) in
+  let x_train =
+    Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array3 x_train_ba)
+  in
+  let y_train =
+    Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array1 y_train_ba)
+  in
   let x_test = Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array3 x_test_ba) in
   let y_test = Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array1 y_test_ba) in
 
@@ -24,7 +28,9 @@ let load_fashion_mnist () = load_mnist_like_dataset ~fashion_mnist:true
 let load_cifar10 () =
   let (x_train_ba, y_train_ba), (x_test_ba, y_test_ba) = Cifar10.load () in
   let x_train = Nx.of_bigarray_ext x_train_ba in
-  let y_train = Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array1 y_train_ba) in
+  let y_train =
+    Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array1 y_train_ba)
+  in
   let x_test = Nx.of_bigarray_ext x_test_ba in
   let y_test = Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array1 y_test_ba) in
 
@@ -36,7 +42,9 @@ let load_cifar10 () =
 
 let load_tabular_dataset loader_func =
   let features_ba, labels_ba = loader_func () in
-  let features = Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array2 features_ba) in
+  let features =
+    Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array2 features_ba)
+  in
   let labels = Nx.of_bigarray_ext (Bigarray_ext.genarray_of_array1 labels_ba) in
   let num_samples = Bigarray_ext.Array1.dim labels_ba in
   let labels = Nx.reshape [| num_samples; 1 |] labels in

@@ -483,7 +483,9 @@ module Make (B : Backend_intf.S) = struct
     in
     let t_to_use = ensure_contiguous_size x in
     let array1 = data t_to_use in
-    Bigarray_ext.reshape (Bigarray_ext.genarray_of_array1 array1) (shape t_to_use)
+    Bigarray_ext.reshape
+      (Bigarray_ext.genarray_of_array1 array1)
+      (shape t_to_use)
 
   let to_bigarray x =
     let ba_ext = to_bigarray_ext x in
@@ -505,7 +507,7 @@ module Make (B : Backend_intf.S) = struct
       Obj.magic ba
     in
     of_bigarray_ext ctx ba_ext
-  
+
   let to_array x =
     let t_contiguous = contiguous x in
     let ba = data t_contiguous in
@@ -1263,8 +1265,7 @@ module Make (B : Backend_intf.S) = struct
       let normalized_axis = if axis < 0 then axis + rank else axis in
       if normalized_axis < 0 || normalized_axis >= rank then
         Error.invalid ~op:"associative_scan" ~what:"axis"
-          ~reason:
-            (Printf.sprintf "axis %d out of bounds for rank %d" axis rank)
+          ~reason:(Printf.sprintf "axis %d out of bounds for rank %d" axis rank)
           ()
       else B.op_associative_scan ~axis:normalized_axis ~op x
 
@@ -2502,22 +2503,25 @@ module Make (B : Backend_intf.S) = struct
     let x_shape = shape x in
     let ndim = Array.length x_shape in
 
-    (* Separate N (new axis) specs from regular specs, tracking output positions *)
+    (* Separate N (new axis) specs from regular specs, tracking output
+       positions *)
     let new_axis_positions = ref [] in
     let regular_specs = ref [] in
-    let output_dim = ref 0 in  (* Track output dimension index *)
-    List.iter (fun spec ->
-      match spec with
-      | N ->
-          new_axis_positions := !output_dim :: !new_axis_positions;
-          output_dim := !output_dim + 1  (* N adds a dimension *)
-      | I _ ->
-          regular_specs := spec :: !regular_specs
-          (* I doesn't add to output, it's squeezed *)
-      | _ ->
-          regular_specs := spec :: !regular_specs;
-          output_dim := !output_dim + 1  (* Other specs preserve or add dims *)
-    ) slice_def;
+    let output_dim = ref 0 in
+    (* Track output dimension index *)
+    List.iter
+      (fun spec ->
+        match spec with
+        | N ->
+            new_axis_positions := !output_dim :: !new_axis_positions;
+            output_dim := !output_dim + 1 (* N adds a dimension *)
+        | I _ ->
+            regular_specs := spec :: !regular_specs
+            (* I doesn't add to output, it's squeezed *)
+        | _ ->
+            regular_specs := spec :: !regular_specs;
+            output_dim := !output_dim + 1 (* Other specs preserve or add dims *))
+      slice_def;
     let new_axis_positions = List.rev !new_axis_positions in
     let regular_specs = List.rev !regular_specs in
 
@@ -2556,205 +2560,210 @@ module Make (B : Backend_intf.S) = struct
           if is_c_contiguous then `ContiguousRanges else `Mixed
     in
 
-    let sliced_result = match analyze_pattern full_slice with
-    | `Empty -> x
-    | `AllSingles ->
-        (* Direct element access *)
-        let indices =
-          List.mapi
-            (fun i spec ->
-              match spec with
-              | I idx -> normalize_index x_shape.(i) idx
-              | _ -> assert false)
-            full_slice
-        in
-        let shrink_config =
-          Array.of_list (List.mapi (fun _i idx -> (idx, idx + 1)) indices)
-        in
-        reshape [||] (shrink shrink_config x)
-    | `ContiguousRanges ->
-        (* Use shrink/flip operations only *)
-        let rec apply_slices tensor dim = function
-          | [] -> tensor
-          | spec :: rest ->
-              let tensor_ndim = Array.length (shape tensor) in
-              if dim >= tensor_ndim then tensor
-                (* No more dimensions to process *)
-              else
-                let dim_size = (shape tensor).(dim) in
-                let tensor', next_dim =
-                  match spec with
-                  | I idx ->
-                      (* Single index - shrink and squeeze that dimension *)
-                      let idx' = normalize_index dim_size idx in
-                      let config =
-                        Array.init tensor_ndim (fun i ->
-                            if i = dim then (idx', idx' + 1)
-                            else (0, (shape tensor).(i)))
-                      in
-                      (squeeze ~axes:[| dim |] (shrink config tensor), dim)
-                      (* Don't increment dim since we removed a dimension *)
-                  | A -> (tensor, dim + 1) (* Take all *)
-                  | R (start_idx, stop_idx) ->
-                      let start =
-                        if start_idx < 0 then dim_size + start_idx
-                        else start_idx
-                      in
-                      let stop =
-                        if stop_idx < 0 then dim_size + stop_idx else stop_idx
-                      in
-                      let stop = stop - 1 in
-                      (* Make exclusive end inclusive *)
-                      let step = 1 in
-                      (* Check if the range is empty *)
-                      let is_empty =
-                        if step > 0 then start > stop else start < stop
-                      in
-                      if is_empty then (
-                        (* Create empty tensor with 0 size in this dimension *)
-                        let new_shape = Array.copy (shape tensor) in
-                        new_shape.(dim) <- 0;
-                        ( empty (B.context tensor) (dtype tensor) new_shape,
-                          dim + 1 ))
-                      else
-                        let s, e =
-                          (* expand_range_spec already returns exclusive stop *)
-                          if step > 0 then (start, stop + 1)
-                          else (stop, start + 1)
-                        in
-                        (* Clamp bounds to valid range *)
-                        let s_clamped = Int.max 0 (Int.min s dim_size) in
-                        let e_clamped = Int.max 0 (Int.min e dim_size) in
+    let sliced_result =
+      match analyze_pattern full_slice with
+      | `Empty -> x
+      | `AllSingles ->
+          (* Direct element access *)
+          let indices =
+            List.mapi
+              (fun i spec ->
+                match spec with
+                | I idx -> normalize_index x_shape.(i) idx
+                | _ -> assert false)
+              full_slice
+          in
+          let shrink_config =
+            Array.of_list (List.mapi (fun _i idx -> (idx, idx + 1)) indices)
+          in
+          reshape [||] (shrink shrink_config x)
+      | `ContiguousRanges ->
+          (* Use shrink/flip operations only *)
+          let rec apply_slices tensor dim = function
+            | [] -> tensor
+            | spec :: rest ->
+                let tensor_ndim = Array.length (shape tensor) in
+                if dim >= tensor_ndim then tensor
+                  (* No more dimensions to process *)
+                else
+                  let dim_size = (shape tensor).(dim) in
+                  let tensor', next_dim =
+                    match spec with
+                    | I idx ->
+                        (* Single index - shrink and squeeze that dimension *)
+                        let idx' = normalize_index dim_size idx in
                         let config =
                           Array.init tensor_ndim (fun i ->
-                              if i = dim then (s_clamped, e_clamped)
+                              if i = dim then (idx', idx' + 1)
                               else (0, (shape tensor).(i)))
                         in
-                        let sliced = shrink config tensor in
-                        ( (if step < 0 then flip ~axes:[| dim |] sliced
-                           else sliced),
-                          dim + 1 )
-                  | Rs (start_idx, stop_idx, step_val) ->
-                      let start =
-                        if start_idx < 0 then dim_size + start_idx
-                        else start_idx
-                      in
-                      let stop =
-                        if stop_idx < 0 then dim_size + stop_idx else stop_idx
-                      in
-                      let stop =
-                        if step_val > 0 then stop - 1
-                          (* Make exclusive end inclusive for positive step *)
-                        else stop + 1
-                        (* Make exclusive end inclusive for negative step *)
-                      in
-                      let step = step_val in
-                      (* Check if the range is empty *)
-                      let is_empty =
-                        if step > 0 then start > stop else start < stop
-                      in
-                      if is_empty then (
-                        (* Create empty tensor with 0 size in this dimension *)
-                        let new_shape = Array.copy (shape tensor) in
-                        new_shape.(dim) <- 0;
-                        ( empty (B.context tensor) (dtype tensor) new_shape,
-                          dim + 1 ))
-                      else
-                        let s, e =
-                          (* expand_range_spec already returns exclusive stop *)
-                          if step > 0 then (start, stop + 1)
-                          else (stop, start + 1)
+                        (squeeze ~axes:[| dim |] (shrink config tensor), dim)
+                        (* Don't increment dim since we removed a dimension *)
+                    | A -> (tensor, dim + 1) (* Take all *)
+                    | R (start_idx, stop_idx) ->
+                        let start =
+                          if start_idx < 0 then dim_size + start_idx
+                          else start_idx
                         in
-                        (* Clamp bounds to valid range *)
-                        let s_clamped = Int.max 0 (Int.min s dim_size) in
-                        let e_clamped = Int.max 0 (Int.min e dim_size) in
-                        let config =
-                          Array.init tensor_ndim (fun i ->
-                              if i = dim then (s_clamped, e_clamped)
-                              else (0, (shape tensor).(i)))
+                        let stop =
+                          if stop_idx < 0 then dim_size + stop_idx else stop_idx
                         in
-                        let sliced = shrink config tensor in
-                        ( (if step < 0 then flip ~axes:[| dim |] sliced
-                           else sliced),
-                          dim + 1 )
-                  | _ -> assert false
-                in
-                apply_slices tensor' next_dim rest
-        in
-        apply_slices x 0 full_slice
-    | `Mixed ->
-        (* Batch gather operations where possible *)
-        let batch_process tensor processed_dims = function
-          | [] -> tensor
-          | specs ->
-              (* Don't group specs - process each one individually *)
-              (* Track how many dimensions have been squeezed *)
-              let groups = List.map (fun spec -> [ spec ]) specs in
+                        let stop = stop - 1 in
+                        (* Make exclusive end inclusive *)
+                        let step = 1 in
+                        (* Check if the range is empty *)
+                        let is_empty =
+                          if step > 0 then start > stop else start < stop
+                        in
+                        if is_empty then (
+                          (* Create empty tensor with 0 size in this
+                             dimension *)
+                          let new_shape = Array.copy (shape tensor) in
+                          new_shape.(dim) <- 0;
+                          ( empty (B.context tensor) (dtype tensor) new_shape,
+                            dim + 1 ))
+                        else
+                          let s, e =
+                            (* expand_range_spec already returns exclusive
+                               stop *)
+                            if step > 0 then (start, stop + 1)
+                            else (stop, start + 1)
+                          in
+                          (* Clamp bounds to valid range *)
+                          let s_clamped = Int.max 0 (Int.min s dim_size) in
+                          let e_clamped = Int.max 0 (Int.min e dim_size) in
+                          let config =
+                            Array.init tensor_ndim (fun i ->
+                                if i = dim then (s_clamped, e_clamped)
+                                else (0, (shape tensor).(i)))
+                          in
+                          let sliced = shrink config tensor in
+                          ( (if step < 0 then flip ~axes:[| dim |] sliced
+                             else sliced),
+                            dim + 1 )
+                    | Rs (start_idx, stop_idx, step_val) ->
+                        let start =
+                          if start_idx < 0 then dim_size + start_idx
+                          else start_idx
+                        in
+                        let stop =
+                          if stop_idx < 0 then dim_size + stop_idx else stop_idx
+                        in
+                        let stop =
+                          if step_val > 0 then stop - 1
+                            (* Make exclusive end inclusive for positive step *)
+                          else stop + 1
+                          (* Make exclusive end inclusive for negative step *)
+                        in
+                        let step = step_val in
+                        (* Check if the range is empty *)
+                        let is_empty =
+                          if step > 0 then start > stop else start < stop
+                        in
+                        if is_empty then (
+                          (* Create empty tensor with 0 size in this
+                             dimension *)
+                          let new_shape = Array.copy (shape tensor) in
+                          new_shape.(dim) <- 0;
+                          ( empty (B.context tensor) (dtype tensor) new_shape,
+                            dim + 1 ))
+                        else
+                          let s, e =
+                            (* expand_range_spec already returns exclusive
+                               stop *)
+                            if step > 0 then (start, stop + 1)
+                            else (stop, start + 1)
+                          in
+                          (* Clamp bounds to valid range *)
+                          let s_clamped = Int.max 0 (Int.min s dim_size) in
+                          let e_clamped = Int.max 0 (Int.min e dim_size) in
+                          let config =
+                            Array.init tensor_ndim (fun i ->
+                                if i = dim then (s_clamped, e_clamped)
+                                else (0, (shape tensor).(i)))
+                          in
+                          let sliced = shrink config tensor in
+                          ( (if step < 0 then flip ~axes:[| dim |] sliced
+                             else sliced),
+                            dim + 1 )
+                    | _ -> assert false
+                  in
+                  apply_slices tensor' next_dim rest
+          in
+          apply_slices x 0 full_slice
+      | `Mixed ->
+          (* Batch gather operations where possible *)
+          let batch_process tensor processed_dims = function
+            | [] -> tensor
+            | specs ->
+                (* Don't group specs - process each one individually *)
+                (* Track how many dimensions have been squeezed *)
+                let groups = List.map (fun spec -> [ spec ]) specs in
 
-              (* Process each group *)
-              let _, _, result =
-                List.fold_left
-                  (fun (current_dim, dims_squeezed, tensor) group ->
-                    match group with
-                    | [] -> (current_dim, dims_squeezed, tensor)
-                    | [ spec ] ->
-                        (* Single spec - use shrink or squeeze as needed *)
-                        (* Adjust dimension index for squeezed dimensions *)
-                        let working_dim = current_dim - dims_squeezed in
-                        let dim_size = (shape tensor).(working_dim) in
-                        let indices = indices_of_spec dim_size spec in
-                        let tensor' =
-                          if List.length indices = dim_size then tensor
-                          else if List.length indices = 0 then (
-                            (* Empty slice - create tensor with 0 size in this
-                               dimension *)
-                            let new_shape = Array.copy (shape tensor) in
-                            new_shape.(working_dim) <- 0;
-                            empty (B.context tensor) (dtype tensor) new_shape)
-                          else if List.length indices = 1 then
-                            squeeze ~axes:[| working_dim |]
-                              (shrink
-                                 (Array.init
-                                    (Array.length (shape tensor))
-                                    (fun i ->
-                                      if i = working_dim then
-                                        (List.hd indices, List.hd indices + 1)
-                                      else (0, (shape tensor).(i))))
-                                 tensor)
-                          else
-                            (* Create index tensor and gather *)
-                            (* The index tensor should have same rank as data with correct shape *)
-                            let data_shape = shape tensor in
-                            let idx_shape = Array.copy data_shape in
-                            idx_shape.(working_dim) <- List.length indices;
-                            let idx_tensor =
-                              init (B.context x) Dtype.int32 idx_shape
-                                (fun idx_arr ->
-                                  Int32.of_int
-                                    (List.nth indices idx_arr.(working_dim)))
-                            in
-                            B.op_gather tensor idx_tensor working_dim
-                        in
-                        (* R spec processes one dimension, doesn't squeeze *)
-                        let dims_squeezed' =
-                          if List.length indices = 1 then dims_squeezed + 1
-                          else dims_squeezed
-                        in
-                        (current_dim + 1, dims_squeezed', tensor')
-                    | _ ->
-                        (* This shouldn't happen with our current grouping *)
-                        assert false)
-                  (processed_dims, 0, tensor)
-                  groups
-              in
-              result
-        in
-        batch_process x 0 full_slice
+                (* Process each group *)
+                let _, _, result =
+                  List.fold_left
+                    (fun (current_dim, dims_squeezed, tensor) group ->
+                      match group with
+                      | [] -> (current_dim, dims_squeezed, tensor)
+                      | [ spec ] ->
+                          (* Single spec - use shrink or squeeze as needed *)
+                          (* Adjust dimension index for squeezed dimensions *)
+                          let working_dim = current_dim - dims_squeezed in
+                          let dim_size = (shape tensor).(working_dim) in
+                          let indices = indices_of_spec dim_size spec in
+                          let tensor' =
+                            if List.length indices = dim_size then tensor
+                            else if List.length indices = 0 then (
+                              (* Empty slice - create tensor with 0 size in this
+                                 dimension *)
+                              let new_shape = Array.copy (shape tensor) in
+                              new_shape.(working_dim) <- 0;
+                              empty (B.context tensor) (dtype tensor) new_shape)
+                            else if List.length indices = 1 then
+                              squeeze ~axes:[| working_dim |]
+                                (shrink
+                                   (Array.init
+                                      (Array.length (shape tensor))
+                                      (fun i ->
+                                        if i = working_dim then
+                                          (List.hd indices, List.hd indices + 1)
+                                        else (0, (shape tensor).(i))))
+                                   tensor)
+                            else
+                              (* Create index tensor and gather *)
+                              (* The index tensor should have same rank as data with correct shape *)
+                              let data_shape = shape tensor in
+                              let idx_shape = Array.copy data_shape in
+                              idx_shape.(working_dim) <- List.length indices;
+                              let idx_tensor =
+                                init (B.context x) Dtype.int32 idx_shape
+                                  (fun idx_arr ->
+                                    Int32.of_int
+                                      (List.nth indices idx_arr.(working_dim)))
+                              in
+                              B.op_gather tensor idx_tensor working_dim
+                          in
+                          (* R spec processes one dimension, doesn't squeeze *)
+                          let dims_squeezed' =
+                            if List.length indices = 1 then dims_squeezed + 1
+                            else dims_squeezed
+                          in
+                          (current_dim + 1, dims_squeezed', tensor')
+                      | _ ->
+                          (* This shouldn't happen with our current grouping *)
+                          assert false)
+                    (processed_dims, 0, tensor)
+                    groups
+                in
+                result
+          in
+          batch_process x 0 full_slice
     in
     (* Apply expand_dims for each N (new axis) spec *)
-    List.fold_left (fun tensor axis_pos ->
-      expand_dims [| axis_pos |] tensor
-    ) sliced_result new_axis_positions
+    List.fold_left
+      (fun tensor axis_pos -> expand_dims [| axis_pos |] tensor)
+      sliced_result new_axis_positions
 
   (* Efficient set_slice_internal using scatter operations *)
   let set_slice_internal slice_def x y =
@@ -4571,12 +4580,11 @@ module Make (B : Backend_intf.S) = struct
     check_float_or_complex ~op:"slogdet" a;
     let dtype_a = dtype a in
     let is_complex =
-      Dtype.equal dtype_a Dtype.complex32
-      || Dtype.equal dtype_a Dtype.complex64
+      Dtype.equal dtype_a Dtype.complex32 || Dtype.equal dtype_a Dtype.complex64
     in
     let sh = shape a in
     let rank = Array.length sh in
-    if (not is_complex) && sh.(rank - 1) = 2 && sh.(rank - 2) = 2 then (
+    if (not is_complex) && sh.(rank - 1) = 2 && sh.(rank - 2) = 2 then
       let prefix = List.init (Stdlib.max 0 (rank - 2)) (fun _ -> A) in
       let a11 = slice_internal (prefix @ [ I 0; I 0 ]) a in
       let a12 = slice_internal (prefix @ [ I 0; I 1 ]) a in
@@ -4598,8 +4606,8 @@ module Make (B : Backend_intf.S) = struct
         where is_zero neg_inf (log abs_det)
       in
       let logdet = cast Dtype.float32 logdet64 in
-      (sign_float, logdet))
-    else (
+      (sign_float, logdet)
+    else
       let _q, r = B.op_qr ~reduced:false a in
       let r_diag = diagonal r in
       let signs = sign r_diag in
@@ -4627,7 +4635,7 @@ module Make (B : Backend_intf.S) = struct
         else sum log_abs_diag
       in
       let logdet = cast Dtype.float32 logdet64 in
-      (sign_float, logdet))
+      (sign_float, logdet)
 
   and det a =
     check_square ~op:"det" a;
@@ -4709,13 +4717,9 @@ module Make (B : Backend_intf.S) = struct
     let m = dim (-2) a in
     let eps = if Dtype.equal (dtype a) Dtype.float32 then 1e-6 else 1e-12 in
     let tol = eps *. float_of_int m in
-    let tol_tensor =
-      full (B.context r_diag) Dtype.float64 (shape r_diag) tol
-    in
+    let tol_tensor = full (B.context r_diag) Dtype.float64 (shape r_diag) tol in
     let zero_mask = less (abs r_diag) tol_tensor in
-    let zero_count =
-      sum (cast Dtype.float64 zero_mask) |> unsafe_get []
-    in
+    let zero_count = sum (cast Dtype.float64 zero_mask) |> unsafe_get [] in
     if zero_count > 0. then invalid_arg "solve: matrix is singular";
     let y = matmul (matrix_transpose q) b_expanded in
     let result =
@@ -4842,8 +4846,7 @@ module Make (B : Backend_intf.S) = struct
         let tol_tensor = scalar (B.context x) dtype_s tol in
         let safe_s = where (greater s tol_tensor) s tol_tensor in
         let min_s_tensor =
-          if ndim safe_s > 1 then
-            min safe_s ~axes:[| -1 |] ~keepdims:false
+          if ndim safe_s > 1 then min safe_s ~axes:[| -1 |] ~keepdims:false
           else min safe_s
         in
         let ratio = div max_s_tensor min_s_tensor in
@@ -4935,7 +4938,8 @@ module Make (B : Backend_intf.S) = struct
             (fun ax ->
               let axis = if ax < 0 then ax + a_rank else ax in
               if axis < 0 || axis >= a_rank then
-                Error.axis_out_of_bounds ~op:"tensorsolve" ~axis:ax ~ndim:a_rank ();
+                Error.axis_out_of_bounds ~op:"tensorsolve" ~axis:ax ~ndim:a_rank
+                  ();
               if seen.(axis) then
                 Error.invalid ~op:"tensorsolve"
                   ~what:(Printf.sprintf "axis %d" ax)
@@ -4948,8 +4952,7 @@ module Make (B : Backend_intf.S) = struct
     let selected = Array.make a_rank false in
     Array.iter (fun ax -> selected.(ax) <- true) axes_for_b;
     let free_axes =
-      Array.init a_rank Fun.id
-      |> Array.to_list
+      Array.init a_rank Fun.id |> Array.to_list
       |> List.filter (fun ax -> not selected.(ax))
       |> Array.of_list
     in
@@ -4967,7 +4970,8 @@ module Make (B : Backend_intf.S) = struct
     let free_shape = Array.sub perm_shape 0 free_rank in
     let rhs_shape = Array.sub perm_shape free_rank b_rank in
     if rhs_shape <> b_shape then
-      Error.shape_mismatch ~op:"tensorsolve" ~expected:b_shape ~actual:rhs_shape ();
+      Error.shape_mismatch ~op:"tensorsolve" ~expected:b_shape ~actual:rhs_shape
+        ();
 
     let rows = array_prod free_shape in
     let cols = array_prod rhs_shape in
@@ -5006,9 +5010,7 @@ module Make (B : Backend_intf.S) = struct
       Error.invalid ~op:"tensorinv" ~what:"input"
         ~reason:"leading and trailing dimensions must have equal product" ();
     let a_mat = reshape [| left_size; right_size |] a in
-    let inv_mat =
-      try inv a_mat with Invalid_argument _ -> pinv a_mat
-    in
+    let inv_mat = try inv a_mat with Invalid_argument _ -> pinv a_mat in
     let out_shape = Array.append right_dims left_dims in
     reshape out_shape inv_mat
 

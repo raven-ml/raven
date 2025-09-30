@@ -51,9 +51,7 @@ let randint key ~min ~max shape =
       (Printf.sprintf "randint: min (%d) must be less than max (%d)" min max);
   let range = max - min in
   let uniform_vals = uniform key Tensor.Float32 shape in
-  let scaled =
-    mul uniform_vals (scalar Tensor.Float32 (float_of_int range))
-  in
+  let scaled = mul uniform_vals (scalar Tensor.Float32 (float_of_int range)) in
   let shifted = add scaled (scalar Tensor.Float32 (float_of_int min)) in
   astype Tensor.Int32 shifted
 

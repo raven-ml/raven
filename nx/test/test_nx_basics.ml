@@ -14,9 +14,7 @@ let test_create_empty_float32 () =
   check_shape "empty shape" [| 0 |] t
 
 let test_create_2x2x2_float32 () =
-  let t =
-    Nx.create Nx.float32 [| 2; 2; 2 |] (Array.init 8 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 2; 2 |] (Array.init 8 float_of_int) in
   check_t "create 2x2x2" [| 2; 2; 2 |] [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] t
 
 let test_scalar_float32 () =
@@ -80,16 +78,12 @@ let test_full_like_int32 () =
   check_t "full_like" [| 2; 2 |] [| 10l; 10l; 10l; 10l |] t
 
 let test_empty_like_float32 () =
-  let ref_t =
-    Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
-  in
+  let ref_t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let t = Nx.empty_like ref_t in
   check_shape "empty_like shape" [| 2; 2 |] t
 
 let test_zeros_like_float32 () =
-  let ref_t =
-    Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
-  in
+  let ref_t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let t = Nx.zeros_like ref_t in
   check_t "zeros_like" [| 2; 2 |] [| 0.; 0.; 0.; 0. |] t
 
@@ -177,9 +171,7 @@ let test_logspace_base10_float32 () =
     t
 
 let test_logspace_base2_no_endpoint_float32 () =
-  let t =
-    Nx.logspace ~endpoint:false ~base:2.0 Nx.float32 0.0 4.0 5
-  in
+  let t = Nx.logspace ~endpoint:false ~base:2.0 Nx.float32 0.0 4.0 5 in
   check_t ~eps:1e-6 "logspace base 2 no endpoint" [| 5 |]
     [|
       1.0;
@@ -209,33 +201,23 @@ let test_geomspace_no_endpoint_float32 () =
 (* ───── Property Access Tests ───── *)
 
 let test_shape_2x3 () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
   check_shape "shape 2x3" [| 2; 3 |] t
 
 let test_strides_2x3_float32 () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
   check (array int) "strides" [| 12; 4 |] (Nx.strides t)
 
 let test_stride_dim0_2x3_float32 () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
   check int "stride dim 0" 12 (Nx.stride 0 t)
 
 let test_stride_dim1_2x3_float32 () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
   check int "stride dim 1" 4 (Nx.stride 1 t)
 
 let test_strides_2x3_int64 () =
-  let t =
-    Nx.create Nx.int64 [| 2; 3 |] (Array.init 6 Int64.of_int)
-  in
+  let t = Nx.create Nx.int64 [| 2; 3 |] (Array.init 6 Int64.of_int) in
   check (array int) "strides int64" [| 24; 8 |] (Nx.strides t)
 
 let test_itemsize_float32 () =
@@ -255,16 +237,11 @@ let test_ndim_2x2 () =
   check int "ndim 2x2" 2 (Nx.ndim t)
 
 let test_dim_0_2x3 () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   check int "dim 0" 2 (Nx.dim 0 t)
 
 let test_dims_2x3 () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
   check (array int) "dims" [| 2; 3 |] (Nx.dims t)
 
 let test_nbytes_float32 () =
@@ -272,9 +249,7 @@ let test_nbytes_float32 () =
   check int "nbytes float32" 16 (Nx.nbytes t)
 
 let test_nbytes_int64 () =
-  let t =
-    Nx.create Nx.int64 [| 2; 3 |] (Array.init 6 Int64.of_int)
-  in
+  let t = Nx.create Nx.int64 [| 2; 3 |] (Array.init 6 Int64.of_int) in
   check int "nbytes int64" 48 (Nx.nbytes t)
 
 let test_nbytes_empty () =
@@ -282,10 +257,7 @@ let test_nbytes_empty () =
   check int "nbytes empty" 0 (Nx.nbytes t)
 
 let test_size_2x3 () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   check int "size 2x3" 6 (Nx.size t)
 
 let test_size_scalar () =
@@ -297,9 +269,7 @@ let test_offset_basic () =
   check int "offset basic" 0 (Nx.offset t)
 
 let test_offset_slice () =
-  let t =
-    Nx.create Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int) in
   let s = Nx.slice [ Nx.R (1, -1); Nx.R (1, -1) ] t in
   check int "offset slice" 4 (Nx.offset s)
 
@@ -367,24 +337,17 @@ let test_set_scalar () =
 (* ───── Slicing Tests ───── *)
 
 let test_slice_3x4 () =
-  let t =
-    Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
   let s = Nx.slice [ Nx.R (1, 3); Nx.R (0, 4) ] t in
   check_t "slice [1:3, 0:4]" [| 2; 4 |] [| 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11. |] s
 
 let test_slice_with_steps () =
-  let t =
-    Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
   let s = Nx.slice [ Nx.Rs (0, 3, 2); Nx.Rs (0, 4, 2) ] t in
   check_t "slice with steps" [| 2; 2 |] [| 0.; 2.; 8.; 10. |] s
 
 let test_slice_view () =
-  let t =
-    Nx.create Nx.float32 [| 3; 2 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-  in
+  let t = Nx.create Nx.float32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let s = Nx.slice [ Nx.R (1, 2); Nx.R (0, 2) ] t in
   Nx.set_item [ 1; 0 ] 99.0 t;
   check (float 1e-6) "slice view modified" 99.0 (Nx.item [ 0; 0 ] s)
@@ -420,9 +383,7 @@ let test_data_buffer_view () =
   check (float 1e-6) "data buffer view" 99.0 (Nx.item [ 0 ] t)
 
 let test_strides_after_transpose () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let original_strides = Nx.strides t in
   let transposed = Nx.transpose t in
   let new_strides = Nx.strides transposed in
@@ -431,37 +392,27 @@ let test_strides_after_transpose () =
     new_strides
 
 let test_strides_after_slice () =
-  let t =
-    Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
   let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
   let strides = Nx.strides sliced in
   check int "slice stride" 4 strides.(0)
 
 let test_is_c_contiguous_basic () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   check bool "fresh array is contiguous" true (Nx.is_c_contiguous t)
 
 let test_is_c_contiguous_after_transpose () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let transposed = Nx.transpose t in
   check bool "transposed not contiguous" false (Nx.is_c_contiguous transposed)
 
 let test_is_c_contiguous_after_slice () =
-  let t =
-    Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
   let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
   check bool "slice step=2 is contiguous" true (Nx.is_c_contiguous sliced)
 
 let test_offset_after_multiple_slices () =
-  let t =
-    Nx.create Nx.float32 [| 5; 5 |] (Array.init 25 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 5; 5 |] (Array.init 25 float_of_int) in
   let slice1 = Nx.slice [ Nx.R (1, 3); Nx.R (0, 5) ] t in
   let slice2 = Nx.slice [ Nx.R (0, 1); Nx.R (0, 5) ] slice1 in
   check (float 1e-6) "accumulated offset value" 5.0 (Nx.item [ 0; 0 ] slice2)
@@ -471,8 +422,7 @@ let test_offset_after_multiple_slices () =
 let test_to_bigarray () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let ba = Nx.to_bigarray t in
-  check (float 1e-6) "initial [0,0]" 1.0
-    (Bigarray.Genarray.get ba [| 0; 0 |]);
+  check (float 1e-6) "initial [0,0]" 1.0 (Bigarray.Genarray.get ba [| 0; 0 |]);
   Nx.set_item [ 0; 0 ] 55.0 t;
   check (float 1e-6) "after set [0,0]" 55.0
     (Bigarray.Genarray.get ba [| 0; 0 |])
@@ -531,9 +481,9 @@ let test_blit_self () =
    overlapping blit is properly handled (e.g., using
    https://github.com/dinosaure/overlap).
 
-   let test_blit_overlapping_views () = let t = Nx.create Nx.float32
-   [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in let view1 = Nx.slice [ Nx.R (0, 3) ] t in
-   let view2 = Nx.slice [ Nx.R (2, 5) ] t in Nx.blit view1 view2; check_t "blit
+   let test_blit_overlapping_views () = let t = Nx.create Nx.float32 [| 5 |] [|
+   1.; 2.; 3.; 4.; 5. |] in let view1 = Nx.slice [ Nx.R (0, 3) ] t in let view2
+   = Nx.slice [ Nx.R (2, 5) ] t in Nx.blit view1 view2; check_t "blit
    overlapping views" [| 5 |] [| 1.; 2.; 1.; 2.; 3. |] t *)
 
 (* ───── Type Conversion Tests ───── *)
@@ -679,9 +629,7 @@ let memory_and_views =
 let utility_operations =
   [
     ("to bigarray", `Quick, test_to_bigarray);
-    ( "to bigarray partial slice",
-      `Quick,
-      test_to_bigarray_partial_slice );
+    ("to bigarray partial slice", `Quick, test_to_bigarray_partial_slice);
     ("copy", `Quick, test_copy);
     ("blit incompatible", `Quick, test_blit_incompatible);
     ("fill nan", `Quick, test_fill_nan);

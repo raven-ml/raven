@@ -1,7 +1,6 @@
 open Rune
 
 let () =
-
   (* Simple test case *)
   let x = randn Float32 [| 2; 1; 5; 5 |] in
   (* batch=2, channels=1, 5x5 *)

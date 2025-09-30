@@ -562,11 +562,7 @@ let op_associative_scan ~axis ~op x =
       let x_ffi = to_ffi_tensor x' in
       let out_ffi = to_ffi_tensor out in
       let op_tag =
-        match op with
-        | `Sum -> 0
-        | `Prod -> 1
-        | `Max -> 2
-        | `Min -> 3
+        match op with `Sum -> 0 | `Prod -> 1 | `Max -> 2 | `Min -> 3
       in
       caml_associative_scan x_ffi out_ffi axis op_tag;
       out

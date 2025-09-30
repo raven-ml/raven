@@ -162,7 +162,8 @@ let prefix_exclusive axis tensor =
   let padded = T.pad pad_config one tensor in
   let cumprod_padded = T.cumprod ~axis padded in
   let slice_specs =
-    Array.mapi (fun i dim -> if i = axis then T.R (0, dim) else T.R (0, dim))
+    Array.mapi
+      (fun i dim -> if i = axis then T.R (0, dim) else T.R (0, dim))
       shape
   in
   T.slice (Array.to_list slice_specs) cumprod_padded
@@ -178,14 +179,17 @@ let suffix_exclusive axis tensor =
   in
   let padded = T.pad pad_config one suffix_inclusive in
   let slice_specs =
-    Array.mapi (fun i dim -> if i = axis then T.R (1, dim + 1) else T.R (0, dim))
+    Array.mapi
+      (fun i dim -> if i = axis then T.R (1, dim + 1) else T.R (0, dim))
       shape
   in
   T.slice (Array.to_list slice_specs) padded
 
 let divide_no_nan num denom =
   let zero_scalar = Dtype.zero (T.dtype denom) in
-  let zero_tensor = T.full (context denom) (T.dtype denom) (T.shape denom) zero_scalar in
+  let zero_tensor =
+    T.full (context denom) (T.dtype denom) (T.shape denom) zero_scalar
+  in
   let zero_mask = T.equal denom zero_tensor in
   let safe_denom = T.where zero_mask (T.ones_like denom) denom in
   let base = T.div num safe_denom in
@@ -606,16 +610,13 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                       let prefix = prefix_exclusive axis_norm t_in_val in
                       let suffix = suffix_exclusive axis_norm t_in_val in
                       let h = divide_no_nan d_loss_d_result suffix in
-                      let tail_sum =
-                        T.sub (reverse_cumsum h axis_norm) h
-                      in
+                      let tail_sum = T.sub (reverse_cumsum h axis_norm) h in
                       let inner =
                         T.add d_loss_d_result (T.mul suffix tail_sum)
                       in
                       T.mul prefix inner
                   | `Max | `Min ->
-                      failwith
-                        "autodiff: cummax/cummin gradients not supported"
+                      failwith "autodiff: cummax/cummin gradients not supported"
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib);
             forward_val)

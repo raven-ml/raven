@@ -96,8 +96,8 @@ module Add_tests = struct
     [
       ( "0d + 0d",
         `Quick,
-        test_binary_op_0d ~op ~op_name ~dtype:Nx.float32 ~a_val:5.0
-          ~b_val:3.0 ~expected:8.0 );
+        test_binary_op_0d ~op ~op_name ~dtype:Nx.float32 ~a_val:5.0 ~b_val:3.0
+          ~expected:8.0 );
       ( "1d + 1d",
         `Quick,
         test_binary_op ~op ~op_name ~dtype:Nx.float32 ~shape:[| 5 |]
@@ -105,9 +105,9 @@ module Add_tests = struct
           ~expected:[| 6.; 6.; 6.; 6.; 6. |] );
       ( "2d + 2d",
         `Quick,
-        test_binary_op ~op ~op_name ~dtype:Nx.float32
-          ~shape:[| 2; 2 |] ~a_data:[| 1.; 2.; 3.; 4. |]
-          ~b_data:[| 5.; 6.; 7.; 8. |] ~expected:[| 6.; 8.; 10.; 12. |] );
+        test_binary_op ~op ~op_name ~dtype:Nx.float32 ~shape:[| 2; 2 |]
+          ~a_data:[| 1.; 2.; 3.; 4. |] ~b_data:[| 5.; 6.; 7.; 8. |]
+          ~expected:[| 6.; 8.; 10.; 12. |] );
       ( "5d + 5d",
         `Quick,
         fun () ->
@@ -120,21 +120,19 @@ module Add_tests = struct
         `Quick,
         fun () ->
           let a = Nx.scalar Nx.float32 5.0 in
-          let b =
-            Nx.create Nx.float32 [| 3; 4 |] (Array.make 12 1.0)
-          in
+          let b = Nx.create Nx.float32 [| 3; 4 |] (Array.make 12 1.0) in
           let result = Nx.add a b in
           check_t "add scalar broadcast" [| 3; 4 |] (Array.make 12 6.0) result
       );
       ( "1d broadcast to 2d",
         `Quick,
-        test_broadcast ~op ~op_name ~dtype:Nx.float32
-          ~a_shape:[| 4 |] ~a_data:[| 1.; 2.; 3.; 4. |] ~b_shape:[| 3; 4 |]
+        test_broadcast ~op ~op_name ~dtype:Nx.float32 ~a_shape:[| 4 |]
+          ~a_data:[| 1.; 2.; 3.; 4. |] ~b_shape:[| 3; 4 |]
           ~b_data:(Array.make 12 10.0) ~result_shape:[| 3; 4 |] );
       ( "broadcast error",
         `Quick,
-        test_broadcast_error ~op ~op_name ~dtype:Nx.float32
-          ~a_shape:[| 3 |] ~b_shape:[| 4 |] );
+        test_broadcast_error ~op ~op_name ~dtype:Nx.float32 ~a_shape:[| 3 |]
+          ~b_shape:[| 4 |] );
       ("nan propagation", `Quick, test_nan_propagation ~op ~op_name);
       ( "inf arithmetic",
         `Quick,
@@ -152,8 +150,7 @@ module Add_tests = struct
         `Quick,
         fun () ->
           let a =
-            Nx.create Nx.float32 [| 2 |]
-              [| Float.infinity; Float.infinity |]
+            Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.infinity |]
           in
           let b =
             Nx.create Nx.float32 [| 2 |]
@@ -164,14 +161,13 @@ module Add_tests = struct
           check bool "inf + -inf" true (Float.is_nan (Nx.item [ 1 ] result)) );
       ( "iadd",
         `Quick,
-        test_inplace ~iop:Nx.iadd ~op_name ~dtype:Nx.float32
-          ~shape:[| 2; 2 |] ~a_data:[| 1.; 2.; 3.; 4. |]
-          ~b_data:[| 5.; 6.; 7.; 8. |] ~expected:[| 6.; 8.; 10.; 12. |] );
+        test_inplace ~iop:Nx.iadd ~op_name ~dtype:Nx.float32 ~shape:[| 2; 2 |]
+          ~a_data:[| 1.; 2.; 3.; 4. |] ~b_data:[| 5.; 6.; 7.; 8. |]
+          ~expected:[| 6.; 8.; 10.; 12. |] );
       ( "add_s",
         `Quick,
-        test_scalar_op ~op_s:Nx.add_s ~op_name ~dtype:Nx.float32
-          ~shape:[| 3 |] ~data:[| 1.; 2.; 3. |] ~scalar:5.0
-          ~expected:[| 6.; 7.; 8. |] );
+        test_scalar_op ~op_s:Nx.add_s ~op_name ~dtype:Nx.float32 ~shape:[| 3 |]
+          ~data:[| 1.; 2.; 3. |] ~scalar:5.0 ~expected:[| 6.; 7.; 8. |] );
     ]
 end
 
@@ -183,15 +179,14 @@ module Sub_tests = struct
     [
       ( "2d - 2d",
         `Quick,
-        test_binary_op ~op ~op_name ~dtype:Nx.float32
-          ~shape:[| 2; 2 |] ~a_data:[| 5.; 6.; 7.; 8. |]
-          ~b_data:[| 1.; 2.; 3.; 4. |] ~expected:[| 4.; 4.; 4.; 4. |] );
+        test_binary_op ~op ~op_name ~dtype:Nx.float32 ~shape:[| 2; 2 |]
+          ~a_data:[| 5.; 6.; 7.; 8. |] ~b_data:[| 1.; 2.; 3.; 4. |]
+          ~expected:[| 4.; 4.; 4.; 4. |] );
       ( "inf - inf",
         `Quick,
         fun () ->
           let a =
-            Nx.create Nx.float32 [| 2 |]
-              [| Float.infinity; Float.infinity |]
+            Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.infinity |]
           in
           let b =
             Nx.create Nx.float32 [| 2 |]
@@ -203,14 +198,13 @@ module Sub_tests = struct
       );
       ( "isub",
         `Quick,
-        test_inplace ~iop:Nx.isub ~op_name ~dtype:Nx.float32
-          ~shape:[| 2; 2 |] ~a_data:[| 10.; 11.; 12.; 13. |]
-          ~b_data:[| 1.; 2.; 3.; 4. |] ~expected:[| 9.; 9.; 9.; 9. |] );
+        test_inplace ~iop:Nx.isub ~op_name ~dtype:Nx.float32 ~shape:[| 2; 2 |]
+          ~a_data:[| 10.; 11.; 12.; 13. |] ~b_data:[| 1.; 2.; 3.; 4. |]
+          ~expected:[| 9.; 9.; 9.; 9. |] );
       ( "sub_s",
         `Quick,
-        test_scalar_op ~op_s:Nx.sub_s ~op_name ~dtype:Nx.float32
-          ~shape:[| 3 |] ~data:[| 5.; 6.; 7. |] ~scalar:2.0
-          ~expected:[| 3.; 4.; 5. |] );
+        test_scalar_op ~op_s:Nx.sub_s ~op_name ~dtype:Nx.float32 ~shape:[| 3 |]
+          ~data:[| 5.; 6.; 7. |] ~scalar:2.0 ~expected:[| 3.; 4.; 5. |] );
     ]
 end
 
@@ -222,19 +216,18 @@ module Mul_tests = struct
     [
       ( "2d * 2d",
         `Quick,
-        test_binary_op ~op ~op_name ~dtype:Nx.float32
-          ~shape:[| 2; 2 |] ~a_data:[| 1.; 2.; 3.; 4. |]
-          ~b_data:[| 5.; 6.; 7.; 8. |] ~expected:[| 5.; 12.; 21.; 32. |] );
+        test_binary_op ~op ~op_name ~dtype:Nx.float32 ~shape:[| 2; 2 |]
+          ~a_data:[| 1.; 2.; 3.; 4. |] ~b_data:[| 5.; 6.; 7.; 8. |]
+          ~expected:[| 5.; 12.; 21.; 32. |] );
       ( "imul",
         `Quick,
-        test_inplace ~iop:Nx.imul ~op_name ~dtype:Nx.int32
-          ~shape:[| 3 |] ~a_data:[| 1l; 2l; 3l |] ~b_data:[| 5l; 6l; 7l |]
+        test_inplace ~iop:Nx.imul ~op_name ~dtype:Nx.int32 ~shape:[| 3 |]
+          ~a_data:[| 1l; 2l; 3l |] ~b_data:[| 5l; 6l; 7l |]
           ~expected:[| 5l; 12l; 21l |] );
       ( "mul_s",
         `Quick,
-        test_scalar_op ~op_s:Nx.mul_s ~op_name ~dtype:Nx.float32
-          ~shape:[| 3 |] ~data:[| 1.; 2.; 3. |] ~scalar:3.0
-          ~expected:[| 3.; 6.; 9. |] );
+        test_scalar_op ~op_s:Nx.mul_s ~op_name ~dtype:Nx.float32 ~shape:[| 3 |]
+          ~data:[| 1.; 2.; 3. |] ~scalar:3.0 ~expected:[| 3.; 6.; 9. |] );
     ]
 end
 
@@ -257,9 +250,7 @@ module Div_tests = struct
       ( "div by zero float",
         `Quick,
         fun () ->
-          let a =
-            Nx.create Nx.float32 [| 3 |] [| 1.0; -1.0; 0.0 |]
-          in
+          let a = Nx.create Nx.float32 [| 3 |] [| 1.0; -1.0; 0.0 |] in
           let b = Nx.create Nx.float32 [| 3 |] [| 0.0; 0.0; 0.0 |] in
           let result = Nx.div a b in
           check (float 1e-6) "1/0" Float.infinity (Nx.item [ 0 ] result);
@@ -267,14 +258,13 @@ module Div_tests = struct
           check bool "0/0" true (Float.is_nan (Nx.item [ 2 ] result)) );
       ( "idiv",
         `Quick,
-        test_inplace ~iop:Nx.idiv ~op_name ~dtype:Nx.float32
-          ~shape:[| 3 |] ~a_data:[| 10.; 20.; 30. |] ~b_data:[| 2.; 2.; 2. |]
+        test_inplace ~iop:Nx.idiv ~op_name ~dtype:Nx.float32 ~shape:[| 3 |]
+          ~a_data:[| 10.; 20.; 30. |] ~b_data:[| 2.; 2.; 2. |]
           ~expected:[| 5.; 10.; 15. |] );
       ( "div_s",
         `Quick,
-        test_scalar_op ~op_s:Nx.div_s ~op_name ~dtype:Nx.float32
-          ~shape:[| 3 |] ~data:[| 6.; 9.; 12. |] ~scalar:3.0
-          ~expected:[| 2.; 3.; 4. |] );
+        test_scalar_op ~op_s:Nx.div_s ~op_name ~dtype:Nx.float32 ~shape:[| 3 |]
+          ~data:[| 6.; 9.; 12. |] ~scalar:3.0 ~expected:[| 2.; 3.; 4. |] );
     ]
 end
 
@@ -340,14 +330,13 @@ module Mod_tests = struct
           ~expected:[| 1l; 1l; 0l |] );
       ( "imod",
         `Quick,
-        test_inplace ~iop:Nx.imod ~op_name ~dtype:Nx.int32
-          ~shape:[| 3 |] ~a_data:[| 10l; 11l; 12l |] ~b_data:[| 3l; 5l; 4l |]
+        test_inplace ~iop:Nx.imod ~op_name ~dtype:Nx.int32 ~shape:[| 3 |]
+          ~a_data:[| 10l; 11l; 12l |] ~b_data:[| 3l; 5l; 4l |]
           ~expected:[| 1l; 1l; 0l |] );
       ( "mod_s",
         `Quick,
-        test_scalar_op ~op_s:Nx.mod_s ~op_name ~dtype:Nx.int32
-          ~shape:[| 3 |] ~data:[| 10l; 11l; 12l |] ~scalar:3l
-          ~expected:[| 1l; 2l; 0l |] );
+        test_scalar_op ~op_s:Nx.mod_s ~op_name ~dtype:Nx.int32 ~shape:[| 3 |]
+          ~data:[| 10l; 11l; 12l |] ~scalar:3l ~expected:[| 1l; 2l; 0l |] );
     ]
 end
 
@@ -381,8 +370,8 @@ module Math_tests = struct
       ( "log basic",
         `Quick,
         test_unary_op_float ~eps:1e-5 ~op:Nx.log ~op_name:"log"
-          ~dtype:Nx.float32 ~shape:[| 3 |]
-          ~input:[| 1.; 2.71828; 7.38905 |] ~expected:[| 0.; 1.; 2. |] );
+          ~dtype:Nx.float32 ~shape:[| 3 |] ~input:[| 1.; 2.71828; 7.38905 |]
+          ~expected:[| 0.; 1.; 2. |] );
       ( "log negative",
         `Quick,
         fun () ->
@@ -416,14 +405,13 @@ module Math_tests = struct
     [
       ( "abs int32",
         `Quick,
-        test_unary_op ~op:Nx.abs ~op_name:"abs" ~dtype:Nx.int32
-          ~shape:[| 4 |] ~input:[| -1l; 0l; 5l; -10l |]
-          ~expected:[| 1l; 0l; 5l; 10l |] );
+        test_unary_op ~op:Nx.abs ~op_name:"abs" ~dtype:Nx.int32 ~shape:[| 4 |]
+          ~input:[| -1l; 0l; 5l; -10l |] ~expected:[| 1l; 0l; 5l; 10l |] );
       ( "abs float32",
         `Quick,
         test_unary_op_float ~eps:1e-5 ~op:Nx.abs ~op_name:"abs"
-          ~dtype:Nx.float32 ~shape:[| 3 |]
-          ~input:[| -1.5; 0.0; 5.2 |] ~expected:[| 1.5; 0.0; 5.2 |] );
+          ~dtype:Nx.float32 ~shape:[| 3 |] ~input:[| -1.5; 0.0; 5.2 |]
+          ~expected:[| 1.5; 0.0; 5.2 |] );
     ]
 
   let test_sign =
@@ -435,8 +423,8 @@ module Math_tests = struct
           ~expected:[| -1.0; 0.0; 1.0; 0.0 |] );
       ( "sign int32",
         `Quick,
-        test_unary_op ~op:Nx.sign ~op_name:"sign" ~dtype:Nx.int32
-          ~shape:[| 3 |] ~input:[| -5l; 0l; 3l |] ~expected:[| -1l; 0l; 1l |] );
+        test_unary_op ~op:Nx.sign ~op_name:"sign" ~dtype:Nx.int32 ~shape:[| 3 |]
+          ~input:[| -5l; 0l; 3l |] ~expected:[| -1l; 0l; 1l |] );
     ]
 
   let tests =
@@ -449,9 +437,9 @@ module Math_tests = struct
             ~expected:[| -1.0; 2.0; 0.0 |] );
         ( "square",
           `Quick,
-          test_unary_op ~op:Nx.square ~op_name:"square"
-            ~dtype:Nx.float32 ~shape:[| 4 |]
-            ~input:[| 1.; 2.; -3.; 0. |] ~expected:[| 1.; 4.; 9.; 0. |] );
+          test_unary_op ~op:Nx.square ~op_name:"square" ~dtype:Nx.float32
+            ~shape:[| 4 |] ~input:[| 1.; 2.; -3.; 0. |]
+            ~expected:[| 1.; 4.; 9.; 0. |] );
       ]
 end
 
@@ -552,12 +540,10 @@ module Comparison_tests = struct
         `Quick,
         fun () ->
           let t1 =
-            Nx.create Nx.float32 [| 3 |]
-              [| Float.nan; 1.; Float.nan |]
+            Nx.create Nx.float32 [| 3 |] [| Float.nan; 1.; Float.nan |]
           in
           let t2 =
-            Nx.create Nx.float32 [| 3 |]
-              [| Float.nan; Float.nan; 1. |]
+            Nx.create Nx.float32 [| 3 |] [| Float.nan; Float.nan; 1. |]
           in
           let eq_result = Nx.equal t1 t2 in
           let ne_result = Nx.not_equal t1 t2 in
@@ -578,15 +564,13 @@ module Reduction_tests = struct
     [
       ( "sum all",
         `Quick,
-        test_reduction_all ~op:Nx.sum ~op_name:"sum"
-          ~dtype:Nx.float32 ~shape:[| 2; 2 |]
-          ~input:[| 1.; 2.; 3.; 4. |] ~expected:10. );
+        test_reduction_all ~op:Nx.sum ~op_name:"sum" ~dtype:Nx.float32
+          ~shape:[| 2; 2 |] ~input:[| 1.; 2.; 3.; 4. |] ~expected:10. );
       ( "sum axis=0",
         `Quick,
         fun () ->
           let t =
-            Nx.create Nx.float32 [| 2; 3 |]
-              [| 1.; 2.; 3.; 4.; 5.; 6. |]
+            Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
           let result = Nx.sum ~axes:[| 0 |] t in
           check_t "sum axis=0" [| 3 |] [| 5.; 7.; 9. |] result );
@@ -594,8 +578,7 @@ module Reduction_tests = struct
         `Quick,
         fun () ->
           let t =
-            Nx.create Nx.float32 [| 2; 3 |]
-              [| 1.; 2.; 3.; 4.; 5.; 6. |]
+            Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
           let result = Nx.sum ~axes:[| 1 |] ~keepdims:true t in
           check_t "sum axis=1 keepdims" [| 2; 1 |] [| 6.; 15. |] result );
@@ -608,41 +591,31 @@ module Reduction_tests = struct
       ( "mean all",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
-          in
+          let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let result = Nx.mean t in
           check_t "mean all" [||] [| 2.5 |] result );
       ( "max all",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
-          in
+          let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let result = Nx.max t in
           check_t "max all" [||] [| 4. |] result );
       ( "min all",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
-          in
+          let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let result = Nx.min t in
           check_t "min all" [||] [| 1. |] result );
       ( "var 1d",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
-          in
+          let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
           let result = Nx.var t in
           check_t "var 1d" [||] [| 2. |] result );
       ( "std 1d",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
-          in
+          let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
           let result = Nx.std t in
           check_t ~eps:1e-5 "std 1d" [||] [| 1.41421 |] result );
       ( "empty array mean",
@@ -654,9 +627,7 @@ module Reduction_tests = struct
       ( "min/max with nan",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.float32 [| 3 |] [| 1.; Float.nan; 3. |]
-          in
+          let t = Nx.create Nx.float32 [| 3 |] [| 1.; Float.nan; 3. |] in
           let min_result = Nx.min t in
           let max_result = Nx.max t in
           check bool "min with nan" true (Float.is_nan (Nx.item [] min_result));
@@ -672,34 +643,34 @@ module MinMax_tests = struct
     [
       ( "maximum",
         `Quick,
-        test_binary_op ~op:Nx.maximum ~op_name:"maximum"
-          ~dtype:Nx.float32 ~shape:[| 3 |] ~a_data:[| 1.; 3.; 2. |]
-          ~b_data:[| 2.; 1.; 4. |] ~expected:[| 2.; 3.; 4. |] );
+        test_binary_op ~op:Nx.maximum ~op_name:"maximum" ~dtype:Nx.float32
+          ~shape:[| 3 |] ~a_data:[| 1.; 3.; 2. |] ~b_data:[| 2.; 1.; 4. |]
+          ~expected:[| 2.; 3.; 4. |] );
       ( "maximum_s",
         `Quick,
-        test_scalar_op ~op_s:Nx.maximum_s ~op_name:"maximum"
-          ~dtype:Nx.float32 ~shape:[| 3 |] ~data:[| 1.; 5.; 3. |]
-          ~scalar:2.0 ~expected:[| 2.; 5.; 3. |] );
+        test_scalar_op ~op_s:Nx.maximum_s ~op_name:"maximum" ~dtype:Nx.float32
+          ~shape:[| 3 |] ~data:[| 1.; 5.; 3. |] ~scalar:2.0
+          ~expected:[| 2.; 5.; 3. |] );
       ( "imaximum",
         `Quick,
-        test_inplace ~iop:Nx.imaximum ~op_name:"maximum"
-          ~dtype:Nx.float32 ~shape:[| 3 |] ~a_data:[| 1.; 3.; 2. |]
-          ~b_data:[| 2.; 1.; 4. |] ~expected:[| 2.; 3.; 4. |] );
+        test_inplace ~iop:Nx.imaximum ~op_name:"maximum" ~dtype:Nx.float32
+          ~shape:[| 3 |] ~a_data:[| 1.; 3.; 2. |] ~b_data:[| 2.; 1.; 4. |]
+          ~expected:[| 2.; 3.; 4. |] );
       ( "minimum",
         `Quick,
-        test_binary_op ~op:Nx.minimum ~op_name:"minimum"
-          ~dtype:Nx.int32 ~shape:[| 3 |] ~a_data:[| 1l; 3l; 4l |]
-          ~b_data:[| 2l; 1l; 4l |] ~expected:[| 1l; 1l; 4l |] );
+        test_binary_op ~op:Nx.minimum ~op_name:"minimum" ~dtype:Nx.int32
+          ~shape:[| 3 |] ~a_data:[| 1l; 3l; 4l |] ~b_data:[| 2l; 1l; 4l |]
+          ~expected:[| 1l; 1l; 4l |] );
       ( "minimum_s",
         `Quick,
-        test_scalar_op ~op_s:Nx.minimum_s ~op_name:"minimum"
-          ~dtype:Nx.float32 ~shape:[| 3 |] ~data:[| 1.; 5.; 3. |]
-          ~scalar:2.0 ~expected:[| 1.; 2.; 2. |] );
+        test_scalar_op ~op_s:Nx.minimum_s ~op_name:"minimum" ~dtype:Nx.float32
+          ~shape:[| 3 |] ~data:[| 1.; 5.; 3. |] ~scalar:2.0
+          ~expected:[| 1.; 2.; 2. |] );
       ( "iminimum",
         `Quick,
-        test_inplace ~iop:Nx.iminimum ~op_name:"minimum"
-          ~dtype:Nx.int32 ~shape:[| 3 |] ~a_data:[| 1l; 3l; 4l |]
-          ~b_data:[| 2l; 1l; 4l |] ~expected:[| 1l; 1l; 4l |] );
+        test_inplace ~iop:Nx.iminimum ~op_name:"minimum" ~dtype:Nx.int32
+          ~shape:[| 3 |] ~a_data:[| 1l; 3l; 4l |] ~b_data:[| 2l; 1l; 4l |]
+          ~expected:[| 1l; 1l; 4l |] );
     ]
 end
 
@@ -726,9 +697,7 @@ module Rounding_tests = struct
       ( "clip",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.float32 [| 5 |] [| -1.; 2.; 5.; 8.; 10. |]
-          in
+          let t = Nx.create Nx.float32 [| 5 |] [| -1.; 2.; 5.; 8.; 10. |] in
           let result = Nx.clip ~min:0. ~max:7. t in
           check_t "clip" [| 5 |] [| 0.; 2.; 5.; 7.; 7. |] result );
     ]
@@ -742,19 +711,15 @@ module Cumulative_tests = struct
       ( "cumsum default axis",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
-          in
+          let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let result = Nx.cumsum t in
-          check_t ~eps:1e-6 "cumsum flatten" [| 2; 2 |]
-            [| 1.; 3.; 6.; 10. |]
+          check_t ~eps:1e-6 "cumsum flatten" [| 2; 2 |] [| 1.; 3.; 6.; 10. |]
             result );
       ( "cumsum axis=1",
         `Quick,
         fun () ->
           let t =
-            Nx.create Nx.float32 [| 2; 3 |]
-              [| 1.; 2.; 3.; 4.; 5.; 6. |]
+            Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
           let result = Nx.cumsum ~axis:1 t in
           check_t ~eps:1e-6 "cumsum axis=1" [| 2; 3 |]
@@ -763,10 +728,7 @@ module Cumulative_tests = struct
       ( "cumprod axis=-1",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.int32 [| 2; 3 |]
-              [| 1l; 2l; 3l; 2l; 2l; 2l |]
-          in
+          let t = Nx.create Nx.int32 [| 2; 3 |] [| 1l; 2l; 3l; 2l; 2l; 2l |] in
           let result = Nx.cumprod ~axis:(-1) t in
           check_t "cumprod axis=-1" [| 2; 3 |]
             [| 1l; 2l; 6l; 2l; 4l; 8l |]
@@ -774,21 +736,16 @@ module Cumulative_tests = struct
       ( "cummax nan propagation",
         `Quick,
         fun () ->
-          let t =
-            Nx.create Nx.float32 [| 4 |]
-              [| 1.; Float.nan; 2.; 3. |]
-          in
+          let t = Nx.create Nx.float32 [| 4 |] [| 1.; Float.nan; 2.; 3. |] in
           let result = Nx.cummax t in
-          check bool "cummax nan[1]" true
-            (Float.is_nan (Nx.item [ 1 ] result));
-          check bool "cummax nan[2]" true
-            (Float.is_nan (Nx.item [ 2 ] result)) );
+          check bool "cummax nan[1]" true (Float.is_nan (Nx.item [ 1 ] result));
+          check bool "cummax nan[2]" true (Float.is_nan (Nx.item [ 2 ] result))
+      );
       ( "cummin axis option",
         `Quick,
         fun () ->
           let t =
-            Nx.create Nx.int32 [| 2; 4 |]
-              [| 4l; 2l; 3l; 1l; 5l; 6l; 2l; 7l |]
+            Nx.create Nx.int32 [| 2; 4 |] [| 4l; 2l; 3l; 1l; 5l; 6l; 2l; 7l |]
           in
           let result = Nx.cummin ~axis:0 t in
           check_t "cummin axis=0" [| 2; 4 |]
@@ -834,12 +791,9 @@ module Broadcasting_tests = struct
         `Quick,
         fun () ->
           let t2d =
-            Nx.create Nx.float32 [| 2; 3 |]
-              [| 1.; 2.; 3.; 4.; 5.; 6. |]
+            Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
-          let t1d =
-            Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |]
-          in
+          let t1d = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
           let result = Nx.add t2d t1d in
           check_t "broadcast 1d to 2d" [| 2; 3 |]
             [| 11.; 22.; 33.; 14.; 25.; 36. |]
@@ -849,8 +803,7 @@ module Broadcasting_tests = struct
         fun () ->
           let t21 = Nx.create Nx.float32 [| 2; 1 |] [| 1.; 2. |] in
           let t23 =
-            Nx.create Nx.float32 [| 2; 3 |]
-              [| 10.; 11.; 12.; 20.; 21.; 22. |]
+            Nx.create Nx.float32 [| 2; 3 |] [| 10.; 11.; 12.; 20.; 21.; 22. |]
           in
           let result = Nx.add t21 t23 in
           check_t "broadcast 2x1 to 2x3" [| 2; 3 |]
@@ -863,9 +816,7 @@ module Broadcasting_tests = struct
             Nx.reshape [| 4; 1 |]
               (Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
           in
-          let t3 =
-            Nx.create Nx.float32 [| 3 |] [| 10.; 100.; 1000. |]
-          in
+          let t3 = Nx.create Nx.float32 [| 3 |] [| 10.; 100.; 1000. |] in
           let result = Nx.mul t41 t3 in
           check_t "broadcast (4,1) * (3,)" [| 4; 3 |]
             [|

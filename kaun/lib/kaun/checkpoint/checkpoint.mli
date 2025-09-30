@@ -75,8 +75,7 @@ module Checkpointer : sig
 
   val restore_file :
     t -> path:string -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t
-  (** [restore_file checkpointer ~path ~dtype] loads from a single file.
-  *)
+  (** [restore_file checkpointer ~path ~dtype] loads from a single file. *)
 end
 
 (** {1 Checkpoint Management} *)

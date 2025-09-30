@@ -169,8 +169,7 @@ let fashion_mnist ?(train = true) ?(flatten = false) ?(normalize = true)
 
 (** {1 Text Datasets} *)
 
-let imdb ?(train = true) ?tokenizer ?(max_length = 512) ?cache_dir:_ ()
-    =
+let imdb ?(train = true) ?tokenizer ?(max_length = 512) ?cache_dir:_ () =
   (* TODO: Load actual IMDB data when available in nx-datasets *)
   (* For now, create a placeholder with synthetic data *)
   let num_samples = if train then 25000 else 25000 in

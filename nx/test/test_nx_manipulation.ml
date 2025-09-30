@@ -6,9 +6,7 @@ open Test_nx_support
 (* ───── Reshape Tests ───── *)
 
 let test_reshape_minus_one () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
   (* Single -1 inference *)
   let r1 = Nx.reshape [| -1 |] t in
   check_shape "reshape [-1]" [| 24 |] r1;
@@ -20,18 +18,14 @@ let test_reshape_minus_one () =
   check_shape "reshape [-1,6]" [| 4; 6 |] r3
 
 let test_reshape_multiple_minus_one () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   check_invalid_arg "multiple -1"
     "reshape: invalid shape specification (multiple -1 dimensions)\n\
      hint: can only specify one unknown dimension" (fun () ->
       ignore (Nx.reshape [| -1; -1 |] t))
 
 let test_reshape_wrong_size () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   check_invalid_arg "wrong size"
     "reshape: cannot reshape [5] to [2,3] (5→6 elements)" (fun () ->
       ignore (Nx.reshape [| 5 |] t))
@@ -64,9 +58,7 @@ let test_reshape_view_when_contiguous () =
   check (float 1e-6) "reshape view modified" 99.0 (Nx.item [ 0; 0 ] r)
 
 let test_reshape_copy_when_not_contiguous () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let transposed = Nx.transpose t in
   check_invalid_arg "reshape non-contiguous"
     "reshape: cannot reshape strided view [3,2] to [6] (incompatible strides \
@@ -92,10 +84,7 @@ let test_transpose_0d () =
   check_t "transpose scalar is no-op" [||] [| 42.0 |] tr
 
 let test_transpose_high_d () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3; 4; 5 |]
-      (Array.init 120 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 3; 4; 5 |] (Array.init 120 float_of_int) in
   let tr = Nx.transpose t in
   check_shape "transpose high-d shape" [| 5; 4; 3; 2 |] tr;
   (* Check a few values to ensure correct transpose *)
@@ -103,27 +92,21 @@ let test_transpose_high_d () =
   check (float 1e-6) "transpose[0,0,0,1]" 60.0 (Nx.item [ 0; 0; 0; 1 ] tr)
 
 let test_transpose_axes () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
   let tr = Nx.transpose ~axes:[| 1; 2; 0 |] t in
   check_shape "transpose custom axes" [| 3; 4; 2 |] tr;
   check (float 1e-6) "transpose[0,0,0]" 0.0 (Nx.item [ 0; 0; 0 ] tr);
   check (float 1e-6) "transpose[0,0,1]" 12.0 (Nx.item [ 0; 0; 1 ] tr)
 
 let test_transpose_invalid_axes () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   check_invalid_arg "invalid axes length"
     "transpose: invalid axes (length 3) (expected rank 2, got 3)\n\
      hint: provide exactly one axis per dimension" (fun () ->
       Nx.transpose ~axes:[| 0; 1; 2 |] t)
 
 let test_transpose_view () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let tr = Nx.transpose t in
   Nx.set_item [ 0; 1 ] 99.0 t;
   check (float 1e-6) "transpose view modified" 99.0 (Nx.item [ 1; 0 ] tr)
@@ -131,9 +114,7 @@ let test_transpose_view () =
 (* ───── Concatenate Tests ───── *)
 
 let test_concat_axis_1 () =
-  let t1 =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t1 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let t2 = Nx.create Nx.float32 [| 2; 2 |] [| 7.; 8.; 9.; 10. |] in
   let c = Nx.concatenate ~axis:1 [ t1; t2 ] in
   check_t "concat axis 1" [| 2; 5 |]
@@ -141,9 +122,7 @@ let test_concat_axis_1 () =
     c
 
 let test_concat_single () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let c = Nx.concatenate [ t ] in
   check_t "concat single array" [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] c
 
@@ -163,20 +142,15 @@ let test_concat_different_dtypes () =
       ignore (Nx.concatenate [ t1; Obj.magic t2 ]))
 
 let test_concat_with_empty () =
-  let t1 =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t1 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let t2 = Nx.create Nx.float32 [| 0; 3 |] [||] in
   let c = Nx.concatenate ~axis:0 [ t1; t2 ] in
   check_t "concat with empty" [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] c
 
 let test_concat_shape_mismatch () =
-  let t1 =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t1 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let t2 =
-    Nx.create Nx.float32 [| 2; 4 |]
-      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+    Nx.create Nx.float32 [| 2; 4 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
   in
   check_invalid_arg "shape mismatch"
     "concatenate: invalid dimension 1 (size 4\226\137\1603)" (fun () ->
@@ -192,12 +166,8 @@ let test_concat_new_array () =
 (* ───── Stack Tests ───── *)
 
 let test_stack_new_axis () =
-  let t1 =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
-  let t2 =
-    Nx.create Nx.float32 [| 2; 3 |] [| 7.; 8.; 9.; 10.; 11.; 12. |]
-  in
+  let t1 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let t2 = Nx.create Nx.float32 [| 2; 3 |] [| 7.; 8.; 9.; 10.; 11.; 12. |] in
   let s = Nx.stack ~axis:1 [ t1; t2 ] in
   check_shape "stack axis 1 shape" [| 2; 2; 3 |] s;
   check_t "stack axis 1 values" [| 2; 2; 3 |]
@@ -221,9 +191,7 @@ let test_stack_new_array () =
 (* ───── Split Tests ───── *)
 
 let test_split_equal () =
-  let t =
-    Nx.create Nx.float32 [| 12 |] (Array.init 12 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 12 |] (Array.init 12 float_of_int) in
   let parts = Nx.split ~axis:0 3 t in
   check int "split count" 3 (List.length parts);
   check_t "split part 0" [| 4 |] [| 0.; 1.; 2.; 3. |] (List.nth parts 0);
@@ -231,26 +199,20 @@ let test_split_equal () =
   check_t "split part 2" [| 4 |] [| 8.; 9.; 10.; 11. |] (List.nth parts 2)
 
 let test_split_unequal () =
-  let t =
-    Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
   check_invalid_arg "split unequal"
     "split: cannot divide evenly axis 0 (size 10) to 3 sections (10 % 3 = 1)\n\
      hint: use array_split for uneven division" (fun () ->
       ignore (Nx.split ~axis:0 3 t))
 
 let test_split_axis () =
-  let t =
-    Nx.create Nx.float32 [| 4; 6 |] (Array.init 24 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 4; 6 |] (Array.init 24 float_of_int) in
   let parts = Nx.split ~axis:1 2 t in
   check int "split axis 1 count" 2 (List.length parts);
   check_shape "split axis 1 shape" [| 4; 3 |] (List.nth parts 0)
 
 let test_split_one () =
-  let t =
-    Nx.create Nx.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let parts = Nx.split ~axis:0 1 t in
   check int "split into 1 count" 1 (List.length parts);
   check_t "split into 1 part" [| 6 |]
@@ -267,17 +229,13 @@ let test_split_views () =
 (* ───── Array Split Tests ───── *)
 
 let test_array_split_equal () =
-  let t =
-    Nx.create Nx.float32 [| 6 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-  in
+  let t = Nx.create Nx.float32 [| 6 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let parts = Nx.array_split ~axis:0 (`Count 3) t in
   check int "array_split equal count" 3 (List.length parts);
   check_t "array_split equal part 0" [| 2 |] [| 1.0; 2.0 |] (List.nth parts 0)
 
 let test_array_split_unequal () =
-  let t =
-    Nx.create Nx.float32 [| 5 |] [| 1.0; 2.0; 3.0; 4.0; 5.0 |]
-  in
+  let t = Nx.create Nx.float32 [| 5 |] [| 1.0; 2.0; 3.0; 4.0; 5.0 |] in
   let parts = Nx.array_split ~axis:0 (`Count 3) t in
   check int "array_split unequal count" 3 (List.length parts);
   check_t "array_split unequal part 0" [| 2 |] [| 1.0; 2.0 |] (List.nth parts 0);
@@ -285,9 +243,7 @@ let test_array_split_unequal () =
   check_t "array_split unequal part 2" [| 1 |] [| 5.0 |] (List.nth parts 2)
 
 let test_array_split_views () =
-  let t =
-    Nx.create Nx.float32 [| 5 |] [| 1.0; 2.0; 3.0; 4.0; 5.0 |]
-  in
+  let t = Nx.create Nx.float32 [| 5 |] [| 1.0; 2.0; 3.0; 4.0; 5.0 |] in
   let parts = Nx.array_split ~axis:0 (`Count 2) t in
   let p1 = List.nth parts 0 in
   Nx.set_item [ 0 ] 99.0 p1;
@@ -297,31 +253,23 @@ let test_array_split_views () =
 
 let test_squeeze_all () =
   let t =
-    Nx.create Nx.float32 [| 1; 3; 1; 4; 1 |]
-      (Array.init 12 float_of_int)
+    Nx.create Nx.float32 [| 1; 3; 1; 4; 1 |] (Array.init 12 float_of_int)
   in
   let s = Nx.squeeze t in
   check_shape "squeeze all" [| 3; 4 |] s
 
 let test_squeeze_specific () =
-  let t =
-    Nx.create Nx.float32 [| 1; 3; 1; 4 |]
-      (Array.init 12 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 1; 3; 1; 4 |] (Array.init 12 float_of_int) in
   let s = Nx.squeeze ~axes:[| 0; 2 |] t in
   check_shape "squeeze specific axes" [| 3; 4 |] s
 
 let test_squeeze_no_ones () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
   let s = Nx.squeeze t in
   check_shape "squeeze no ones" [| 2; 3; 4 |] s
 
 let test_squeeze_invalid_axis () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   check_invalid_arg "squeeze invalid axis"
     "squeeze: cannot remove dimension axis 1 (size 3) to squeezed (size \
      3\226\137\1601)" (fun () -> ignore (Nx.squeeze ~axes:[| 1 |] t))
@@ -338,9 +286,7 @@ let test_expand_dims_various () =
   check_shape "expand_dims at -1" [| 3; 1 |] e_end;
 
   (* Add dim in middle *)
-  let t2 =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t2 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let e_mid = Nx.expand_dims [| 1 |] t2 in
   check_shape "expand_dims in middle" [| 2; 1; 3 |] e_mid
 
@@ -368,9 +314,7 @@ let test_broadcast_to_invalid () =
       ignore (Nx.broadcast_to [| 4 |] t))
 
 let test_broadcast_to_same () =
-  let t =
-    Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int)
-  in
+  let t = Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
   let b = Nx.broadcast_to [| 3; 4 |] t in
   check_t "broadcast to same" [| 3; 4 |] (Array.init 12 float_of_int) b
 
@@ -382,9 +326,7 @@ let test_broadcast_scalar () =
 
 let test_broadcast_arrays_compatible () =
   let t1 = Nx.create Nx.float32 [| 3; 1 |] [| 1.0; 2.0; 3.0 |] in
-  let t2 =
-    Nx.create Nx.float32 [| 1; 4 |] [| 10.0; 20.0; 30.0; 40.0 |]
-  in
+  let t2 = Nx.create Nx.float32 [| 1; 4 |] [| 10.0; 20.0; 30.0; 40.0 |] in
   let broadcasted = Nx.broadcast_arrays [ t1; t2 ] in
   check int "broadcast_arrays count" 2 (List.length broadcasted);
   let b1 = List.nth broadcasted 0 in
@@ -416,9 +358,7 @@ let test_tile_1d () =
   check_t "tile 1d" [| 6 |] [| 1.; 2.; 3.; 1.; 2.; 3. |] tiled
 
 let test_tile_2d () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let tiled = Nx.tile [| 2; 1 |] t in
   check_t "tile 2d" [| 4; 3 |]
     [| 1.; 2.; 3.; 4.; 5.; 6.; 1.; 2.; 3.; 4.; 5.; 6. |]
@@ -442,18 +382,14 @@ let test_tile_invalid () =
       Nx.tile [| -1 |] t)
 
 let test_repeat_axis () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let r = Nx.repeat ~axis:0 2 t in
   check_t "repeat axis 0" [| 4; 3 |]
     [| 1.; 2.; 3.; 1.; 2.; 3.; 4.; 5.; 6.; 4.; 5.; 6. |]
     r
 
 let test_repeat_no_axis () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let r = Nx.repeat 2 t in
   check_t "repeat no axis" [| 12 |]
     [| 1.; 1.; 2.; 2.; 3.; 3.; 4.; 4.; 5.; 5.; 6.; 6. |]
@@ -502,10 +438,7 @@ let test_pad_invalid () =
       Nx.pad [| (-1, 2) |] 0.0 t)
 
 let test_flip_axis () =
-  let t =
-    Nx.create Nx.float32 [| 2; 3 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-  in
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let f = Nx.flip ~axes:[| 1 |] t in
   check_t "flip axis 1" [| 2; 3 |] [| 3.0; 2.0; 1.0; 6.0; 5.0; 4.0 |] f
 
@@ -556,37 +489,22 @@ let test_dstack_1d () =
   check_t "dstack 1d" [| 1; 2; 2 |] [| 1.0; 3.0; 2.0; 4.0 |] d
 
 let test_vstack_invalid () =
-  let t1 =
-    Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
-  in
-  let t2 =
-    Nx.create Nx.float32 [| 2; 3 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-  in
+  let t1 = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
+  let t2 = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   check_invalid_arg "vstack invalid"
     "concatenate: invalid dimension 1 (size 3\226\137\1602)" (fun () ->
       Nx.vstack [ t1; t2 ])
 
 let test_hstack_invalid () =
-  let t1 =
-    Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
-  in
-  let t2 =
-    Nx.create Nx.float32 [| 3; 2 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-  in
+  let t1 = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
+  let t2 = Nx.create Nx.float32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   check_invalid_arg "hstack invalid"
     "concatenate: invalid dimension 0 (size 3\226\137\1602)" (fun () ->
       Nx.hstack [ t1; t2 ])
 
 let test_dstack_invalid () =
-  let t1 =
-    Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]
-  in
-  let t2 =
-    Nx.create Nx.float32 [| 2; 3 |]
-      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-  in
+  let t1 = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
+  let t2 = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   check_invalid_arg "dstack invalid"
     "concatenate: invalid dimension 1 (size 3\226\137\1602)" (fun () ->
       Nx.dstack [ t1; t2 ])
@@ -595,9 +513,7 @@ let test_dstack_invalid () =
 
 let test_as_strided_basic () =
   (* Create a simple 1D array and view it as 2D with overlapping windows *)
-  let x =
-    Nx.create Nx.float32 [| 8 |] [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |]
-  in
+  let x = Nx.create Nx.float32 [| 8 |] [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
   (* Create overlapping windows of size 3 with stride 2 *)
   let result = Nx.as_strided [| 3; 3 |] [| 2; 1 |] ~offset:0 x in
   check_t "as_strided overlapping windows" [| 3; 3 |]
@@ -606,9 +522,7 @@ let test_as_strided_basic () =
 
 let test_as_strided_2d_transpose () =
   (* Use as_strided to implement a transpose *)
-  let x =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let x = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   (* Transpose by swapping strides: original strides are [3, 1], transposed are
      [1, 3] *)
   let result = Nx.as_strided [| 3; 2 |] [| 1; 3 |] ~offset:0 x in
@@ -617,8 +531,7 @@ let test_as_strided_2d_transpose () =
 let test_as_strided_diagonal () =
   (* Extract diagonal using as_strided *)
   let x =
-    Nx.create Nx.float32 [| 3; 3 |]
-      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+    Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
   in
   (* Diagonal has stride of 4 (3+1) to skip to next diagonal element *)
   let result = Nx.as_strided [| 3 |] [| 4 |] ~offset:0 x in
@@ -626,9 +539,7 @@ let test_as_strided_diagonal () =
 
 let test_as_strided_sliding_window () =
   (* Create sliding windows over a 1D array *)
-  let x =
-    Nx.create Nx.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let x = Nx.create Nx.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   (* Windows of size 3 with stride 1 *)
   let result = Nx.as_strided [| 4; 3 |] [| 1; 1 |] ~offset:0 x in
   check_t "as_strided sliding window" [| 4; 3 |]
@@ -638,8 +549,7 @@ let test_as_strided_sliding_window () =
 let test_as_strided_with_offset () =
   (* Test as_strided with non-zero offset *)
   let x =
-    Nx.create Nx.float32 [| 10 |]
-      [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+    Nx.create Nx.float32 [| 10 |] [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
   in
   (* Start from offset 2, create a 2x3 view *)
   let result = Nx.as_strided [| 2; 3 |] [| 3; 1 |] ~offset:2 x in
@@ -665,9 +575,7 @@ let test_as_strided_skip_elements () =
 
 let test_as_strided_int_dtype () =
   (* Test as_strided with integer dtype *)
-  let x =
-    Nx.create Nx.int32 [| 6 |] [| 10l; 20l; 30l; 40l; 50l; 60l |]
-  in
+  let x = Nx.create Nx.int32 [| 6 |] [| 10l; 20l; 30l; 40l; 50l; 60l |] in
   let result = Nx.as_strided [| 2; 2 |] [| 2; 1 |] ~offset:1 x in
   check_t "as_strided int32" [| 2; 2 |] [| 20l; 30l; 40l; 50l |] result
 

@@ -419,8 +419,7 @@ let multi_transform ~transforms ~labels =
             (combined_updates, State new_states));
   }
 
-let rec apply_mask : type a. mask_tree -> a Ptree.t -> a Ptree.t -> a Ptree.t
-    =
+let rec apply_mask : type a. mask_tree -> a Ptree.t -> a Ptree.t -> a Ptree.t =
  fun mask_tree params grads ->
   match (mask_tree, params, grads) with
   | MaskTensor true, Ptree.Tensor _, Ptree.Tensor g -> Ptree.Tensor g

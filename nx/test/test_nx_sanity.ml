@@ -794,8 +794,7 @@ let type_conversion_tests =
           (Bigarray.Genarray.get ba [| 1 |]));
     test_case "of_bigarray" `Quick (fun () ->
         let ba =
-          Bigarray.Genarray.create Bigarray.float32
-            Bigarray.c_layout [| 3 |]
+          Bigarray.Genarray.create Bigarray.float32 Bigarray.c_layout [| 3 |]
         in
         Bigarray.Genarray.set ba [| 0 |] 4.0;
         Bigarray.Genarray.set ba [| 1 |] 5.0;

@@ -103,9 +103,7 @@ let test_jit_grad_composition () =
   (* Test both JIT(grad(f)) and grad(JIT(f)) give same results *)
   let f x = T.sum (T.mul x x) in
 
-  let x =
-    T.create T.float32 [| 3; 2 |] [| 0.1; 0.2; -0.3; 0.4; -0.5; 0.6 |]
-  in
+  let x = T.create T.float32 [| 3; 2 |] [| 0.1; 0.2; -0.3; 0.4; -0.5; 0.6 |] in
 
   (* Regular gradient *)
   let grad_f x = T.grad f x in
@@ -160,8 +158,7 @@ let test_jit_reduction_ops () =
 (* TODO: Implement when jit2 is available let test_jit_broadcast_ops () = let f
    x y = T.add (T.mul x y) x in let jit_f = T.jit2 f in
 
-   let x = T.ones T.float32 [|3; 1|] in let y = T.ones T.float32 [|1;
-   4|] in
+   let x = T.ones T.float32 [|3; 1|] in let y = T.ones T.float32 [|1; 4|] in
 
    let expected = f x y in let actual = jit_f x y in
 

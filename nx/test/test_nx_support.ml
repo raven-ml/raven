@@ -7,8 +7,8 @@ let check_invalid_arg msg pattern f =
 
 let check_failure msg pattern f = check_raises msg (Failure pattern) f
 
-let testable_of_dtype (type a b) ?(eps = 1e-6) (dtype : (a, b) Nx.dtype)
-    : a testable =
+let testable_of_dtype (type a b) ?(eps = 1e-6) (dtype : (a, b) Nx.dtype) :
+    a testable =
   match dtype with
   | Nx.Float16 -> Alcotest.float eps
   | Nx.Float32 -> Alcotest.float eps

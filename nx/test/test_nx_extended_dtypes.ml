@@ -94,8 +94,8 @@ let test_create_float8_e4m3 () =
   check_t ~eps:0.1 "create float8_e4m3" [| 3 |] [| 1.0; 2.0; 3.0 |] t
 
 let test_scalar_float8_e4m3 () =
-  (* Test with a value that can be exactly represented in Float8_e4m3. With
-     a 3-bit mantissa, we can represent 1.000 through 1.111 in binary. For
+  (* Test with a value that can be exactly represented in Float8_e4m3. With a
+     3-bit mantissa, we can represent 1.000 through 1.111 in binary. For
      example: 11.0 = 1.011 × 2^3 is exactly representable. *)
   let t = Nx.scalar Nx_core.Dtype.float8_e4m3 11.0 in
   check_t ~eps:0.1 "scalar float8_e4m3" [||] [| 11.0 |] t

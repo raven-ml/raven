@@ -57,7 +57,8 @@
    (copy %{lib:nx.io:nx_io.cma} nx_io.cma)
    (copy %{lib:nx.io.npy:npy.cma} npy.cma)
    (copy %{lib:nx.io.stb_image:stb_image.cma} stb_image.cma)
-   (copy %{lib:nx.io.stb_image_write:stb_image_write.cma}
+   (copy
+    %{lib:nx.io.stb_image_write:stb_image_write.cma}
     stb_image_write.cma)
    (copy %{lib:nx-datasets:nx_datasets.cmi} nx_datasets.cmi)
    (copy %{lib:nx-datasets:nx_datasets.cma} nx_datasets.cma)
@@ -89,13 +90,20 @@
    (copy %{lib:logs:logs.cmi} logs.cmi))))
 
 (rule
- (targets bigarray_compat.cma ctypes.cma integers.cma ctypes_foreign.cma
+ (targets
+  bigarray_compat.cma
+  ctypes.cma
+  integers.cma
+  ctypes_foreign.cma
   rune_jit_metal.cma)
  (mode promote)
  (enabled_if
   (= %{system} "macosx"))
- (deps %{lib:bigarray-compat:bigarray_compat.cma} %{lib:ctypes:ctypes.cma}
-  %{lib:ctypes-foreign:ctypes_foreign.cma} %{lib:integers:integers.cma}
+ (deps
+  %{lib:bigarray-compat:bigarray_compat.cma}
+  %{lib:ctypes:ctypes.cma}
+  %{lib:ctypes-foreign:ctypes_foreign.cma}
+  %{lib:integers:integers.cma}
   %{lib:rune.jit.metal:rune_jit_metal.cma})
  (action
   (progn
