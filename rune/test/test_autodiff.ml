@@ -102,7 +102,7 @@ let test_grad_sigmoid () =
 let test_grad_softmax () =
   (* Softmax gradient *)
   let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let grad = T.grad (fun x -> T.sum (T.softmax x ~axes:[ 1 ])) x in
+  let grad = T.grad (fun x -> T.sum (T.softmax x ~axes:[ 0 ])) x in
   (* Sum of softmax is 1, so gradient should sum to 0 *)
   let grad_sum = T.sum grad |> scalar_value in
   check_scalar ~eps:1e-5 "softmax gradient sum" 0.0 grad_sum
