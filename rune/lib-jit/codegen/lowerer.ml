@@ -64,14 +64,21 @@ let gtid ctx =
   v
 
 let load_scalar ctx ~hl_buffer ~idx ~dtype =
-  let buf = ll_of_hl ctx hl_buffer ~buffer:true in
-  let dst = Var.fresh () in
-  ensure_meta ctx dst
-    { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
-  add_instr ctx
-    (Lowered.L_Load
-       { dst; buf; idx; dtype = Dtype.Any_Dtype dtype; valid = None });
-  dst
+  (* Check if this is already a scalar (e.g., from Const_Scalar) *)
+  match Hashtbl.find_opt ctx.scalar_map hl_buffer with
+  | Some scalar_var ->
+      (* It's already a scalar variable, use it directly *)
+      scalar_var
+  | None ->
+      (* It's a buffer, need to load from it *)
+      let buf = ll_of_hl ctx hl_buffer ~buffer:true in
+      let dst = Var.fresh () in
+      ensure_meta ctx dst
+        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+      add_instr ctx
+        (Lowered.L_Load
+           { dst; buf; idx; dtype = Dtype.Any_Dtype dtype; valid = None });
+      dst
 
 (* ───── node lowering ───── *)
 

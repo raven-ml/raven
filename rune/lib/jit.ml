@@ -178,6 +178,13 @@ let handle_reduction state op t_in axes keepdims =
           ~dtype:ir_dtype));
   create_symbolic_tensor state out_var dt out_shape
 
+let bigarray_to_vconst_node (type a b) (nx_dt : (a, b) Dtype.t)
+    (array : (a, b, c_layout) Array1.t) out_var =
+  let numel = Array1.dim array in
+  let ir_dtype = nx_dtype_to_ir_dtype nx_dt in
+  let values = Array.init numel (fun i -> Array1.unsafe_get array i) in
+  Ir.Any_Node (Ir.Vconst { values; out_var; dtype = ir_dtype })
+
 (* ───── Main Effect Handler ───── *)
 
 let make_jit_handler (state : jit_tracer_state) =
@@ -209,23 +216,30 @@ let make_jit_handler (state : jit_tracer_state) =
     | E_const_array { array; _ } ->
         Some
           (fun k ->
+            let kind = Array1.kind array in
             let numel = Array1.dim array in
-            let nx_dtype =
-              Nx_core.Dtype.of_bigarray_ext_kind (Array1.kind array)
-            in
             let var = Var.fresh () in
-            add_node state
-              (Any_Node
-                 (Placeholder
-                    {
-                      out_var = var;
-                      dtype = nx_dtype_to_ir_dtype nx_dtype;
-                      shape = [| numel |];
-                    }));
-            if not (List.mem var state.input_vars_acc) then
-              state.input_vars_acc <- var :: state.input_vars_acc;
-            record_metadata state var nx_dtype [| numel |];
-            continue k (create_symbolic_tensor state var nx_dtype [| numel |]))
+            (* Convert bigarray to regular OCaml array for Vconst *)
+            match kind with
+            | Float32 ->
+                let nx_dt = Nx_core.Dtype.Float32 in
+                add_node state (bigarray_to_vconst_node nx_dt array var);
+                record_metadata state var nx_dt [| numel |];
+                continue k (create_symbolic_tensor state var nx_dt [| numel |])
+            | Int32 ->
+                let nx_dt = Nx_core.Dtype.Int32 in
+                add_node state (bigarray_to_vconst_node nx_dt array var);
+                record_metadata state var nx_dt [| numel |];
+                continue k (create_symbolic_tensor state var nx_dt [| numel |])
+            | Int8_unsigned ->
+                let nx_dt = Nx_core.Dtype.UInt8 in
+                add_node state (bigarray_to_vconst_node nx_dt array var);
+                record_metadata state var nx_dt [| numel |];
+                continue k (create_symbolic_tensor state var nx_dt [| numel |])
+            | _ ->
+                failwith
+                  (Printf.sprintf
+                     "JIT: Unsupported bigarray kind for const_array"))
     | E_add { a; b } -> Some (fun k -> continue k (handle_binop state Add a b))
     | E_mul { a; b } -> Some (fun k -> continue k (handle_binop state Mul a b))
     | E_idiv { a; b } ->
@@ -757,10 +771,6 @@ let jit ?(device : jit_device = `metal)
 
   fun (input : ('a, 'b) Nx_rune.t) ->
     (* All inputs are expected to be CPU tensors outside JIT. *)
-    (match input with
-    | Native_tensor _ -> ()
-    | Symbolic_tensor _ -> failwith "JIT: Cannot execute with symbolic tensor");
-
     let input_shape = get_shape (view input) in
     match device with
     | `metal -> (

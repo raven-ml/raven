@@ -113,9 +113,14 @@ let get_node_output_var (Any_Node node) : Var.t =
 
 let is_boundary_node (Any_Node node) =
   match node with
-  | Reduce_Axis _ | Buffer _ | Cat _ | Scatter _ | Assign _ | Wmma _ | Multi _
-  | Kernel _ | Sink _ ->
+  | Reduce_Axis _ | Cat _ | Scatter _ | Assign _ | Wmma _ | Multi _ | Kernel _
+  | Sink _ ->
       true
+  | Buffer _ ->
+      (* Buffer nodes should not be boundaries - they should fuse with their
+         producers. This aligns with tinygrad's approach where buffer allocation
+         is implicit in the dataflow, not an explicit boundary. *)
+      false
   | _ -> false
 
 let is_fusible_elementwise (Any_Node node) =
@@ -123,7 +128,7 @@ let is_fusible_elementwise (Any_Node node) =
   | Binop _ | Unary _ | Ternary _ | Const_Scalar _ | Vconst _ | Expand _
   | Reshape _ | Permute _ | Placeholder _ | Pad _ | Shrink _ | Flip _ | Cast _
   | Bitcast _ | Contiguous _ | Copy _ | View _ | Valid _ | Detach _
-  | Contiguous_Backward _ | Fuse _ | Noop _ ->
+  | Contiguous_Backward _ | Fuse _ | Noop _ | Buffer _ ->
       true
   | _ -> false
 

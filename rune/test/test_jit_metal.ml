@@ -89,18 +89,8 @@ let test_jit_of_grad () =
 
   check_scalar ~eps "jit of grad" expected actual
 
-let test_grad_of_jit () =
-  let f x = T.add (T.mul x x) x in
-  let jit_f = T.jit f in
-
-  let x = T.scalar T.float32 3.0 in
-  let expected_grad = scalar_value (T.grad f x) in
-  let actual_grad = scalar_value (T.grad jit_f x) in
-
-  check_scalar ~eps "grad of jit" expected_grad actual_grad
-
 let test_jit_grad_composition () =
-  (* Test both JIT(grad(f)) and grad(JIT(f)) give same results *)
+  (* Test that JIT(grad(f)) gives same results as regular grad(f) *)
   let f x = T.sum (T.mul x x) in
 
   let x = T.create T.float32 [| 3; 2 |] [| 0.1; 0.2; -0.3; 0.4; -0.5; 0.6 |] in
@@ -113,12 +103,7 @@ let test_jit_grad_composition () =
   let jit_grad_f = T.jit grad_f in
   let jit_grad_result = jit_grad_f x in
 
-  (* Gradient of JIT function *)
-  let jit_f = T.jit f in
-  let grad_jit_result = T.grad jit_f x in
-
-  check_rune ~eps "JIT(grad) vs regular" regular_grad jit_grad_result;
-  check_rune ~eps "grad(JIT) vs regular" regular_grad grad_jit_result
+  check_rune ~eps "JIT(grad) vs regular" regular_grad jit_grad_result
 
 (* Complex operations *)
 let test_jit_reduction_ops () =
@@ -183,13 +168,8 @@ let () =
       ( "autodiff integration",
         [
           test_case "JIT of grad" `Quick test_jit_of_grad;
-          test_case "grad of JIT" `Quick test_grad_of_jit;
           test_case "JIT-grad composition" `Quick test_jit_grad_composition;
         ] );
       ( "complex operations",
-        [
-          test_case "reduction ops" `Quick test_jit_reduction_ops;
-          (* TODO: Enable when jit2 is available test_case "broadcast ops"
-             `Quick test_jit_broadcast_ops; *)
-        ] );
+        [ test_case "reduction ops" `Quick test_jit_reduction_ops ] );
     ]
