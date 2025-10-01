@@ -153,20 +153,49 @@ let () =
             |> List.filter (fun s -> String.length s > 0)
           in
 
+          (* Deduplicate flags - important when LLVM uses monolithic shared library *)
+          let deduplicate lst =
+            let tbl = Hashtbl.create 16 in
+            List.filter (fun x ->
+              if Hashtbl.mem tbl x then false
+              else (Hashtbl.add tbl x (); true)
+            ) lst
+          in
+
+          (* Separate ldflags into library paths (-L) and libraries (-l) *)
+          let is_lib_path flag = String.length flag >= 2 && String.sub flag 0 2 = "-L" in
+          let lib_paths = List.filter is_lib_path ldflags in
+          let lib_flags = List.filter (fun f -> not (is_lib_path f)) ldflags in
+
+          (* Check if using monolithic shared library (all components return same libs) *)
+          let using_monolithic =
+            libs_core = libs_executionengine &&
+            libs_core = libs_analysis &&
+            libs_core = libs_target
+          in
+
+          (* For monolithic builds, only include -lLLVM-XX in core library *)
+          let make_libs is_core libs =
+            if using_monolithic && not is_core then
+              deduplicate (lib_paths @ lib_flags)
+            else
+              deduplicate (lib_paths @ libs @ lib_flags)
+          in
+
           (* Write sexp files for each library *)
           C.Flags.write_sexp "llvm_cflags.sexp" cflags;
-          C.Flags.write_sexp "llvm_libs_core.sexp" (ldflags @ libs_core);
+          C.Flags.write_sexp "llvm_libs_core.sexp" (make_libs true libs_core);
           C.Flags.write_sexp "llvm_libs_executionengine.sexp"
-            (ldflags @ libs_executionengine);
-          C.Flags.write_sexp "llvm_libs_analysis.sexp" (ldflags @ libs_analysis);
-          C.Flags.write_sexp "llvm_libs_target.sexp" (ldflags @ libs_target);
+            (make_libs false libs_executionengine);
+          C.Flags.write_sexp "llvm_libs_analysis.sexp" (make_libs false libs_analysis);
+          C.Flags.write_sexp "llvm_libs_target.sexp" (make_libs false libs_target);
           C.Flags.write_sexp "llvm_libs_bitreader.sexp"
-            (ldflags @ libs_bitreader);
+            (make_libs false libs_bitreader);
           C.Flags.write_sexp "llvm_libs_bitwriter.sexp"
-            (ldflags @ libs_bitwriter);
+            (make_libs false libs_bitwriter);
           C.Flags.write_sexp "llvm_libs_transforms.sexp"
-            (ldflags @ libs_transforms);
-          C.Flags.write_sexp "llvm_libs_all.sexp" (ldflags @ libs_all);
+            (make_libs false libs_transforms);
+          C.Flags.write_sexp "llvm_libs_all.sexp" (make_libs false libs_all);
 
           (* Generate version file for conditional compilation *)
           let version_parts = String.split_on_char '.' version in

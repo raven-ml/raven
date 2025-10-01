@@ -11,6 +11,7 @@ tags: [
   "notebook" "interactive-computing" "data-science" "literate-programming"
 ]
 homepage: "https://github.com/raven-ml/raven"
+doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.3.0"}

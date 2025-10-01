@@ -167,18 +167,22 @@ let () =
       let word_size = C.ocaml_config_var_exn c "word_size" in
 
       let base_flags =
-        match architecture with
-        | "amd64" | "x86_64" -> [ "-O3"; "-march=native"; "-fPIC" ]
-        | "arm64" | "aarch64" -> [ "-O3"; "-mcpu=native"; "-fPIC" ]
-        | "power" | "ppc" | "ppc64" | "ppc64le" ->
-            [ "-O3"; "-mcpu=native"; "-fPIC" ]
-        | "riscv32" -> [ "-O3"; "-march=rv32gc"; "-fPIC" ]
-        | "riscv64" -> [ "-O3"; "-march=rv64gc"; "-fPIC" ]
-        | "riscv" ->
-            if word_size = "64" then [ "-O3"; "-march=rv64gc"; "-fPIC" ]
-            else [ "-O3"; "-march=rv32gc"; "-fPIC" ]
-        | "s390x" -> [ "-O3"; "-march=native"; "-fPIC" ]
-        | _ -> [ "-O3"; "-fPIC" ]
+        let opt_flags =
+          match architecture with
+          | "amd64" | "x86_64" -> [ "-O3"; "-march=native"; "-fPIC" ]
+          | "arm64" | "aarch64" -> [ "-O3"; "-mcpu=native"; "-fPIC" ]
+          | "power" | "ppc" | "ppc64" | "ppc64le" ->
+              [ "-O3"; "-mcpu=native"; "-fPIC" ]
+          | "riscv32" -> [ "-O3"; "-march=rv32gc"; "-fPIC" ]
+          | "riscv64" -> [ "-O3"; "-march=rv64gc"; "-fPIC" ]
+          | "riscv" ->
+              if word_size = "64" then [ "-O3"; "-march=rv64gc"; "-fPIC" ]
+              else [ "-O3"; "-march=rv32gc"; "-fPIC" ]
+          | "s390x" -> [ "-O3"; "-march=native"; "-fPIC" ]
+          | _ -> [ "-O3"; "-fPIC" ]
+        in
+        (* Suppress vectorization failure warnings from clang *)
+        opt_flags @ [ "-Wno-pass-failed" ]
       in
 
       let opt_flags =

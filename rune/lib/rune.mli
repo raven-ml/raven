@@ -390,7 +390,7 @@ module Rng : sig
       element is true with probability [p].
 
       @param key PRNG key for random generation
-      @param p Probability of true (must be in \[0, 1])
+      @param p Probability of true (must be in \[0, 1\])
       @param shape Shape of the output tensor
       @return Tensor with boolean random values *)
 

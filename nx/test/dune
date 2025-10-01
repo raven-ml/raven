@@ -15,6 +15,7 @@
   test_nx_neural_net
   test_nx_fft
   test_nx_ops)
+ (package nx)
  (modules :standard \ test_nx_support)
  (libraries bigarray_ext nx nx_core alcotest test_nx_support))
 

@@ -7,14 +7,18 @@ description:
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
+tags: [
+  "reinforcement-learning" "machine-learning" "ai" "environments" "agents"
+]
 homepage: "https://github.com/raven-ml/raven"
+doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.3.0"}
   "dune" {>= "3.19"}
   "rune" {= version}
   "kaun" {= version}
-  "yojson"
+  "yojson" {>= "2.0.0"}
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]

@@ -43,11 +43,11 @@ val to_int : key -> int
 (** {2 Random Sampling Functions} *)
 
 val uniform : key -> ('a, 'b) Tensor.dtype -> int array -> ('a, 'b) Tensor.t
-(** Generate uniform random values in [0, 1).
-    
-    [uniform key dtype shape] generates a tensor of the given shape with
-    values uniformly distributed in the half-open interval [0, 1).
-    
+(** Generate uniform random values in \[0, 1).
+
+    [uniform key dtype shape] generates a tensor of the given shape with values
+    uniformly distributed in the half-open interval \[0, 1).
+
     @param key PRNG key for random generation
     @param dtype Data type of the output tensor
     @param shape Shape of the output tensor
@@ -66,10 +66,10 @@ val normal : key -> ('a, 'b) Tensor.dtype -> int array -> ('a, 'b) Tensor.t
 
 val randint : key -> min:int -> max:int -> int array -> Tensor.int32_t
 (** Generate random integers in a range.
-    
+
     [randint key ~min ~max shape] generates a tensor of integers uniformly
-    distributed in the half-open interval [min, max).
-    
+    distributed in the half-open interval \[min, max).
+
     @param key PRNG key for random generation
     @param min Minimum value (inclusive)
     @param max Maximum value (exclusive)

@@ -9,6 +9,7 @@ authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
 tags: ["text-processing" "nlp" "natural-language-processing" "tokenization"]
 homepage: "https://github.com/raven-ml/raven"
+doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.3.0"}
@@ -17,7 +18,7 @@ depends: [
   "re"
   "uutf"
   "uucp"
-  "yojson"
+  "yojson" {>= "2.0.0"}
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]

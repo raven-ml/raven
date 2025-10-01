@@ -9,11 +9,13 @@ authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
 tags: ["numerical-computation" "tensor-library" "machine-learning"]
 homepage: "https://github.com/raven-ml/raven"
+doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.3.0"}
   "dune" {>= "3.19"}
   "dune-configurator" {build}
+  "conf-pkg-config" {build}
   "stdlib-shims"
   "alcotest" {with-test}
   "mdx" {with-test}

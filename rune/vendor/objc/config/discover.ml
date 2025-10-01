@@ -70,7 +70,7 @@ module Ccomp = struct
 
   let warn_flags = function
     | GCC -> [ "-Wincompatible-pointer-types" ]
-    | Clang -> [ "-Wno-incompatible-function-pointer-types"; "-fno-common" ]
+    | Clang -> [ "-Wno-incompatible-function-pointer-types"; "-Wno-incompatible-pointer-types"; "-fno-common" ]
     | MSVC | Other _ -> []
 end
 

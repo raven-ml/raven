@@ -126,12 +126,16 @@ module Callbacks : sig
     ?save_freq:[ `Epoch of int | `Best ] ->
     unit ->
     'layout t
-  (** [model_checkpoint ~filepath ?monitor ?mode ?save_best_only ?save_freq ()] creates a checkpoint callback.
-      - [filepath]: Path pattern for saving checkpoints (can include {epoch} placeholder)
+  (** [model_checkpoint ~filepath ?monitor ?mode ?save_best_only ?save_freq ()]
+      creates a checkpoint callback.
+      - [filepath]: Path pattern for saving checkpoints (can include \{epoch\}
+        placeholder)
       - [monitor]: Metric to monitor for best model (default: "val_loss")
       - [mode]: Whether to minimize or maximize the metric (default: `Min)
-      - [save_best_only]: Only save when monitored metric improves (default: true)
-      - [save_freq]: Save frequency - every N epochs or only best (default: `Best) *)
+      - [save_best_only]: Only save when monitored metric improves (default:
+        true)
+      - [save_freq]: Save frequency - every N epochs or only best (default:
+        `Best) *)
 
   val reduce_lr_on_plateau :
     ?monitor:string ->

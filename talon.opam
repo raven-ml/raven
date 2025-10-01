@@ -7,14 +7,16 @@ description:
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
+tags: ["dataframe" "data-manipulation" "data-science" "tabular-data"]
 homepage: "https://github.com/raven-ml/raven"
+doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
-  "ocaml"
+  "ocaml" {>= "5.3.0"}
   "dune" {>= "3.19"}
-  "nx" {>= "0.1.0"}
+  "nx" {= version}
   "re"
-  "yojson"
+  "yojson" {>= "2.0.0"}
   "csv"
   "alcotest" {with-test}
   "odoc" {with-doc}

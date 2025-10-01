@@ -11,6 +11,10 @@
 
 (license ISC)
 
+(documentation "https://raven-ml.dev/docs/")
+
+(bug_reports "https://github.com/raven-ml/raven/issues")
+
 (using directory-targets 0.1)
 
 (using dune_site 0.1)
@@ -45,6 +49,7 @@
    (>= 5.3.0))
   dune
   (dune-configurator :build)
+  (conf-pkg-config :build)
   ; camlzip
   stdlib-shims
   ; tests
@@ -85,7 +90,8 @@
   re
   uutf
   uucp
-  yojson
+  (yojson
+   (>= 2.0.0))
   (alcotest :with-test))
  (tags
   (text-processing nlp natural-language-processing tokenization)))
@@ -96,14 +102,18 @@
  (description
   "Talon provides efficient tabular data manipulation with heterogeneous column types, inspired by pandas and polars.")
  (depends
-  ocaml
+  (ocaml
+   (>= 5.3.0))
   dune
   (nx
-   (>= 0.1.0))
+   (= :version))
   re
-  yojson
+  (yojson
+   (>= 2.0.0))
   csv
-  (alcotest :with-test)))
+  (alcotest :with-test))
+ (tags
+  (dataframe data-manipulation data-science tabular-data)))
 
 (package
  (name rune)
@@ -126,7 +136,10 @@
   ; rune.metal - only on macOS
   (integers
    (= :os macos))
-  (alcotest :with-test)))
+  (alcotest :with-test))
+ (tags
+  (automatic-differentiation jit-compilation machine-learning deep-learning
+   optimization)))
 
 (package
  (name kaun)
@@ -138,7 +151,8 @@
    (>= 5.3.0))
   dune
   logs
-  yojson
+  (yojson
+   (>= 2.0.0))
   domainslib
   (saga
    (= :version))
@@ -178,8 +192,11 @@
    (= :version))
   (kaun
    (= :version))
-  yojson
-  (alcotest :with-test)))
+  (yojson
+   (>= 2.0.0))
+  (alcotest :with-test))
+ (tags
+  (reinforcement-learning machine-learning ai environments agents)))
 
 (package
  (name quill)

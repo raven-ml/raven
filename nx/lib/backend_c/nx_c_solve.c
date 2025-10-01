@@ -10,9 +10,6 @@
 
 #include "nx_c_shared.h"
 
-// LAPACK integer type (usually int on most systems)
-typedef int lapack_int;
-
 // Machine epsilon for float32 and float64
 #define NX_EPS32 FLT_EPSILON
 #define NX_EPS64 DBL_EPSILON

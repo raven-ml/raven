@@ -6,13 +6,12 @@
   yojson
   cmdliner
   dream
+  lwt
   quill_top
   quill_top_unix
   quill_api
   dune-site
-  compiler-libs.toplevel)
- (preprocess
-  (pps lwt_ppx)))
+  compiler-libs.toplevel))
 
 (rule
  (target mode.txt)

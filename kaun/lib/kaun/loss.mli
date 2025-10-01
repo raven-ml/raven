@@ -21,16 +21,24 @@
 
 val softmax_cross_entropy :
   (float, 'a) Rune.t -> (float, 'a) Rune.t -> (float, 'a) Rune.t
-(** [softmax_cross_entropy logits labels] computes cross-entropy loss between softmax-normalized logits and one-hot encoded labels.
+(** [softmax_cross_entropy logits labels] computes cross-entropy loss between
+    softmax-normalized logits and one-hot encoded labels.
 
-    The function applies softmax to [logits] internally and computes the cross-entropy loss: -sum(labels * log(softmax(logits))) / batch_size.
+    The function applies softmax to [logits] internally and computes the
+    cross-entropy loss: -sum(labels * log(softmax(logits))) / batch_size.
 
-    Numerically stable implementation using the log-sum-exp trick to prevent overflow.
+    Numerically stable implementation using the log-sum-exp trick to prevent
+    overflow.
 
-    @param logits Raw model outputs of shape [batch_size; num_classes]. Not softmax-normalized.
-    @param labels One-hot encoded ground truth labels of shape [batch_size; num_classes]. Each row should sum to 1.0.
+    @param logits
+      Raw model outputs of shape [batch_size; num_classes]. Not
+      softmax-normalized.
+    @param labels
+      One-hot encoded ground truth labels of shape [batch_size; num_classes].
+      Each row should sum to 1.0.
 
-    @return Scalar tensor containing the mean cross-entropy loss across the batch.
+    @return
+      Scalar tensor containing the mean cross-entropy loss across the batch.
 
     {4 Example}
 
@@ -41,8 +49,9 @@ val softmax_cross_entropy :
       let loss = Loss.softmax_cross_entropy logits labels
     ]}
 
-    Mathematical formula: L = -1/N * sum_i sum_c y_{i,c} * log(softmax(x_{i,c}))
-    where N is batch size, y is one-hot labels, x is logits. *)
+    Mathematical formula:
+    [L = -1/N * sum_i sum_c y_{i,c} * log(softmax(x_{i,c}))] where N is batch
+    size, [y] is one-hot labels, [x] is logits. *)
 
 val softmax_cross_entropy_with_indices :
   (float, 'a) Rune.t -> ('c, 'd) Rune.t -> (float, 'a) Rune.t

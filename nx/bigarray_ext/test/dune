@@ -1,3 +1,4 @@
 (test
  (name test_bigarray_ext)
+ (package nx)
  (libraries bigarray_ext alcotest))

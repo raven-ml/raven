@@ -509,8 +509,8 @@ val swiglu : (float, 'a) t -> (float, 'a) t
       (* Shape becomes [|2; 3|] - last dim halved *)
     ]}
 
-    Mathematical formula: SwiGLU(x) = SiLU(x_{1:d/2}) * x_{d/2+1:d}
-    where x is split along the last dimension
+    Mathematical formula: [SwiGLU(x) = SiLU(x_{1:d/2}) * x_{d/2+1:d}] where x is
+    split along the last dimension.
 
     {4 Properties}
 

@@ -8,33 +8,6 @@ extern value caml_ba_get_N(value vb, value * vind, int nind);
 extern value caml_ba_set_N(value vb, value * vind, int nargs);
 extern value caml_ba_blit(value vsrc, value vdst);
 
-/* OCaml kind value constructors - mapping to our extended kind type */
-static const int nx_ba_kind_ocaml_constructors[] = {
-    0, /* Float32 */
-    1, /* Float64 */
-    2, /* Int8_signed */
-    3, /* Int8_unsigned */
-    4, /* Int16_signed */
-    5, /* Int16_unsigned */
-    6, /* Int32 */
-    7, /* Int64 */
-    8, /* Int */
-    9, /* Nativeint */
-    10, /* Complex32 */
-    11, /* Complex64 */
-    12, /* Char */
-    13, /* Float16 */
-    14, /* Bfloat16 - our extension */
-    15, /* Bool - our extension */
-    16, /* Int4_signed - our extension */
-    17, /* Int4_unsigned - our extension */
-    18, /* Float8_e4m3 - our extension */
-    19, /* Float8_e5m2 - our extension */
-    20, /* Complex16 - our extension */
-    21, /* Qint8 - our extension */
-    22 /* Quint8 - our extension */
-};
-
 /* Element sizes for our extended types, aligning with stdlib caml_ba_element_size[] */
 int caml_ba_extended_element_size[] = {
     [NX_BA_BFLOAT16 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 2, /* bfloat16 */

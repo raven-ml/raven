@@ -206,8 +206,7 @@ val with_max_length : int -> generation_config -> generation_config
 (** [with_max_length len config] sets maximum total sequence length.
 
     Includes both prompt and generated tokens. Generation stops when this length
-    is reached. Must be positive.
-} *)
+    is reached. Must be positive. *)
 
 val with_max_new_tokens : int -> generation_config -> generation_config
 (** [with_max_new_tokens tokens config] sets maximum new tokens to generate.

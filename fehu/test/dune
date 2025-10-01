@@ -10,4 +10,5 @@
   test_trajectory
   test_reinforce
   test_dqn)
+ (package fehu)
  (libraries fehu fehu.envs fehu.algorithms kaun rune alcotest))
