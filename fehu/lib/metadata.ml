@@ -92,8 +92,7 @@ let optional_string key json =
   match member key json with
   | `Null -> None
   | `String s -> Some s
-  | `Assoc _ | `List _ | `Bool _ | `Float _ | `Int _ | `Intlit _ | `Tuple _
-  | `Variant _ ->
+  | _ ->
       raise
         (Failure (Printf.sprintf "metadata.%s must be a string or null" key))
 
@@ -107,8 +106,7 @@ let optional_int key json =
            (Printf.sprintf
               "metadata.%s must be an int or null (string literal %S received)"
               key lit))
-  | `Float _ | `Bool _ | `String _ | `Assoc _ | `List _ | `Tuple _ | `Variant _
-    ->
+  | _ ->
       raise (Failure (Printf.sprintf "metadata.%s must be an int or null" key))
 
 let extra_member json =

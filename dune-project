@@ -51,6 +51,7 @@
   (dune-configurator :build)
   (conf-pkg-config :build)
   ; camlzip
+  (conf-zlib :build)
   stdlib-shims
   ; tests
   (alcotest :with-test)
@@ -153,7 +154,8 @@
   logs
   (yojson
    (>= 2.0.0))
-  domainslib
+  (domainslib
+   (>= 0.5.0))
   (saga
    (= :version))
   (rune

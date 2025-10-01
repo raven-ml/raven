@@ -1,4 +1,4 @@
 (tests
  (names test_talon)
- (package nx)
+ (package talon)
  (libraries talon talon_csv talon_json alcotest nx yojson))
