@@ -61,6 +61,13 @@ jobs:
           opam exec -- dune build @saga/runtest
           echo "::endgroup::"
 
+      - name: Build and test talon
+        run: |
+          echo "::group::talon"
+          opam exec -- dune build talon
+          opam exec -- dune build @talon/runtest
+          echo "::endgroup::"
+
       - name: Build and test rune
         run: |
           echo "::group::rune"
@@ -73,6 +80,13 @@ jobs:
           echo "::group::kaun"
           opam exec -- dune build kaun
           opam exec -- dune build @kaun/runtest
+          echo "::endgroup::"
+
+      - name: Build and test fehu
+        run: |
+          echo "::group::fehu"
+          opam exec -- dune build fehu
+          opam exec -- dune build @fehu/runtest
           echo "::endgroup::"
 
       - name: Build and test sowilo
