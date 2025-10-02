@@ -1,5 +1,4 @@
 (executables
  (names
-  bug_blit_overlapping
-  bug_logspace_division_by_zero)
- (libraries bigarray_ext nx))
+  bug_blit_overlapping)
+ (libraries nx))
