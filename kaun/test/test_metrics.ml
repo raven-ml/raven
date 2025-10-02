@@ -6,9 +6,11 @@ let tensor_testable eps =
     (fun fmt t ->
       Format.fprintf fmt "tensor[%s]" (Rune.shape_to_string (Rune.shape t)))
     (fun a b ->
-      let a_val = Rune.item [] (Rune.sum a) in
-      let b_val = Rune.item [] (Rune.sum b) in
-      abs_float (a_val -. b_val) < eps)
+      if Rune.shape a <> Rune.shape b then false
+      else
+        let diff = Rune.abs (Rune.sub a b) in
+        let max_diff = Rune.item [] (Rune.max diff) in
+        max_diff < eps)
 
 let test_accuracy () =
   let dtype = Rune.float32 in
@@ -311,7 +313,7 @@ let test_custom_metric () =
   (* MAPE = mean(|110-100|/100, |210-200|/200, |310-300|/300) * 100 *)
   (* = mean(0.1, 0.05, 0.033) * 100 ≈ 6.1% *)
   let result_val = Rune.item [] result in
-  check bool "custom MAPE in range" true (result_val > 5.0 && result_val < 7.0)
+  check bool "custom MAPE in range" true (result_val > 5.5 && result_val < 6.5)
 
 let test_metric_utilities () =
   let dtype = Rune.float32 in

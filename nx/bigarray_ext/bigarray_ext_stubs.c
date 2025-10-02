@@ -12,14 +12,26 @@ extern value caml_ba_blit(value vsrc, value vdst);
 int caml_ba_extended_element_size[] = {
     [NX_BA_BFLOAT16 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 2, /* bfloat16 */
     [NX_BA_BOOL - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* bool */
-    [NX_BA_INT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 0, /* int4_signed - packed, effective 0.5, but 0 to indicate special handling */
-    [NX_BA_UINT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 0, /* int4_unsigned - packed */
+    [NX_BA_INT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* int4_signed - use 1 byte (2 values packed), caml_ba_alloc will see 1 byte per "element" */
+    [NX_BA_UINT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* int4_unsigned - use 1 byte (2 values packed) */
     [NX_BA_FP8_E4M3 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* fp8_e4m3 */
     [NX_BA_FP8_E5M2 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* fp8_e5m2 */
     [NX_BA_COMPLEX16 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 4, /* complex16 */
     [NX_BA_QINT8 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* qint8 */
     [NX_BA_QUINT8 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* quint8 */
 };
+
+/* External reference to OCaml's element size table */
+extern int caml_ba_element_size[];
+
+/* Initialize element sizes in OCaml runtime's table */
+__attribute__((constructor))
+static void nx_ba_init(void) {
+  /* Patch OCaml's caml_ba_element_size array with our extended types */
+  for (int i = 0; i < (NX_BA_LAST_KIND - CAML_BA_FIRST_UNIMPLEMENTED_KIND); i++) {
+    caml_ba_element_size[CAML_BA_FIRST_UNIMPLEMENTED_KIND + i] = caml_ba_extended_element_size[i];
+  }
+}
 
 /* Helper for overflow-safe multiplication */
 static int umul_overflow(uintnat a, uintnat b, uintnat *res) {
@@ -81,8 +93,10 @@ CAMLprim value caml_nx_ba_create_int4_signed(value vlayout, value vdim) {
   CAMLlocal1(res);
   int num_dims = Wosize_val(vdim);
   intnat dim[CAML_BA_MAX_NUM_DIMS];
+  intnat original_dim[CAML_BA_MAX_NUM_DIMS];
   for (int i = 0; i < num_dims; i++) {
-    dim[i] = Long_val(Field(vdim, i));
+    original_dim[i] = Long_val(Field(vdim, i));
+    dim[i] = original_dim[i];
   }
   uintnat num_elts = nx_ba_num_elts_from_dims(num_dims, dim);
   /* For int4, we pack 2 values per byte, so divide by 2 (round up) */
@@ -91,7 +105,9 @@ CAMLprim value caml_nx_ba_create_int4_signed(value vlayout, value vdim) {
   if (data == NULL && size != 0) caml_raise_out_of_memory();
   int layout_flag = Caml_ba_layout_val(vlayout);
   int flags = NX_BA_INT4 | layout_flag | CAML_BA_MANAGED;
-  res = caml_ba_alloc(flags, num_dims, data, dim);
+  /* Pass original dimensions to caml_ba_alloc - the element size of 1 in caml_ba_element_size
+     will make it compute size correctly */
+  res = caml_ba_alloc(flags, num_dims, data, original_dim);
   CAMLreturn(res);
 }
 
@@ -100,8 +116,10 @@ CAMLprim value caml_nx_ba_create_int4_unsigned(value vlayout, value vdim) {
   CAMLlocal1(res);
   int num_dims = Wosize_val(vdim);
   intnat dim[CAML_BA_MAX_NUM_DIMS];
+  intnat original_dim[CAML_BA_MAX_NUM_DIMS];
   for (int i = 0; i < num_dims; i++) {
-    dim[i] = Long_val(Field(vdim, i));
+    original_dim[i] = Long_val(Field(vdim, i));
+    dim[i] = original_dim[i];
   }
   uintnat num_elts = nx_ba_num_elts_from_dims(num_dims, dim);
   /* For uint4, we pack 2 values per byte, so divide by 2 (round up) */
@@ -110,7 +128,9 @@ CAMLprim value caml_nx_ba_create_int4_unsigned(value vlayout, value vdim) {
   if (data == NULL && size != 0) caml_raise_out_of_memory();
   int layout_flag = Caml_ba_layout_val(vlayout);
   int flags = NX_BA_UINT4 | layout_flag | CAML_BA_MANAGED;
-  res = caml_ba_alloc(flags, num_dims, data, dim);
+  /* Pass original dimensions to caml_ba_alloc - the element size of 1 in caml_ba_element_size
+     will make it compute size correctly */
+  res = caml_ba_alloc(flags, num_dims, data, original_dim);
   CAMLreturn(res);
 }
 

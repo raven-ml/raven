@@ -459,6 +459,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
   int m = in.shape[in.ndim - 2];
   int n = in.shape[in.ndim - 1];
   int k = reduced ? (m < n ? m : n) : m;
+  int rows_r = reduced ? k : m;
   int batch_size = 1;
   for (int i = 0; i < in.ndim - 2; i++) {
     batch_size *= in.shape[i];
@@ -496,7 +497,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
         nx_pack_f32(A, base_in, m, n, s_in_row, s_in_col);
         qr_decompose_float32(A, Q, R, m, n, reduced);
         nx_unpack_f32(base_q, Q, m, k, s_q_row, s_q_col);
-        nx_unpack_f32(base_r, R, m, n, s_r_row, s_r_col);
+        nx_unpack_f32(base_r, R, rows_r, n, s_r_row, s_r_col);
         free(A);
         free(Q);
         free(R);
@@ -512,7 +513,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
         nx_pack_f64(A, base_in, m, n, s_in_row, s_in_col);
         qr_decompose_float64(A, Q, R, m, n, reduced);
         nx_unpack_f64(base_q, Q, m, k, s_q_row, s_q_col);
-        nx_unpack_f64(base_r, R, m, n, s_r_row, s_r_col);
+        nx_unpack_f64(base_r, R, rows_r, n, s_r_row, s_r_col);
         free(A);
         free(Q);
         free(R);
@@ -528,7 +529,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
         nx_pack_c32(A, base_in, m, n, s_in_row, s_in_col);
         qr_decompose_complex32(A, Q, R, m, n, reduced);
         nx_unpack_c32(base_q, Q, m, k, s_q_row, s_q_col);
-        nx_unpack_c32(base_r, R, m, n, s_r_row, s_r_col);
+        nx_unpack_c32(base_r, R, rows_r, n, s_r_row, s_r_col);
         free(A);
         free(Q);
         free(R);
@@ -544,7 +545,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
         nx_pack_c64(A, base_in, m, n, s_in_row, s_in_col);
         qr_decompose_complex64(A, Q, R, m, n, reduced);
         nx_unpack_c64(base_q, Q, m, k, s_q_row, s_q_col);
-        nx_unpack_c64(base_r, R, m, n, s_r_row, s_r_col);
+        nx_unpack_c64(base_r, R, rows_r, n, s_r_row, s_r_col);
         free(A);
         free(Q);
         free(R);
@@ -569,7 +570,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
               base_q[i * s_q_row + j * s_q_col] = Q[i * k + j];
             }
           }
-          for (int i = 0; i < m; i++) {
+          for (int i = 0; i < rows_r; i++) {
             for (int j = 0; j < n; j++) {
               base_r[i * s_r_row + j * s_r_col] = R[i * n + j];
             }
@@ -602,7 +603,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
               base_q[i * s_q_row + j * s_q_col] = Q[i * k + j];
             }
           }
-          for (int i = 0; i < m; i++) {
+          for (int i = 0; i < rows_r; i++) {
             for (int j = 0; j < n; j++) {
               base_r[i * s_r_row + j * s_r_col] = R[i * n + j];
             }
@@ -635,7 +636,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
               base_q[i * s_q_row + j * s_q_col] = Q[i * k + j];
             }
           }
-          for (int i = 0; i < m; i++) {
+          for (int i = 0; i < rows_r; i++) {
             for (int j = 0; j < n; j++) {
               base_r[i * s_r_row + j * s_r_col] = R[i * n + j];
             }
@@ -668,7 +669,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
               base_q[i * s_q_row + j * s_q_col] = Q[i * k + j];
             }
           }
-          for (int i = 0; i < m; i++) {
+          for (int i = 0; i < rows_r; i++) {
             for (int j = 0; j < n; j++) {
               base_r[i * s_r_row + j * s_r_col] = R[i * n + j];
             }
@@ -701,7 +702,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
               base_q[i * s_q_row + j * s_q_col] = Q[i * k + j];
             }
           }
-          for (int i = 0; i < m; i++) {
+          for (int i = 0; i < rows_r; i++) {
             for (int j = 0; j < n; j++) {
               base_r[i * s_r_row + j * s_r_col] = R[i * n + j];
             }

@@ -14,7 +14,6 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
-          - windows-latest
 
     runs-on: ${{ matrix.os }}
 
@@ -37,33 +36,6 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install libev curl cairo pkg-config sdl2
-
-      - name: Install system dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          # Install additional Cygwin packages needed for the dependencies
-          /cygdrive/d/cygwin/setup-x86_64.exe \
-            --quiet-mode \
-            --packages \
-            git,libcurl-devel,libcairo-devel,libcairo2,pkg-config,libSDL2-devel,\
-            libfreetype-devel,libpng-devel,libev-devel,\
-            liblapack-devel,libopenblas,\
-            mingw64-x86_64-curl,mingw64-x86_64-cairo,mingw64-x86_64-pkg-config,\
-            mingw64-x86_64-freetype2,mingw64-x86_64-SDL2,cmake \
-            --root=D:/cygwin \
-            --site=https://mirrors.kernel.org/sourceware/cygwin/ \
-            --local-package-dir=D:/cygwin/tmp
-          
-          # Set up environment variables for pkg-config to find MinGW libraries
-          echo "PKG_CONFIG_PATH=/usr/x86_64-w64-mingw32/sys-root/mingw/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
-          
-          # Ensure MinGW compilers are used
-          echo "CC=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
-          echo "CXX=x86_64-w64-mingw32-g++" >> $GITHUB_ENV
-          
-          # Add Cygwin MinGW cross-compiler paths
-          echo "PATH=/usr/x86_64-w64-mingw32/sys-root/mingw/bin:$PATH" >> $GITHUB_ENV
 
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test

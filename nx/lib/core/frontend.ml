@@ -440,8 +440,8 @@ module Make (B : Backend_intf.S) = struct
     let numel = array_prod shape_arr in
     let buf = B.op_buffer ctx dtype numel in
     let t = reshape shape_arr buf in
-    (* Buffer is already initialized to zeros by op_buffer *)
-    t
+    (* Explicitly clear the newly allocated buffer. *)
+    fill (Dtype.zero dtype) t
 
   let ones ctx dtype shape_arr =
     (* Create actual ones, not broadcast *)
