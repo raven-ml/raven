@@ -22,12 +22,12 @@ Raven is built from modular projects that form a cohesive ecosystem:
 | [**Quill**](quill/) | Jupyter               | A love letter to scientific writing                 |
 
 **Rune Ecosystem:**
-| **Raven Project**       | **Python Equivalent**            | **Description**                                        |
-| ----------------------- | -------------------------------- | ------------------------------------------------------ |
-| [**Rune**](rune/)       | JAX                              | Autodiff with multi-device support and JIT compilation |
-| [**Kaun** ᚲ](kaun/)     | PyTorch/Flax                     | Deep learning framework built on Rune                  |
-| [**Sowilo** ᛋ](sowilo/) | OpenCV                           | Computer vision framework built on Rune                |
-| [**Fehu** ᚠ](fehu/)     | Gymnasium/Stable Baselines3      | Reinforcement learning environments and algorithms     |
+| **Raven Project**       | **Python Equivalent**       | **Description**                                        |
+| ----------------------- | --------------------------- | ------------------------------------------------------ |
+| [**Rune**](rune/)       | JAX                         | Autodiff with multi-device support and JIT compilation |
+| [**Kaun** ᚲ](kaun/)     | PyTorch/Flax                | Deep learning framework built on Rune                  |
+| [**Fehu** ᚠ](fehu/)     | Gymnasium/Stable Baselines3 | Reinforcement learning environments and algorithms     |
+| [**Sowilo** ᛋ](sowilo/) | OpenCV                      | Computer vision framework built on Rune                |
 
 ## Why Raven?
 
