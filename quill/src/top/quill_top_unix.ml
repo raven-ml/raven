@@ -249,8 +249,11 @@ Logs.set_reporter (setup_logs ());;
   | Env.Error e ->
       (* Create a more descriptive error message *)
       failwith
-        (format_error_to_string "Plugin loading failed with environment error:"
-           (fun fmt -> Env.report_error fmt e))
+        (Format.asprintf "Plugin loading failed with environment error: %a"
+           (fun fmt err ->
+             (* OCaml 5.4+ removed Env.report_error, use generic formatting *)
+             Format.fprintf fmt "%s" (Printexc.to_string (Env.Error err)))
+           e)
   | Typecore.Error (loc, env, err) ->
       (* Create a more descriptive error message *)
       failwith
@@ -288,9 +291,8 @@ let eval ?(print_all = true) code : Quill_top.execution_result =
   | Env.Error e ->
       (* Format the environment error properly *)
       let error_msg =
-        format_error_to_string
-          "Toplevel initialization failed: Environment error" (fun fmt ->
-            Env.report_error fmt e)
+        Format.asprintf "Toplevel initialization failed: Environment error: %s"
+          (Printexc.to_string (Env.Error e))
       in
       { Quill_top.output = ""; error = Some error_msg; status = `Error }
   | Typecore.Error (loc, env, err) ->
