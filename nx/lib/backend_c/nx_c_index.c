@@ -194,16 +194,21 @@ typedef struct {
   int ndim;
   long *shape;
   long *coords;  // Changed to long to handle large dimensions
+  int has_elements;
 } multi_iterator_t;
 
 static void multi_iterator_init(multi_iterator_t *it, const ndarray_t *nd) {
   it->ndim = nd->ndim;
   it->shape = (long *)caml_stat_alloc(it->ndim * sizeof(long));
   it->coords = (long *)caml_stat_alloc(it->ndim * sizeof(long));
+  it->has_elements = 1;
   for (int i = 0; i < it->ndim; i++) {
-    it->shape[i] = nd->shape[i];
+    long dim = nd->shape[i];
+    it->shape[i] = dim;
     it->coords[i] = 0;
+    if (dim == 0) it->has_elements = 0;
   }
+  if (it->ndim == 0) it->has_elements = 1;
 }
 
 static int multi_iterator_next(multi_iterator_t *it) {
@@ -366,16 +371,18 @@ static void copy_ndarray(const ndarray_t *src, ndarray_t *dst, int kind) {
   // Use multi-iterator to copy elements
   multi_iterator_t it;
   multi_iterator_init(&it, src);
-  
-  do {
-    long src_off = compute_offset(src, it.coords);
-    long dst_off = compute_offset(dst, it.coords);
-    
-    memcpy(dst->data + (dst->offset + dst_off) * elem_size,
-           src->data + (src->offset + src_off) * elem_size,
-           elem_size);
-  } while (multi_iterator_next(&it));
-  
+
+  if (it.has_elements) {
+    do {
+      long src_off = compute_offset(src, it.coords);
+      long dst_off = compute_offset(dst, it.coords);
+
+      memcpy(dst->data + (dst->offset + dst_off) * elem_size,
+             src->data + (src->offset + src_off) * elem_size,
+             elem_size);
+    } while (multi_iterator_next(&it));
+  }
+
   multi_iterator_destroy(&it);
 }
 
@@ -402,33 +409,40 @@ static const char *generic_gather(const ndarray_t *data,
     return error_msg;
   }
 
+  if (total_elements_safe(indices) == 0) {
+    return NULL;
+  }
+
   multi_iterator_t it;
   multi_iterator_init(&it, indices);
 
-  do {
-    long indices_off = compute_offset(indices, it.coords);
-    int32_t index =
-        *((int32_t *)(indices->data +
-                      (indices->offset + indices_off) * sizeof(int32_t)));
-    // Handle negative indices (Python-style)
-    if (index < 0) {
-      index += data->shape[axis];
-    }
-    if (index < 0 || index >= data->shape[axis]) {
-      error_msg = "index out of bounds";
-      break;
-    }
+  if (it.has_elements) {
+    do {
+      long indices_off = compute_offset(indices, it.coords);
+      int32_t index = *
+          ((int32_t *)(indices->data
+                        + (indices->offset + indices_off) * sizeof(int32_t)));
+      // Handle negative indices (Python-style)
+      if (index < 0) {
+        index += data->shape[axis];
+      }
+      if (index < 0 || index >= data->shape[axis]) {
+        error_msg = "index out of bounds";
+        break;
+      }
 
-    long data_coords[32];  // Stack buffer for coordinates
-    for (int i = 0; i < it.ndim; i++) {
-      data_coords[i] = (i == axis) ? index : it.coords[i];
-    }
-    long data_off = compute_offset(data, data_coords);
-    long out_off = compute_offset(out, it.coords);
+      long data_coords[32];  // Stack buffer for coordinates
+      for (int i = 0; i < it.ndim; i++) {
+        data_coords[i] = (i == axis) ? index : it.coords[i];
+      }
+      long data_off = compute_offset(data, data_coords);
+      long out_off = compute_offset(out, it.coords);
 
-    // Apply set op (copy)
-    op(data->data, data->offset + data_off, out->data, out->offset + out_off);
-  } while (multi_iterator_next(&it));
+      // Apply set op (copy)
+      op(data->data, data->offset + data_off, out->data,
+         out->offset + out_off);
+    } while (multi_iterator_next(&it));
+  }
   multi_iterator_destroy(&it);
 
   return error_msg;
@@ -489,31 +503,33 @@ static const char *generic_scatter(const ndarray_t *template,
   multi_iterator_t it;
   multi_iterator_init(&it, indices);
 
-  do {
-    long indices_off = compute_offset(indices, it.coords);
-    int32_t index =
-        *((int32_t *)(indices->data +
-                      (indices->offset + indices_off) * sizeof(int32_t)));
-    // Handle negative indices (Python-style)
-    if (index < 0) {
-      index += template->shape[axis];
-    }
-    if (index < 0 || index >= template->shape[axis]) {
-      error_msg = "index out of bounds";
-      break;
-    }
+  if (it.has_elements) {
+    do {
+      long indices_off = compute_offset(indices, it.coords);
+      int32_t index = *
+          ((int32_t *)(indices->data
+                        + (indices->offset + indices_off) * sizeof(int32_t)));
+      // Handle negative indices (Python-style)
+      if (index < 0) {
+        index += template->shape[axis];
+      }
+      if (index < 0 || index >= template->shape[axis]) {
+        error_msg = "index out of bounds";
+        break;
+      }
 
-    long out_coords[32];  // Stack buffer for coordinates
-    for (int i = 0; i < it.ndim; i++) {
-      out_coords[i] = (i == axis) ? index : it.coords[i];
-    }
-    long out_off = compute_offset(out, out_coords);
-    long updates_off = compute_offset(updates, it.coords);
+      long out_coords[32];  // Stack buffer for coordinates
+      for (int i = 0; i < it.ndim; i++) {
+        out_coords[i] = (i == axis) ? index : it.coords[i];
+      }
+      long out_off = compute_offset(out, out_coords);
+      long updates_off = compute_offset(updates, it.coords);
 
-    // Apply op
-    op(updates->data, updates->offset + updates_off, out->data,
-       out->offset + out_off);
-  } while (multi_iterator_next(&it));
+      // Apply op
+      op(updates->data, updates->offset + updates_off, out->data,
+         out->offset + out_off);
+    } while (multi_iterator_next(&it));
+  }
   multi_iterator_destroy(&it);
 
   return error_msg;
