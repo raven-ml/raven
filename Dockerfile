@@ -29,17 +29,21 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install OPAM binary directly
-RUN curl -L https://github.com/ocaml/opam/releases/download/2.3.0/opam-2.3.0-arm64-linux -o /usr/local/bin/opam && \
+RUN curl -L https://github.com/ocaml/opam/releases/download/2.4.1/opam-2.4.1-arm64-linux -o /usr/local/bin/opam && \
     chmod +x /usr/local/bin/opam
 
-# Initialize OPAM with OCaml 5.2.0
-RUN opam init --disable-sandboxing --compiler=5.2.0
+# Initialize OPAM with OCaml 5.3.0
+RUN opam init --disable-sandboxing --compiler=5.3.0
 
 # Set working directory
 WORKDIR /app
 
 # Copy only opam files first
 COPY *.opam ./
+
+RUN apt-get update && apt-get install -y \
+    libzstd-dev \
+    llvm-19-dev
 
 # Install dependencies
 RUN eval $(opam env) && \
