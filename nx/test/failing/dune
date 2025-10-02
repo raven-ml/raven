@@ -1,4 +1,3 @@
 (executables
- (names
-  bug_blit_overlapping)
+ (names bug_blit_overlapping)
  (libraries nx))
