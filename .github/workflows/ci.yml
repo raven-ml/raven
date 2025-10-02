@@ -19,6 +19,10 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+      - name: Configure Git for Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf input
+
       - name: Checkout tree
         uses: actions/checkout@v4
 
@@ -55,9 +59,11 @@ jobs:
           echo "PATH=/usr/x86_64-w64-mingw32/sys-root/mingw/bin:$PATH" >> $GITHUB_ENV
 
       - name: Install OCaml dependencies
+        shell: ${{ runner.os == 'Windows' && 'bash -o igncr {0}' || 'bash {0}' }}
         run: opam install . --deps-only --with-test
 
       - name: Build and test nx
+        shell: ${{ runner.os == 'Windows' && 'bash -o igncr {0}' || 'bash {0}' }}
         run: |
           echo "::group::nx"
           opam exec -- dune build nx
@@ -65,6 +71,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Build and test nx-datasets
+        shell: ${{ runner.os == 'Windows' && 'bash -o igncr {0}' || 'bash {0}' }}
         run: |
           echo "::group::nx-datasets"
           opam exec -- dune build nx-datasets
@@ -72,6 +79,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Build and test saga
+        shell: ${{ runner.os == 'Windows' && 'bash -o igncr {0}' || 'bash {0}' }}
         run: |
           echo "::group::saga"
           opam exec -- dune build saga
@@ -79,6 +87,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Build and test rune
+        shell: ${{ runner.os == 'Windows' && 'bash -o igncr {0}' || 'bash {0}' }}
         run: |
           echo "::group::rune"
           opam exec -- dune build rune
@@ -86,6 +95,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Build and test kaun
+        shell: ${{ runner.os == 'Windows' && 'bash -o igncr {0}' || 'bash {0}' }}
         run: |
           echo "::group::kaun"
           opam exec -- dune build kaun
@@ -93,6 +103,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Build and test sowilo
+        shell: ${{ runner.os == 'Windows' && 'bash -o igncr {0}' || 'bash {0}' }}
         run: |
           echo "::group::sowilo"
           opam exec -- dune build sowilo
@@ -100,6 +111,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Build and test hugin
+        shell: ${{ runner.os == 'Windows' && 'bash -o igncr {0}' || 'bash {0}' }}
         run: |
           echo "::group::hugin"
           opam exec -- dune build hugin
@@ -107,6 +119,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Build and test quill
+        shell: ${{ runner.os == 'Windows' && 'bash -o igncr {0}' || 'bash {0}' }}
         run: |
           echo "::group::quill"
           opam exec -- dune build quill
