@@ -103,6 +103,7 @@ module Safe = struct
   (* Conversions from packed arrays *)
 
   let as_float16 = Packed_nx.as_float16
+  let as_bfloat16 = Packed_nx.as_bfloat16
   let as_float32 = Packed_nx.as_float32
   let as_float64 = Packed_nx.as_float64
   let as_int8 = Packed_nx.as_int8
@@ -128,6 +129,7 @@ let unwrap_result = function
   | Error err -> failwith (Error.to_string err)
 
 let as_float16 packed = Packed_nx.as_float16 packed |> unwrap_result
+let as_bfloat16 packed = Packed_nx.as_bfloat16 packed |> unwrap_result
 let as_float32 packed = Packed_nx.as_float32 packed |> unwrap_result
 let as_float64 packed = Packed_nx.as_float64 packed |> unwrap_result
 let as_int8 packed = Packed_nx.as_int8 packed |> unwrap_result

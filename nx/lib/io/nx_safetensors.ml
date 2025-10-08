@@ -2,6 +2,12 @@ open Bigarray_ext
 open Error
 open Packed_nx
 
+(* External functions for 16-bit float conversions *)
+external half_to_float : int -> float = "caml_half_to_float"
+external bfloat16_to_float : int -> float = "caml_bfloat16_to_float"
+external float_to_half : float -> int = "caml_float_to_half"
+external float_to_bfloat16 : float -> int = "caml_float_to_bfloat16"
+
 let load_safetensor path =
   try
     let ic = open_in_bin path in
@@ -82,10 +88,12 @@ let load_safetensor path =
                 let ba = Array1.create Float16 c_layout num_elems in
                 for i = 0 to num_elems - 1 do
                   let offset = view.offset + (i * 2) in
-                  let _b0 = Char.code view.data.[offset] in
-                  let _b1 = Char.code view.data.[offset + 1] in
-                  (* TODO: Convert bits to float16 properly *)
-                  Array1.unsafe_set ba i 0.0
+                  let b0 = Char.code view.data.[offset] in
+                  let b1 = Char.code view.data.[offset + 1] in
+                  (* Combine bytes to get 16-bit value (little-endian) *)
+                  let bits = (b1 lsl 8) lor b0 in
+                  let float_val = half_to_float bits in
+                  Array1.unsafe_set ba i float_val
                 done;
                 let nx_arr = Nx.of_bigarray_ext (genarray_of_array1 ba) in
                 Hashtbl.add result name (P (Nx.reshape shape nx_arr))
@@ -93,10 +101,12 @@ let load_safetensor path =
                 let ba = Array1.create Bfloat16 c_layout num_elems in
                 for i = 0 to num_elems - 1 do
                   let offset = view.offset + (i * 2) in
-                  let _b0 = Char.code view.data.[offset] in
-                  let _b1 = Char.code view.data.[offset + 1] in
-                  (* TODO: Convert bits to bfloat16 properly *)
-                  Array1.unsafe_set ba i 0.0
+                  let b0 = Char.code view.data.[offset] in
+                  let b1 = Char.code view.data.[offset + 1] in
+                  (* Combine bytes to get 16-bit value (little-endian) *)
+                  let bits = (b1 lsl 8) lor b0 in
+                  let float_val = bfloat16_to_float bits in
+                  Array1.unsafe_set ba i float_val
                 done;
                 let nx_arr = Nx.of_bigarray_ext (genarray_of_array1 ba) in
                 Hashtbl.add result name (P (Nx.reshape shape nx_arr))
@@ -183,24 +193,31 @@ let save_safetensor ?(overwrite = true) path items =
                   done;
                   (Safetensors.I32, Bytes.unsafe_to_string bytes)
               | Float16 ->
-                  (* For float16, we need to copy the raw bytes directly *)
                   let bytes = Bytes.create (num_elems * 2) in
-                  (* Copy raw memory - float16 is already in the right format *)
-                  for i = 0 to (num_elems * 2) - 1 do
-                    Bytes.set bytes i '\000'
-                    (* Placeholder - proper implementation would copy raw
-                       bytes *)
+                  let ba_flat = Nx.to_bigarray_ext (Nx.flatten arr) in
+                  let ba1 = array1_of_genarray ba_flat in
+                  for i = 0 to num_elems - 1 do
+                    let float_val = Array1.unsafe_get ba1 i in
+                    (* Convert float to half-precision bits *)
+                    let bits = float_to_half float_val in
+                    let offset = i * 2 in
+                    (* Store as little-endian *)
+                    Bytes.set bytes offset (Char.chr (bits land 0xff));
+                    Bytes.set bytes (offset + 1) (Char.chr ((bits lsr 8) land 0xff))
                   done;
                   (Safetensors.F16, Bytes.unsafe_to_string bytes)
               | Bfloat16 ->
-                  (* For bfloat16, we need to copy the raw bytes directly *)
                   let bytes = Bytes.create (num_elems * 2) in
-                  (* Copy raw memory - bfloat16 is already in the right
-                     format *)
-                  for i = 0 to (num_elems * 2) - 1 do
-                    Bytes.set bytes i '\000'
-                    (* Placeholder - proper implementation would copy raw
-                       bytes *)
+                  let ba_flat = Nx.to_bigarray_ext (Nx.flatten arr) in
+                  let ba1 = array1_of_genarray ba_flat in
+                  for i = 0 to num_elems - 1 do
+                    let float_val = Array1.unsafe_get ba1 i in
+                    (* Convert float to bfloat16 bits *)
+                    let bits = float_to_bfloat16 float_val in
+                    let offset = i * 2 in
+                    (* Store as little-endian *)
+                    Bytes.set bytes offset (Char.chr (bits land 0xff));
+                    Bytes.set bytes (offset + 1) (Char.chr ((bits lsr 8) land 0xff))
                   done;
                   (Safetensors.BF16, Bytes.unsafe_to_string bytes)
               | _ ->

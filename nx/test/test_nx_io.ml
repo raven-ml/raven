@@ -302,6 +302,43 @@ let test_high_dimensional_arrays () =
   (* Clean up *)
   Sys.remove path
 
+(* Test SafeTensors with float16 and bfloat16 round-trip *)
+let test_safetensors_float16_roundtrip () =
+  let test_data = Nx.full Nx.float16 [| 2; 3 |] 1.5 in
+  let path = temp_file "test_safetensors_f16_" ".safetensors" in
+
+  (* Save the data *)
+  Nx_io.save_safetensor path [("test_f16", Nx_io.P test_data)];
+
+  (* Load it back *)
+  let archive = Nx_io.load_safetensor path in
+  let loaded = Hashtbl.find archive "test_f16" |> Nx_io.as_float16 in
+
+  (* Check shape and values *)
+  check (array int) "float16 shape" [| 2; 3 |] (Nx.shape loaded);
+  check_array_approx "float16 values" ~eps:1e-3 test_data loaded;
+
+  (* Clean up *)
+  Sys.remove path
+
+let test_safetensors_bfloat16_roundtrip () =
+  let test_data = Nx.full Nx.bfloat16 [| 2; 3 |] 1.5 in
+  let path = temp_file "test_safetensors_bf16_" ".safetensors" in
+
+  (* Save the data *)
+  Nx_io.save_safetensor path [("test_bf16", Nx_io.P test_data)];
+
+  (* Load it back *)
+  let archive = Nx_io.load_safetensor path in
+  let loaded = Hashtbl.find archive "test_bf16" |> Nx_io.as_bfloat16 in
+
+  (* Check shape and values *)
+  check (array int) "bfloat16 shape" [| 2; 3 |] (Nx.shape loaded);
+  check_array_approx "bfloat16 values" ~eps:1e-3 test_data loaded;
+
+  (* Clean up *)
+  Sys.remove path
+
 (* Test Safe module *)
 let test_safe_module_error_handling () =
   (* Test file not found *)
@@ -344,6 +381,8 @@ let () =
         [
           test_case "Save/load tensors" `Quick test_safetensors_save_load;
           test_case "Different dtypes" `Quick test_safetensors_different_dtypes;
+          test_case "Float16 round-trip" `Quick test_safetensors_float16_roundtrip;
+          test_case "Bfloat16 round-trip" `Quick test_safetensors_bfloat16_roundtrip;
         ] );
       ( "dtype_conversions",
         [ test_case "Basic conversions" `Quick test_dtype_conversions ] );
