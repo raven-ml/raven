@@ -29,7 +29,7 @@ extern "C" {
 
 #if defined(__GNUC__) || defined(__clang__)
 #define POCKETFFT_RESTRICT __restrict__
-#define POCKETFFT_INLINE inline
+#define POCKETFFT_INLINE inline __attribute__((used))
 #define POCKETFFT_HOT __attribute__((hot))
 #define POCKETFFT_CONST __attribute__((const))
 #define POCKETFFT_PURE __attribute__((pure))
