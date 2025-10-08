@@ -4229,9 +4229,37 @@ module Make (B : Backend_intf.S) = struct
 
     (* For complex types, conjugate first vector *)
     match dtype a with
-    | (Complex32 | Complex64) when dtype a = dtype b ->
-        (* TODO: implement conj when available *)
-        sum (mul flat_a flat_b)
+    | Complex32 when dtype a = dtype b ->
+        (* Conjugate by creating a new tensor with negated imaginary parts *)
+        let flat_a_complex = (flat_a : (Complex.t, complex32_elt) t) in
+        let shape_a = shape flat_a_complex in
+        let size = Array.fold_left ( * ) 1 shape_a in
+        let conj_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_a |> Array.to_list in
+              let c = unsafe_get idx flat_a_complex in
+              Complex.{ re = c.re; im = -.c.im })
+        in
+        let conj_flat_a =
+          Obj.magic
+            (create (B.context flat_a_complex) complex32 shape_a conj_data)
+        in
+        sum (mul conj_flat_a flat_b)
+    | Complex64 when dtype a = dtype b ->
+        let flat_a_complex = (flat_a : (Complex.t, complex64_elt) t) in
+        let shape_a = shape flat_a_complex in
+        let size = Array.fold_left ( * ) 1 shape_a in
+        let conj_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_a |> Array.to_list in
+              let c = unsafe_get idx flat_a_complex in
+              Complex.{ re = c.re; im = -.c.im })
+        in
+        let conj_flat_a =
+          Obj.magic
+            (create (B.context flat_a_complex) complex64 shape_a conj_data)
+        in
+        sum (mul conj_flat_a flat_b)
     | _ -> sum (mul flat_a flat_b)
 
   let vecdot ?axis x1 x2 =
