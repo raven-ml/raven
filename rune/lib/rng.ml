@@ -101,8 +101,28 @@ let shuffle key x =
    ~keepdims:false *)
 
 (* Temporary placeholder for categorical *)
-let categorical _key ?axis:(_ = -1) _logits =
-  failwith "categorical: not implemented yet (requires cumsum)"
+let categorical key ?(axis = -1) logits =
+  let shape_array = Tensor.shape logits in
+  let ndim = Array.length shape_array in
+  let axis = if axis < 0 then ndim + axis else axis in
+  
+  (* Convert logits to float32 for softmax and cumsum operations *)
+  let logits_float = astype Tensor.Float32 logits in
+  
+  (* Generate uniform random values with same shape *)
+  let uniform_vals = uniform key Tensor.Float32 shape_array in
+  
+  (* Apply softmax to get probabilities *)
+  let probs = softmax logits_float ~axes:[axis] in
+  
+  (* Compute cumulative sum along axis *)
+  let cumsum = cumsum probs ~axis in
+  
+  (* Find where uniform_vals < cumsum for the first time *)
+  let comparison = cmplt uniform_vals cumsum in
+  
+  (* argmax along axis gives us the first True index *)
+  argmax comparison ~axis ~keepdims:false
 
 let truncated_normal key dtype ~lower ~upper shape =
   if lower >= upper then
