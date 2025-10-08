@@ -237,6 +237,33 @@ module Genarray = struct
   external nx_ba_fill : ('a, 'b, 'c) t -> 'a -> unit = "caml_nx_ba_fill"
 
   let fill = nx_ba_fill
+
+  external unsafe_blit_from_bytes :
+    bytes -> int -> ('a, 'b, 'c) t -> int -> int -> unit
+    = "caml_nx_ba_blit_from_bytes"
+
+  external unsafe_blit_to_bytes :
+    ('a, 'b, 'c) t -> int -> bytes -> int -> int -> unit
+    = "caml_nx_ba_blit_to_bytes"
+
+  let element_size arr = kind_size_in_bytes (kind arr)
+  let num_elements arr = Array.fold_left ( * ) 1 (dims arr)
+
+  let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes arr =
+    let elem_size = element_size arr in
+    let total = num_elements arr in
+    let len = match len with Some len -> len | None -> total - dst_off in
+    if len < 0 then invalid_arg "blit_from_bytes: negative length";
+    unsafe_blit_from_bytes bytes (src_off * elem_size) arr (dst_off * elem_size)
+      (len * elem_size)
+
+  let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len arr bytes =
+    let elem_size = element_size arr in
+    let total = num_elements arr in
+    let len = match len with Some len -> len | None -> total - src_off in
+    if len < 0 then invalid_arg "blit_to_bytes: negative length";
+    unsafe_blit_to_bytes arr (src_off * elem_size) bytes (dst_off * elem_size)
+      (len * elem_size)
 end
 
 (* Shadow Array0 module *)
@@ -256,6 +283,13 @@ module Array0 = struct
     a
 
   let of_value = init
+
+  let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes arr =
+    Genarray.blit_from_bytes ~src_off ~dst_off ?len bytes
+      (genarray_of_array0 arr)
+
+  let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len arr bytes =
+    Genarray.blit_to_bytes ~src_off ~dst_off ?len (genarray_of_array0 arr) bytes
 end
 
 (* Shadow Array1 module *)
@@ -310,6 +344,13 @@ module Array1 = struct
       unsafe_set ba (i + ofs) data.(i)
     done;
     ba
+
+  let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes arr =
+    Genarray.blit_from_bytes ~src_off ~dst_off ?len bytes
+      (genarray_of_array1 arr)
+
+  let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len arr bytes =
+    Genarray.blit_to_bytes ~src_off ~dst_off ?len (genarray_of_array1 arr) bytes
 end
 
 (* Shadow Array2 module *)
@@ -376,6 +417,13 @@ module Array2 = struct
       done
     done;
     ba
+
+  let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes arr =
+    Genarray.blit_from_bytes ~src_off ~dst_off ?len bytes
+      (genarray_of_array2 arr)
+
+  let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len arr bytes =
+    Genarray.blit_to_bytes ~src_off ~dst_off ?len (genarray_of_array2 arr) bytes
 end
 
 (* Shadow Array3 module *)
@@ -452,4 +500,11 @@ module Array3 = struct
       done
     done;
     ba
+
+  let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes arr =
+    Genarray.blit_from_bytes ~src_off ~dst_off ?len bytes
+      (genarray_of_array3 arr)
+
+  let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len arr bytes =
+    Genarray.blit_to_bytes ~src_off ~dst_off ?len (genarray_of_array3 arr) bytes
 end

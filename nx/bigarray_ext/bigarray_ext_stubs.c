@@ -333,6 +333,34 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
   CAMLreturn(Val_unit);
 }
 
+CAMLprim value caml_nx_ba_blit_from_bytes(value vbytes, value vsrc_off,
+                                          value vdst, value vdst_off,
+                                          value vlen) {
+  CAMLparam5(vbytes, vsrc_off, vdst, vdst_off, vlen);
+  struct caml_ba_array *dst = Caml_ba_array_val(vdst);
+  size_t len = (size_t)Long_val(vlen);
+  uint8_t *dst_ptr =
+      (uint8_t *)dst->data + (size_t)Long_val(vdst_off);
+  const uint8_t *src_ptr =
+      (const uint8_t *)Bytes_val(vbytes) + (size_t)Long_val(vsrc_off);
+  memcpy(dst_ptr, src_ptr, len);
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_nx_ba_blit_to_bytes(value vsrc, value vsrc_off,
+                                        value vbytes, value vdst_off,
+                                        value vlen) {
+  CAMLparam5(vsrc, vsrc_off, vbytes, vdst_off, vlen);
+  struct caml_ba_array *src = Caml_ba_array_val(vsrc);
+  size_t len = (size_t)Long_val(vlen);
+  const uint8_t *src_ptr =
+      (const uint8_t *)src->data + (size_t)Long_val(vsrc_off);
+  uint8_t *dst_ptr =
+      (uint8_t *)Bytes_val(vbytes) + (size_t)Long_val(vdst_off);
+  memcpy(dst_ptr, src_ptr, len);
+  CAMLreturn(Val_unit);
+}
+
 /* Get the extended kind of a bigarray */
 CAMLprim value caml_nx_ba_kind(value vb) {
   struct caml_ba_array *b = Caml_ba_array_val(vb);
