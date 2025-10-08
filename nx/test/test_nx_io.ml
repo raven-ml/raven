@@ -3,6 +3,11 @@ open Alcotest
 (* Helper functions *)
 let temp_file prefix suffix = Filename.temp_file prefix suffix
 
+let expect_safetensors_ok context = function
+  | Ok v -> v
+  | Error err ->
+      Alcotest.failf "%s: %s" context (Safetensors.string_of_error err)
+
 let array_approx_equal ?(eps = 1e-6) a b =
   try
     let a_flat = Nx.flatten a in
@@ -302,6 +307,120 @@ let test_high_dimensional_arrays () =
   (* Clean up *)
   Sys.remove path
 
+module Raw_safetensor = struct
+  let tensor_name = "raw_tensor"
+
+  let bytes_of_u16 values =
+    let len = List.length values in
+    let bytes = Bytes.create (len * 2) in
+    List.iteri
+      (fun i bits ->
+        Bytes.set bytes (i * 2) (Char.chr (bits land 0xFF));
+        Bytes.set bytes ((i * 2) + 1) (Char.chr ((bits lsr 8) land 0xFF)))
+      values;
+    bytes
+
+  let write path dtype values =
+    let data = Bytes.unsafe_to_string (bytes_of_u16 values) in
+    let view =
+      expect_safetensors_ok "tensor_view_new"
+      @@ Safetensors.tensor_view_new ~dtype ~shape:[ List.length values ] ~data
+    in
+    expect_safetensors_ok "serialize_to_file"
+    @@ Safetensors.serialize_to_file [ (tensor_name, view) ] None path
+
+  let payload path =
+    let ic = open_in_bin path in
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () ->
+        let len = in_channel_length ic in
+        let buffer = really_input_string ic len in
+        let safetensors =
+          expect_safetensors_ok "deserialize" @@ Safetensors.deserialize buffer
+        in
+        match
+          Safetensors.tensors safetensors
+          |> List.find_opt (fun (name, _) -> String.equal name tensor_name)
+        with
+        | Some (_, view) -> String.sub view.data view.offset view.length
+        | None ->
+            Alcotest.failf "Tensor '%s' not found in safetensors file"
+              tensor_name)
+
+  let remove path = if Sys.file_exists path then Sys.remove path
+
+  let check_roundtrip ~dtype ~values ~payload_msg ~check_values =
+    let path_in = temp_file "test_safetensors_raw_in_" ".safetensors" in
+    let path_out = temp_file "test_safetensors_raw_out_" ".safetensors" in
+    Fun.protect
+      ~finally:(fun () ->
+        remove path_in;
+        remove path_out)
+      (fun () ->
+        write path_in dtype values;
+        let archive = Nx_io.load_safetensor path_in in
+        let tensor = Hashtbl.find archive tensor_name in
+        check_values tensor;
+        Nx_io.save_safetensor path_out [ (tensor_name, tensor) ];
+        let payload_in = payload path_in in
+        let payload_out = payload path_out in
+        check string payload_msg payload_in payload_out)
+end
+
+(* Test SafeTensors with float16 and bfloat16 round-trip *)
+let test_safetensors_float16_roundtrip () =
+  let test_data = Nx.full Nx.float16 [| 2; 3 |] 1.5 in
+  let path = temp_file "test_safetensors_f16_" ".safetensors" in
+
+  (* Save the data *)
+  Nx_io.save_safetensor path [ ("test_f16", Nx_io.P test_data) ];
+
+  (* Load it back *)
+  let archive = Nx_io.load_safetensor path in
+  let loaded = Hashtbl.find archive "test_f16" |> Nx_io.as_float16 in
+
+  (* Check shape and values *)
+  check (array int) "float16 shape" [| 2; 3 |] (Nx.shape loaded);
+  check_array_approx "float16 values" ~eps:1e-3 test_data loaded;
+
+  (* Clean up *)
+  Sys.remove path
+
+let test_safetensors_float16_bit_exact () =
+  Raw_safetensor.check_roundtrip ~dtype:Safetensors.F16
+    ~values:[ 0x0000; 0x0001; 0x3C00; 0x7C00; 0x7E01 ]
+    ~payload_msg:"float16 payload round-trip" ~check_values:(fun packed ->
+      let values = packed |> Nx_io.as_float16 |> Nx.to_array in
+      check bool "subnormal preserved" true (values.(1) <> 0.0);
+      check bool "nan preserved" true (Float.is_nan values.(4)))
+
+let test_safetensors_bfloat16_roundtrip () =
+  let test_data = Nx.full Nx.bfloat16 [| 2; 3 |] 1.5 in
+  let path = temp_file "test_safetensors_bf16_" ".safetensors" in
+
+  (* Save the data *)
+  Nx_io.save_safetensor path [ ("test_bf16", Nx_io.P test_data) ];
+
+  (* Load it back *)
+  let archive = Nx_io.load_safetensor path in
+  let loaded = Hashtbl.find archive "test_bf16" |> Nx_io.as_bfloat16 in
+
+  (* Check shape and values *)
+  check (array int) "bfloat16 shape" [| 2; 3 |] (Nx.shape loaded);
+  check_array_approx "bfloat16 values" ~eps:1e-3 test_data loaded;
+
+  (* Clean up *)
+  Sys.remove path
+
+let test_safetensors_bfloat16_bit_exact () =
+  Raw_safetensor.check_roundtrip ~dtype:Safetensors.BF16
+    ~values:[ 0x0000; 0x0001; 0x3F80; 0x7F80; 0x7FC1 ]
+    ~payload_msg:"bfloat16 payload round-trip" ~check_values:(fun packed ->
+      let values = packed |> Nx_io.as_bfloat16 |> Nx.to_array in
+      check bool "bf16 subnormal preserved" true (values.(1) <> 0.0);
+      check bool "bf16 nan preserved" true (Float.is_nan values.(4)))
+
 (* Test Safe module *)
 let test_safe_module_error_handling () =
   (* Test file not found *)
@@ -344,6 +463,14 @@ let () =
         [
           test_case "Save/load tensors" `Quick test_safetensors_save_load;
           test_case "Different dtypes" `Quick test_safetensors_different_dtypes;
+          test_case "Float16 round-trip" `Quick
+            test_safetensors_float16_roundtrip;
+          test_case "Float16 bit exact" `Quick
+            test_safetensors_float16_bit_exact;
+          test_case "Bfloat16 round-trip" `Quick
+            test_safetensors_bfloat16_roundtrip;
+          test_case "Bfloat16 bit exact" `Quick
+            test_safetensors_bfloat16_bit_exact;
         ] );
       ( "dtype_conversions",
         [ test_case "Basic conversions" `Quick test_dtype_conversions ] );

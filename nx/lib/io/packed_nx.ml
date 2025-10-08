@@ -9,11 +9,16 @@ let convert_result_with_error : type a b.
       let source_dtype = Nx.dtype nx in
       let source_ba_kind = Nx_core.Dtype.to_bigarray_ext_kind source_dtype in
       let target_ba_kind = Nx_core.Dtype.to_bigarray_ext_kind target_dtype in
+      (* Try Npy.Eq.Kind first for standard types *)
       match Npy.Eq.Kind.( === ) source_ba_kind target_ba_kind with
       | Some Npy.Eq.W -> Ok nx
-      | None -> Error Unsupported_dtype)
+      | None -> (
+          match Nx_core.Dtype.equal_witness source_dtype target_dtype with
+          | Some Type.Equal -> Ok (nx : (a, b) Nx.t)
+          | None -> Error Unsupported_dtype))
 
 let as_float16 packed = convert_result_with_error Nx.float16 packed
+let as_bfloat16 packed = convert_result_with_error Nx.bfloat16 packed
 let as_float32 packed = convert_result_with_error Nx.float32 packed
 let as_float64 packed = convert_result_with_error Nx.float64 packed
 let as_int8 packed = convert_result_with_error Nx.int8 packed
