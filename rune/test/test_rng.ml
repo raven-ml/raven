@@ -164,24 +164,25 @@ let test_truncated_normal () =
 
 let test_categorical () =
   let key = Rng.key 42 in
-  
+
   (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
   (* Expected probabilities after softmax: [0.090, 0.245, 0.665] approximately *)
   let logits = Rune.create Float32 [| 3 |] [| 0.0; 1.0; 2.0 |] in
   let samples = Rng.categorical key logits in
-  
+
   (* Check output shape *)
   let output_shape = Rune.shape samples in
-  A.check (A.array A.int) "categorical produces correct shape" [| |] output_shape;
-  
+  A.check (A.array A.int) "categorical produces correct shape" [||] output_shape;
+
   (* Check that output is a scalar int32 *)
   let sample_val = Rune.to_array samples in
   A.check A.int "categorical produces single value" 1 (Array.length sample_val);
-  
+
   (* Check value is in valid range [0, 2] *)
   let sample_idx = Int32.to_int sample_val.(0) in
-  A.check A.bool "categorical value in valid range" true (sample_idx >= 0 && sample_idx <= 2);
-  
+  A.check A.bool "categorical value in valid range" true
+    (sample_idx >= 0 && sample_idx <= 2);
+
   (* Test determinism *)
   let samples2 = Rng.categorical key logits in
   let is_equal = Rune.all (Rune.equal samples samples2) in
@@ -190,55 +191,60 @@ let test_categorical () =
 
 let test_categorical_2d () =
   let key = Rng.key 42 in
-  
+
   (* Test with 2D logits: [[0.0, 1.0], [2.0, 0.0]] *)
   (* Expected probabilities after softmax: [[0.269, 0.731], [0.881, 0.119]] approximately *)
   let logits = Rune.create Float32 [| 2; 2 |] [| 0.0; 1.0; 2.0; 0.0 |] in
   let samples = Rng.categorical key logits in
-  
+
   (* Check output shape (should be [2] - one sample per row) *)
   let output_shape = Rune.shape samples in
-  A.check (A.array A.int) "categorical 2D produces correct shape" [| 2 |] output_shape;
-  
+  A.check (A.array A.int) "categorical 2D produces correct shape" [| 2 |]
+    output_shape;
+
   (* Check values are in valid range [0, 1] for each row *)
   let sample_vals = Rune.to_array samples in
   A.check A.int "categorical 2D produces 2 values" 2 (Array.length sample_vals);
-  
+
   Array.iter
     (fun v ->
       let idx = Int32.to_int v in
-      A.check A.bool "categorical 2D value in valid range" true (idx >= 0 && idx <= 1))
+      A.check A.bool "categorical 2D value in valid range" true
+        (idx >= 0 && idx <= 1))
     sample_vals
 
 let test_categorical_axis_handling () =
   let key = Rng.key 42 in
-  
+
   (* Test with 2D logits and explicit axis=1 *)
-  let logits = Rune.create Float32 [| 2; 3 |] [| 0.0; 1.0; 2.0; 2.0; 1.0; 0.0 |] in
+  let logits =
+    Rune.create Float32 [| 2; 3 |] [| 0.0; 1.0; 2.0; 2.0; 1.0; 0.0 |]
+  in
   let samples_axis_1 = Rng.categorical key ~axis:1 logits in
   let samples_axis_neg_1 = Rng.categorical key ~axis:(-1) logits in
-  
+
   (* Both should produce the same result *)
   let is_equal = Rune.all (Rune.equal samples_axis_1 samples_axis_neg_1) in
   let is_equal_val = Rune.to_array is_equal in
   A.check A.bool "categorical axis handling works" true (is_equal_val.(0) > 0);
-  
+
   (* Check output shape *)
   let output_shape = Rune.shape samples_axis_1 in
-  A.check (A.array A.int) "categorical axis=1 produces correct shape" [| 2 |] output_shape
+  A.check (A.array A.int) "categorical axis=1 produces correct shape" [| 2 |]
+    output_shape
 
 let test_categorical_distribution () =
   let key = Rng.key 42 in
-  
+
   (* Test with logits that strongly favor index 2: [0.0, 0.0, 3.0] *)
   (* Expected probabilities: [0.048, 0.048, 0.905] approximately *)
   let logits = Rune.create Float32 [| 3 |] [| 0.0; 0.0; 3.0 |] in
-  
+
   (* Generate many samples to check distribution *)
   let num_samples = 1000 in
   let keys = Rng.split ~n:num_samples key in
   let samples = Array.map (fun k -> Rng.categorical k logits) keys in
-  
+
   (* Count occurrences of each index *)
   let counts = Array.make 3 0 in
   Array.iter
@@ -247,7 +253,7 @@ let test_categorical_distribution () =
       let idx = Int32.to_int sample_val.(0) in
       counts.(idx) <- counts.(idx) + 1)
     samples;
-  
+
   (* Index 2 should be much more frequent than 0 and 1 *)
   (* Softmax of [0, 0, 3] ≈ [0.047, 0.047, 0.905] *)
   let prop_2 = float_of_int counts.(2) /. float_of_int num_samples in
@@ -294,8 +300,10 @@ let () =
           A.test_case "truncated_normal" `Quick test_truncated_normal;
           A.test_case "categorical" `Quick test_categorical;
           A.test_case "categorical_2d" `Quick test_categorical_2d;
-          A.test_case "categorical_axis_handling" `Quick test_categorical_axis_handling;
-          A.test_case "categorical_distribution" `Quick test_categorical_distribution;
+          A.test_case "categorical_axis_handling" `Quick
+            test_categorical_axis_handling;
+          A.test_case "categorical_distribution" `Quick
+            test_categorical_distribution;
         ] );
       ("autodiff", [ A.test_case "rng_with_grad" `Quick test_rng_with_autodiff ]);
     ]
