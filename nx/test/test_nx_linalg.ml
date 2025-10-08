@@ -490,6 +490,38 @@ let test_vdot_mismatch () =
     (Invalid_argument "vdot: different number of elements") (fun () ->
       ignore (Nx.vdot a b))
 
+let test_vdot_complex () =
+  (* Test complex32 vdot with conjugation *)
+  let a =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
+  in
+  let b =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 5.; im = 6. }; Complex.{ re = 7.; im = 8. } |]
+  in
+  let result = Nx.vdot a b in
+  (* Expected: conj(a) · b = (1-2i)*(5+6i) + (3-4i)*(7+8i)
+     = (5+6i-10i+12) + (21+24i-28i+32)
+     = (17-4i) + (53-4i) = 70-8i *)
+  check_t ~eps:1e-5 "vdot complex32" [||]
+    [| Complex.{ re = 70.; im = -8. } |]
+    result;
+
+  (* Test complex64 vdot *)
+  let a64 =
+    Nx.create Nx.complex64 [| 2 |]
+      [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
+  in
+  let b64 =
+    Nx.create Nx.complex64 [| 2 |]
+      [| Complex.{ re = 5.; im = 6. }; Complex.{ re = 7.; im = 8. } |]
+  in
+  let result64 = Nx.vdot a64 b64 in
+  check_t ~eps:1e-10 "vdot complex64" [||]
+    [| Complex.{ re = 70.; im = -8. } |]
+    result64
+
 let test_vecdot () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let b = Nx.create Nx.float32 [| 2; 3 |] [| 7.; 8.; 9.; 10.; 11.; 12. |] in
@@ -1013,6 +1045,7 @@ let product_tests =
   [
     ("vdot", `Quick, test_vdot);
     ("vdot mismatch", `Quick, test_vdot_mismatch);
+    ("vdot complex", `Quick, test_vdot_complex);
     ("vecdot", `Quick, test_vecdot);
     ("inner", `Quick, test_inner);
     ("inner mismatch", `Quick, test_inner_mismatch);
