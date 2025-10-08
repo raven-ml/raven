@@ -216,22 +216,56 @@ let test_categorical_2d () =
 let test_categorical_axis_handling () =
   let key = Rng.key 42 in
 
-  (* Test with 2D logits and explicit axis=1 *)
+  (* 2D logits: shape [2; 3] Row 0 → [0.0, 1.0, 2.0] Row 1 → [2.0, 0.5, -1.0]
+     This ensures all probabilities differ. *)
   let logits =
-    Rune.create Float32 [| 2; 3 |] [| 0.0; 1.0; 2.0; 2.0; 1.0; 0.0 |]
+    Rune.create Float32 [| 2; 3 |] [| 0.0; 1.0; 2.0; 2.0; 0.5; -1.0 |]
   in
+
+  (* axis=1 → sample across columns for each row → shape [2] *)
   let samples_axis_1 = Rng.categorical key ~axis:1 logits in
+
+  (* axis=-1 → equivalent to axis=1 → shape [2] *)
   let samples_axis_neg_1 = Rng.categorical key ~axis:(-1) logits in
 
-  (* Both should produce the same result *)
+  (* axis=0 → sample across rows for each column → shape [3] *)
+  let samples_axis_0 = Rng.categorical key ~axis:0 logits in
+
+  (* Check shape for axis=1 *)
+  let shape_axis_1 = Rune.shape samples_axis_1 in
+  A.check (A.array A.int) "categorical axis=1 produces correct shape" [| 2 |]
+    shape_axis_1;
+
+  (* Check shape for axis=-1 (should match axis=1) *)
+  let shape_axis_neg_1 = Rune.shape samples_axis_neg_1 in
+  A.check (A.array A.int) "categorical axis=-1 matches axis=1 shape" [| 2 |]
+    shape_axis_neg_1;
+
+  (* Check shape for axis=0 *)
+  let shape_axis_0 = Rune.shape samples_axis_0 in
+  A.check (A.array A.int) "categorical axis=0 produces correct shape" [| 3 |]
+    shape_axis_0;
+
+  (* Check that axis=1 and axis=-1 give identical results *)
   let is_equal = Rune.all (Rune.equal samples_axis_1 samples_axis_neg_1) in
   let is_equal_val = Rune.to_array is_equal in
-  A.check A.bool "categorical axis handling works" true (is_equal_val.(0) > 0);
+  A.check A.bool "categorical axis=-1 behaves like axis=1" true
+    (is_equal_val.(0) > 0);
 
-  (* Check output shape *)
-  let output_shape = Rune.shape samples_axis_1 in
-  A.check (A.array A.int) "categorical axis=1 produces correct shape" [| 2 |]
-    output_shape
+  (* Sanity check: ensure sampled indices are in valid range *)
+  let vals_axis_0 = Rune.to_array samples_axis_0 in
+  Array.iter
+    (fun i ->
+      A.check A.bool "axis=0 value in valid range" true
+        (Int32.to_int i >= 0 && Int32.to_int i < 2))
+    vals_axis_0;
+
+  let vals_axis_1 = Rune.to_array samples_axis_1 in
+  Array.iter
+    (fun i ->
+      A.check A.bool "axis=1 value in valid range" true
+        (Int32.to_int i >= 0 && Int32.to_int i < 3))
+    vals_axis_1
 
 let test_categorical_distribution () =
   let key = Rng.key 42 in
