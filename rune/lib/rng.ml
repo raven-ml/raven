@@ -81,26 +81,6 @@ let shuffle key x =
     let results = Array.map (fun i -> get [ i ] x) perm_array in
     concatenate ~axis:0 (Array.to_list results)
 
-(* TODO: Implement categorical when cumsum is available let categorical key ctx
-   ?(axis = -1) logits = let shape_array = shape logits in let ndim =
-   Array.length shape_array in let axis = if axis < 0 then ndim + axis else axis
-   in
-
-   (* Generate uniform random values with same shape *) let uniform_vals =
-   uniform key Tensor.Float32 shape_array in
-
-   (* Apply softmax to get probabilities *) let probs = softmax logits ~axes:[|
-   axis |] in
-
-   (* Compute cumulative sum along axis *) let cumsum = cumsum probs ~axis in
-
-   (* Find where uniform_vals < cumsum for the first time *) let comparison =
-   cmplt uniform_vals cumsum in
-
-   (* argmax along axis gives us the first True index *) argmax comparison ~axis
-   ~keepdims:false *)
-
-(* Temporary placeholder for categorical *)
 let categorical key ?(axis = -1) logits =
   let shape_array = Tensor.shape logits in
   let ndim = Array.length shape_array in
