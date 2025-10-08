@@ -23,8 +23,8 @@ val as_float16 : packed_nx -> Nx.float16_t
     dtype mismatch. *)
 
 val as_bfloat16 : packed_nx -> Nx.bfloat16_t
-(** [as_bfloat16 packed] converts a packed Nx to a [Nx.bfloat16_t], or [Error] if
-    dtype mismatch. *)
+(** [as_bfloat16 packed] converts a packed Nx to a [Nx.bfloat16_t], or [Error]
+    if dtype mismatch. *)
 
 val as_float32 : packed_nx -> Nx.float32_t
 (** [as_float32 packed] converts a packed Nx to a [Nx.float32_t], or [Error] if

@@ -542,32 +542,3 @@ CAMLprim value caml_nx_ba_fill(value vb, value vinit) {
  
   CAMLreturn(Val_unit);
 }
-
-/* Conversion functions for 16-bit floats */
-CAMLprim value caml_half_to_float(value v) {
-  CAMLparam1(v);
-  uint16_t h = Int_val(v);
-  float f = half_to_float(h);
-  CAMLreturn(caml_copy_double(f));
-}
-
-CAMLprim value caml_bfloat16_to_float(value v) {
-  CAMLparam1(v);
-  uint16_t bf16 = Int_val(v);
-  float f = bfloat16_to_float(bf16);
-  CAMLreturn(caml_copy_double(f));
-}
-
-CAMLprim value caml_float_to_half(value v) {
-  CAMLparam1(v);
-  float f = Double_val(v);
-  uint16_t h = float_to_half(f);
-  CAMLreturn(Val_int(h));
-}
-
-CAMLprim value caml_float_to_bfloat16(value v) {
-  CAMLparam1(v);
-  float f = Double_val(v);
-  uint16_t bf16 = float_to_bfloat16(f);
-  CAMLreturn(Val_int(bf16));
-}

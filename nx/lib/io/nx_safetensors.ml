@@ -2,11 +2,97 @@ open Bigarray_ext
 open Error
 open Packed_nx
 
-(* External functions for 16-bit float conversions *)
-external half_to_float : int -> float = "caml_half_to_float"
-external bfloat16_to_float : int -> float = "caml_bfloat16_to_float"
-external float_to_half : float -> int = "caml_float_to_half"
-external float_to_bfloat16 : float -> int = "caml_float_to_bfloat16"
+(* TODO: consider wiring a bulk half/bfloat16 blit in Bigarray_ext to avoid
+   per-element OCaml loops once we profile safetensor workloads. That would
+   require extending the Bigarray API with bytes<->array blits. *)
+let float_to_bfloat16_bits (f : float) : int =
+  let open Int32 in
+  let bits = bits_of_float f in
+  let exponent = to_int (shift_right_logical (logand bits 0x7F800000l) 23) in
+  let mantissa = logand bits 0x007FFFFFl in
+  let upper = to_int (shift_right_logical bits 16) in
+  if exponent = 0xFF then
+    if mantissa = 0l then upper
+    else if upper land 0x007F = 0 then upper lor 0x0001
+    else upper
+  else
+    let lsb = logand (shift_right_logical bits 16) 1l in
+    let rounding_bias = add (of_int 0x7FFF) lsb in
+    let rounded = add bits rounding_bias in
+    shift_right_logical rounded 16 |> to_int
+
+let bfloat16_bits_to_float (bits : int) : float =
+  Int32.(float_of_bits (shift_left (of_int (bits land 0xFFFF)) 16))
+
+let float_to_half_bits (f : float) : int =
+  let bits = Int32.bits_of_float f in
+  let sign =
+    Int32.(to_int (shift_right_logical (logand bits 0x80000000l) 16))
+  in
+  let mantissa = Int32.(to_int (logand bits 0x007FFFFFl)) in
+  let exponent =
+    Int32.(to_int (shift_right_logical (logand bits 0x7F800000l) 23))
+  in
+  if exponent = 255 then
+    if mantissa = 0 then sign lor 0x7C00
+    else
+      let payload = mantissa lsr 13 in
+      let payload = if payload = 0 then 1 else payload in
+      sign lor 0x7C00 lor payload
+  else
+    let exp = exponent - 127 in
+    if exp < -14 then
+      if exp < -24 then sign
+      else
+        let mant = mantissa lor 0x00800000 in
+        let shift = -exp - 1 in
+        let t = mant lsr shift in
+        let should_round =
+          t land 1 = 1 && (t land 2 = 2 || mant land ((1 lsl shift) - 1) <> 0)
+        in
+        let t = if should_round then t + 1 else t in
+        sign lor (t lsr 1)
+    else if exp > 15 then sign lor 0x7C00
+    else
+      let mant = mantissa + 0x00001000 in
+      let mant, exp =
+        if mant land 0x00800000 <> 0 then (0, exp + 1) else (mant, exp)
+      in
+      if exp > 15 then sign lor 0x7C00
+      else sign lor (((exp + 15) lsl 10) lor (mant lsr 13))
+
+let half_bits_to_float (bits : int) : float =
+  let sign = (bits land 0x8000) lsl 16 in
+  let exponent = (bits lsr 10) land 0x1F in
+  let mantissa = bits land 0x3FF in
+  let open Int32 in
+  let sign_bits = of_int sign in
+  let value_bits =
+    if exponent = 0x1F then
+      let mant =
+        if mantissa = 0 then 0l
+        else logor (shift_left (of_int mantissa) 13) 0x400000l
+      in
+      logor sign_bits (logor 0x7F800000l mant)
+    else if exponent = 0 then (
+      if mantissa = 0 then sign_bits
+      else
+        let mant = ref (mantissa lsl 1) in
+        let exp_val = ref (-14) in
+        while !mant land 0x400 = 0 do
+          mant := !mant lsl 1;
+          exp_val := !exp_val - 1
+        done;
+        let mant = !mant land 0x3FF in
+        let mant32 = shift_left (of_int mant) 13 in
+        let exp32 = shift_left (of_int (!exp_val + 127)) 23 in
+        logor sign_bits (logor exp32 mant32))
+    else
+      let exp32 = shift_left (of_int (exponent + 112)) 23 in
+      let mant32 = shift_left (of_int mantissa) 13 in
+      logor sign_bits (logor exp32 mant32)
+  in
+  Int32.float_of_bits value_bits
 
 let load_safetensor path =
   try
@@ -92,7 +178,7 @@ let load_safetensor path =
                   let b1 = Char.code view.data.[offset + 1] in
                   (* Combine bytes to get 16-bit value (little-endian) *)
                   let bits = (b1 lsl 8) lor b0 in
-                  let float_val = half_to_float bits in
+                  let float_val = half_bits_to_float bits in
                   Array1.unsafe_set ba i float_val
                 done;
                 let nx_arr = Nx.of_bigarray_ext (genarray_of_array1 ba) in
@@ -105,7 +191,7 @@ let load_safetensor path =
                   let b1 = Char.code view.data.[offset + 1] in
                   (* Combine bytes to get 16-bit value (little-endian) *)
                   let bits = (b1 lsl 8) lor b0 in
-                  let float_val = bfloat16_to_float bits in
+                  let float_val = bfloat16_bits_to_float bits in
                   Array1.unsafe_set ba i float_val
                 done;
                 let nx_arr = Nx.of_bigarray_ext (genarray_of_array1 ba) in
@@ -199,11 +285,12 @@ let save_safetensor ?(overwrite = true) path items =
                   for i = 0 to num_elems - 1 do
                     let float_val = Array1.unsafe_get ba1 i in
                     (* Convert float to half-precision bits *)
-                    let bits = float_to_half float_val in
+                    let bits = float_to_half_bits float_val in
                     let offset = i * 2 in
                     (* Store as little-endian *)
                     Bytes.set bytes offset (Char.chr (bits land 0xff));
-                    Bytes.set bytes (offset + 1) (Char.chr ((bits lsr 8) land 0xff))
+                    Bytes.set bytes (offset + 1)
+                      (Char.chr ((bits lsr 8) land 0xff))
                   done;
                   (Safetensors.F16, Bytes.unsafe_to_string bytes)
               | Bfloat16 ->
@@ -213,11 +300,12 @@ let save_safetensor ?(overwrite = true) path items =
                   for i = 0 to num_elems - 1 do
                     let float_val = Array1.unsafe_get ba1 i in
                     (* Convert float to bfloat16 bits *)
-                    let bits = float_to_bfloat16 float_val in
+                    let bits = float_to_bfloat16_bits float_val in
                     let offset = i * 2 in
                     (* Store as little-endian *)
                     Bytes.set bytes offset (Char.chr (bits land 0xff));
-                    Bytes.set bytes (offset + 1) (Char.chr ((bits lsr 8) land 0xff))
+                    Bytes.set bytes (offset + 1)
+                      (Char.chr ((bits lsr 8) land 0xff))
                   done;
                   (Safetensors.BF16, Bytes.unsafe_to_string bytes)
               | _ ->
