@@ -10,11 +10,18 @@ let data_path = dataset_dir ^ data_filename
 let url =
   "https://raw.githubusercontent.com/jbrownlee/Datasets/master/airline-passengers.csv"
 
+(* Logging source for this loader *)
+let src =
+  Logs.Src.create "nx.datasets.airline_passengers"
+    ~doc:"Airline passengers loader"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 let ensure_dataset () = ensure_file url data_path
 
 let load () =
   ensure_dataset ();
-  Printf.printf "Loading Airline Passengers dataset...\n%!";
+  Log.info (fun m -> m "Loading Airline Passengers dataset...");
 
   let header, data_rows_iter =
     try
@@ -101,7 +108,7 @@ let load () =
   let num_samples = List.length data_rows_rev in
   if num_samples = 0 then
     failwith "No data rows loaded from airline-passengers.csv";
-  Printf.printf "Found %d samples.\n%!" num_samples;
+  Log.info (fun m -> m "Found %d samples." num_samples);
 
   (* Create Bigarray and populate (data is reversed from fold_left) *)
   let passengers = Array1.create int32 c_layout num_samples in
@@ -110,5 +117,5 @@ let load () =
       passengers.{num_samples - 1 - i} <- Int32.of_int passenger_val)
     data_rows_rev;
 
-  Printf.printf "Airline Passengers loading complete.\n%!";
+  Log.info (fun m -> m "Airline Passengers loading complete.");
   passengers
