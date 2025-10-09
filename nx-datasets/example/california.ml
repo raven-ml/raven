@@ -15,8 +15,14 @@ let () =
   let labels_1d = Nx.reshape [| n_samples |] labels in
   let labels_f32 = astype_f32 labels_1d in
 
-  let longitude = Nx.slice [ Nx.R (0, n_samples); Nx.R (0, 1) ] features in
-  let latitude = Nx.slice [ Nx.R (0, n_samples); Nx.R (1, 2) ] features in
+  (* slice produces shape [n;1] — reshape to 1-D [n] so Hugin's scatter receives
+     a vector not a 2-D column *)
+  let longitude_col = Nx.slice [ Nx.R (0, n_samples); Nx.R (0, 1) ] features in
+  let latitude_col = Nx.slice [ Nx.R (0, n_samples); Nx.R (1, 2) ] features in
+
+  let longitude = Nx.reshape [| n_samples |] longitude_col in
+  let latitude = Nx.reshape [| n_samples |] latitude_col in
+
   let longitude_f32 = astype_f32 longitude in
   let latitude_f32 = astype_f32 latitude in
 
