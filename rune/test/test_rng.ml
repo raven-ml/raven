@@ -187,7 +187,14 @@ let test_categorical () =
   let samples2 = Rng.categorical key logits in
   let is_equal = Rune.all (Rune.equal samples samples2) in
   let is_equal_val = Rune.to_array is_equal in
-  A.check A.bool "categorical is deterministic" true (is_equal_val.(0) > 0)
+  A.check A.bool "categorical is deterministic" true (is_equal_val.(0) > 0);
+
+  (* Test with Float64 *)
+  let logits64 = Rune.create Float64 [| 3 |] [| 0.0; 1.0; 2.0 |] in
+  let samples64 = Rng.categorical key logits64 in
+  let is_equal64 = Rune.all (Rune.equal samples samples64) in
+  let is_equal_val64 = Rune.to_array is_equal64 in
+  A.check A.bool "categorical is type agnostic" true (is_equal_val64.(0) > 0)
 
 let test_categorical_2d () =
   let key = Rng.key 42 in
