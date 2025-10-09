@@ -163,31 +163,43 @@ let test_truncated_normal () =
     values
 
 let test_categorical () =
-  let key = Rng.key 42 in
+  let key = Rng.key 123 in
+  let logits = Rune.create Rune.Float32 [| 3 |] [| 0.0; 1.0; 2.0 |] in
 
-  (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
-  (* Expected probabilities after softmax: [0.090, 0.245, 0.665] approximately *)
-  let logits = Rune.create Float32 [| 3 |] [| 0.0; 1.0; 2.0 |] in
-  let samples = Rng.categorical key logits in
+  let n_samples = 20000 in
+  let inds = Rng.categorical key ~shape:[| n_samples |] logits in
 
-  (* Check output shape *)
-  let output_shape = Rune.shape samples in
-  A.check (A.array A.int) "categorical produces correct shape" [||] output_shape;
+  A.check (A.array A.int) "categorical produces correct shape" [| n_samples |]
+    (Rune.shape inds);
 
-  (* Check that output is a scalar int32 *)
-  let sample_val = Rune.to_array samples in
-  A.check A.int "categorical produces single value" 1 (Array.length sample_val);
+  let values = Rune.to_array inds |> Array.map Int32.to_int in
 
-  (* Check value is in valid range [0, 2] *)
-  let sample_idx = Int32.to_int sample_val.(0) in
-  A.check A.bool "categorical value in valid range" true
-    (sample_idx >= 0 && sample_idx <= 2);
+  (* Histogram counts *)
+  let n_classes = 3 in
+  let counts = Array.make n_classes 0 in
+  Array.iter (fun v -> counts.(v) <- counts.(v) + 1) values;
 
-  (* Test determinism *)
-  let samples2 = Rng.categorical key logits in
-  let is_equal = Rune.all (Rune.equal samples samples2) in
-  let is_equal_val = Rune.to_array is_equal in
-  A.check A.bool "categorical is deterministic" true (is_equal_val.(0) > 0)
+  (* Compute softmax probabilities from logits_arr *)
+  let logits_arr = [| 0.0; 1.0; 2.0 |] in
+  let max_logit =
+    Array.fold_left
+      (fun acc x -> if x > acc then x else acc)
+      neg_infinity logits_arr
+  in
+  let exps = Array.map (fun x -> Stdlib.exp (x -. max_logit)) logits_arr in
+  let sum_exps = Array.fold_left ( +. ) 0. exps in
+  let probs = Array.map (fun e -> e /. sum_exps) exps in
+
+  (* Check each bucket is within a reasonable statistical tolerance *)
+  Array.iteri
+    (fun i p ->
+      let prop = float_of_int counts.(i) /. float_of_int n_samples in
+      let se = Stdlib.sqrt (p *. (1. -. p) /. float_of_int n_samples) in
+      let tol = Stdlib.max (4. *. se) 0.01 in
+      A.check (A.float tol)
+        (Printf.sprintf "categorical bucket %d ~ p" i)
+        p prop)
+    probs
 
 let test_categorical_2d () =
   let key = Rng.key 42 in

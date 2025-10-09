@@ -414,7 +414,8 @@ module Rng : sig
       @param x Tensor to shuffle
       @return Shuffled tensor *)
 
-  val categorical : key -> ?axis:int -> ('a, 'b) t -> int32_t
+  val categorical :
+    key -> ?axis:int -> ?shape:int array -> ('a, 'b) t -> int32_t
   (** Sample from a categorical distribution.
 
       [categorical key logits ?axis] samples indices from a categorical
@@ -423,6 +424,7 @@ module Rng : sig
       @param key PRNG key for random generation
       @param logits Unnormalized log probabilities
       @param axis Axis along which to sample (default: -1)
+      @param shape Shape of the output tensor (default: scalar)
       @return Tensor of sampled indices *)
 
   val truncated_normal :

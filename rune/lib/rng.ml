@@ -81,28 +81,48 @@ let shuffle key x =
     let results = Array.map (fun i -> get [ i ] x) perm_array in
     concatenate ~axis:0 (Array.to_list results)
 
-let categorical key ?(axis = -1) logits =
-  let shape_array = Tensor.shape logits in
+let categorical (type a b) (key : key) ?(axis : int = -1)
+    ?(shape : int array = [||]) (logits : (a, b) Tensor.t) : Tensor.int32_t =
+  (* Gumbel-max categorical sampler with optional prefix shape (JAX-like) *)
+
+  (* Work in a floating dtype for the Gumbel transform; don't mutate the
+     input *)
+  let logits_f = astype Tensor.Float32 logits in
+
+  let shape_array = Tensor.shape logits_f in
   let ndim = Array.length shape_array in
   let axis = if axis < 0 then ndim + axis else axis in
+  if axis < 0 || axis >= ndim then
+    invalid_arg
+      (Printf.sprintf
+         "categorical: axis (%d) out of bounds for logits ndim (%d)" axis ndim);
 
-  (* Convert logits to float32 for softmax and cumsum operations *)
-  let logits_float = astype Tensor.Float32 logits in
+  (* Build the full shape for the uniform/Gumbel noise: prefix_shape +
+     logits_shape *)
+  let full_shape = Array.append shape shape_array in
 
-  (* Generate uniform random values with same shape *)
-  let uniform_vals = uniform key Tensor.Float32 shape_array in
+  (* Draw uniform samples in (0,1) in Float32. Clamp to avoid numerical issues
+     with log(0) *)
+  let u = uniform key Tensor.Float32 full_shape in
+  let eps = 1e-6 in
+  let u_clamped = clip u ~min:eps ~max:(1. -. eps) in
 
-  (* Apply softmax to get probabilities *)
-  let probs = softmax logits_float ~axes:[ axis ] in
+  (* Gumbel transform: g = -log(-log(U)) computed in Float32 *)
+  let neg_one = scalar Tensor.Float32 (-1.0) in
+  let log_u = log u_clamped in
+  let neg_log_u = mul log_u neg_one in
+  let log_neg_log_u = log neg_log_u in
+  let gumbel = mul log_neg_log_u neg_one in
 
-  (* Compute cumulative sum along axis *)
-  let cumsum = cumsum probs ~axis in
+  (* Add Gumbel noise to logits_f. Broadcasting will replicate logits across
+     prefix dims. *)
+  let noisy = add logits_f gumbel in
 
-  (* Find where uniform_vals < cumsum for the first time *)
-  let comparison = cmplt uniform_vals cumsum in
-
-  (* argmax along axis gives us the first True index *)
-  argmax comparison ~axis ~keepdims:false
+  (* Argmax along the class axis. Account for prefix dims by shifting axis *)
+  let prefix_len = Array.length shape in
+  let argmax_axis = axis + prefix_len in
+  let inds = argmax noisy ~axis:argmax_axis ~keepdims:false in
+  astype Tensor.Int32 inds
 
 let truncated_normal key dtype ~lower ~upper shape =
   if lower >= upper then
