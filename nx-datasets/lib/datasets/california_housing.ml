@@ -2,6 +2,13 @@
 open Bigarray
 open Dataset_utils
 
+(* Logging source for this loader *)
+let src =
+  Logs.Src.create "nx.datasets.california_housing"
+    ~doc:"California Housing loader"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 let dataset_name = "california-housing"
 let dataset_dir = get_cache_dir dataset_name
 let data_filename = "housing.csv"
@@ -28,7 +35,7 @@ let calculate_mean_non_nan column_data =
 
 let load () =
   ensure_dataset ();
-  Printf.printf "Loading California Housing dataset...\n%!";
+  Log.info (fun m -> m "Loading California Housing dataset...");
 
   let header, all_data_rows =
     try
@@ -85,8 +92,9 @@ let load () =
     List.find_index (( = ) "total_bedrooms") header
   in
 
-  Printf.printf "Found %d samples. Loading %d features + target '%s'.\n%!"
-    num_samples num_features target_name;
+  Log.info (fun m ->
+      m "Found %d samples. Loading %d features + target '%s'." num_samples
+        num_features target_name);
 
   let parsed_features_temp = Array.make_matrix num_samples num_features nan in
   let parsed_labels_temp = Array.make num_samples nan in
@@ -127,8 +135,9 @@ let load () =
     data_rows_str;
 
   let total_bedrooms_mean = calculate_mean_non_nan !total_bedrooms_col_temp in
-  Printf.printf "Calculated mean for 'total_bedrooms' (for imputation): %f\n%!"
-    total_bedrooms_mean;
+  Log.info (fun m ->
+      m "Calculated mean for 'total_bedrooms' (for imputation): %f"
+        total_bedrooms_mean);
   let total_bedrooms_feature_index =
     match List.find_index (( = ) "total_bedrooms") feature_names with
     | Some idx -> idx
@@ -163,5 +172,5 @@ let load () =
     else labels.{i} <- label_v
   done;
 
-  Printf.printf "California Housing loading complete.\n%!";
+  Log.info (fun m -> m "California Housing loading complete.");
   (features, labels)
