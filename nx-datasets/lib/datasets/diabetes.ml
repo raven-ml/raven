@@ -1,6 +1,10 @@
-(* diabetes.ml *)
 open Bigarray
 open Dataset_utils
+
+(* Logging source for this loader *)
+let src = Logs.Src.create "nx.datasets.diabetes" ~doc:"Diabetes dataset loader"
+
+module Log = (val Logs.src_log src : Logs.LOG)
 
 let dataset_name = "diabetes-sklearn"
 let dataset_dir = get_cache_dir dataset_name
@@ -11,7 +15,7 @@ let ensure_dataset () = ensure_file url data_path
 
 let load () =
   ensure_dataset ();
-  Printf.printf "Loading Diabetes (sklearn version) dataset...\n%!";
+  Log.info (fun m -> m "Loading Diabetes (sklearn version) dataset...");
 
   let header, data_rows_iter =
     try
@@ -106,8 +110,9 @@ let load () =
   let num_samples = List.length labels_rev in
 
   if num_samples = 0 then failwith "No data rows loaded from diabetes.tab.txt";
-  Printf.printf "Found %d samples with %d features and target '%s'.\n%!"
-    num_samples num_features target_col_name;
+  Log.info (fun m ->
+      m "Found %d samples with %d features and target '%s'." num_samples
+        num_features target_col_name);
 
   let features_ba = Array2.create float64 c_layout num_samples num_features in
   let labels_ba = Array1.create float64 c_layout num_samples in
@@ -124,5 +129,5 @@ let load () =
     (fun i label_val -> labels_ba.{num_samples - 1 - i} <- label_val)
     labels_rev;
 
-  Printf.printf "Diabetes loading complete.\n%!";
+  Log.info (fun m -> m "Diabetes loading complete.");
   (features_ba, labels_ba)
