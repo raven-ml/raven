@@ -87,9 +87,9 @@ let categorical (type a b) (key : key) ?(axis : int = -1)
 
   (* Work in a floating dtype for the Gumbel transform; don't mutate the
      input *)
-  let logits_f = astype Tensor.Float32 logits in
+  (* let logits_f = astype Tensor.Float32 logits in *)
 
-  let shape_array = Tensor.shape logits_f in
+  let shape_array = Tensor.shape logits in
   let ndim = Array.length shape_array in
   let axis = if axis < 0 then ndim + axis else axis in
   if axis < 0 || axis >= ndim then
@@ -112,11 +112,11 @@ let categorical (type a b) (key : key) ?(axis : int = -1)
   let log_u = log u_clamped in
   let neg_log_u = mul log_u neg_one in
   let log_neg_log_u = log neg_log_u in
-  let gumbel = mul log_neg_log_u neg_one in
-
+  let gumbel =  mul log_neg_log_u neg_one in
+  let gumbel = astype (Tensor.dtype logits) gumbel in
   (* Add Gumbel noise to logits_f. Broadcasting will replicate logits across
      prefix dims. *)
-  let noisy = add logits_f gumbel in
+  let noisy = add logits gumbel  in
 
   (* Argmax along the class axis. Account for prefix dims by shifting axis *)
   let prefix_len = Array.length shape in
