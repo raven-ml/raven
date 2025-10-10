@@ -30,7 +30,7 @@
 
     {2 Masks}
 
-    Masks restrict valid regions per dimension using \[(start, end)] pairs with
+    Masks restrict valid regions per dimension using [(start, end)] pairs with
     half-open intervals \[start, end) (NumPy convention). Padding operations
     create masks to mark extended regions as invalid. A masked view cannot
     produce standard strides until the mask is removed (typically by
@@ -65,9 +65,9 @@ val create :
       dimension values.
 
     @param mask
-      Valid ranges per dimension as \[(start, end)] pairs with exclusive ends
+      Valid ranges per dimension as [(start, end)] pairs with exclusive ends
       (NumPy half-open interval convention: \[start, end)). A dimension of size
-      [n] with mask \[(0, n)] is fully valid. Defaults to [None] (all elements
+      [n] with mask [(0, n)] is fully valid. Defaults to [None] (all elements
       valid). Masks with full coverage are automatically removed.
 
     @param shape
@@ -142,8 +142,8 @@ val mask : t -> (int * int) array option
 (** [mask view] returns the valid bounds per dimension if the view is masked.
 
     Returns [Some bounds] where each [(start, end)] pair specifies valid indices
-    in [start, end) (exclusive end). Returns [None] if the view is unmasked (all
-    elements are valid). *)
+    in the half-open interval \[start, end) (exclusive end). Returns [None] if
+    the view is unmasked (all elements are valid). *)
 
 val is_c_contiguous : t -> bool
 (** [is_c_contiguous view] tests for C-contiguous (row-major) layout.
