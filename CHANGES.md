@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~alpha2] - TBD
 
+- Nx-datasets: Use `Logs` for dataset loader logging (#95, @Satarupa22-SD).
 - Rune: Add support for categorical sampling with `Rune.Rng.categorical` (#89, @nirnayroy).
 - Nx: Add float16 and bfloat16 support to safetensors I/O, including precise conversions that preserve denormals/NaNs (#84, @six-shot, @tmattio).
 
