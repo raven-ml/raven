@@ -1,0 +1,28 @@
+name: Changelog Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  changelog:
+    name: Ensure changelog updated
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify changelog entry
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --depth=1 origin "$BASE_SHA"
+          changed=$(git diff --name-only "$BASE_SHA"...HEAD | grep '^CHANGES\.md$' || true)
+          if [ -z "$changed" ]; then
+            echo "::error::Missing changelog entry. Update CHANGES.md to describe your changes."
+            exit 1
+          fi
