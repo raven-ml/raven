@@ -148,7 +148,8 @@ let handle_binop state op a b =
   add_node state
     (Ir.Any_Node
        (Ir.binary ~op ~a_var:var_a ~b_var:var_b ~out_var ~dtype:ir_dtype));
-  create_symbolic_tensor state out_var res_dtype res_shape
+  let symbolic_shape = Symbolic_shape.of_ints res_shape in
+  create_symbolic_tensor state out_var res_dtype symbolic_shape
 
 let handle_unary state op t_in =
   let var_in, meta_in = get_var_and_meta state t_in in
@@ -157,7 +158,8 @@ let handle_unary state op t_in =
   let out_var, ir_dtype = allocate_buffer state dt shape in
   add_node state
     (Ir.Any_Node (Ir.unary ~op ~in_var:var_in ~out_var ~dtype:ir_dtype));
-  create_symbolic_tensor state out_var dt shape
+  let symbolic_shape = Symbolic_shape.of_ints shape in
+  create_symbolic_tensor state out_var dt symbolic_shape
 
 let reduce_shape in_shape axes keepdims =
   if keepdims then
@@ -176,7 +178,8 @@ let handle_reduction state op t_in axes keepdims =
     (Ir.Any_Node
        (Ir.reduce_axis ~reduce_op_kind:op ~in_var:var_in ~axes ~out_var
           ~dtype:ir_dtype));
-  create_symbolic_tensor state out_var dt out_shape
+  let symbolic_shape = Symbolic_shape.of_ints out_shape in
+  create_symbolic_tensor state out_var dt symbolic_shape
 
 let bigarray_to_vconst_node (type a b) (nx_dt : (a, b) Dtype.t)
     (array : (a, b, c_layout) Array1.t) out_var =
@@ -202,7 +205,8 @@ let make_jit_handler (state : jit_tracer_state) =
                     ~size:size_in_elements ~device:"CPU" ~out_var:var));
             let shape = [| size_in_elements |] in
             record_metadata state var dtype shape;
-            continue k (create_symbolic_tensor state var dtype shape))
+            let symbolic_shape = Symbolic_shape.of_ints shape in
+            continue k (create_symbolic_tensor state var dtype symbolic_shape))
     | E_const_scalar { value; dtype; _ } ->
         Some
           (fun k ->
@@ -212,7 +216,8 @@ let make_jit_handler (state : jit_tracer_state) =
                  (Const_Scalar
                     { value; out_var = var; dtype = nx_dtype_to_ir_dtype dtype }));
             record_metadata state var dtype [||];
-            continue k (create_symbolic_tensor state var dtype [||]))
+            let symbolic_shape = Symbolic_shape.of_ints [||] in
+            continue k (create_symbolic_tensor state var dtype symbolic_shape))
     | E_const_array { array; _ } ->
         Some
           (fun k ->
@@ -225,17 +230,20 @@ let make_jit_handler (state : jit_tracer_state) =
                 let nx_dt = Nx_core.Dtype.Float32 in
                 add_node state (bigarray_to_vconst_node nx_dt array var);
                 record_metadata state var nx_dt [| numel |];
-                continue k (create_symbolic_tensor state var nx_dt [| numel |])
+                let symbolic_shape = Symbolic_shape.of_ints [| numel |] in
+                continue k (create_symbolic_tensor state var nx_dt symbolic_shape)
             | Int32 ->
                 let nx_dt = Nx_core.Dtype.Int32 in
                 add_node state (bigarray_to_vconst_node nx_dt array var);
                 record_metadata state var nx_dt [| numel |];
-                continue k (create_symbolic_tensor state var nx_dt [| numel |])
+                let symbolic_shape = Symbolic_shape.of_ints [| numel |] in
+                continue k (create_symbolic_tensor state var nx_dt symbolic_shape)
             | Int8_unsigned ->
                 let nx_dt = Nx_core.Dtype.UInt8 in
                 add_node state (bigarray_to_vconst_node nx_dt array var);
                 record_metadata state var nx_dt [| numel |];
-                continue k (create_symbolic_tensor state var nx_dt [| numel |])
+                let symbolic_shape = Symbolic_shape.of_ints [| numel |] in
+                continue k (create_symbolic_tensor state var nx_dt symbolic_shape)
             | _ ->
                 failwith
                   (Printf.sprintf
@@ -264,8 +272,9 @@ let make_jit_handler (state : jit_tracer_state) =
               (Any_Node
                  (binary ~op:Cmplt ~a_var:var_a ~b_var:var_b ~out_var
                     ~dtype:ir_dtype));
+            let symbolic_shape = Symbolic_shape.of_ints res_shape in
             continue k
-              (create_symbolic_tensor state out_var res_dtype res_shape))
+              (create_symbolic_tensor state out_var res_dtype symbolic_shape))
     | E_cmpne { a; b } ->
         Some
           (fun k ->
@@ -278,8 +287,9 @@ let make_jit_handler (state : jit_tracer_state) =
               (Any_Node
                  (binary ~op:Cmpne ~a_var:var_a ~b_var:var_b ~out_var
                     ~dtype:ir_dtype));
+            let symbolic_shape = Symbolic_shape.of_ints res_shape in
             continue k
-              (create_symbolic_tensor state out_var res_dtype res_shape))
+              (create_symbolic_tensor state out_var res_dtype symbolic_shape))
     | E_neg { t_in } -> Some (fun k -> continue k (handle_unary state Neg t_in))
     | E_log2 { t_in } ->
         Some (fun k -> continue k (handle_unary state Log2 t_in))
@@ -308,16 +318,23 @@ let make_jit_handler (state : jit_tracer_state) =
             let var_in, _ = get_var_and_meta state t_in in
             let dt = dtype t_in in
             let out_var = Var.fresh () in
+            let shape_array =
+              match Symbolic_shape.eval new_shape with
+              | Some arr -> arr
+              | None ->
+                  failwith
+                    "JIT: cannot record metadata for symbolic reshape"
+            in
             add_node state
               (Any_Node
                  (Reshape
                     {
                       in_var = var_in;
-                      new_shape;
+                      new_shape = shape_array;
                       out_var;
                       dtype = nx_dtype_to_ir_dtype dt;
                     }));
-            record_metadata state out_var dt new_shape;
+            record_metadata state out_var dt shape_array;
             continue k (create_symbolic_tensor state out_var dt new_shape))
     | E_expand { t_in; new_target_shape } ->
         Some
@@ -325,16 +342,23 @@ let make_jit_handler (state : jit_tracer_state) =
             let var_in, _ = get_var_and_meta state t_in in
             let dt = dtype t_in in
             let out_var = Var.fresh () in
+            let shape_array =
+              match Symbolic_shape.eval new_target_shape with
+              | Some arr -> arr
+              | None ->
+                  failwith
+                    "JIT: cannot record metadata for symbolic expand"
+            in
             add_node state
               (Any_Node
                  (Expand
                     {
                       in_var = var_in;
-                      new_target_shape;
+                      new_target_shape = shape_array;
                       out_var;
                       dtype = nx_dtype_to_ir_dtype dt;
                     }));
-            record_metadata state out_var dt new_target_shape;
+            record_metadata state out_var dt shape_array;
             continue k
               (create_symbolic_tensor state out_var dt new_target_shape))
     | E_permute { t_in; axes } ->
@@ -356,7 +380,8 @@ let make_jit_handler (state : jit_tracer_state) =
                       dtype = nx_dtype_to_ir_dtype dt;
                     }));
             record_metadata state out_var dt out_shape;
-            continue k (create_symbolic_tensor state out_var dt out_shape))
+            let symbolic_shape = Symbolic_shape.of_ints out_shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_where { condition; if_true; if_false } ->
         Some
           (fun k ->
@@ -381,8 +406,9 @@ let make_jit_handler (state : jit_tracer_state) =
                       out_var;
                       dtype = ir_dtype;
                     }));
+            let symbolic_shape = Symbolic_shape.of_ints res_shape in
             continue k
-              (create_symbolic_tensor state out_var res_dtype res_shape))
+              (create_symbolic_tensor state out_var res_dtype symbolic_shape))
     | E_cast { t_in; target_dtype } ->
         Some
           (fun k ->
@@ -398,7 +424,8 @@ let make_jit_handler (state : jit_tracer_state) =
                       out_var;
                       dtype = ir_dtype;
                     }));
-            continue k (create_symbolic_tensor state out_var target_dtype shape))
+            let symbolic_shape = Symbolic_shape.of_ints shape in
+            continue k (create_symbolic_tensor state out_var target_dtype symbolic_shape))
     | E_contiguous { t_in } ->
         Some
           (fun k ->
@@ -409,7 +436,8 @@ let make_jit_handler (state : jit_tracer_state) =
             add_node state
               (Any_Node
                  (Contiguous { in_var = var_in; out_var; dtype = ir_dtype }));
-            continue k (create_symbolic_tensor state out_var dt shape))
+            let symbolic_shape = Symbolic_shape.of_ints shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_copy { t_in } ->
         Some
           (fun k ->
@@ -427,7 +455,8 @@ let make_jit_handler (state : jit_tracer_state) =
                       out_var;
                       dtype = ir_dtype;
                     }));
-            continue k (create_symbolic_tensor state out_var dt shape))
+            let symbolic_shape = Symbolic_shape.of_ints shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_pad { t_in; padding_config; _ } ->
         Some
           (fun k ->
@@ -451,7 +480,8 @@ let make_jit_handler (state : jit_tracer_state) =
                       dtype = nx_dtype_to_ir_dtype dt;
                     }));
             record_metadata state out_var dt out_shape;
-            continue k (create_symbolic_tensor state out_var dt out_shape))
+            let symbolic_shape = Symbolic_shape.of_ints out_shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_shrink { t_in; limits } ->
         Some
           (fun k ->
@@ -475,7 +505,8 @@ let make_jit_handler (state : jit_tracer_state) =
                       dtype = nx_dtype_to_ir_dtype dt;
                     }));
             record_metadata state out_var dt out_shape;
-            continue k (create_symbolic_tensor state out_var dt out_shape))
+            let symbolic_shape = Symbolic_shape.of_ints out_shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_flip { t_in; dims_to_flip } ->
         Some
           (fun k ->
@@ -497,7 +528,8 @@ let make_jit_handler (state : jit_tracer_state) =
                       dtype = nx_dtype_to_ir_dtype dt;
                     }));
             record_metadata state out_var dt meta_in.shape;
-            continue k (create_symbolic_tensor state out_var dt meta_in.shape))
+            let symbolic_shape = Symbolic_shape.of_ints meta_in.shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_cat { t_list; axis } ->
         Some
           (fun k ->
@@ -514,7 +546,8 @@ let make_jit_handler (state : jit_tracer_state) =
             let out_var, ir_dtype = allocate_buffer state dt out_shape in
             add_node state
               (Any_Node (cat ~in_vars ~axis ~out_var ~dtype:ir_dtype));
-            continue k (create_symbolic_tensor state out_var dt out_shape))
+            let symbolic_shape = Symbolic_shape.of_ints out_shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_assign { dst; src } ->
         Some
           (fun k ->
@@ -543,7 +576,8 @@ let make_jit_handler (state : jit_tracer_state) =
             add_node state
               (Any_Node
                  (Threefry { ctr_var; key_var; out_var; dtype = ir_dtype }));
-            continue k (create_symbolic_tensor state out_var dt shape))
+            let symbolic_shape = Symbolic_shape.of_ints shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_gather { data; indices; axis } ->
         Some
           (fun k ->
@@ -563,7 +597,8 @@ let make_jit_handler (state : jit_tracer_state) =
                       out_var;
                       dtype = ir_dtype;
                     }));
-            continue k (create_symbolic_tensor state out_var dt out_shape))
+            let symbolic_shape = Symbolic_shape.of_ints out_shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_scatter { data_template; indices; updates; axis } ->
         Some
           (fun k ->
@@ -586,7 +621,8 @@ let make_jit_handler (state : jit_tracer_state) =
                       out_var;
                       dtype = ir_dtype;
                     }));
-            continue k (create_symbolic_tensor state out_var dt shape))
+            let symbolic_shape = Symbolic_shape.of_ints shape in
+            continue k (create_symbolic_tensor state out_var dt symbolic_shape))
     | E_fft { t = _; axes = _ } ->
         Some
           (fun _k ->

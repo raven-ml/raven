@@ -1,5 +1,4 @@
 open Nx_rune
-open Nx_core
 module T = Tensor
 
 type tensor_ref = Tensor_ref : ('a, 'b) T.t -> tensor_ref
@@ -256,9 +255,7 @@ let debug_handler () =
         | E_reshape { t_in; new_shape } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result =
-                  op_reshape t_in (Symbolic_shape.of_ints new_shape)
-                in
+                let result = op_reshape t_in new_shape in
                 log_operation !context_stack "reshape" [ Tensor_ref t_in ]
                   (Tensor_ref result);
                 continue k result)
@@ -371,9 +368,7 @@ let debug_handler () =
         | E_expand { t_in; new_target_shape } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result =
-                  op_expand t_in (Symbolic_shape.of_ints new_target_shape)
-                in
+                let result = op_expand t_in new_target_shape in
                 log_operation !context_stack "expand" [ Tensor_ref t_in ]
                   (Tensor_ref result);
                 continue k result)

@@ -1135,11 +1135,17 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   in
                   let prod arr = Array.fold_left (fun a b -> a * b) 1 arr in
                   let prod_old = prod old_tail in
-                  let prod_new = prod new_shape in
+                  let target_logical =
+                    match Symbolic_shape.eval new_shape with
+                    | Some arr -> arr
+                    | None ->
+                        failwith "vmap reshape requires concrete target shape"
+                  in
+                  let prod_new = prod target_logical in
                   let prefix =
                     if nbd = 0 then [||] else Array.sub s_phys 0 nbd
                   in
-                  let phys_target = Array.append prefix new_shape in
+                  let phys_target = Array.append prefix target_logical in
                   let result =
                     if prod_old = prod_new then
                       op_reshape t_in (Symbolic_shape.of_ints phys_target)
@@ -1150,13 +1156,19 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
           | E_expand { t_in; new_target_shape } ->
               Some
                 (fun k ->
+                  let new_target_arr =
+                    match Symbolic_shape.eval new_target_shape with
+                    | Some arr -> arr
+                    | None ->
+                        failwith "vmap expand requires concrete target shape"
+                  in
                   (* Logical expand: canonicalize batches, then broadcast
                      current logical dims with the requested new_target_shape.
                      Keep the existing batch prefix untouched. *)
                   let t0 = canonicalize_batch_positions t_in in
                   let s = phys_shape_of t0 in
                   dprintf "E_expand: s=%s new_target=%s" (pp_shape s)
-                    (pp_shape new_target_shape);
+                    (pp_shape new_target_arr);
                   let nbd = prefix_len_by_batch_sizes t0 in
                   let prefix = if nbd = 0 then [||] else Array.sub s 0 nbd in
                   let cur_log =
@@ -1168,22 +1180,22 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   (* If the requested target already includes the current
                      prefix, strip it *)
                   let logical_target =
-                    let lt = Array.length new_target_shape in
+                    let lt = Array.length new_target_arr in
                     if lt >= nbd then
                       let starts_with_prefix =
                         let ok = ref true in
                         let i = ref 0 in
                         while !ok && !i < nbd && !i < lt do
-                          if new_target_shape.(!i) <> prefix.(!i) then
+                          if new_target_arr.(!i) <> prefix.(!i) then
                             ok := false;
                           incr i
                         done;
                         !ok
                       in
                       if starts_with_prefix then
-                        Array.sub new_target_shape nbd (lt - nbd)
-                      else new_target_shape
-                    else new_target_shape
+                        Array.sub new_target_arr nbd (lt - nbd)
+                      else new_target_arr
+                    else new_target_arr
                   in
                   (* Align ranks by left-padding current logical dims with 1s *)
                   let lt_len = Array.length logical_target in

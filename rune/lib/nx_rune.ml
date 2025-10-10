@@ -24,7 +24,7 @@ type ('a, 'b) t =
   | Symbolic_tensor : {
       id : Symbolic_id.t;
       dtype : ('a, 'b) Dtype.t;
-      shape : int array;
+      shape : Symbolic_shape.t;
     }
       -> ('a, 'b) t
 
@@ -107,12 +107,12 @@ type _ Effect.t +=
   | E_permute : { t_in : ('a, 'b) t; axes : int array } -> ('a, 'b) t Effect.t
   | E_reshape : {
       t_in : ('a, 'b) t;
-      new_shape : int array;
+      new_shape : Symbolic_shape.t;
     }
       -> ('a, 'b) t Effect.t
   | E_expand : {
       t_in : ('a, 'b) t;
-      new_target_shape : int array;
+      new_target_shape : Symbolic_shape.t;
     }
       -> ('a, 'b) t Effect.t
   | E_pad : {
@@ -233,7 +233,7 @@ let view (type a b) (x : (a, b) t) : View.t =
   with Effect.Unhandled _ -> (
     match x with
     | Native_tensor t -> Nx_c.view t
-    | Symbolic_tensor { shape; _ } -> View.create (Symbolic_shape.of_ints shape))
+    | Symbolic_tensor { shape; _ } -> View.create shape)
 
 let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
   | Native_tensor t -> Nx_c.dtype t
@@ -289,12 +289,11 @@ let reduce_op eff cpu_op ~axes ~keepdims t_in =
     | Symbolic_tensor _ ->
         failwith "Cannot perform reduction on symbolic tensor")
 
-let shape_op1 eff cpu_op t_in shape_arg =
+let shape_op1 eff cpu_op symbolic_shape t_in =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> (
     match t_in with
-    | Native_tensor t ->
-        Native_tensor (cpu_op t (Symbolic_shape.of_ints shape_arg))
+    | Native_tensor t -> Native_tensor (cpu_op t symbolic_shape)
     | Symbolic_tensor _ ->
         failwith "Cannot perform shape operation on symbolic tensor")
 
@@ -391,24 +390,14 @@ let op_associative_scan ~axis ~op t_in =
 
 (* Shape operations *)
 let op_reshape t_in new_shape =
-  let new_shape_array =
-    match Symbolic_shape.eval new_shape with
-    | Some arr -> arr
-    | None -> failwith "Cannot reshape with symbolic shape"
-  in
   shape_op1
-    (fun () -> E_reshape { t_in; new_shape = new_shape_array })
-    Nx_c.op_reshape t_in new_shape_array
+    (fun () -> E_reshape { t_in; new_shape })
+    Nx_c.op_reshape new_shape t_in
 
 let op_expand t_in new_target_shape =
-  let new_target_shape_array =
-    match Symbolic_shape.eval new_target_shape with
-    | Some arr -> arr
-    | None -> failwith "Cannot expand with symbolic shape"
-  in
   shape_op1
-    (fun () -> E_expand { t_in; new_target_shape = new_target_shape_array })
-    Nx_c.op_expand t_in new_target_shape_array
+    (fun () -> E_expand { t_in; new_target_shape })
+    Nx_c.op_expand new_target_shape t_in
 
 let op_permute t_in axes =
   axes_op1 (fun () -> E_permute { t_in; axes }) Nx_c.op_permute t_in axes
