@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~alpha2] - TBD
 
+- Rune: Add support for categorical sampling with `Rune.Rng.categorical` (#89, @nirnayroy).
 - Nx: Add float16 and bfloat16 support to safetensors I/O, including precise conversions that preserve denormals/NaNs (#84, @six-shot, @tmattio).
 
 ## [1.0.0~alpha1] - 2025-10-02
