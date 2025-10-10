@@ -381,7 +381,7 @@ static void dispatch_ternary_op(value v_cond, value v_x, value v_y, value v_z,
   value v_z_data = Field(v_z, FFI_TENSOR_DATA);
 
   struct caml_ba_array *ba_cond = Caml_ba_array_val(v_cond_data);
-  int kind_cond = ba_cond->flags & CAML_BA_KIND_MASK;
+  int kind_cond = nx_ba_get_kind(ba_cond);
 
   // Assume condition is bool or uint8
   if (kind_cond != NX_BA_BOOL && kind_cond != CAML_BA_UINT8) {
@@ -393,11 +393,11 @@ static void dispatch_ternary_op(value v_cond, value v_x, value v_y, value v_z,
   }
 
   struct caml_ba_array *ba_x = Caml_ba_array_val(v_x_data);
-  int kind = ba_x->flags & CAML_BA_KIND_MASK;
+  int kind = nx_ba_get_kind(ba_x);
 
   // Check kinds match for x, y, z
-  int kind_y = Caml_ba_array_val(v_y_data)->flags & CAML_BA_KIND_MASK;
-  int kind_z = Caml_ba_array_val(v_z_data)->flags & CAML_BA_KIND_MASK;
+  int kind_y = nx_ba_get_kind(Caml_ba_array_val(v_y_data));
+  int kind_z = nx_ba_get_kind(Caml_ba_array_val(v_z_data));
   if (kind != kind_y || kind != kind_z) {
     cleanup_ndarray(&cond);
     cleanup_ndarray(&x);

@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~alpha2] - TBD
 
+- Nx: Fix macOS ARM crash when loading extended bigarray kinds (@tmattio)
 - Nx: Documented the `Symbolic_shape` interface (@tmattio).
 - Nx: Refined `View` internals for leaner contiguity checks and stride handling, cutting redundant materialization on hot paths (@tmattio).
 - Nx: Assign unique IDs to symbolic shape variables and expose helpers to reuse them explicitly (@tmattio).
