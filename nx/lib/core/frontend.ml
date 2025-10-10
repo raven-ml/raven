@@ -5738,9 +5738,17 @@ module Make (B : Backend_intf.S) = struct
 
   let matrix_rank ?tol ?rtol ?hermitian a =
     check_float_or_complex ~op:"matrix_rank" a;
-    let _ = hermitian in
-    (* TODO: use for optimization *)
-    let s = svdvals a in
+    let s = 
+      match hermitian with
+      | Some true -> 
+          (* Use eigenvalue decomposition for hermitian matrices *)
+          let vals, _ = B.op_eigh ~vectors:false a in
+          (* Eigenvalues are already sorted in descending order *)
+          vals
+      | _ -> 
+          (* Use SVD for general matrices *)
+          svdvals a
+    in
     let max_s = max s |> unsafe_get [] in
     let m, n =
       shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
@@ -5954,10 +5962,23 @@ module Make (B : Backend_intf.S) = struct
 
   let pinv (type a b) ?rtol:_ ?hermitian (a : (a, b) t) =
     check_float_or_complex ~op:"pinv" a;
-    let _ = hermitian in
-    (* TODO: use for optimization *)
-
-    let u, s, vh = B.op_svd ~full_matrices:false a in
+    let u, s, vh = 
+      match hermitian with
+      | Some true ->
+          (* Use eigenvalue decomposition for hermitian matrices *)
+          let vals, vecs_opt = B.op_eigh ~vectors:true a in
+          (match vecs_opt with
+           | Some vecs -> 
+               (* For hermitian matrices: A = V * diag(lambda) * V^H *)
+               (* So pinv(A) = V * diag(1/lambda) * V^H *)
+               (vecs, vals, vecs)
+           | None -> 
+               (* Fallback to SVD if eigenvectors not available *)
+               B.op_svd ~full_matrices:false a)
+      | _ ->
+          (* Use SVD for general matrices *)
+          B.op_svd ~full_matrices:false a
+    in
 
     (* Determine cutoff *)
     let cutoff =
