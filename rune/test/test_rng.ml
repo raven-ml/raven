@@ -274,6 +274,35 @@ let test_categorical_axis_handling () =
         (Int32.to_int i >= 0 && Int32.to_int i < 3))
     vals_axis_1
 
+let test_categorical_shape_prefix_axis () =
+  let key = Rng.key 314 in
+  let logits =
+    Rune.create Float64 [| 2; 3; 4 |]
+      [|
+        0.0; 0.5; 1.0; 1.5; 2.0; 2.5;
+        3.0; -0.5; 0.25; 1.25; -1.0; 0.75;
+        -0.25; 0.4; 1.8; -1.5; 0.2; 1.1;
+        0.3; -0.8; 0.6; 1.4; -0.2; 0.9;
+      |]
+  in
+
+  let prefix_shape = [| 5; 6 |] in
+  let samples =
+    Rng.categorical key ~shape:prefix_shape ~axis:(-2) logits
+  in
+
+  let expected_shape = [| 5; 6; 2; 4 |] in
+  A.check (A.array A.int)
+    "categorical shape prefix keeps axis semantics" expected_shape
+    (Rune.shape samples);
+
+  let values = Rune.to_array samples |> Array.map Int32.to_int in
+  Array.iter
+    (fun v ->
+      A.check A.bool "categorical indices within axis range" true
+        (v >= 0 && v < 3))
+    values
+
 let test_categorical_distribution () =
   let key = Rng.key 123 in
   let logits = Rune.create Rune.Float32 [| 3 |] [| 0.0; 1.0; 2.0 |] in
@@ -356,6 +385,8 @@ let () =
           A.test_case "categorical_2d" `Quick test_categorical_2d;
           A.test_case "categorical_axis_handling" `Quick
             test_categorical_axis_handling;
+          A.test_case "categorical_shape_prefix_axis" `Quick
+            test_categorical_shape_prefix_axis;
           A.test_case "categorical_distribution" `Quick
             test_categorical_distribution;
         ] );

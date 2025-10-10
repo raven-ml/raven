@@ -87,7 +87,7 @@ let categorical (type a b) (key : key) ?(axis : int = -1)
 
   (* Work in a floating dtype for the Gumbel transform; don't mutate the
      input *)
-  (* let logits_f = astype Tensor.Float32 logits in *)
+  let dtype = Tensor.dtype logits in
   let shape_array = Tensor.shape logits in
   let ndim = Array.length shape_array in
   let axis = if axis < 0 then ndim + axis else axis in
@@ -100,28 +100,44 @@ let categorical (type a b) (key : key) ?(axis : int = -1)
      logits_shape *)
   let full_shape = Array.append shape shape_array in
 
-  (* Draw uniform samples in (0,1) in Float32. Clamp to avoid numerical issues
-     with log(0) *)
-  let u = uniform key Tensor.Float32 full_shape in
-  let eps = 1e-6 in
-  let u_clamped = clip u ~min:eps ~max:(1. -. eps) in
+  let run_float32 eps =
+    let u = uniform key Tensor.Float32 full_shape in
+    let u_clamped = clip u ~min:eps ~max:(1. -. eps) in
+    let neg_one = scalar Tensor.Float32 (-1.0) in
+    let log_u = log u_clamped in
+    let neg_log_u = mul log_u neg_one in
+    let log_neg_log_u = log neg_log_u in
+    let gumbel = mul log_neg_log_u neg_one |> astype dtype in
+    let noisy = add logits gumbel in
+    let prefix_len = Array.length shape in
+    let argmax_axis = axis + prefix_len in
+    let inds = argmax noisy ~axis:argmax_axis ~keepdims:false in
+    astype Tensor.Int32 inds
+  in
 
-  (* Gumbel transform: g = -log(-log(U)) computed in Float32 *)
-  let neg_one = scalar Tensor.Float32 (-1.0) in
-  let log_u = log u_clamped in
-  let neg_log_u = mul log_u neg_one in
-  let log_neg_log_u = log neg_log_u in
-  let gumbel = mul log_neg_log_u neg_one in
-  let gumbel = astype (Tensor.dtype logits) gumbel in
-  (* Add Gumbel noise to logits_f. Broadcasting will replicate logits across
-     prefix dims. *)
-  let noisy = add logits gumbel in
+  let run_float64 eps =
+    let u = uniform key Tensor.Float64 full_shape in
+    let u_clamped = clip u ~min:eps ~max:(1. -. eps) in
+    let neg_one = scalar Tensor.Float64 (-1.0) in
+    let log_u = log u_clamped in
+    let neg_log_u = mul log_u neg_one in
+    let log_neg_log_u = log neg_log_u in
+    let gumbel = mul log_neg_log_u neg_one |> astype dtype in
+    let noisy = add logits gumbel in
+    let prefix_len = Array.length shape in
+    let argmax_axis = axis + prefix_len in
+    let inds = argmax noisy ~axis:argmax_axis ~keepdims:false in
+    astype Tensor.Int32 inds
+  in
 
-  (* Argmax along the class axis. Account for prefix dims by shifting axis *)
-  let prefix_len = Array.length shape in
-  let argmax_axis = axis + prefix_len in
-  let inds = argmax noisy ~axis:argmax_axis ~keepdims:false in
-  astype Tensor.Int32 inds
+  match dtype with
+  | Tensor.Float64 -> run_float64 1e-12
+  | Tensor.Float32 -> run_float32 1e-6
+  | Tensor.Float16 -> run_float32 1e-3
+  | Tensor.BFloat16 -> run_float32 1e-2
+  | Tensor.Float8_e4m3 | Tensor.Float8_e5m2 ->
+      invalid_arg "categorical: float8 logits not supported"
+  | _ -> invalid_arg "categorical: logits dtype must be floating point"
 
 let truncated_normal key dtype ~lower ~upper shape =
   if lower >= upper then
