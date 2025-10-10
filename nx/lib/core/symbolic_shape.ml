@@ -32,7 +32,7 @@ let static n =
       ~reason:"negative dimension" ();
   Const n
 
-let create_var name ~min ~max =
+let var name ~min ~max =
   if min < 0 then
     Error.invalid ~op:"dynamic"
       ~what:(Printf.sprintf "min=%d" min)
@@ -45,7 +45,7 @@ let create_var name ~min ~max =
   { id = next_id (); name; min; max; value = None }
 
 let dim_of_var var = Var var
-let dynamic name ~min ~max = dim_of_var (create_var name ~min ~max)
+let dynamic name ~min ~max = dim_of_var (var name ~min ~max)
 let add d1 d2 = Add (d1, d2)
 let mul d1 d2 = Mul (d1, d2)
 let neg d = Neg d
