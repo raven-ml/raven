@@ -10,12 +10,17 @@ let url = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
 let tar_path = base_dir ^ Filename.basename url
 let test_batch_rel_path = archive_dir_name ^ "/test_batch"
 
+(* Logging source for this loader *)
+let src = Logs.Src.create "nx.datasets.cifar10" ~doc:"CIFAR10 dataset loader"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 let ensure_dataset () =
   ensure_extracted_archive ~url ~archive_path:tar_path ~extract_dir:base_dir
     ~check_file:test_batch_rel_path
 
 let read_cifar_batch filename =
-  Printf.printf "Reading batch file: %s\n%!" filename;
+  Log.debug (fun m -> m "Reading batch file: %s" filename);
   let ic = open_in_bin filename in
   let s =
     try really_input_string ic (in_channel_length ic)
@@ -32,7 +37,7 @@ let read_cifar_batch filename =
       (Printf.sprintf "File %s has unexpected size %d" filename num_bytes);
 
   let num_images = num_bytes / bytes_per_image in
-  Printf.printf "Found %d images in %s.\n%!" num_images filename;
+  Log.debug (fun m -> m "Found %d images in %s." num_images filename);
 
   let images =
     Genarray.create int8_unsigned c_layout [| num_images; 32; 32; 3 |]
@@ -64,7 +69,7 @@ let read_cifar_batch filename =
 
 let load () =
   ensure_dataset ();
-  Printf.printf "Loading CIFAR-10 dataset...\n%!";
+  Log.info (fun m -> m "Loading CIFAR-10 dataset...");
 
   let train_batches_files =
     List.init 5 (fun i -> dataset_dir ^ Printf.sprintf "data_batch_%d" (i + 1))
@@ -107,5 +112,5 @@ let load () =
   let test_batch_file = dataset_dir ^ "test_batch" in
   let test_images, test_labels = read_cifar_batch test_batch_file in
 
-  Printf.printf "CIFAR-10 loading complete.\n%!";
+  Log.info (fun m -> m "CIFAR-10 loading complete.");
   ((train_images, train_labels), (test_images, test_labels))

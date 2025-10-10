@@ -2,6 +2,13 @@
 open Bigarray
 open Dataset_utils
 
+(* Logging source for this loader *)
+let src =
+  Logs.Src.create "nx.datasets.breast_cancer"
+    ~doc:"Breast Cancer dataset loader"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 let dataset_name = "breast-cancer-wisconsin"
 let dataset_dir = get_cache_dir dataset_name
 let data_filename = "wdbc.data"
@@ -24,7 +31,7 @@ let encode_label label row =
 
 let load () =
   ensure_dataset ();
-  Printf.printf "Loading Breast Cancer Wisconsin dataset...\n%!";
+  Log.info (fun m -> m "Loading Breast Cancer Wisconsin dataset...");
 
   let data_rows =
     try
@@ -51,7 +58,7 @@ let load () =
   let expected_cols = 32 in
   let num_features = 30 in
 
-  Printf.printf "Found %d samples.\n%!" num_samples;
+  Log.info (fun m -> m "Found %d samples." num_samples);
 
   let features = Array2.create float64 c_layout num_samples num_features in
   let labels = Array1.create int c_layout num_samples in
@@ -75,5 +82,5 @@ let load () =
       done)
     data_rows;
 
-  Printf.printf "Breast Cancer Wisconsin loading complete.\n%!";
+  Log.info (fun m -> m "Breast Cancer Wisconsin loading complete.");
   (features, labels)
