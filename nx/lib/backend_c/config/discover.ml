@@ -182,7 +182,8 @@ let () =
           | _ -> [ "-O3"; "-fPIC" ]
         in
         (* Suppress vectorization failure warnings from clang *)
-        opt_flags @ [ "-Wno-pass-failed" ]
+        if compiler_is_clang c then opt_flags @ [ "-Wno-pass-failed" ]
+        else opt_flags
       in
 
       let opt_flags =

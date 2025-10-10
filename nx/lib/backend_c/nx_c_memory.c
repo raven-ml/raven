@@ -217,13 +217,14 @@ static value make_contiguous(value v_src, bool force_copy) {
     v_new_strides = copy_int_array(Field(v_src, FFI_TENSOR_STRIDES));
     v_new = create_tensor_value(v_new_shape, v_new_strides, v_new_data, 0);
   } else {
-    long dim = total;
+    intnat dims[1];
+    dims[0] = (intnat)total;
     if (kind == NX_BA_INT4 || kind == NX_BA_UINT4) {
-      dim = (total + 1) / 2;
+      dims[0] = (intnat)((total + 1) / 2);
       flags = (flags & ~CAML_BA_KIND_MASK) |
               CAML_BA_UINT8;  // Use byte array for packed
     }
-    v_new_data = caml_ba_alloc(flags, 1, NULL, &dim);
+    v_new_data = caml_ba_alloc(flags, 1, NULL, dims);
     v_new_shape = copy_int_array(Field(v_src, FFI_TENSOR_SHAPE));
     v_new_strides = caml_alloc(src.ndim, 0);
     int strides[32];  // Stack buffer for strides - use int not long
