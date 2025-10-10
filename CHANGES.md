@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~alpha2] - TBD
 
+- Nx: Assign unique IDs to symbolic shape variables and expose helpers to reuse them explicitly (@tmattio).
 - Nx: Documented the reworked `View` interface (@tmattio).
 - Nx: Merge `Lazy_view` into the core `View` API so movement ops operate on a single composed view; improves contiguity checks and restores precise stride/materialization guards (@tmattio).
 - Nx-datasets: Use `Logs` for dataset loader logging (#95, @Satarupa22-SD).

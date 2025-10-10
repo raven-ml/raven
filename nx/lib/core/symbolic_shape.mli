@@ -27,6 +27,14 @@ val static : int -> dim
 
     @raise Invalid_argument if [n < 0] *)
 
+val create_var : string -> min:int -> max:int -> var
+(** [create_var name ~min ~max] creates a fresh symbolic variable.
+
+    Each call returns a distinct variable regardless of [name]. *)
+
+val dim_of_var : var -> dim
+(** [dim_of_var var] converts a variable into a dimension expression. *)
+
 val dynamic : string -> min:int -> max:int -> dim
 (** [dynamic name ~min ~max] creates a dynamic dimension with bounds.
 
@@ -51,9 +59,8 @@ val neg : dim -> dim
 
 (** {2 Runtime Binding} *)
 
-val bind : string -> int -> t -> unit
-(** [bind name value shape] binds a concrete value to all variables with [name]
-    in [shape].
+val bind : var -> int -> t -> unit
+(** [bind var value shape] binds [value] to occurrences of [var] in [shape].
 
     @raise Invalid_argument if [value] outside variable's bounds *)
 
@@ -90,8 +97,8 @@ val resolve_reshape : from_shape:t -> to_shape:t -> t option
     computing any [infer] dimensions in [to_shape] based on [from_shape]'s
     numel. Returns [None] if resolution is impossible. *)
 
-val substitute : (string * int) list -> t -> t
-(** [substitute bindings shape] substitutes variable bindings into a shape,
+val substitute : (var * int) list -> t -> t
+(** [substitute bindings shape] substitutes variable bindings into [shape],
     replacing variables with their bound values. *)
 
 (** {2 Analysis} *)
