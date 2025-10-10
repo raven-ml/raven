@@ -1,4 +1,4 @@
-open Quill_markdown
+open Quill_editor.Document
 open Update
 open Vdom
 

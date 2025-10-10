@@ -2,13 +2,13 @@
  (name quill_browser)
  (public_name quill.browser)
  (modules :standard \ main)
- (libraries vdom.base vdom yojson cmarkit brr quill_api quill_markdown))
+ (libraries vdom.base vdom yojson cmarkit brr quill_api quill_editor))
 
 (executable
  (name main)
  (modes wasm)
  (modules main)
- (libraries quill_browser brr vdom.base vdom quill_api quill_markdown))
+ (libraries quill_browser brr vdom.base vdom quill_api quill_editor))
 
 (alias
  (name default)

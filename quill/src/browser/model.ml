@@ -1,3 +1,3 @@
-type t = { document : Quill_markdown.document }
+type t = { document : Quill_editor.Document.t }
 
-let init = { document = Quill_markdown.init }
+let init = { document = Quill_editor.Document.init }

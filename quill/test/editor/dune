@@ -1,0 +1,4 @@
+(tests
+ (names test_editor_document test_editor_reducer)
+ (package quill)
+ (libraries quill_editor alcotest))
