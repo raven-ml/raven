@@ -36,8 +36,8 @@ let canonicalize_strides _shape_array strides = strides
 let eval_shape_opt shape = Symbolic_shape.eval shape
 
 (* Check if strides represent a contiguous layout *)
-let is_c_contiguous_strides shape_arr strides offset mask =
-  offset = 0 && mask = None
+let is_c_contiguous_strides shape_arr strides mask =
+  mask = None
   &&
   let expected = compute_strides shape_arr in
   let expected_canonical = canonicalize_strides shape_arr expected in
@@ -113,10 +113,8 @@ let create ?(offset = 0) ?strides ?mask shape =
           | _ -> mask
       in
       let new_layout =
-        if
-          is_c_contiguous_strides shape_arr current_strides current_offset
-            current_mask
-        then C_contiguous
+        if is_c_contiguous_strides shape_arr current_strides current_mask then
+          C_contiguous
         else Strided
       in
       {
@@ -407,6 +405,7 @@ let reshape view new_shape =
             match match_dims !old_dims !new_dims with
             | None -> None
             | Some stride_map ->
+                let stride_map_arr = Array.of_list stride_map in
                 (* Build final strides array, including size-1 dimensions *)
                 let new_strides = Array.make (Array.length new_arr) 0 in
                 let map_idx = ref 0 in
@@ -414,7 +413,7 @@ let reshape view new_shape =
                 for i = 0 to Array.length new_arr - 1 do
                   if new_arr.(i) = 1 then new_strides.(i) <- 0
                   else
-                    let _, stride = List.nth stride_map !map_idx in
+                    let _, stride = stride_map_arr.(!map_idx) in
                     new_strides.(i) <- stride;
                     incr map_idx
                 done;
@@ -625,9 +624,7 @@ let simplify view =
         (* Don't use create here - it canonicalizes strides and loses negative values *)
         (* Just update the mask field and recalculate layout *)
         let new_layout =
-          if
-            mask = None && view.offset = 0
-            && is_c_contiguous_strides shape_arr view.strides 0 None
+          if mask = None && is_c_contiguous_strides shape_arr view.strides mask
           then C_contiguous
           else Strided
         in
@@ -636,18 +633,21 @@ let simplify view =
 
 let offset_dim v = Symbolic_shape.static v.offset
 
-let can_get_strides view =
-  let simplified = simplify view in
+let can_get_strides_simplified simplified =
   match (simplified.mask, eval_shape_opt simplified.shape) with
   | None, _ -> true
   | Some mask_array, Some shape_arr ->
       Array.for_all2 (fun (b, e) s -> b = 0 && e = s) mask_array shape_arr
   | Some _, None -> false
 
+let can_get_strides view = simplify view |> can_get_strides_simplified
+
 let strides_opt view =
   let simplified = simplify view in
-  if can_get_strides simplified then Some (strides simplified) else None
+  if can_get_strides_simplified simplified then Some (strides simplified)
+  else None
 
 let is_materializable view =
   let simplified = simplify view in
-  Symbolic_shape.is_static (shape simplified) && can_get_strides simplified
+  Symbolic_shape.is_static (shape simplified)
+  && can_get_strides_simplified simplified
