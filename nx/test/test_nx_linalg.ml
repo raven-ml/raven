@@ -484,6 +484,12 @@ let test_matrix_rank_hermitian () =
     (Failure "eig: input must be square matrix") (fun () ->
       ignore (Nx.matrix_rank ~hermitian:true non_square))
 
+let test_matrix_rank_hermitian_negative () =
+  (* Negative eigenvalues should still contribute to the rank *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| -2.; 0.; 0.; -1. |] in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian negative eigenvalues" 2 r
+
 let test_pinv_hermitian () =
   (* Create a symmetric matrix *)
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
@@ -497,6 +503,13 @@ let test_pinv_hermitian () =
   check_raises "pinv hermitian non-square"
     (Failure "eig: input must be square matrix") (fun () ->
       ignore (Nx.pinv ~hermitian:true non_square))
+
+let test_pinv_hermitian_negative () =
+  (* Negative eigenvalues should still be inverted when above tolerance *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| -2.; 0.; 0.; -1. |] in
+  let pinv_general = Nx.pinv a in
+  let pinv_hermitian = Nx.pinv ~hermitian:true a in
+  check_nx ~epsilon:1e-6 "pinv hermitian negative eigenvalues" pinv_general pinv_hermitian
 
 (* ───── Product Ops Tests ───── *)
 
@@ -1034,7 +1047,9 @@ let advanced_utility_tests =
     ("matrix rank", `Quick, test_matrix_rank);
     ("matrix rank tol", `Quick, test_matrix_rank_tol);
     ("matrix rank hermitian", `Quick, test_matrix_rank_hermitian);
+    ("matrix rank hermitian negative", `Quick, test_matrix_rank_hermitian_negative);
     ("pinv hermitian", `Quick, test_pinv_hermitian);
+    ("pinv hermitian negative", `Quick, test_pinv_hermitian_negative);
   ]
 
 let product_tests =
