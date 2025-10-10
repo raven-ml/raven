@@ -65,9 +65,11 @@ let load () =
           let row_list = Csv.Row.to_list row in
           (* Convert Row.t to string list *)
           if List.length row_list <> List.length header then
-            Printf.eprintf "Warning: Row %d has %d columns, expected %d\n%!"
-              (List.length acc + 1)
-              (List.length row_list) (List.length header);
+            Log.warn (fun m ->
+                m "Row %d has %d columns, expected %d (header: %s)"
+                  (List.length acc + 1)
+                  (List.length row_list) (List.length header)
+                  (String.concat ", " header));
 
           (* Check length before accessing *)
           if List.length row_list > passenger_col_index then
@@ -80,12 +82,13 @@ let load () =
             let passenger_int = parse_int_cell ~context passenger_str in
             passenger_int :: acc
           else (
-            Printf.eprintf
-              "Warning: Row %d is shorter than expected (%d < %d), skipping \
-               passenger value.\n\
-               %!"
-              (List.length acc + 1)
-              (List.length row_list) (passenger_col_index + 1);
+            Log.warn (fun m ->
+                m
+                  "Row %d is shorter than expected (%d < %d), skipping \
+                   passenger value. Missing column: %s"
+                  (List.length acc + 1)
+                  (List.length row_list) (passenger_col_index + 1)
+                  passenger_col_name);
             -1 :: acc (* Placeholder for missing data *)))
         ~init:[] data_rows_iter
     with

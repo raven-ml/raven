@@ -103,8 +103,10 @@ let load () =
   List.iteri
     (fun i row ->
       if List.length row <> List.length header then
-        Printf.eprintf "Warning: Row %d has %d columns, expected %d\n%!" (i + 1)
-          (List.length row) (List.length header);
+        Log.warn (fun m ->
+            m "Row %d has %d columns, expected %d (header: %s)" (i + 1)
+              (List.length row) (List.length header)
+              (String.concat ", " header));
 
       List.iteri
         (fun j feature_idx ->
@@ -114,23 +116,23 @@ let load () =
             parsed_features_temp.(i).(j) <- v_float;
             if Some feature_idx = total_bedrooms_index_opt then
               total_bedrooms_col_temp := v_float :: !total_bedrooms_col_temp)
-          else (
-            Printf.eprintf
-              "Warning: Row %d missing feature column %d ('%s'). Setting NaN.\n\
-               %!"
-              (i + 1) feature_idx (List.nth feature_names j);
+          else
+            let feature_name = List.nth feature_names j in
+            Log.warn (fun m ->
+                m "Row %d missing feature column %d ('%s'). Setting NaN."
+                  (i + 1) feature_idx feature_name);
             parsed_features_temp.(i).(j) <- nan;
             if Some feature_idx = total_bedrooms_index_opt then
-              total_bedrooms_col_temp := nan :: !total_bedrooms_col_temp))
+              total_bedrooms_col_temp := nan :: !total_bedrooms_col_temp)
         feature_indices;
 
       if List.length row > target_index then
         let label_str = List.nth row target_index in
         parsed_labels_temp.(i) <- parse_float_or_nan label_str
       else (
-        Printf.eprintf
-          "Warning: Row %d missing target column %d ('%s'). Setting NaN.\n%!"
-          (i + 1) target_index target_name;
+        Log.warn (fun m ->
+            m "Row %d missing target column %d ('%s'). Setting NaN." (i + 1)
+              target_index target_name);
         parsed_labels_temp.(i) <- nan))
     data_rows_str;
 
