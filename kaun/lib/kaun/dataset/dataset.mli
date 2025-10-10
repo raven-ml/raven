@@ -128,13 +128,17 @@ val from_csv :
   ?label_column:int option ->
   ?has_header:bool ->
   string ->
-  string t
+  'a t
 (** [from_csv ?separator ?text_column ?label_column ?has_header path] reads CSV
     data.
     - [separator]: Field separator (default: ',')
     - [text_column]: Column index for text (default: 0)
     - [label_column]: Optional column index for labels
-    - [has_header]: Skip first row if true (default: true) *)
+    - [has_header]: Skip first row if true (default: true)
+
+    Element spec:
+    - Returns [Scalar "string"] when [label_column] is [None] or omitted, yielding just the text column.
+    - Returns [Tuple [ Scalar "string"; Scalar "string" ]] when [label_column = Some idx], yielding [(text, label)]. *)
 
 val from_text : tokenizer:tokenizer -> string -> int array t
 (** [from_text ~tokenizer path] reads a text file and returns a dataset of token

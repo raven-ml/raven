@@ -135,6 +135,33 @@ let test_from_csv_no_header () =
       let collected = collect_dataset dataset in
       Alcotest.(check (list string)) "all rows" [ "a"; "d" ] collected)
 
+let test_from_csv_with_labels_headers () =
+  let content = "text,label\nhello,spam\nworld,ham\n" in
+  with_temp_csv content (fun path ->
+      let dataset = from_csv ~label_column:(Some 1) path in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "text and labels with header"
+        [ ("hello", "spam"); ("world", "ham") ] collected)
+
+let test_from_csv_with_labels_no_header () =
+  let content = "foo,bar\nbaz,qux\n" in
+  with_temp_csv content (fun path ->
+      let dataset = from_csv ~label_column:(Some 1) ~has_header:false path in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "text and labels without header"
+        [ ("foo", "bar"); ("baz", "qux") ] collected)
+
+let test_from_csv_with_labels_custom_sep () =
+  let content = "t1|l1\nt2|l2\n" in
+  with_temp_csv content (fun path ->
+      let dataset = from_csv ~separator:'|' ~label_column:(Some 1) ~has_header:false path in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "text and labels with custom sep"
+        [ ("t1", "l1"); ("t2", "l2") ] collected)
+
 let test_from_file () =
   let content = "100\n200\n300\n" in
   with_temp_file content (fun path ->
@@ -573,6 +600,12 @@ let () =
           test_case "from_csv" `Quick test_from_csv;
           test_case "from_csv_custom_column" `Quick test_from_csv_custom_column;
           test_case "from_csv_no_header" `Quick test_from_csv_no_header;
+          test_case "from_csv_with_labels_headers" `Quick
+            test_from_csv_with_labels_headers;
+          test_case "from_csv_with_labels_no_header" `Quick
+            test_from_csv_with_labels_no_header;
+          test_case "from_csv_with_labels_custom_sep" `Quick
+            test_from_csv_with_labels_custom_sep;
           test_case "from_file" `Quick test_from_file;
         ] );
       ( "transformations",
