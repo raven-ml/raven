@@ -7576,9 +7576,7 @@ module Make (B : Backend_intf.S) = struct
     if sz = 0 && ndim > 0 then fprintf fmt "[]"
     else if ndim = 0 then
       if sz > 0 then
-        let value =
-          Array1.unsafe_get buffer (View.offset view)
-        in
+        let value = Array1.unsafe_get buffer (View.offset view) in
         pp_element fmt value
       else fprintf fmt "<empty scalar>"
     else
@@ -7652,8 +7650,7 @@ module Make (B : Backend_intf.S) = struct
 
     fprintf fmt "@[<v 0>";
     fprintf fmt "Nx Info:@,";
-    fprintf fmt "  Shape: %s@,"
-      (Symbolic_shape.to_string (View.shape view));
+    fprintf fmt "  Shape: %s@," (Symbolic_shape.to_string (View.shape view));
     fprintf fmt "  Dtype: %a@," pp_dtype (dtype x);
     fprintf fmt "  Strides: %s@,"
       (match View.strides_opt view with

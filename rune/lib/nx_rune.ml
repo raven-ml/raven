@@ -233,8 +233,7 @@ let view (type a b) (x : (a, b) t) : View.t =
   with Effect.Unhandled _ -> (
     match x with
     | Native_tensor t -> Nx_c.view t
-    | Symbolic_tensor { shape; _ } ->
-        View.create (Symbolic_shape.of_ints shape))
+    | Symbolic_tensor { shape; _ } -> View.create (Symbolic_shape.of_ints shape))
 
 let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
   | Native_tensor t -> Nx_c.dtype t
