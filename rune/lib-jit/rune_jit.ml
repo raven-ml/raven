@@ -4,6 +4,7 @@ module Ir = Ir
 module Dtype = Ir.Dtype
 module Var = Ir.Var
 module Backend_intf = Backend_intf
+module Shape_expr = Shape_expr
 
 type 'a kernel_artifact = {
   kernel_id : int;
@@ -190,13 +191,11 @@ let execute (type device_buffer_native callable_kernel_native)
         match Hashtbl.find_opt exe.graph_meta v with
         | None -> Error ("Missing metadata for " ^ Var.to_string v)
         | Some { dtype = Dtype.Any_Dtype dt; shape; _ } ->
-            let bytes =
-              let n =
-                Array.fold_left ( * ) 1
-                  (if Array.length shape = 0 then [| 1 |] else shape)
-              in
-              n * Dtype.sizeof_elt dt
+            let elem_count =
+              Array.fold_left ( * ) 1
+                (if Array.length shape = 0 then [| 1 |] else shape)
             in
+            let bytes = elem_count * Dtype.sizeof_elt dt in
             let* buf =
               B.Runtime.allocate_buffer ~device_info:dev ~size_in_bytes:bytes
                 ~dtype:dt
@@ -231,13 +230,11 @@ let execute (type device_buffer_native callable_kernel_native)
              caller can fill *)
           match Hashtbl.find_opt exe.graph_meta v with
           | Some { dtype = Dtype.Any_Dtype dt; shape; _ } -> (
-              let bytes =
-                let n =
-                  Array.fold_left ( * ) 1
-                    (if Array.length shape = 0 then [| 1 |] else shape)
-                in
-                n * Dtype.sizeof_elt dt
+              let elem_count =
+                Array.fold_left ( * ) 1
+                  (if Array.length shape = 0 then [| 1 |] else shape)
               in
+              let bytes = elem_count * Dtype.sizeof_elt dt in
               match
                 B.Runtime.allocate_buffer ~device_info:dev ~size_in_bytes:bytes
                   ~dtype:dt

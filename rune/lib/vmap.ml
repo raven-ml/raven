@@ -1186,8 +1186,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                         let ok = ref true in
                         let i = ref 0 in
                         while !ok && !i < nbd && !i < lt do
-                          if new_target_arr.(!i) <> prefix.(!i) then
-                            ok := false;
+                          if new_target_arr.(!i) <> prefix.(!i) then ok := false;
                           incr i
                         done;
                         !ok

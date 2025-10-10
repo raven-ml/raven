@@ -124,6 +124,10 @@ let vars shape =
   in
   shape |> Array.to_list |> List.concat_map expr_vars |> dedup []
 
+let var_id v = v.id
+let var_name v = v.name
+let var_bounds v = (v.min, v.max)
+
 let rec expr_is_static = function
   | Const _ -> true
   | Var _ -> false

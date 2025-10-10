@@ -7,9 +7,15 @@ let fresh_var_reset () = Ir.Var.counter := 0
 let simple_add_graph () =
   fresh_var_reset ();
   let vA = Ir.Var.fresh () and vB = Ir.Var.fresh () and vC = Ir.Var.fresh () in
-  let shape = [| 4 |] in
+  let shape_int = [| 4 |] in
+  let shape = Shape_expr.of_int_array shape_int in
   let meta dtype =
-    { Ir.dtype = Ir.Dtype.Any_Dtype dtype; shape; device = None }
+    {
+      Ir.dtype = Ir.Dtype.Any_Dtype dtype;
+      shape = shape_int;
+      shape_expr = None;
+      device = None;
+    }
   in
   let nodes =
     [
@@ -39,9 +45,15 @@ let simple_mulacc_graph () =
   and vB = Ir.Var.fresh ()
   and vC = Ir.Var.fresh ()
   and vOut = Ir.Var.fresh () in
-  let shape = [| 4 |] in
+  let shape_int = [| 4 |] in
+  let shape = Shape_expr.of_int_array shape_int in
   let meta dtype =
-    { Ir.dtype = Ir.Dtype.Any_Dtype dtype; shape; device = None }
+    {
+      Ir.dtype = Ir.Dtype.Any_Dtype dtype;
+      shape = shape_int;
+      shape_expr = None;
+      device = None;
+    }
   in
   let nodes =
     [
@@ -80,9 +92,15 @@ let simple_where_graph () =
   and vX = Ir.Var.fresh ()
   and vY = Ir.Var.fresh ()
   and vOut = Ir.Var.fresh () in
-  let shape = [| 4 |] in
+  let shape_int = [| 4 |] in
+  let shape = Shape_expr.of_int_array shape_int in
   let meta dtype =
-    { Ir.dtype = Ir.Dtype.Any_Dtype dtype; shape; device = None }
+    {
+      Ir.dtype = Ir.Dtype.Any_Dtype dtype;
+      shape = shape_int;
+      shape_expr = None;
+      device = None;
+    }
   in
   let nodes =
     [
@@ -122,9 +140,15 @@ let simple_mulacc_graph () =
   and vB = Ir.Var.fresh ()
   and vC = Ir.Var.fresh ()
   and vOut = Ir.Var.fresh () in
-  let shape = [| 4 |] in
+  let shape_int = [| 4 |] in
+  let shape = Shape_expr.of_int_array shape_int in
   let meta dtype =
-    { Ir.dtype = Ir.Dtype.Any_Dtype dtype; shape; device = None }
+    {
+      Ir.dtype = Ir.Dtype.Any_Dtype dtype;
+      shape = shape_int;
+      shape_expr = None;
+      device = None;
+    }
   in
   let nodes =
     [

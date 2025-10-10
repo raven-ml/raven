@@ -302,6 +302,15 @@ val vars : t -> var list
     Returns an empty list for shapes containing only static dimensions. The
     order of variables in the result is unspecified. *)
 
+val var_id : var -> int
+(** [var_id v] returns the unique identifier assigned to [v]. *)
+
+val var_name : var -> string
+(** [var_name v] returns the user-facing name of [v]. *)
+
+val var_bounds : var -> int * int
+(** [var_bounds v] returns the inclusive minimum and maximum bounds for [v]. *)
+
 val is_static : t -> bool
 (** [is_static shape] returns true if all dimensions are static.
 

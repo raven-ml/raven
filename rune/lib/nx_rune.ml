@@ -1,4 +1,5 @@
 open Nx_core
+module Shape_expr = Rune_jit.Shape_expr
 
 module Symbolic_id = struct
   type t = int
@@ -240,6 +241,33 @@ let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
   | Symbolic_tensor { dtype; _ } -> dtype
 
 let is_symbolic = function Symbolic_tensor _ -> true | _ -> false
+
+let shape_expr_of_symbolic (sym_shape : Symbolic_shape.t) : Shape_expr.shape =
+  let cache = Hashtbl.create 8 in
+  let rec convert = function
+    | Symbolic_shape.Const n -> Shape_expr.const n
+    | Symbolic_shape.Var v ->
+        let id = Symbolic_shape.var_id v in
+        let var =
+          match Hashtbl.find_opt cache id with
+          | Some var -> var
+          | None ->
+              let name = Symbolic_shape.var_name v in
+              let min, max = Symbolic_shape.var_bounds v in
+              let var = Shape_expr.Var.create ~id ~name ~min ~max in
+              Hashtbl.add cache id var;
+              var
+        in
+        Shape_expr.var var
+    | Symbolic_shape.Add (a, b) -> Shape_expr.add (convert a) (convert b)
+    | Symbolic_shape.Mul (a, b) -> Shape_expr.mul (convert a) (convert b)
+    | Symbolic_shape.Neg e -> Shape_expr.neg (convert e)
+  in
+  Array.map convert sym_shape
+
+let view_shape_expr view = shape_expr_of_symbolic (View.shape view)
+let view_shape_eval view = Symbolic_shape.eval (View.shape view)
+let shape_upper_bound shape_expr = Shape_expr.upper_bounds shape_expr
 
 let data : type a b.
     (a, b) t -> (a, b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t = function

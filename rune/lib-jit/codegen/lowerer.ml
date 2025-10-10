@@ -58,7 +58,12 @@ let ll_of_hl ctx hl ~buffer =
 let gtid ctx =
   let v = Var.fresh () in
   ensure_meta ctx v
-    { dtype = Dtype.Any_Dtype Dtype.Int32; shape = [| 1 |]; device = None };
+    {
+      dtype = Dtype.Any_Dtype Dtype.Int32;
+      shape = [| 1 |];
+      shape_expr = None;
+      device = None;
+    };
   add_instr ctx
     (Lowered.L_Special { dst = v; kind = Special_index_kind.Global_task_idx 0 });
   v
@@ -74,7 +79,12 @@ let load_scalar ctx ~hl_buffer ~idx ~dtype =
       let buf = ll_of_hl ctx hl_buffer ~buffer:true in
       let dst = Var.fresh () in
       ensure_meta ctx dst
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (Lowered.L_Load
            { dst; buf; idx; dtype = Dtype.Any_Dtype dtype; valid = None });
@@ -110,7 +120,12 @@ let lower_node ctx (Any_Node n) kernel_outs =
       let b_ll = load_scalar ctx ~hl_buffer:b_var ~idx ~dtype in
       let dst = Var.fresh () in
       ensure_meta ctx dst
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (L_ALU
            {
@@ -140,11 +155,21 @@ let lower_node ctx (Any_Node n) kernel_outs =
 
       let idx = Var.fresh () in
       ensure_meta ctx idx
-        { dtype = Dtype.Any_Dtype Dtype.Int32; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype Dtype.Int32;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
 
       let ub = Var.fresh () in
       ensure_meta ctx ub
-        { dtype = Dtype.Any_Dtype Dtype.Int32; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype Dtype.Int32;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (L_Const
            {
@@ -156,7 +181,12 @@ let lower_node ctx (Any_Node n) kernel_outs =
 
       let acc = Var.fresh () in
       ensure_meta ctx acc
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       let identity =
         match (dtype, reduce_op_kind) with
         | Dtype.Float32, Reduce_Sum -> "0.0"
@@ -195,6 +225,7 @@ let lower_node ctx (Any_Node n) kernel_outs =
           {
             dtype = Dtype.Any_Dtype Dtype.Int32;
             shape = [| 1 |];
+            shape_expr = None;
             device = None;
           };
         add_instr ctx
@@ -207,7 +238,12 @@ let lower_node ctx (Any_Node n) kernel_outs =
       let in_ll = load_scalar ctx ~hl_buffer:in_var ~idx ~dtype in
       let dst = Var.fresh () in
       ensure_meta ctx dst
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (L_ALU
            {
@@ -238,7 +274,12 @@ let lower_node ctx (Any_Node n) kernel_outs =
       let y_ll = load_scalar ctx ~hl_buffer:y_var ~idx ~dtype in
       let dst = Var.fresh () in
       ensure_meta ctx dst
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (L_ALU
            {
@@ -293,7 +334,12 @@ let lower_node ctx (Any_Node n) kernel_outs =
       let idx = gtid ctx in
       let dst = Var.fresh () in
       ensure_meta ctx dst
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (L_Const { dtype = Dtype.Any_Dtype dtype; value = "0"; out = dst });
       Hashtbl.replace ctx.scalar_map out_var dst;
@@ -314,7 +360,12 @@ let lower_node ctx (Any_Node n) kernel_outs =
       let idx = gtid ctx in
       let dst = Var.fresh () in
       ensure_meta ctx dst
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (L_Const { dtype = Dtype.Any_Dtype dtype; value = "0"; out = dst });
       Hashtbl.replace ctx.scalar_map out_var dst;
@@ -328,7 +379,12 @@ let lower_node ctx (Any_Node n) kernel_outs =
       let c_ll = load_scalar ctx ~hl_buffer:c_var ~idx ~dtype in
       let dst = Var.fresh () in
       ensure_meta ctx dst
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (L_ALU
            {
@@ -383,7 +439,12 @@ let lower_node ctx (Any_Node n) kernel_outs =
       let ll = ll_of_hl ctx in_var ~buffer:false in
       let dst = Var.fresh () in
       ensure_meta ctx dst
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (L_Gep { dst; src = ll; indices; dtype = Dtype.Any_Dtype dtype });
       Hashtbl.replace ctx.scalar_map out_var dst;
@@ -395,6 +456,7 @@ let lower_node ctx (Any_Node n) kernel_outs =
         {
           dtype = Dtype.Any_Dtype dtype;
           shape = [| Array.length in_vars |];
+          shape_expr = None;
           device = None;
         };
       add_instr ctx (L_Vectorize { dst; srcs; dtype = Dtype.Any_Dtype dtype });
@@ -459,7 +521,12 @@ let lower_node ctx (Any_Node n) kernel_outs =
       let idx = gtid ctx in
       let dst = Var.fresh () in
       ensure_meta ctx dst
-        { dtype = Dtype.Any_Dtype dtype; shape = [| 1 |]; device = None };
+        {
+          dtype = Dtype.Any_Dtype dtype;
+          shape = [| 1 |];
+          shape_expr = None;
+          device = None;
+        };
       add_instr ctx
         (L_Const { dtype = Dtype.Any_Dtype dtype; value = "0"; out = dst });
       Hashtbl.replace ctx.scalar_map out_var dst;
