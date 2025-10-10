@@ -30,7 +30,7 @@ type ('a, 'b) t =
 
 (* Effects - no context in most operations per new backend interface *)
 type _ Effect.t +=
-  | E_view : ('a, 'b) t -> Lazy_view.t Effect.t
+  | E_view : ('a, 'b) t -> View.t Effect.t
   | E_buffer : {
       context : context;
       dtype : ('a, 'b) Dtype.t;
@@ -228,13 +228,13 @@ let to_device (target_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t =
   | _, Symbolic_tensor _ -> failwith "Cannot transfer symbolic tensor to device"
 
 (* Lenses *)
-let view (type a b) (x : (a, b) t) : Lazy_view.t =
+let view (type a b) (x : (a, b) t) : View.t =
   try Effect.perform (E_view x)
   with Effect.Unhandled _ -> (
     match x with
     | Native_tensor t -> Nx_c.view t
     | Symbolic_tensor { shape; _ } ->
-        Lazy_view.create (Symbolic_shape.of_ints shape))
+        View.create (Symbolic_shape.of_ints shape))
 
 let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
   | Native_tensor t -> Nx_c.dtype t

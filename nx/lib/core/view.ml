@@ -176,16 +176,6 @@ let is_valid view indices =
           (fun idx (b, e) -> idx >= b && idx < e)
           indices mask_array
 
-let can_be_strided view =
-  (* All views now have strides, so check other conditions *)
-  match (view.mask, eval_shape_opt view.shape) with
-  | None, _ -> true
-  | Some mask_array, Some shape_arr ->
-      Array.for_all2 (fun (b, e) s -> b = 0 && e = s) mask_array shape_arr
-  | Some _, None ->
-      (* With symbolic shape and mask, conservatively return false *)
-      false
-
 (* ───── view manipulation ───── *)
 
 let expand view new_shape =
@@ -753,3 +743,21 @@ let simplify view =
         in
         { view with mask; layout = new_layout }
       else view (* No simplification possible *)
+
+let offset_dim v = Symbolic_shape.static v.offset
+
+let can_get_strides view =
+  let simplified = simplify view in
+  match (simplified.mask, eval_shape_opt simplified.shape) with
+  | None, _ -> true
+  | Some mask_array, Some shape_arr ->
+      Array.for_all2 (fun (b, e) s -> b = 0 && e = s) mask_array shape_arr
+  | Some _, None -> false
+
+let strides_opt view =
+  let simplified = simplify view in
+  if can_get_strides simplified then Some (strides simplified) else None
+
+let is_materializable view =
+  let simplified = simplify view in
+  Symbolic_shape.is_static (shape simplified) && can_get_strides simplified

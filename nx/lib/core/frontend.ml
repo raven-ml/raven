@@ -106,7 +106,7 @@ module Make (B : Backend_intf.S) = struct
 
   let shape x =
     let view = B.view x in
-    match Symbolic_shape.eval (Lazy_view.shape view) with
+    match Symbolic_shape.eval (View.shape view) with
     | Some arr -> arr
     | None ->
         Error.failed ~op:"shape"
@@ -120,12 +120,12 @@ module Make (B : Backend_intf.S) = struct
     let itemsize = itemsize x in
 
     (* Use high-level API instead of accessing internals *)
-    match Lazy_view.strides view with
+    match View.strides_opt view with
     | None ->
         let reason =
-          if not (Lazy_view.is_materializable view) then
+          if not (View.is_materializable view) then
             "view has non-materializable layout"
-          else if not (Symbolic_shape.is_static (Lazy_view.shape view)) then
+          else if not (Symbolic_shape.is_static (View.shape view)) then
             "view has symbolic shape"
           else "view has complex striding pattern"
         in
@@ -138,14 +138,14 @@ module Make (B : Backend_intf.S) = struct
     let itemsize = itemsize x in
 
     (* Get strides if available *)
-    match Lazy_view.strides view with
+    match View.strides_opt view with
     | None ->
         Error.failed ~op:"stride"
           ~what:(Printf.sprintf "stride for dimension %d" i)
           ~reason:"tensor does not have defined strides"
           ~hint:"call contiguous() first or check has_strides()" ()
     | Some elem_strides ->
-        let ndim = Lazy_view.ndim view in
+        let ndim = View.ndim view in
         let i = if i < 0 then i + ndim else i in
         if i < 0 || i >= ndim then
           Error.axis_out_of_bounds ~op:"stride" ~axis:i ~ndim ()
@@ -153,7 +153,7 @@ module Make (B : Backend_intf.S) = struct
 
   let dims x =
     let view = B.view x in
-    let sym_shape = Lazy_view.shape view in
+    let sym_shape = View.shape view in
     match Symbolic_shape.eval sym_shape with
     | Some arr -> arr
     | None ->
@@ -162,7 +162,7 @@ module Make (B : Backend_intf.S) = struct
 
   let dim i x =
     let view = B.view x in
-    let shape = Lazy_view.shape view in
+    let shape = View.shape view in
     let ndim = Symbolic_shape.rank shape in
     let i = if i < 0 then i + ndim else i in
     if i < 0 || i >= ndim then
@@ -176,11 +176,11 @@ module Make (B : Backend_intf.S) = struct
 
   let ndim x =
     let view = B.view x in
-    Lazy_view.ndim view
+    View.ndim view
 
   let size x =
     let view = B.view x in
-    match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+    match Symbolic_shape.eval_dim (View.numel view) with
     | Some n -> n
     | None ->
         Error.failed ~op:"size"
@@ -201,15 +201,11 @@ module Make (B : Backend_intf.S) = struct
 
   let offset x =
     let view = B.view x in
-    match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-    | Some n -> n
-    | None ->
-        Error.failed ~op:"offset" ~what:"tensor has symbolic offset"
-          ~hint:"bind symbolic variables first" ()
+    View.offset view
 
   let is_c_contiguous x =
     let view = B.view x in
-    Lazy_view.is_contiguous view
+    View.is_c_contiguous view
 
   (* ───── Internal Utilities ───── *)
 
@@ -3111,7 +3107,7 @@ module Make (B : Backend_intf.S) = struct
         ();
 
     (* For scalar tensors, there are two cases: *)
-    match Lazy_view.strides (B.view scalar_tensor) with
+    match View.strides_opt (B.view scalar_tensor) with
     | Some _ ->
         (* Has valid strides - use the offset *)
         let view_offset = offset scalar_tensor in
@@ -7536,7 +7532,7 @@ module Make (B : Backend_intf.S) = struct
     let buffer = B.data x in
     let dtype = dtype x in
     let shape =
-      match Symbolic_shape.eval (Lazy_view.shape view) with
+      match Symbolic_shape.eval (View.shape view) with
       | Some arr -> arr
       | None ->
           Error.failed ~op:"pp_data"
@@ -7544,7 +7540,7 @@ module Make (B : Backend_intf.S) = struct
     in
     let ndim = Array.length shape in
     let sz =
-      match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+      match Symbolic_shape.eval_dim (View.numel view) with
       | Some n -> n
       | None ->
           Error.failed ~op:"pp_data"
@@ -7581,12 +7577,7 @@ module Make (B : Backend_intf.S) = struct
     else if ndim = 0 then
       if sz > 0 then
         let value =
-          Array1.unsafe_get buffer
-            (match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-            | Some n -> n
-            | None ->
-                Error.failed ~op:"pp_data"
-                  ~what:"cannot access data with symbolic offset" ())
+          Array1.unsafe_get buffer (View.offset view)
         in
         pp_element fmt value
       else fprintf fmt "<empty scalar>"
@@ -7597,19 +7588,13 @@ module Make (B : Backend_intf.S) = struct
           let md_index = Array.of_list current_indices in
           let linear_offset =
             let strides =
-              match Lazy_view.strides view with
+              match View.strides_opt view with
               | Some s -> s
               | None ->
                   Error.failed ~op:"pp_data"
                     ~what:"cannot print non-contiguous symbolic tensor" ()
             in
-            let offset =
-              match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-              | Some n -> n
-              | None ->
-                  Error.failed ~op:"pp_data"
-                    ~what:"cannot print tensor with symbolic offset" ()
-            in
+            let offset = View.offset view in
             Shape.ravel_index md_index strides + offset
           in
           if linear_offset < 0 || linear_offset >= Array1.dim buffer then
@@ -7668,21 +7653,18 @@ module Make (B : Backend_intf.S) = struct
     fprintf fmt "@[<v 0>";
     fprintf fmt "Nx Info:@,";
     fprintf fmt "  Shape: %s@,"
-      (Symbolic_shape.to_string (Lazy_view.shape view));
+      (Symbolic_shape.to_string (View.shape view));
     fprintf fmt "  Dtype: %a@," pp_dtype (dtype x);
     fprintf fmt "  Strides: %s@,"
-      (match Lazy_view.strides view with
+      (match View.strides_opt view with
       | Some s ->
           "["
           ^ String.concat "; " (Array.to_list (Array.map string_of_int s))
           ^ "]"
       | None -> "<symbolic>");
-    fprintf fmt "  Offset: %s@,"
-      (match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-      | Some n -> string_of_int n
-      | None -> "<symbolic>");
+    fprintf fmt "  Offset: %d@," (View.offset view);
     fprintf fmt "  Size: %s@,"
-      (match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+      (match Symbolic_shape.eval_dim (View.numel view) with
       | Some n -> string_of_int n
       | None -> "<symbolic>");
     fprintf fmt "  Data: %a@," pp_data x

@@ -26,7 +26,10 @@ val shape : t -> Symbolic_shape.t
 (** [shape view] returns dimension sizes. *)
 
 val strides : t -> int array
-(** [strides view] returns element strides per dimension. *)
+(** [strides view] returns element strides per dimension.
+
+    @raise Invalid_argument if the view cannot be represented as a standard
+    strided layout—use {!strides_opt} when unsure. *)
 
 val offset : t -> int
 (** [offset view] returns starting position in buffer. *)
@@ -36,6 +39,9 @@ val ndim : t -> int
 
 val numel : t -> Symbolic_shape.dim
 (** [numel view] returns total elements (may be symbolic). *)
+
+val offset_dim : t -> Symbolic_shape.dim
+(** [offset_dim view] returns the offset as a symbolic dimension. *)
 
 val dim : int -> t -> Symbolic_shape.dim
 (** [dim axis view] returns size of dimension [axis].
@@ -53,6 +59,19 @@ val mask : t -> (int * int) array option
 val is_c_contiguous : t -> bool
 (** [is_c_contiguous view] tests for row-major contiguous layout. *)
 
+val strides_opt : t -> int array option
+(** [strides_opt view] returns element strides when the view can be represented
+    as a standard strided layout. Returns [None] when the view requires
+    materialization. *)
+
+val can_get_strides : t -> bool
+(** [can_get_strides view] is [true] when [strides_opt view] would return
+    [Some _]. *)
+
+val is_materializable : t -> bool
+(** [is_materializable view] indicates whether the view describes a layout that
+    can be materialized without resolving symbolic dimensions or masks. *)
+
 (** {2 Index Operations} *)
 
 val linear_index : t -> int array -> int
@@ -67,8 +86,6 @@ val is_valid : t -> int array -> bool
 (** [is_valid view indices] checks mask bounds.
 
     Returns true if no mask or indices within all bounds. *)
-
-val can_be_strided : t -> bool
 
 (** {2 Transformations} *)
 

@@ -10,7 +10,7 @@ type ('a, 'b) t = {
   context : context;
   dtype : ('a, 'b) Dtype.t;
   buffer : ('a, 'b) buffer;
-  view : Lazy_view.t;
+  view : View.t;
 }
 
 type ('a, 'b) ffi_tensor = {
@@ -233,26 +233,21 @@ let data t = t.buffer
 let context t = t.context
 
 let shape t =
-  let s = Lazy_view.shape t.view in
+  let s = View.shape t.view in
   match Symbolic_shape.eval s with
   | Some arr -> arr
   | None -> Error.failed ~op:"shape" ~what:"symbolic shape not evaluable" ()
 
 let strides t =
-  match Lazy_view.strides t.view with
+  match View.strides_opt t.view with
   | Some s -> s
   | None -> Error.failed ~op:"strides" ~what:"cannot get strides for view" ()
 
-let offset t =
-  let off = Lazy_view.offset t.view in
-  match Symbolic_shape.eval_dim off with
-  | Some n -> n
-  | None -> Error.failed ~op:"offset" ~what:"symbolic offset not evaluable" ()
-
-let is_contiguous t = Lazy_view.is_contiguous t.view
+let offset t = View.offset t.view
+let is_contiguous t = View.is_c_contiguous t.view
 
 (* Check if a tensor can be efficiently operated on *)
-let can_get_strides t = Lazy_view.can_get_strides t.view
+let can_get_strides t = View.can_get_strides t.view
 
 (* Convert tensor to FFI representation if possible *)
 let to_ffi_tensor t =
@@ -268,7 +263,7 @@ let create_tensor ctx dtype shape_arr =
   let kind = Dtype.to_bigarray_ext_kind dtype in
   let buffer = Array1.create kind c_layout size in
   let shape = Symbolic_shape.of_ints shape_arr in
-  let view = Lazy_view.create shape in
+  let view = View.create shape in
   { context = ctx; dtype; buffer; view }
 
 (* Materialize a tensor to contiguous layout if needed *)
@@ -366,7 +361,7 @@ let op_buffer ctx dtype size_in_elements =
   let buffer = Array1.create kind c_layout size_in_elements in
   (* Create a flat view for the buffer *)
   let shape = Symbolic_shape.of_ints [| size_in_elements |] in
-  let view = Lazy_view.create shape in
+  let view = View.create shape in
   { context = ctx; dtype; buffer; view }
 
 (* Constant creation ops *)
@@ -376,7 +371,7 @@ let op_const_scalar ctx value dtype =
   Array1.set buffer 0 value;
   (* Create a scalar view (0-dimensional) *)
   let shape = Symbolic_shape.of_ints [||] in
-  let view = Lazy_view.create shape in
+  let view = View.create shape in
   { context = ctx; dtype; buffer; view }
 
 let op_const_array ctx array =
@@ -384,7 +379,7 @@ let op_const_array ctx array =
   let size = Array1.dim array in
   (* Create a view for the 1D array *)
   let shape = Symbolic_shape.of_ints [| size |] in
-  let view = Lazy_view.create shape in
+  let view = View.create shape in
   (* Note: We're sharing the buffer directly, assuming it's contiguous *)
   { context = ctx; dtype; buffer = array; view }
 
@@ -555,9 +550,9 @@ let op_associative_scan ~axis ~op x =
       out
 
 (* Movement Ops - These are view-only operations *)
-let op_expand x shape = { x with view = Lazy_view.expand shape x.view }
-let op_reshape x shape = { x with view = Lazy_view.reshape shape x.view }
-let op_permute x axes = { x with view = Lazy_view.permute axes x.view }
+let op_expand x shape = { x with view = View.expand x.view shape }
+let op_reshape x shape = { x with view = View.reshape x.view shape }
+let op_permute x axes = { x with view = View.permute x.view axes }
 
 let op_pad x padding fill_value =
   let x' = ensure_materializable x in
@@ -586,8 +581,8 @@ let op_pad x padding fill_value =
   caml_pad x_ffi padding_flat fill_value out_ffi;
   out
 
-let op_shrink x bounds = { x with view = Lazy_view.shrink bounds x.view }
-let op_flip x axes = { x with view = Lazy_view.flip axes x.view }
+let op_shrink x bounds = { x with view = View.shrink x.view bounds }
+let op_flip x axes = { x with view = View.flip x.view axes }
 
 let op_cat tensors axis =
   match tensors with
@@ -653,7 +648,7 @@ let op_contiguous x =
     let out_ffi = caml_contiguous x_ffi in
     (* Create tensor from FFI result - it's contiguous so simple view *)
     let shape_sym = Symbolic_shape.of_ints out_ffi.shape in
-    let view = Lazy_view.create shape_sym in
+    let view = View.create shape_sym in
     { context = x.context; dtype = x.dtype; buffer = out_ffi.data; view }
 
 let op_copy x =
@@ -662,7 +657,7 @@ let op_copy x =
   let out_ffi = caml_copy x_ffi in
   (* Create tensor from FFI result - it's contiguous so simple view *)
   let shape_sym = Symbolic_shape.of_ints out_ffi.shape in
-  let view = Lazy_view.create shape_sym in
+  let view = View.create shape_sym in
   { context = x.context; dtype = x.dtype; buffer = out_ffi.data; view }
 
 let op_assign dst src =
@@ -1223,7 +1218,7 @@ let op_as_strided t new_shape new_strides_in_elements offset_in_elements =
 
   (* Create a new view with custom strides and offset - zero-copy operation *)
   let new_view =
-    Lazy_view.create_strided new_shape ~strides:new_strides_in_elements
+    View.create new_shape ~strides:new_strides_in_elements
       ~offset:offset_in_elements
   in
 

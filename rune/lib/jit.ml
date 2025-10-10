@@ -9,7 +9,7 @@ let shape_prod = Array.fold_left ( * ) 1
 
 (* Helper to get shape from view *)
 let get_shape view =
-  match Symbolic_shape.eval (Lazy_view.shape view) with
+  match Symbolic_shape.eval (View.shape view) with
   | Some arr -> arr
   | None -> failwith "Cannot evaluate symbolic shape in JIT"
 

@@ -242,7 +242,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
   let phys_shape_of : type a b. (a, b) t -> int array =
    fun t ->
     let view = Nx_rune.view t in
-    match Symbolic_shape.eval (Lazy_view.shape view) with
+    match Symbolic_shape.eval (View.shape view) with
     | Some arr -> arr
     | None -> failwith "vmap: cannot evaluate physical shape"
   in
@@ -620,7 +620,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
 
                   if batch_dims_to_remove = [] then continue k actual_view
                   else
-                    let shape = Lazy_view.shape actual_view in
+                    let shape = View.shape actual_view in
                     (* Remove batch dims from the symbolic shape directly *)
                     let unbatched_shape =
                       let arr = ref shape in
@@ -633,8 +633,8 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     in
                     (* Preserve strides and offset if available *)
                     let unbatched_view =
-                      match Lazy_view.strides actual_view with
-                      | None -> Lazy_view.create unbatched_shape
+                      match View.strides_opt actual_view with
+                      | None -> View.create unbatched_shape
                       | Some strides -> (
                           let unbatched_strides =
                             let s = ref strides in
@@ -647,12 +647,12 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                           in
                           match
                             Symbolic_shape.eval_dim
-                              (Lazy_view.offset actual_view)
+                              (View.offset_dim actual_view)
                           with
                           | Some offset ->
-                              Lazy_view.create_strided unbatched_shape
+                              View.create unbatched_shape
                                 ~strides:unbatched_strides ~offset
-                          | None -> Lazy_view.create unbatched_shape)
+                          | None -> View.create unbatched_shape)
                     in
                     continue k unbatched_view)
           (* Creation operations - create unbatched tensors *)
