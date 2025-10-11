@@ -77,6 +77,7 @@ end
 type var_metadata = {
   dtype : Dtype.any;
   shape : int array;
+  shape_expr : Shape_expr.shape option;
   device : string option;
 }
 
@@ -94,10 +95,10 @@ type custom_attr =
   | Attr_Shape of int array
 
 (* Shape tracker for VIEW operations *)
-type shape_tracker = { views : view list; shape : int array }
+type shape_tracker = { views : view list; shape : Shape_expr.shape }
 
 and view = {
-  shape : int array;
+  shape : Shape_expr.shape;
   strides : int array;
   offset : int;
   mask : (int * int) array option; (* for masked/valid regions *)
@@ -151,7 +152,7 @@ type _ node_t =
   | Placeholder : {
       out_var : Var.t;
       dtype : 'a Dtype.t;
-      shape : int array;
+      shape : Shape_expr.shape;
     }
       -> 'a node_t
   | Const_Scalar : {
@@ -203,7 +204,7 @@ type _ node_t =
       -> 'a node_t
   | Reshape : {
       in_var : Var.t;
-      new_shape : int array;
+      new_shape : Shape_expr.shape;
       out_var : Var.t;
       dtype : 'a Dtype.t;
     }
@@ -217,7 +218,7 @@ type _ node_t =
       -> 'a node_t
   | Expand : {
       in_var : Var.t;
-      new_target_shape : int array;
+      new_target_shape : Shape_expr.shape;
       out_var : Var.t;
       dtype : 'a Dtype.t;
     }

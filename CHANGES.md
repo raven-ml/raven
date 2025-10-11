@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~alpha2] - TBD
 
+- Nx: Fix macOS ARM crash when loading extended bigarray kinds (@tmattio)
+- Nx: Documented the `Symbolic_shape` interface (@tmattio).
+- Nx: Refined `View` internals for leaner contiguity checks and stride handling, cutting redundant materialization on hot paths (@tmattio).
+- Nx: Assign unique IDs to symbolic shape variables and expose helpers to reuse them explicitly (@tmattio).
+- Nx: Documented the reworked `View` interface (@tmattio).
+- Nx: Merge `Lazy_view` into the core `View` API so movement ops operate on a single composed view; improves contiguity checks and restores precise stride/materialization guards (@tmattio).
+- Nx-datasets: Use `Logs` for dataset loader logging (#95, @Satarupa22-SD).
+- Rune: Add support for categorical sampling with `Rune.Rng.categorical` (#89, @nirnayroy).
 - Nx: Add float16 and bfloat16 support to safetensors I/O, including precise conversions that preserve denormals/NaNs (#84, @six-shot, @tmattio).
 
 ## [1.0.0~alpha1] - 2025-10-02

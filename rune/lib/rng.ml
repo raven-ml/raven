@@ -81,28 +81,63 @@ let shuffle key x =
     let results = Array.map (fun i -> get [ i ] x) perm_array in
     concatenate ~axis:0 (Array.to_list results)
 
-(* TODO: Implement categorical when cumsum is available let categorical key ctx
-   ?(axis = -1) logits = let shape_array = shape logits in let ndim =
-   Array.length shape_array in let axis = if axis < 0 then ndim + axis else axis
-   in
+let categorical (type a b) (key : key) ?(axis : int = -1)
+    ?(shape : int array = [||]) (logits : (a, b) Tensor.t) : Tensor.int32_t =
+  (* Gumbel-max categorical sampler with optional prefix shape (JAX-like) *)
 
-   (* Generate uniform random values with same shape *) let uniform_vals =
-   uniform key Tensor.Float32 shape_array in
+  (* Work in a floating dtype for the Gumbel transform; don't mutate the
+     input *)
+  let dtype = Tensor.dtype logits in
+  let shape_array = Tensor.shape logits in
+  let ndim = Array.length shape_array in
+  let axis = if axis < 0 then ndim + axis else axis in
+  if axis < 0 || axis >= ndim then
+    invalid_arg
+      (Printf.sprintf
+         "categorical: axis (%d) out of bounds for logits ndim (%d)" axis ndim);
 
-   (* Apply softmax to get probabilities *) let probs = softmax logits ~axes:[|
-   axis |] in
+  (* Build the full shape for the uniform/Gumbel noise: prefix_shape +
+     logits_shape *)
+  let full_shape = Array.append shape shape_array in
 
-   (* Compute cumulative sum along axis *) let cumsum = cumsum probs ~axis in
+  let run_float32 eps =
+    let u = uniform key Tensor.Float32 full_shape in
+    let u_clamped = clip u ~min:eps ~max:(1. -. eps) in
+    let neg_one = scalar Tensor.Float32 (-1.0) in
+    let log_u = log u_clamped in
+    let neg_log_u = mul log_u neg_one in
+    let log_neg_log_u = log neg_log_u in
+    let gumbel = mul log_neg_log_u neg_one |> astype dtype in
+    let noisy = add logits gumbel in
+    let prefix_len = Array.length shape in
+    let argmax_axis = axis + prefix_len in
+    let inds = argmax noisy ~axis:argmax_axis ~keepdims:false in
+    astype Tensor.Int32 inds
+  in
 
-   (* Find where uniform_vals < cumsum for the first time *) let comparison =
-   cmplt uniform_vals cumsum in
+  let run_float64 eps =
+    let u = uniform key Tensor.Float64 full_shape in
+    let u_clamped = clip u ~min:eps ~max:(1. -. eps) in
+    let neg_one = scalar Tensor.Float64 (-1.0) in
+    let log_u = log u_clamped in
+    let neg_log_u = mul log_u neg_one in
+    let log_neg_log_u = log neg_log_u in
+    let gumbel = mul log_neg_log_u neg_one |> astype dtype in
+    let noisy = add logits gumbel in
+    let prefix_len = Array.length shape in
+    let argmax_axis = axis + prefix_len in
+    let inds = argmax noisy ~axis:argmax_axis ~keepdims:false in
+    astype Tensor.Int32 inds
+  in
 
-   (* argmax along axis gives us the first True index *) argmax comparison ~axis
-   ~keepdims:false *)
-
-(* Temporary placeholder for categorical *)
-let categorical _key ?axis:(_ = -1) _logits =
-  failwith "categorical: not implemented yet (requires cumsum)"
+  match dtype with
+  | Tensor.Float64 -> run_float64 1e-12
+  | Tensor.Float32 -> run_float32 1e-6
+  | Tensor.Float16 -> run_float32 1e-3
+  | Tensor.BFloat16 -> run_float32 1e-2
+  | Tensor.Float8_e4m3 | Tensor.Float8_e5m2 ->
+      invalid_arg "categorical: float8 logits not supported"
+  | _ -> invalid_arg "categorical: logits dtype must be floating point"
 
 let truncated_normal key dtype ~lower ~upper shape =
   if lower >= upper then

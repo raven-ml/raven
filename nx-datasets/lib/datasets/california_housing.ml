@@ -2,6 +2,13 @@
 open Bigarray
 open Dataset_utils
 
+(* Logging source for this loader *)
+let src =
+  Logs.Src.create "nx.datasets.california_housing"
+    ~doc:"California Housing loader"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 let dataset_name = "california-housing"
 let dataset_dir = get_cache_dir dataset_name
 let data_filename = "housing.csv"
@@ -28,7 +35,7 @@ let calculate_mean_non_nan column_data =
 
 let load () =
   ensure_dataset ();
-  Printf.printf "Loading California Housing dataset...\n%!";
+  Log.info (fun m -> m "Loading California Housing dataset...");
 
   let header, all_data_rows =
     try
@@ -85,8 +92,9 @@ let load () =
     List.find_index (( = ) "total_bedrooms") header
   in
 
-  Printf.printf "Found %d samples. Loading %d features + target '%s'.\n%!"
-    num_samples num_features target_name;
+  Log.info (fun m ->
+      m "Found %d samples. Loading %d features + target '%s'." num_samples
+        num_features target_name);
 
   let parsed_features_temp = Array.make_matrix num_samples num_features nan in
   let parsed_labels_temp = Array.make num_samples nan in
@@ -95,8 +103,10 @@ let load () =
   List.iteri
     (fun i row ->
       if List.length row <> List.length header then
-        Printf.eprintf "Warning: Row %d has %d columns, expected %d\n%!" (i + 1)
-          (List.length row) (List.length header);
+        Log.warn (fun m ->
+            m "Row %d has %d columns, expected %d (header: %s)" (i + 1)
+              (List.length row) (List.length header)
+              (String.concat ", " header));
 
       List.iteri
         (fun j feature_idx ->
@@ -106,29 +116,30 @@ let load () =
             parsed_features_temp.(i).(j) <- v_float;
             if Some feature_idx = total_bedrooms_index_opt then
               total_bedrooms_col_temp := v_float :: !total_bedrooms_col_temp)
-          else (
-            Printf.eprintf
-              "Warning: Row %d missing feature column %d ('%s'). Setting NaN.\n\
-               %!"
-              (i + 1) feature_idx (List.nth feature_names j);
+          else
+            let feature_name = List.nth feature_names j in
+            Log.warn (fun m ->
+                m "Row %d missing feature column %d ('%s'). Setting NaN."
+                  (i + 1) feature_idx feature_name);
             parsed_features_temp.(i).(j) <- nan;
             if Some feature_idx = total_bedrooms_index_opt then
-              total_bedrooms_col_temp := nan :: !total_bedrooms_col_temp))
+              total_bedrooms_col_temp := nan :: !total_bedrooms_col_temp)
         feature_indices;
 
       if List.length row > target_index then
         let label_str = List.nth row target_index in
         parsed_labels_temp.(i) <- parse_float_or_nan label_str
       else (
-        Printf.eprintf
-          "Warning: Row %d missing target column %d ('%s'). Setting NaN.\n%!"
-          (i + 1) target_index target_name;
+        Log.warn (fun m ->
+            m "Row %d missing target column %d ('%s'). Setting NaN." (i + 1)
+              target_index target_name);
         parsed_labels_temp.(i) <- nan))
     data_rows_str;
 
   let total_bedrooms_mean = calculate_mean_non_nan !total_bedrooms_col_temp in
-  Printf.printf "Calculated mean for 'total_bedrooms' (for imputation): %f\n%!"
-    total_bedrooms_mean;
+  Log.info (fun m ->
+      m "Calculated mean for 'total_bedrooms' (for imputation): %f"
+        total_bedrooms_mean);
   let total_bedrooms_feature_index =
     match List.find_index (( = ) "total_bedrooms") feature_names with
     | Some idx -> idx
@@ -163,5 +174,5 @@ let load () =
     else labels.{i} <- label_v
   done;
 
-  Printf.printf "California Housing loading complete.\n%!";
+  Log.info (fun m -> m "California Housing loading complete.");
   (features, labels)

@@ -34,8 +34,38 @@ enum nx_ba_extended_kind {
   NX_BA_LAST_KIND
 };
 
-/* Extended element sizes, aligning with stdlib's caml_ba_element_size[] */
-extern int caml_ba_extended_element_size[];
+#define NX_BA_EXTENDED_KIND_SHIFT 16
+#define NX_BA_EXTENDED_KIND_FIELD(kind) \
+  ((int)((kind) << NX_BA_EXTENDED_KIND_SHIFT))
+#define NX_BA_EXTENDED_KIND_MASK NX_BA_EXTENDED_KIND_FIELD(0xFF)
+
+static inline bool nx_ba_is_extended_kind(int kind) {
+  return kind >= NX_BA_BFLOAT16 && kind < NX_BA_LAST_KIND;
+}
+
+static inline int nx_ba_get_stored_extended_kind(int flags) {
+  return (flags & NX_BA_EXTENDED_KIND_MASK) >> NX_BA_EXTENDED_KIND_SHIFT;
+}
+
+static inline int nx_ba_store_extended_kind(int flags, int kind) {
+  if (nx_ba_is_extended_kind(kind)) {
+    flags &= ~NX_BA_EXTENDED_KIND_MASK;
+    flags |= NX_BA_EXTENDED_KIND_FIELD(kind);
+  } else {
+    flags &= ~NX_BA_EXTENDED_KIND_MASK;
+  }
+  return flags;
+}
+
+static inline int nx_ba_get_kind_from_flags(int flags) {
+  int stored = nx_ba_get_stored_extended_kind(flags);
+  if (stored != 0) return stored;
+  return flags & CAML_BA_KIND_MASK;
+}
+
+static inline int nx_ba_get_kind(const struct caml_ba_array *b) {
+  return nx_ba_get_kind_from_flags(b->flags);
+}
 
 /* Conversion functions for extended types */
 

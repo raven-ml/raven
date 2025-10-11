@@ -7,11 +7,6 @@ goalpost: jit-compiled gpt2 matching pytorch performance
 feature requests:
 - vmap (that compose with jvp!)
 
-fix:
-- near-zero formatting issues on some platform (opam-ci)
-- hang/deadlock during opam-ci (need to test commited fix with opam-ci)
-- rune debug handler causing malloc in opam-ci
-
 ## v1 (devex+docs)
 
 goalpost: mnist notebook in quill with rune + hugin

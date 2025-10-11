@@ -45,9 +45,9 @@
   (= %{profile} release))
  ; Only crunch in release mode
  (deps
-  ../editor/styles.css
-  ../editor/main.bc.wasm.js
-  (source_tree ../editor/main.bc.wasm.assets))
+  ../browser/styles.css
+  ../browser/main.bc.wasm.js
+  (source_tree ../browser/main.bc.wasm.assets))
  (action
   (run
    %{bin:ocaml-crunch}
@@ -62,7 +62,7 @@
    map
    -o
    asset_editor.ml
-   ../editor/)))
+   ../browser/)))
 
 (rule
  (target asset.ml)
@@ -79,9 +79,9 @@
  (enabled_if
   (<> %{profile} release))
  (deps
-  ../editor/styles.css
-  ../editor/main.bc.wasm.js
-  (source_tree ../editor/main.bc.wasm.assets))
+  ../browser/styles.css
+  ../browser/main.bc.wasm.js
+  (source_tree ../browser/main.bc.wasm.assets))
  ; Generate stub in dev mode
  (action
   (with-stdout-to

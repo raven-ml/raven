@@ -1,4 +1,4 @@
-open Quill_markdown
+open Quill_editor.Document
 
 (* Evaluate code blocks in markdown *)
 let eval_code_block ?(print_all = false) code =
@@ -30,14 +30,16 @@ let rec process_block block =
       | Ok output ->
           let output = unescape_output output in
           let formatted_output = Quill_top.format_output output in
-          let output_block = Quill_markdown.html_block formatted_output in
+          let output_block =
+            Quill_editor.Document.html_block formatted_output
+          in
           {
             block with
             content = Codeblock { code; output = Some output_block; info };
           }
       | Error err ->
           let error_block =
-            Quill_markdown.html_block ("```\n" ^ err ^ "\n```")
+            Quill_editor.Document.html_block ("```\n" ^ err ^ "\n```")
           in
           {
             block with
@@ -53,9 +55,9 @@ let rec process_block block =
   | _ -> block
 
 let eval_markdown md =
-  let blocks = Quill_markdown.document_of_md md in
+  let blocks = Quill_editor.Document.of_markdown md in
   let evaluated_blocks = List.map process_block blocks in
-  Quill_markdown.md_of_document evaluated_blocks
+  Quill_editor.Document.to_markdown evaluated_blocks
 
 let eval_file path =
   try

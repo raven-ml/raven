@@ -8,29 +8,31 @@ extern value caml_ba_get_N(value vb, value * vind, int nind);
 extern value caml_ba_set_N(value vb, value * vind, int nargs);
 extern value caml_ba_blit(value vsrc, value vdst);
 
-/* Element sizes for our extended types, aligning with stdlib caml_ba_element_size[] */
-int caml_ba_extended_element_size[] = {
-    [NX_BA_BFLOAT16 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 2, /* bfloat16 */
-    [NX_BA_BOOL - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* bool */
-    [NX_BA_INT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* int4_signed - use 1 byte (2 values packed), caml_ba_alloc will see 1 byte per "element" */
-    [NX_BA_UINT4 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* int4_unsigned - use 1 byte (2 values packed) */
-    [NX_BA_FP8_E4M3 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* fp8_e4m3 */
-    [NX_BA_FP8_E5M2 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* fp8_e5m2 */
-    [NX_BA_COMPLEX16 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 4, /* complex16 */
-    [NX_BA_QINT8 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* qint8 */
-    [NX_BA_QUINT8 - CAML_BA_FIRST_UNIMPLEMENTED_KIND] = 1, /* quint8 */
-};
-
-/* External reference to OCaml's element size table */
-extern int caml_ba_element_size[];
-
-/* Initialize element sizes in OCaml runtime's table */
-__attribute__((constructor))
-static void nx_ba_init(void) {
-  /* Patch OCaml's caml_ba_element_size array with our extended types */
-  for (int i = 0; i < (NX_BA_LAST_KIND - CAML_BA_FIRST_UNIMPLEMENTED_KIND); i++) {
-    caml_ba_element_size[CAML_BA_FIRST_UNIMPLEMENTED_KIND + i] = caml_ba_extended_element_size[i];
+static int nx_ba_base_kind(int kind) {
+  switch (kind) {
+    case NX_BA_BFLOAT16: return CAML_BA_FLOAT16;
+    case NX_BA_BOOL: return CAML_BA_UINT8;
+    case NX_BA_INT4:
+    case NX_BA_UINT4:
+    case NX_BA_FP8_E4M3:
+    case NX_BA_FP8_E5M2:
+    case NX_BA_QUINT8: return CAML_BA_UINT8;
+    case NX_BA_QINT8: return CAML_BA_SINT8;
+    case NX_BA_COMPLEX16: return CAML_BA_FLOAT32;
+    default: return -1;
   }
+}
+
+static value caml_nx_ba_alloc_with_kind(int kind, int layout_flag,
+                                        int num_dims, intnat *dim,
+                                        void *data) {
+  int base_kind = nx_ba_is_extended_kind(kind) ? nx_ba_base_kind(kind) : kind;
+  if (base_kind < 0) caml_failwith("Unknown extended bigarray kind");
+  int flags = base_kind | layout_flag | CAML_BA_MANAGED;
+  value res = caml_ba_alloc(flags, num_dims, data, dim);
+  struct caml_ba_array *ba = Caml_ba_array_val(res);
+  ba->flags = nx_ba_store_extended_kind(ba->flags, kind);
+  return res;
 }
 
 /* Helper for overflow-safe multiplication */
@@ -72,8 +74,7 @@ static uintnat nx_ba_num_elts_from_dims(int num_dims, intnat *dim) {
     if (data == NULL && size != 0) caml_raise_out_of_memory(); \
                                                                        \
     int layout_flag = Caml_ba_layout_val(vlayout); \
-    int flags = (type_enum) | layout_flag | CAML_BA_MANAGED; \
-    res = caml_ba_alloc(flags, num_dims, data, dim); \
+    res = caml_nx_ba_alloc_with_kind((type_enum), layout_flag, num_dims, dim, data); \
                                                                        \
     CAMLreturn(res); \
   }
@@ -104,10 +105,9 @@ CAMLprim value caml_nx_ba_create_int4_signed(value vlayout, value vdim) {
   void *data = calloc(1, size);
   if (data == NULL && size != 0) caml_raise_out_of_memory();
   int layout_flag = Caml_ba_layout_val(vlayout);
-  int flags = NX_BA_INT4 | layout_flag | CAML_BA_MANAGED;
-  /* Pass original dimensions to caml_ba_alloc - the element size of 1 in caml_ba_element_size
-     will make it compute size correctly */
-  res = caml_ba_alloc(flags, num_dims, data, original_dim);
+  /* Pass original dimensions to caml_ba_alloc and tag the extended kind for consumers */
+  res = caml_nx_ba_alloc_with_kind(NX_BA_INT4, layout_flag, num_dims, original_dim,
+                                   data);
   CAMLreturn(res);
 }
 
@@ -127,10 +127,9 @@ CAMLprim value caml_nx_ba_create_int4_unsigned(value vlayout, value vdim) {
   void *data = calloc(1, size);
   if (data == NULL && size != 0) caml_raise_out_of_memory();
   int layout_flag = Caml_ba_layout_val(vlayout);
-  int flags = NX_BA_UINT4 | layout_flag | CAML_BA_MANAGED;
-  /* Pass original dimensions to caml_ba_alloc - the element size of 1 in caml_ba_element_size
-     will make it compute size correctly */
-  res = caml_ba_alloc(flags, num_dims, data, original_dim);
+  /* Pass original dimensions to caml_ba_alloc and tag the extended kind for consumers */
+  res = caml_nx_ba_alloc_with_kind(NX_BA_UINT4, layout_flag, num_dims, original_dim,
+                                   data);
   CAMLreturn(res);
 }
 
@@ -172,7 +171,7 @@ CAMLprim value caml_nx_ba_get_generic(value vb, value vind) {
   for (int i = 0; i < b->num_dims; i++) index[i] = Long_val(Field(vind, i));
   offset = nx_ba_offset(b, index);
   /* Perform read based on kind */
-  int kind = b->flags & CAML_BA_KIND_MASK;
+  int kind = nx_ba_get_kind(b);
   /* Handle standard types first */
   if (kind < CAML_BA_FIRST_UNIMPLEMENTED_KIND) {
     /* Use standard bigarray get - we need to build the arguments */
@@ -257,7 +256,7 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
   for (int i = 0; i < b->num_dims; i++) index[i] = Long_val(Field(vind, i));
   offset = nx_ba_offset(b, index);
   /* Perform write based on kind */
-  int kind = b->flags & CAML_BA_KIND_MASK;
+  int kind = nx_ba_get_kind(b);
   /* Handle standard types first */
   if (kind < CAML_BA_FIRST_UNIMPLEMENTED_KIND) {
     /* Use standard bigarray set */
@@ -364,7 +363,7 @@ CAMLprim value caml_nx_ba_blit_to_bytes(value vsrc, value vsrc_off,
 /* Get the extended kind of a bigarray */
 CAMLprim value caml_nx_ba_kind(value vb) {
   struct caml_ba_array *b = Caml_ba_array_val(vb);
-  int kind = b->flags & CAML_BA_KIND_MASK;
+  int kind = nx_ba_get_kind(b);
  
   /* Map standard kinds to our extended kind values */
   switch (kind) {
@@ -403,8 +402,8 @@ CAMLprim value caml_nx_ba_blit(value vsrc, value vdst) {
   struct caml_ba_array *dst = Caml_ba_array_val(vdst);
  
   /* Check that kinds match */
-  int src_kind = src->flags & CAML_BA_KIND_MASK;
-  int dst_kind = dst->flags & CAML_BA_KIND_MASK;
+  int src_kind = nx_ba_get_kind(src);
+  int dst_kind = nx_ba_get_kind(dst);
   if (src_kind != dst_kind) {
     caml_invalid_argument("caml_nx_ba_blit: arrays have different kinds");
   }
@@ -465,7 +464,7 @@ static uintnat nx_ba_num_elts(struct caml_ba_array * b) {
 CAMLprim value caml_nx_ba_fill(value vb, value vinit) {
   CAMLparam2(vb, vinit);
   struct caml_ba_array * b = Caml_ba_array_val(vb);
-  int kind = b->flags & CAML_BA_KIND_MASK;
+  int kind = nx_ba_get_kind(b);
  
   /* Check if this is an extended type */
   if (kind >= CAML_BA_FIRST_UNIMPLEMENTED_KIND) {

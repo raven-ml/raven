@@ -1,4 +1,4 @@
-open Quill_markdown
+open Quill_editor.Document
 open Vdom
 
 let rec inline_to_debug_string (indent : int) (i : inline) : string =
@@ -155,7 +155,7 @@ let document_to_debug_string (model : Model.t) : string =
   let doc_ast =
     List.map (block_to_debug_string 0) model.document |> String.concat "\n"
   in
-  let doc_str = Quill_markdown.md_of_document model.document in
+  let doc_str = Quill_editor.Document.to_markdown model.document in
   Printf.sprintf "Document [\n%s\n]\n\n---\n\n%s" doc_ast doc_str
 
 let view model =

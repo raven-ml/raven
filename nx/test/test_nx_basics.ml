@@ -426,6 +426,13 @@ let test_is_c_contiguous_after_slice () =
   let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
   check bool "slice step=2 is contiguous" true (Nx.is_c_contiguous sliced)
 
+let test_is_c_contiguous_after_double_transpose () =
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let transposed = Nx.transpose t in
+  let restored = Nx.transpose transposed in
+  check bool "transpose twice restores contiguous layout" true
+    (Nx.is_c_contiguous restored)
+
 let test_offset_after_multiple_slices () =
   let t = Nx.create Nx.float32 [| 5; 5 |] (Array.init 25 float_of_int) in
   let slice1 = Nx.slice [ Nx.R (1, 3); Nx.R (0, 5) ] t in
@@ -640,6 +647,9 @@ let memory_and_views =
       `Quick,
       test_is_c_contiguous_after_transpose );
     ("is contiguous after slice", `Quick, test_is_c_contiguous_after_slice);
+    ( "is contiguous after double transpose",
+      `Quick,
+      test_is_c_contiguous_after_double_transpose );
     ("offset after multiple slices", `Quick, test_offset_after_multiple_slices);
   ]
 

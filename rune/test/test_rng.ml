@@ -162,6 +162,203 @@ let test_truncated_normal () =
         (v >= lower && v <= upper))
     values
 
+let test_categorical () =
+  let key = Rng.key 42 in
+
+  (* Test with simple 1D logits: [0.0, 1.0, 2.0] *)
+  (* Expected probabilities after softmax: [0.090, 0.245, 0.665] approximately *)
+  let logits = Rune.create Float32 [| 3 |] [| 0.0; 1.0; 2.0 |] in
+  let samples = Rng.categorical key logits in
+
+  (* Check output shape *)
+  let output_shape = Rune.shape samples in
+  A.check (A.array A.int) "categorical produces correct shape" [||] output_shape;
+
+  (* Check that output is a scalar int32 *)
+  let sample_val = Rune.to_array samples in
+  A.check A.int "categorical produces single value" 1 (Array.length sample_val);
+
+  (* Check value is in valid range [0, 2] *)
+  let sample_idx = Int32.to_int sample_val.(0) in
+  A.check A.bool "categorical value in valid range" true
+    (sample_idx >= 0 && sample_idx <= 2);
+
+  (* Test determinism *)
+  let samples2 = Rng.categorical key logits in
+  let is_equal = Rune.all (Rune.equal samples samples2) in
+  let is_equal_val = Rune.to_array is_equal in
+  A.check A.bool "categorical is deterministic" true (is_equal_val.(0) > 0);
+
+  (* Test with Float64 *)
+  let logits64 = Rune.create Float64 [| 3 |] [| 0.0; 1.0; 2.0 |] in
+  let samples64 = Rng.categorical key logits64 in
+  let is_equal64 = Rune.all (Rune.equal samples samples64) in
+  let is_equal_val64 = Rune.to_array is_equal64 in
+  A.check A.bool "categorical is type agnostic" true (is_equal_val64.(0) > 0)
+
+let test_categorical_2d () =
+  let key = Rng.key 42 in
+
+  (* Test with 2D logits: [[0.0, 1.0], [2.0, 0.0]] *)
+  (* Expected probabilities after softmax: [[0.269, 0.731], [0.881, 0.119]] approximately *)
+  let logits = Rune.create Float32 [| 2; 2 |] [| 0.0; 1.0; 2.0; 0.0 |] in
+  let samples = Rng.categorical key logits in
+
+  (* Check output shape (should be [2] - one sample per row) *)
+  let output_shape = Rune.shape samples in
+  A.check (A.array A.int) "categorical 2D produces correct shape" [| 2 |]
+    output_shape;
+
+  (* Check values are in valid range [0, 1] for each row *)
+  let sample_vals = Rune.to_array samples in
+  A.check A.int "categorical 2D produces 2 values" 2 (Array.length sample_vals);
+
+  Array.iter
+    (fun v ->
+      let idx = Int32.to_int v in
+      A.check A.bool "categorical 2D value in valid range" true
+        (idx >= 0 && idx <= 1))
+    sample_vals
+
+let test_categorical_axis_handling () =
+  let key = Rng.key 42 in
+
+  (* 2D logits: shape [2; 3] Row 0 → [0.0, 1.0, 2.0] Row 1 → [2.0, 0.5, -1.0]
+     This ensures all probabilities differ. *)
+  let logits =
+    Rune.create Float32 [| 2; 3 |] [| 0.0; 1.0; 2.0; 2.0; 0.5; -1.0 |]
+  in
+
+  (* axis=1 → sample across columns for each row → shape [2] *)
+  let samples_axis_1 = Rng.categorical key ~axis:1 logits in
+
+  (* axis=-1 → equivalent to axis=1 → shape [2] *)
+  let samples_axis_neg_1 = Rng.categorical key ~axis:(-1) logits in
+
+  (* axis=0 → sample across rows for each column → shape [3] *)
+  let samples_axis_0 = Rng.categorical key ~axis:0 logits in
+
+  (* Check shape for axis=1 *)
+  let shape_axis_1 = Rune.shape samples_axis_1 in
+  A.check (A.array A.int) "categorical axis=1 produces correct shape" [| 2 |]
+    shape_axis_1;
+
+  (* Check shape for axis=-1 (should match axis=1) *)
+  let shape_axis_neg_1 = Rune.shape samples_axis_neg_1 in
+  A.check (A.array A.int) "categorical axis=-1 matches axis=1 shape" [| 2 |]
+    shape_axis_neg_1;
+
+  (* Check shape for axis=0 *)
+  let shape_axis_0 = Rune.shape samples_axis_0 in
+  A.check (A.array A.int) "categorical axis=0 produces correct shape" [| 3 |]
+    shape_axis_0;
+
+  (* Check that axis=1 and axis=-1 give identical results *)
+  let is_equal = Rune.all (Rune.equal samples_axis_1 samples_axis_neg_1) in
+  let is_equal_val = Rune.to_array is_equal in
+  A.check A.bool "categorical axis=-1 behaves like axis=1" true
+    (is_equal_val.(0) > 0);
+
+  (* Sanity check: ensure sampled indices are in valid range *)
+  let vals_axis_0 = Rune.to_array samples_axis_0 in
+  Array.iter
+    (fun i ->
+      A.check A.bool "axis=0 value in valid range" true
+        (Int32.to_int i >= 0 && Int32.to_int i < 2))
+    vals_axis_0;
+
+  let vals_axis_1 = Rune.to_array samples_axis_1 in
+  Array.iter
+    (fun i ->
+      A.check A.bool "axis=1 value in valid range" true
+        (Int32.to_int i >= 0 && Int32.to_int i < 3))
+    vals_axis_1
+
+let test_categorical_shape_prefix_axis () =
+  let key = Rng.key 314 in
+  let logits =
+    Rune.create Float64 [| 2; 3; 4 |]
+      [|
+        0.0;
+        0.5;
+        1.0;
+        1.5;
+        2.0;
+        2.5;
+        3.0;
+        -0.5;
+        0.25;
+        1.25;
+        -1.0;
+        0.75;
+        -0.25;
+        0.4;
+        1.8;
+        -1.5;
+        0.2;
+        1.1;
+        0.3;
+        -0.8;
+        0.6;
+        1.4;
+        -0.2;
+        0.9;
+      |]
+  in
+
+  let prefix_shape = [| 5; 6 |] in
+  let samples = Rng.categorical key ~shape:prefix_shape ~axis:(-2) logits in
+
+  let expected_shape = [| 5; 6; 2; 4 |] in
+  A.check (A.array A.int) "categorical shape prefix keeps axis semantics"
+    expected_shape (Rune.shape samples);
+
+  let values = Rune.to_array samples |> Array.map Int32.to_int in
+  Array.iter
+    (fun v ->
+      A.check A.bool "categorical indices within axis range" true
+        (v >= 0 && v < 3))
+    values
+
+let test_categorical_distribution () =
+  let key = Rng.key 123 in
+  let logits = Rune.create Rune.Float32 [| 3 |] [| 0.0; 1.0; 2.0 |] in
+
+  let n_samples = 20000 in
+  let inds = Rng.categorical key ~shape:[| n_samples |] logits in
+
+  A.check (A.array A.int) "categorical produces correct shape" [| n_samples |]
+    (Rune.shape inds);
+
+  let values = Rune.to_array inds |> Array.map Int32.to_int in
+
+  (* Histogram counts *)
+  let n_classes = 3 in
+  let counts = Array.make n_classes 0 in
+  Array.iter (fun v -> counts.(v) <- counts.(v) + 1) values;
+
+  (* Compute softmax probabilities from logits_arr *)
+  let logits_arr = [| 0.0; 1.0; 2.0 |] in
+  let max_logit =
+    Array.fold_left
+      (fun acc x -> if x > acc then x else acc)
+      neg_infinity logits_arr
+  in
+  let exps = Array.map (fun x -> Stdlib.exp (x -. max_logit)) logits_arr in
+  let sum_exps = Array.fold_left ( +. ) 0. exps in
+  let probs = Array.map (fun e -> e /. sum_exps) exps in
+
+  (* Check each bucket is within a reasonable statistical tolerance *)
+  Array.iteri
+    (fun i p ->
+      let prop = float_of_int counts.(i) /. float_of_int n_samples in
+      let se = Stdlib.sqrt (p *. (1. -. p) /. float_of_int n_samples) in
+      let tol = Stdlib.max (4. *. se) 0.01 in
+      A.check (A.float tol)
+        (Printf.sprintf "categorical bucket %d ~ p" i)
+        p prop)
+    probs
+
 let test_rng_with_autodiff () =
   let key = Rng.key 42 in
 
@@ -201,6 +398,14 @@ let () =
           (* A.test_case "permutation" `Quick test_permutation;
           A.test_case "shuffle" `Quick test_shuffle; *)
           A.test_case "truncated_normal" `Quick test_truncated_normal;
+          A.test_case "categorical" `Quick test_categorical;
+          A.test_case "categorical_2d" `Quick test_categorical_2d;
+          A.test_case "categorical_axis_handling" `Quick
+            test_categorical_axis_handling;
+          A.test_case "categorical_shape_prefix_axis" `Quick
+            test_categorical_shape_prefix_axis;
+          A.test_case "categorical_distribution" `Quick
+            test_categorical_distribution;
         ] );
       ("autodiff", [ A.test_case "rng_with_grad" `Quick test_rng_with_autodiff ]);
     ]

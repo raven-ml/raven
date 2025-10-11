@@ -1,6 +1,5 @@
 open Brr
-open Quill_editor
-open Quill_markdown
+open Quill_browser
 
 let log fmt =
   Printf.ksprintf (fun s -> Console.(log [ Jstr.v ("[main] " ^ s) ])) fmt
@@ -48,7 +47,7 @@ let () =
       let fut = Api.fetch_document path in
       Fut.await fut (function
         | Ok response_text ->
-            let document = document_of_md response_text in
+            let document = Quill_editor.Document.of_markdown response_text in
             Vdom_blit.process mounted_app (Update.Set_document document)
         | Error err ->
             Console.(

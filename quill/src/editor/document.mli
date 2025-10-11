@@ -40,7 +40,7 @@ and list_type = Ordered of int * char | Unordered of char
 and list_spacing = Tight | Loose
 and block = { id : int; content : block_content; focused : bool }
 
-type document = block list
+type t = block list
 (** Document type *)
 
 (** {1 Constructors} *)
@@ -74,12 +74,15 @@ val list :
 val html_block : ?focused:bool -> string -> block
 val link_reference_definition : ?focused:bool -> Link_definition.t node -> block
 
-val init : document
+val init : t
 (** Empty document *)
+
+val empty : t
+(** Alias of {!init} for clarity *)
 
 (** {1 Parsing and Serialization} *)
 
-val document_of_md : string -> document
+val of_markdown : string -> t
 (** Parse markdown to document *)
 
 val block_of_md : string -> block
@@ -94,7 +97,7 @@ val inline_of_md : string -> inline
 val inline_content_of_md : string -> inline_content
 (** Parse markdown to inline content *)
 
-val md_of_document : document -> string
+val to_markdown : t -> string
 (** Serialize document to markdown *)
 
 (** {1 Document Operations} *)
@@ -108,7 +111,7 @@ val replace_inline_in_block : block -> int -> inline -> block
 val split_inline : inline -> int -> inline * inline
 (** Split inline at offset *)
 
-val set_focused_document_by_id : document -> int -> document
+val set_focused_document_by_id : t -> int -> t
 (** Set focused state by ID *)
 
 val clear_focus_block : block -> block
@@ -119,13 +122,30 @@ val clear_focus_inline : inline -> inline
 val set_codeblock_output_in_block : block -> int -> block -> block
 (** Set codeblock output *)
 
-val normalize_blanklines : document -> document
+val normalize_blanklines : t -> t
 (** Normalize blank lines *)
 
 val inline_to_plain : inline -> string
 (** Convert inline to plain text *)
 
 val inline_content_to_plain : inline_content -> string
+
+(** {1 Extended Helpers} *)
+
+val focus_inline_by_id : t -> int -> t
+val focus_block_by_id : t -> int -> t
+val replace_block_with_codeblock : t -> block_id:int -> t
+val update_codeblock : t -> block_id:int -> code:string -> t
+val set_codeblock_output : t -> block_id:int -> block -> t
+
+val split_block_at_inline :
+  t -> block_id:int -> inline_id:int -> offset:int -> t
+
+val find_block : t -> block_id:int -> block option
+val index_of_block : t -> block_id:int -> int option
+val find_block_of_inline : t -> inline_id:int -> (block * int) option
+val block_ids_between : t -> start_id:int -> end_id:int -> int list
+val slice_between : t -> start_id:int -> end_id:int -> t
 
 (** {1 Internal} *)
 

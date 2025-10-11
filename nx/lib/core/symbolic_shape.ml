@@ -1,6 +1,12 @@
 (* Symbolic shapes for shape-polymorphic tensors. *)
 
-type var = { name : string; min : int; max : int; mutable value : int option }
+type var = {
+  id : int;
+  name : string;
+  min : int;
+  max : int;
+  mutable value : int option;
+}
 
 type expr =
   | Const of int
@@ -12,6 +18,13 @@ type expr =
 type dim = expr
 type t = dim array
 
+let next_id =
+  let counter = ref 0 in
+  fun () ->
+    let id = !counter in
+    incr counter;
+    id
+
 let static n =
   if n < 0 then
     Error.invalid ~op:"static"
@@ -19,7 +32,7 @@ let static n =
       ~reason:"negative dimension" ();
   Const n
 
-let dynamic name ~min ~max =
+let var name ~min ~max =
   if min < 0 then
     Error.invalid ~op:"dynamic"
       ~what:(Printf.sprintf "min=%d" min)
@@ -29,8 +42,10 @@ let dynamic name ~min ~max =
       ~what:(Printf.sprintf "bounds [%d, %d]" min max)
       ~reason:(Printf.sprintf "min > max")
       ();
-  Var { name; min; max; value = None }
+  { id = next_id (); name; min; max; value = None }
 
+let dim_of_var var = Var var
+let dynamic name ~min ~max = dim_of_var (var name ~min ~max)
 let add d1 d2 = Add (d1, d2)
 let mul d1 d2 = Mul (d1, d2)
 let neg d = Neg d
@@ -45,11 +60,11 @@ let bind_var var value =
       ();
   var.value <- Some value
 
-let bind name value shape =
-  (* Find and bind the variable with the given name *)
+let bind target value shape =
+  bind_var target value;
   let rec find_and_bind expr =
     match expr with
-    | Var v when v.name = name -> bind_var v value
+    | Var v when v.id = target.id -> bind_var v value
     | Add (e1, e2) | Mul (e1, e2) ->
         find_and_bind e1;
         find_and_bind e2
@@ -100,8 +115,18 @@ let rec expr_vars = function
   | Neg e -> expr_vars e
 
 let vars shape =
-  shape |> Array.to_list |> List.concat_map expr_vars
-  |> List.sort_uniq (fun v1 v2 -> String.compare v1.name v2.name)
+  let rec dedup acc = function
+    | [] -> List.rev acc
+    | v :: rest ->
+        if List.exists (fun existing -> existing.id = v.id) acc then
+          dedup acc rest
+        else dedup (v :: acc) rest
+  in
+  shape |> Array.to_list |> List.concat_map expr_vars |> dedup []
+
+let var_id v = v.id
+let var_name v = v.name
+let var_bounds v = (v.min, v.max)
 
 let rec expr_is_static = function
   | Const _ -> true
@@ -117,8 +142,12 @@ let to_string shape =
     | Const n -> string_of_int n
     | Var var -> (
         match var.value with
-        | None -> var.name
-        | Some n -> Printf.sprintf "%s=%d" var.name n)
+        | None ->
+            if var.name = "" then Printf.sprintf "v%d" var.id
+            else Printf.sprintf "%s#%d" var.name var.id
+        | Some n ->
+            if var.name = "" then Printf.sprintf "v%d=%d" var.id n
+            else Printf.sprintf "%s#%d=%d" var.name var.id n)
     | Add (e1, e2) ->
         Printf.sprintf "(%s + %s)" (expr_to_string e1) (expr_to_string e2)
     | Mul (e1, e2) ->
@@ -132,7 +161,7 @@ let to_string shape =
 let rec expr_equal e1 e2 =
   match (e1, e2) with
   | Const n1, Const n2 -> n1 = n2
-  | Var v1, Var v2 -> v1 == v2
+  | Var v1, Var v2 -> v1.id = v2.id
   | Add (a1, b1), Add (a2, b2) | Mul (a1, b1), Mul (a2, b2) ->
       expr_equal a1 a2 && expr_equal b1 b2
   | Neg e1', Neg e2' -> expr_equal e1' e2'
@@ -206,7 +235,12 @@ let substitute bindings shape =
       let rec subst = function
         | Const n -> Const n
         | Var v as var -> (
-            try Const (List.assoc v.name bindings) with Not_found -> var)
+            let rec lookup = function
+              | [] -> None
+              | (var', value) :: rest ->
+                  if var'.id = v.id then Some value else lookup rest
+            in
+            match lookup bindings with Some value -> Const value | None -> var)
         | Add (e1, e2) -> Add (subst e1, subst e2)
         | Mul (e1, e2) -> Mul (subst e1, subst e2)
         | Neg e -> Neg (subst e)

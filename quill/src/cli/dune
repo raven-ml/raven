@@ -9,6 +9,6 @@
   quill_server
   quill_top
   quill_top_unix
-  quill_markdown
+  quill_editor
   str
   unix))

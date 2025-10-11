@@ -107,7 +107,8 @@ val shuffle : key -> ('a, 'b) Tensor.t -> ('a, 'b) Tensor.t
     @param x Tensor to shuffle
     @return Shuffled tensor *)
 
-val categorical : key -> ?axis:int -> ('a, 'b) Tensor.t -> Tensor.int32_t
+val categorical :
+  key -> ?axis:int -> ?shape:int array -> ('a, 'b) Tensor.t -> Tensor.int32_t
 (** Sample from a categorical distribution.
 
     [categorical key logits ?axis] samples indices from a categorical
@@ -115,6 +116,7 @@ val categorical : key -> ?axis:int -> ('a, 'b) Tensor.t -> Tensor.int32_t
 
     @param key PRNG key for random generation
     @param logits Unnormalized log probabilities
+    @param shape Shape of the output tensor (default: scalar)
     @param axis Axis along which to sample (default: -1)
     @return Tensor of sampled indices *)
 

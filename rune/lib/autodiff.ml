@@ -423,9 +423,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
     | E_reshape { t_in = t_in_val; new_shape } ->
         Some
           (fun k ->
-            let result_val =
-              op_reshape t_in_val (Symbolic_shape.of_ints new_shape)
-            in
+            let result_val = op_reshape t_in_val new_shape in
             let forward_val = continue k result_val in
             Debug.with_context "∇reshape" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
@@ -440,9 +438,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
     | E_expand { t_in = t_in_val; new_target_shape } ->
         Some
           (fun k ->
-            let result_val =
-              op_expand t_in_val (Symbolic_shape.of_ints new_target_shape)
-            in
+            let result_val = op_expand t_in_val new_target_shape in
             let forward_val = continue k result_val in
             Debug.with_context "∇expand" (fun () ->
                 let twg_in = get_or_init_twg t_in_val in
@@ -451,7 +447,12 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
 
                 let grad_contrib_to_original_input =
                   let original_input_shape = T.shape (value_of twg_in) in
-                  let expanded_output_shape = new_target_shape in
+                  let expanded_output_shape =
+                    match Symbolic_shape.eval new_target_shape with
+                    | Some arr -> arr
+                    | None ->
+                        failwith "expand grad requires concrete target shape"
+                  in
                   if original_input_shape = expanded_output_shape then
                     d_loss_d_expanded_result
                   else
@@ -1461,11 +1462,14 @@ let make_forward_handler primal_to_dual_map =
     | E_reshape { t_in; new_shape } ->
         Some
           (fun k ->
-            let result_val =
-              op_reshape t_in (Symbolic_shape.of_ints new_shape)
-            in
+            let result_val = op_reshape t_in new_shape in
             let dual_in = get_dual t_in in
-            let result_tangent = T.reshape new_shape dual_in.tangent in
+            let shape_array =
+              match Symbolic_shape.eval new_shape with
+              | Some arr -> arr
+              | None -> failwith "reshape tangent requires concrete shape"
+            in
+            let result_tangent = T.reshape shape_array dual_in.tangent in
             let result_dual =
               { primal = result_val; tangent = result_tangent }
             in
@@ -1475,12 +1479,16 @@ let make_forward_handler primal_to_dual_map =
     | E_expand { t_in; new_target_shape } ->
         Some
           (fun k ->
-            let result_val =
-              op_expand t_in (Symbolic_shape.of_ints new_target_shape)
-            in
+            let result_val = op_expand t_in new_target_shape in
             let dual_in = get_dual t_in in
             let result_tangent =
-              T.broadcast_to new_target_shape dual_in.tangent
+              let target_shape =
+                match Symbolic_shape.eval new_target_shape with
+                | Some arr -> arr
+                | None ->
+                    failwith "expand tangent requires concrete target shape"
+              in
+              T.broadcast_to target_shape dual_in.tangent
             in
             let result_dual =
               { primal = result_val; tangent = result_tangent }

@@ -52,7 +52,7 @@ let handle_remove ~is_backspace mounted_app dom_el =
     | None -> failwith "Could not find editor element"
   in
   let model = Vdom_blit.get mounted_app in
-  let md = Quill_markdown.md_of_document model.Model.document in
+  let md = Quill_editor.Document.to_markdown model.Model.document in
   let start_offset, end_offset = get_selection_offsets_within editor_div in
   let new_md, new_offset =
     if start_offset = end_offset then (* Collapsed selection *)
@@ -87,7 +87,7 @@ let handle_remove ~is_backspace mounted_app dom_el =
       (new_md, start_offset))
   in
   if new_md <> md then (
-    let new_document = Quill_markdown.document_of_md new_md in
+    let new_document = Quill_editor.Document.of_markdown new_md in
     Vdom_blit.process mounted_app (Update.Set_document new_document);
     Vdom_blit.after_redraw mounted_app (fun () ->
         set_caret_offset_within editor_div new_offset));
@@ -139,8 +139,8 @@ let handle_enter mounted_app dom_el =
           ^ String.sub md end_offset (String.length md - end_offset)
       in
       let new_offset = start_offset + String.length inserted_text in
-      let doc = Quill_markdown.document_of_md (String.trim new_md) in
-      let doc = Quill_markdown.normalize_blanklines doc in
+      let doc = Quill_editor.Document.of_markdown (String.trim new_md) in
+      let doc = Quill_editor.Document.normalize_blanklines doc in
       Vdom_blit.process mounted_app (Update.Set_document doc);
       Vdom_blit.after_redraw mounted_app (fun () ->
           set_caret_offset_within editor_div new_offset);
@@ -169,7 +169,7 @@ let handle_enter_in_codeblock mounted_app dom_el =
           ^ String.sub md end_offset (String.length md - end_offset)
       in
       let new_offset = start_offset + String.length inserted_text in
-      let doc = Quill_markdown.document_of_md (String.trim new_md) in
+      let doc = Quill_editor.Document.of_markdown (String.trim new_md) in
       Vdom_blit.process mounted_app (Update.Set_document doc);
       Vdom_blit.after_redraw mounted_app (fun () ->
           set_caret_offset_within editor_div new_offset);

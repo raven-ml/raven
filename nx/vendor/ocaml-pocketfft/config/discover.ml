@@ -19,11 +19,22 @@ let () =
         | _ -> []
       in
 
+      let lto_flags =
+        match Sys.getenv_opt "NX_POCKETFFT_ENABLE_LTO" with
+        | Some v ->
+            let normalized = String.(lowercase_ascii (trim v)) in
+            if normalized = "1" || normalized = "true" || normalized = "yes" then
+              [ "-flto" ]
+            else
+              []
+        | None -> []
+      in
+
       let cxx_flags =
         [ "-O3" ]
         @ arch_flags
+        @ lto_flags
         @ [
-            "-flto";
             "-ffast-math";
             "-DNDEBUG";
             "-funroll-loops";

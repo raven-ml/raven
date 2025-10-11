@@ -703,11 +703,11 @@ static void dispatch_matmul_op(value v_a, value v_b, value v_c,
   value v_c_data = Field(v_c, FFI_TENSOR_DATA);
 
   struct caml_ba_array *ba = Caml_ba_array_val(v_a_data);
-  int kind = ba->flags & CAML_BA_KIND_MASK;
+  int kind = nx_ba_get_kind(ba);
 
   // Check kinds match for b and c
-  int kind_b = Caml_ba_array_val(v_b_data)->flags & CAML_BA_KIND_MASK;
-  int kind_c = Caml_ba_array_val(v_c_data)->flags & CAML_BA_KIND_MASK;
+  int kind_b = nx_ba_get_kind(Caml_ba_array_val(v_b_data));
+  int kind_c = nx_ba_get_kind(Caml_ba_array_val(v_c_data));
   if (kind != kind_b || kind != kind_c) {
     cleanup_ndarray(&A);
     cleanup_ndarray(&B);
