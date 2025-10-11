@@ -5890,7 +5890,7 @@ module Make (B : Backend_intf.S) = struct
     (*let x = Nx.pinv a in*)
     (* TODO: use for rank determination *)
 
-    (* Use QR decomposition 
+    (* Use QR decomposition  
     let q, r = B.op_qr ~reduced:true a in
     let y = matmul (matrix_transpose q) b in
 
