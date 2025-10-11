@@ -1,5 +1,4 @@
 (* High-level tensor operations built on backend [B]. *)
-
 open Bigarray_ext
 
 module Make (B : Backend_intf.S) = struct
@@ -5630,20 +5629,84 @@ module Make (B : Backend_intf.S) = struct
     (* Squeeze result if we expanded b *)
     if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
+
+  let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
+    check_float_or_complex ~op:"pinv" a;
+    let _ = hermitian in
+    (* TODO: use for optimization *)
+
+    let u, s, vh = B.op_svd ~full_matrices:false a in
+
+    (* Determine cutoff *)
+    let cutoff =
+      match rtol with
+      | Some rtol_value ->
+
+        (*Use provided relative tolerance*)
+         rtol_value
+      
+      | None ->
+        let max_s = max s |> unsafe_get [] in
+        (* Default cutoff is max(m,n) * eps * max_s *)
+        let m, n =
+          shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
+        in
+        (* Use appropriate epsilon for the dtype *)
+        let eps = 
+          if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
+            (* Machine epsilon for float32 *)
+          else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
+            (* Machine epsilon for float64 *)
+          else 1e-15 (* Default for other types *)
+        in
+        (float_of_int (Stdlib.max m n) *. eps *. max_s)
+    in
+
+    (* Compute pseudoinverse *)
+    let ones_s = ones (B.context s) (dtype s) (shape s) in
+    let threshold = scalar (B.context a) (dtype s) cutoff in
+    let mask = greater s threshold in
+    let safe_s = where mask s ones_s in
+    let s_inv = div ones_s safe_s in
+    let mask = cast (dtype s) mask in
+    let s_inv = mul s_inv mask in
+
+    (* Cast s_inv to match input type *)
+    let s_inv = cast (dtype a) s_inv in
+
+    (* Compute V @ S^-1 @ U^H *)
+    (* We need to multiply each column of vh.T by corresponding s_inv element *)
+    (* vh.T has shape [n, k], s_inv has shape [k] *)
+    (* We want broadcasting [n, k] * [1, k] -> [n, k] *)
+    let s_inv_expanded = unsqueeze ~axes:[ 0 ] s_inv in
+    (* Shape [1, k] *)
+    let vs = mul (matrix_transpose vh) s_inv_expanded in
+    matmul vs (matrix_transpose u)
+
   let lstsq ?rcond a b =
     check_float_or_complex ~op:"lstsq" a;
     check_float_or_complex ~op:"lstsq" b;
-    let _ = rcond in
+
+    let m, n =
+      shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
+    in
+
+    let rcond_value = Option.value ~default:0.0 rcond in
+
+    let a_pseudo = pinv a ~rtol:rcond_value in
+
+    let x = matmul a_pseudo b in
+
+
+    (*let x = Nx.pinv a in*)
     (* TODO: use for rank determination *)
 
-    (* Use QR decomposition *)
+    (* Use QR decomposition 
     let q, r = B.op_qr ~reduced:true a in
     let y = matmul (matrix_transpose q) b in
 
     (* Solve upper triangular system *)
-    let m, n =
-      shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
-    in
+    
     let x =
       if m >= n then
         (* For overdetermined systems, r is [n, n] when reduced=true *)
@@ -5661,7 +5724,7 @@ module Make (B : Backend_intf.S) = struct
       else
         Error.failed ~op:"lstsq" ~what:"underdetermined systems not implemented"
           ()
-    in
+    in*)
 
     (* Compute residuals *)
     let residuals =
@@ -5762,52 +5825,6 @@ module Make (B : Backend_intf.S) = struct
         let norm_inv = norm ~ord:`Inf inv_x in
         mul norm_x norm_inv
     | _ -> Error.failed ~op:"cond" ~what:"unsupported norm" ()
-
-  let pinv (type a b) ?rtol:_ ?hermitian (a : (a, b) t) =
-    check_float_or_complex ~op:"pinv" a;
-    let _ = hermitian in
-    (* TODO: use for optimization *)
-
-    let u, s, vh = B.op_svd ~full_matrices:false a in
-
-    (* Determine cutoff *)
-    let cutoff =
-      let max_s = max s |> unsafe_get [] in
-      (* Default cutoff is max(m,n) * eps * max_s *)
-      let m, n =
-        shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
-      in
-      (* Use appropriate epsilon for the dtype *)
-      let eps =
-        if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
-          (* Machine epsilon for float32 *)
-        else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
-          (* Machine epsilon for float64 *)
-        else 1e-15 (* Default for other types *)
-      in
-      float_of_int (Stdlib.max m n) *. eps *. max_s
-    in
-
-    (* Compute pseudoinverse *)
-    let ones_s = ones (B.context s) (dtype s) (shape s) in
-    let threshold = scalar (B.context a) (dtype s) cutoff in
-    let mask = greater s threshold in
-    let safe_s = where mask s ones_s in
-    let s_inv = div ones_s safe_s in
-    let mask = cast (dtype s) mask in
-    let s_inv = mul s_inv mask in
-
-    (* Cast s_inv to match input type *)
-    let s_inv = cast (dtype a) s_inv in
-
-    (* Compute V @ S^-1 @ U^H *)
-    (* We need to multiply each column of vh.T by corresponding s_inv element *)
-    (* vh.T has shape [n, k], s_inv has shape [k] *)
-    (* We want broadcasting [n, k] * [1, k] -> [n, k] *)
-    let s_inv_expanded = unsqueeze ~axes:[ 0 ] s_inv in
-    (* Shape [1, k] *)
-    let vs = mul (matrix_transpose vh) s_inv_expanded in
-    matmul vs (matrix_transpose u)
 
   let tensorsolve ?axes a b =
     check_float_or_complex ~op:"tensorsolve" a;
@@ -7815,3 +7832,6 @@ module Make (B : Backend_intf.S) = struct
     let ( .${}<- ) x slice_def value = set_slice slice_def x value
   end
 end
+
+
+
