@@ -140,7 +140,7 @@ let detect_json_dtype values =
     else if all_float then `Float32
     else `String
 
-let from_string ?(orient = `Records) json_str =
+let from_string ?(orient = `Records) ?dtype_spec json_str =
   let json = from_string json_str in
 
   match orient with
@@ -178,8 +178,13 @@ let from_string ?(orient = `Records) json_str =
             let columns =
               List.map
                 (fun (col_name, values) ->
-                  let dtype = detect_json_dtype values in
-
+                  let dtype =
+                    match dtype_spec with
+                    | Some specs -> (
+                        try List.assoc col_name specs
+                        with Not_found -> detect_json_dtype values)
+                    | None -> detect_json_dtype values
+                  in
                   let column =
                     match dtype with
                     | `Float32 ->
@@ -189,22 +194,55 @@ let from_string ?(orient = `Records) json_str =
                               | `Null -> None
                               | `Float f -> Some f
                               | `Int i -> Some (float_of_int i)
+                              | `String s -> (
+                                  try Some (float_of_string s) with _ -> None)
                               | _ -> None)
                             values
                           |> Array.of_list
                         in
                         Col.float32_opt arr
+                    | `Float64 ->
+                        let arr =
+                          List.map
+                            (function
+                              | `Null -> None
+                              | `Float f -> Some f
+                              | `Int i -> Some (float_of_int i)
+                              | `String s -> (
+                                  try Some (float_of_string s) with _ -> None)
+                              | _ -> None)
+                            values
+                          |> Array.of_list
+                        in
+                        Col.float64_opt arr
                     | `Int32 ->
                         let arr =
                           List.map
                             (function
                               | `Null -> None
                               | `Int i -> Some (Int32.of_int i)
+                              | `String s -> (
+                                  try Some (Int32.of_string s) with _ -> None)
+                              | `Float f -> Some (Int32.of_float f)
                               | _ -> None)
                             values
                           |> Array.of_list
                         in
                         Col.int32_opt arr
+                    | `Int64 ->
+                        let arr =
+                          List.map
+                            (function
+                              | `Null -> None
+                              | `Int i -> Some (Int64.of_int i)
+                              | `String s -> (
+                                  try Some (Int64.of_string s) with _ -> None)
+                              | `Float f -> Some (Int64.of_float f)
+                              | _ -> None)
+                            values
+                          |> Array.of_list
+                        in
+                        Col.int64_opt arr
                     | `Bool ->
                         let arr =
                           List.map
@@ -247,8 +285,13 @@ let from_string ?(orient = `Records) json_str =
                 (fun (col_name, values) ->
                   match values with
                   | `List vals ->
-                      let dtype = detect_json_dtype vals in
-
+                      let dtype =
+                        match dtype_spec with
+                        | Some specs -> (
+                            try List.assoc col_name specs
+                            with Not_found -> detect_json_dtype vals)
+                        | None -> detect_json_dtype vals
+                      in
                       let column =
                         match dtype with
                         | `Float32 ->
@@ -258,22 +301,59 @@ let from_string ?(orient = `Records) json_str =
                                   | `Null -> None
                                   | `Float f -> Some f
                                   | `Int i -> Some (float_of_int i)
+                                  | `String s -> (
+                                      try Some (float_of_string s)
+                                      with _ -> None)
                                   | _ -> None)
                                 vals
                               |> Array.of_list
                             in
                             Col.float32_opt arr
+                        | `Float64 ->
+                            let arr =
+                              List.map
+                                (function
+                                  | `Null -> None
+                                  | `Float f -> Some f
+                                  | `Int i -> Some (float_of_int i)
+                                  | `String s -> (
+                                      try Some (float_of_string s)
+                                      with _ -> None)
+                                  | _ -> None)
+                                vals
+                              |> Array.of_list
+                            in
+                            Col.float64_opt arr
                         | `Int32 ->
                             let arr =
                               List.map
                                 (function
                                   | `Null -> None
                                   | `Int i -> Some (Int32.of_int i)
+                                  | `String s -> (
+                                      try Some (Int32.of_string s)
+                                      with _ -> None)
+                                  | `Float f -> Some (Int32.of_float f)
                                   | _ -> None)
                                 vals
                               |> Array.of_list
                             in
                             Col.int32_opt arr
+                        | `Int64 ->
+                            let arr =
+                              List.map
+                                (function
+                                  | `Null -> None
+                                  | `Int i -> Some (Int64.of_int i)
+                                  | `String s -> (
+                                      try Some (Int64.of_string s)
+                                      with _ -> None)
+                                  | `Float f -> Some (Int64.of_float f)
+                                  | _ -> None)
+                                vals
+                              |> Array.of_list
+                            in
+                            Col.int64_opt arr
                         | `Bool ->
                             let arr =
                               List.map
@@ -318,8 +398,8 @@ let to_file ?orient df file =
   output_string oc json_string;
   close_out oc
 
-let from_file ?orient file =
+let from_file ?orient ?dtype_spec file =
   let ic = open_in file in
   let contents = really_input_string ic (in_channel_length ic) in
   close_in ic;
-  from_string ?orient contents
+  from_string ?orient ?dtype_spec contents
