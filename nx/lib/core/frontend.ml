@@ -106,11 +106,15 @@ module Make (B : Backend_intf.S) = struct
 
   let shape x =
     let view = B.view x in
-    match Symbolic_shape.eval (Lazy_view.shape view) with
+    match Symbolic_shape.eval (View.shape view) with
     | Some arr -> arr
     | None ->
         Error.failed ~op:"shape"
           ~what:"cannot get shape with unbound symbolic dimensions" ()
+
+  let shape_symbolic x =
+    let view = B.view x in
+    View.shape view
 
   let dtype x = B.dtype x
   let itemsize x = Dtype.itemsize (B.dtype x)
@@ -120,12 +124,12 @@ module Make (B : Backend_intf.S) = struct
     let itemsize = itemsize x in
 
     (* Use high-level API instead of accessing internals *)
-    match Lazy_view.strides view with
+    match View.strides_opt view with
     | None ->
         let reason =
-          if not (Lazy_view.is_materializable view) then
+          if not (View.is_materializable view) then
             "view has non-materializable layout"
-          else if not (Symbolic_shape.is_static (Lazy_view.shape view)) then
+          else if not (Symbolic_shape.is_static (View.shape view)) then
             "view has symbolic shape"
           else "view has complex striding pattern"
         in
@@ -138,14 +142,14 @@ module Make (B : Backend_intf.S) = struct
     let itemsize = itemsize x in
 
     (* Get strides if available *)
-    match Lazy_view.strides view with
+    match View.strides_opt view with
     | None ->
         Error.failed ~op:"stride"
           ~what:(Printf.sprintf "stride for dimension %d" i)
           ~reason:"tensor does not have defined strides"
           ~hint:"call contiguous() first or check has_strides()" ()
     | Some elem_strides ->
-        let ndim = Lazy_view.ndim view in
+        let ndim = View.ndim view in
         let i = if i < 0 then i + ndim else i in
         if i < 0 || i >= ndim then
           Error.axis_out_of_bounds ~op:"stride" ~axis:i ~ndim ()
@@ -153,7 +157,7 @@ module Make (B : Backend_intf.S) = struct
 
   let dims x =
     let view = B.view x in
-    let sym_shape = Lazy_view.shape view in
+    let sym_shape = View.shape view in
     match Symbolic_shape.eval sym_shape with
     | Some arr -> arr
     | None ->
@@ -162,7 +166,7 @@ module Make (B : Backend_intf.S) = struct
 
   let dim i x =
     let view = B.view x in
-    let shape = Lazy_view.shape view in
+    let shape = View.shape view in
     let ndim = Symbolic_shape.rank shape in
     let i = if i < 0 then i + ndim else i in
     if i < 0 || i >= ndim then
@@ -176,11 +180,11 @@ module Make (B : Backend_intf.S) = struct
 
   let ndim x =
     let view = B.view x in
-    Lazy_view.ndim view
+    View.ndim view
 
   let size x =
     let view = B.view x in
-    match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+    match Symbolic_shape.eval_dim (View.numel view) with
     | Some n -> n
     | None ->
         Error.failed ~op:"size"
@@ -188,6 +192,10 @@ module Make (B : Backend_intf.S) = struct
           ~hint:"bind symbolic dimensions first" ()
 
   let numel x = size x
+
+  let numel_symbolic x =
+    let view = B.view x in
+    View.numel view
 
   let nbytes x =
     (* This might also need to handle symbolic case *)
@@ -201,15 +209,11 @@ module Make (B : Backend_intf.S) = struct
 
   let offset x =
     let view = B.view x in
-    match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-    | Some n -> n
-    | None ->
-        Error.failed ~op:"offset" ~what:"tensor has symbolic offset"
-          ~hint:"bind symbolic variables first" ()
+    View.offset view
 
   let is_c_contiguous x =
     let view = B.view x in
-    Lazy_view.is_contiguous view
+    View.is_c_contiguous view
 
   (* ───── Internal Utilities ───── *)
 
@@ -241,6 +245,15 @@ module Make (B : Backend_intf.S) = struct
           ()
 
   let array_prod arr = Array.fold_left ( * ) 1 arr
+  let dims_equal a b = Symbolic_shape.equal [| a |] [| b |]
+
+  let ensure_no_infer ~op shape =
+    Array.iter
+      (fun dim ->
+        if Symbolic_shape.is_infer dim then
+          Error.invalid ~op ~what:"target shape"
+            ~reason:"cannot contain infer (-1) dimensions" ())
+      shape
 
   (** Integer ceiling division: (a + b - 1) / b for integers a, b where b > 0.
   *)
@@ -274,85 +287,261 @@ module Make (B : Backend_intf.S) = struct
     let ndim = match ndim_opt with Some n -> n | None -> ndim x in
     if axis < 0 then axis + ndim else axis
 
-  let reshape shape_spec x =
-    let new_shape = Shape.resolve_neg_one (shape x) shape_spec in
-    if shape x = new_shape then x
-    else B.op_reshape x (Symbolic_shape.of_ints new_shape)
+  let reshape_symbolic new_shape x =
+    let current_shape = shape_symbolic x in
+    let has_infer = Array.exists Symbolic_shape.is_infer new_shape in
+    let resolved =
+      if has_infer then
+        match
+          Symbolic_shape.resolve_reshape ~from_shape:current_shape
+            ~to_shape:new_shape
+        with
+        | Some s -> s
+        | None ->
+            Error.failed ~op:"reshape"
+              ~what:"cannot infer dimension for symbolic reshape"
+              ~hint:"bind symbolic dimensions or avoid using -1" ()
+      else new_shape
+    in
+    (match
+       (Symbolic_shape.eval current_shape, Symbolic_shape.eval resolved)
+     with
+    | Some old_arr, Some new_arr ->
+        let old_numel = array_prod old_arr in
+        let new_numel = array_prod new_arr in
+        if old_numel <> new_numel && old_numel <> 0 && new_numel <> 0 then
+          Error.shape_mismatch ~op:"reshape" ~expected:new_arr ~actual:old_arr
+            ()
+    | _ -> ());
+    if Symbolic_shape.equal current_shape resolved then x
+    else B.op_reshape x resolved
 
-  (* reshape and expand [x] to [new_shape] following numpy-style rules *)
-  let broadcast_to new_shape x =
-    let current_shape = shape x in
-    if current_shape = new_shape then x
+  let reshape shape_spec x =
+    let infer_count = ref 0 in
+    let target_shape =
+      Array.map
+        (fun dim ->
+          if dim = -1 then (
+            incr infer_count;
+            Symbolic_shape.infer)
+          else if dim < -1 then
+            Error.invalid ~op:"reshape" ~what:"shape specification"
+              ~reason:(Printf.sprintf "dimension %d < -1" dim)
+              ()
+          else Symbolic_shape.static dim)
+        shape_spec
+    in
+    if !infer_count > 1 then
+      Error.invalid ~op:"reshape" ~what:"shape specification"
+        ~reason:"multiple -1 dimensions"
+        ~hint:"can only specify one unknown dimension" ();
+    reshape_symbolic target_shape x
+
+  let broadcast_shapes shape_a shape_b =
+    let rank_a = Symbolic_shape.rank shape_a in
+    let rank_b = Symbolic_shape.rank shape_b in
+    let rank_out = max rank_a rank_b in
+    let static_one = Symbolic_shape.static 1 in
+    let result = Array.make rank_out static_one in
+    for i = 0 to rank_out - 1 do
+      let idx_a = rank_a - rank_out + i in
+      let idx_b = rank_b - rank_out + i in
+      let dim_a = if idx_a >= 0 then shape_a.(idx_a) else static_one in
+      let dim_b = if idx_b >= 0 then shape_b.(idx_b) else static_one in
+      let chosen =
+        if dims_equal dim_a dim_b then dim_a
+        else
+          let eval_a = Symbolic_shape.eval_dim dim_a in
+          let eval_b = Symbolic_shape.eval_dim dim_b in
+          match (eval_a, eval_b) with
+          | Some a, Some b -> (
+              if a = b then dim_a
+              else if a = 1 then dim_b
+              else if b = 1 then dim_a
+              else
+                match
+                  (Symbolic_shape.eval shape_a, Symbolic_shape.eval shape_b)
+                with
+                | Some sa, Some sb ->
+                    Error.broadcast_incompatible ~op:"broadcast" ~shape1:sa
+                      ~shape2:sb ()
+                | _ ->
+                    Error.failed ~op:"broadcast"
+                      ~what:
+                        (Printf.sprintf "cannot broadcast dimensions %s and %s"
+                           (Symbolic_shape.to_string [| dim_a |])
+                           (Symbolic_shape.to_string [| dim_b |]))
+                      ())
+          | Some a, None ->
+              if a = 1 then dim_b
+              else
+                Error.failed ~op:"broadcast"
+                  ~what:
+                    (Printf.sprintf "cannot broadcast dimension %s to %s"
+                       (Symbolic_shape.to_string [| dim_a |])
+                       (Symbolic_shape.to_string [| dim_b |]))
+                  ~hint:"bind symbolic dimensions first" ()
+          | None, Some b ->
+              if b = 1 then dim_a
+              else
+                Error.failed ~op:"broadcast"
+                  ~what:
+                    (Printf.sprintf "cannot broadcast dimension %s to %s"
+                       (Symbolic_shape.to_string [| dim_b |])
+                       (Symbolic_shape.to_string [| dim_a |]))
+                  ~hint:"bind symbolic dimensions first" ()
+          | None, None ->
+              Error.failed ~op:"broadcast"
+                ~what:
+                  (Printf.sprintf
+                     "cannot broadcast symbolic dimensions %s and %s"
+                     (Symbolic_shape.to_string [| dim_a |])
+                     (Symbolic_shape.to_string [| dim_b |]))
+                ~hint:"bind symbolic dimensions first" ()
+      in
+      result.(i) <- chosen
+    done;
+    result
+
+  let broadcast_to_symbolic target_shape x =
+    ensure_no_infer ~op:"broadcast_to" target_shape;
+    let current_shape = shape_symbolic x in
+    if Symbolic_shape.equal current_shape target_shape then x
     else
-      let rank_current = Array.length current_shape in
-      let rank_new = Array.length new_shape in
-      if rank_current > rank_new then
-        Error.cannot ~op:"broadcast_to" ~what:"broadcast"
-          ~from:
-            (Printf.sprintf "%s (rank %d)"
-               (Shape.to_string current_shape)
-               rank_current)
-          ~to_:
-            (Printf.sprintf "%s (rank %d)" (Shape.to_string new_shape) rank_new)
-          ~reason:(Printf.sprintf "rank mismatch: %d>%d" rank_current rank_new)
+      let rank_current = Symbolic_shape.rank current_shape in
+      let rank_target = Symbolic_shape.rank target_shape in
+      if rank_current > rank_target then
+        Error.failed ~op:"broadcast_to"
+          ~what:
+            (Printf.sprintf
+               "rank mismatch: source rank %d exceeds target rank %d (%s -> %s)"
+               rank_current rank_target
+               (Symbolic_shape.to_string current_shape)
+               (Symbolic_shape.to_string target_shape))
           ~hint:"target shape must have at least as many dimensions as source"
           ()
       else
+        let pad_count = rank_target - rank_current in
         let padded_shape =
-          if rank_current < rank_new then
-            Array.append (Array.make (rank_new - rank_current) 1) current_shape
-          else current_shape
+          if pad_count <= 0 then current_shape
+          else
+            let arr = Array.make rank_target (Symbolic_shape.static 1) in
+            Array.blit current_shape 0 arr pad_count rank_current;
+            arr
         in
-        let compatible = ref true in
-        let first_incompatible = ref None in
-        for i = 0 to rank_new - 1 do
-          if not (padded_shape.(i) = new_shape.(i) || padded_shape.(i) = 1) then (
-            compatible := false;
-            if !first_incompatible = None then first_incompatible := Some i)
+        for i = 0 to rank_target - 1 do
+          let curr_dim = padded_shape.(i) in
+          let target_dim = target_shape.(i) in
+          if dims_equal curr_dim target_dim then ()
+          else
+            match Symbolic_shape.eval_dim curr_dim with
+            | Some 1 -> ()
+            | Some curr_val -> (
+                match Symbolic_shape.eval_dim target_dim with
+                | Some target_val when curr_val = target_val -> ()
+                | Some _target_val ->
+                    let shape_curr =
+                      match Symbolic_shape.eval padded_shape with
+                      | Some s -> s
+                      | None ->
+                          Array.init rank_target (fun j ->
+                              match
+                                Symbolic_shape.eval_dim padded_shape.(j)
+                              with
+                              | Some v -> v
+                              | None -> -1)
+                    in
+                    let shape_target =
+                      match Symbolic_shape.eval target_shape with
+                      | Some s -> s
+                      | None ->
+                          Array.init rank_target (fun j ->
+                              match
+                                Symbolic_shape.eval_dim target_shape.(j)
+                              with
+                              | Some v -> v
+                              | None -> -1)
+                    in
+                    Error.broadcast_incompatible ~op:"broadcast_to"
+                      ~shape1:shape_curr ~shape2:shape_target ()
+                | None ->
+                    Error.failed ~op:"broadcast_to"
+                      ~what:
+                        (Printf.sprintf
+                           "dimension %d is symbolic (%s) and cannot be \
+                            broadcast to %s"
+                           i
+                           (Symbolic_shape.to_string [| curr_dim |])
+                           (Symbolic_shape.to_string [| target_dim |]))
+                      ())
+            | None ->
+                Error.failed ~op:"broadcast_to"
+                  ~what:
+                    (Printf.sprintf
+                       "dimension %d is symbolic (%s) and cannot be broadcast \
+                        to %s"
+                       i
+                       (Symbolic_shape.to_string [| curr_dim |])
+                       (Symbolic_shape.to_string [| target_dim |]))
+                  ~hint:"bind symbolic dimensions first" ()
         done;
-        if not !compatible then
-          match !first_incompatible with
-          | Some _ ->
-              Error.broadcast_incompatible ~op:"broadcast_to"
-                ~shape1:current_shape ~shape2:new_shape ()
-          | None -> assert false
-        else
-          let x_reshaped =
-            if padded_shape <> current_shape then reshape padded_shape x else x
-          in
-          B.op_expand x_reshaped (Symbolic_shape.of_ints new_shape)
+        let x_aligned =
+          if pad_count <= 0 then x else reshape_symbolic padded_shape x
+        in
+        if Symbolic_shape.equal (shape_symbolic x_aligned) target_shape then
+          x_aligned
+        else B.op_expand x_aligned target_shape
+
+  (* reshape and expand [x] to [new_shape] following numpy-style rules *)
+  let broadcast_to new_shape x =
+    let target_shape =
+      Array.map
+        (fun dim ->
+          if dim < 0 then
+            Error.invalid ~op:"broadcast_to" ~what:"target shape"
+              ~reason:(Printf.sprintf "dimension %d < 0" dim)
+              ()
+          else Symbolic_shape.static dim)
+        new_shape
+    in
+    broadcast_to_symbolic target_shape x
 
   (* return [x] and [y] broadcasted to a common shape *)
   let broadcasted ?(reverse = false) x y =
     let a, b = if reverse then (y, x) else (x, y) in
-    let broadcast_shape = Shape.broadcast (shape a) (shape b) in
-    let a_broad = broadcast_to broadcast_shape a in
-    let b_broad = broadcast_to broadcast_shape b in
+    let shape_a = shape_symbolic a in
+    let shape_b = shape_symbolic b in
+    let broadcast_shape = broadcast_shapes shape_a shape_b in
+    let a_broad = broadcast_to_symbolic broadcast_shape a in
+    let b_broad = broadcast_to_symbolic broadcast_shape b in
     (a_broad, b_broad)
 
   (* like [broadcast_to] but [-1] keeps the original dimension *)
   let expand shape_spec x =
-    let current_shape = shape x in
-    let rank_current = Array.length current_shape in
+    let current_shape = shape_symbolic x in
+    let rank_current = Symbolic_shape.rank current_shape in
     let rank_spec = Array.length shape_spec in
     let rank_new = max rank_current rank_spec in
     let current_aligned =
-      if rank_current < rank_new then
-        Array.append (Array.make (rank_new - rank_current) 1) current_shape
-      else current_shape
+      if rank_current = rank_new then current_shape
+      else
+        let arr = Array.make rank_new (Symbolic_shape.static 1) in
+        Array.blit current_shape 0 arr (rank_new - rank_current) rank_current;
+        arr
     in
-    let spec_aligned =
-      if rank_spec < rank_new then
-        Array.append (Array.make (rank_new - rank_spec) (-1)) shape_spec
-      else shape_spec
+    let target_shape =
+      Array.init rank_new (fun i ->
+          let spec_idx = i - (rank_new - rank_spec) in
+          let spec_dim = if spec_idx < 0 then -1 else shape_spec.(spec_idx) in
+          if spec_dim = -1 then current_aligned.(i)
+          else if spec_dim < -1 then
+            Error.invalid ~op:"expand"
+              ~what:(Printf.sprintf "dimension %d" i)
+              ~reason:(Printf.sprintf "negative size %d" spec_dim)
+              ()
+          else Symbolic_shape.static spec_dim)
     in
-    let new_shape =
-      Array.mapi
-        (fun i spec_dim ->
-          if spec_dim = -1 then current_aligned.(i) else spec_dim)
-        spec_aligned
-    in
-    broadcast_to new_shape x
+    broadcast_to_symbolic target_shape x
 
   let cast (type a b c d) (dt : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t =
     match Dtype.equal_witness (dtype x) dt with
@@ -3111,7 +3300,7 @@ module Make (B : Backend_intf.S) = struct
         ();
 
     (* For scalar tensors, there are two cases: *)
-    match Lazy_view.strides (B.view scalar_tensor) with
+    match View.strides_opt (B.view scalar_tensor) with
     | Some _ ->
         (* Has valid strides - use the offset *)
         let view_offset = offset scalar_tensor in
@@ -7536,7 +7725,7 @@ module Make (B : Backend_intf.S) = struct
     let buffer = B.data x in
     let dtype = dtype x in
     let shape =
-      match Symbolic_shape.eval (Lazy_view.shape view) with
+      match Symbolic_shape.eval (View.shape view) with
       | Some arr -> arr
       | None ->
           Error.failed ~op:"pp_data"
@@ -7544,7 +7733,7 @@ module Make (B : Backend_intf.S) = struct
     in
     let ndim = Array.length shape in
     let sz =
-      match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+      match Symbolic_shape.eval_dim (View.numel view) with
       | Some n -> n
       | None ->
           Error.failed ~op:"pp_data"
@@ -7580,14 +7769,7 @@ module Make (B : Backend_intf.S) = struct
     if sz = 0 && ndim > 0 then fprintf fmt "[]"
     else if ndim = 0 then
       if sz > 0 then
-        let value =
-          Array1.unsafe_get buffer
-            (match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-            | Some n -> n
-            | None ->
-                Error.failed ~op:"pp_data"
-                  ~what:"cannot access data with symbolic offset" ())
-        in
+        let value = Array1.unsafe_get buffer (View.offset view) in
         pp_element fmt value
       else fprintf fmt "<empty scalar>"
     else
@@ -7597,19 +7779,13 @@ module Make (B : Backend_intf.S) = struct
           let md_index = Array.of_list current_indices in
           let linear_offset =
             let strides =
-              match Lazy_view.strides view with
+              match View.strides_opt view with
               | Some s -> s
               | None ->
                   Error.failed ~op:"pp_data"
                     ~what:"cannot print non-contiguous symbolic tensor" ()
             in
-            let offset =
-              match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-              | Some n -> n
-              | None ->
-                  Error.failed ~op:"pp_data"
-                    ~what:"cannot print tensor with symbolic offset" ()
-            in
+            let offset = View.offset view in
             Shape.ravel_index md_index strides + offset
           in
           if linear_offset < 0 || linear_offset >= Array1.dim buffer then
@@ -7667,22 +7843,18 @@ module Make (B : Backend_intf.S) = struct
 
     fprintf fmt "@[<v 0>";
     fprintf fmt "Nx Info:@,";
-    fprintf fmt "  Shape: %s@,"
-      (Symbolic_shape.to_string (Lazy_view.shape view));
+    fprintf fmt "  Shape: %s@," (Symbolic_shape.to_string (View.shape view));
     fprintf fmt "  Dtype: %a@," pp_dtype (dtype x);
     fprintf fmt "  Strides: %s@,"
-      (match Lazy_view.strides view with
+      (match View.strides_opt view with
       | Some s ->
           "["
           ^ String.concat "; " (Array.to_list (Array.map string_of_int s))
           ^ "]"
       | None -> "<symbolic>");
-    fprintf fmt "  Offset: %s@,"
-      (match Symbolic_shape.eval_dim (Lazy_view.offset view) with
-      | Some n -> string_of_int n
-      | None -> "<symbolic>");
+    fprintf fmt "  Offset: %d@," (View.offset view);
     fprintf fmt "  Size: %s@,"
-      (match Symbolic_shape.eval_dim (Lazy_view.numel view) with
+      (match Symbolic_shape.eval_dim (View.numel view) with
       | Some n -> string_of_int n
       | None -> "<symbolic>");
     fprintf fmt "  Data: %a@," pp_data x

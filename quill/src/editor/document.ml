@@ -35,7 +35,7 @@ and list_type = Ordered of int * char | Unordered of char
 and list_spacing = Tight | Loose
 and block = { id : int; content : block_content; focused : bool }
 
-type document = block list
+type t = block list
 
 let next_block_id_ref = ref 0
 let next_run_id_ref = ref 0
@@ -83,7 +83,8 @@ let html_block ?focused html = block ?focused (Html_block html)
 let link_reference_definition ?focused ld =
   block ?focused (Link_reference_definition ld)
 
-let init : document = []
+let init : t = []
+let empty = init
 
 let rec inline_of_cmarkit label_defs inline' =
   match inline' with
@@ -216,7 +217,7 @@ and block_of_cmarkit label_defs cb : block =
   let id = next_block_id () in
   { id; content = block_content_of_cmarkit label_defs cb; focused = false }
 
-and process_blocks label_defs (cmarkit_blocks : Block.t list) : document =
+and process_blocks label_defs (cmarkit_blocks : Block.t list) : t =
   match cmarkit_blocks with
   | [] -> []
   | Block.Code_block (codeblock, _) :: rest -> (
@@ -275,7 +276,7 @@ let document_of_cmarkit doc =
   | Block.Blocks (items, _) -> process_blocks label_defs items
   | other -> process_blocks label_defs [ other ]
 
-let document_of_md text =
+let of_markdown text =
   let doc = Doc.of_string ~strict:true text in
   document_of_cmarkit doc
 
@@ -407,7 +408,7 @@ let cmarkit_of_document (doc : block list) : Block.t =
   in
   Block.Blocks (flattened, Meta.none)
 
-let md_of_document document : string =
+let to_markdown document : string =
   let block = cmarkit_of_document document in
   let doc = Doc.make block in
   Cmarkit_commonmark.of_doc doc
@@ -431,11 +432,29 @@ let rec find_inline_in_inline (inline : inline) id : inline option =
     | Image { alt; _ } -> find_inline_in_inline alt id
     | Link { text; _ } -> find_inline_in_inline text id
 
-let find_inline_in_block (block : block) id : inline option =
+let rec find_inline_in_blocks blocks id =
+  match blocks with
+  | [] -> None
+  | block :: rest -> (
+      match find_inline_in_block block id with
+      | Some inline -> Some inline
+      | None -> find_inline_in_blocks rest id)
+
+and find_inline_in_block (block : block) id : inline option =
   match block.content with
   | Paragraph inline | Heading (_, inline) -> find_inline_in_inline inline id
-  | Codeblock _ | Blank_line _ | Blocks _ | Block_quote _ | Thematic_break
-  | List _ | Html_block _ | Link_reference_definition _ ->
+  | Blocks bs | Block_quote bs -> find_inline_in_blocks bs id
+  | List (_, _, items) ->
+      let rec find_in_items = function
+        | [] -> None
+        | item :: rest -> (
+            match find_inline_in_blocks item id with
+            | Some inline -> Some inline
+            | None -> find_in_items rest)
+      in
+      find_in_items items
+  | Codeblock _ | Blank_line _ | Thematic_break | Html_block _
+  | Link_reference_definition _ ->
       None
 
 let split_inline (inline : inline) (offset : int) : inline * inline =
@@ -500,7 +519,7 @@ let rec replace_inline_in_block (block : block) id (new_inline : inline) =
       list list_type spacing updated_items
   | _ -> block
 
-let normalize_blanklines (blocks : document) =
+let normalize_blanklines (blocks : t) =
   let rec aux acc = function
     | [] -> List.rev acc
     | ({ content = Blank_line (); _ } as b1)
@@ -579,7 +598,7 @@ let rec set_focused_block_by_id (block : block) (target_id : int) : block =
   in
   { block with focused = child_focused; content }
 
-let set_focused_document_by_id (doc : document) (target_id : int) : document =
+let set_focused_document_by_id (doc : t) (target_id : int) : t =
   List.map (fun b -> set_focused_block_by_id b target_id) doc
 
 let rec set_codeblock_output_in_block (block : block) (target_id : int)
@@ -674,3 +693,116 @@ and inline_to_plain (inline : inline) =
 let reset_ids () =
   next_block_id_ref := 0;
   next_run_id_ref := 0
+
+let focus_inline_by_id document inline_id =
+  document |> List.map clear_focus_block |> fun doc ->
+  set_focused_document_by_id doc inline_id
+
+let focus_block_by_id document block_id =
+  document |> List.map clear_focus_block
+  |> List.map (fun block ->
+         if block.id = block_id then { block with focused = true } else block)
+
+let replace_block_with_codeblock document ~block_id =
+  document
+  |> List.map (fun block ->
+         if block.id = block_id then
+           {
+             block with
+             content = Codeblock { code = ""; output = None; info = None };
+             focused = false;
+           }
+         else block)
+
+let rec update_codeblock_in_block block target_id code =
+  if block.id = target_id then
+    match block.content with
+    | Codeblock { output; info; _ } ->
+        { block with content = Codeblock { code; output; info } }
+    | _ -> block
+  else
+    match block.content with
+    | Blocks bs ->
+        let content =
+          Blocks
+            (List.map (fun b -> update_codeblock_in_block b target_id code) bs)
+        in
+        { block with content }
+    | _ -> block
+
+let update_codeblock document ~block_id ~code =
+  List.map (fun block -> update_codeblock_in_block block block_id code) document
+
+let set_codeblock_output document ~block_id output_block =
+  List.map
+    (fun block -> set_codeblock_output_in_block block block_id output_block)
+    document
+
+let split_block_at_inline document ~block_id ~inline_id ~offset =
+  let split_block block =
+    match find_inline_in_block block inline_id with
+    | None -> [ block ]
+    | Some inline ->
+        let before, after = split_inline inline offset in
+        let new_block1 = replace_inline_in_block block inline_id before in
+        let new_block2 = replace_inline_in_block block inline_id after in
+        [ new_block1; new_block2 ]
+  in
+  document
+  |> List.map (fun block ->
+         if block.id = block_id then split_block block else [ block ])
+  |> List.flatten
+
+let find_block document ~block_id =
+  List.find_opt (fun block -> block.id = block_id) document
+
+let index_of_block document ~block_id =
+  let rec aux idx = function
+    | [] -> None
+    | block :: rest ->
+        if block.id = block_id then Some idx else aux (idx + 1) rest
+  in
+  aux 0 document
+
+let find_block_of_inline document ~inline_id =
+  let rec search_block index = function
+    | [] -> None
+    | block :: rest -> (
+        match find_inline_in_block block inline_id with
+        | Some _ -> Some (block, index)
+        | None -> search_block (index + 1) rest)
+  in
+  search_block 0 document
+
+let block_ids_between document ~start_id ~end_id =
+  match
+    ( index_of_block document ~block_id:start_id,
+      index_of_block document ~block_id:end_id )
+  with
+  | Some start_idx, Some end_idx ->
+      let i_min = min start_idx end_idx in
+      let i_max = max start_idx end_idx in
+      document
+      |> List.mapi (fun idx block ->
+             if idx >= i_min && idx <= i_max then Some block.id else None)
+      |> List.filter_map (fun x -> x)
+  | _ -> []
+
+let slice_between document ~start_id ~end_id =
+  match
+    ( index_of_block document ~block_id:start_id,
+      index_of_block document ~block_id:end_id )
+  with
+  | Some start_idx, Some end_idx ->
+      let i_min = min start_idx end_idx in
+      let i_max = max start_idx end_idx in
+      let rec aux idx acc = function
+        | [] -> List.rev acc
+        | block :: rest ->
+            if idx > i_max then List.rev acc
+            else
+              let acc = if idx >= i_min then block :: acc else acc in
+              aux (idx + 1) acc rest
+      in
+      aux 0 [] document
+  | _ -> []

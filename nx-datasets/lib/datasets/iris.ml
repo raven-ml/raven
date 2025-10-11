@@ -2,6 +2,10 @@
 open Bigarray
 open Dataset_utils
 
+let src = Logs.Src.create "nx.datasets.iris" ~doc:"Iris dataset loader"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 let dataset_name = "iris"
 let dataset_dir = get_cache_dir dataset_name
 let data_filename = "iris.data"
@@ -24,7 +28,7 @@ let encode_label s =
 
 let load () =
   ensure_dataset ();
-  Printf.printf "Loading Iris dataset...\n%!";
+  Log.info (fun m -> m "Loading Iris dataset...");
 
   let data_rows =
     try
@@ -50,7 +54,7 @@ let load () =
   let num_features = 4 in
 
   if num_samples = 0 then failwith "No data loaded from iris.data";
-  Printf.printf "Found %d samples.\n%!" num_samples;
+  Log.info (fun m -> m "Found %d samples" num_samples);
 
   let features = Array2.create float64 c_layout num_samples num_features in
   let labels = Array1.create int32 c_layout num_samples in
@@ -73,5 +77,5 @@ let load () =
       labels.{i} <- encode_label label_str)
     data_rows;
 
-  Printf.printf "Iris loading complete.\n%!";
+  Log.info (fun m -> m "Iris loading complete");
   (features, labels)

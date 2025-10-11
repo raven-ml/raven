@@ -287,14 +287,11 @@ let test_categorical_shape_prefix_axis () =
   in
 
   let prefix_shape = [| 5; 6 |] in
-  let samples =
-    Rng.categorical key ~shape:prefix_shape ~axis:(-2) logits
-  in
+  let samples = Rng.categorical key ~shape:prefix_shape ~axis:(-2) logits in
 
   let expected_shape = [| 5; 6; 2; 4 |] in
-  A.check (A.array A.int)
-    "categorical shape prefix keeps axis semantics" expected_shape
-    (Rune.shape samples);
+  A.check (A.array A.int) "categorical shape prefix keeps axis semantics"
+    expected_shape (Rune.shape samples);
 
   let values = Rune.to_array samples |> Array.map Int32.to_int in
   Array.iter

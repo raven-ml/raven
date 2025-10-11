@@ -181,8 +181,8 @@ CAMLprim value caml_nx_assign(value v_src, value v_dst) {
       Caml_ba_array_val(Field(v_src, FFI_TENSOR_DATA));
   struct caml_ba_array *ba_dst =
       Caml_ba_array_val(Field(v_dst, FFI_TENSOR_DATA));
-  int kind_src = ba_src->flags & CAML_BA_KIND_MASK;
-  int kind_dst = ba_dst->flags & CAML_BA_KIND_MASK;
+  int kind_src = nx_ba_get_kind(ba_src);
+  int kind_dst = nx_ba_get_kind(ba_dst);
   if (kind_src != kind_dst) {
     cleanup_ndarray(&src);
     cleanup_ndarray(&dst);
@@ -208,7 +208,7 @@ static value make_contiguous(value v_src, bool force_copy) {
   ndarray_t src = extract_ndarray(v_src);
   struct caml_ba_array *ba = Caml_ba_array_val(Field(v_src, FFI_TENSOR_DATA));
   int flags = ba->flags;
-  int kind = flags & CAML_BA_KIND_MASK;
+  int kind = nx_ba_get_kind(ba);
   long total = total_elements_safe(&src);
   bool can_share = !force_copy && is_c_contiguous(&src) && src.offset == 0;
   if (can_share) {
@@ -217,13 +217,14 @@ static value make_contiguous(value v_src, bool force_copy) {
     v_new_strides = copy_int_array(Field(v_src, FFI_TENSOR_STRIDES));
     v_new = create_tensor_value(v_new_shape, v_new_strides, v_new_data, 0);
   } else {
-    long dim = total;
+    intnat dims[1];
+    dims[0] = (intnat)total;
     if (kind == NX_BA_INT4 || kind == NX_BA_UINT4) {
-      dim = (total + 1) / 2;
+      dims[0] = (intnat)((total + 1) / 2);
       flags = (flags & ~CAML_BA_KIND_MASK) |
               CAML_BA_UINT8;  // Use byte array for packed
     }
-    v_new_data = caml_ba_alloc(flags, 1, NULL, &dim);
+    v_new_data = caml_ba_alloc(flags, 1, NULL, dims);
     v_new_shape = copy_int_array(Field(v_src, FFI_TENSOR_SHAPE));
     v_new_strides = caml_alloc(src.ndim, 0);
     int strides[32];  // Stack buffer for strides - use int not long

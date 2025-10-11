@@ -3,6 +3,7 @@
 
 open Ir
 module S = Ir.Scheduled
+module SymVar = Ir.SymVar
 
 (* small helpers *)
 
@@ -30,16 +31,30 @@ let nbytes_of (dt : Dtype.any) (shape : int array) =
   elems * sizeof_any dt
 
 (* choose a "kernel output shape" (used to build iteration space) *)
-let pick_output_shape (spec : Grouper.cluster_t) : int array =
-  match spec.outputs with
-  | v :: _ -> shape_of spec.vars_metadata v
-  | [] ->
-      (* fallback: walk nodes until we find a var with known shape *)
+let pick_output_shape (spec : Grouper.cluster_t) :
+    int array * Shape_expr.shape option =
+  let lookup v = Hashtbl.find_opt spec.vars_metadata v in
+  let pick_from_var v =
+    match lookup v with
+    | Some md -> Some (md.shape, md.shape_expr)
+    | None -> None
+  in
+  let rec pick_from_outputs = function
+    | [] -> None
+    | v :: tl -> (
+        match pick_from_var v with
+        | Some _ as res -> res
+        | None -> pick_from_outputs tl)
+  in
+  match pick_from_outputs spec.outputs with
+  | Some (shape, expr) -> (shape, expr)
+  | None ->
+      (* fallback: walk nodes until we find a var with known shape metadata *)
       let rec first_out = function
-        | [] -> [||]
-        | Ir.Any_Node n :: tl ->
-            let v =
-              match n with
+        | [] -> ([||], None)
+        | Ir.Any_Node node :: tl -> (
+            let v_opt =
+              match node with
               | Placeholder { out_var; _ }
               | Const_Scalar { out_var; _ }
               | Vconst { out_var; _ }
@@ -83,11 +98,15 @@ let pick_output_shape (spec : Grouper.cluster_t) : int array =
               | Device { out_var; _ }
               | Custom { out_var; _ }
               | Noop { out_var; _ } ->
-                  out_var
-              | Sink _ -> Var.fresh ()
+                  Some out_var
+              | Sink _ -> None
             in
-            let sh = shape_of spec.vars_metadata v in
-            if Array.length sh > 0 then sh else first_out tl
+            match v_opt with
+            | Some v -> (
+                match pick_from_var v with
+                | Some (shape, expr) when Array.length shape > 0 -> (shape, expr)
+                | _ -> first_out tl)
+            | None -> first_out tl)
       in
       first_out spec.nodes
 
@@ -104,7 +123,28 @@ let make_buf_info ~(is_input : bool) ~(is_output : bool)
 
 (* build S.iter_space from an output shape *)
 
-let make_iter_space (out_shape : int array) : S.iter_space =
+let sym_for_axis shape_expr_opt i =
+  match shape_expr_opt with
+  | Some expr when i < Array.length expr -> (
+      match expr.(i) with
+      | Shape_expr.Var v ->
+          let raw_name = Shape_expr.Var.name v in
+          let name =
+            if String.length raw_name = 0 then
+              Printf.sprintf "v%d" (Shape_expr.Var.id v)
+            else raw_name
+          in
+          Some
+            {
+              SymVar.name;
+              min_val = Shape_expr.Var.min v;
+              max_val = Shape_expr.Var.max v;
+            }
+      | _ -> None)
+  | _ -> None
+
+let make_iter_space (out_shape : int array)
+    (shape_expr_opt : Shape_expr.shape option) : S.iter_space =
   let nd = Array.length out_shape in
   let axes =
     if nd = 0 then
@@ -115,7 +155,7 @@ let make_iter_space (out_shape : int array) : S.iter_space =
           {
             S.name = Printf.sprintf "i%d" i;
             size = Some sz;
-            sym = None;
+            sym = sym_for_axis shape_expr_opt i;
             role = `Normal;
           })
         out_shape
@@ -157,8 +197,8 @@ let make_context (spec : Grouper.cluster_t) (out_shape : int array) :
 
 let of_spec (kernel_id : int) (spec : Grouper.cluster_t) :
     S.schedule_item * S.item_analysis =
-  let out_shape = pick_output_shape spec in
-  let iter = make_iter_space out_shape in
+  let out_shape, out_shape_expr = pick_output_shape spec in
+  let iter = make_iter_space out_shape out_shape_expr in
   let context = make_context spec out_shape in
 
   let inputs =

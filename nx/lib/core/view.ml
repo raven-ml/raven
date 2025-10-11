@@ -36,8 +36,8 @@ let canonicalize_strides _shape_array strides = strides
 let eval_shape_opt shape = Symbolic_shape.eval shape
 
 (* Check if strides represent a contiguous layout *)
-let is_c_contiguous_strides shape_arr strides offset mask =
-  offset = 0 && mask = None
+let is_c_contiguous_strides shape_arr strides mask =
+  mask = None
   &&
   let expected = compute_strides shape_arr in
   let expected_canonical = canonicalize_strides shape_arr expected in
@@ -113,10 +113,8 @@ let create ?(offset = 0) ?strides ?mask shape =
           | _ -> mask
       in
       let new_layout =
-        if
-          is_c_contiguous_strides shape_arr current_strides current_offset
-            current_mask
-        then C_contiguous
+        if is_c_contiguous_strides shape_arr current_strides current_mask then
+          C_contiguous
         else Strided
       in
       {
@@ -175,16 +173,6 @@ let is_valid view indices =
         Array.for_all2
           (fun idx (b, e) -> idx >= b && idx < e)
           indices mask_array
-
-let can_be_strided view =
-  (* All views now have strides, so check other conditions *)
-  match (view.mask, eval_shape_opt view.shape) with
-  | None, _ -> true
-  | Some mask_array, Some shape_arr ->
-      Array.for_all2 (fun (b, e) s -> b = 0 && e = s) mask_array shape_arr
-  | Some _, None ->
-      (* With symbolic shape and mask, conservatively return false *)
-      false
 
 (* ───── view manipulation ───── *)
 
@@ -417,6 +405,7 @@ let reshape view new_shape =
             match match_dims !old_dims !new_dims with
             | None -> None
             | Some stride_map ->
+                let stride_map_arr = Array.of_list stride_map in
                 (* Build final strides array, including size-1 dimensions *)
                 let new_strides = Array.make (Array.length new_arr) 0 in
                 let map_idx = ref 0 in
@@ -424,7 +413,7 @@ let reshape view new_shape =
                 for i = 0 to Array.length new_arr - 1 do
                   if new_arr.(i) = 1 then new_strides.(i) <- 0
                   else
-                    let _, stride = List.nth stride_map !map_idx in
+                    let _, stride = stride_map_arr.(!map_idx) in
                     new_strides.(i) <- stride;
                     incr map_idx
                 done;
@@ -614,116 +603,6 @@ let flip view flip_axes_bools =
         flip_axes_bools;
       create ~offset:!new_offset ?mask:new_mask ~strides:new_strides view.shape
 
-(* ───── view merging ───── *)
-
-(* Try to merge two views into one *)
-let merge v1 v2 =
-  (* Case 1: v2 is contiguous - we can only merge if v1 is also contiguous and
-     can be safely reshaped to v2's shape without losing information. *)
-  if v2.layout = C_contiguous then
-    if v1.layout = C_contiguous then
-      (* Both are contiguous - safe to reshape v1 to v2's shape *)
-      try Some (reshape v1 v2.shape) with _ -> None
-    else
-      (* v1 is not contiguous (e.g., transposed) - cannot merge without losing
-         information *)
-      None (* Case 2: v1 is contiguous and same shape - use v2 *)
-  else if v1.layout = C_contiguous && Symbolic_shape.equal v1.shape v2.shape
-  then Some v2
-    (* Case 3: Handle symbolic shapes - if either shape is symbolic, try
-       conservative merge *)
-  else if
-    (not (Symbolic_shape.is_static v1.shape))
-    || not (Symbolic_shape.is_static v2.shape)
-  then
-    (* For symbolic shapes, we can still merge in some cases *)
-    if v1.layout = C_contiguous then
-      (* v1 is contiguous, v2 operates on it - often mergeable *)
-      Some { v2 with offset = v1.offset + v2.offset }
-    else
-      (* Don't try to merge non-contiguous views with symbolic shapes *)
-      None (* Case 4: v1 is contiguous and can be reshaped to v2 *)
-  else if v1.layout = C_contiguous then
-    match (Symbolic_shape.eval v1.shape, Symbolic_shape.eval v2.shape) with
-    | Some s1_arr, Some s2_arr when prod s1_arr = prod s2_arr -> (
-        (* v1 is C-contiguous and has same numel as v2 *)
-        (* Check if v2 represents a permutation that would be lost by reshape *)
-        let v2_is_permutation =
-          (* A view is a permutation if it has the same strides values but in different order *)
-          (* For example, transpose of [2,3] has strides [1,3] instead of [3,1] *)
-          (* But we need to be careful with zero strides from size-1 dimensions *)
-          match (Symbolic_shape.eval v2.shape, v2.strides) with
-          | Some shape_arr, strides ->
-              (* Filter out strides for size-1 dimensions (which have stride
-                 0) *)
-              let non_unit_pairs =
-                Array.to_list
-                  (Array.mapi
-                     (fun i _ -> (shape_arr.(i), strides.(i)))
-                     shape_arr)
-                |> List.filter (fun (size, _) -> size > 1)
-              in
-              if List.length non_unit_pairs < 2 then
-                (* Less than 2 non-unit dimensions - can't be a meaningful
-                   permutation *)
-                false
-              else
-                (* Check if the non-zero strides form a permutation *)
-                (* For transpose, we'd have different stride ordering *)
-                let strides_only =
-                  List.map snd non_unit_pairs |> Array.of_list
-                in
-                let expected_strides =
-                  let sizes_only =
-                    List.map fst non_unit_pairs |> Array.of_list
-                  in
-                  compute_strides sizes_only
-                in
-                (* Check if strides match expected pattern for this shape *)
-                (* A permutation would have different stride ordering *)
-                not (Array.for_all2 ( = ) strides_only expected_strides)
-          | _ -> false
-        in
-        if v2_is_permutation then
-          (* v2 is a permutation (like transpose) - can't merge without losing
-             info *)
-          None
-        else
-          (* v2 is not a permutation - safe to reshape v1 to v2's shape *)
-          try Some (reshape v1 v2.shape) with _ -> None)
-    | _ -> None (* Case 5: Handle operations on broadcast views *)
-  else if Array.exists (( = ) 0) v1.strides then
-    (* v1 is a broadcast view - operations on it maintain broadcast semantics *)
-    match Symbolic_shape.eval v2.shape with
-    | Some _s2_arr ->
-        (* For broadcast views, most operations just update shape/offset *)
-        (* The key is that strides remain broadcast (0) for broadcast dimensions *)
-        Some v2
-    | _ -> None
-    (* Case 6: Handle expand operations - if v2 is an expand of v1 *)
-  else if v1.mask = None && v2.mask = None then
-    match (Symbolic_shape.eval v1.shape, Symbolic_shape.eval v2.shape) with
-    | Some s1_arr, Some s2_arr when Array.length s1_arr = Array.length s2_arr ->
-        (* Check if v2 could be an expand of v1 *)
-        let is_expand = ref true in
-        for i = 0 to Array.length s1_arr - 1 do
-          if s1_arr.(i) <> s2_arr.(i) && s1_arr.(i) <> 1 then is_expand := false
-        done;
-        (* Also check that strides have the same sign (no flips) *)
-        let has_negative_v1 = Array.exists (fun s -> s < 0) v1.strides in
-        let has_negative_v2 = Array.exists (fun s -> s < 0) v2.strides in
-        if !is_expand && has_negative_v1 = has_negative_v2 then
-          (* v2 is an expand of v1 - we can merge by applying expand to v1 *)
-          try Some (expand v1 v2.shape) with _ -> None
-        else None
-    | _ -> None (* Case 7: Handle shrink views - if v2 has a mask *)
-  else if v2.mask <> None && v1.mask = None then
-    (* v2 is a shrink/slice operation - try to preserve it *)
-    (* This handles the common case of slicing a regular tensor *)
-    Some v2
-  (* Default: can't merge *)
-    else None
-
 let simplify view =
   match Symbolic_shape.eval view.shape with
   | None -> view (* Can't simplify symbolic shapes *)
@@ -745,11 +624,30 @@ let simplify view =
         (* Don't use create here - it canonicalizes strides and loses negative values *)
         (* Just update the mask field and recalculate layout *)
         let new_layout =
-          if
-            mask = None && view.offset = 0
-            && is_c_contiguous_strides shape_arr view.strides 0 None
+          if mask = None && is_c_contiguous_strides shape_arr view.strides mask
           then C_contiguous
           else Strided
         in
         { view with mask; layout = new_layout }
       else view (* No simplification possible *)
+
+let offset_dim v = Symbolic_shape.static v.offset
+
+let can_get_strides_simplified simplified =
+  match (simplified.mask, eval_shape_opt simplified.shape) with
+  | None, _ -> true
+  | Some mask_array, Some shape_arr ->
+      Array.for_all2 (fun (b, e) s -> b = 0 && e = s) mask_array shape_arr
+  | Some _, None -> false
+
+let can_get_strides view = simplify view |> can_get_strides_simplified
+
+let strides_opt view =
+  let simplified = simplify view in
+  if can_get_strides_simplified simplified then Some (strides simplified)
+  else None
+
+let is_materializable view =
+  let simplified = simplify view in
+  Symbolic_shape.is_static (shape simplified)
+  && can_get_strides_simplified simplified

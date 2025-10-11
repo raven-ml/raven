@@ -19,7 +19,7 @@ module type S = sig
 
   (* lenses *)
 
-  val view : ('a, 'b) t -> Lazy_view.t
+  val view : ('a, 'b) t -> View.t
   (** Return the view tracker for [t]. *)
 
   val dtype : ('a, 'b) t -> ('a, 'b) Dtype.t

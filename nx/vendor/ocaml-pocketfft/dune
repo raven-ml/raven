@@ -7,7 +7,8 @@
   (flags
    (:standard
     (:include cxx_flags.sexp)))
-  (include_dirs pocketfft)))
+  (include_dirs pocketfft))
+ (c_library_flags (:standard \ -shared-libgcc)))
 
 (rule
  (targets cxx_flags.sexp)

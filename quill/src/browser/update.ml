@@ -1,4 +1,4 @@
-open Quill_markdown
+open Quill_editor.Document
 
 type msg =
   | Focus_inline_by_id of int
@@ -80,7 +80,7 @@ let update (m : Model.t) (message : msg) : Model.t =
             log "Execution success for block %d" block_id;
             result.output
       in
-      let output_block = Quill_markdown.block_of_md output_text in
+      let output_block = Quill_editor.Document.block_of_md output_text in
       let new_document =
         List.map
           (fun b -> set_codeblock_output_in_block b block_id output_block)
@@ -92,7 +92,7 @@ let update (m : Model.t) (message : msg) : Model.t =
         List.map
           (fun b ->
             if b.id = block_id then (
-              match Quill_markdown.find_inline_in_block b run_id with
+              match Quill_editor.Document.find_inline_in_block b run_id with
               | None ->
                   log "No inline content with id %d found in block %d" run_id
                     block_id;
@@ -101,13 +101,14 @@ let update (m : Model.t) (message : msg) : Model.t =
                   log "Splitting inline content with id %d in block %d" run_id
                     block_id;
                   let before, after =
-                    Quill_markdown.split_inline inline offset
+                    Quill_editor.Document.split_inline inline offset
                   in
                   let new_block1 =
-                    Quill_markdown.replace_inline_in_block b run_id before
+                    Quill_editor.Document.replace_inline_in_block b run_id
+                      before
                   in
                   let new_block2 =
-                    Quill_markdown.replace_inline_in_block b run_id after
+                    Quill_editor.Document.replace_inline_in_block b run_id after
                   in
                   [ new_block1; new_block2 ])
             else [ b ])

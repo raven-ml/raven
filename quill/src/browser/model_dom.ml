@@ -1,4 +1,4 @@
-open Quill_markdown
+open Quill_editor.Document
 open Brr_ext
 
 let log fmt =
@@ -6,16 +6,16 @@ let log fmt =
     (fun s -> Brr.Console.(log [ Jstr.v ("[model_dom] " ^ s) ]))
     fmt
 
-let parse_dom (root : El.t) : Quill_markdown.block list =
+let parse_dom (root : El.t) : Quill_editor.Document.block list =
   match El.find_first_by_selector (Jstr.v "#editor") ~root with
   | None ->
       log "Could not find editor element";
       []
   | Some editor_div ->
-      Quill_markdown.reset_ids ();
+      Quill_editor.Document.reset_ids ();
       let content = Jstr.to_string (El.text_content editor_div) in
       log "Parsing content: %s" content;
-      Quill_markdown.document_of_md (String.trim content)
+      Quill_editor.Document.of_markdown (String.trim content)
 
 let rec text_length_inline inline : int =
   match inline.inline_content with

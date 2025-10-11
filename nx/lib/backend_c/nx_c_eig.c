@@ -715,7 +715,7 @@ CAMLprim value caml_nx_op_eig(value v_in, value v_vals, value v_vecs,
       Caml_ba_array_val(Field(v_vals, FFI_TENSOR_DATA));
   struct caml_ba_array* ba_vecs =
       Caml_ba_array_val(Field(v_vecs, FFI_TENSOR_DATA));
-  int kind = ba_in->flags & CAML_BA_KIND_MASK;
+  int kind = nx_ba_get_kind(ba_in);
   if (in.ndim < 2) {
     cleanup_ndarray(&in);
     cleanup_ndarray(&vals);

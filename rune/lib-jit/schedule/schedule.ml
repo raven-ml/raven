@@ -2,6 +2,7 @@
 
 open Ir
 module S = Ir.Scheduled
+module SymVar = Ir.SymVar
 
 (* wiring helpers *)
 
@@ -233,6 +234,61 @@ let build (g : Ir.graph_t) : S.graph_t =
       groups []
   in
 
+  (* Gather symbolic vars from metadata to surface in the scheduled graph. *)
+  let collected_symbolics =
+    let tbl : (int, SymVar.t) Hashtbl.t = Hashtbl.create 16 in
+    Hashtbl.iter
+      (fun _ meta ->
+        match meta.shape_expr with
+        | Some expr ->
+            Array.iter
+              (function
+                | Shape_expr.Var v ->
+                    let id = Shape_expr.Var.id v in
+                    if not (Hashtbl.mem tbl id) then
+                      let raw_name = Shape_expr.Var.name v in
+                      let name =
+                        if String.length raw_name = 0 then
+                          Printf.sprintf "v%d" id
+                        else raw_name
+                      in
+                      Hashtbl.add tbl id
+                        {
+                          SymVar.name;
+                          min_val = Shape_expr.Var.min v;
+                          max_val = Shape_expr.Var.max v;
+                        }
+                | _ -> ())
+              expr
+        | None -> ())
+      g.vars_metadata;
+    Hashtbl.fold (fun id sym acc -> (id, sym) :: acc) tbl []
+    |> List.sort (fun (a, _) (b, _) -> compare a b)
+    |> List.map snd
+  in
+  let module SymKeySet = Set.Make (struct
+    type t = string * int * int
+
+    let compare = compare
+  end) in
+  let existing_keys =
+    List.fold_left
+      (fun acc (sym : SymVar.t) ->
+        let SymVar.{ name; min_val; max_val } = sym in
+        SymKeySet.add (name, min_val, max_val) acc)
+      SymKeySet.empty g.symbolic_vars
+  in
+  let _, added_rev =
+    List.fold_left
+      (fun (seen, acc_rev) (sym : SymVar.t) ->
+        let SymVar.{ name; min_val; max_val } = sym in
+        let key = (name, min_val, max_val) in
+        if SymKeySet.mem key seen then (seen, acc_rev)
+        else (SymKeySet.add key seen, sym :: acc_rev))
+      (existing_keys, []) collected_symbolics
+  in
+  let symbolic_vars = g.symbolic_vars @ List.rev added_rev in
+
   (* 6) Assemble final scheduled graph *)
   assemble ~items:items_with_deps ~dependencies ~fusion:[] ~analysis
-    ~vars_metadata:g.vars_metadata ~symbolic_vars:g.symbolic_vars
+    ~vars_metadata:g.vars_metadata ~symbolic_vars
