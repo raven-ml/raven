@@ -1,5 +1,5 @@
 open Talon
-open Yojson.Basic 
+open Yojson.Basic
 
 (* Helper to convert a column value to JSON *)
 let value_to_json col idx =
@@ -188,58 +188,61 @@ let from_string ?(orient = `Records) ?dtype_spec json_str =
                   let column =
                     match dtype with
                     | `Float32 ->
-                      let arr =
-                        List.map
-                          (function
-                            | `Null -> None
-                            | `Float f -> Some f
-                            | `Int i -> Some (float_of_int i)
-                            | `String s -> (try Some (float_of_string s) with _ -> None)
-                            | _ -> None)
-                          values
-                        |> Array.of_list
-                      in
-                      Col.float32_opt arr
-                        | `Float64 ->
-                          let arr =
-                            List.map
-                              (function
-                                | `Null -> None
-                                | `Float f -> Some f
-                                | `Int i -> Some (float_of_int i)
-                                | `String s -> (try Some (float_of_string s) with _ -> None)
-                                | _ -> None)
-                              values
-                            |> Array.of_list
-                          in
-                          Col.float64_opt arr
-                        
-                      | `Int32 ->
+                        let arr =
+                          List.map
+                            (function
+                              | `Null -> None
+                              | `Float f -> Some f
+                              | `Int i -> Some (float_of_int i)
+                              | `String s -> (
+                                  try Some (float_of_string s) with _ -> None)
+                              | _ -> None)
+                            values
+                          |> Array.of_list
+                        in
+                        Col.float32_opt arr
+                    | `Float64 ->
+                        let arr =
+                          List.map
+                            (function
+                              | `Null -> None
+                              | `Float f -> Some f
+                              | `Int i -> Some (float_of_int i)
+                              | `String s -> (
+                                  try Some (float_of_string s) with _ -> None)
+                              | _ -> None)
+                            values
+                          |> Array.of_list
+                        in
+                        Col.float64_opt arr
+                    | `Int32 ->
                         let arr =
                           List.map
                             (function
                               | `Null -> None
                               | `Int i -> Some (Int32.of_int i)
-                              | `String s -> (try Some (Int32.of_string s) with _ -> None)
+                              | `String s -> (
+                                  try Some (Int32.of_string s) with _ -> None)
                               | `Float f -> Some (Int32.of_float f)
                               | _ -> None)
                             values
                           |> Array.of_list
                         in
-                        Col.int32_opt arr                      
-                        | `Int64 ->
-                          let arr =
-                            List.map
-                              (function
-                                | `Null -> None
-                                | `Int i -> Some (Int64.of_int i)
-                                | `String s -> (try Some (Int64.of_string s) with _ -> None)
-                                | `Float f -> Some (Int64.of_float f)
-                                | _ -> None)
-                              values
-                            |> Array.of_list
-                          in
-                          Col.int64_opt arr
+                        Col.int32_opt arr
+                    | `Int64 ->
+                        let arr =
+                          List.map
+                            (function
+                              | `Null -> None
+                              | `Int i -> Some (Int64.of_int i)
+                              | `String s -> (
+                                  try Some (Int64.of_string s) with _ -> None)
+                              | `Float f -> Some (Int64.of_float f)
+                              | _ -> None)
+                            values
+                          |> Array.of_list
+                        in
+                        Col.int64_opt arr
                     | `Bool ->
                         let arr =
                           List.map
@@ -286,65 +289,71 @@ let from_string ?(orient = `Records) ?dtype_spec json_str =
                         match dtype_spec with
                         | Some specs -> (
                             try List.assoc col_name specs
-                            with Not_found -> detect_json_dtype  vals)
-                        | None -> detect_json_dtype  vals
+                            with Not_found -> detect_json_dtype vals)
+                        | None -> detect_json_dtype vals
                       in
                       let column =
                         match dtype with
                         | `Float32 ->
-                          let arr =
-                            List.map
-                              (function
-                                | `Null -> None
-                                | `Float f -> Some f
-                                | `Int i -> Some (float_of_int i)
-                                | `String s -> (try Some (float_of_string s) with _ -> None)
-                                | _ -> None)
-                              vals
-                            |> Array.of_list
-                          in
-                          Col.float32_opt arr
-                            | `Float64 ->
-                              let arr =
-                                List.map
-                                  (function
-                                    | `Null -> None
-                                    | `Float f -> Some f
-                                    | `Int i -> Some (float_of_int i)
-                                    | `String s -> (try Some (float_of_string s) with _ -> None)
-                                    | _ -> None)
-                                  vals
-                                |> Array.of_list
-                              in
-                              Col.float64_opt arr
-                            
-                              | `Int32 ->
-                                let arr =
-                                  List.map
-                                    (function
-                                      | `Null -> None
-                                      | `Int i -> Some (Int32.of_int i)
-                                      | `String s -> (try Some (Int32.of_string s) with _ -> None)
-                                      | `Float f -> Some (Int32.of_float f)
-                                      | _ -> None)
-                                    vals
-                                  |> Array.of_list
-                                in
-                                Col.int32_opt arr
-                              
-                            | `Int64 ->
-                              let arr =
-                                List.map
-                                  (function
-                                    | `Null -> None
-                                    | `Int i -> Some (Int64.of_int i)
-                                    | `String s -> (try Some (Int64.of_string s) with _ -> None)
-                                    | `Float f -> Some (Int64.of_float f)
-                                    | _ -> None)
-                                  vals
-                                |> Array.of_list
-                              in
-                              Col.int64_opt arr
+                            let arr =
+                              List.map
+                                (function
+                                  | `Null -> None
+                                  | `Float f -> Some f
+                                  | `Int i -> Some (float_of_int i)
+                                  | `String s -> (
+                                      try Some (float_of_string s)
+                                      with _ -> None)
+                                  | _ -> None)
+                                vals
+                              |> Array.of_list
+                            in
+                            Col.float32_opt arr
+                        | `Float64 ->
+                            let arr =
+                              List.map
+                                (function
+                                  | `Null -> None
+                                  | `Float f -> Some f
+                                  | `Int i -> Some (float_of_int i)
+                                  | `String s -> (
+                                      try Some (float_of_string s)
+                                      with _ -> None)
+                                  | _ -> None)
+                                vals
+                              |> Array.of_list
+                            in
+                            Col.float64_opt arr
+                        | `Int32 ->
+                            let arr =
+                              List.map
+                                (function
+                                  | `Null -> None
+                                  | `Int i -> Some (Int32.of_int i)
+                                  | `String s -> (
+                                      try Some (Int32.of_string s)
+                                      with _ -> None)
+                                  | `Float f -> Some (Int32.of_float f)
+                                  | _ -> None)
+                                vals
+                              |> Array.of_list
+                            in
+                            Col.int32_opt arr
+                        | `Int64 ->
+                            let arr =
+                              List.map
+                                (function
+                                  | `Null -> None
+                                  | `Int i -> Some (Int64.of_int i)
+                                  | `String s -> (
+                                      try Some (Int64.of_string s)
+                                      with _ -> None)
+                                  | `Float f -> Some (Int64.of_float f)
+                                  | _ -> None)
+                                vals
+                              |> Array.of_list
+                            in
+                            Col.int64_opt arr
                         | `Bool ->
                             let arr =
                               List.map
