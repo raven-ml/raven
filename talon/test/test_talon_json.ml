@@ -218,6 +218,30 @@ let test_mixed_types () =
       check_string "string" "two" arr.(1)
   | None -> Alcotest.fail "mixed should be string column"
 
+let test_force_all_null_to_float64 () =
+  let json = {| [{"a": null}, {"a": null}] |} in
+  let df = Talon_json.from_string ~dtype_spec:[ ("a", `Float64) ] json in
+
+  check_int "rows" 2 (num_rows df);
+
+  let col = get_column_exn df "a" in
+  check_bool "has nulls" true (Col.has_nulls col);
+  check_int "null count" 2 (Col.null_count col)
+
+let test_force_string_id_to_int64 () =
+  let json = {| [{"id": "123456789123456"}, {"id": "42"}] |} in
+  let dtype_spec = [ ("id", `Int64) ] in
+  let df = Talon_json.from_string ~dtype_spec json in
+  check_int "is int" 2 (num_rows df);
+  check_bool "int values" true
+    (to_int64_array df "id" = Some [| 123456789123456L; 42L |])
+
+let dtype_spec_tests =
+  [
+    ("Force all-null to Float64", `Quick, test_force_all_null_to_float64);
+    ("Force string ID to Int64", `Quick, test_force_string_id_to_int64);
+  ]
+
 (* Test suites *)
 let serialization_tests =
   [
@@ -247,6 +271,7 @@ let integration_tests =
 let () =
   Alcotest.run "Talon JSON"
     [
+      ("Dtype Spec", dtype_spec_tests);
       ("Serialization", serialization_tests);
       ("Deserialization", deserialization_tests);
       ("Integration", integration_tests);

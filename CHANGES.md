@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - Nx-datasets: Use `Logs` for dataset loader logging (#95, @Satarupa22-SD).
 - Rune: Add support for categorical sampling with `Rune.Rng.categorical` (#89, @nirnayroy).
 - Nx: Add float16 and bfloat16 support to safetensors I/O, including precise conversions that preserve denormals/NaNs (#84, @six-shot, @tmattio).
+- Talon: Allow forcing column types in Talon JSON loader (#104, @nirnayroy)
 
 ## [1.0.0~alpha1] - 2025-10-02
 
