@@ -5826,20 +5826,23 @@ module Make (B : Backend_intf.S) = struct
 
     let u, s, vh = B.op_svd ~full_matrices:false a in
 
+    let max_s = max s |> unsafe_get [] in
+
+    let m, n =
+      shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
+    in
+
     (* Determine cutoff *)
     let cutoff =
       match rtol with
       | Some rtol_value ->
 
         (*Use provided relative tolerance*)
-         rtol_value
+        (rtol_value *. max_s *. float_of_int (Stdlib.max m n))
       
       | None ->
-        let max_s = max s |> unsafe_get [] in
         (* Default cutoff is max(m,n) * eps * max_s *)
-        let m, n =
-          shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
-        in
+        
         (* Use appropriate epsilon for the dtype *)
         let eps = 
           if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7

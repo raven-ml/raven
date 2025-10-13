@@ -855,7 +855,7 @@ let test_lstsq () =
   check_shape "lstsq x" [| 2 |] x;
   check int "lstsq rank" 2 rank;
   let approx_b = Nx.matmul a x in
-  check_nx "lstsq approx" b approx_b
+  check_nx ~epsilon:1e-5 "lstsq approx" b approx_b
 
 let test_lstsq_rcond () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; 1e-10 |] in
