@@ -59,7 +59,7 @@ val load_breast_cancer : unit -> Nx.float64_t * (int, Nx.int_elt) Nx.t
 (** [load_breast_cancer ()] loads Breast Cancer Wisconsin dataset.
 
     Returns features as float64 tensor of shape [|569; 30|] and labels as int32
-    tensor of shape [|569; 1|]. Labels are 0 (malignant) or 1 (benign). *)
+    tensor of shape [|569; 1|]. Labels are 1 (malignant) or 0 (benign). *)
 
 val load_diabetes : unit -> Nx.float64_t * Nx.float64_t
 (** [load_diabetes ()] loads diabetes regression dataset.
