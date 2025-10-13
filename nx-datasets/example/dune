@@ -13,3 +13,11 @@
 (executable
  (name california)
  (libraries nx_datasets hugin nx))
+
+(executable
+ (name diabetes)
+ (libraries nx_datasets hugin nx))
+
+(executable
+ (name breast_cancer)
+ (libraries nx_datasets hugin nx))
