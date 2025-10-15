@@ -5818,7 +5818,6 @@ module Make (B : Backend_intf.S) = struct
     (* Squeeze result if we expanded b *)
     if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
-
   let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
     check_float_or_complex ~op:"pinv" a;
     let _ = hermitian in
@@ -5836,22 +5835,20 @@ module Make (B : Backend_intf.S) = struct
     let cutoff =
       match rtol with
       | Some rtol_value ->
-
-        (*Use provided relative tolerance*)
-        (rtol_value *. max_s *. float_of_int (Stdlib.max m n))
-      
+          (*Use provided relative tolerance*)
+          rtol_value *. max_s *. float_of_int (Stdlib.max m n)
       | None ->
-        (* Default cutoff is max(m,n) * eps * max_s *)
-        
-        (* Use appropriate epsilon for the dtype *)
-        let eps = 
-          if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
-            (* Machine epsilon for float32 *)
-          else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
-            (* Machine epsilon for float64 *)
-          else 1e-15 (* Default for other types *)
-        in
-        (float_of_int (Stdlib.max m n) *. eps *. max_s)
+          (* Default cutoff is max(m,n) * eps * max_s *)
+
+          (* Use appropriate epsilon for the dtype *)
+          let eps =
+            if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
+              (* Machine epsilon for float32 *)
+            else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
+              (* Machine epsilon for float64 *)
+            else 1e-15 (* Default for other types *)
+          in
+          float_of_int (Stdlib.max m n) *. eps *. max_s
     in
 
     (* Compute pseudoinverse *)
@@ -5878,30 +5875,25 @@ module Make (B : Backend_intf.S) = struct
   let lstsq ?rcond a b =
     check_float_or_complex ~op:"lstsq" a;
     check_float_or_complex ~op:"lstsq" b;
-
     let m, n =
       shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
     in
-
-    let rcond_value = Option.value ~default:0.0 rcond in
-
-    let a_pseudo = pinv a ~rtol:rcond_value in
-
-    let x = matmul a_pseudo b in
-
-
-    (*let x = Nx.pinv a in*)
-    (* TODO: use for rank determination *)
-
-    (* Use QR decomposition  
-    let q, r = B.op_qr ~reduced:true a in
-    let y = matmul (matrix_transpose q) b in
-
-    (* Solve upper triangular system *)
-    
+    let rcond_value =
+      match rcond with
+      | Some v -> v
+      | None ->
+          let eps =
+            if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
+            else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
+            else 1e-15
+          in
+          let max_s = max (svdvals a) |> unsafe_get [] in
+          float_of_int (Stdlib.max m n) *. eps *. max_s
+    in
     let x =
       if m >= n then
-        (* For overdetermined systems, r is [n, n] when reduced=true *)
+        let q, r = B.op_qr ~reduced:true a in
+        let y = matmul (matrix_transpose q) b in
         let r_square =
           if ndim r = 2 then slice_internal [ R (0, n); R (0, n) ] r
           else slice_internal [ A; R (0, n); R (0, n) ] r
@@ -5914,21 +5906,17 @@ module Make (B : Backend_intf.S) = struct
         B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false
           r_square y_top
       else
-        Error.failed ~op:"lstsq" ~what:"underdetermined systems not implemented"
-          ()
-    in*)
-
-    (* Compute residuals *)
+        let a_pseudo = pinv a ~rtol:rcond_value in
+        matmul a_pseudo b
+    in
     let residuals =
       if m > n then
         let res = sub b (matmul a x) in
         sum (square res) ~axes:[ ndim res - 2 ] ~keepdims:false
       else zeros (B.context a) (dtype b) [||]
     in
-
     let rank = matrix_rank a in
     let s = svdvals a in
-
     (x, residuals, rank, s)
 
   let inv a =
@@ -8007,6 +7995,3 @@ module Make (B : Backend_intf.S) = struct
     let ( .${}<- ) x slice_def value = set_slice slice_def x value
   end
 end
-
-
-
