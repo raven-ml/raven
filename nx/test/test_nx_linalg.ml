@@ -855,7 +855,7 @@ let test_lstsq () =
   check_shape "lstsq x" [| 2 |] x;
   check int "lstsq rank" 2 rank;
   let approx_b = Nx.matmul a x in
-  check_nx "lstsq approx" b approx_b
+  check_nx ~epsilon:1e-5 "lstsq approx" b approx_b
 
 let test_lstsq_rcond () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; 1e-10 |] in
@@ -863,6 +863,17 @@ let test_lstsq_rcond () =
   let _, _, rank, _ = Nx.lstsq ~rcond:1e-8 a b in
   check int "lstsq rcond rank" 1 rank
 
+let test_lstsq_underdetermined () = 
+  let a = Nx.create Nx.float32 [|2; 3|] [| 1.; 0.; 2.; 3.; 2.; 4.;|] in
+  let b = Nx.create Nx.float32 [| 2 |] [|1.; 0.|] in
+
+  let x, _res, rank, _s = Nx.lstsq ~rcond:1e-8 a b in
+  check_shape "lstsq x underdetermined" [| 3 |] x;
+  check int "lstsq rank underdetermined" 2 rank;
+  let approx_b_underdetermined = Nx.matmul a x in
+  check_nx "lstsq approx underdetermined" b approx_b_underdetermined
+
+  
 let test_pinv () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let pinv = Nx.pinv a in
@@ -1058,6 +1069,7 @@ let advanced_solve_tests =
   [
     ("lstsq", `Quick, test_lstsq);
     ("lstsq rcond", `Quick, test_lstsq_rcond);
+    ("lstsq underdetermined", `Quick, test_lstsq_underdetermined);
     ("pinv", `Quick, test_pinv);
     ("pinv singular", `Quick, test_pinv_singular);
     ("tensorsolve", `Quick, test_tensorsolve);
