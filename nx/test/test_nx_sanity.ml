@@ -335,7 +335,8 @@ let comparison_tests =
     test_case "greater_equal" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 5.; 3.; 1. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 3.; 3.; 2. |] in
-        Nx.greater_equal a b |> check_t "greater_equal" [| 3 |] [| true; true; false |]);
+        Nx.greater_equal a b
+        |> check_t "greater_equal" [| 3 |] [| true; true; false |]);
     test_case "less" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 5. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 3.; 3.; 2. |] in
@@ -343,7 +344,8 @@ let comparison_tests =
     test_case "less_equal" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 5. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 3.; 3.; 2. |] in
-        Nx.less_equal a b |> check_t "less_equal" [| 3 |] [| true; true; false |]);
+        Nx.less_equal a b
+        |> check_t "less_equal" [| 3 |] [| true; true; false |]);
   ]
 
 let element_wise_unary_tests =
@@ -518,13 +520,16 @@ let special_value_tests =
         Nx.isinf a |> check_t "isinf" [| 4 |] [| false; true; true; false |]);
     test_case "isfinite" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 4 |] [| 1.0; infinity; nan; 0.0 |] in
-        Nx.isfinite a |> check_t "isfinite" [| 4 |] [| true; false; false; true |]);
+        Nx.isfinite a
+        |> check_t "isfinite" [| 4 |] [| true; false; false; true |]);
   ]
 
 let ternary_tests =
   [
     test_case "where" `Quick (fun () ->
-        let cond = Nx.create Nx.bool [| 5 |] [| true; false; true; false; true |] in
+        let cond =
+          Nx.create Nx.bool [| 5 |] [| true; false; true; false; true |]
+        in
         let x = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
         let y = Nx.create Nx.float32 [| 5 |] [| 10.; 20.; 30.; 40.; 50. |] in
         Nx.where cond x y |> check_t "where" [| 5 |] [| 1.; 20.; 3.; 40.; 5. |]);

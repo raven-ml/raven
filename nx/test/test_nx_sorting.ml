@@ -22,7 +22,9 @@ let test_where_broadcast () =
     result
 
 let test_where_scalar_inputs () =
-  let mask = Nx.create Nx.bool [| 2; 3 |] [| true; false; true; false; true; false |] in
+  let mask =
+    Nx.create Nx.bool [| 2; 3 |] [| true; false; true; false; true; false |]
+  in
   let a = Nx.scalar Nx.float32 5.0 in
   let b = Nx.scalar Nx.float32 10.0 in
   let result = Nx.where mask a b in

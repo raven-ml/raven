@@ -1753,11 +1753,11 @@ val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
       # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         let y = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         array_equal x y |> item []
-      - : int = true
+      - : bool = true
       # let x = create int32 [| 2 |] [| 1l; 2l |] in
         let y = create int32 [| 2 |] [| 1l; 3l |] in
         array_equal x y |> item []
-      - : int = false
+      - : bool = false
     ]} *)
 
 val maximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
@@ -1820,7 +1820,7 @@ val isinf : (float, 'a) t -> (bool, bool_elt) t
     {@ocaml[
       # let x = create float32 [| 4 |] [| 1.; Float.infinity; Float.neg_infinity; Float.nan |] in
         isinf x
-      - : (bool, uint8_elt) t = [false, true, true, false]
+      - : (bool, bool_elt) t = [false, true, true, false]
     ]} *)
 
 val isnan : ('a, 'b) t -> (bool, bool_elt) t
@@ -1832,7 +1832,7 @@ val isnan : ('a, 'b) t -> (bool, bool_elt) t
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; Float.nan; Float.infinity |] in
         isnan x
-      - : (bool, bool_elt) t = [false, true, true]
+      - : (bool, bool_elt) t = [false, true, false]
     ]} *)
 
 val isfinite : (float, 'a) t -> (bool, bool_elt) t
@@ -2211,13 +2211,13 @@ val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
     {@ocaml[
       # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         all x |> item []
-      - : int = 1
+      - : bool = true
       # let x = create int32 [| 3 |] [| 1l; 0l; 3l |] in
         all x |> item []
-      - : int = 0
+      - : bool = false
       # let x = create int32 [| 2; 2 |] [| 1l; 0l; 1l; 1l |] in
         all ~axes:[ 1 ] x
-      - : (bool, bool_elt) t = [0, 1]
+      - : (bool, bool_elt) t = [false, true]
     ]} *)
 
 val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
@@ -2228,13 +2228,13 @@ val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
     {@ocaml[
       # let x = create int32 [| 3 |] [| 0l; 0l; 1l |] in
         any x |> item []
-      - : int = 1
+      - : bool = true
       # let x = create int32 [| 3 |] [| 0l; 0l; 0l |] in
         any x |> item []
-      - : int = 0
+      - : bool = false
       # let x = create int32 [| 2; 2 |] [| 0l; 0l; 0l; 1l |] in
         any ~axes:[ 1 ] x
-      - : (bool, bool_elt) t = [0, 1]
+      - : (bool, bool_elt) t = [false, true]
     ]} *)
 
 val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t

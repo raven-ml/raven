@@ -3594,10 +3594,8 @@ module Make (B : Backend_intf.S) = struct
 
         (* Get indices where condition is true *)
         let bool_indices = astype UInt8 (reshape [| axis_size |] condition) in
-        let true_indices =
-           nonzero_indices_only bool_indices
-        in
-        
+        let true_indices = nonzero_indices_only bool_indices in
+
         if Array.length true_indices = 0 || numel true_indices.(0) = 0 then (
           (* No true values - return empty tensor *)
           let new_shape = Array.copy (shape t) in
@@ -7665,10 +7663,11 @@ module Make (B : Backend_intf.S) = struct
     shape_for_arange.(ndim_expanded - 1) <- num_classes;
     let arange_b = reshape shape_for_arange arange_x in
 
-     (* Broadcasts to one-hot mask *)
+    (* Broadcasts to one-hot mask *)
     let bool_to_uint (x : (bool, bool_elt) t) : (int, uint8_elt) t =
-      cast Dtype.uint8 x in
-    let bool_tensor =  cmpeq index_expanded arange_b in
+      cast Dtype.uint8 x
+    in
+    let bool_tensor = cmpeq index_expanded arange_b in
     bool_to_uint bool_tensor
 
   (** Internal N-Dimensional max unpooling. *)

@@ -255,7 +255,9 @@ let test_grad_expand () =
 
 let test_grad_where () =
   (* Where with broadcasting *)
-  let cond = T.create T.bool [| 2; 3 |] [| true; false; true; false; true; false |] in
+  let cond =
+    T.create T.bool [| 2; 3 |] [| true; false; true; false; true; false |]
+  in
   let x = T.create T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let y_scalar = T.scalar T.float32 10.0 in
 

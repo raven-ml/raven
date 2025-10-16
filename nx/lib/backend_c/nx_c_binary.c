@@ -714,7 +714,7 @@ static void nx_c_cmplt_f16_kernel(void *x_data, void *y_data, void *z_data,
                                   long x_off, long y_off, long z_off) {
   uint16_t *x = (uint16_t *)x_data;
   uint16_t *y = (uint16_t *)y_data;
-  uint8_t *z = (uint8_t *)z_data;
+  bool *z = (bool *)z_data;
   float a = half_to_float(x[x_off]);
   float b = half_to_float(y[y_off]);
   z[z_off] = a < b ? 1 : 0;
@@ -728,7 +728,7 @@ BINARY_OP_IMPL(cmplt, uint16_t, f16)
                                               long y_off, long z_off) {   \
     T *x = (T *)x_data;                                                   \
     T *y = (T *)y_data;                                                   \
-    uint8_t *z = (uint8_t *)z_data;                                       \
+    bool *z = (bool *)z_data;                                       \
     float a = TO_FLOAT(x[x_off]);                                         \
     float b = TO_FLOAT(y[y_off]);                                         \
     z[z_off] = OP(a, b);                                                  \
@@ -750,7 +750,7 @@ LOW_PREC_CMP_KERNEL(cmplt, caml_ba_fp8_e5m2, f8e5m2, CMPLT_OP,
                                               long y_off, long z_off) {        \
     uint8_t *x = (uint8_t *)x_data;                                            \
     uint8_t *y = (uint8_t *)y_data;                                            \
-    uint8_t *z = (uint8_t *)z_data;                                            \
+    bool *z = (bool *)z_data;                                            \
     /* Unpack x value */                                                       \
     long x_byte_off = x_off / 2;                                               \
     int x_nib_off = x_off % 2;                                                 \
@@ -797,11 +797,11 @@ LOW_PREC_CMP_KERNEL(cmplt, caml_ba_fp8_e5m2, f8e5m2, CMPLT_OP,
   }
 
 // Define comparison operators
-#define CMPGT_OP(x, y) ((x) > (y) ? 1 : 0)
-#define CMPLE_OP(x, y) ((x) <= (y) ? 1 : 0)
-#define CMPGE_OP(x, y) ((x) >= (y) ? 1 : 0)
-#define CMPEQ_OP(x, y) ((x) == (y) ? 1 : 0)
-#define CMPNE_OP(x, y) ((x) != (y) ? 1 : 0)
+#define CMPGT_OP(x, y) ((x) > (y) ? true : false)
+#define CMPLE_OP(x, y) ((x) <= (y) ? true : false)
+#define CMPGE_OP(x, y) ((x) >= (y) ? true : false)
+#define CMPEQ_OP(x, y) ((x) == (y) ? true : false)
+#define CMPNE_OP(x, y) ((x) != (y) ? true : false)
 
 // Generate int4/uint4 comparison operations
 INT4_COMPARISON_OP_IMPL(cmplt, 1, i4, CMPLT_OP)
@@ -1241,11 +1241,11 @@ static void dispatch_comparison_op(value v_x, value v_y, value v_z,
   
   // Check output is uint8
   int kind_z = nx_ba_get_kind(Caml_ba_array_val(v_z_data));
-  if (kind_z != CAML_BA_UINT8) {
+  if (kind_z != NX_BA_BOOL) {
     cleanup_ndarray(&x);
     cleanup_ndarray(&y);
     cleanup_ndarray(&z);
-    caml_failwith("dtype mismatch: comparison output must be uint8");
+    caml_failwith("dtype mismatch: comparison output must be bool");
   }
 
   // Select operation based on input dtype

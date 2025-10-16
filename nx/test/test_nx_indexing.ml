@@ -221,7 +221,9 @@ let test_put_along_axis () =
 
 let test_compress_no_axis () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  let condition = Nx.create Nx.bool [| 5 |] [| true; false; true; false; true |] in
+  let condition =
+    Nx.create Nx.bool [| 5 |] [| true; false; true; false; true |]
+  in
   let result = Nx.compress ~condition t in
   check_t "compress no axis" [| 3 |] [| 1.; 3.; 5. |] result
 
@@ -238,7 +240,7 @@ let test_compress_with_axis () =
 
 let test_compress_empty_result () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let condition = Nx.create Nx.bool [| 3 |] [| false; true; true |] in
+  let condition = Nx.create Nx.bool [| 3 |] [| false; false; false |] in
   let result = Nx.compress ~condition t in
   check_shape "compress empty result" [| 0 |] result
 
@@ -246,7 +248,9 @@ let test_compress_empty_result () =
 
 let test_extract_basic () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let condition = Nx.create Nx.bool [| 2; 3 |] [| true; false; true; false; true; false |] in
+  let condition =
+    Nx.create Nx.bool [| 2; 3 |] [| true; false; true; false; true; false |]
+  in
   let result = Nx.extract ~condition t in
   check_t "extract basic" [| 3 |] [| 1.; 3.; 5. |] result
 
