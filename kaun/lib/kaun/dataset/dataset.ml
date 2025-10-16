@@ -317,10 +317,20 @@ let from_jsonl ?field path =
     spec = (fun () -> Scalar "string");
   }
 
-let from_csv ?(separator = ',') ?(text_column = 0) ?label_column
-    ?(has_header = true) path =
-  let _ = label_column in
-  (* TODO: Handle label column *)
+let from_csv :
+    ?separator:char ->
+    ?text_column:int ->
+    ?label_column:int option ->
+    ?has_header:bool ->
+    string ->
+    'a t =
+ fun ?separator ?text_column ?label_column ?has_header path ->
+  (* Normalize optional args to concrete values / options *)
+  let separator = Option.value separator ~default:',' in
+  let text_column = Option.value text_column ~default:0 in
+  let has_header = Option.value has_header ~default:true in
+  let label_column = match label_column with None -> None | Some v -> v in
+
   let text_ds = from_text_file path in
   let skipped_header = ref (not has_header) in
 
@@ -329,26 +339,60 @@ let from_csv ?(separator = ',') ?(text_column = 0) ?label_column
     String.split_on_char separator line
   in
 
-  let next () =
-    if not !skipped_header then (
-      skipped_header := true;
-      ignore (text_ds.next ()));
+  match label_column with
+  | Some lbl_col ->
+      (* Return (text, label) tuples *)
+      let next () : (string * string) option =
+        if not !skipped_header then (
+          skipped_header := true;
+          ignore (text_ds.next ()));
 
-    match text_ds.next () with
-    | None -> None
-    | Some line ->
-        let fields = split_csv line in
-        if text_column < List.length fields then
-          Some (List.nth fields text_column)
-        else None
-  in
+        let rec read_next () =
+          match text_ds.next () with
+          | None -> None
+          | Some line ->
+              let fields = split_csv line in
+              let len = List.length fields in
+              (* Bounds check for both columns *)
+              if text_column < len && lbl_col < len then
+                let text = List.nth fields text_column in
+                let label = List.nth fields lbl_col in
+                Some (text, label)
+              else
+                (* Skip malformed rows *)
+                read_next ()
+        in
+        read_next ()
+      in
+      Obj.magic
+        {
+          next;
+          cardinality = text_ds.cardinality;
+          reset = text_ds.reset;
+          spec = (fun () -> Tuple [ Scalar "string"; Scalar "string" ]);
+        }
+  | None ->
+      (* Return text only *)
+      let next () : string option =
+        if not !skipped_header then (
+          skipped_header := true;
+          ignore (text_ds.next ()));
 
-  {
-    next;
-    cardinality = text_ds.cardinality;
-    reset = text_ds.reset;
-    spec = (fun () -> Scalar "string");
-  }
+        match text_ds.next () with
+        | None -> None
+        | Some line ->
+            let fields = split_csv line in
+            if text_column < List.length fields then
+              Some (List.nth fields text_column)
+            else None
+      in
+      Obj.magic
+        {
+          next;
+          cardinality = text_ds.cardinality;
+          reset = text_ds.reset;
+          spec = (fun () -> Scalar "string");
+        }
 
 let from_text ~tokenizer path =
   (* Read entire file as a single string *)

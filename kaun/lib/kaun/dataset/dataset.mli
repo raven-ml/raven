@@ -128,7 +128,7 @@ val from_csv :
   ?label_column:int option ->
   ?has_header:bool ->
   string ->
-  string t
+  'a t
 (** [from_csv ?separator ?text_column ?label_column ?has_header path] reads CSV
     data.
     - [separator]: Field separator (default: ',')
