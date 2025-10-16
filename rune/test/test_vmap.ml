@@ -103,7 +103,7 @@ let test_vmap_reduction () =
 (* Test vmap with where operation *)
 let test_vmap_where () =
   (* JAX semantics: captured tensors are broadcast, not co-iterated *)
-  let cond = T.create T.uint8 [| 3; 2 |] [| 1; 0; 1; 1; 0; 1 |] in
+  let cond = T.create T.bool [| 3; 2 |] [| true; false; true; true; false; true |] in
   let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let y = T.create T.float32 [| 3; 2 |] [| 10.; 20.; 30.; 40.; 50.; 60. |] in
   let f = T.vmap (fun c -> T.where c x y) in

@@ -1316,7 +1316,7 @@ val put_along_axis :
     ]} *)
 
 val compress :
-  ?axis:int -> condition:(int, uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t
+  ?axis:int -> condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
 (** [compress ?axis condition t] selects elements where condition is true.
 
     Equivalent to NumPy's compress. [condition] is a 1D boolean array. If [axis]
@@ -1329,15 +1329,15 @@ val compress :
 
     {@ocaml[
       # let x = create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |] in
-        compress ~condition:(create uint8 [| 5 |] [| 1; 0; 1; 0; 1 |]) x
+        compress ~condition:(create bool [| 5 |] [| true; false; true; false; true |]) x
       - : (int32, int32_elt) t = [1, 3, 5]
       # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        compress ~axis:0 ~condition:(create uint8 [| 3 |] [| 0; 1; 1 |]) x
+        compress ~axis:0 ~condition:(create bool [| 3 |] [| false; true; true |]) x
       - : (int32, int32_elt) t = [[4, 5, 6],
                                   [7, 8, 9]]
     ]} *)
 
-val extract : condition:(int, uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t
+val extract : condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
 (** [extract condition t] flattens and selects elements where condition is true.
 
     Equivalent to NumPy's extract (1D compress after flatten). [condition] must
@@ -1688,63 +1688,63 @@ val lerp_scalar_weight : ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 
     Element-wise comparisons and logical operations. *)
 
-val cmplt : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val cmplt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmplt t1 t2] returns 1 where t1 < t2, 0 elsewhere. *)
 
-val less : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val less : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [less t1 t2] is synonym for {!cmplt}. *)
 
-val less_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+val less_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [less_s t scalar] checks if each element is less than scalar. *)
 
-val cmpne : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpne t1 t2] returns 1 where t1 ≠ t2, 0 elsewhere. *)
 
-val not_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val not_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [not_equal t1 t2] is synonym for {!cmpne}. *)
 
-val not_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+val not_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [not_equal_s t scalar] compares each element with scalar for inequality. *)
 
-val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpeq t1 t2] returns 1 where t1 = t2, 0 elsewhere. *)
 
-val equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [equal t1 t2] is synonym for {!cmpeq}. *)
 
-val equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+val equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [equal_s t scalar] compares each element with scalar for equality. *)
 
-val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpgt t1 t2] returns 1 where t1 > t2, 0 elsewhere. *)
 
-val greater : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val greater : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [greater t1 t2] is synonym for {!cmpgt}. *)
 
-val greater_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+val greater_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [greater_s t scalar] checks if each element is greater than scalar. *)
 
-val cmple : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val cmple : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmple t1 t2] returns 1 where t1 ≤ t2, 0 elsewhere. *)
 
-val less_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val less_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [less_equal t1 t2] is synonym for {!cmple}. *)
 
-val less_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+val less_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [less_equal_s t scalar] checks if each element is less than or equal to
     scalar. *)
 
-val cmpge : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val cmpge : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpge t1 t2] returns 1 where t1 ≥ t2, 0 elsewhere. *)
 
-val greater_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val greater_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [greater_equal t1 t2] is synonym for {!cmpge}. *)
 
-val greater_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+val greater_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [greater_equal_s t scalar] checks if each element is greater than or equal
     to scalar. *)
 
-val array_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [array_equal t1 t2] returns scalar 1 if all elements equal, 0 otherwise.
 
     Broadcasts inputs before comparison. Returns 0 if shapes incompatible.
@@ -1753,11 +1753,11 @@ val array_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
       # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         let y = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         array_equal x y |> item []
-      - : int = 1
+      - : int = true
       # let x = create int32 [| 2 |] [| 1l; 2l |] in
         let y = create int32 [| 2 |] [| 1l; 3l |] in
         array_equal x y |> item []
-      - : int = 0
+      - : int = false
     ]} *)
 
 val maximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
@@ -1812,7 +1812,7 @@ val logical_not : ('a, 'b) t -> ('a, 'b) t
       - : (int32, int32_elt) t = [1, 0, -4]
     ]} *)
 
-val isinf : (float, 'a) t -> (int, uint8_elt) t
+val isinf : (float, 'a) t -> (bool, bool_elt) t
 (** [isinf t] returns 1 where infinite, 0 elsewhere.
 
     Detects both positive and negative infinity. Non-float types return all 0s.
@@ -1820,10 +1820,10 @@ val isinf : (float, 'a) t -> (int, uint8_elt) t
     {@ocaml[
       # let x = create float32 [| 4 |] [| 1.; Float.infinity; Float.neg_infinity; Float.nan |] in
         isinf x
-      - : (int, uint8_elt) t = [0, 1, 1, 0]
+      - : (bool, uint8_elt) t = [false, true, true, false]
     ]} *)
 
-val isnan : ('a, 'b) t -> (int, uint8_elt) t
+val isnan : ('a, 'b) t -> (bool, bool_elt) t
 (** [isnan t] returns 1 where NaN, 0 elsewhere.
 
     NaN is the only value that doesn't equal itself. Non-float types return all
@@ -1832,10 +1832,10 @@ val isnan : ('a, 'b) t -> (int, uint8_elt) t
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; Float.nan; Float.infinity |] in
         isnan x
-      - : (int, uint8_elt) t = [0, 1, 0]
+      - : (bool, bool_elt) t = [false, true, true]
     ]} *)
 
-val isfinite : (float, 'a) t -> (int, uint8_elt) t
+val isfinite : (float, 'a) t -> (bool, bool_elt) t
 (** [isfinite t] returns 1 where finite, 0 elsewhere.
 
     Finite means not inf, -inf, or NaN. Non-float types return all 1s.
@@ -1843,19 +1843,19 @@ val isfinite : (float, 'a) t -> (int, uint8_elt) t
     {@ocaml[
       # let x = create float32 [| 4 |] [| 1.; Float.infinity; Float.nan; -0. |] in
         isfinite x
-      - : (int, uint8_elt) t = [1, 0, 0, 1]
+      - : (bool, bool_elt) t = [true, false, false, true]
     ]} *)
 
-val where : (int, uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+val where : (bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [where cond if_true if_false] selects elements based on condition.
 
-    Returns [if_true] where [cond] is non-zero, [if_false] elsewhere. All three
+    Returns [if_true] where [cond] is true, [if_false] elsewhere. All three
     inputs broadcast to common shape.
 
     @raise Invalid_argument if shapes incompatible for broadcasting
 
     {@ocaml[
-      # let cond = create uint8 [| 3 |] [| 1; 0; 1 |] in
+      # let cond = create bool [| 3 |] [| true; false; true |] in
         let if_true = create int32 [| 3 |] [| 2l; 3l; 4l |] in
         let if_false = create int32 [| 3 |] [| 5l; 6l; 7l |] in
         where cond if_true if_false
@@ -1956,42 +1956,42 @@ module Infix : sig
 
   (** {3 Comparisons} *)
 
-  val ( < ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( < ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 < t2] is a synonym for {!less} *)
 
-  val ( <> ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( <> ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 <> t2] is a synonym for {!not_equal}. *)
 
-  val ( = ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( = ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 = t1] is a synonym for {!equal}. *)
 
-  val ( > ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( > ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 > t2] is a synonym for {!greater}. *)
 
-  val ( <= ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( <= ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 <= t2] is a synonym for {!less_equal}. *)
 
-  val ( >= ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( >= ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 >= t2] is a synonym for {!greater_equal}. *)
 
   (** {3 Scalar Comparisons} *)
 
-  val ( =$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( =$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t =$ scalar] compares each element with scalar for equality. *)
 
-  val ( <>$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( <>$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t <>$ scalar] compares each element with scalar for inequality. *)
 
-  val ( <$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( <$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t <$ scalar] checks if each element is less than scalar. *)
 
-  val ( >$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( >$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t >$ scalar] checks if each element is greater than scalar. *)
 
-  val ( <=$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( <=$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t <=$ scalar] checks if each element is less than or equal to scalar. *)
 
-  val ( >=$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( >=$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t >=$ scalar] checks if each element is greater than or equal to scalar.
   *)
 
@@ -2203,7 +2203,7 @@ val std :
       - : float = 2.
     ]} *)
 
-val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
+val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 (** [all ?axes ?keepdims t] tests if all elements are true (non-zero).
 
     Returns 1 if all elements along axes are non-zero, 0 otherwise.
@@ -2217,10 +2217,10 @@ val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
       - : int = 0
       # let x = create int32 [| 2; 2 |] [| 1l; 0l; 1l; 1l |] in
         all ~axes:[ 1 ] x
-      - : (int, uint8_elt) t = [0, 1]
+      - : (bool, bool_elt) t = [0, 1]
     ]} *)
 
-val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
+val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 (** [any ?axes ?keepdims t] tests if any element is true (non-zero).
 
     Returns 1 if any element along axes is non-zero, 0 if all are zero.
@@ -2234,7 +2234,7 @@ val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
       - : int = 0
       # let x = create int32 [| 2; 2 |] [| 0l; 0l; 0l; 1l |] in
         any ~axes:[ 1 ] x
-      - : (int, uint8_elt) t = [0, 1]
+      - : (bool, bool_elt) t = [0, 1]
     ]} *)
 
 val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t

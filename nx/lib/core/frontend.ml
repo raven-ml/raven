@@ -73,6 +73,7 @@ module Make (B : Backend_intf.S) = struct
   type std_nativeint_t = (nativeint, nativeint_elt) t
   type complex32_t = (Complex.t, complex32_elt) t
   type complex64_t = (Complex.t, complex64_elt) t
+  type bool_t = (bool, bool_elt) t
 
   (* Constructor shortcuts *)
   let float16 = Float16
@@ -1230,7 +1231,7 @@ module Make (B : Backend_intf.S) = struct
 
   let isinf x =
     let dt = dtype x in
-    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.uint8 (shape x)
+    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.bool (shape x)
     else
       let pos_inf_const = B.op_const_scalar (B.context x) Float.infinity dt in
       let neg_inf_const =
@@ -1242,12 +1243,12 @@ module Make (B : Backend_intf.S) = struct
 
   let isnan x =
     let dt = dtype x in
-    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.uint8 (shape x)
+    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.bool (shape x)
     else cmpne x x
 
   let isfinite x =
     let dt = dtype x in
-    if not (Dtype.is_float dt) then ones (B.context x) Dtype.uint8 (shape x)
+    if not (Dtype.is_float dt) then ones (B.context x) Dtype.bool (shape x)
     else logical_not (logical_or (isinf x) (isnan x))
 
   let lerp start_tensor end_tensor weight =
@@ -1593,7 +1594,7 @@ module Make (B : Backend_intf.S) = struct
     if not can_broadcast then
       (* If shapes can't be broadcast, arrays are not equal Return a scalar
          False (0) *)
-      zeros (B.context x) Dtype.uint8 [||]
+      zeros (B.context x) Dtype.bool [||]
     else
       (* Check element-wise equality and then check if all are true *)
       let eq_result = equal x y in
@@ -3562,7 +3563,7 @@ module Make (B : Backend_intf.S) = struct
       done;
       [| indices |]
 
-  let compress ?axis ~(condition : (int, uint8_elt) t) t =
+  let compress ?axis ~(condition : (bool, bool_elt) t) t =
     match axis with
     | None ->
         (* Flatten and compress *)
@@ -3578,7 +3579,8 @@ module Make (B : Backend_intf.S) = struct
         if n_true = 0 then empty (B.context t) (dtype t) [| 0 |]
         else
           (* Get indices where condition is true *)
-          let indices = nonzero_indices_only cond_flat in
+          let bool_cond_as_uint8 = astype UInt8 cond_flat in
+          let indices = nonzero_indices_only bool_cond_as_uint8 in
           take indices.(0) t_flat
     | Some axis ->
         let axis = resolve_single_axis t axis in
@@ -3591,9 +3593,11 @@ module Make (B : Backend_intf.S) = struct
                (numel condition) axis axis_size);
 
         (* Get indices where condition is true *)
+        let bool_indices = astype UInt8 (reshape [| axis_size |] condition) in
         let true_indices =
-          nonzero_indices_only (reshape [| axis_size |] condition)
+           nonzero_indices_only bool_indices
         in
+        
         if Array.length true_indices = 0 || numel true_indices.(0) = 0 then (
           (* No true values - return empty tensor *)
           let new_shape = Array.copy (shape t) in
@@ -3651,7 +3655,7 @@ module Make (B : Backend_intf.S) = struct
           let is_nonzero_tensor = not_equal elem zero_scalar in
           (* We need to materialize this to iterate - this breaks
              differentiability *)
-          let is_nonzero = unsafe_get [] is_nonzero_tensor <> 0 in
+          let is_nonzero = unsafe_get [] is_nonzero_tensor <> false in
 
           if is_nonzero then (
             (* Store coordinates *)
@@ -7661,7 +7665,11 @@ module Make (B : Backend_intf.S) = struct
     shape_for_arange.(ndim_expanded - 1) <- num_classes;
     let arange_b = reshape shape_for_arange arange_x in
 
-    cmpeq index_expanded arange_b (* Broadcasts to one-hot mask *)
+     (* Broadcasts to one-hot mask *)
+    let bool_to_uint (x : (bool, bool_elt) t) : (int, uint8_elt) t =
+      cast Dtype.uint8 x in
+    let bool_tensor =  cmpeq index_expanded arange_b in
+    bool_to_uint bool_tensor
 
   (** Internal N-Dimensional max unpooling. *)
   let max_unpool_nd ~kernel_size ?stride ?dilation ~padding_spec

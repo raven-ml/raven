@@ -511,31 +511,31 @@ module Comparison_tests = struct
       ( "equal",
         `Quick,
         test_comparison ~op:Nx.equal ~op_name:"equal" ~input1:[| 1.; 2.; 3. |]
-          ~input2:[| 1.; 5.; 3. |] ~expected:[| 1; 0; 1 |] );
+          ~input2:[| 1.; 5.; 3. |] ~expected:[| true; false; true |] );
       ( "not_equal",
         `Quick,
         test_comparison ~op:Nx.not_equal ~op_name:"not_equal"
           ~input1:[| 1.; 2.; 3. |] ~input2:[| 1.; 5.; 3. |]
-          ~expected:[| 0; 1; 0 |] );
+          ~expected:[| false; true; false |] );
       ( "greater",
         `Quick,
         test_comparison ~op:Nx.greater ~op_name:"greater"
           ~input1:[| 1.; 3.; 2. |] ~input2:[| 2.; 1.; 4. |]
-          ~expected:[| 0; 1; 0 |] );
+          ~expected:[| false; true; false |] );
       ( "greater_equal",
         `Quick,
         test_comparison ~op:Nx.greater_equal ~op_name:"greater_equal"
           ~input1:[| 1.; 3.; 4. |] ~input2:[| 2.; 3.; 3. |]
-          ~expected:[| 0; 1; 1 |] );
+          ~expected:[| false; true; true |] );
       ( "less",
         `Quick,
         test_comparison ~op:Nx.less ~op_name:"less" ~input1:[| 1.; 3.; 2. |]
-          ~input2:[| 2.; 1.; 4. |] ~expected:[| 1; 0; 1 |] );
+          ~input2:[| 2.; 1.; 4. |] ~expected:[| true; false; true |] );
       ( "less_equal",
         `Quick,
         test_comparison ~op:Nx.less_equal ~op_name:"less_equal"
           ~input1:[| 1.; 3.; 4. |] ~input2:[| 2.; 3.; 3. |]
-          ~expected:[| 1; 1; 0 |] );
+          ~expected:[| true; true; false |] );
       ( "nan comparisons",
         `Quick,
         fun () ->
@@ -547,8 +547,8 @@ module Comparison_tests = struct
           in
           let eq_result = Nx.equal t1 t2 in
           let ne_result = Nx.not_equal t1 t2 in
-          check_t "nan equal" [| 3 |] [| 0; 0; 0 |] eq_result;
-          check_t "nan not_equal" [| 3 |] [| 1; 1; 1 |] ne_result );
+          check_t "nan equal" [| 3 |] [| false; false; false |] eq_result;
+          check_t "nan not_equal" [| 3 |] [| true; true; true |] ne_result );
     ]
 end
 

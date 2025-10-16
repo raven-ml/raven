@@ -664,7 +664,7 @@ let make_jit_handler (state : jit_tracer_state) =
             let res_shape =
               Shape.broadcast (concrete_shape meta_a) (concrete_shape meta_b)
             in
-            let res_dtype = Nx_core.Dtype.uint8 in
+            let res_dtype = Nx_core.Dtype.bool in
             let shape_expr =
               broadcast_shape_expr [ meta_a; meta_b ] res_shape
             in
@@ -686,7 +686,7 @@ let make_jit_handler (state : jit_tracer_state) =
             let res_shape =
               Shape.broadcast (concrete_shape meta_a) (concrete_shape meta_b)
             in
-            let res_dtype = Nx_core.Dtype.uint8 in
+            let res_dtype = Nx_core.Dtype.bool in
             let shape_expr =
               broadcast_shape_expr [ meta_a; meta_b ] res_shape
             in

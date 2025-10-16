@@ -38,7 +38,7 @@ let scaled_dot_product_attention ?attention_mask ?(dropout = 0.0) ?is_causal
       let ones_matrix = ones dtype [| seq_len_q; seq_len_k |] in
       let causal_mask = tril ones_matrix in
       let causal_mask = reshape mask_shape causal_mask in
-      let causal_mask = cast uint8 causal_mask in
+      let causal_mask = cast bool causal_mask in
       let neg_inf = scalar dtype (-1e9) in
       where causal_mask scores neg_inf)
     else scores

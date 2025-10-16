@@ -1007,7 +1007,7 @@ module Row = struct
                     in
                     let mask_float = Nx.cast Nx.float64 mask_tensor in
                     let nan_tensor = Nx.full_like tensor Float.nan in
-                    Nx.where (Nx.cast Nx.uint8 mask_float) nan_tensor tensor
+                    Nx.where (Nx.cast Nx.bool mask_float) nan_tensor tensor
                 | None -> tensor
               in
               result :: acc
@@ -1023,7 +1023,7 @@ module Row = struct
                     in
                     let mask_float = Nx.cast Nx.float64 mask_tensor in
                     let nan_tensor = Nx.full_like casted Float.nan in
-                    Nx.where (Nx.cast Nx.uint8 mask_float) nan_tensor casted
+                    Nx.where (Nx.cast Nx.bool mask_float) nan_tensor casted
                 | None -> casted
               in
               result :: acc
@@ -1039,7 +1039,7 @@ module Row = struct
                     in
                     let mask_float = Nx.cast Nx.float64 mask_tensor in
                     let nan_tensor = Nx.full_like casted Float.nan in
-                    Nx.where (Nx.cast Nx.uint8 mask_float) nan_tensor casted
+                    Nx.where (Nx.cast Nx.bool mask_float) nan_tensor casted
                 | None -> casted
               in
               result :: acc
@@ -1055,7 +1055,7 @@ module Row = struct
                     in
                     let mask_float = Nx.cast Nx.float64 mask_tensor in
                     let nan_tensor = Nx.full_like casted Float.nan in
-                    Nx.where (Nx.cast Nx.uint8 mask_float) nan_tensor casted
+                    Nx.where (Nx.cast Nx.bool mask_float) nan_tensor casted
                 | None -> casted
               in
               result :: acc

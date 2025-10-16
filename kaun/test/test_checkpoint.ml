@@ -27,7 +27,7 @@ let test_save_and_load () =
       | Some loaded_w ->
           let is_equal = Rune.all (Rune.equal w loaded_w) in
           let is_equal_val = Rune.to_array is_equal in
-          A.check A.bool "weights match" true (is_equal_val.(0) > 0)
+          A.check A.bool "weights match" true (is_equal_val.(0))
       | None -> A.fail "weight is not a tensor")
   | None -> A.fail "weight not found");
 
@@ -37,7 +37,7 @@ let test_save_and_load () =
       | Some loaded_b ->
           let is_equal = Rune.all (Rune.equal b loaded_b) in
           let is_equal_val = Rune.to_array is_equal in
-          A.check A.bool "bias matches" true (is_equal_val.(0) > 0)
+          A.check A.bool "bias matches" true (is_equal_val.(0))
       | None -> A.fail "bias is not a tensor")
   | None -> A.fail "bias not found"
 

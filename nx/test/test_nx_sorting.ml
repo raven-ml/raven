@@ -6,14 +6,14 @@ open Test_nx_support
 (* ───── Where Tests ───── *)
 
 let test_where_1d () =
-  let mask = Nx.create Nx.uint8 [| 3 |] [| 1; 0; 1 |] in
+  let mask = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Nx.create Nx.float32 [| 3 |] [| 4.; 5.; 6. |] in
   let result = Nx.where mask a b in
   check_t "where 1D" [| 3 |] [| 1.; 5.; 3. |] result
 
 let test_where_broadcast () =
-  let mask = Nx.create Nx.uint8 [| 2; 1 |] [| 1; 0 |] in
+  let mask = Nx.create Nx.bool [| 2; 1 |] [| true; false |] in
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let b = Nx.create Nx.float32 [| 2; 3 |] [| 7.; 8.; 9.; 10.; 11.; 12. |] in
   let result = Nx.where mask a b in
@@ -22,7 +22,7 @@ let test_where_broadcast () =
     result
 
 let test_where_scalar_inputs () =
-  let mask = Nx.create Nx.uint8 [| 2; 3 |] [| 1; 0; 1; 0; 1; 0 |] in
+  let mask = Nx.create Nx.bool [| 2; 3 |] [| true; false; true; false; true; false |] in
   let a = Nx.scalar Nx.float32 5.0 in
   let b = Nx.scalar Nx.float32 10.0 in
   let result = Nx.where mask a b in
@@ -31,7 +31,7 @@ let test_where_scalar_inputs () =
     result
 
 let test_where_invalid_shapes () =
-  let mask = Nx.create Nx.uint8 [| 2 |] [| 1; 0 |] in
+  let mask = Nx.create Nx.bool [| 2 |] [| true; false |] in
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Nx.create Nx.float32 [| 2 |] [| 4.; 5. |] in
   check_raises "where invalid shapes"
