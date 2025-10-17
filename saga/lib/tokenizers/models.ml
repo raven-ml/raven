@@ -161,7 +161,12 @@ let token_to_id model token =
   | WordLevel { vocab; _ } -> (
       try Some (Hashtbl.find vocab token) with Not_found -> None)
   | Unigram { vocab } ->
-      List.find_opt (fun (s, _) -> s = token) vocab |> Option.map (fun _ -> 0)
+      let rec find_index i = function
+  | [] -> None
+  | (s, _) :: _ when s = token -> Some i
+  | _ :: rest -> find_index (i + 1) rest
+in
+find_index 0 vocab
 (* TODO: Proper implementation *)
 
 (** Get token from ID *)
@@ -185,7 +190,12 @@ let id_to_token model id =
         Hashtbl.fold
           (fun token tid acc -> if tid = id then Some token else acc)
           vocab None
-  | Unigram _ -> None (* TODO: Proper implementation *)
+  | Unigram { vocab } -> 
+      if id >= 0 && id < List.length vocab then
+        Some (fst (List.nth vocab id))
+      else
+        None
+  (* TODO: Proper implementation *)
 
 (** Get vocabulary *)
 let get_vocab model =
