@@ -90,33 +90,39 @@ let value_loss ~values ~returns ?clip_range ?old_values () =
 
   if n = 0 then 0.0
   else
+    (* Unclipped MSE loss definition*)
+    let mse_loss arr1 arr2 =
+      let sum = ref 0.0 in
+      for i = 0 to n - 1 do
+        let diff = arr1.(i) -. arr2.(i) in
+        sum := !sum +. (diff *. diff)
+      done;
+      !sum /. float_of_int n
+    in
+
+    (* === Main logic === *)
     match (clip_range, old_values) with
     | Some _, None ->
-        (* Enforce presence of old_values when clip_range is provided *)
         invalid_arg
           "Training.value_loss: ~old_values must be provided when using \
            ~clip_range for clipped value loss"
-    | None, _ ->
-        (* Unclipped MSE loss *)
-        let sum = ref 0.0 in
-        for i = 0 to n - 1 do
-          let diff = values.(i) -. returns.(i) in
-          sum := !sum +. (diff *. diff)
-        done;
-        !sum /. float_of_int n
+    | None, Some _ ->
+        prerr_endline
+          "Warning: old_values provided without clip_range — ignoring \
+           old_values";
+        mse_loss values returns
+    | None, None -> mse_loss values returns
     | Some clip, Some old_vals ->
         if Array.length old_vals <> n then
           invalid_arg
             "Training.value_loss: ~old_values must have same length as arrays";
-
         let sum = ref 0.0 in
         for i = 0 to n - 1 do
-          let unclipped = (values.(i) -. returns.(i)) ** 2.0 in
           let delta = values.(i) -. old_vals.(i) in
           let clipped_delta = max (-.clip) (min clip delta) in
           let value_clipped = old_vals.(i) +. clipped_delta in
+          let unclipped = (values.(i) -. returns.(i)) ** 2.0 in
           let clipped = (value_clipped -. returns.(i)) ** 2.0 in
-          (* PPO-style: take the max of unclipped and clipped errors *)
           sum := !sum +. max unclipped clipped
         done;
         !sum /. float_of_int n
