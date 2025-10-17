@@ -1702,7 +1702,8 @@ val less : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [less t1 t2] is synonym for {!cmplt}. *)
 
 val less_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [less_s t scalar] checks if each element is less than scalar and returns booleans. *)
+(** [less_s t scalar] checks if each element is less than scalar and returns
+    booleans. *)
 
 val cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpne t1 t2] returns [true] where [t1 ≠ t2], [false] elsewhere. *)
@@ -1711,7 +1712,8 @@ val not_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [not_equal t1 t2] is synonym for {!cmpne}. *)
 
 val not_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [not_equal_s t scalar] compares each element with scalar for inequality and returns booleans. *)
+(** [not_equal_s t scalar] compares each element with scalar for inequality and
+    returns booleans. *)
 
 val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpeq t1 t2] returns [true] where [t1 = t2], [false] elsewhere. *)
@@ -1720,7 +1722,8 @@ val equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [equal t1 t2] is synonym for {!cmpeq}. *)
 
 val equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [equal_s t scalar] compares each element with scalar for equality and returns booleans. *)
+(** [equal_s t scalar] compares each element with scalar for equality and
+    returns booleans. *)
 
 val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpgt t1 t2] returns [true] where [t1 > t2], [false] elsewhere. *)
@@ -1729,7 +1732,8 @@ val greater : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [greater t1 t2] is synonym for {!cmpgt}. *)
 
 val greater_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [greater_s t scalar] checks if each element is greater than scalar and returns booleans. *)
+(** [greater_s t scalar] checks if each element is greater than scalar and
+    returns booleans. *)
 
 val cmple : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmple t1 t2] returns [true] where [t1 ≤ t2], [false] elsewhere. *)
@@ -2230,7 +2234,8 @@ val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 (** [any ?axes ?keepdims t] tests if any element is true (non-zero).
 
-    Returns [true] if any element along axes is non-zero, [false] if all are zero.
+    Returns [true] if any element along axes is non-zero, [false] if all are
+    zero.
 
     {@ocaml[
       # let x = create int32 [| 3 |] [| 0l; 0l; 1l |] in

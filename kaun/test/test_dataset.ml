@@ -168,9 +168,7 @@ let test_from_csv_with_labels_no_header () =
 let test_from_csv_with_labels_custom_columns () =
   let content = "id,sentiment,text,score\n1,pos,great,5\n2,neg,bad,1\n" in
   with_temp_csv content (fun path ->
-      let dataset =
-        from_csv_with_labels ~text_column:2 ~label_column:1 path
-      in
+      let dataset = from_csv_with_labels ~text_column:2 ~label_column:1 path in
       let collected = collect_dataset dataset in
       Alcotest.(check (list (pair string string)))
         "custom columns"

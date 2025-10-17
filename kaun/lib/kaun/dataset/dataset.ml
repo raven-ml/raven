@@ -393,9 +393,7 @@ let from_csv_with_labels ?(separator = ',') ?(text_column = 0)
             reset_fn ())
   in
 
-  let split_csv line =
-    String.split_on_char separator line
-  in
+  let split_csv line = String.split_on_char separator line in
 
   let consume_header () =
     if not !skipped_header then (
@@ -413,11 +411,11 @@ let from_csv_with_labels ?(separator = ',') ?(text_column = 0)
   let rec read_next () =
     match text_ds.next () with
     | None -> None
-    | Some line ->
+    | Some line -> (
         let fields = split_csv line in
         let text_opt = take_field fields text_column in
         let label_opt = take_field fields label_column in
-        (match (text_opt, label_opt) with
+        match (text_opt, label_opt) with
         | Some text, Some label -> Some (text, label)
         | _ -> read_next ())
   in
