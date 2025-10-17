@@ -923,8 +923,8 @@ module Make (B : Backend_intf.S) = struct
     B.op_xor a_b b_b
 
   let logical_not (type a b) (a : (a, b) t) =
-    (* For boolean tensors (uint8), logical not is 1 - x *)
-    (* But sub doesn't support uint8, so we use XOR with 1 *)
+    (* For boolean tensors, logical not should flip the bit *)
+    (* But subtraction isn't supported for bool, so we use XOR with 1 *)
     let dt = dtype a in
     match dt with
     | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 | Dtype.QUInt8 ->
@@ -3535,8 +3535,8 @@ module Make (B : Backend_intf.S) = struct
      are NOT differentiable. They use unsafe_get to materialize values. *)
 
   (* Forward declaration for mutual recursion *)
-  let nonzero_indices_only (condition : (int, uint8_elt) t) =
-    (* Special version for compress that only returns indices for uint8 masks *)
+  let nonzero_indices_only (condition : (bool, bool_elt) t) =
+    (* Special version for compress that only returns indices for boolean masks *)
     let total = numel condition in
     let cond_flat = reshape [| total |] condition in
 
@@ -3557,7 +3557,7 @@ module Make (B : Backend_intf.S) = struct
       let idx = ref 0 in
       for i = 0 to total - 1 do
         let elem_val = unsafe_get [ i ] cond_flat in
-        if elem_val <> 0 then (
+        if elem_val then (
           set_item [ !idx ] (Int32.of_int i) indices;
           incr idx)
       done;
@@ -3579,8 +3579,7 @@ module Make (B : Backend_intf.S) = struct
         if n_true = 0 then empty (B.context t) (dtype t) [| 0 |]
         else
           (* Get indices where condition is true *)
-          let bool_cond_as_uint8 = astype UInt8 cond_flat in
-          let indices = nonzero_indices_only bool_cond_as_uint8 in
+          let indices = nonzero_indices_only cond_flat in
           take indices.(0) t_flat
     | Some axis ->
         let axis = resolve_single_axis t axis in
@@ -3593,8 +3592,8 @@ module Make (B : Backend_intf.S) = struct
                (numel condition) axis axis_size);
 
         (* Get indices where condition is true *)
-        let bool_indices = astype UInt8 (reshape [| axis_size |] condition) in
-        let true_indices = nonzero_indices_only bool_indices in
+        let cond_1d = reshape [| axis_size |] condition in
+        let true_indices = nonzero_indices_only cond_1d in
 
         if Array.length true_indices = 0 || numel true_indices.(0) = 0 then (
           (* No true values - return empty tensor *)
@@ -3622,7 +3621,7 @@ module Make (B : Backend_intf.S) = struct
     let total = numel mask in
     let mask_flat = reshape [| total |] mask in
 
-    (* Count non-zeros - mask is uint8 (0 or 1) *)
+    (* Count non-zeros - mask is boolean (true or false) *)
     let n_nonzero =
       let sum_result = sum (astype Int32 mask_flat) in
       let scalar_val = squeeze sum_result |> unsafe_get [] in

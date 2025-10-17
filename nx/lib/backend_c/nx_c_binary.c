@@ -1197,7 +1197,7 @@ static void dispatch_binary_op(value v_x, value v_y, value v_z,
   cleanup_ndarray(&z);
 }
 
-// Generic dispatch function for comparison operations (output is always uint8)
+// Generic dispatch function for comparison operations (output is always bool)
 static void dispatch_comparison_op(value v_x, value v_y, value v_z,
                                    const binary_op_table *table,
                                    const char *op_name) {
