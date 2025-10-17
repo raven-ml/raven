@@ -83,27 +83,41 @@ let ppo_clip_loss ~log_probs ~old_log_probs ~advantages ~clip_range =
     done;
     -. !sum /. float_of_int n
 
-let value_loss ~values ~returns ?clip_range () =
+let value_loss ~values ~returns ?clip_range ?old_values () =
   let n = Array.length values in
   if n <> Array.length returns then
     invalid_arg "Training.value_loss: arrays must have same length";
+
   if n = 0 then 0.0
   else
-    match clip_range with
-    | None ->
+    match (clip_range, old_values) with
+    | Some _, None ->
+        (* Enforce presence of old_values when clip_range is provided *)
+        invalid_arg
+          "Training.value_loss: ~old_values must be provided when using \
+           ~clip_range for clipped value loss"
+    | None, _ ->
+        (* Unclipped MSE loss *)
         let sum = ref 0.0 in
         for i = 0 to n - 1 do
           let diff = values.(i) -. returns.(i) in
           sum := !sum +. (diff *. diff)
         done;
         !sum /. float_of_int n
-    | Some _ ->
-        (* For clipped value loss, we'd need old_values which aren't provided in the signature *)
-        (* Fallback to unclipped for now - interface may need adjustment *)
+    | Some clip, Some old_vals ->
+        if Array.length old_vals <> n then
+          invalid_arg
+            "Training.value_loss: ~old_values must have same length as arrays";
+
         let sum = ref 0.0 in
         for i = 0 to n - 1 do
-          let diff = values.(i) -. returns.(i) in
-          sum := !sum +. (diff *. diff)
+          let unclipped = (values.(i) -. returns.(i)) ** 2.0 in
+          let delta = values.(i) -. old_vals.(i) in
+          let clipped_delta = max (-.clip) (min clip delta) in
+          let value_clipped = old_vals.(i) +. clipped_delta in
+          let clipped = (value_clipped -. returns.(i)) ** 2.0 in
+          (* PPO-style: take the max of unclipped and clipped errors *)
+          sum := !sum +. max unclipped clipped
         done;
         !sum /. float_of_int n
 

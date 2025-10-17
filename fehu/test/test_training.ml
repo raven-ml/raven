@@ -89,6 +89,38 @@ let test_value_loss () =
   Alcotest.(check bool) "loss >= 0" true (loss >= 0.0);
   Alcotest.(check bool) "loss is finite" true (not (Float.is_nan loss))
 
+let test_value_loss_clipped () =
+  (* Toy arrays to make hand-computation simple *)
+  let values = [| 1.2; 2.8; 3.5 |] in
+  let old_values = [| 1.0; 3.0; 3.0 |] in
+  let returns = [| 1.1; 2.7; 3.2 |] in
+  let clip_range = 0.1 in
+
+  (* Compute manually: delta = values - old_values value_clipped = old_values +
+     clamp(delta, -clip_range, clip_range) unclipped_loss = (values - returns)^2
+     clipped_loss = (value_clipped - returns)^2 element_loss =
+     max(unclipped_loss, clipped_loss) *)
+  let expected =
+    let compute_one v ov r =
+      let delta = v -. ov in
+      let clipped_delta = max (-.clip_range) (min clip_range delta) in
+      let v_clipped = ov +. clipped_delta in
+      let unclipped = (v -. r) ** 2.0 in
+      let clipped = (v_clipped -. r) ** 2.0 in
+      max unclipped clipped
+    in
+    let sum =
+      compute_one 1.2 1.0 1.1 +. compute_one 2.8 3.0 2.7
+      +. compute_one 3.5 3.0 3.2
+    in
+    sum /. 3.0
+  in
+
+  let loss = Training.value_loss ~values ~returns ~clip_range ~old_values () in
+
+  Alcotest.(check (float 1e-6))
+    "clipped value loss matches expected" expected loss
+
 let test_explained_variance () =
   let y_pred = [| 1.0; 2.0; 3.0; 4.0 |] in
   let y_true = [| 1.1; 1.9; 3.1; 3.9 |] in
@@ -144,6 +176,7 @@ let () =
             test_policy_gradient_loss_no_normalize;
           test_case "PPO clip loss" `Quick test_ppo_clip_loss;
           test_case "value loss" `Quick test_value_loss;
+          test_case "value loss (clipped)" `Quick test_value_loss_clipped;
         ] );
       ( "Utilities",
         [
