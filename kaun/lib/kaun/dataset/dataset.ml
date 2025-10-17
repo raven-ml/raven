@@ -317,37 +317,121 @@ let from_jsonl ?field path =
     spec = (fun () -> Scalar "string");
   }
 
-let from_csv ?(separator = ',') ?(text_column = 0) ?label_column
-    ?(has_header = true) path =
-  let _ = label_column in
-  (* TODO: Handle label column *)
+let ensure_non_negative ~name value =
+  if value < 0 then
+    raise
+      (Invalid_parameter
+         (name ^ " must be non-negative, got " ^ string_of_int value))
+
+let from_csv ?(separator = ',') ?(text_column = 0) ?(has_header = true) path =
+  ensure_non_negative ~name:"text_column" text_column;
+
   let text_ds = from_text_file path in
   let skipped_header = ref (not has_header) in
+
+  let reset =
+    match text_ds.reset with
+    | None -> None
+    | Some reset_fn ->
+        Some
+          (fun () ->
+            skipped_header := not has_header;
+            reset_fn ())
+  in
 
   let split_csv line =
     (* Simple CSV split - doesn't handle quoted fields *)
     String.split_on_char separator line
   in
 
-  let next () =
+  let consume_header () =
     if not !skipped_header then (
       skipped_header := true;
-      ignore (text_ds.next ()));
+      ignore (text_ds.next ()))
+  in
 
+  let rec take_field fields idx =
+    match (fields, idx) with
+    | [], _ -> None
+    | x :: _, 0 -> Some x
+    | _ :: tl, n -> take_field tl (n - 1)
+  in
+  let rec read_next () =
+    match text_ds.next () with
+    | None -> None
+    | Some line -> (
+        match take_field (split_csv line) text_column with
+        | Some text -> Some text
+        | None -> read_next ())
+  in
+  let next () =
+    consume_header ();
+    read_next ()
+  in
+  {
+    next;
+    cardinality = text_ds.cardinality;
+    reset;
+    spec = (fun () -> Scalar "string");
+  }
+
+let from_csv_with_labels ?(separator = ',') ?(text_column = 0)
+    ?(has_header = true) ~label_column path =
+  ensure_non_negative ~name:"text_column" text_column;
+  ensure_non_negative ~name:"label_column" label_column;
+
+  let text_ds = from_text_file path in
+  let skipped_header = ref (not has_header) in
+
+  let reset =
+    match text_ds.reset with
+    | None -> None
+    | Some reset_fn ->
+        Some
+          (fun () ->
+            skipped_header := not has_header;
+            reset_fn ())
+  in
+
+  let split_csv line =
+    String.split_on_char separator line
+  in
+
+  let consume_header () =
+    if not !skipped_header then (
+      skipped_header := true;
+      ignore (text_ds.next ()))
+  in
+
+  let rec take_field fields idx =
+    match (fields, idx) with
+    | [], _ -> None
+    | x :: _, 0 -> Some x
+    | _ :: tl, n -> take_field tl (n - 1)
+  in
+
+  let rec read_next () =
     match text_ds.next () with
     | None -> None
     | Some line ->
         let fields = split_csv line in
-        if text_column < List.length fields then
-          Some (List.nth fields text_column)
-        else None
+        let text_opt = take_field fields text_column in
+        let label_opt = take_field fields label_column in
+        (match (text_opt, label_opt) with
+        | Some text, Some label -> Some (text, label)
+        | _ -> read_next ())
+  in
+
+  let next () =
+    consume_header ();
+    read_next ()
   in
 
   {
     next;
     cardinality = text_ds.cardinality;
-    reset = text_ds.reset;
-    spec = (fun () -> Scalar "string");
+    reset;
+    spec = (fun () -> Tuple [ Scalar "string"; Scalar "string" ]);
   }
 
 let from_text ~tokenizer path =

@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - Nx: Add float16 and bfloat16 support to safetensors I/O, including precise conversions that preserve denormals/NaNs (#84, @six-shot, @tmattio).
 - Talon: Allow forcing column types in Talon JSON loader (#104, @nirnayroy)
 - Nx: Update comparison and conditional operations to use boolean tensors (#54, @nirnayroy)
+- Kaun: Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD).
 
 ## [1.0.0~alpha1] - 2025-10-02
 
