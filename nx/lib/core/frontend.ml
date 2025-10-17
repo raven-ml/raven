@@ -3536,7 +3536,8 @@ module Make (B : Backend_intf.S) = struct
 
   (* Forward declaration for mutual recursion *)
   let nonzero_indices_only (condition : (bool, bool_elt) t) =
-    (* Special version for compress that only returns indices for boolean masks *)
+    (* Special version for compress that only returns indices for boolean
+       masks *)
     let total = numel condition in
     let cond_flat = reshape [| total |] condition in
 
@@ -3918,6 +3919,28 @@ module Make (B : Backend_intf.S) = struct
 
       (* Cast to target integer dtype *)
       cast dtype floored
+
+  let dropout ?seed ~rate x =
+    if rate < 0.0 || rate >= 1.0 then
+      Error.invalid ~op:"dropout" ~what:"rate"
+        ~reason:"must satisfy 0.0 ≤ rate < 1.0" ();
+    let tensor_dtype = dtype x in
+    if not (Dtype.is_float tensor_dtype) then
+      Error.invalid ~op:"dropout" ~what:"tensor"
+        ~reason:"requires floating point dtype" ();
+    if rate = 0.0 then x
+    else
+      let keep_prob = 1.0 -. rate in
+      let ctx = B.context x in
+      let seed =
+        match seed with Some explicit -> explicit | None -> Random.bits ()
+      in
+      let random_vals = rand ctx tensor_dtype ~seed (shape x) in
+      let threshold = scalar ctx tensor_dtype keep_prob in
+      let keep_mask = cmplt random_vals threshold in
+      let keep_mask_float = cast tensor_dtype keep_mask in
+      let scale = scalar ctx tensor_dtype (1.0 /. keep_prob) in
+      mul x (mul keep_mask_float scale)
 
   (* ───── Sorting and Searching ───── *)
 
@@ -6671,17 +6694,12 @@ module Make (B : Backend_intf.S) = struct
 
   (* Hard Sigmoid: relu6(x + 3) / 6 *)
   let hard_sigmoid ?(alpha = 1.0 /. 6.0) ?(beta = 0.5) x =
-    let dt = dtype x in
-    let alpha_x = B.op_const_scalar (B.context x) alpha dt in
-    let beta_x = B.op_const_scalar (B.context x) beta dt in
-    let one_x = B.op_const_scalar (B.context x) 1.0 dt in
-
-    let term1_arg = add (mul alpha_x x) beta_x in
-    let term1 = relu term1_arg in
-
-    let term2_arg = sub term1_arg one_x in
-    let term2 = relu term2_arg in
-    sub term1 term2
+    let alpha_tensor = scalar_like x alpha in
+    let beta_tensor = scalar_like x beta in
+    let linear = add (mul alpha_tensor x) beta_tensor in
+    let zero = scalar_like x 0. in
+    let one = scalar_like x 1. in
+    minimum one (maximum zero linear)
 
   (* Softplus: log(1 + exp(x)) *)
   let softplus x =
@@ -6695,10 +6713,20 @@ module Make (B : Backend_intf.S) = struct
     let sig_x = sigmoid x in
     mul x sig_x
 
+  let swish x = silu x
+
   (* Hard SiLU: x * hard_sigmoid(x) *)
   let hard_silu x =
     let y = hard_sigmoid x in
     mul x y
+
+  let hard_swish x = hard_silu x
+
+  let prelu alpha x =
+    let zero = zeros_like x in
+    let positive = maximum zero x in
+    let negative = minimum zero x in
+    add positive (mul alpha negative)
 
   (* Log-Sigmoid: log(sigmoid(x)) *)
   let log_sigmoid x =
@@ -6755,17 +6783,495 @@ module Make (B : Backend_intf.S) = struct
     let lambda_scalar = scalar_like x lambda in
     mul lambda_scalar elu_x
 
-  (* Softmax: exp(x - max(x)) / sum(exp(x - max(x))) along specified axes *)
-  let softmax ?(axes = [ -1 ]) x =
+  let celu ?(alpha = 1.0) x =
+    let zero = zeros_like x in
+    let pos = maximum zero x in
+    let neg = minimum zero x in
+    let alpha_tensor = scalar_like x alpha in
+    let one = scalar_like x 1. in
+    let neg_term = mul alpha_tensor (sub (exp (div neg alpha_tensor)) one) in
+    add pos neg_term
+
+  let squareplus ?(b = 4.0) x =
+    let half = scalar_like x 0.5 in
+    let b_tensor = scalar_like x b in
+    let inside = add (square x) b_tensor in
+    let sqrt_term = sqrt inside in
+    mul half (add x sqrt_term)
+
+  let glu ?(axis = -1) x =
+    match split ~axis 2 x with
+    | [ left; right ] -> mul left (sigmoid right)
+    | _ ->
+        Error.failed ~op:"glu" ~what:"split" ~reason:"expected two partitions"
+          ()
+
+  let sparse_plus x =
+    let zero = zeros_like x in
+    let one = scalar_like x 1. in
+    let neg_one = scalar_like x (-1.) in
+    let quadratic = mul (scalar_like x 0.25) (square (add x one)) in
+    let res = where (greater_equal x one) x quadratic in
+    where (less_equal x neg_one) zero res
+
+  let sparse_sigmoid x =
+    let zero = zeros_like x in
+    let one = scalar_like x 1. in
+    let neg_one = scalar_like x (-1.) in
+    let half = scalar_like x 0.5 in
+    let linear = mul half (add x one) in
+    let res = where (greater_equal x one) one linear in
+    where (less_equal x neg_one) zero res
+
+  (* Softmax: exp(scale * (x - max(x))) / sum(exp(scale * (x - max(x)))) along
+     specified axes *)
+  let softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
     let ndim = Array.length (shape x) in
     let axes_normalized =
       List.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
     in
     let max_x = max x ~axes:axes_normalized ~keepdims:true in
-    let x_shifted = sub x max_x in
+    let x_shifted =
+      if scale = 1.0 then sub x max_x
+      else
+        let scaled = mul (scalar_like x scale) (sub x max_x) in
+        scaled
+    in
     let exp_x = exp x_shifted in
     let sum_exp = sum exp_x ~axes:axes_normalized ~keepdims:true in
     div exp_x sum_exp
+
+  let log_softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
+    let ndim = ndim x in
+    let axes_sorted =
+      List.map
+        (fun ax ->
+          let axis = if ax < 0 then ndim + ax else ax in
+          if axis < 0 || axis >= ndim then
+            Error.axis_out_of_bounds ~op:"log_softmax" ~axis:ax ~ndim ()
+          else axis)
+        axes
+      |> List.sort compare
+    in
+    let rec dedup prev acc = function
+      | [] -> List.rev acc
+      | h :: t when Some h = prev -> dedup prev acc t
+      | h :: t -> dedup (Some h) (h :: acc) t
+    in
+    let axes_norm = dedup None [] axes_sorted in
+    if axes_norm = [] then zeros_like x
+    else
+      let max_x = max x ~axes:axes_norm ~keepdims:true in
+      let shifted = sub x max_x in
+      let scaled_shifted =
+        if scale = 1.0 then shifted else mul (scalar_like shifted scale) shifted
+      in
+      let log_den =
+        let sum_exp = sum (exp scaled_shifted) ~axes:axes_norm ~keepdims:true in
+        log sum_exp
+      in
+      sub scaled_shifted log_den
+
+  let logsumexp ?axes ?(keepdims = false) x =
+    let ndim = ndim x in
+    let axes_list =
+      match axes with
+      | None -> List.init ndim Fun.id
+      | Some lst ->
+          List.map
+            (fun ax ->
+              let axis = if ax < 0 then ndim + ax else ax in
+              if axis < 0 || axis >= ndim then
+                Error.axis_out_of_bounds ~op:"logsumexp" ~axis:ax ~ndim ()
+              else axis)
+            lst
+    in
+    let axes_sorted = List.sort compare axes_list in
+    let rec dedup prev acc = function
+      | [] -> List.rev acc
+      | h :: t when Some h = prev -> dedup prev acc t
+      | h :: t -> dedup (Some h) (h :: acc) t
+    in
+    let axes_norm = dedup None [] axes_sorted in
+    if axes_norm = [] then x
+    else
+      let max_x = max x ~axes:axes_norm ~keepdims:true in
+      let shifted = sub x max_x in
+      let sum_exp = sum (exp shifted) ~axes:axes_norm ~keepdims:true in
+      let log_sum = add (log sum_exp) max_x in
+      if keepdims then log_sum
+      else
+        let axes_desc = List.rev axes_norm in
+        squeeze ~axes:axes_desc log_sum
+
+  let logmeanexp ?axes ?(keepdims = false) x =
+    let ndim = ndim x in
+    let axes_list =
+      match axes with
+      | None -> List.init ndim Fun.id
+      | Some lst ->
+          List.map
+            (fun ax ->
+              let axis = if ax < 0 then ndim + ax else ax in
+              if axis < 0 || axis >= ndim then
+                Error.axis_out_of_bounds ~op:"logmeanexp" ~axis:ax ~ndim ()
+              else axis)
+            lst
+    in
+    let axes_sorted = List.sort compare axes_list in
+    let rec dedup prev acc = function
+      | [] -> List.rev acc
+      | h :: t when Some h = prev -> dedup prev acc t
+      | h :: t -> dedup (Some h) (h :: acc) t
+    in
+    let axes_norm = dedup None [] axes_sorted in
+    if axes_norm = [] then x
+    else
+      let log_sum = logsumexp ~axes:axes_norm ~keepdims:true x in
+      let count = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_norm in
+      let count_tensor = scalar_like log_sum (float_of_int count) in
+      let log_mean = sub log_sum (log count_tensor) in
+      if keepdims then log_mean
+      else
+        let axes_desc = List.rev axes_norm in
+        squeeze ~axes:axes_desc log_mean
+
+  let standardize ?axes ?mean:mean_param ?variance:variance_param
+      ?(epsilon = 1e-5) x =
+    let ndim = ndim x in
+    let axes_list =
+      match axes with
+      | None -> List.init ndim Fun.id
+      | Some lst ->
+          List.map
+            (fun ax ->
+              let axis = if ax < 0 then ndim + ax else ax in
+              if axis < 0 || axis >= ndim then
+                Error.axis_out_of_bounds ~op:"standardize" ~axis:ax ~ndim ()
+              else axis)
+            lst
+    in
+    let axes_sorted = List.sort compare axes_list in
+    let rec dedup prev acc = function
+      | [] -> List.rev acc
+      | h :: t when Some h = prev -> dedup prev acc t
+      | h :: t -> dedup (Some h) (h :: acc) t
+    in
+    let axes_norm = dedup None [] axes_sorted in
+    let x_shape = shape x in
+    let keep_shape =
+      Array.mapi
+        (fun idx dim -> if List.exists (( = ) idx) axes_norm then 1 else dim)
+        x_shape
+    in
+    let unaffected_axes =
+      List.filter
+        (fun idx -> not (List.exists (( = ) idx) axes_norm))
+        (List.init ndim Fun.id)
+    in
+    let core_shape =
+      Array.of_list (List.map (fun idx -> x_shape.(idx)) unaffected_axes)
+    in
+    let broadcast_param name param =
+      let param_shape = shape param in
+      if param_shape = x_shape then param
+      else if param_shape = keep_shape then param
+      else if param_shape = core_shape then reshape keep_shape param
+      else
+        Error.invalid ~op:"standardize" ~what:name
+          ~reason:"shape must match normalized axes" ()
+    in
+    let mean_tensor =
+      match mean_param with
+      | Some m -> broadcast_param "mean" m
+      | None ->
+          if axes_norm = [] then x else mean x ~axes:axes_norm ~keepdims:true
+    in
+    let variance_tensor =
+      match variance_param with
+      | Some v -> broadcast_param "variance" v
+      | None ->
+          if axes_norm = [] then zeros_like x
+          else var x ~axes:axes_norm ~keepdims:true
+    in
+    let eps = scalar_like x epsilon in
+    let denom = sqrt (add variance_tensor eps) in
+    let centered = sub x mean_tensor in
+    div centered denom
+
+  let batch_norm ?axes ?(epsilon = 1e-5) ~scale ~bias x =
+    let rank = ndim x in
+    let axes_normalized =
+      let default_axes =
+        match axes with
+        | Some ax -> ax
+        | None ->
+            if rank = 2 then [ 0 ] else if rank = 4 then [ 0; 2; 3 ] else [ 0 ]
+      in
+      let normalize_axis ax =
+        let axis = if ax < 0 then rank + ax else ax in
+        if axis < 0 || axis >= rank then
+          Error.axis_out_of_bounds ~op:"batch_norm" ~axis:ax ~ndim:rank ()
+        else axis
+      in
+      match default_axes with
+      | [] ->
+          Error.invalid ~op:"batch_norm" ~what:"axes"
+            ~reason:"must contain at least one axis" ()
+      | lst -> List.map normalize_axis lst
+    in
+    let x_shape = shape x in
+    let keep_shape =
+      Array.mapi
+        (fun idx dim ->
+          if List.exists (fun ax -> ax = idx) axes_normalized then 1 else dim)
+        x_shape
+    in
+    let unaffected_axes =
+      Array.init rank Fun.id |> Array.to_list
+      |> List.filter (fun ax -> not (List.exists (( = ) ax) axes_normalized))
+    in
+    let core_shape =
+      Array.of_list (List.map (fun ax -> x_shape.(ax)) unaffected_axes)
+    in
+    let broadcast_param name param =
+      let param =
+        if dtype param <> dtype x then cast (dtype x) param else param
+      in
+      let param_shape = shape param in
+      if param_shape = keep_shape then param
+      else if param_shape = core_shape then reshape keep_shape param
+      else if param_shape = x_shape then param
+      else
+        Error.invalid ~op:"batch_norm" ~what:name
+          ~reason:"shape must match normalized axes or remaining axes" ()
+    in
+    let mean_x = mean x ~axes:axes_normalized ~keepdims:true in
+    let variance = var x ~axes:axes_normalized ~keepdims:true in
+    let eps = scalar_like x epsilon in
+    let normalized = mul (sub x mean_x) (rsqrt (add variance eps)) in
+    let scale_b = broadcast_param "scale" scale in
+    let bias_b = broadcast_param "bias" bias in
+    add (mul normalized scale_b) bias_b
+
+  let rms_norm ?axes ?(epsilon = 1e-5) ?gamma x =
+    let ndim = ndim x in
+    let axes_normalized =
+      let default_axes = match axes with Some ax -> ax | None -> [ -1 ] in
+      let normalize_axis ax =
+        let axis = if ax < 0 then ndim + ax else ax in
+        if axis < 0 || axis >= ndim then
+          Error.axis_out_of_bounds ~op:"rms_norm" ~axis:ax ~ndim ()
+        else axis
+      in
+      match default_axes with
+      | [] ->
+          Error.invalid ~op:"rms_norm" ~what:"axes"
+            ~reason:"must contain at least one axis" ()
+      | lst -> List.map normalize_axis lst
+    in
+    let x_shape = shape x in
+    let keep_shape =
+      Array.mapi
+        (fun idx dim ->
+          if List.exists (fun ax -> ax = idx) axes_normalized then 1 else dim)
+        x_shape
+    in
+    let mean_square = mean (mul x x) ~axes:axes_normalized ~keepdims:true in
+    let eps = scalar_like x epsilon in
+    let normalized = mul x (rsqrt (add mean_square eps)) in
+    match gamma with
+    | None -> normalized
+    | Some gamma ->
+        let gamma_shape = shape gamma in
+        let gamma =
+          if gamma_shape = keep_shape then gamma
+          else
+            let unaffected_axes =
+              Array.init ndim Fun.id |> Array.to_list
+              |> List.filter (fun ax ->
+                     not (List.exists (( = ) ax) axes_normalized))
+            in
+            let core_shape =
+              Array.of_list (List.map (fun ax -> x_shape.(ax)) unaffected_axes)
+            in
+            if gamma_shape = core_shape then reshape keep_shape gamma
+            else if gamma_shape = x_shape then gamma
+            else
+              Error.invalid ~op:"rms_norm" ~what:"gamma"
+                ~reason:"shape must match normalized axes or remaining axes" ()
+        in
+        mul normalized gamma
+
+  let layer_norm ?(axes = [ -1 ]) ?(epsilon = 1e-5) ?gamma ?beta x =
+    let ndim = ndim x in
+    let axes_normalized =
+      List.map
+        (fun ax ->
+          let axis = if ax < 0 then ndim + ax else ax in
+          if axis < 0 || axis >= ndim then
+            Error.axis_out_of_bounds ~op:"layer_norm" ~axis:ax ~ndim ()
+          else axis)
+        axes
+    in
+    let x_shape = shape x in
+    let keep_shape =
+      Array.mapi
+        (fun idx dim -> if List.mem idx axes_normalized then dim else 1)
+        x_shape
+    in
+    let broadcast_param name param =
+      let param_shape = shape param in
+      if param_shape = x_shape then param
+      else if param_shape = keep_shape then param
+      else
+        let axes_shape =
+          Array.of_list (List.map (fun ax -> x_shape.(ax)) axes_normalized)
+        in
+        if param_shape = axes_shape then reshape keep_shape param
+        else
+          Error.invalid ~op:"layer_norm" ~what:name
+            ~reason:"shape must match normalized axes" ()
+    in
+    let mean_x = mean x ~axes:axes_normalized ~keepdims:true in
+    let centered = sub x mean_x in
+    let variance =
+      mean (mul centered centered) ~axes:axes_normalized ~keepdims:true
+    in
+    let eps = scalar_like x epsilon in
+    let inv_std = rsqrt (add variance eps) in
+    let normalized = mul centered inv_std in
+    let with_scale =
+      match gamma with
+      | None -> normalized
+      | Some gamma ->
+          let gamma_broadcast = broadcast_param "gamma" gamma in
+          mul normalized gamma_broadcast
+    in
+    match beta with
+    | None -> with_scale
+    | Some beta ->
+        let beta_broadcast = broadcast_param "beta" beta in
+        add with_scale beta_broadcast
+
+  let dot_product_attention (type b)
+      ?(attention_mask : (bool, bool_elt) t option) ?scale ?dropout_rate
+      ?dropout_seed ?(is_causal = false) (q : (float, b) t) (k : (float, b) t)
+      (v : (float, b) t) =
+    let check_float_tensor name (t : (float, b) t) =
+      match dtype t with
+      | Float16 -> ()
+      | Float32 -> ()
+      | Float64 -> ()
+      | _ ->
+          Error.invalid ~op:"dot_product_attention" ~what:name
+            ~reason:"requires floating point dtype" ()
+    in
+    check_float_tensor "query" q;
+    check_float_tensor "key" k;
+    check_float_tensor "value" v;
+    let q_shape = shape q in
+    let k_shape = shape k in
+    let v_shape = shape v in
+    let q_rank = Array.length q_shape in
+    if q_rank < 2 then
+      Error.invalid ~op:"dot_product_attention" ~what:"query"
+        ~reason:"must have rank >= 2" ();
+    if Array.length k_shape <> q_rank || Array.length v_shape <> q_rank then
+      Error.invalid ~op:"dot_product_attention" ~what:"key/value"
+        ~reason:"must match query rank" ();
+    let depth = q_shape.(q_rank - 1) in
+    if k_shape.(q_rank - 1) <> depth then
+      Error.shape_mismatch ~op:"dot_product_attention" ~expected:q_shape
+        ~actual:k_shape ();
+    let scale_factor =
+      match scale with
+      | Some s -> s
+      | None -> 1.0 /. Stdlib.sqrt (float_of_int depth)
+    in
+    let transpose_last_two tensor =
+      let nd = Array.length (shape tensor) in
+      if nd < 2 then
+        Error.invalid ~op:"dot_product_attention" ~what:"key/value"
+          ~reason:"must have rank >= 2" ();
+      let axes = Array.init nd Fun.id in
+      let tmp = axes.(nd - 1) in
+      axes.(nd - 1) <- axes.(nd - 2);
+      axes.(nd - 2) <- tmp;
+      transpose tensor ~axes:(Array.to_list axes)
+    in
+    let k_t = transpose_last_two k in
+    let scores = matmul q k_t in
+    let scores =
+      if scale_factor = 1.0 then scores
+      else
+        let scale_tensor = scalar_like scores scale_factor in
+        mul scores scale_tensor
+    in
+    let scores =
+      if is_causal then (
+        let scores_shape = shape scores in
+        let seq_len_q = scores_shape.(q_rank - 2) in
+        let seq_len_k = scores_shape.(q_rank - 1) in
+        if seq_len_q <> seq_len_k then
+          Error.invalid ~op:"dot_product_attention" ~what:"causal masking"
+            ~reason:"requires seq_len_q == seq_len_k" ();
+        (* Create lower triangular mask using tril *)
+        let ones_matrix =
+          full (B.context scores) (dtype scores) [| seq_len_q; seq_len_k |] 1.0
+        in
+        let causal_mask = tril ones_matrix in
+        let causal_mask = cast Bool causal_mask in
+        (* Broadcast causal mask to scores shape *)
+        let causal_mask = broadcast_to scores_shape causal_mask in
+        let neg_inf = scalar_like scores (-1e9) in
+        where causal_mask scores neg_inf)
+      else scores
+    in
+    let scores =
+      match attention_mask with
+      | None -> scores
+      | Some mask ->
+          let neg_inf = scalar_like scores (-1e9) in
+          where mask scores neg_inf
+    in
+    let probs = softmax ~axes:[ -1 ] scores in
+    let probs =
+      match dropout_rate with
+      | None -> probs
+      | Some rate -> dropout ?seed:dropout_seed ~rate probs
+    in
+    matmul probs v
+
+  let embedding ?(scale = true) ~embedding indices =
+    let embed_shape = shape embedding in
+    if Array.length embed_shape <> 2 then
+      Error.invalid ~op:"embedding" ~what:"embedding matrix"
+        ~reason:"must have shape [vocab_size; embed_dim]" ();
+    let embed_dim = embed_shape.(1) in
+    let indices_shape = shape indices in
+    let is_scalar = Array.length indices_shape = 0 in
+    let vocab_size = embed_shape.(0) in
+    if vocab_size <= 0 then
+      Error.invalid ~op:"embedding" ~what:"embedding matrix"
+        ~reason:"vocabulary dimension must be positive" ();
+    let flat_size = Array.fold_left ( * ) 1 indices_shape in
+    let indices_flat =
+      if is_scalar then reshape [| 1 |] indices
+      else reshape [| flat_size |] indices
+    in
+    let gathered = take ~axis:0 indices_flat embedding in
+    let output_shape =
+      if is_scalar then [| embed_dim |]
+      else Array.append indices_shape [| embed_dim |]
+    in
+    let embedded = reshape output_shape gathered in
+    if not scale then embedded
+    else
+      let factor =
+        scalar_like embedding (Stdlib.sqrt (float_of_int embed_dim))
+      in
+      mul embedded factor
 
   (* Approximated Gaussian Error Linear Unit: 0.5 * x * (1 + tanh(x *
      0.7978845608 * (1 + 0.044715 * x * x))) *)

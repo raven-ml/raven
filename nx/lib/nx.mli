@@ -542,6 +542,13 @@ val randint :
 
     @raise Invalid_argument if non-integer dtype or [low >= high] *)
 
+val dropout : ?seed:int -> rate:float -> (float, 'b) t -> (float, 'b) t
+(** [dropout ?seed ~rate x] randomly zeroes elements with probability [rate].
+
+    The remaining values are scaled by [1/(1 - rate)] keeping the expected value
+    unchanged. Requires floating-point input and rate in \[0, 1). When [seed] is
+    provided, the same mask is reproduced. *)
+
 (** {2 Shape Manipulation}
 
     Functions to reshape, transpose, and rearrange arrays. *)
@@ -3071,6 +3078,9 @@ val silu : (float, 'a) t -> (float, 'a) t
       - : float = -0.
     ]} *)
 
+val swish : (float, 'a) t -> (float, 'a) t
+(** Alias for {!silu}. *)
+
 val hard_silu : (float, 'a) t -> (float, 'a) t
 (** [hard_silu t] applies x * hard_sigmoid(x).
 
@@ -3081,6 +3091,14 @@ val hard_silu : (float, 'a) t -> (float, 'a) t
         hard_silu x
       - : (float, float32_elt) t = [-0, 0, 3]
     ]} *)
+
+val hard_swish : (float, 'a) t -> (float, 'a) t
+(** Alias for {!hard_silu}. *)
+
+val prelu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [prelu alpha x] applies Parametric ReLU: max(0,x) + alpha * min(0,x).
+
+    [alpha] must broadcast across the shape of [x]. *)
 
 val log_sigmoid : (float, 'a) t -> (float, 'a) t
 (** [log_sigmoid t] computes log(sigmoid(x)).
@@ -3139,11 +3157,43 @@ val selu : (float, 'a) t -> (float, 'a) t
       - : float = 1.
     ]} *)
 
-val softmax : ?axes:int list -> (float, 'a) t -> (float, 'a) t
-(** [softmax ?axes t] applies softmax normalization.
+val celu : ?alpha:float -> (float, 'a) t -> (float, 'a) t
+(** [celu ?alpha x] applies continuously differentiable ELU.
 
-    Default axis -1. Computes exp(x - max) / sum(exp(x - max)) for numerical
-    stability. Output sums to 1 along specified axes.
+    Returns [x] if [x >= 0], else [alpha * (exp(x / alpha) - 1)]. Default
+    [alpha = 1.0]. *)
+
+val squareplus : ?b:float -> (float, 'a) t -> (float, 'a) t
+(** [squareplus ?b x] applies smooth ReLU: 0.5 * (x + sqrt(x² + b)).
+
+    Default [b = 4]. *)
+
+val glu : ?axis:int -> (float, 'a) t -> (float, 'a) t
+(** [glu ?axis x] applies the gated linear unit.
+
+    Splits [x] into two equal parts along [axis] and returns [x1 * sigmoid(x2)].
+    Default axis is the last dimension. *)
+
+val sparse_plus : (float, 'a) t -> (float, 'a) t
+(** [sparse_plus x] applies the piecewise function:
+
+    - 0 for x ≤ -1
+    - (1/4) (x + 1)² for -1 < x < 1
+    - x for x ≥ 1 *)
+
+val sparse_sigmoid : (float, 'a) t -> (float, 'a) t
+(** [sparse_sigmoid x] applies the piecewise sparse sigmoid:
+
+    - 0 for x ≤ -1
+    - 0.5 (x + 1) for -1 < x < 1
+    - 1 for x ≥ 1 *)
+
+val softmax : ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
+(** [softmax ?axes ?scale t] applies softmax normalization.
+
+    Default axis -1. Computes exp(scale * (x - max)) / sum(exp(scale * (x -
+    max))) for numerical stability. Output sums to 1 along specified axes.
+    [scale] defaults to 1.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -3153,6 +3203,111 @@ val softmax : ?axes:int list -> (float, 'a) t -> (float, 'a) t
         sum (softmax x) |> item []
       - : float = 1.
     ]} *)
+
+val log_softmax :
+  ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
+(** [log_softmax ?axes ?scale t] returns the natural logarithm of {!softmax}.
+
+    Uses the same semantics as {!softmax} for [axes] and [scale]. *)
+
+val logsumexp :
+  ?axes:int list -> ?keepdims:bool -> (float, 'a) t -> (float, 'a) t
+(** [logsumexp ?axes ?keepdims t] computes log(sum(exp(t))) in a numerically
+    stable manner along [axes]. Defaults to reducing across all axes. *)
+
+val logmeanexp :
+  ?axes:int list -> ?keepdims:bool -> (float, 'a) t -> (float, 'a) t
+(** [logmeanexp ?axes ?keepdims t] computes log(mean(exp(t))) in a numerically
+    stable manner along [axes]. Equivalent to {!logsumexp} minus log of the
+    number of elements. *)
+
+val standardize :
+  ?axes:int list ->
+  ?mean:(float, 'a) t ->
+  ?variance:(float, 'a) t ->
+  ?epsilon:float ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [standardize ?axes ?mean ?variance ?epsilon x] normalizes [x] to zero mean
+    and unit variance.
+
+    If [mean] or [variance] are not provided they are computed along [axes]
+    (default: all axes). The result is [(x - mean) / sqrt(variance + epsilon)].
+*)
+
+val batch_norm :
+  ?axes:int list ->
+  ?epsilon:float ->
+  scale:(float, 'a) t ->
+  bias:(float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [batch_norm ?axes ?epsilon ~scale ~bias x] applies batch normalization.
+
+    Normalizes [x] along [axes] (defaults to `[0]` for 2D and `[0;2;3]` for 4D)
+    and applies learnable [scale] and [bias]. [scale] and [bias] must broadcast
+    across the normalized axes. *)
+
+val layer_norm :
+  ?axes:int list ->
+  ?epsilon:float ->
+  ?gamma:(float, 'a) t ->
+  ?beta:(float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [layer_norm ?axes ?epsilon ?gamma ?beta x] applies layer normalization.
+
+    Normalizes [x] along [axes] (default last axis), subtracting mean and
+    dividing by sqrt(variance + epsilon). Optional [gamma] (scale) and [beta]
+    (offset) are broadcast across the normalized axes. *)
+
+val rms_norm :
+  ?axes:int list ->
+  ?epsilon:float ->
+  ?gamma:(float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [rms_norm ?axes ?epsilon ?gamma x] applies Root Mean Square normalization.
+
+    Normalizes [x] by the root mean square across [axes]. Optional [gamma]
+    scales the normalized output. *)
+
+val embedding :
+  ?scale:bool ->
+  embedding:(float, 'a) t ->
+  (int32, int32_elt) t ->
+  (float, 'a) t
+(** [embedding ?scale ~embedding indices] performs embedding lookup.
+
+    - [embedding] must have shape [vocab_size; embed_dim]
+    - [indices] is an int32 tensor of positions
+    - returns a tensor with shape [indices_shape ++ [embed_dim]]
+    - when [scale] is true (default) multiplies result by √embed_dim *)
+
+val dot_product_attention :
+  ?attention_mask:(bool, bool_elt) t ->
+  ?scale:float ->
+  ?dropout_rate:float ->
+  ?dropout_seed:int ->
+  ?is_causal:bool ->
+  (float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [dot_product_attention ?attention_mask ?scale ?dropout_rate ?dropout_seed
+     ?is_causal q k v] computes scaled dot-product attention.
+
+    - [q], [k], [v] must have matching leading dimensions; the last dimension of
+      [q] and [k] must match.
+    - [scale] defaults to 1/√depth of keys.
+    - [is_causal], when true, applies a causal (lower triangular) mask to
+      prevent attending to future positions. Requires seq_len_q == seq_len_k.
+    - [attention_mask], when provided, should broadcast to the attention score
+      shape; true values keep scores, false values set them to -∞ before
+      softmax.
+    - [dropout_rate], when provided, applies dropout to the attention
+      probabilities before multiplying by [v]. [dropout_seed] controls the
+      random mask when supplied. *)
 
 val erf : (float, 'a) t -> (float, 'a) t
 (** [erf t] computes the error function.
