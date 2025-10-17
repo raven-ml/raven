@@ -1,5 +1,5 @@
 val scaled_dot_product_attention :
-  ?attention_mask:(int, Rune.uint8_elt) Rune.t ->
+  ?attention_mask:(bool, Rune.bool_elt) Rune.t ->
   ?dropout:float ->
   ?is_causal:bool ->
   ?scale:float ->
@@ -23,7 +23,7 @@ val multi_head_attention :
   query:(float, 'a) Rune.t ->
   ?key:(float, 'a) Rune.t ->
   ?value:(float, 'a) Rune.t ->
-  ?attention_mask:(int, Rune.uint8_elt) Rune.t ->
+  ?attention_mask:(bool, Rune.bool_elt) Rune.t ->
   ?is_causal:bool ->
   ?rngs:Rune.Rng.key ->
   embed_dim:int ->

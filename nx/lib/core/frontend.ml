@@ -73,6 +73,7 @@ module Make (B : Backend_intf.S) = struct
   type std_nativeint_t = (nativeint, nativeint_elt) t
   type complex32_t = (Complex.t, complex32_elt) t
   type complex64_t = (Complex.t, complex64_elt) t
+  type bool_t = (bool, bool_elt) t
 
   (* Constructor shortcuts *)
   let float16 = Float16
@@ -96,7 +97,7 @@ module Make (B : Backend_intf.S) = struct
     | R of int * int (* Range [start, stop) *)
     | Rs of int * int * int (* Range with step *)
     | A (* All indices *)
-    | M of (int, uint8_elt) t (* Boolean mask *)
+    | M of (bool, bool_elt) t (* Boolean mask *)
     | N (* New axis *)
 
   (* ───── Basic Tensor Properties ───── *)
@@ -922,8 +923,8 @@ module Make (B : Backend_intf.S) = struct
     B.op_xor a_b b_b
 
   let logical_not (type a b) (a : (a, b) t) =
-    (* For boolean tensors (uint8), logical not is 1 - x *)
-    (* But sub doesn't support uint8, so we use XOR with 1 *)
+    (* For boolean tensors, logical not should flip the bit *)
+    (* But subtraction isn't supported for bool, so we use XOR with 1 *)
     let dt = dtype a in
     match dt with
     | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 | Dtype.QUInt8 ->
@@ -1230,7 +1231,7 @@ module Make (B : Backend_intf.S) = struct
 
   let isinf x =
     let dt = dtype x in
-    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.uint8 (shape x)
+    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.bool (shape x)
     else
       let pos_inf_const = B.op_const_scalar (B.context x) Float.infinity dt in
       let neg_inf_const =
@@ -1242,12 +1243,12 @@ module Make (B : Backend_intf.S) = struct
 
   let isnan x =
     let dt = dtype x in
-    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.uint8 (shape x)
+    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.bool (shape x)
     else cmpne x x
 
   let isfinite x =
     let dt = dtype x in
-    if not (Dtype.is_float dt) then ones (B.context x) Dtype.uint8 (shape x)
+    if not (Dtype.is_float dt) then ones (B.context x) Dtype.bool (shape x)
     else logical_not (logical_or (isinf x) (isnan x))
 
   let lerp start_tensor end_tensor weight =
@@ -1593,7 +1594,7 @@ module Make (B : Backend_intf.S) = struct
     if not can_broadcast then
       (* If shapes can't be broadcast, arrays are not equal Return a scalar
          False (0) *)
-      zeros (B.context x) Dtype.uint8 [||]
+      zeros (B.context x) Dtype.bool [||]
     else
       (* Check element-wise equality and then check if all are true *)
       let eq_result = equal x y in
@@ -3534,8 +3535,8 @@ module Make (B : Backend_intf.S) = struct
      are NOT differentiable. They use unsafe_get to materialize values. *)
 
   (* Forward declaration for mutual recursion *)
-  let nonzero_indices_only (condition : (int, uint8_elt) t) =
-    (* Special version for compress that only returns indices for uint8 masks *)
+  let nonzero_indices_only (condition : (bool, bool_elt) t) =
+    (* Special version for compress that only returns indices for boolean masks *)
     let total = numel condition in
     let cond_flat = reshape [| total |] condition in
 
@@ -3556,13 +3557,13 @@ module Make (B : Backend_intf.S) = struct
       let idx = ref 0 in
       for i = 0 to total - 1 do
         let elem_val = unsafe_get [ i ] cond_flat in
-        if elem_val <> 0 then (
+        if elem_val then (
           set_item [ !idx ] (Int32.of_int i) indices;
           incr idx)
       done;
       [| indices |]
 
-  let compress ?axis ~(condition : (int, uint8_elt) t) t =
+  let compress ?axis ~(condition : (bool, bool_elt) t) t =
     match axis with
     | None ->
         (* Flatten and compress *)
@@ -3591,9 +3592,9 @@ module Make (B : Backend_intf.S) = struct
                (numel condition) axis axis_size);
 
         (* Get indices where condition is true *)
-        let true_indices =
-          nonzero_indices_only (reshape [| axis_size |] condition)
-        in
+        let cond_1d = reshape [| axis_size |] condition in
+        let true_indices = nonzero_indices_only cond_1d in
+
         if Array.length true_indices = 0 || numel true_indices.(0) = 0 then (
           (* No true values - return empty tensor *)
           let new_shape = Array.copy (shape t) in
@@ -3620,7 +3621,7 @@ module Make (B : Backend_intf.S) = struct
     let total = numel mask in
     let mask_flat = reshape [| total |] mask in
 
-    (* Count non-zeros - mask is uint8 (0 or 1) *)
+    (* Count non-zeros - mask is boolean (true or false) *)
     let n_nonzero =
       let sum_result = sum (astype Int32 mask_flat) in
       let scalar_val = squeeze sum_result |> unsafe_get [] in
@@ -3651,7 +3652,7 @@ module Make (B : Backend_intf.S) = struct
           let is_nonzero_tensor = not_equal elem zero_scalar in
           (* We need to materialize this to iterate - this breaks
              differentiability *)
-          let is_nonzero = unsafe_get [] is_nonzero_tensor <> 0 in
+          let is_nonzero = unsafe_get [] is_nonzero_tensor <> false in
 
           if is_nonzero then (
             (* Store coordinates *)
@@ -7661,7 +7662,12 @@ module Make (B : Backend_intf.S) = struct
     shape_for_arange.(ndim_expanded - 1) <- num_classes;
     let arange_b = reshape shape_for_arange arange_x in
 
-    cmpeq index_expanded arange_b (* Broadcasts to one-hot mask *)
+    (* Broadcasts to one-hot mask *)
+    let bool_to_uint (x : (bool, bool_elt) t) : (int, uint8_elt) t =
+      cast Dtype.uint8 x
+    in
+    let bool_tensor = cmpeq index_expanded arange_b in
+    bool_to_uint bool_tensor
 
   (** Internal N-Dimensional max unpooling. *)
   let max_unpool_nd ~kernel_size ?stride ?dilation ~padding_spec
