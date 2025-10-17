@@ -146,7 +146,7 @@ let test_from_file () =
 let test_from_csv_with_labels () =
   let content = "text,label\nhello,spam\nworld,ham\n" in
   with_temp_csv content (fun path ->
-      let dataset = from_csv ~label_column:(Some 1) path in
+      let dataset = from_csv_with_labels ~label_column:1 path in
       let collected = collect_dataset dataset in
       Alcotest.(check (list (pair string string)))
         "text and labels with header"
@@ -156,7 +156,9 @@ let test_from_csv_with_labels () =
 let test_from_csv_with_labels_no_header () =
   let content = "foo,bar\nbaz,qux\n" in
   with_temp_csv content (fun path ->
-      let dataset = from_csv ~label_column:(Some 1) ~has_header:false path in
+      let dataset =
+        from_csv_with_labels ~label_column:1 ~has_header:false path
+      in
       let collected = collect_dataset dataset in
       Alcotest.(check (list (pair string string)))
         "text and labels without header"
@@ -166,7 +168,9 @@ let test_from_csv_with_labels_no_header () =
 let test_from_csv_with_labels_custom_columns () =
   let content = "id,sentiment,text,score\n1,pos,great,5\n2,neg,bad,1\n" in
   with_temp_csv content (fun path ->
-      let dataset = from_csv ~text_column:2 ~label_column:(Some 1) path in
+      let dataset =
+        from_csv_with_labels ~text_column:2 ~label_column:1 path
+      in
       let collected = collect_dataset dataset in
       Alcotest.(check (list (pair string string)))
         "custom columns"
@@ -177,7 +181,8 @@ let test_from_csv_with_labels_custom_separator () =
   let content = "t1|l1\nt2|l2\n" in
   with_temp_csv content (fun path ->
       let dataset =
-        from_csv ~separator:'|' ~label_column:(Some 1) ~has_header:false path
+        from_csv_with_labels ~separator:'|' ~label_column:1 ~has_header:false
+          path
       in
       let collected = collect_dataset dataset in
       Alcotest.(check (list (pair string string)))
@@ -188,7 +193,7 @@ let test_from_csv_with_labels_custom_separator () =
 let test_from_csv_with_labels_malformed_rows () =
   let content = "text,label\nhello,positive\nincomplete\nworld,negative\n" in
   with_temp_csv content (fun path ->
-      let dataset = from_csv ~label_column:(Some 1) path in
+      let dataset = from_csv_with_labels ~label_column:1 path in
       let collected = collect_dataset dataset in
       Alcotest.(check (list (pair string string)))
         "skip malformed rows"
