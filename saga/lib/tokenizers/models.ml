@@ -167,7 +167,6 @@ let token_to_id model token =
   | _ :: rest -> find_index (i + 1) rest
 in
 find_index 0 vocab
-(* TODO: Proper implementation *)
 
 (** Get token from ID *)
 let id_to_token model id =
@@ -195,7 +194,6 @@ let id_to_token model id =
         Some (fst (List.nth vocab id))
       else
         None
-  (* TODO: Proper implementation *)
 
 (** Get vocabulary *)
 let get_vocab model =
