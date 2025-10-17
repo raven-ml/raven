@@ -130,7 +130,7 @@ type index =
   | Rs of int * int * int
       (** Range with step: [Rs (0, 10, 2)] selects 0, 2, 4, 6, 8 *)
   | A  (** All indices: [A] selects entire axis *)
-  | M of (int, uint8_elt) t
+  | M of (bool, bool_elt) t
       (** Boolean mask: [M mask] selects where mask is true *)
   | N  (** New axis: [N] inserts dimension of size 1 *)
 

@@ -97,7 +97,7 @@ module Make (B : Backend_intf.S) = struct
     | R of int * int (* Range [start, stop) *)
     | Rs of int * int * int (* Range with step *)
     | A (* All indices *)
-    | M of (int, uint8_elt) t (* Boolean mask *)
+    | M of (bool, bool_elt) t (* Boolean mask *)
     | N (* New axis *)
 
   (* ───── Basic Tensor Properties ───── *)
