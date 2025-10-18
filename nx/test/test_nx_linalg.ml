@@ -472,6 +472,52 @@ let test_matrix_rank_tol () =
   let r = Nx.matrix_rank ~tol:1e-8 a in
   check int "matrix_rank with tol" 1 r
 
+let test_matrix_rank_hermitian () =
+  (* Create a symmetric matrix with known rank *)
+  let a = Nx.create Nx.float32 [| 3; 3 |] [| 2.; 1.; 0.; 1.; 2.; 0.; 0.; 0.; 0. |] in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian" 2 r;
+  (* Test that hermitian flag is actually used by checking it works on a non-square matrix *)
+  (* This will fail if hermitian flag is ignored because eigh requires square matrices *)
+  let non_square = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  check_raises "matrix_rank hermitian non-square"
+    (Failure "eig: input must be square matrix") (fun () ->
+      ignore (Nx.matrix_rank ~hermitian:true non_square))
+
+let test_matrix_rank_hermitian_negative () =
+  (* Test negative-definite matrix *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| -2.; 0.; 0.; -1. |] in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian negative" 2 r;
+  (* Compare with non-hermitian version *)
+  let r_svd = Nx.matrix_rank a in
+  check int "matrix_rank hermitian negative vs svd" r_svd r
+
+let test_pinv_hermitian () =
+  (* Create a symmetric matrix *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
+  let pinv_a = Nx.pinv ~hermitian:true a in
+  (* Check that a @ pinv_a @ a ≈ a (pseudoinverse property) *)
+  let recon = Nx.matmul a (Nx.matmul pinv_a a) in
+  check_nx ~epsilon:1e-5 "pinv hermitian recon" a recon;
+  (* Test that hermitian flag is actually used by checking it works on a non-square matrix *)
+  (* This will fail if hermitian flag is ignored because eigh requires square matrices *)
+  let non_square = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  check_raises "pinv hermitian non-square"
+    (Failure "eig: input must be square matrix") (fun () ->
+      ignore (Nx.pinv ~hermitian:true non_square))
+
+let test_pinv_hermitian_negative () =
+  (* Test negative-definite matrix *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| -2.; 0.; 0.; -1. |] in
+  let pinv_a = Nx.pinv ~hermitian:true a in
+  (* Check that a @ pinv_a @ a ≈ a (pseudoinverse property) *)
+  let recon = Nx.matmul a (Nx.matmul pinv_a a) in
+  check_nx ~epsilon:1e-5 "pinv hermitian negative recon" a recon;
+  (* Compare with non-hermitian version *)
+  let pinv_svd = Nx.pinv a in
+  check_nx ~epsilon:1e-5 "pinv hermitian negative vs svd" pinv_svd pinv_a
+
 (* ───── Product Ops Tests ───── *)
 
 let test_vdot () =
@@ -1017,6 +1063,10 @@ let advanced_utility_tests =
     ("slogdet singular", `Quick, test_slogdet_singular);
     ("matrix rank", `Quick, test_matrix_rank);
     ("matrix rank tol", `Quick, test_matrix_rank_tol);
+    ("matrix rank hermitian", `Quick, test_matrix_rank_hermitian);
+    ("matrix rank hermitian negative", `Quick, test_matrix_rank_hermitian_negative);
+    ("pinv hermitian", `Quick, test_pinv_hermitian);
+    ("pinv hermitian negative", `Quick, test_pinv_hermitian_negative);
   ]
 
 let product_tests =
