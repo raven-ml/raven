@@ -5761,9 +5761,17 @@ module Make (B : Backend_intf.S) = struct
 
   let matrix_rank ?tol ?rtol ?hermitian a =
     check_float_or_complex ~op:"matrix_rank" a;
-    let _ = hermitian in
-    (* TODO: use for optimization *)
-    let s = svdvals a in
+    let s = 
+      match hermitian with
+      | Some true -> 
+          (* Use eigenvalue decomposition for hermitian matrices *)
+          let vals, _ = B.op_eigh ~vectors:false a in
+          (* Use absolute values to match SVD behavior for tolerance computation *)
+          abs vals
+      | _ -> 
+          (* Use SVD for general matrices *)
+          svdvals a
+    in
     let max_s = max s |> unsafe_get [] in
     let m, n =
       shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
@@ -5844,10 +5852,28 @@ module Make (B : Backend_intf.S) = struct
 
   let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
     check_float_or_complex ~op:"pinv" a;
-    let _ = hermitian in
-    (* TODO: use for optimization *)
-
-    let u, s, vh = B.op_svd ~full_matrices:false a in
+    let u, s, vh, original_vals = 
+      match hermitian with
+      | Some true ->
+          (* Use eigenvalue decomposition for hermitian matrices *)
+          let vals, vecs_opt = B.op_eigh ~vectors:true a in
+          (match vecs_opt with
+           | Some vecs -> 
+               (* For hermitian matrices: A = V * diag(lambda) * V^H *)
+               (* So pinv(A) = V * diag(1/lambda) * V^H *)
+               (* Use absolute values for cutoff computation, but keep original vals for pseudoinverse *)
+               let abs_vals = abs vals in
+               let vh_transposed = matrix_transpose vecs in
+               (vecs, abs_vals, vh_transposed, Some vals)
+           | None -> 
+               (* Fallback to SVD if eigenvectors not available *)
+               let u, s, vh = B.op_svd ~full_matrices:false a in
+               (u, s, vh, None))
+      | _ ->
+          (* Use SVD for general matrices *)
+          let u, s, vh = B.op_svd ~full_matrices:false a in
+          (u, s, vh, None)
+    in
 
     let max_s = max s |> unsafe_get [] in
 
@@ -5881,11 +5907,23 @@ module Make (B : Backend_intf.S) = struct
     let mask = greater s threshold in
     let safe_s = where mask s ones_s in
     let s_inv = div ones_s safe_s in
-    let mask = cast (dtype s) mask in
-    let s_inv = mul s_inv mask in
+    let mask_float = cast (dtype s) mask in
+    let s_inv = mul s_inv mask_float in
 
-    (* Cast s_inv to match input type *)
-    let s_inv = cast (dtype a) s_inv in
+    (* For hermitian case, use original eigenvalues for pseudoinverse computation *)
+    let s_inv = 
+      match original_vals with
+      | Some orig_vals ->
+          (* Use original eigenvalues for pseudoinverse, but apply the same mask *)
+          let orig_vals_cast = cast (dtype s) orig_vals in
+          let safe_orig = where mask orig_vals_cast ones_s in
+          let orig_inv = div ones_s safe_orig in
+          let orig_inv = mul orig_inv mask_float in
+          cast (dtype a) orig_inv
+      | None ->
+          (* Cast s_inv to match input type for SVD case *)
+          cast (dtype a) s_inv
+    in
 
     (* Compute V @ S^-1 @ U^H *)
     (* We need to multiply each column of vh.T by corresponding s_inv element *)
