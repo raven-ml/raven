@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Talon: Allow forcing column types in Talon JSON loader (#104, @nirnayroy)
 - Nx: Update comparison and conditional operations to use boolean tensors (#54, @nirnayroy)
 - Kaun: Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD).
+- Nx: Fix `matrix_rank`/`pinv` Hermitian fast paths to use eigen-decomposition and match NumPy for complex inputs (#96, @six-shot, @tmattio).
 
 ## [1.0.0~alpha1] - 2025-10-02
 
