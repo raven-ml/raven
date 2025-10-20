@@ -123,18 +123,21 @@ val sliding_window :
     ]} *)
 
 val from_csv :
+  ?separator:char -> ?text_column:int -> ?has_header:bool -> string -> string t
+(** [from_csv ?separator ?text_column ?has_header path] reads a CSV file and
+    returns the text column as a dataset of strings. Rows that do not contain
+    the requested column are skipped. *)
+
+val from_csv_with_labels :
   ?separator:char ->
   ?text_column:int ->
-  ?label_column:int option ->
   ?has_header:bool ->
+  label_column:int ->
   string ->
-  string t
-(** [from_csv ?separator ?text_column ?label_column ?has_header path] reads CSV
-    data.
-    - [separator]: Field separator (default: ',')
-    - [text_column]: Column index for text (default: 0)
-    - [label_column]: Optional column index for labels
-    - [has_header]: Skip first row if true (default: true) *)
+  (string * string) t
+(** [from_csv_with_labels ?separator ?text_column ?has_header ~label_column
+     path] reads a CSV file and returns a dataset of (text, label) tuples. Rows
+    missing either the text or label column are skipped. *)
 
 val from_text : tokenizer:tokenizer -> string -> int array t
 (** [from_text ~tokenizer path] reads a text file and returns a dataset of token

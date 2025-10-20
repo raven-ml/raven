@@ -207,7 +207,13 @@ let dropout ~rate () =
     init = (fun ~rngs:_ ~dtype:_ -> List []);
     apply =
       (fun _params ~training ?rngs x ->
-        if training then Ops.dropout ~rate ?rngs x else x);
+        if (not training) || rate = 0.0 then x
+        else
+          match rngs with
+          | Some rng ->
+              let seed = Rune.Rng.to_int rng in
+              Rune.dropout ~seed ~rate x
+          | None -> failwith "dropout requires RNG if rate > 0.0");
   }
 
 (* alias for internal use *)
@@ -239,7 +245,7 @@ let batch_norm ~num_features () =
             in
             Rune.debug_with_context
               (Printf.sprintf "batch_norm_%d_apply" num_features) (fun () ->
-                Ops.batch_norm ~scale ~bias ~num_features x)
+                Rune.batch_norm ~scale ~bias x)
         | _ -> failwith "batch_norm: invalid params structure");
   }
 
@@ -341,7 +347,7 @@ let rms_norm ~dim ?(eps = 1e-6) ?scale_init () =
     apply =
       (fun params ~training:_ ?rngs:_ x ->
         match params with
-        | Tensor scale -> Ops.rms_norm ~scale ~dim ~eps x
+        | Tensor scale -> Rune.rms_norm ~gamma:scale ~epsilon:eps x
         | _ -> failwith "rms_norm: invalid params");
   }
 
@@ -369,9 +375,9 @@ let layer_norm ~dim ?(eps = 1e-5) ?(elementwise_affine = true) () =
                 | Some (Tensor t) -> t
                 | _ -> failwith "layer_norm: missing beta"
               in
-              Ops.layer_norm ~gamma ~beta ~dim ~eps ~elementwise_affine:true x
+              Rune.layer_norm ~gamma ~beta ~epsilon:eps x
           | _ -> failwith "layer_norm: invalid params"
-        else Ops.layer_norm ~dim ~eps ~elementwise_affine:false x);
+        else Rune.layer_norm ~epsilon:eps x);
   }
 
 let embedding ~vocab_size ~embed_dim ?(scale = true) ?embedding_init () =
@@ -396,9 +402,77 @@ let embedding ~vocab_size ~embed_dim ?(scale = true) ?embedding_init () =
         | Tensor embedding ->
             (* Cast input to int32 for embedding lookup *)
             let indices = Rune.cast Rune.int32 x in
-            Ops.embedding ~embedding ~embed_dim ~scale indices
+            Rune.embedding ~scale ~embedding indices
         | _ -> failwith "embedding: invalid params");
   }
+
+let compute_attention_from_projected ?attention_mask ?(is_causal = false)
+    ?dropout_rate ?dropout_rng ?scale ~q ~k ~v ~embed_dim ~num_heads
+    ~num_kv_heads ~head_dim () =
+  if embed_dim <> num_heads * head_dim then
+    failwith
+      (Printf.sprintf
+         "multi-head attention: embed_dim (%d) must equal num_heads (%d) * \
+          head_dim (%d)"
+         embed_dim num_heads head_dim);
+  let reshape_heads tensor heads =
+    let tensor = Rune.contiguous tensor in
+    let shape = Rune.shape tensor in
+    if Array.length shape <> 3 then
+      failwith "multi-head attention expects projected tensors of rank 3";
+    let last_dim = shape.(2) in
+    if last_dim <> heads * head_dim then
+      failwith
+        (Printf.sprintf
+           "multi-head attention: projected dimension mismatch (got %d, \
+            expected %d)"
+           last_dim (heads * head_dim));
+    let reshaped =
+      Rune.reshape [| shape.(0); shape.(1); heads; head_dim |] tensor
+    in
+    Rune.transpose reshaped ~axes:[ 0; 2; 1; 3 ]
+  in
+  let q_heads = reshape_heads q num_heads in
+  let k_heads = reshape_heads k num_kv_heads in
+  let v_heads = reshape_heads v num_kv_heads in
+  let repeat_if_needed tensor =
+    if num_kv_heads < num_heads then (
+      if num_heads mod num_kv_heads <> 0 then
+        failwith
+          (Printf.sprintf
+             "multi-head attention: num_heads (%d) must be a multiple of \
+              num_kv_heads (%d)"
+             num_heads num_kv_heads);
+      let repeat_factor = num_heads / num_kv_heads in
+      let shape = Rune.shape tensor in
+      let expanded = Rune.expand_dims [ 2 ] tensor in
+      let target =
+        [| shape.(0); shape.(1); repeat_factor; shape.(2); shape.(3) |]
+      in
+      let broadcasted = Rune.broadcast_to target expanded in
+      Rune.reshape [| shape.(0); num_heads; shape.(2); shape.(3) |] broadcasted)
+    else tensor
+  in
+  let k_heads = repeat_if_needed k_heads in
+  let v_heads = repeat_if_needed v_heads in
+  let attn =
+    (* Build the function call with all optional parameters *)
+    let dropout_seed =
+      match dropout_rng with
+      | Some rng -> Some (Rune.Rng.to_int rng)
+      | None when dropout_rate <> None -> failwith "compute_attention_from_projected: dropout requires RNG"
+      | None -> None
+    in
+    Rune.dot_product_attention ?attention_mask ?scale ?dropout_rate
+      ?dropout_seed ~is_causal q_heads k_heads v_heads
+  in
+  let q_shape = Rune.shape q in
+  let batch = q_shape.(0) in
+  let seq_len = q_shape.(1) in
+  attn
+  |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
+  |> Rune.contiguous
+  |> Rune.reshape [| batch; seq_len; embed_dim |]
 
 let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
     ?head_dim ?(dropout = 0.0) ?(use_qk_norm = false) ?attn_logits_soft_cap
@@ -500,19 +574,29 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
             let effective_dropout = if training then dropout else 0.0 in
 
             (* Pass RNGs only when dropout > 0 and training *)
-            let rngs_for_dropout =
-              if training && dropout > 0.0 then rngs else None
+            let dropout_rng =
+              if effective_dropout > 0.0 then
+                match rngs with
+                | Some rng -> Some rng
+                | None -> failwith "dropout requires RNG if rate > 0.0"
+              else None
             in
-
-            let output, _attn_weights_opt =
-              Ops.multi_head_attention ~q_proj_w:q_proj ~k_proj_w:k_proj
-                ~v_proj_w:v_proj ~out_proj_w:out_proj ?q_bias:None ?k_bias:None
-                ?v_bias:None ?out_bias:None ?k_bias_kv:None ?v_bias_kv:None
-                ~query ?key ?value ?attention_mask ?is_causal:None
-                ?rngs:rngs_for_dropout ~embed_dim ~num_heads ~num_kv_heads
-                ~head_dim ~dropout:effective_dropout ~bias:false
-                ~add_bias_kv:false ~scale ()
+            let query_input = query in
+            let key_input = Option.value key ~default:query_input in
+            let value_input = Option.value value ~default:query_input in
+            let q_projected = Rune.matmul query_input q_proj in
+            let k_projected = Rune.matmul key_input k_proj in
+            let v_projected = Rune.matmul value_input v_proj in
+            let dropout_rate_opt =
+              if effective_dropout > 0.0 then Some effective_dropout else None
             in
+            let context =
+              compute_attention_from_projected ?attention_mask
+                ?scale:(Some scale) ?dropout_rate:dropout_rate_opt ?dropout_rng
+                ~is_causal:false ~q:q_projected ~k:k_projected ~v:v_projected
+                ~embed_dim ~num_heads ~num_kv_heads ~head_dim ()
+            in
+            let output = Rune.matmul context out_proj in
 
             (* Apply attention logits soft cap if specified *)
             let output =
@@ -649,24 +733,116 @@ let transformer_encoder_layer ~hidden_size ~num_attention_heads
               | _ -> None
             in
 
-            Ops.transformer_encoder_layer ~q_weight:(get_weight "q_weight")
-              ~k_weight:(get_weight "k_weight")
-              ~v_weight:(get_weight "v_weight")
-              ~attn_out_weight:(get_weight "attn_out_weight")
-              ~inter_weight:(get_weight "inter_weight")
-              ~out_weight:(get_weight "out_weight")
-              ?q_bias:(get_bias_opt "q_bias") ?k_bias:(get_bias_opt "k_bias")
-              ?v_bias:(get_bias_opt "v_bias")
-              ?attn_out_bias:(get_bias_opt "attn_out_bias")
-              ?inter_bias:(get_bias_opt "inter_bias")
-              ?out_bias:(get_bias_opt "out_bias")
-              ~attn_gamma:(get_weight "attn_gamma")
-              ~attn_beta:(get_weight "attn_beta")
-              ~ffn_gamma:(get_weight "ffn_gamma")
-              ~ffn_beta:(get_weight "ffn_beta") ~hidden_states ~training ?rngs
-              ~hidden_size ~num_attention_heads ~intermediate_size
-              ~hidden_dropout_prob ~attention_probs_dropout_prob ~layer_norm_eps
-              ~hidden_act ~use_bias ()
+            let apply_linear weight bias input =
+              let projected = Rune.matmul input weight in
+              if use_bias then
+                Option.fold ~none:projected
+                  ~some:(fun b -> Rune.add projected b)
+                  bias
+              else projected
+            in
+            let q =
+              apply_linear (get_weight "q_weight") (get_bias_opt "q_bias")
+                hidden_states
+            in
+            let k =
+              apply_linear (get_weight "k_weight") (get_bias_opt "k_bias")
+                hidden_states
+            in
+            let v =
+              apply_linear (get_weight "v_weight") (get_bias_opt "v_bias")
+                hidden_states
+            in
+            let num_heads = num_attention_heads in
+            let head_dim = hidden_size / num_heads in
+            let attn_dropout_rate =
+              if training then attention_probs_dropout_prob else 0.0
+            in
+            let attn_dropout_rng =
+              if attn_dropout_rate > 0.0 then
+                match rngs with
+                | Some rng -> Some rng
+                | None -> failwith "dropout requires RNG if rate > 0.0"
+              else None
+            in
+            let attn_context =
+              compute_attention_from_projected
+                ?dropout_rate:
+                  (if attn_dropout_rate > 0.0 then Some attn_dropout_rate
+                   else None)
+                ?dropout_rng:attn_dropout_rng ~is_causal:false ~q ~k ~v
+                ~embed_dim:hidden_size ~num_heads ~num_kv_heads:num_heads
+                ~head_dim ()
+            in
+            let attn_output =
+              Rune.matmul attn_context (get_weight "attn_out_weight")
+            in
+            let attn_output =
+              if use_bias then
+                Option.fold ~none:attn_output
+                  ~some:(fun b -> Rune.add attn_output b)
+                  (get_bias_opt "attn_out_bias")
+              else attn_output
+            in
+            let attn_output =
+              if training && hidden_dropout_prob > 0.0 then
+                match rngs with
+                | Some rng ->
+                    let seed = Rune.Rng.to_int rng in
+                    Rune.dropout ~seed ~rate:hidden_dropout_prob attn_output
+                | None -> failwith "dropout requires RNG if rate > 0.0"
+              else attn_output
+            in
+            let hidden_states = Rune.add hidden_states attn_output in
+            let hidden_states =
+              Rune.layer_norm ~gamma:(get_weight "attn_gamma")
+                ~beta:(get_weight "attn_beta") ~epsilon:layer_norm_eps
+                hidden_states
+            in
+            let intermediate =
+              Rune.matmul hidden_states (get_weight "inter_weight")
+            in
+            let intermediate =
+              if use_bias then
+                Option.fold ~none:intermediate
+                  ~some:(fun b -> Rune.add intermediate b)
+                  (get_bias_opt "inter_bias")
+              else intermediate
+            in
+            let inter_shape = Rune.shape intermediate in
+            if inter_shape.(2) <> intermediate_size then
+              failwith
+                (Printf.sprintf
+                   "transformer_encoder_layer: intermediate_size mismatch \
+                    (expected %d, got %d)"
+                   intermediate_size inter_shape.(2));
+            let activated =
+              match hidden_act with
+              | `gelu | `gelu_new -> Activations.gelu intermediate
+              | `relu -> Activations.relu intermediate
+              | `swish -> Activations.swish intermediate
+            in
+            let output = Rune.matmul activated (get_weight "out_weight") in
+            let output =
+              if use_bias then
+                Option.fold ~none:output
+                  ~some:(fun b -> Rune.add output b)
+                  (get_bias_opt "out_bias")
+              else output
+            in
+            let output =
+              if training && hidden_dropout_prob > 0.0 then
+                match rngs with
+                | Some rng ->
+                    let seed = Rune.Rng.to_int rng in
+                    Rune.dropout ~seed ~rate:hidden_dropout_prob output
+                | None -> failwith "dropout requires RNG if rate > 0.0"
+              else output
+            in
+            let hidden_states = Rune.add hidden_states output in
+            Rune.layer_norm ~gamma:(get_weight "ffn_gamma")
+              ~beta:(get_weight "ffn_beta") ~epsilon:layer_norm_eps
+              hidden_states
         | _ -> failwith "transformer_encoder_layer: invalid params");
   }
 
@@ -1065,9 +1241,7 @@ let positional_embedding_learned ~max_len ~embed_dim () =
               |> Rune.expand [| b; s |]
               |> Rune.contiguous
             in
-            let pos_e =
-              Ops.embedding ~embedding:table ~embed_dim ~scale:false pos
-            in
+            let pos_e = Rune.embedding ~scale:false ~embedding:table pos in
             Rune.add x pos_e
         | _ -> failwith "positional_embedding: invalid params");
   }
@@ -1136,7 +1310,7 @@ let transformer_decoder_block ~embed_dim ~num_heads ~mlp_hidden ?(dropout = 0.0)
             and p_ln2 = get "ln2"
             and p_ff = get "ff" in
             let x_norm = ln1.apply p_ln1 ~training ?rngs x in
-            (* Extract weights from attn params to call Ops with is_causal *)
+            (* Extract weights from attention module to run causal attention *)
             let attn_out =
               match p_attn with
               | Record f ->
@@ -1151,14 +1325,26 @@ let transformer_decoder_block ~embed_dim ~num_heads ~mlp_hidden ?(dropout = 0.0)
                   and o = getw "out_proj" in
                   let head_dim = embed_dim / num_heads in
                   let effective_dropout = if training then dropout else 0.0 in
-                  let out, _ =
-                    Ops.multi_head_attention ~q_proj_w:q ~k_proj_w:k ~v_proj_w:v
-                      ~out_proj_w:o ~query:x_norm ~is_causal:true ~embed_dim
-                      ~num_heads ~num_kv_heads:num_heads ~head_dim
-                      ~dropout:effective_dropout ?rngs ~bias:false
-                      ~add_bias_kv:false ~scale:1.0 ()
+                  let dropout_rng =
+                    if effective_dropout > 0.0 then
+                      match rngs with
+                      | Some rng -> Some rng
+                      | None -> failwith "dropout requires RNG if rate > 0.0"
+                    else None
                   in
-                  out
+                  let q_proj_out = Rune.matmul x_norm q in
+                  let k_proj_out = Rune.matmul x_norm k in
+                  let v_proj_out = Rune.matmul x_norm v in
+                  let context =
+                    compute_attention_from_projected ?scale:(Some 1.0)
+                      ?dropout_rate:
+                        (if effective_dropout > 0.0 then Some effective_dropout
+                         else None)
+                      ?dropout_rng ~is_causal:true ~q:q_proj_out ~k:k_proj_out
+                      ~v:v_proj_out ~embed_dim ~num_heads
+                      ~num_kv_heads:num_heads ~head_dim ()
+                  in
+                  Rune.matmul context o
               | _ -> failwith "attn params"
             in
             let x = Rune.add x attn_out in

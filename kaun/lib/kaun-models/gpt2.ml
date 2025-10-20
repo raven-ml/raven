@@ -508,8 +508,8 @@ module Gpt2_block = struct
 
     (* Pre-layer norm for attention *)
     let normed =
-      Kaun.Ops.layer_norm ~gamma:ln1_weight ~beta:ln1_bias ~dim:(-1)
-        ~eps:config.layer_norm_epsilon ~elementwise_affine:true x
+      layer_norm ~gamma:ln1_weight ~beta:ln1_bias
+        ~epsilon:config.layer_norm_epsilon x
     in
 
     (* Self-attention with residual *)
@@ -521,8 +521,8 @@ module Gpt2_block = struct
 
     (* Pre-layer norm for FFN *)
     let normed =
-      Kaun.Ops.layer_norm ~gamma:ln2_weight ~beta:ln2_bias ~dim:(-1)
-        ~eps:config.layer_norm_epsilon ~elementwise_affine:true x
+      layer_norm ~gamma:ln2_weight ~beta:ln2_bias
+        ~epsilon:config.layer_norm_epsilon x
     in
 
     (* FFN with residual *)
@@ -614,9 +614,7 @@ let create ?(config = default_config) () =
                   | Some (Kaun.Ptree.Tensor t) -> t
                   | _ -> failwith "Missing ln_f beta"
                 in
-                Kaun.Ops.layer_norm x ~gamma ~beta
-                  ~eps:config.layer_norm_epsilon ~dim:(-1)
-                  ~elementwise_affine:true
+                layer_norm x ~gamma ~beta ~epsilon:config.layer_norm_epsilon
             | _ -> failwith "Invalid ln_f params")
         | _ -> failwith "Invalid params structure");
   }

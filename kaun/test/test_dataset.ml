@@ -143,23 +143,77 @@ let test_from_file () =
       let collected = collect_dataset dataset in
       Alcotest.(check (list int)) "parsed integers" [ 100; 200; 300 ] collected)
 
-(** Test transformations *)
+let test_from_csv_with_labels () =
+  let content = "text,label\nhello,spam\nworld,ham\n" in
+  with_temp_csv content (fun path ->
+      let dataset = from_csv_with_labels ~label_column:1 path in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "text and labels with header"
+        [ ("hello", "spam"); ("world", "ham") ]
+        collected)
+
+let test_from_csv_with_labels_no_header () =
+  let content = "foo,bar\nbaz,qux\n" in
+  with_temp_csv content (fun path ->
+      let dataset =
+        from_csv_with_labels ~label_column:1 ~has_header:false path
+      in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "text and labels without header"
+        [ ("foo", "bar"); ("baz", "qux") ]
+        collected)
+
+let test_from_csv_with_labels_custom_columns () =
+  let content = "id,sentiment,text,score\n1,pos,great,5\n2,neg,bad,1\n" in
+  with_temp_csv content (fun path ->
+      let dataset = from_csv_with_labels ~text_column:2 ~label_column:1 path in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "custom columns"
+        [ ("great", "pos"); ("bad", "neg") ]
+        collected)
+
+let test_from_csv_with_labels_custom_separator () =
+  let content = "t1|l1\nt2|l2\n" in
+  with_temp_csv content (fun path ->
+      let dataset =
+        from_csv_with_labels ~separator:'|' ~label_column:1 ~has_header:false
+          path
+      in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "text and labels with custom sep"
+        [ ("t1", "l1"); ("t2", "l2") ]
+        collected)
+
+let test_from_csv_with_labels_malformed_rows () =
+  let content = "text,label\nhello,positive\nincomplete\nworld,negative\n" in
+  with_temp_csv content (fun path ->
+      let dataset = from_csv_with_labels ~label_column:1 path in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "skip malformed rows"
+        [ ("hello", "positive"); ("world", "negative") ]
+        collected)
+
 let test_map () =
-  let dataset = from_list [ 1; 2; 3 ] |> map (fun x -> x * 2) in
-  let collected = collect_dataset dataset in
-  Alcotest.(check (list int)) "mapped values" [ 2; 4; 6 ] collected
+  let ds = from_list [ 1; 2; 3 ] |> map (fun x -> x * 2) in
+  let collected = collect_dataset ds in
+  Alcotest.(check (list int)) "map doubled" [ 2; 4; 6 ] collected
 
 let test_filter () =
-  let dataset = from_list [ 1; 2; 3; 4; 5 ] |> filter (fun x -> x mod 2 = 0) in
-  let collected = collect_dataset dataset in
-  Alcotest.(check (list int)) "filtered values" [ 2; 4 ] collected
+  let ds = from_list [ 1; 2; 3; 4; 5 ] |> filter (fun x -> x mod 2 = 0) in
+  let collected = collect_dataset ds in
+  Alcotest.(check (list int)) "filter evens" [ 2; 4 ] collected
 
 let test_flat_map () =
-  let dataset =
-    from_list [ 1; 2; 3 ] |> flat_map (fun x -> from_list [ x; x * 10 ])
+  let ds =
+    from_list [ 1; 2; 3 ] |> flat_map (fun x -> from_list [ x; x + 1 ])
   in
-  let collected = collect_dataset dataset in
-  Alcotest.(check (list int)) "flat mapped" [ 1; 10; 2; 20; 3; 30 ] collected
+  let collected = collect_dataset ds in
+  Alcotest.(check (list int)) "flat_map expanded" [ 1; 2; 2; 3; 3; 4 ] collected
 
 let test_zip () =
   let ds1 = from_list [ "a"; "b"; "c" ] in
@@ -574,6 +628,15 @@ let () =
           test_case "from_csv_custom_column" `Quick test_from_csv_custom_column;
           test_case "from_csv_no_header" `Quick test_from_csv_no_header;
           test_case "from_file" `Quick test_from_file;
+          test_case "from_csv_with_labels" `Quick test_from_csv_with_labels;
+          test_case "from_csv_with_labels_no_header" `Quick
+            test_from_csv_with_labels_no_header;
+          test_case "from_csv_with_labels_custom_columns" `Quick
+            test_from_csv_with_labels_custom_columns;
+          test_case "from_csv_with_labels_custom_separator" `Quick
+            test_from_csv_with_labels_custom_separator;
+          test_case "from_csv_with_labels_malformed_rows" `Quick
+            test_from_csv_with_labels_malformed_rows;
         ] );
       ( "transformations",
         [

@@ -509,7 +509,9 @@ let one_hot ~num_classes indices =
 
 (* Missing operations for BERT *)
 
-let softmax ?axes x = Debug.with_context "softmax" (fun () -> T.softmax ?axes x)
+let softmax ?axes ?scale x =
+  Debug.with_context "softmax" (fun () -> T.softmax ?axes ?scale x)
+
 let cumsum ?axis x = Debug.with_context "cumsum" (fun () -> T.cumsum ?axis x)
 let numel x = T.numel x
 let get indices x = Debug.with_context "get" (fun () -> T.get indices x)

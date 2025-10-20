@@ -383,7 +383,7 @@ module Rng : sig
       @param shape Shape of the output tensor
       @return Tensor with random integer values *)
 
-  val bernoulli : key -> p:float -> int array -> uint8_t
+  val bernoulli : key -> p:float -> int array -> bool_t
   (** Generate Bernoulli random values.
 
       [bernoulli key ~p shape] generates a tensor of boolean values where each

@@ -57,7 +57,7 @@ let test_uniform () =
   let t2 = Rng.uniform key Float32 shape in
   let is_equal = Rune.all (Rune.equal t t2) in
   let is_equal_val = Rune.to_array is_equal in
-  A.check A.bool "uniform is deterministic" true (is_equal_val.(0) > 0)
+  A.check A.bool "uniform is deterministic" true is_equal_val.(0)
 
 let test_normal () =
   let key = Rng.key 42 in
@@ -103,9 +103,9 @@ let test_bernoulli () =
 
   A.check (A.array A.int) "bernoulli produces correct shape" shape
     (Rune.shape t);
-
+  let t_int = astype UInt8 t in
   (* Check proportion roughly matches p *)
-  let values = Rune.to_array t in
+  let values = Rune.to_array t_int in
   let ones =
     Array.fold_left (fun acc v -> acc + if v > 0 then 1 else 0) 0 values
   in
@@ -187,14 +187,14 @@ let test_categorical () =
   let samples2 = Rng.categorical key logits in
   let is_equal = Rune.all (Rune.equal samples samples2) in
   let is_equal_val = Rune.to_array is_equal in
-  A.check A.bool "categorical is deterministic" true (is_equal_val.(0) > 0);
+  A.check A.bool "categorical is deterministic" true is_equal_val.(0);
 
   (* Test with Float64 *)
   let logits64 = Rune.create Float64 [| 3 |] [| 0.0; 1.0; 2.0 |] in
   let samples64 = Rng.categorical key logits64 in
   let is_equal64 = Rune.all (Rune.equal samples samples64) in
   let is_equal_val64 = Rune.to_array is_equal64 in
-  A.check A.bool "categorical is type agnostic" true (is_equal_val64.(0) > 0)
+  A.check A.bool "categorical is type agnostic" true is_equal_val64.(0)
 
 let test_categorical_2d () =
   let key = Rng.key 42 in
@@ -256,8 +256,7 @@ let test_categorical_axis_handling () =
   (* Check that axis=1 and axis=-1 give identical results *)
   let is_equal = Rune.all (Rune.equal samples_axis_1 samples_axis_neg_1) in
   let is_equal_val = Rune.to_array is_equal in
-  A.check A.bool "categorical axis=-1 behaves like axis=1" true
-    (is_equal_val.(0) > 0);
+  A.check A.bool "categorical axis=-1 behaves like axis=1" true is_equal_val.(0);
 
   (* Sanity check: ensure sampled indices are in valid range *)
   let vals_axis_0 = Rune.to_array samples_axis_0 in
@@ -377,7 +376,7 @@ let test_rng_with_autodiff () =
   let expected = Rune.ones Float32 [| 3; 3 |] in
   let is_equal = Rune.all (Rune.equal dx expected) in
   let is_equal_val = Rune.to_array is_equal in
-  A.check A.bool "RNG works with autodiff" true (is_equal_val.(0) > 0)
+  A.check A.bool "RNG works with autodiff" true is_equal_val.(0)
 
 let () =
   A.run "Rune.Rng"

@@ -130,7 +130,7 @@ type index =
   | Rs of int * int * int
       (** Range with step: [Rs (0, 10, 2)] selects 0, 2, 4, 6, 8 *)
   | A  (** All indices: [A] selects entire axis *)
-  | M of (int, uint8_elt) t
+  | M of (bool, bool_elt) t
       (** Boolean mask: [M mask] selects where mask is true *)
   | N  (** New axis: [N] inserts dimension of size 1 *)
 
@@ -541,6 +541,13 @@ val randint :
     exclusive (NumPy convention).
 
     @raise Invalid_argument if non-integer dtype or [low >= high] *)
+
+val dropout : ?seed:int -> rate:float -> (float, 'b) t -> (float, 'b) t
+(** [dropout ?seed ~rate x] randomly zeroes elements with probability [rate].
+
+    The remaining values are scaled by [1/(1 - rate)] keeping the expected value
+    unchanged. Requires floating-point input and rate in \[0, 1). When [seed] is
+    provided, the same mask is reproduced. *)
 
 (** {2 Shape Manipulation}
 
@@ -1316,7 +1323,7 @@ val put_along_axis :
     ]} *)
 
 val compress :
-  ?axis:int -> condition:(int, uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t
+  ?axis:int -> condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
 (** [compress ?axis condition t] selects elements where condition is true.
 
     Equivalent to NumPy's compress. [condition] is a 1D boolean array. If [axis]
@@ -1329,15 +1336,15 @@ val compress :
 
     {@ocaml[
       # let x = create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |] in
-        compress ~condition:(create uint8 [| 5 |] [| 1; 0; 1; 0; 1 |]) x
+        compress ~condition:(create bool [| 5 |] [| true; false; true; false; true |]) x
       - : (int32, int32_elt) t = [1, 3, 5]
       # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        compress ~axis:0 ~condition:(create uint8 [| 3 |] [| 0; 1; 1 |]) x
+        compress ~axis:0 ~condition:(create bool [| 3 |] [| false; true; true |]) x
       - : (int32, int32_elt) t = [[4, 5, 6],
                                   [7, 8, 9]]
     ]} *)
 
-val extract : condition:(int, uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t
+val extract : condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
 (** [extract condition t] flattens and selects elements where condition is true.
 
     Equivalent to NumPy's extract (1D compress after flatten). [condition] must
@@ -1688,63 +1695,67 @@ val lerp_scalar_weight : ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 
     Element-wise comparisons and logical operations. *)
 
-val cmplt : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
-(** [cmplt t1 t2] returns 1 where t1 < t2, 0 elsewhere. *)
+val cmplt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmplt t1 t2] returns [true] where [t1 < t2], [false] elsewhere. *)
 
-val less : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val less : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [less t1 t2] is synonym for {!cmplt}. *)
 
-val less_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
-(** [less_s t scalar] checks if each element is less than scalar. *)
+val less_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [less_s t scalar] checks if each element is less than scalar and returns
+    booleans. *)
 
-val cmpne : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
-(** [cmpne t1 t2] returns 1 where t1 ≠ t2, 0 elsewhere. *)
+val cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmpne t1 t2] returns [true] where [t1 ≠ t2], [false] elsewhere. *)
 
-val not_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val not_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [not_equal t1 t2] is synonym for {!cmpne}. *)
 
-val not_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
-(** [not_equal_s t scalar] compares each element with scalar for inequality. *)
+val not_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [not_equal_s t scalar] compares each element with scalar for inequality and
+    returns booleans. *)
 
-val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
-(** [cmpeq t1 t2] returns 1 where t1 = t2, 0 elsewhere. *)
+val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmpeq t1 t2] returns [true] where [t1 = t2], [false] elsewhere. *)
 
-val equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [equal t1 t2] is synonym for {!cmpeq}. *)
 
-val equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
-(** [equal_s t scalar] compares each element with scalar for equality. *)
+val equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [equal_s t scalar] compares each element with scalar for equality and
+    returns booleans. *)
 
-val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
-(** [cmpgt t1 t2] returns 1 where t1 > t2, 0 elsewhere. *)
+val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmpgt t1 t2] returns [true] where [t1 > t2], [false] elsewhere. *)
 
-val greater : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val greater : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [greater t1 t2] is synonym for {!cmpgt}. *)
 
-val greater_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
-(** [greater_s t scalar] checks if each element is greater than scalar. *)
+val greater_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [greater_s t scalar] checks if each element is greater than scalar and
+    returns booleans. *)
 
-val cmple : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
-(** [cmple t1 t2] returns 1 where t1 ≤ t2, 0 elsewhere. *)
+val cmple : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmple t1 t2] returns [true] where [t1 ≤ t2], [false] elsewhere. *)
 
-val less_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val less_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [less_equal t1 t2] is synonym for {!cmple}. *)
 
-val less_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+val less_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [less_equal_s t scalar] checks if each element is less than or equal to
-    scalar. *)
+    scalar and returns booleans. *)
 
-val cmpge : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
-(** [cmpge t1 t2] returns 1 where t1 ≥ t2, 0 elsewhere. *)
+val cmpge : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmpge t1 t2] returns [true] where [t1 ≥ t2], [false] elsewhere. *)
 
-val greater_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val greater_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [greater_equal t1 t2] is synonym for {!cmpge}. *)
 
-val greater_equal_s : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+val greater_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [greater_equal_s t scalar] checks if each element is greater than or equal
-    to scalar. *)
+    to scalar and returns booleans. *)
 
-val array_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [array_equal t1 t2] returns scalar 1 if all elements equal, 0 otherwise.
 
     Broadcasts inputs before comparison. Returns 0 if shapes incompatible.
@@ -1753,11 +1764,11 @@ val array_equal : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
       # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         let y = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         array_equal x y |> item []
-      - : int = 1
+      - : bool = true
       # let x = create int32 [| 2 |] [| 1l; 2l |] in
         let y = create int32 [| 2 |] [| 1l; 3l |] in
         array_equal x y |> item []
-      - : int = 0
+      - : bool = false
     ]} *)
 
 val maximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
@@ -1812,7 +1823,7 @@ val logical_not : ('a, 'b) t -> ('a, 'b) t
       - : (int32, int32_elt) t = [1, 0, -4]
     ]} *)
 
-val isinf : (float, 'a) t -> (int, uint8_elt) t
+val isinf : (float, 'a) t -> (bool, bool_elt) t
 (** [isinf t] returns 1 where infinite, 0 elsewhere.
 
     Detects both positive and negative infinity. Non-float types return all 0s.
@@ -1820,10 +1831,10 @@ val isinf : (float, 'a) t -> (int, uint8_elt) t
     {@ocaml[
       # let x = create float32 [| 4 |] [| 1.; Float.infinity; Float.neg_infinity; Float.nan |] in
         isinf x
-      - : (int, uint8_elt) t = [0, 1, 1, 0]
+      - : (bool, bool_elt) t = [false, true, true, false]
     ]} *)
 
-val isnan : ('a, 'b) t -> (int, uint8_elt) t
+val isnan : ('a, 'b) t -> (bool, bool_elt) t
 (** [isnan t] returns 1 where NaN, 0 elsewhere.
 
     NaN is the only value that doesn't equal itself. Non-float types return all
@@ -1832,10 +1843,10 @@ val isnan : ('a, 'b) t -> (int, uint8_elt) t
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; Float.nan; Float.infinity |] in
         isnan x
-      - : (int, uint8_elt) t = [0, 1, 0]
+      - : (bool, bool_elt) t = [false, true, false]
     ]} *)
 
-val isfinite : (float, 'a) t -> (int, uint8_elt) t
+val isfinite : (float, 'a) t -> (bool, bool_elt) t
 (** [isfinite t] returns 1 where finite, 0 elsewhere.
 
     Finite means not inf, -inf, or NaN. Non-float types return all 1s.
@@ -1843,19 +1854,19 @@ val isfinite : (float, 'a) t -> (int, uint8_elt) t
     {@ocaml[
       # let x = create float32 [| 4 |] [| 1.; Float.infinity; Float.nan; -0. |] in
         isfinite x
-      - : (int, uint8_elt) t = [1, 0, 0, 1]
+      - : (bool, bool_elt) t = [true, false, false, true]
     ]} *)
 
-val where : (int, uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+val where : (bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [where cond if_true if_false] selects elements based on condition.
 
-    Returns [if_true] where [cond] is non-zero, [if_false] elsewhere. All three
+    Returns [if_true] where [cond] is true, [if_false] elsewhere. All three
     inputs broadcast to common shape.
 
     @raise Invalid_argument if shapes incompatible for broadcasting
 
     {@ocaml[
-      # let cond = create uint8 [| 3 |] [| 1; 0; 1 |] in
+      # let cond = create bool [| 3 |] [| true; false; true |] in
         let if_true = create int32 [| 3 |] [| 2l; 3l; 4l |] in
         let if_false = create int32 [| 3 |] [| 5l; 6l; 7l |] in
         where cond if_true if_false
@@ -1956,42 +1967,42 @@ module Infix : sig
 
   (** {3 Comparisons} *)
 
-  val ( < ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( < ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 < t2] is a synonym for {!less} *)
 
-  val ( <> ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( <> ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 <> t2] is a synonym for {!not_equal}. *)
 
-  val ( = ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( = ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 = t1] is a synonym for {!equal}. *)
 
-  val ( > ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( > ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 > t2] is a synonym for {!greater}. *)
 
-  val ( <= ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( <= ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 <= t2] is a synonym for {!less_equal}. *)
 
-  val ( >= ) : ('a, 'b) t -> ('a, 'b) t -> (int, uint8_elt) t
+  val ( >= ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
   (** [t1 >= t2] is a synonym for {!greater_equal}. *)
 
   (** {3 Scalar Comparisons} *)
 
-  val ( =$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( =$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t =$ scalar] compares each element with scalar for equality. *)
 
-  val ( <>$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( <>$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t <>$ scalar] compares each element with scalar for inequality. *)
 
-  val ( <$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( <$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t <$ scalar] checks if each element is less than scalar. *)
 
-  val ( >$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( >$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t >$ scalar] checks if each element is greater than scalar. *)
 
-  val ( <=$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( <=$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t <=$ scalar] checks if each element is less than or equal to scalar. *)
 
-  val ( >=$ ) : ('a, 'b) t -> 'a -> (int, uint8_elt) t
+  val ( >=$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
   (** [t >=$ scalar] checks if each element is greater than or equal to scalar.
   *)
 
@@ -2203,38 +2214,39 @@ val std :
       - : float = 2.
     ]} *)
 
-val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
+val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 (** [all ?axes ?keepdims t] tests if all elements are true (non-zero).
 
-    Returns 1 if all elements along axes are non-zero, 0 otherwise.
+    Returns [true] if all elements along axes are non-zero, [false] otherwise.
 
     {@ocaml[
       # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
         all x |> item []
-      - : int = 1
+      - : bool = true
       # let x = create int32 [| 3 |] [| 1l; 0l; 3l |] in
         all x |> item []
-      - : int = 0
+      - : bool = false
       # let x = create int32 [| 2; 2 |] [| 1l; 0l; 1l; 1l |] in
         all ~axes:[ 1 ] x
-      - : (int, uint8_elt) t = [0, 1]
+      - : (bool, bool_elt) t = [false, true]
     ]} *)
 
-val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (int, uint8_elt) t
+val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 (** [any ?axes ?keepdims t] tests if any element is true (non-zero).
 
-    Returns 1 if any element along axes is non-zero, 0 if all are zero.
+    Returns [true] if any element along axes is non-zero, [false] if all are
+    zero.
 
     {@ocaml[
       # let x = create int32 [| 3 |] [| 0l; 0l; 1l |] in
         any x |> item []
-      - : int = 1
+      - : bool = true
       # let x = create int32 [| 3 |] [| 0l; 0l; 0l |] in
         any x |> item []
-      - : int = 0
+      - : bool = false
       # let x = create int32 [| 2; 2 |] [| 0l; 0l; 0l; 1l |] in
         any ~axes:[ 1 ] x
-      - : (int, uint8_elt) t = [0, 1]
+      - : (bool, bool_elt) t = [false, true]
     ]} *)
 
 val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
@@ -3071,6 +3083,9 @@ val silu : (float, 'a) t -> (float, 'a) t
       - : float = -0.
     ]} *)
 
+val swish : (float, 'a) t -> (float, 'a) t
+(** Alias for {!silu}. *)
+
 val hard_silu : (float, 'a) t -> (float, 'a) t
 (** [hard_silu t] applies x * hard_sigmoid(x).
 
@@ -3081,6 +3096,14 @@ val hard_silu : (float, 'a) t -> (float, 'a) t
         hard_silu x
       - : (float, float32_elt) t = [-0, 0, 3]
     ]} *)
+
+val hard_swish : (float, 'a) t -> (float, 'a) t
+(** Alias for {!hard_silu}. *)
+
+val prelu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [prelu alpha x] applies Parametric ReLU: max(0,x) + alpha * min(0,x).
+
+    [alpha] must broadcast across the shape of [x]. *)
 
 val log_sigmoid : (float, 'a) t -> (float, 'a) t
 (** [log_sigmoid t] computes log(sigmoid(x)).
@@ -3139,11 +3162,43 @@ val selu : (float, 'a) t -> (float, 'a) t
       - : float = 1.
     ]} *)
 
-val softmax : ?axes:int list -> (float, 'a) t -> (float, 'a) t
-(** [softmax ?axes t] applies softmax normalization.
+val celu : ?alpha:float -> (float, 'a) t -> (float, 'a) t
+(** [celu ?alpha x] applies continuously differentiable ELU.
 
-    Default axis -1. Computes exp(x - max) / sum(exp(x - max)) for numerical
-    stability. Output sums to 1 along specified axes.
+    Returns [x] if [x >= 0], else [alpha * (exp(x / alpha) - 1)]. Default
+    [alpha = 1.0]. *)
+
+val squareplus : ?b:float -> (float, 'a) t -> (float, 'a) t
+(** [squareplus ?b x] applies smooth ReLU: 0.5 * (x + sqrt(x² + b)).
+
+    Default [b = 4]. *)
+
+val glu : ?axis:int -> (float, 'a) t -> (float, 'a) t
+(** [glu ?axis x] applies the gated linear unit.
+
+    Splits [x] into two equal parts along [axis] and returns [x1 * sigmoid(x2)].
+    Default axis is the last dimension. *)
+
+val sparse_plus : (float, 'a) t -> (float, 'a) t
+(** [sparse_plus x] applies the piecewise function:
+
+    - 0 for x ≤ -1
+    - (1/4) (x + 1)² for -1 < x < 1
+    - x for x ≥ 1 *)
+
+val sparse_sigmoid : (float, 'a) t -> (float, 'a) t
+(** [sparse_sigmoid x] applies the piecewise sparse sigmoid:
+
+    - 0 for x ≤ -1
+    - 0.5 (x + 1) for -1 < x < 1
+    - 1 for x ≥ 1 *)
+
+val softmax : ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
+(** [softmax ?axes ?scale t] applies softmax normalization.
+
+    Default axis -1. Computes exp(scale * (x - max)) / sum(exp(scale * (x -
+    max))) for numerical stability. Output sums to 1 along specified axes.
+    [scale] defaults to 1.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -3153,6 +3208,111 @@ val softmax : ?axes:int list -> (float, 'a) t -> (float, 'a) t
         sum (softmax x) |> item []
       - : float = 1.
     ]} *)
+
+val log_softmax :
+  ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
+(** [log_softmax ?axes ?scale t] returns the natural logarithm of {!softmax}.
+
+    Uses the same semantics as {!softmax} for [axes] and [scale]. *)
+
+val logsumexp :
+  ?axes:int list -> ?keepdims:bool -> (float, 'a) t -> (float, 'a) t
+(** [logsumexp ?axes ?keepdims t] computes log(sum(exp(t))) in a numerically
+    stable manner along [axes]. Defaults to reducing across all axes. *)
+
+val logmeanexp :
+  ?axes:int list -> ?keepdims:bool -> (float, 'a) t -> (float, 'a) t
+(** [logmeanexp ?axes ?keepdims t] computes log(mean(exp(t))) in a numerically
+    stable manner along [axes]. Equivalent to {!logsumexp} minus log of the
+    number of elements. *)
+
+val standardize :
+  ?axes:int list ->
+  ?mean:(float, 'a) t ->
+  ?variance:(float, 'a) t ->
+  ?epsilon:float ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [standardize ?axes ?mean ?variance ?epsilon x] normalizes [x] to zero mean
+    and unit variance.
+
+    If [mean] or [variance] are not provided they are computed along [axes]
+    (default: all axes). The result is [(x - mean) / sqrt(variance + epsilon)].
+*)
+
+val batch_norm :
+  ?axes:int list ->
+  ?epsilon:float ->
+  scale:(float, 'a) t ->
+  bias:(float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [batch_norm ?axes ?epsilon ~scale ~bias x] applies batch normalization.
+
+    Normalizes [x] along [axes] (defaults to `[0]` for 2D and `[0;2;3]` for 4D)
+    and applies learnable [scale] and [bias]. [scale] and [bias] must broadcast
+    across the normalized axes. *)
+
+val layer_norm :
+  ?axes:int list ->
+  ?epsilon:float ->
+  ?gamma:(float, 'a) t ->
+  ?beta:(float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [layer_norm ?axes ?epsilon ?gamma ?beta x] applies layer normalization.
+
+    Normalizes [x] along [axes] (default last axis), subtracting mean and
+    dividing by sqrt(variance + epsilon). Optional [gamma] (scale) and [beta]
+    (offset) are broadcast across the normalized axes. *)
+
+val rms_norm :
+  ?axes:int list ->
+  ?epsilon:float ->
+  ?gamma:(float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [rms_norm ?axes ?epsilon ?gamma x] applies Root Mean Square normalization.
+
+    Normalizes [x] by the root mean square across [axes]. Optional [gamma]
+    scales the normalized output. *)
+
+val embedding :
+  ?scale:bool ->
+  embedding:(float, 'a) t ->
+  (int32, int32_elt) t ->
+  (float, 'a) t
+(** [embedding ?scale ~embedding indices] performs embedding lookup.
+
+    - [embedding] must have shape [vocab_size; embed_dim]
+    - [indices] is an int32 tensor of positions
+    - returns a tensor with shape [indices_shape ++ [embed_dim]]
+    - when [scale] is true (default) multiplies result by √embed_dim *)
+
+val dot_product_attention :
+  ?attention_mask:(bool, bool_elt) t ->
+  ?scale:float ->
+  ?dropout_rate:float ->
+  ?dropout_seed:int ->
+  ?is_causal:bool ->
+  (float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [dot_product_attention ?attention_mask ?scale ?dropout_rate ?dropout_seed
+     ?is_causal q k v] computes scaled dot-product attention.
+
+    - [q], [k], [v] must have matching leading dimensions; the last dimension of
+      [q] and [k] must match.
+    - [scale] defaults to 1/√depth of keys.
+    - [is_causal], when true, applies a causal (lower triangular) mask to
+      prevent attending to future positions. Requires seq_len_q == seq_len_k.
+    - [attention_mask], when provided, should broadcast to the attention score
+      shape; true values keep scores, false values set them to -∞ before
+      softmax.
+    - [dropout_rate], when provided, applies dropout to the attention
+      probabilities before multiplying by [v]. [dropout_seed] controls the
+      random mask when supplied. *)
 
 val erf : (float, 'a) t -> (float, 'a) t
 (** [erf t] computes the error function.

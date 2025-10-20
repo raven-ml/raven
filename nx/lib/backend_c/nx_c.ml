@@ -53,13 +53,13 @@ external caml_pow :
 external caml_cmplt :
   ('a, 'b) ffi_tensor ->
   ('a, 'b) ffi_tensor ->
-  (int, Dtype.uint8_elt) ffi_tensor ->
+  (bool, Dtype.bool_elt) ffi_tensor ->
   unit = "caml_nx_cmplt"
 
 external caml_cmpne :
   ('a, 'b) ffi_tensor ->
   ('a, 'b) ffi_tensor ->
-  (int, Dtype.uint8_elt) ffi_tensor ->
+  (bool, Dtype.bool_elt) ffi_tensor ->
   unit = "caml_nx_cmpne"
 
 external caml_xor :
@@ -95,7 +95,7 @@ external caml_recip : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
 
 (* Ternary operation FFI declarations *)
 external caml_where :
-  (int, Dtype.uint8_elt) ffi_tensor ->
+  (bool, Dtype.bool_elt) ffi_tensor ->
   ('a, 'b) ffi_tensor ->
   ('a, 'b) ffi_tensor ->
   ('a, 'b) ffi_tensor ->
@@ -325,7 +325,7 @@ let binary_op op_name ffi_op x y =
 
     out
 
-(* Comparison operation that returns uint8 *)
+(* Comparison operation that returns bool *)
 let comparison_op op_name ffi_op x y =
   (* Ensure both inputs have the same shape *)
   let x_shape = shape x in
@@ -342,8 +342,8 @@ let comparison_op op_name ffi_op x y =
     let x' = ensure_materializable x in
     let y' = ensure_materializable y in
 
-    (* Create output tensor with uint8 dtype *)
-    let out = create_tensor x.context Dtype.uint8 x_shape in
+    (* Create output tensor with bool dtype *)
+    let out = create_tensor x.context Dtype.bool x_shape in
 
     (* Convert to FFI tensors *)
     let x_ffi = to_ffi_tensor x' in

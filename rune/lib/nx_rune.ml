@@ -60,12 +60,12 @@ type _ Effect.t +=
       a : ('a, 'b) t;
       b : ('a, 'b) t;
     }
-      -> (int, Dtype.uint8_elt) t Effect.t
+      -> (bool, Dtype.bool_elt) t Effect.t
   | E_cmpne : {
       a : ('a, 'b) t;
       b : ('a, 'b) t;
     }
-      -> (int, Dtype.uint8_elt) t Effect.t
+      -> (bool, Dtype.bool_elt) t Effect.t
   | E_xor : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_or : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_and : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
@@ -76,7 +76,7 @@ type _ Effect.t +=
   | E_sqrt : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_recip : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_where : {
-      condition : (int, Dtype.uint8_elt) t;
+      condition : (bool, Dtype.bool_elt) t;
       if_true : ('a, 'b) t;
       if_false : ('a, 'b) t;
     }
