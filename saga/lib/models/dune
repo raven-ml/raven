@@ -1,4 +1,4 @@
 (library
  (name saga_models)
  (public_name saga.models)
- (libraries saga.tokenizers))
+ (modules ngram hmm pcfg saga_models))

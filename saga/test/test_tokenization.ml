@@ -109,6 +109,68 @@ let test_tokenize_regex_no_match () =
   let tokens = Array.to_list (Encoding.get_tokens encoding) in
   check (list string) "regex no match" [] tokens
 
+(* ───── Unigram Model Tests ───── *)
+
+(* Round-trip lookups *)
+let test_unigram_roundtrip () =
+  let tokens = [ "hello"; "world"; "test" ] in
+  let vocab = List.map (fun token -> (token, 0.0)) tokens in
+  let model = Models.unigram ~vocab () in
+  List.iteri
+    (fun expected_id token ->
+      check (option int)
+        (Printf.sprintf "token_to_id '%s'" token)
+        (Some expected_id)
+        (Models.token_to_id model token);
+      check (option string)
+        (Printf.sprintf "id_to_token %d" expected_id)
+        (Some token)
+        (Models.id_to_token model expected_id))
+    tokens
+
+(* token_to_id - out of vocab *)
+let test_unigram_token_to_id_oov () =
+  let model = Models.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] () in
+  check (option int) "token_to_id out-of-vocab" None
+    (Models.token_to_id model "missing")
+
+(* id_to_token - out of bounds *)
+let test_unigram_id_to_token_oob () =
+  let model = Models.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] () in
+  check (option string) "id_to_token negative" None
+    (Models.id_to_token model (-1));
+  check (option string) "id_to_token out of bounds" None
+    (Models.id_to_token model 10)
+
+(* Test empty vocabulary *)
+let test_unigram_empty_vocab () =
+  let model = Models.unigram ~vocab:[] () in
+  check (option int) "empty vocab token_to_id" None
+    (Models.token_to_id model "test");
+  check (option string) "empty vocab id_to_token" None
+    (Models.id_to_token model 0)
+
+(* Test special characters and unicode *)
+let test_unigram_special_tokens () =
+  let model =
+    Models.unigram
+      ~vocab:
+        [
+          ("<unk>", 0.0);
+          ("<s>", 0.0);
+          ("</s>", 0.0);
+          ("▁hello", 0.0);
+          ("世界", 0.0);
+        ]
+      ()
+  in
+  check (option int) "special <unk>" (Some 0) (Models.token_to_id model "<unk>");
+  check (option int) "special <s>" (Some 1) (Models.token_to_id model "<s>");
+  check (option int) "sentencepiece token" (Some 3)
+    (Models.token_to_id model "▁hello");
+  check (option int) "unicode token" (Some 4) (Models.token_to_id model "世界");
+  check (option string) "id to unicode" (Some "世界") (Models.id_to_token model 4)
+
 (* ───── Edge Cases ───── *)
 
 let test_tokenize_long_text () =
@@ -157,6 +219,14 @@ let tokenization_tests =
     test_case "tokenize repeated punctuation" `Quick
       test_tokenize_repeated_punctuation;
     test_case "tokenize mixed whitespace" `Quick test_tokenize_mixed_whitespace;
+    (* Unigram model tests *)
+    test_case "unigram roundtrip" `Quick test_unigram_roundtrip;
+    test_case "unigram token_to_id out-of-vocab" `Quick
+      test_unigram_token_to_id_oov;
+    test_case "unigram id_to_token out-of-bounds" `Quick
+      test_unigram_id_to_token_oob;
+    test_case "unigram empty vocab" `Quick test_unigram_empty_vocab;
+    test_case "unigram special tokens" `Quick test_unigram_special_tokens;
   ]
 
 let () =

@@ -22,7 +22,12 @@ val read_lines_lazy : ?buffer_size:int -> string -> string Seq.t
 
     Use this for very large files to avoid loading everything into memory. The
     file is automatically closed when the sequence is fully consumed or when an
-    error occurs. *)
+    error occurs.
+
+    {b Note:} If the sequence is only partially consumed and then abandoned
+    (e.g., using [Seq.take]), the file descriptor may remain open until garbage
+    collection. For guaranteed cleanup, consume the sequence fully or handle
+    resources explicitly. *)
 
 val write_lines : ?append:bool -> string -> string list -> unit
 (** [write_lines ?append filename lines] writes lines to a file.

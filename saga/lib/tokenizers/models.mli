@@ -23,7 +23,12 @@ type wordpiece_model = {
 }
 
 type wordlevel_model = { vocab : (string, int) Hashtbl.t; unk_token : string }
-type unigram_model = { vocab : (string * float) list }
+
+type unigram_model = {
+  vocab : (string * float) list;
+  token_map : (string, int) Hashtbl.t;
+  tokens : string array;
+}
 
 (** Main model type *)
 type t =

@@ -4421,6 +4421,110 @@ module Make (B : Backend_intf.S) = struct
     let nd = ndim x in
     if nd < 2 then x else swapaxes (nd - 2) (nd - 1) x
 
+  (* ───── Complex Helpers ───── *)
+
+  let complex (type a b) ~(real : (a, b) t) ~(imag : (a, b) t) =
+    let real_shape = shape real in
+    let imag_shape = shape imag in
+    if real_shape <> imag_shape then
+      Error.shape_mismatch ~op:"complex" ~expected:real_shape ~actual:imag_shape
+        ();
+    let size = Array.fold_left ( * ) 1 real_shape in
+    match dtype real with
+    | Float32 ->
+        let real = (real : (float, float32_elt) t) in
+        let imag = (imag : (float, float32_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex32 real_shape complex_data)
+    | Float64 ->
+        let real = (real : (float, float64_elt) t) in
+        let imag = (imag : (float, float64_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex64 real_shape complex_data)
+    | _ ->
+        Error.invalid ~op:"complex" ~what:"dtype"
+          ~reason:"real and imag must be float32 or float64" ()
+
+  let real (type a b) (x : (a, b) t) =
+    match dtype x with
+    | Complex32 ->
+        let x = (x : (Complex.t, complex32_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let real_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.re)
+        in
+        Obj.magic (create (B.context x) float32 shape_x real_data)
+    | Complex64 ->
+        let x = (x : (Complex.t, complex64_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let real_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.re)
+        in
+        Obj.magic (create (B.context x) float64 shape_x real_data)
+    | _ ->
+        Error.invalid ~op:"real" ~what:"dtype"
+          ~reason:"input must be complex32 or complex64" ()
+
+  let imag (type a b) (x : (a, b) t) =
+    match dtype x with
+    | Complex32 ->
+        let x = (x : (Complex.t, complex32_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let imag_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.im)
+        in
+        Obj.magic (create (B.context x) float32 shape_x imag_data)
+    | Complex64 ->
+        let x = (x : (Complex.t, complex64_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let imag_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.im)
+        in
+        Obj.magic (create (B.context x) float64 shape_x imag_data)
+    | _ ->
+        Error.invalid ~op:"imag" ~what:"dtype"
+          ~reason:"input must be complex32 or complex64" ()
+
+  let conjugate (type a b) (x : (a, b) t) =
+    match dtype x with
+    | Complex32 ->
+        let real_part = real x in
+        let imag_part = imag x |> neg in
+        complex ~real:real_part ~imag:imag_part
+    | Complex64 ->
+        let real_part = real x in
+        let imag_part = imag x |> neg in
+        complex ~real:real_part ~imag:imag_part
+    | _ -> x
+
   let vdot (type a b) (a : (a, b) t) (b : (a, b) t) =
     (* Try to broadcast inputs to compatible shapes first *)
     let a', b' =
@@ -5761,19 +5865,31 @@ module Make (B : Backend_intf.S) = struct
 
   let matrix_rank ?tol ?rtol ?hermitian a =
     check_float_or_complex ~op:"matrix_rank" a;
-    let _ = hermitian in
-    (* TODO: use for optimization *)
-    let s = svdvals a in
+    let s =
+      match hermitian with
+      | Some true ->
+          (* Use eigenvalue decomposition for hermitian matrices *)
+          let vals, _ = B.op_eigh ~vectors:false a in
+          (* Use absolute values to match SVD behavior for tolerance
+             computation *)
+          abs vals
+      | _ ->
+          (* Use SVD for general matrices *)
+          svdvals a
+    in
     let max_s = max s |> unsafe_get [] in
     let m, n =
       shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
     in
     (* Use appropriate epsilon for the dtype *)
+    let dtype_a = dtype a in
     let eps =
-      if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
-        (* Machine epsilon for float32 *)
-      else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
-        (* Machine epsilon for float64 *)
+      if
+        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
+      then 1.2e-7
+      else if
+        Dtype.equal dtype_a Dtype.float64 || Dtype.equal dtype_a Dtype.complex64
+      then 2.2e-16
       else 1e-15 (* Default for other types *)
     in
     let tol =
@@ -5842,59 +5958,113 @@ module Make (B : Backend_intf.S) = struct
     (* Squeeze result if we expanded b *)
     if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
+  (* Complex helpers placed before pinv to allow conjugation support *)
+
+  let complex (type a b) ~(real : (a, b) t) ~(imag : (a, b) t) =
+    (* Check shapes match *)
+    let real_shape = shape real in
+    let imag_shape = shape imag in
+    if real_shape <> imag_shape then
+      Error.shape_mismatch ~op:"complex" ~expected:real_shape ~actual:imag_shape
+        ();
+
+    (* Create complex tensor based on the input dtype *)
+    let size = Array.fold_left ( * ) 1 real_shape in
+    match dtype real with
+    | Float32 ->
+        let real = (real : (float, float32_elt) t) in
+        let imag = (imag : (float, float32_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex32 real_shape complex_data)
+    | Float64 ->
+        let real = (real : (float, float64_elt) t) in
+        let imag = (imag : (float, float64_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex64 real_shape complex_data)
+    | _ ->
+        Error.invalid ~op:"complex" ~what:"dtype"
+          ~reason:"real and imag must be float32 or float64" ()
+
   let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
     check_float_or_complex ~op:"pinv" a;
-    let _ = hermitian in
-    (* TODO: use for optimization *)
-
-    let u, s, vh = B.op_svd ~full_matrices:false a in
-
-    let max_s = max s |> unsafe_get [] in
-
     let m, n =
       shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
     in
 
-    (* Determine cutoff *)
-    let cutoff =
-      match rtol with
-      | Some rtol_value ->
-          (*Use provided relative tolerance*)
-          rtol_value *. max_s *. float_of_int (Stdlib.max m n)
-      | None ->
-          (* Default cutoff is max(m,n) * eps * max_s *)
+    let dtype_a = dtype a in
 
-          (* Use appropriate epsilon for the dtype *)
-          let eps =
-            if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
-              (* Machine epsilon for float32 *)
-            else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
-              (* Machine epsilon for float64 *)
-            else 1e-15 (* Default for other types *)
-          in
-          float_of_int (Stdlib.max m n) *. eps *. max_s
+    let eps_for_dtype =
+      if
+        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
+      then 1.2e-7
+      else if
+        Dtype.equal dtype_a Dtype.float64 || Dtype.equal dtype_a Dtype.complex64
+      then 2.2e-16
+      else 1e-15
     in
 
-    (* Compute pseudoinverse *)
-    let ones_s = ones (B.context s) (dtype s) (shape s) in
-    let threshold = scalar (B.context a) (dtype s) cutoff in
-    let mask = greater s threshold in
-    let safe_s = where mask s ones_s in
-    let s_inv = div ones_s safe_s in
-    let mask = cast (dtype s) mask in
-    let s_inv = mul s_inv mask in
+    let max_dim = float_of_int (Stdlib.max m n) in
 
-    (* Cast s_inv to match input type *)
-    let s_inv = cast (dtype a) s_inv in
+    let cutoff ~max_s =
+      match rtol with
+      | Some rtol_value -> rtol_value *. max_s *. max_dim
+      | None -> max_dim *. eps_for_dtype *. max_s
+    in
 
-    (* Compute V @ S^-1 @ U^H *)
-    (* We need to multiply each column of vh.T by corresponding s_inv element *)
-    (* vh.T has shape [n, k], s_inv has shape [k] *)
-    (* We want broadcasting [n, k] * [1, k] -> [n, k] *)
-    let s_inv_expanded = unsqueeze ~axes:[ 0 ] s_inv in
-    (* Shape [1, k] *)
-    let vs = mul (matrix_transpose vh) s_inv_expanded in
-    matmul vs (matrix_transpose u)
+    let pinv_from_factors u s vh =
+      let max_s = max s |> unsafe_get [] in
+      let cutoff = cutoff ~max_s in
+      let ones_s = ones (B.context s) (dtype s) (shape s) in
+      let threshold = scalar (B.context s) (dtype s) cutoff in
+      let mask = greater s threshold in
+      let safe_s = where mask s ones_s in
+      let s_inv = div ones_s safe_s in
+      let mask_float = cast (dtype s) mask in
+      let s_inv = mul s_inv mask_float |> cast dtype_a in
+      let s_inv_expanded = unsqueeze ~axes:[ 0 ] s_inv in
+      let v = matrix_transpose vh in
+      let vs = mul v s_inv_expanded in
+      if Dtype.is_complex dtype_a then
+        let u_adj = matrix_transpose (conjugate u) in
+        matmul vs u_adj
+      else matmul vs (matrix_transpose u)
+    in
+
+    let pinv_via_svd () =
+      let u, s, vh = B.op_svd ~full_matrices:false a in
+      pinv_from_factors u s vh
+    in
+
+    match hermitian with
+    | Some true -> (
+        let vals, vecs_opt = B.op_eigh ~vectors:true a in
+        match vecs_opt with
+        | None -> pinv_via_svd ()
+        | Some vecs ->
+            let abs_vals = abs vals in
+            let sign_vals = sign vals in
+            let ones_vals = ones (B.context vals) (dtype vals) (shape vals) in
+            let zeros_vals = zeros (B.context vals) (dtype vals) (shape vals) in
+            let sign_vals =
+              where (cmpeq sign_vals zeros_vals) ones_vals sign_vals
+            in
+            let sign_cast = cast dtype_a sign_vals in
+            let sign_expanded = expand_dims [ -1 ] sign_cast in
+            let vh = mul sign_expanded (matrix_transpose vecs) in
+            pinv_from_factors vecs abs_vals vh)
+    | _ -> pinv_via_svd ()
 
   let lstsq ?rcond a b =
     check_float_or_complex ~op:"lstsq" a;
@@ -6137,104 +6307,6 @@ module Make (B : Backend_intf.S) = struct
     reshape out_shape inv_mat
 
   (* ───── Complex Operations and FFT ───── *)
-
-  (* Create complex tensor from real and imaginary parts *)
-  let complex (type a b) ~(real : (a, b) t) ~(imag : (a, b) t) =
-    (* Check shapes match *)
-    let real_shape = shape real in
-    let imag_shape = shape imag in
-    if real_shape <> imag_shape then
-      Error.shape_mismatch ~op:"complex" ~expected:real_shape ~actual:imag_shape
-        ();
-
-    (* Create complex tensor based on the input dtype *)
-    let size = Array.fold_left ( * ) 1 real_shape in
-    match dtype real with
-    | Float32 ->
-        let real = (real : (float, float32_elt) t) in
-        let imag = (imag : (float, float32_elt) t) in
-        let complex_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i real_shape |> Array.to_list in
-              let re = unsafe_get idx real in
-              let im = unsafe_get idx imag in
-              Complex.{ re; im })
-        in
-        Obj.magic (create (B.context real) complex32 real_shape complex_data)
-    | Float64 ->
-        let real = (real : (float, float64_elt) t) in
-        let imag = (imag : (float, float64_elt) t) in
-        let complex_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i real_shape |> Array.to_list in
-              let re = unsafe_get idx real in
-              let im = unsafe_get idx imag in
-              Complex.{ re; im })
-        in
-        Obj.magic (create (B.context real) complex64 real_shape complex_data)
-    | _ ->
-        Error.invalid ~op:"complex" ~what:"dtype"
-          ~reason:"real and imag must be float32 or float64" ()
-
-  (* Extract real part of complex tensor *)
-  let real (type a b) (x : (a, b) t) =
-    match dtype x with
-    | Complex32 ->
-        let x = (x : (Complex.t, complex32_elt) t) in
-        (* Extract real part by creating a new tensor *)
-        let shape_x = shape x in
-        let size = Array.fold_left ( * ) 1 shape_x in
-        let real_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i shape_x |> Array.to_list in
-              let c = unsafe_get idx x in
-              c.Complex.re)
-        in
-        Obj.magic (create (B.context x) float32 shape_x real_data)
-    | Complex64 ->
-        let x = (x : (Complex.t, complex64_elt) t) in
-        let shape_x = shape x in
-        let size = Array.fold_left ( * ) 1 shape_x in
-        let real_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i shape_x |> Array.to_list in
-              let c = unsafe_get idx x in
-              c.Complex.re)
-        in
-        Obj.magic (create (B.context x) float64 shape_x real_data)
-    | _ ->
-        Error.invalid ~op:"real" ~what:"dtype"
-          ~reason:"input must be complex32 or complex64" ()
-
-  (* Extract imaginary part of complex tensor *)
-  let imag (type a b) (x : (a, b) t) =
-    match dtype x with
-    | Complex32 ->
-        let x = (x : (Complex.t, complex32_elt) t) in
-        (* Extract imaginary part by creating a new tensor *)
-        let shape_x = shape x in
-        let size = Array.fold_left ( * ) 1 shape_x in
-        let imag_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i shape_x |> Array.to_list in
-              let c = unsafe_get idx x in
-              c.Complex.im)
-        in
-        Obj.magic (create (B.context x) float32 shape_x imag_data)
-    | Complex64 ->
-        let x = (x : (Complex.t, complex64_elt) t) in
-        let shape_x = shape x in
-        let size = Array.fold_left ( * ) 1 shape_x in
-        let imag_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i shape_x |> Array.to_list in
-              let c = unsafe_get idx x in
-              c.Complex.im)
-        in
-        Obj.magic (create (B.context x) float64 shape_x imag_data)
-    | _ ->
-        Error.invalid ~op:"imag" ~what:"dtype"
-          ~reason:"input must be complex32 or complex64" ()
 
   (* FFT operations *)
 

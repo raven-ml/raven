@@ -26,7 +26,11 @@ type wordpiece_model = {
 type wordlevel_model = { vocab : (string, int) Hashtbl.t; unk_token : string }
 (** WordLevel model configuration *)
 
-type unigram_model = { vocab : (string * float) list }
+type unigram_model = {
+  vocab : (string * float) list;
+  token_map : (string, int) Hashtbl.t;
+  tokens : string array;
+}
 (** Unigram model configuration *)
 
 (** Main model type *)
@@ -160,9 +164,8 @@ let token_to_id model token =
       try Some (Hashtbl.find vocab token) with Not_found -> None)
   | WordLevel { vocab; _ } -> (
       try Some (Hashtbl.find vocab token) with Not_found -> None)
-  | Unigram { vocab } ->
-      List.find_opt (fun (s, _) -> s = token) vocab |> Option.map (fun _ -> 0)
-(* TODO: Proper implementation *)
+  | Unigram { token_map; _ } -> (
+      try Some (Hashtbl.find token_map token) with Not_found -> None)
 
 (** Get token from ID *)
 let id_to_token model id =
@@ -185,7 +188,8 @@ let id_to_token model id =
         Hashtbl.fold
           (fun token tid acc -> if tid = id then Some token else acc)
           vocab None
-  | Unigram _ -> None (* TODO: Proper implementation *)
+  | Unigram { tokens; _ } ->
+      if id >= 0 && id < Array.length tokens then Some tokens.(id) else None
 
 (** Get vocabulary *)
 let get_vocab model =
@@ -196,7 +200,7 @@ let get_vocab model =
       Hashtbl.fold (fun token id acc -> (token, id) :: acc) vocab []
   | WordLevel { vocab; _ } ->
       Hashtbl.fold (fun token id acc -> (token, id) :: acc) vocab []
-  | Unigram { vocab } -> List.mapi (fun i (token, _) -> (token, i)) vocab
+  | Unigram { vocab; _ } -> List.mapi (fun i (token, _) -> (token, i)) vocab
 
 (** Get vocabulary size *)
 let get_vocab_size model =
@@ -204,7 +208,7 @@ let get_vocab_size model =
   | BPE { vocab; _ } -> Hashtbl.length vocab
   | WordPiece { vocab; _ } -> Hashtbl.length vocab
   | WordLevel { vocab; _ } -> Hashtbl.length vocab
-  | Unigram { vocab } -> List.length vocab
+  | Unigram { tokens; _ } -> Array.length tokens
 
 (** Save model *)
 let save model ~folder ?(prefix = "") () =
@@ -280,6 +284,12 @@ let word_level ?(vocab = []) ?(unk_token = "<unk>") () =
   List.iter (fun (token, id) -> Hashtbl.add vocab_tbl token id) vocab;
   WordLevel { vocab = vocab_tbl; unk_token }
 
+let build_unigram_lookup vocab =
+  let token_map = Hashtbl.create (List.length vocab) in
+  List.iteri (fun i (token, _score) -> Hashtbl.replace token_map token i) vocab;
+  let tokens = Array.of_list (List.map fst vocab) in
+  (token_map, tokens)
+
 let unigram ?(vocab = []) ?(unk_token = "<unk>") ?(byte_fallback = false)
     ?(max_piece_length = 16) ?(n_sub_iterations = 2) ?(shrinking_factor = 0.75)
     () =
@@ -290,7 +300,9 @@ let unigram ?(vocab = []) ?(unk_token = "<unk>") ?(byte_fallback = false)
       n_sub_iterations,
       shrinking_factor )
   in
-  Unigram { vocab }
+  let token_map, tokens = build_unigram_lookup vocab in
+
+  Unigram { vocab; token_map; tokens }
 
 let chars () =
   (* Character-level tokenization - create a special marker *)
