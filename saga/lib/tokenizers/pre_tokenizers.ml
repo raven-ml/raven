@@ -303,7 +303,10 @@ let whitespace () text =
       (* Word character *)
       if !in_punct then flush_current ();
       if Buffer.length current = 0 then current_start := !i;
-      Buffer.add_string current (String.sub text !i l);
+      (* Avoid String.sub allocation - add bytes directly *)
+      for j = 0 to l - 1 do
+        Buffer.add_char current text.[!i + j]
+      done;
       in_word := true;
       in_punct := false;
       i := !i + l)
@@ -317,7 +320,10 @@ let whitespace () text =
       (* Punctuation/other character *)
       if !in_word then flush_current ();
       if Buffer.length current = 0 then current_start := !i;
-      Buffer.add_string current (String.sub text !i l);
+      (* Avoid String.sub allocation - add bytes directly *)
+      for j = 0 to l - 1 do
+        Buffer.add_char current text.[!i + j]
+      done;
       in_word := false;
       in_punct := true;
       i := !i + l)
