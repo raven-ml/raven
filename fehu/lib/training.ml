@@ -90,17 +90,14 @@ let value_loss ~values ~returns ?clip () =
 
   if n = 0 then 0.0
   else
-    let mse_loss arr1 arr2 =
-      let sum = ref 0.0 in
-      for i = 0 to n - 1 do
-        let diff = arr1.(i) -. arr2.(i) in
-        sum := !sum +. (diff *. diff)
-      done;
-      !sum /. float_of_int n
-    in
-
     match clip with
-    | None -> mse_loss values returns
+    | None ->
+        let sum = ref 0.0 in
+        for i = 0 to n - 1 do
+          let diff = values.(i) -. returns.(i) in
+          sum := !sum +. (diff *. diff)
+        done;
+        !sum /. float_of_int n
     | Some (clip_range, old_values) ->
         if clip_range < 0.0 then
           invalid_arg "Training.value_loss: clip_range must be non-negative";
