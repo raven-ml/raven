@@ -136,7 +136,7 @@ let test_value_loss_clipped () =
 
   (*Change the shape of returns and check it raises error*)
   let returns = [| 1.1; 2.7 |] in
-  Alcotest.check_raises "old_values should be have the same shape"
+  Alcotest.check_raises "returns and values should be have the same shape"
     (Invalid_argument "Training.value_loss: arrays must have same length")
     (fun () ->
       ignore
