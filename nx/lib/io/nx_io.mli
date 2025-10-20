@@ -191,6 +191,25 @@ val save_npz : ?overwrite:bool -> string -> (string * packed_nx) list -> unit
 
     Save multiple named nxs to a NumPy `.npz` archive. *)
 
+(** {1 Text Format} *)
+
+val save_txt : ?sep:string -> ?append:bool -> out:string -> ('a, 'b) Nx.t -> unit
+(** [save_txt ?sep ?append ~out t]
+
+    Save a 1D or 2D tensor to a text file. Each row is written on a new line,
+    values separated by [sep] (default: a single space). If [append] is [true],
+    data is appended to [out]; otherwise the file is truncated/created. Fails on
+    tensors with rank other than 1 or 2. *)
+
+val load_txt : ?sep:string -> ('a, 'b) Nx.dtype -> string -> ('a, 'b) Nx.t
+(** [load_txt ?sep dtype path]
+
+    Load a 1D/2D tensor from a text file previously written by [save_txt] or a
+    compatible format. The number of columns is inferred from the first
+    non-empty line; all subsequent non-empty lines must have the same number of
+    columns. The resulting shape is [|rows; cols|]. For a single row, the shape
+    is [|1; cols|]. *)
+
 (** {1 SafeTensors Format} *)
 
 val load_safetensor : string -> archive
@@ -287,6 +306,23 @@ module Safe : sig
     (string * packed_nx) list ->
     (unit, error) result
   (** Safe alias for [save_npz] *)
+
+  (** {2 Text Format} *)
+
+  val save_txt :
+    ?sep:string ->
+    ?append:bool ->
+    out:string ->
+    ('a, 'b) Nx.t ->
+    (unit, error) result
+  (** Safe alias for [save_txt] *)
+
+  val load_txt :
+    ?sep:string ->
+    ('a, 'b) Nx.dtype ->
+    string ->
+    (('a, 'b) Nx.t, error) result
+  (** Safe alias for [load_txt] *)
 
   (** {2 SafeTensors Format} *)
 

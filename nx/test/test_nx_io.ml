@@ -453,6 +453,33 @@ let () =
           test_case "Save/load int64" `Quick test_npy_save_load_int64;
           test_case "Overwrite protection" `Quick test_npy_overwrite_protection;
         ] );
+      ( "txt",
+        [
+          test_case "Save/load txt float32" `Quick (fun () ->
+              let data = Nx.reshape [| 2; 3 |] (Nx.arange Nx.float32 0 6 1) in
+              let path = temp_file "test_txt_" ".txt" in
+              Nx_io.save_txt ~out:path data;
+              let loaded = Nx_io.load_txt Nx.float32 path in
+              check (array int) "shape" [| 2; 3 |] (Nx.shape loaded);
+              check_array_approx "values" data loaded;
+              Sys.remove path);
+          test_case "Save/load txt int64" `Quick (fun () ->
+              let data = Nx.reshape [| 3; 2 |] (Nx.arange Nx.int64 0 6 1) in
+              let path = temp_file "test_txt_" ".txt" in
+              Nx_io.save_txt ~out:path data;
+              let loaded = Nx_io.load_txt Nx.int64 path in
+              check (array int) "shape" [| 3; 2 |] (Nx.shape loaded);
+              for i = 0 to 2 do
+                for j = 0 to 1 do
+                  let e = Nx.item [ i; j ] data in
+                  let a = Nx.item [ i; j ] loaded in
+                  check int
+                    (Printf.sprintf "[%d,%d]" i j)
+                    (Int64.to_int e) (Int64.to_int a)
+                done
+              done;
+              Sys.remove path);
+        ] );
       ( "npz",
         [
           test_case "Save/load multiple arrays" `Quick
