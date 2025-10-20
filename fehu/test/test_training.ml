@@ -89,6 +89,59 @@ let test_value_loss () =
   Alcotest.(check bool) "loss >= 0" true (loss >= 0.0);
   Alcotest.(check bool) "loss is finite" true (not (Float.is_nan loss))
 
+let test_value_loss_clipped () =
+  let values = [| 1.2; 2.8; 3.5 |] in
+  let old_values = [| 1.0; 3.0; 3.0 |] in
+  let returns = [| 1.1; 2.7; 3.2 |] in
+  let clip_range = 0.1 in
+
+  (* Compute expected value manually*)
+  let compute_one v ov r =
+    let delta = v -. ov in
+    let clipped_delta = max (-.clip_range) (min clip_range delta) in
+    let v_clipped = ov +. clipped_delta in
+    let unclipped = (v -. r) ** 2.0 in
+    let clipped = (v_clipped -. r) ** 2.0 in
+    max unclipped clipped
+  in
+
+  (* Compute expected loss using the arrays *)
+  let n = Array.length values in
+  let sum = ref 0.0 in
+  for i = 0 to n - 1 do
+    sum := !sum +. compute_one values.(i) old_values.(i) returns.(i)
+  done;
+  let expected = !sum /. float_of_int n in
+  let loss =
+    Training.value_loss ~values ~returns ~clip:(clip_range, old_values) ()
+  in
+
+  Alcotest.(check (float 1e-6))
+    "clipped value loss matches expected" expected loss;
+
+  Alcotest.check_raises "clip_range should be positive"
+    (Invalid_argument "Training.value_loss: clip_range must be non-negative")
+    (fun () ->
+      ignore (Training.value_loss ~values ~returns ~clip:(-0.2, old_values) ()));
+
+  let old_values_small = [| 1.0; 3.0 |] in
+  Alcotest.check_raises "old_values should be have the same shape"
+    (Invalid_argument
+       "Training.value_loss: old_values must have same length as arrays")
+    (fun () ->
+      ignore
+        (Training.value_loss ~values ~returns
+           ~clip:(clip_range, old_values_small)
+           ()));
+
+  (*Change the shape of returns and check it raises error*)
+  let returns = [| 1.1; 2.7 |] in
+  Alcotest.check_raises "returns and values should be have the same shape"
+    (Invalid_argument "Training.value_loss: arrays must have same length")
+    (fun () ->
+      ignore
+        (Training.value_loss ~values ~returns ~clip:(clip_range, old_values) ()))
+
 let test_explained_variance () =
   let y_pred = [| 1.0; 2.0; 3.0; 4.0 |] in
   let y_true = [| 1.1; 1.9; 3.1; 3.9 |] in
@@ -144,6 +197,7 @@ let () =
             test_policy_gradient_loss_no_normalize;
           test_case "PPO clip loss" `Quick test_ppo_clip_loss;
           test_case "value loss" `Quick test_value_loss;
+          test_case "value loss (clipped)" `Quick test_value_loss_clipped;
         ] );
       ( "Utilities",
         [

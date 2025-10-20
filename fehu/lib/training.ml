@@ -83,13 +83,14 @@ let ppo_clip_loss ~log_probs ~old_log_probs ~advantages ~clip_range =
     done;
     -. !sum /. float_of_int n
 
-let value_loss ~values ~returns ?clip_range () =
+let value_loss ~values ~returns ?clip () =
   let n = Array.length values in
   if n <> Array.length returns then
     invalid_arg "Training.value_loss: arrays must have same length";
+
   if n = 0 then 0.0
   else
-    match clip_range with
+    match clip with
     | None ->
         let sum = ref 0.0 in
         for i = 0 to n - 1 do
@@ -97,13 +98,21 @@ let value_loss ~values ~returns ?clip_range () =
           sum := !sum +. (diff *. diff)
         done;
         !sum /. float_of_int n
-    | Some _ ->
-        (* For clipped value loss, we'd need old_values which aren't provided in the signature *)
-        (* Fallback to unclipped for now - interface may need adjustment *)
+    | Some (clip_range, old_values) ->
+        if clip_range < 0.0 then
+          invalid_arg "Training.value_loss: clip_range must be non-negative";
+        if Array.length old_values <> n then
+          invalid_arg
+            "Training.value_loss: old_values must have same length as arrays";
+
         let sum = ref 0.0 in
         for i = 0 to n - 1 do
-          let diff = values.(i) -. returns.(i) in
-          sum := !sum +. (diff *. diff)
+          let delta = values.(i) -. old_values.(i) in
+          let clipped_delta = max (-.clip_range) (min clip_range delta) in
+          let value_clipped = old_values.(i) +. clipped_delta in
+          let unclipped = (values.(i) -. returns.(i)) ** 2.0 in
+          let clipped = (value_clipped -. returns.(i)) ** 2.0 in
+          sum := !sum +. max unclipped clipped
         done;
         !sum /. float_of_int n
 
