@@ -1,5 +1,5 @@
 open Alcotest
-module Ngram = Saga_models.Ngram
+module Ngram = Saga.Ngram
 module Sampler = Saga.Sampler
 
 let train ~order ?(smoothing = `Add_k 1.0) sequences =

@@ -96,6 +96,15 @@ module Sampler = Sampler
     Use this for production text generation systems or when you need fine
     control over the generation process. *)
 
+(** {1:section-ngram N-grams} *)
+
+module Ngram = Ngram
+(** Low-level n-gram language models.
+
+    Provides n-gram models with configurable smoothing strategies for handling
+    unseen contexts. Operates on pre-tokenized integer sequences for maximum
+    efficiency. *)
+
 (** {1 Examples}
 
     {2 Quick tokenization}
@@ -118,9 +127,7 @@ module Sampler = Sampler
       (* Wraps a neural model for Sampler integration. Example - illustrative
          pseudocode, adapt to your model API. *)
       let setup_neural_generation neural_model =
-        let tok =
-          Tokenizer.from_file "tokenizer.json" |> Result.get_ok
-        in
+        let tok = Tokenizer.from_file "tokenizer.json" |> Result.get_ok in
 
         (* Model function: token_ids -> logits *)
         let model_fn token_ids =

@@ -3,7 +3,6 @@
  (public_name saga)
  (libraries
   saga.tokenizers
-  saga.models
   nx
   nx_core
   re

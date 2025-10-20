@@ -7,10 +7,8 @@
   test_bpe
   test_wordpiece
   test_ngram
-  test_hmm
-  test_pcfg
   test_gpt2_tokenizer
   test_pretokenizers
   test_io)
  (package saga)
- (libraries saga saga.tokenizers saga.models nx alcotest unix))
+ (libraries saga saga.tokenizers nx alcotest unix))

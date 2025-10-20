@@ -23,7 +23,7 @@ let () =
 
   (* Tokenize training data *)
   let sequences = [ Tokenizer.encode tok text |> Encoding.get_ids ] in
-  let model = Saga_models.Ngram.of_sequences ~order:2 sequences in
+  let model = Ngram.of_sequences ~order:2 sequences in
 
   (* Generate text with different starting prompts *)
   Printf.printf "=== Bigram Language Model Demo ===\n\n";
@@ -34,7 +34,7 @@ let () =
   Printf.printf "Generated text (temperature=0.5, prompt=\"To be\"):\n";
   let generator config prompt =
     let logits_fn history =
-      Saga_models.Ngram.logits model ~context:(Array.of_list history)
+      Ngram.logits model ~context:(Array.of_list history)
     in
     let prompt_ids =
       match prompt with
