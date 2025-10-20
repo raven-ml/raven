@@ -140,8 +140,7 @@ val ppo_clip_loss :
 val value_loss :
   values:float array ->
   returns:float array ->
-  ?clip_range:float ->
-  ?old_values:float array ->
+  ?clip:float * float array ->
   unit ->
   float
 (** [value_loss ~values ~returns ~clip_range ()] computes the value function
@@ -150,9 +149,9 @@ val value_loss :
     Returns the mean squared error between predicted values and target returns:
     {v mean((V - R)^2) v}
 
-    - If [clip_range] is [None], this is just the standard MSE loss.
-    - If [clip_range] = [Some c], you must also pass [old_values]; otherwise
-      [Invalid_argument] is raised.
+    - If [clip] is [None], computes the mean-squared error (MSE) between
+      [values] and [returns].
+    - If [clip = Some ((clip_range, old_values))], applies PPO-style clipping:
 
     In that case, PPO-style value clipping is applied:
     [value_clipped = old_values + clamp(values - old_values, ±clip_range)], and
@@ -163,13 +162,13 @@ val value_loss :
     Parameters:
     - [values]: Predicted values V(s) from the critic
     - [returns]: Target returns (from GAE or Monte Carlo)
-    - [clip_range]: Optional clipping threshold
-    - [old_values]: Required if [clip_range] is provided; previous value
-      estimates before the update Time complexity: O(n) where n = length of
-      arrays.
+    - [(clip_range, old_values)]: Optional clip range and previous value
+
+    estimates before the update Time complexity: O(n) where n = length of
+    arrays.
 
     @raise Invalid_argument if arrays have different lengths.
-    @raise Invalid_argument if clip_range is provided and old_values is not. *)
+    @raise Invalid_argument if clip_range < 0 *)
 
 (** {1 Evaluation}
 

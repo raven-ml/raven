@@ -83,14 +83,13 @@ let ppo_clip_loss ~log_probs ~old_log_probs ~advantages ~clip_range =
     done;
     -. !sum /. float_of_int n
 
-let value_loss ~values ~returns ?clip_range ?old_values () =
+let value_loss ~values ~returns ?clip () =
   let n = Array.length values in
   if n <> Array.length returns then
     invalid_arg "Training.value_loss: arrays must have same length";
 
   if n = 0 then 0.0
   else
-    (* Unclipped MSE loss definition*)
     let mse_loss arr1 arr2 =
       let sum = ref 0.0 in
       for i = 0 to n - 1 do
@@ -100,27 +99,20 @@ let value_loss ~values ~returns ?clip_range ?old_values () =
       !sum /. float_of_int n
     in
 
-    (* === Main logic === *)
-    match (clip_range, old_values) with
-    | Some _, None ->
-        invalid_arg
-          "Training.value_loss: ~old_values must be provided when using \
-           ~clip_range for clipped value loss"
-    | None, Some _ ->
-        prerr_endline
-          "Warning: old_values provided without clip_range — ignoring \
-           old_values";
-        mse_loss values returns
-    | None, None -> mse_loss values returns
-    | Some clip, Some old_vals ->
-        if Array.length old_vals <> n then
+    match clip with
+    | None -> mse_loss values returns
+    | Some (clip_range, old_values) ->
+        if clip_range < 0.0 then
+          invalid_arg "Training.value_loss: clip_range must be non-negative";
+        if Array.length old_values <> n then
           invalid_arg
-            "Training.value_loss: ~old_values must have same length as arrays";
+            "Training.value_loss: old_values must have same length as arrays";
+
         let sum = ref 0.0 in
         for i = 0 to n - 1 do
-          let delta = values.(i) -. old_vals.(i) in
-          let clipped_delta = max (-.clip) (min clip delta) in
-          let value_clipped = old_vals.(i) +. clipped_delta in
+          let delta = values.(i) -. old_values.(i) in
+          let clipped_delta = max (-.clip_range) (min clip_range delta) in
+          let value_clipped = old_values.(i) +. clipped_delta in
           let unclipped = (values.(i) -. returns.(i)) ** 2.0 in
           let clipped = (value_clipped -. returns.(i)) ** 2.0 in
           sum := !sum +. max unclipped clipped

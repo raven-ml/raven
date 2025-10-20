@@ -112,16 +112,35 @@ let test_value_loss_clipped () =
     sum := !sum +. compute_one values.(i) old_values.(i) returns.(i)
   done;
   let expected = !sum /. float_of_int n in
-  let loss = Training.value_loss ~values ~returns ~clip_range ~old_values () in
+  let loss =
+    Training.value_loss ~values ~returns ~clip:(clip_range, old_values) ()
+  in
 
   Alcotest.(check (float 1e-6))
     "clipped value loss matches expected" expected loss;
 
-  Alcotest.check_raises "clip_range without old_values should raise"
+  Alcotest.check_raises "clip_range should be positive"
+    (Invalid_argument "Training.value_loss: clip_range must be non-negative")
+    (fun () ->
+      ignore (Training.value_loss ~values ~returns ~clip:(-0.2, old_values) ()));
+
+  let old_values_small = [| 1.0; 3.0 |] in
+  Alcotest.check_raises "old_values should be have the same shape"
     (Invalid_argument
-       "Training.value_loss: ~old_values must be provided when using \
-        ~clip_range for clipped value loss") (fun () ->
-      ignore (Training.value_loss ~values ~returns ~clip_range:0.2 ()))
+       "Training.value_loss: old_values must have same length as arrays")
+    (fun () ->
+      ignore
+        (Training.value_loss ~values ~returns
+           ~clip:(clip_range, old_values_small)
+           ()));
+
+  (*Change the shape of returns and check it raises error*)
+  let returns = [| 1.1; 2.7 |] in
+  Alcotest.check_raises "old_values should be have the same shape"
+    (Invalid_argument "Training.value_loss: arrays must have same length")
+    (fun () ->
+      ignore
+        (Training.value_loss ~values ~returns ~clip:(clip_range, old_values) ()))
 
 let test_explained_variance () =
   let y_pred = [| 1.0; 2.0; 3.0; 4.0 |] in
