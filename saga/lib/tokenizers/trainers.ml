@@ -285,12 +285,7 @@ let train_unigram (_config : unigram_config) _lines _existing_model =
       (fun w c acc -> (w, float_of_int c /. max 1.0 total) :: acc)
       freq []
   in
-  let token_map = Hashtbl.create (List.length vocab) in
-List.iteri (fun i (token, _score) ->
-  if not (Hashtbl.mem token_map token) then
-    Hashtbl.add token_map token i
-) vocab;
-let model = Models.Unigram { vocab; token_map } in
+  let model = Models.unigram ~vocab () in
   { model; special_tokens = [] }
 
 (** Main training function *)
