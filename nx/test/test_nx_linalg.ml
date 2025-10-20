@@ -493,6 +493,22 @@ let test_matrix_rank_hermitian_negative () =
   let r_svd = Nx.matrix_rank a in
   check int "matrix_rank hermitian negative vs svd" r_svd r
 
+let test_matrix_rank_hermitian_complex () =
+  (* Complex Hermitian matrix with full rank *)
+  let a =
+    Nx.create Nx.complex64 [| 2; 2 |]
+      [|
+        Complex.{ re = 2.; im = 0. };
+        Complex.{ re = 0.; im = 1.5 };
+        Complex.{ re = 0.; im = -1.5 };
+        Complex.{ re = 3.; im = 0. };
+      |]
+  in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian complex" 2 r;
+  let r_svd = Nx.matrix_rank a in
+  check int "matrix_rank hermitian complex vs svd" r_svd r
+
 let test_pinv_hermitian () =
   (* Create a symmetric matrix *)
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
@@ -517,6 +533,26 @@ let test_pinv_hermitian_negative () =
   (* Compare with non-hermitian version *)
   let pinv_svd = Nx.pinv a in
   check_nx ~epsilon:1e-5 "pinv hermitian negative vs svd" pinv_svd pinv_a
+
+let test_pinv_hermitian_complex () =
+  (* Complex Hermitian matrix *)
+  let a =
+    Nx.create Nx.complex64 [| 2; 2 |]
+      [|
+        Complex.{ re = 4.; im = 0. };
+        Complex.{ re = 1.; im = 2. };
+        Complex.{ re = 1.; im = -2. };
+        Complex.{ re = 5.; im = 0. };
+      |]
+  in
+  let pinv_a = Nx.pinv ~hermitian:true a in
+  let identity = Nx.identity Nx.complex64 2 in
+  let product = Nx.matmul a pinv_a in
+  check_nx ~epsilon:1e-5 "pinv hermitian complex identity" identity product;
+  let recon = Nx.matmul a (Nx.matmul pinv_a a) in
+  check_nx ~epsilon:1e-5 "pinv hermitian complex recon" a recon;
+  let pinv_svd = Nx.pinv a in
+  check_nx ~epsilon:1e-5 "pinv hermitian complex vs svd" pinv_svd pinv_a
 
 (* ───── Product Ops Tests ───── *)
 
@@ -1065,8 +1101,10 @@ let advanced_utility_tests =
     ("matrix rank tol", `Quick, test_matrix_rank_tol);
     ("matrix rank hermitian", `Quick, test_matrix_rank_hermitian);
     ("matrix rank hermitian negative", `Quick, test_matrix_rank_hermitian_negative);
+    ("matrix rank hermitian complex", `Quick, test_matrix_rank_hermitian_complex);
     ("pinv hermitian", `Quick, test_pinv_hermitian);
     ("pinv hermitian negative", `Quick, test_pinv_hermitian_negative);
+    ("pinv hermitian complex", `Quick, test_pinv_hermitian_complex);
   ]
 
 let product_tests =
