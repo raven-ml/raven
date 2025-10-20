@@ -285,7 +285,7 @@ let train_unigram (_config : unigram_config) _lines _existing_model =
       (fun w c acc -> (w, float_of_int c /. max 1.0 total) :: acc)
       freq []
   in
-  let model = Models.Unigram { vocab } in
+  let model = Models.unigram ~vocab () in
   { model; special_tokens = [] }
 
 (** Main training function *)
