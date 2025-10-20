@@ -2,19 +2,19 @@ open Saga_tokenizers
 
 let test_bpe_basic () =
   (* Create a simple vocabulary and merges *)
-  let vocab = Hashtbl.create 10 in
-  Hashtbl.add vocab "h" 0;
-  Hashtbl.add vocab "e" 1;
-  Hashtbl.add vocab "l" 2;
-  Hashtbl.add vocab "o" 3;
-  Hashtbl.add vocab "ll" 4;
-  (* Result of merging l + l *)
-  Hashtbl.add vocab "he" 5;
-  Hashtbl.add vocab "llo" 6;
-  (* Result of merging ll + o *)
-  Hashtbl.add vocab "hello" 7;
+  let vocab =
+    [
+      ("h", 0);
+      ("e", 1);
+      ("l", 2);
+      ("o", 3);
+      ("ll", 4);
+      ("he", 5);
+      ("llo", 6);
+      ("hello", 7);
+    ]
+  in
 
-  (* Result of merging he + llo *)
   let merges =
     [
       ("l", "l");
@@ -26,127 +26,82 @@ let test_bpe_basic () =
     ]
   in
 
-  let config : Bpe.config =
-    {
-      vocab;
-      merges;
-      cache_capacity = 100;
-      dropout = None;
-      unk_token = Some "<unk>";
-      continuing_subword_prefix = None;
-      end_of_word_suffix = None;
-      fuse_unk = false;
-      byte_fallback = false;
-      ignore_merges = false;
-    }
-  in
+  let tokenizer = Tokenizer.bpe ~vocab ~merges ~unk_token:"<unk>" () in
 
-  let model = Bpe.create config in
-  let tokens = Bpe.tokenize model "hello" in
+  let encoding = Tokenizer.encode tokenizer "hello" in
+  let tokens = Encoding.get_tokens encoding |> Array.to_list in
 
   Printf.printf "Tokenized 'hello': ";
-  List.iter (fun t -> Printf.printf "%s (id=%d) " t.Bpe.value t.Bpe.id) tokens;
+  List.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check int) "vocabulary size" 8 (Bpe.get_vocab_size model)
+  Alcotest.(check int) "vocabulary size" 8 (Tokenizer.vocab_size tokenizer)
 
 let test_bpe_builder () =
-  let vocab = Hashtbl.create 10 in
-  Hashtbl.add vocab "a" 0;
-  Hashtbl.add vocab "b" 1;
-  Hashtbl.add vocab "ab" 2;
-
+  let vocab = [ ("a", 0); ("b", 1); ("ab", 2) ] in
   let merges = [ ("a", "b") ] in
 
-  let builder = Bpe.Builder.create () in
-  let builder = Bpe.Builder.vocab_and_merges builder vocab merges in
-  let builder = Bpe.Builder.cache_capacity builder 50 in
-  let model = Bpe.Builder.build builder in
+  let tokenizer = Tokenizer.bpe ~vocab ~merges ~cache_capacity:50 () in
 
-  let tokens = Bpe.tokenize model "ab" in
-  Alcotest.(check int) "single token for 'ab'" 1 (List.length tokens)
+  let encoding = Tokenizer.encode tokenizer "ab" in
+  let tokens = Encoding.get_tokens encoding in
+  Alcotest.(check int) "single token for 'ab'" 1 (Array.length tokens)
 
 let test_bpe_save_load () =
-  let vocab = Hashtbl.create 10 in
-  Hashtbl.add vocab "t" 0;
-  Hashtbl.add vocab "e" 1;
-  Hashtbl.add vocab "s" 2;
-  Hashtbl.add vocab "test" 3;
-
+  let vocab = [ ("t", 0); ("e", 1); ("s", 2); ("test", 3) ] in
   let merges = [] in
   (* No merges for simplicity *)
 
-  let builder = Bpe.Builder.create () in
-  let builder = Bpe.Builder.vocab_and_merges builder vocab merges in
-  let model = Bpe.Builder.build builder in
+  let tokenizer = Tokenizer.bpe ~vocab ~merges () in
 
   (* Save the model *)
   let temp_dir = Filename.temp_dir "bpe_test" "" in
-  Bpe.save model ~path:temp_dir ();
+  let files = Tokenizer.save_model_files tokenizer ~folder:temp_dir () in
 
   (* Load the model *)
-  let vocab_file = Filename.concat temp_dir "vocab.json" in
-  let merges_file = Filename.concat temp_dir "merges.txt" in
-  let loaded_model = Bpe.from_files ~vocab_file ~merges_file in
+  let vocab_file = List.find (fun f -> Filename.check_suffix f ".json") files in
+  let merges_file = List.find (fun f -> Filename.check_suffix f ".txt") files in
+  let loaded_tokenizer =
+    Tokenizer.from_model_file ~vocab:vocab_file ~merges:merges_file ()
+  in
 
-  (* Test that loaded model works the same *)
-  let original_tokens = Bpe.tokenize model "test" in
-  let loaded_tokens = Bpe.tokenize loaded_model "test" in
+  (* Test that loaded tokenizer works the same *)
+  let original_tokens =
+    Tokenizer.encode tokenizer "test" |> Encoding.get_tokens
+  in
+  let loaded_tokens =
+    Tokenizer.encode loaded_tokenizer "test" |> Encoding.get_tokens
+  in
 
   Alcotest.(check int)
     "same number of tokens"
-    (List.length original_tokens)
-    (List.length loaded_tokens);
+    (Array.length original_tokens)
+    (Array.length loaded_tokens);
 
   (* Clean up *)
-  Sys.remove vocab_file;
-  Sys.remove merges_file;
+  List.iter Sys.remove files;
   Unix.rmdir temp_dir
 
 let test_tokenizer_integration () =
-  (* Create temporary vocab and merges files *)
-  let temp_dir = Filename.temp_dir "bpe_test" "" in
-  let vocab_file = Filename.concat temp_dir "vocab.json" in
-  let merges_file = Filename.concat temp_dir "merges.txt" in
-
-  (* Write a simple vocab file *)
-  let oc = open_out vocab_file in
-  output_string oc
-    "{\"h\": 0, \"e\": 1, \"l\": 2, \"o\": 3, \"he\": 4, \"llo\": 5, \
-     \"hello\": 6}";
-  close_out oc;
-
-  (* Write a simple merges file *)
-  let oc = open_out merges_file in
-  output_string oc "#version: 0.2\nh e\nhe llo\n";
-  close_out oc;
-
-  (* Create a BPE tokenizer using the model *)
+  (* Create a BPE tokenizer using the high-level API *)
   let vocab =
     [
       ("h", 0); ("e", 1); ("l", 2); ("o", 3); ("he", 4); ("llo", 5); ("hello", 6);
     ]
   in
   let merges = [ ("h", "e"); ("he", "llo") ] in
-  let model = Models.bpe ~vocab ~merges () in
-  let tokenizer = Tokenizer.create ~model in
+  let tokenizer = Tokenizer.bpe ~vocab ~merges () in
 
-  (* For now, just test encoding *)
-  let encoding =
-    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello") ()
+  (* Test encoding *)
+  let tokens =
+    Tokenizer.encode tokenizer "hello" |> Encoding.get_tokens |> Array.to_list
   in
-  let tokens = Array.to_list (Encoding.get_tokens encoding) in
 
   Printf.printf "Tokenizer.bpe result: ";
   List.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check bool) "tokenizer produces output" true (List.length tokens > 0);
-
-  (* Clean up *)
-  Sys.remove vocab_file;
-  Sys.remove merges_file;
-  Unix.rmdir temp_dir
+  Alcotest.(check bool) "tokenizer produces output" true (List.length tokens > 0)
 
 let () =
   let open Alcotest in

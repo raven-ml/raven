@@ -14,17 +14,15 @@ let () =
      Devoutly to be wished To die to sleep\n\
      To sleep perchance to dream ay theres the rub"
   in
-  (* Create a tokenizer trained for words on this text *)
-  let tok = Tokenizer.create ~model:(Models.word_level ()) in
-  Tokenizer.set_pre_tokenizer tok (Some (Pre_tokenizers.whitespace ()));
-  (* Train a simple word-level vocab from the text *)
-  let seq = Seq.return text in
-  Tokenizer.train_from_iterator tok seq ~trainer:(Trainers.word_level ()) ();
+  (* Create and train a tokenizer for words on this text *)
+  let tok =
+    Tokenizer.train_wordlevel
+      ~pre:(Pre_tokenizers.whitespace ())
+      (`Seq (Seq.return text))
+  in
 
   (* Tokenize training data *)
-  let sequences =
-    [ Tokenizer.encode tok ~sequence:(Either.Left text) () |> Encoding.get_ids ]
-  in
+  let sequences = [ Tokenizer.encode tok text |> Encoding.get_ids ] in
   let model = Saga_models.Ngram.of_sequences ~order:2 sequences in
 
   (* Generate text with different starting prompts *)
@@ -40,9 +38,7 @@ let () =
     in
     let prompt_ids =
       match prompt with
-      | Some s ->
-          Tokenizer.encode tok ~sequence:(Either.Left s) ()
-          |> Encoding.get_ids |> Array.to_list
+      | Some s -> Tokenizer.encode tok s |> Encoding.get_ids |> Array.to_list
       | None -> []
     in
     let output =
@@ -51,9 +47,7 @@ let () =
     in
     match output.sequences with
     | seq :: _ ->
-        seq
-        |> List.filter_map (Models.id_to_token (Tokenizer.get_model tok))
-        |> String.concat " "
+        seq |> List.filter_map (Tokenizer.id_to_token tok) |> String.concat " "
     | [] -> ""
   in
   let config = Sampler.default |> Sampler.with_temperature 0.5 in

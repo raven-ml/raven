@@ -2,153 +2,132 @@ open Saga_tokenizers
 
 let test_wordpiece_basic () =
   (* Create a simple vocabulary *)
-  let vocab = Hashtbl.create 10 in
-  Hashtbl.add vocab "[UNK]" 0;
-  Hashtbl.add vocab "hello" 1;
-  Hashtbl.add vocab "world" 2;
-  Hashtbl.add vocab "##llo" 3;
-  Hashtbl.add vocab "##rld" 4;
-  Hashtbl.add vocab "he" 5;
-  Hashtbl.add vocab "wo" 6;
-
-  let config : Wordpiece.config =
-    {
-      vocab;
-      unk_token = "[UNK]";
-      continuing_subword_prefix = "##";
-      max_input_chars_per_word = 100;
-    }
+  let vocab =
+    [
+      ("[UNK]", 0);
+      ("hello", 1);
+      ("world", 2);
+      ("##llo", 3);
+      ("##rld", 4);
+      ("he", 5);
+      ("wo", 6);
+    ]
   in
 
-  let model = Wordpiece.create config in
+  let tokenizer =
+    Tokenizer.wordpiece ~vocab ~unk_token:"[UNK]"
+      ~continuing_subword_prefix:"##" ()
+  in
 
   (* Test tokenizing a known word *)
-  let tokens = Wordpiece.tokenize model "hello" in
-  Alcotest.(check int) "single token for 'hello'" 1 (List.length tokens);
-  Alcotest.(check string) "token value" "hello" (List.hd tokens).Wordpiece.value;
+  let encoding = Tokenizer.encode tokenizer "hello" in
+  let tokens = Encoding.get_tokens encoding in
+  Alcotest.(check int) "single token for 'hello'" 1 (Array.length tokens);
+  Alcotest.(check string) "token value" "hello" tokens.(0);
 
-  (* Test tokenizing with subwords *)
-  let tokens = Wordpiece.tokenize model "hello" in
   Printf.printf "Tokenized 'hello': ";
-  List.iter
-    (fun t -> Printf.printf "%s (id=%d) " t.Wordpiece.value t.Wordpiece.id)
-    tokens;
+  Array.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check int) "vocabulary size" 7 (Wordpiece.get_vocab_size model)
+  Alcotest.(check int) "vocabulary size" 7 (Tokenizer.vocab_size tokenizer)
 
 let test_wordpiece_subwords () =
   (* Create vocabulary with subword pieces *)
-  let vocab = Hashtbl.create 20 in
-  Hashtbl.add vocab "[UNK]" 0;
-  Hashtbl.add vocab "un" 1;
-  Hashtbl.add vocab "##able" 2;
-  Hashtbl.add vocab "##happy" 3;
-  Hashtbl.add vocab "play" 4;
-  Hashtbl.add vocab "##ing" 5;
-  Hashtbl.add vocab "##ed" 6;
+  let vocab =
+    [
+      ("[UNK]", 0);
+      ("un", 1);
+      ("##able", 2);
+      ("##happy", 3);
+      ("play", 4);
+      ("##ing", 5);
+      ("##ed", 6);
+    ]
+  in
 
-  let builder = Wordpiece.Builder.create () in
-  let builder = Wordpiece.Builder.vocab builder vocab in
-  let builder = Wordpiece.Builder.unk_token builder "[UNK]" in
-  let model = Wordpiece.Builder.build builder in
+  let tokenizer = Tokenizer.wordpiece ~vocab ~unk_token:"[UNK]" () in
 
   (* Test word that can be split into subwords *)
-  let tokens = Wordpiece.tokenize model "playing" in
+  let encoding = Tokenizer.encode tokenizer "playing" in
+  let tokens = Encoding.get_tokens encoding in
   Printf.printf "Tokenized 'playing': ";
-  List.iter (fun t -> Printf.printf "%s " t.Wordpiece.value) tokens;
+  Array.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check int) "should split into subwords" 2 (List.length tokens);
-  Alcotest.(check string)
-    "first token" "play" (List.nth tokens 0).Wordpiece.value;
-  Alcotest.(check string)
-    "second token" "##ing" (List.nth tokens 1).Wordpiece.value
+  Alcotest.(check int) "should split into subwords" 2 (Array.length tokens);
+  Alcotest.(check string) "first token" "play" tokens.(0);
+  Alcotest.(check string) "second token" "##ing" tokens.(1)
 
 let test_wordpiece_unknown () =
   (* Create minimal vocabulary *)
-  let vocab = Hashtbl.create 5 in
-  Hashtbl.add vocab "[UNK]" 0;
-  Hashtbl.add vocab "hello" 1;
+  let vocab = [ ("[UNK]", 0); ("hello", 1) ] in
 
-  let builder = Wordpiece.Builder.create () in
-  let builder = Wordpiece.Builder.vocab builder vocab in
-  let builder = Wordpiece.Builder.unk_token builder "[UNK]" in
-  let model = Wordpiece.Builder.build builder in
+  let tokenizer = Tokenizer.wordpiece ~vocab ~unk_token:"[UNK]" () in
 
   (* Test unknown word *)
-  let tokens = Wordpiece.tokenize model "goodbye" in
+  let encoding = Tokenizer.encode tokenizer "goodbye" in
+  let tokens = Encoding.get_tokens encoding in
   Alcotest.(check int)
-    "unknown word becomes single token" 1 (List.length tokens);
-  Alcotest.(check string)
-    "unknown token" "[UNK]" (List.hd tokens).Wordpiece.value
+    "unknown word becomes single token" 1 (Array.length tokens);
+  Alcotest.(check string) "unknown token" "[UNK]" tokens.(0)
 
 let test_wordpiece_max_chars () =
   (* Create vocabulary *)
-  let vocab = Hashtbl.create 5 in
-  Hashtbl.add vocab "[UNK]" 0;
-  Hashtbl.add vocab "test" 1;
+  let vocab = [ ("[UNK]", 0); ("test", 1) ] in
 
-  let builder = Wordpiece.Builder.create () in
-  let builder = Wordpiece.Builder.vocab builder vocab in
-  let builder = Wordpiece.Builder.unk_token builder "[UNK]" in
-  let builder = Wordpiece.Builder.max_input_chars_per_word builder 5 in
-  let model = Wordpiece.Builder.build builder in
+  let tokenizer =
+    Tokenizer.wordpiece ~vocab ~unk_token:"[UNK]" ~max_input_chars_per_word:5 ()
+  in
 
   (* Test word exceeding max chars *)
   let long_word = String.make 10 'a' in
-  let tokens = Wordpiece.tokenize model long_word in
-  Alcotest.(check int) "long word becomes unknown" 1 (List.length tokens);
-  Alcotest.(check string)
-    "unknown token" "[UNK]" (List.hd tokens).Wordpiece.value
+  let encoding = Tokenizer.encode tokenizer long_word in
+  let tokens = Encoding.get_tokens encoding in
+  Alcotest.(check int) "long word becomes unknown" 1 (Array.length tokens);
+  Alcotest.(check string) "unknown token" "[UNK]" tokens.(0)
 
 let test_wordpiece_save_load () =
   (* Create vocabulary *)
-  let vocab = Hashtbl.create 10 in
-  Hashtbl.add vocab "[PAD]" 0;
-  Hashtbl.add vocab "[UNK]" 1;
-  Hashtbl.add vocab "[CLS]" 2;
-  Hashtbl.add vocab "[SEP]" 3;
-  Hashtbl.add vocab "hello" 4;
-  Hashtbl.add vocab "world" 5;
+  let vocab =
+    [
+      ("[PAD]", 0);
+      ("[UNK]", 1);
+      ("[CLS]", 2);
+      ("[SEP]", 3);
+      ("hello", 4);
+      ("world", 5);
+    ]
+  in
 
-  let builder = Wordpiece.Builder.create () in
-  let builder = Wordpiece.Builder.vocab builder vocab in
-  let builder = Wordpiece.Builder.unk_token builder "[UNK]" in
-  let model = Wordpiece.Builder.build builder in
+  let tokenizer = Tokenizer.wordpiece ~vocab ~unk_token:"[UNK]" () in
 
   (* Save the model *)
   let temp_dir = Filename.temp_dir "wordpiece_test" "" in
-  let _fp = Wordpiece.save model ~path:temp_dir () in
+  let files = Tokenizer.save_model_files tokenizer ~folder:temp_dir () in
 
   (* Load the model *)
-  let vocab_file = Filename.concat temp_dir "vocab.txt" in
-  let loaded_model = Wordpiece.from_file ~vocab_file in
+  let vocab_file = List.find (fun f -> Filename.check_suffix f ".txt") files in
+  let loaded_tokenizer = Tokenizer.from_model_file ~vocab:vocab_file () in
 
-  (* Test that loaded model works the same *)
-  let original_tokens = Wordpiece.tokenize model "hello" in
-  let loaded_tokens = Wordpiece.tokenize loaded_model "hello" in
+  (* Test that loaded tokenizer works the same *)
+  let original_tokens =
+    Tokenizer.encode tokenizer "hello" |> Encoding.get_tokens
+  in
+  let loaded_tokens =
+    Tokenizer.encode loaded_tokenizer "hello" |> Encoding.get_tokens
+  in
 
   Alcotest.(check int)
     "same number of tokens"
-    (List.length original_tokens)
-    (List.length loaded_tokens);
+    (Array.length original_tokens)
+    (Array.length loaded_tokens);
 
   (* Clean up *)
-  Sys.remove vocab_file;
+  List.iter Sys.remove files;
   Unix.rmdir temp_dir
 
 let test_tokenizer_integration () =
-  (* Create temporary vocab file *)
-  let temp_dir = Filename.temp_dir "wordpiece_test" "" in
-  let vocab_file = Filename.concat temp_dir "vocab.txt" in
-
-  (* Write a simple vocab file *)
-  let oc = open_out vocab_file in
-  output_string oc "[PAD]\n[UNK]\n[CLS]\n[SEP]\nhello\nworld\n##ing\n";
-  close_out oc;
-
-  (* Create a WordPiece tokenizer using the model *)
+  (* Create a WordPiece tokenizer using the high-level API *)
   let vocab =
     [
       ("[PAD]", 0);
@@ -160,45 +139,40 @@ let test_tokenizer_integration () =
       ("##ing", 6);
     ]
   in
-  let model = Models.wordpiece ~vocab ~unk_token:"[UNK]" () in
-  let tokenizer = Tokenizer.create ~model in
+  let tokenizer = Tokenizer.wordpiece ~vocab ~unk_token:"[UNK]" () in
 
-  (* For now, just test encoding *)
-  let encoding =
-    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello") ()
+  (* Test encoding *)
+  let tokens =
+    Tokenizer.encode tokenizer "hello" |> Encoding.get_tokens |> Array.to_list
   in
-  let tokens = Array.to_list (Encoding.get_tokens encoding) in
 
   Printf.printf "Tokenizer.wordpiece result: ";
   List.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check bool) "tokenizer produces output" true (List.length tokens > 0);
-
-  (* Clean up *)
-  Sys.remove vocab_file;
-  Unix.rmdir temp_dir
+  Alcotest.(check bool) "tokenizer produces output" true (List.length tokens > 0)
 
 let test_wordpiece_greedy_matching () =
   (* Test the greedy longest-match-first algorithm *)
-  let vocab = Hashtbl.create 20 in
-  Hashtbl.add vocab "[UNK]" 0;
-  Hashtbl.add vocab "un" 1;
-  Hashtbl.add vocab "able" 2;
-  Hashtbl.add vocab "unable" 3;
-  (* Longer match should be preferred *)
-  Hashtbl.add vocab "##able" 4;
+  let vocab =
+    [
+      ("[UNK]", 0);
+      ("un", 1);
+      ("able", 2);
+      ("unable", 3);
+      (* Longer match should be preferred *)
+      ("##able", 4);
+    ]
+  in
 
-  let builder = Wordpiece.Builder.create () in
-  let builder = Wordpiece.Builder.vocab builder vocab in
-  let builder = Wordpiece.Builder.unk_token builder "[UNK]" in
-  let model = Wordpiece.Builder.build builder in
+  let tokenizer = Tokenizer.wordpiece ~vocab ~unk_token:"[UNK]" () in
 
   (* Should match "unable" as a single token, not "un" + "##able" *)
-  let tokens = Wordpiece.tokenize model "unable" in
-  Alcotest.(check int) "greedy match finds longest token" 1 (List.length tokens);
-  Alcotest.(check string)
-    "matched full word" "unable" (List.hd tokens).Wordpiece.value
+  let encoding = Tokenizer.encode tokenizer "unable" in
+  let tokens = Encoding.get_tokens encoding in
+  Alcotest.(check int)
+    "greedy match finds longest token" 1 (Array.length tokens);
+  Alcotest.(check string) "matched full word" "unable" tokens.(0)
 
 let () =
   let open Alcotest in

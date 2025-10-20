@@ -1,6 +1,7 @@
 (** Comprehensive GPT-2 tokenizer tests to ensure exact match with Python
     tokenizers *)
 
+open Saga_tokenizers
 open Alcotest
 
 let test_gpt2_tokenization () =
@@ -12,10 +13,11 @@ let test_gpt2_tokenization () =
   if not (Sys.file_exists vocab_file && Sys.file_exists merges_file) then
     skip ()
   else
-    let pre_tokenizer =
-      Saga.Pre_tokenizers.byte_level ~add_prefix_space:false ()
+    let pre_tokenizer = Pre_tokenizers.byte_level ~add_prefix_space:false () in
+    let tokenizer =
+      Tokenizer.from_model_file ~vocab:vocab_file ~merges:merges_file
+        ~pre:pre_tokenizer ()
     in
-    let bpe_model = Saga.Bpe.from_files ~vocab_file ~merges_file in
 
     (* Test cases with expected token IDs from Python transformers *)
     let test_cases =
@@ -186,15 +188,8 @@ let test_gpt2_tokenization () =
     (* Test each case *)
     List.iter
       (fun (text, expected) ->
-        (* Apply pre-tokenizer first, then tokenize each piece with BPE *)
-        let pre_tokens = pre_tokenizer text |> List.map fst in
-        let tokens_list =
-          List.concat_map
-            (fun pre_token ->
-              Saga.Bpe.tokenize bpe_model pre_token
-              |> List.map (fun token -> token.Saga.Bpe.id))
-            pre_tokens
-        in
+        let encoding = Tokenizer.encode tokenizer text in
+        let tokens_list = Encoding.get_ids encoding |> Array.to_list in
         check (list int)
           (Printf.sprintf "Tokenizing %S" text)
           expected tokens_list)
@@ -208,22 +203,16 @@ let test_gpt2_edge_cases () =
   if not (Sys.file_exists vocab_file && Sys.file_exists merges_file) then
     skip ()
   else
-    let pre_tokenizer =
-      Saga.Pre_tokenizers.byte_level ~add_prefix_space:false ()
+    let pre_tokenizer = Pre_tokenizers.byte_level ~add_prefix_space:false () in
+    let tokenizer =
+      Tokenizer.from_model_file ~vocab:vocab_file ~merges:merges_file
+        ~pre:pre_tokenizer ()
     in
-    let bpe_model = Saga.Bpe.from_files ~vocab_file ~merges_file in
 
     (* Test that space + word is kept together *)
     let test_space_word text expected_tokens =
-      (* Apply pre-tokenizer first, then tokenize each piece with BPE *)
-      let pre_tokens = pre_tokenizer text |> List.map fst in
-      let tokens =
-        List.concat_map
-          (fun pre_token ->
-            Saga.Bpe.tokenize bpe_model pre_token
-            |> List.map (fun token -> token.Saga.Bpe.id))
-          pre_tokens
-      in
+      let encoding = Tokenizer.encode tokenizer text in
+      let tokens = Encoding.get_ids encoding |> Array.to_list in
       check (list int)
         (Printf.sprintf "Space handling in %S" text)
         expected_tokens tokens
@@ -236,14 +225,8 @@ let test_gpt2_edge_cases () =
 
     (* Test that contractions are recognized *)
     let test_contraction text expected_tokens =
-      let pre_tokens = pre_tokenizer text |> List.map fst in
-      let tokens =
-        List.concat_map
-          (fun pre_token ->
-            Saga.Bpe.tokenize bpe_model pre_token
-            |> List.map (fun token -> token.Saga.Bpe.id))
-          pre_tokens
-      in
+      let encoding = Tokenizer.encode tokenizer text in
+      let tokens = Encoding.get_ids encoding |> Array.to_list in
       check (list int)
         (Printf.sprintf "Contraction %S" text)
         expected_tokens tokens
@@ -259,14 +242,8 @@ let test_gpt2_edge_cases () =
 
     (* Test special character combinations *)
     let test_special_chars text expected_tokens =
-      let pre_tokens = pre_tokenizer text |> List.map fst in
-      let tokens =
-        List.concat_map
-          (fun pre_token ->
-            Saga.Bpe.tokenize bpe_model pre_token
-            |> List.map (fun token -> token.Saga.Bpe.id))
-          pre_tokens
-      in
+      let encoding = Tokenizer.encode tokenizer text in
+      let tokens = Encoding.get_ids encoding |> Array.to_list in
       check (list int)
         (Printf.sprintf "Special chars %S" text)
         expected_tokens tokens
@@ -287,22 +264,17 @@ let test_gpt2_decode () =
   if not (Sys.file_exists vocab_file && Sys.file_exists merges_file) then
     skip ()
   else
-    let pre_tokenizer =
-      Saga.Pre_tokenizers.byte_level ~add_prefix_space:false ()
+    let pre_tokenizer = Pre_tokenizers.byte_level ~add_prefix_space:false () in
+    let tokenizer =
+      Tokenizer.from_model_file ~vocab:vocab_file ~merges:merges_file
+        ~pre:pre_tokenizer ()
     in
-    let bpe_model = Saga.Bpe.from_files ~vocab_file ~merges_file in
 
     let test_roundtrip text =
-      let pre_tokens = pre_tokenizer text |> List.map fst in
-      let token_ids =
-        List.concat_map
-          (fun pre_token ->
-            Saga.Bpe.tokenize bpe_model pre_token
-            |> List.map (fun token -> token.Saga.Bpe.id))
-          pre_tokens
-      in
+      let encoding = Tokenizer.encode tokenizer text in
+      let token_ids = Encoding.get_ids encoding |> Array.to_list in
       let decoded =
-        List.filter_map (fun id -> Saga.Bpe.id_to_token bpe_model id) token_ids
+        List.filter_map (fun id -> Tokenizer.id_to_token tokenizer id) token_ids
         |> String.concat ""
       in
       (* Note: GPT-2 decode may not be exact due to space encoding *)
@@ -325,7 +297,7 @@ let test_gpt2_decode () =
 let test_pretokenizer_output () =
   (* Test that the pre-tokenizer produces expected splits *)
   let pre_tokenizer =
-    Saga.Pre_tokenizers.byte_level ~add_prefix_space:false ~use_regex:true ()
+    Pre_tokenizers.byte_level ~add_prefix_space:false ~use_regex:true ()
   in
 
   let test_splits text expected_splits =

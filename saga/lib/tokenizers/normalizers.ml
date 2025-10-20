@@ -398,7 +398,7 @@ let rec to_json = function
 let rec of_json = function
   | `Assoc fields -> (
       match List.assoc_opt "type" fields with
-      | Some (`String "Bert") ->
+      | Some (`String ("Bert" | "BertNormalizer")) ->
           let get_bool name default =
             match List.assoc_opt name fields with
             | Some (`Bool b) -> b

@@ -298,9 +298,9 @@ let rec of_json = function
             | _ -> ""
           in
           BPE { suffix }
-      | Some (`String "Byte_level") -> Byte_level
-      | Some (`String "Byte_fallback") -> Byte_fallback
-      | Some (`String "Word_piece") ->
+      | Some (`String ("Byte_level" | "ByteLevel")) -> Byte_level
+      | Some (`String ("Byte_fallback" | "ByteFallback")) -> Byte_fallback
+      | Some (`String ("Word_piece" | "WordPiece")) ->
           let prefix =
             match List.assoc_opt "prefix" fields with
             | Some (`String s) -> s

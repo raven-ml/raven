@@ -390,23 +390,48 @@ let rec of_json = function
           in
           ByteLevel { trim_offsets }
       | Some (`String "TemplateProcessing") ->
+          (* HuggingFace uses structured template format with SpecialToken/Sequence *)
+          (* For now, we'll create a simplified string template from the structure *)
+          (* TODO: Implement full Template parsing compatible with HF format *)
           let single =
             match List.assoc_opt "single" fields with
             | Some (`String s) -> s
-            | _ -> failwith "Missing single template"
+            | Some (`List _pieces) -> "$0" (* Simplified default *)
+            | _ -> "$0"
           in
           let pair =
             match List.assoc_opt "pair" fields with
             | Some (`String p) -> Some p
+            | Some (`List _pieces) -> Some "$A $B" (* Simplified default *)
+            | Some `Null -> None
             | _ -> None
           in
           let special_tokens =
             match List.assoc_opt "special_tokens" fields with
+            | Some (`Assoc tokens) ->
+                (* HF format: {"[CLS]": {"id": "[CLS]", "ids": [101], "tokens":
+                   ["[CLS]"]}} *)
+                List.filter_map
+                  (fun (_key, value) ->
+                    match value with
+                    | `Assoc fields -> (
+                        match
+                          ( List.assoc_opt "ids" fields,
+                            List.assoc_opt "tokens" fields )
+                        with
+                        | ( Some (`List (`Int id :: _)),
+                            Some (`List (`String tok :: _)) ) ->
+                            Some (tok, id)
+                        | _ -> None)
+                    | _ -> None)
+                  tokens
             | Some (`List tokens) ->
-                List.map
-                  (function
-                    | `List [ `String s; `Int i ] -> (s, i)
-                    | _ -> failwith "Invalid special token format")
+                (* Simplified list format *)
+                List.filter_map
+                  (fun t ->
+                    match t with
+                    | `List [ `String s; `Int i ] -> Some (s, i)
+                    | _ -> None)
                   tokens
             | _ -> []
           in

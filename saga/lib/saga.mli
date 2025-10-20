@@ -17,10 +17,6 @@
 
     {1 Quick Start}
 
-    {b Note:} The [~sequence] parameter in tokenization functions accepts
-    [Either.Left string] for raw text input or [Either.Right string list] for
-    pretokenized input (where text is already split into words or tokens).
-
     {2 Advanced text generation}
     {[
       (* Create a model function (typically a neural network) *)
@@ -28,8 +24,16 @@
         (* Your neural network forward pass *)
         Array.make 50000 0.0 (* Example: uniform logits *)
 
-      (* Build a vocabulary and tokenizer *)
-      let tok = Tokenizer.create ~model:(Models.chars ())
+      (* Build a tokenizer *)
+      let tok = Tokenizer.chars ()
+
+      (* Create encoder and decoder functions *)
+      let tokenizer_fn text =
+        Tokenizer.encode tok text |> Encoding.get_ids |> Array.to_list
+      in
+      let decoder_fn ids =
+        Tokenizer.decode tok ids
+      in
 
       (* Configure generation with custom processors *)
       let config =
@@ -40,8 +44,8 @@
 
       (* Generate with fine-grained control *)
       let result =
-        Sampler.generate ~model:model_fn ~tokenizer:tok ~prompt:"Hello"
-          ~generation_config:config ()
+        Sampler.generate_text ~model:model_fn ~tokenizer:tokenizer_fn
+          ~decoder:decoder_fn ~prompt:"Hello" ~generation_config:config ()
     ]}
 
     {1 Performance Tips}
@@ -99,18 +103,14 @@ module Sampler = Sampler
       open Saga
 
       (* Character tokenization *)
-      let tok = Tokenizer.create ~model:(Models.chars ())
-      let enc = Tokenizer.encode tok ~sequence:(Either.Left "Hello world!") ()
+      let tok = Tokenizer.chars ()
+      let enc = Tokenizer.encode tok "Hello world!"
       let ids = Encoding.get_ids enc
-      let text = Tokenizer.decode tok (Array.to_list ids) ()
+      let text = Tokenizer.decode tok (Array.to_list ids)
 
       (* BPE tokenization with batch processing *)
-      let tok = Tokenizer.from_file "tokenizer.json"
-
-      let batch_enc =
-        Tokenizer.encode_batch tok
-          ~sequences:[ Either.Left "Hello"; Either.Left "World" ]
-          ~padding:true ()
+      let tok = Tokenizer.from_file "tokenizer.json" |> Result.get_ok
+      let batch_enc = Tokenizer.encode_batch tok [ "Hello"; "World" ]
     ]}
 
     {2 Neural Model Integration}
@@ -118,7 +118,9 @@ module Sampler = Sampler
       (* Wraps a neural model for Sampler integration. Example - illustrative
          pseudocode, adapt to your model API. *)
       let setup_neural_generation neural_model =
-        let tok = Tokenizer.from_file "tokenizer.json" in
+        let tok =
+          Tokenizer.from_file "tokenizer.json" |> Result.get_ok
+        in
 
         (* Model function: token_ids -> logits *)
         let model_fn token_ids =

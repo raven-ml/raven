@@ -22,13 +22,13 @@ let tokenize_text text =
   in
   let vocab = List.mapi (fun i token -> (token, i)) all_tokens in
 
-  (* Create WordLevel model with the vocabulary *)
-  let model = Models.word_level ~vocab ~unk_token:"<unk>" () in
-  let tokenizer = Tokenizer.create ~model in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-
-  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left text) () in
-  Array.to_list (Encoding.get_tokens encoding)
+  (* Create WordLevel tokenizer with the vocabulary *)
+  let tokenizer =
+    Tokenizer.word_level ~vocab ~unk_token:"<unk>"
+      ~pre:(Pre_tokenizers.whitespace ())
+      ()
+  in
+  Tokenizer.encode tokenizer text |> Encoding.get_tokens |> Array.to_list
 
 (* ───── Basic Tokenization Tests ───── *)
 
@@ -94,19 +94,22 @@ let test_tokenize_regex_custom () =
   let text = "don't stop!" in
   let pre_tokens = Pre_tokenizers.punctuation () text in
   let vocab = List.mapi (fun i (tok, _) -> (tok, i)) pre_tokens in
-  let model = Models.word_level ~vocab ~unk_token:"<unk>" () in
-  let tokenizer = Tokenizer.create ~model in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.punctuation ()));
-  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left text) () in
-  let tokens = Array.to_list (Encoding.get_tokens encoding) in
+  let tokenizer =
+    Tokenizer.word_level ~vocab ~unk_token:"<unk>"
+      ~pre:(Pre_tokenizers.punctuation ())
+      ()
+  in
+  let tokens =
+    Tokenizer.encode tokenizer text |> Encoding.get_tokens |> Array.to_list
+  in
   check bool "has tokens" true (List.length tokens > 0)
 
 let test_tokenize_regex_no_match () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  let encoding =
-    Tokenizer.encode tokenizer ~sequence:(Either.Left "no numbers here") ()
+  let tokenizer = Tokenizer.word_level () in
+  let tokens =
+    Tokenizer.encode tokenizer "no numbers here"
+    |> Encoding.get_tokens |> Array.to_list
   in
-  let tokens = Array.to_list (Encoding.get_tokens encoding) in
   check (list string) "regex no match" [] tokens
 
 (* ───── Unigram Model Tests ───── *)
@@ -115,45 +118,49 @@ let test_tokenize_regex_no_match () =
 let test_unigram_roundtrip () =
   let tokens = [ "hello"; "world"; "test" ] in
   let vocab = List.map (fun token -> (token, 0.0)) tokens in
-  let model = Models.unigram ~vocab () in
+  let tokenizer = Tokenizer.unigram ~vocab () in
   List.iteri
     (fun expected_id token ->
       check (option int)
         (Printf.sprintf "token_to_id '%s'" token)
         (Some expected_id)
-        (Models.token_to_id model token);
+        (Tokenizer.token_to_id tokenizer token);
       check (option string)
         (Printf.sprintf "id_to_token %d" expected_id)
         (Some token)
-        (Models.id_to_token model expected_id))
+        (Tokenizer.id_to_token tokenizer expected_id))
     tokens
 
 (* token_to_id - out of vocab *)
 let test_unigram_token_to_id_oov () =
-  let model = Models.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] () in
+  let tokenizer =
+    Tokenizer.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] ()
+  in
   check (option int) "token_to_id out-of-vocab" None
-    (Models.token_to_id model "missing")
+    (Tokenizer.token_to_id tokenizer "missing")
 
 (* id_to_token - out of bounds *)
 let test_unigram_id_to_token_oob () =
-  let model = Models.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] () in
+  let tokenizer =
+    Tokenizer.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] ()
+  in
   check (option string) "id_to_token negative" None
-    (Models.id_to_token model (-1));
+    (Tokenizer.id_to_token tokenizer (-1));
   check (option string) "id_to_token out of bounds" None
-    (Models.id_to_token model 10)
+    (Tokenizer.id_to_token tokenizer 10)
 
 (* Test empty vocabulary *)
 let test_unigram_empty_vocab () =
-  let model = Models.unigram ~vocab:[] () in
+  let tokenizer = Tokenizer.unigram ~vocab:[] () in
   check (option int) "empty vocab token_to_id" None
-    (Models.token_to_id model "test");
+    (Tokenizer.token_to_id tokenizer "test");
   check (option string) "empty vocab id_to_token" None
-    (Models.id_to_token model 0)
+    (Tokenizer.id_to_token tokenizer 0)
 
 (* Test special characters and unicode *)
 let test_unigram_special_tokens () =
-  let model =
-    Models.unigram
+  let tokenizer =
+    Tokenizer.unigram
       ~vocab:
         [
           ("<unk>", 0.0);
@@ -164,12 +171,16 @@ let test_unigram_special_tokens () =
         ]
       ()
   in
-  check (option int) "special <unk>" (Some 0) (Models.token_to_id model "<unk>");
-  check (option int) "special <s>" (Some 1) (Models.token_to_id model "<s>");
+  check (option int) "special <unk>" (Some 0)
+    (Tokenizer.token_to_id tokenizer "<unk>");
+  check (option int) "special <s>" (Some 1)
+    (Tokenizer.token_to_id tokenizer "<s>");
   check (option int) "sentencepiece token" (Some 3)
-    (Models.token_to_id model "▁hello");
-  check (option int) "unicode token" (Some 4) (Models.token_to_id model "世界");
-  check (option string) "id to unicode" (Some "世界") (Models.id_to_token model 4)
+    (Tokenizer.token_to_id tokenizer "▁hello");
+  check (option int) "unicode token" (Some 4)
+    (Tokenizer.token_to_id tokenizer "世界");
+  check (option string) "id to unicode" (Some "世界")
+    (Tokenizer.id_to_token tokenizer 4)
 
 (* ───── Edge Cases ───── *)
 

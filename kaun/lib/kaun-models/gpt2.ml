@@ -68,8 +68,8 @@ type inputs = {
 (* GPT-2 specific tokenizer with BPE *)
 module Tokenizer = struct
   type t = {
-    bpe_model : Saga.Bpe.t;
-        (* Store the actual BPE model for encoding/decoding *)
+    tokenizer : Saga.Tokenizer.t;
+        (* Store the actual tokenizer for encoding/decoding *)
     vocab_size : int;
     bos_token_id : int;
     eos_token_id : int;
@@ -146,9 +146,16 @@ module Tokenizer = struct
 
     (* Create GPT-2 tokenizer with ByteLevel pre-tokenizer Use use_regex:true to
        enable GPT-2 pattern splitting *)
-    let bpe_model = Saga.Bpe.from_files ~vocab_file ~merges_file in
+    let tokenizer =
+      Saga.Tokenizer.from_model_file ~vocab:vocab_file ~merges:merges_file
+        ~pre:
+          (Saga.Pre_tokenizers.byte_level ~add_prefix_space:false
+             ~use_regex:true ())
+        ~decoder:(Saga.Decoders.byte_level ())
+        ()
+    in
     {
-      bpe_model;
+      tokenizer;
       vocab_size = 50257;
       (* GPT-2 vocab size *)
       bos_token_id = 50256;
@@ -160,20 +167,9 @@ module Tokenizer = struct
     }
 
   let encode_to_array t text =
-    (* Use pre-tokenizer to split text, then apply BPE tokenization *)
-    let pre_tokenizer =
-      Saga.Pre_tokenizers.byte_level ~add_prefix_space:false ~use_regex:true ()
-    in
-    let pre_tokens = pre_tokenizer text |> List.map fst in
-    (* Tokenize each pre-token with BPE and collect IDs *)
-    let token_ids =
-      List.concat_map
-        (fun pre_token ->
-          Saga.Bpe.tokenize t.bpe_model pre_token
-          |> List.map (fun token -> token.Saga.Bpe.id))
-        pre_tokens
-    in
-    Array.of_list token_ids
+    (* Use the tokenizer's encode method *)
+    let encoding = Saga.Tokenizer.encode t.tokenizer text in
+    Saga.Encoding.get_ids encoding
 
   let encode t text =
     let token_ids = encode_to_array t text in
@@ -244,12 +240,8 @@ module Tokenizer = struct
     Rune.of_nx nx_tensor
 
   let decode t token_ids =
-    (* Decode token IDs back to text using BPE model *)
-    let tokens =
-      Array.to_list token_ids
-      |> List.filter_map (fun id -> Saga.Bpe.id_to_token t.bpe_model id)
-    in
-    String.concat "" tokens
+    (* Decode token IDs back to text using tokenizer *)
+    Saga.Tokenizer.decode t.tokenizer token_ids
 
   (* Get special token IDs *)
   let get_bos_token_id t = t.bos_token_id
