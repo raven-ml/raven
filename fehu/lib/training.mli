@@ -151,7 +151,7 @@ val value_loss :
 
     - If [clip] is [None], computes the mean-squared error (MSE) between
       [values] and [returns].
-    - If [clip = Some ((clip_range, old_values))], applies PPO-style clipping:
+    - If [clip = Some (clip_range, old_values)], applies PPO-style clipping:
 
     In that case, PPO-style value clipping is applied:
     [value_clipped = old_values + clamp(values - old_values, ±clip_range)], and
