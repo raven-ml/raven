@@ -5865,14 +5865,15 @@ module Make (B : Backend_intf.S) = struct
 
   let matrix_rank ?tol ?rtol ?hermitian a =
     check_float_or_complex ~op:"matrix_rank" a;
-    let s = 
+    let s =
       match hermitian with
-      | Some true -> 
+      | Some true ->
           (* Use eigenvalue decomposition for hermitian matrices *)
           let vals, _ = B.op_eigh ~vectors:false a in
-          (* Use absolute values to match SVD behavior for tolerance computation *)
+          (* Use absolute values to match SVD behavior for tolerance
+             computation *)
           abs vals
-      | _ -> 
+      | _ ->
           (* Use SVD for general matrices *)
           svdvals a
     in
@@ -5883,7 +5884,8 @@ module Make (B : Backend_intf.S) = struct
     (* Use appropriate epsilon for the dtype *)
     let dtype_a = dtype a in
     let eps =
-      if Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
+      if
+        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
       then 1.2e-7
       else if
         Dtype.equal dtype_a Dtype.float64 || Dtype.equal dtype_a Dtype.complex64
@@ -6004,7 +6006,8 @@ module Make (B : Backend_intf.S) = struct
     let dtype_a = dtype a in
 
     let eps_for_dtype =
-      if Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
+      if
+        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
       then 1.2e-7
       else if
         Dtype.equal dtype_a Dtype.float64 || Dtype.equal dtype_a Dtype.complex64
@@ -6054,7 +6057,9 @@ module Make (B : Backend_intf.S) = struct
             let sign_vals = sign vals in
             let ones_vals = ones (B.context vals) (dtype vals) (shape vals) in
             let zeros_vals = zeros (B.context vals) (dtype vals) (shape vals) in
-            let sign_vals = where (cmpeq sign_vals zeros_vals) ones_vals sign_vals in
+            let sign_vals =
+              where (cmpeq sign_vals zeros_vals) ones_vals sign_vals
+            in
             let sign_cast = cast dtype_a sign_vals in
             let sign_expanded = expand_dims [ -1 ] sign_cast in
             let vh = mul sign_expanded (matrix_transpose vecs) in

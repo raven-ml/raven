@@ -460,7 +460,8 @@ let compute_attention_from_projected ?attention_mask ?(is_causal = false)
     let dropout_seed =
       match dropout_rng with
       | Some rng -> Some (Rune.Rng.to_int rng)
-      | None when dropout_rate <> None -> failwith "compute_attention_from_projected: dropout requires RNG"
+      | None when dropout_rate <> None ->
+          failwith "compute_attention_from_projected: dropout requires RNG"
       | None -> None
     in
     Rune.dot_product_attention ?attention_mask ?scale ?dropout_rate
