@@ -8,6 +8,8 @@
   test_bpe
   test_wordpiece
   test_ngram
+  test_hmm
+  test_pcfg
   test_gpt2_tokenizer
   test_pretokenizers)
  (package saga)

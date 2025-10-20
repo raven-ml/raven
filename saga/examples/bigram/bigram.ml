@@ -21,9 +21,11 @@ let () =
   let seq = Seq.return text in
   Tokenizer.train_from_iterator tok seq ~trainer:(Trainers.word_level ()) ();
 
-  (* Train a bigram model (word-level) *)
-  let model = ngram ~n:2 ~tokenizer:tok () in
-  let model = train model [ text ] in
+  (* Tokenize training data *)
+  let sequences =
+    [ Tokenizer.encode tok ~sequence:(Either.Left text) () |> Encoding.get_ids ]
+  in
+  let model = Saga_models.Ngram.of_sequences ~order:2 sequences in
 
   (* Generate text with different starting prompts *)
   Printf.printf "=== Bigram Language Model Demo ===\n\n";
@@ -32,21 +34,37 @@ let () =
 
   (* Generate with different temperatures *)
   Printf.printf "Generated text (temperature=0.5, prompt=\"To be\"):\n";
-  let ids =
-    generate_ids model ~num_tokens:50 ~temperature:0.5 ~prompt:"To be" ()
+  let generator config prompt =
+    let logits_fn history =
+      Saga_models.Ngram.logits model ~context:(Array.of_list history)
+    in
+    let prompt_ids =
+      match prompt with
+      | Some s ->
+          Tokenizer.encode tok ~sequence:(Either.Left s) ()
+          |> Encoding.get_ids |> Array.to_list
+      | None -> []
+    in
+    let output =
+      Sampler.generate ~model:logits_fn ~input_ids:prompt_ids
+        ~generation_config:config ()
+    in
+    match output.sequences with
+    | seq :: _ ->
+        seq
+        |> List.filter_map (Models.id_to_token (Tokenizer.get_model tok))
+        |> String.concat " "
+    | [] -> ""
   in
-  let tokens = decode_ids model ids in
-  Printf.printf "%s\n\n" (String.concat " " tokens);
+  let config = Sampler.default |> Sampler.with_temperature 0.5 in
+  Printf.printf "%s\n\n" (generator config (Some "To be"));
 
   Printf.printf "Generated text (temperature=1.0, prompt=\"The\"):\n";
-  let ids =
-    generate_ids model ~num_tokens:50 ~temperature:1.0 ~top_k:10 ~prompt:"The"
-      ()
+  let config =
+    Sampler.default |> Sampler.with_temperature 1.0 |> Sampler.with_top_k 10
   in
-  let tokens = decode_ids model ids in
-  Printf.printf "%s\n\n" (String.concat " " tokens);
+  Printf.printf "%s\n\n" (generator config (Some "The"));
 
   Printf.printf "Generated text (temperature=1.5, no prompt):\n";
-  let ids = generate_ids model ~num_tokens:50 ~temperature:1.5 () in
-  let tokens = decode_ids model ids in
-  Printf.printf "%s\n" (String.concat " " tokens)
+  let config = Sampler.default |> Sampler.with_temperature 1.5 in
+  Printf.printf "%s\n" (generator config None)
