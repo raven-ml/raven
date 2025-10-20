@@ -156,11 +156,11 @@ val default : generation_config
 (** [default] provides sensible default configuration.
 
     Values:
-    - [max_length]: 20
+    - [max_length]: 100
     - [max_new_tokens]: None (uses max_length)
     - [min_length]: 0
     - [min_new_tokens]: 0
-    - [do_sample]: true
+    - [do_sample]: false (greedy decoding)
     - [early_stopping]: false
     - [num_beams]: 1 (greedy)
     - [temperature]: 1.0
@@ -169,7 +169,7 @@ val default : generation_config
     - [repetition_penalty]: 1.0 (disabled)
     - [length_penalty]: 1.0
     - [no_repeat_ngram_size]: 0 (disabled)
-    - All token IDs: None (auto-detected)
+    - All token IDs: None
 
     Use builder functions like {!with_temperature} to customize. *)
 
@@ -255,8 +255,10 @@ val creative_writing : generation_config
     Settings:
     - Temperature: 0.8 (creative but coherent)
     - Top-p: 0.9 (good diversity)
-    - Repetition penalty: 1.05 (slight anti-repetition)
-    - Max length: 512 tokens *)
+    - Repetition penalty: 1.2 (reduce repetition)
+    - N-gram blocking: 3
+    - Max new tokens: 512
+    - Sampling: enabled *)
 
 val chat : generation_config
 (** [chat] preset for conversational AI responses.
@@ -266,9 +268,10 @@ val chat : generation_config
 
     Settings:
     - Temperature: 0.7 (conversational balance)
-    - Top-k: 50 (moderate filtering)
+    - Top-p: 0.95 (moderate diversity)
     - Repetition penalty: 1.1 (avoid repetitive responses)
-    - Max length: 256 tokens *)
+    - Max new tokens: 512
+    - Sampling: enabled *)
 
 val code_generation : generation_config
 (** [code_generation] preset for generating source code.
@@ -278,9 +281,10 @@ val code_generation : generation_config
 
     Settings:
     - Temperature: 0.2 (focused, deterministic)
-    - Top-k: 40 (conservative filtering)
-    - Do sample: true but low temperature
-    - Max length: 1024 tokens *)
+    - Top-k: 5 (very conservative filtering)
+    - Repetition penalty: 1.0 (no penalty)
+    - Max new tokens: 1024
+    - Sampling: enabled *)
 
 val factual : generation_config
 (** [factual] preset for factual, informative text.
@@ -289,10 +293,11 @@ val factual : generation_config
     content. Minimizes hallucination and ensures consistent, reliable output.
 
     Settings:
-    - Temperature: 0.1 (highly deterministic)
-    - Top-k: 20 (strict filtering)
-    - Repetition penalty: 1.0 (no penalty, factual can repeat)
-    - Max length: 256 tokens *)
+    - Temperature: 0.3 (relatively deterministic)
+    - Top-k: 10 (strict filtering)
+    - Repetition penalty: 1.1 (mild penalty)
+    - Max new tokens: 256
+    - Sampling: enabled *)
 
 val from_preset : string -> generation_config
 (** [from_preset name] loads configuration by preset name.
@@ -301,12 +306,12 @@ val from_preset : string -> generation_config
     configuration files or user input.
 
     Supported presets:
-    - "creative_writing" or "creative"
-    - "chat" or "conversation"
-    - "code_generation" or "code"
-    - "factual" or "facts"
+    - ["creative_writing"]
+    - ["chat"]
+    - ["code_generation"]
+    - ["factual"]
 
-    @raise Invalid_argument if preset name is not recognized. *)
+    Returns {!default} for unrecognized preset names. *)
 
 (** {1 Logits Processors} *)
 

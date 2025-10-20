@@ -136,8 +136,9 @@ val forward : t -> int array -> float array array
 val backward : t -> int array -> float array array
 (** [backward hmm observations] computes backward probabilities.
 
-    Returns a matrix where [beta.(t).(i)] = P(o_{t+1}..o_T | state_t = i), the
-    probability of observing the remaining sequence given state i at time t.
+    Returns a matrix where [beta.(t).(i)] = P(o{_ t+1}..o{_ T} | state{_ t} =
+    i), the probability of observing the remaining sequence given state i at
+    time t.
 
     Probabilities are normalized at each time step. Returns an empty array if
     [observations] is empty. *)

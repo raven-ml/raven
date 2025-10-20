@@ -160,8 +160,8 @@ val log_prob : t -> int array -> float
     Returns the sum of log probabilities for each token given its context. The
     first [order - 1] tokens are skipped since they lack full context.
 
-    For a sequence [t_0, t_1, ..., t_n], computes:
-    sum_{i=order-1}^{n} log P(t_i | t_{i-order+1}, ..., t_{i-1})
+    For a sequence [t{_ 0}, t{_ 1}, ..., t{_ n}], computes:
+    sum{_ i=order-1}{^ n} log P(t{_ i} | t{_ i-order+1}, ..., t{_ i-1})
 
     Token IDs outside the vocabulary are skipped.
 
