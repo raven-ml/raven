@@ -121,9 +121,9 @@ let create_wordlevel_tokenizer () =
 module Encoding = struct
   let text_sizes =
     [
-      ("100 chars", String.make 100 'a');
-      ("1K chars", String.make 1000 'a');
       ("10K chars", String.make 10000 'a');
+      ("100K chars", String.make 100000 'a');
+      ("1M chars", String.make 1000000 'a');
     ]
 
   let bench_bpe =
@@ -151,8 +151,8 @@ end
 module Decoding = struct
   let token_counts =
     [
-      ("100 tokens", Array.init 100 (fun i -> i mod 10));
-      ("1K tokens", Array.init 1000 (fun i -> i mod 10));
+      ("10K tokens", Array.init 10000 (fun i -> i mod 10));
+      ("100K tokens", Array.init 100000 (fun i -> i mod 10));
     ]
 
   let bench_bpe =
@@ -172,7 +172,7 @@ end
 
 (** Batch encoding benchmarks - important for real-world usage *)
 module Batch = struct
-  let batch_sizes = [ ("10 items", 10); ("100 items", 100) ]
+  let batch_sizes = [ ("100 items", 100); ("1K items", 1000) ]
 
   let bench_bpe =
     let tok = create_bpe_tokenizer () in
