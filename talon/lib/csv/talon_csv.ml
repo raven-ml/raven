@@ -30,30 +30,32 @@ let detect_dtype na_values values =
 
     if all_bool then `Bool
     else
-      (* Check if all can be parsed as int *)
-      let all_int =
-        List.for_all
-          (fun v ->
-            try
-              let _ = int_of_string v in
-              true
-            with _ -> false)
-          non_null_values
+      (* Detect integers, promote to Int64 if any exceed Int32 range *)
+      let all_int, needs_int64 =
+        List.fold_left
+          (fun (all_ok, overflow) v ->
+            if not all_ok then (false, overflow)
+            else
+              try
+                let i64 = Int64.of_string v in
+                let too_big =
+                  i64 > Int64.of_int32 Int32.max_int
+                  || i64 < Int64.of_int32 Int32.min_int
+                in
+                (true, overflow || too_big)
+              with _ -> (false, overflow))
+          (true, false) non_null_values
       in
-
-      if all_int then `Int32
+      if all_int then
+        if needs_int64 then `Int64 else `Int32
       else
-        (* Check if all can be parsed as float *)
         let all_float =
           List.for_all
             (fun v ->
-              try
-                let _ = float_of_string v in
-                true
+              try ignore (float_of_string v); true
               with _ -> false)
             non_null_values
         in
-
         if all_float then `Float32 else `String
 
 let from_string ?(sep = ',') ?(header = true) ?(na_values = default_na_values)
