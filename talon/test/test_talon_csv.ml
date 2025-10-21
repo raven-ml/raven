@@ -170,11 +170,10 @@ let test_big_int_detection () =
   check_bool "big int detected as Int64" true is_int64;
 
   match to_int64_array df "id" with
-  | Some arr -> 
+  | Some arr ->
       check_int "array length" 1 (Array.length arr);
       check_bool "correct value" true (arr.(0) = 9223372036854775806L)
   | None -> Alcotest.fail "to_int64_array should return Some for Int64 column"
-
 
 (* Test suites *)
 let reading_tests =

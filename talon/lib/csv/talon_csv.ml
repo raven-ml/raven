@@ -46,13 +46,14 @@ let detect_dtype na_values values =
               with _ -> (false, overflow))
           (true, false) non_null_values
       in
-      if all_int then
-        if needs_int64 then `Int64 else `Int32
+      if all_int then if needs_int64 then `Int64 else `Int32
       else
         let all_float =
           List.for_all
             (fun v ->
-              try ignore (float_of_string v); true
+              try
+                ignore (float_of_string v);
+                true
               with _ -> false)
             non_null_values
         in

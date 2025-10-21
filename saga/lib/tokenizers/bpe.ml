@@ -76,11 +76,13 @@ let add_symbol word c byte_len =
 
 module PQueue = struct
   (* Use a binary heap for O(log n) push/pop instead of O(n log n) sort *)
-  type 'a t = { mutable arr : 'a array; mutable size : int; cmp : 'a -> 'a -> int }
+  type 'a t = {
+    mutable arr : 'a array;
+    mutable size : int;
+    cmp : 'a -> 'a -> int;
+  }
 
-  let create cmp =
-    { arr = [||]; size = 0; cmp }
-
+  let create cmp = { arr = [||]; size = 0; cmp }
   let parent i = (i - 1) / 2
   let left i = (2 * i) + 1
   let right i = (2 * i) + 2
@@ -101,10 +103,8 @@ module PQueue = struct
     let l = left i in
     let r = right i in
     let smallest = ref i in
-    if l < t.size && t.cmp t.arr.(l) t.arr.(!smallest) < 0 then
-      smallest := l;
-    if r < t.size && t.cmp t.arr.(r) t.arr.(!smallest) < 0 then
-      smallest := r;
+    if l < t.size && t.cmp t.arr.(l) t.arr.(!smallest) < 0 then smallest := l;
+    if r < t.size && t.cmp t.arr.(r) t.arr.(!smallest) < 0 then smallest := r;
     if !smallest <> i then (
       swap t i !smallest;
       sift_down t !smallest)
@@ -118,13 +118,13 @@ module PQueue = struct
 
   let pop t =
     if t.size = 0 then None
-    else (
+    else
       let result = t.arr.(0) in
       t.size <- t.size - 1;
       if t.size > 0 then (
         t.arr.(0) <- t.arr.(t.size);
         sift_down t 0);
-      Some result)
+      Some result
 end
 
 let apply_merges model dropout word =
@@ -222,7 +222,12 @@ let merge_word model text =
         let is_last = !i >= len in
         (* Build token_str with minimal allocations *)
         let token_str =
-          match (is_first, is_last, model.continuing_subword_prefix, model.end_of_word_suffix) with
+          match
+            ( is_first,
+              is_last,
+              model.continuing_subword_prefix,
+              model.end_of_word_suffix )
+          with
           | true, true, _, _ -> char_str
           | true, false, _, Some suffix -> char_str ^ suffix
           | true, false, _, None -> char_str
