@@ -72,6 +72,23 @@ EINSUM_OPS = [
             _RNG.random(size, dtype=dtype),
         ],
     ),
+    # Critical contraction-reduction patterns (known to be slow in Raven)
+    EinsumOp(
+        "ContractReduce1",
+        "ij,kj->",
+        lambda size, dtype: [
+            _RNG.random((size, size), dtype=dtype),
+            _RNG.random((size, size), dtype=dtype),
+        ],
+    ),
+    EinsumOp(
+        "ContractReduce2",
+        "ij,jk->",
+        lambda size, dtype: [
+            _RNG.random((size, size), dtype=dtype),
+            _RNG.random((size, size), dtype=dtype),
+        ],
+    ),
 ]
 
 

@@ -18,12 +18,15 @@ let einsum_specs =
     { name = "MatMul"; subscripts = "ij,jk->ik" };
     { name = "BatchMatMul"; subscripts = "bij,bjk->bik" };
     { name = "InnerProduct"; subscripts = "i,i->" };
+    (* Critical contraction-reduction patterns (known to be slow) *)
+    { name = "ContractReduce1"; subscripts = "ij,kj->" };
+    { name = "ContractReduce2"; subscripts = "ij,jk->" };
   ]
 
 (** Setup tensors for a given operation and dtype *)
 let setup_f32 spec size =
   match spec.name with
-  | "MatMul" ->
+  | "MatMul" | "ContractReduce2" ->
       let shape = [| size; size |] in
       [| Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape |]
   | "BatchMatMul" ->
@@ -31,12 +34,16 @@ let setup_f32 spec size =
       [| Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape |]
   | "InnerProduct" ->
       let shape = [| size |] in
+      [| Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape |]
+  | "ContractReduce1" ->
+      (* ij,kj-> needs two (size, size) matrices *)
+      let shape = [| size; size |] in
       [| Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape |]
   | _ -> failwith ("Unknown einsum operation: " ^ spec.name)
 
 let setup_f64 spec size =
   match spec.name with
-  | "MatMul" ->
+  | "MatMul" | "ContractReduce2" ->
       let shape = [| size; size |] in
       [| Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape |]
   | "BatchMatMul" ->
@@ -44,6 +51,10 @@ let setup_f64 spec size =
       [| Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape |]
   | "InnerProduct" ->
       let shape = [| size |] in
+      [| Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape |]
+  | "ContractReduce1" ->
+      (* ij,kj-> needs two (size, size) matrices *)
+      let shape = [| size; size |] in
       [| Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape |]
   | _ -> failwith ("Unknown einsum operation: " ^ spec.name)
 
