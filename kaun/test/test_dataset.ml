@@ -69,6 +69,23 @@ let test_from_text_file () =
         [ "line1"; "line2"; "line3" ]
         collected)
 
+(* Test for utf8 *)
+let test_from_text_file_utf8 () =
+  let content = "hello \xF0\x9F\x98\x8A\nsecond\n" in
+  with_temp_file content (fun path ->
+      let ds = from_text_file ~encoding:`UTF8 path in
+      let lines = collect_dataset ds in
+      Alcotest.(check (list string))
+        "utf8 emoji preserved" [ "hello 😊"; "second" ] lines)
+
+(* Test for Latin1 *)
+let test_from_text_file_latin1 () =
+  let content = "caf\xE9\nna\xEFve\n" in
+  with_temp_file content (fun path ->
+      let ds = from_text_file ~encoding:`LATIN1 path in
+      let lines = collect_dataset ds in
+      Alcotest.(check (list string)) "latin1 decoded" [ "café"; "naïve" ] lines)
+
 let test_from_text_file_large_lines () =
   let line = String.make 1000 'x' in
   let content = line ^ "\n" ^ line ^ "\n" in
@@ -618,6 +635,8 @@ let () =
       ( "text_files",
         [
           test_case "from_text_file" `Quick test_from_text_file;
+          test_case "from_text_file_utf8" `Quick test_from_text_file_utf8;
+          test_case "from_text_file_latin1" `Quick test_from_text_file_latin1;
           test_case "from_text_file_large_lines" `Quick
             test_from_text_file_large_lines;
           test_case "from_text_files" `Quick test_from_text_files;

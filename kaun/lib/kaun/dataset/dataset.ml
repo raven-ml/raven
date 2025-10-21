@@ -185,72 +185,73 @@ let from_tensors (x, y) =
   }
 
 (* Text Data Sources *)
+let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
+  match encoding with
+  | `UTF8 | `ASCII | `LATIN1 ->
+      let enc_name =
+        match encoding with
+        | `UTF8 -> "utf-8"
+        | `ASCII -> "us-ascii"
+        | `LATIN1 -> "iso-8859-1"
+      in
+      let uenc_opt = Uutf.encoding_of_string enc_name in
+      let dec = Uutf.decoder ?encoding:uenc_opt `Manual in
+      let handle = create_mmap path in
+      let offset = ref 0 in
+      let closed = ref false in
+      let buf = Buffer.create 512 in
+      let lines_queue = Queue.create () in
 
-let from_text_file ?encoding ?(chunk_size = 65536) path =
-  let _ = encoding in
-  (* TODO: Handle different encodings *)
-  let handle = create_mmap path in
-  let offset = ref 0 in
-  let buffer = ref "" in
-  let buffer_pos = ref 0 in
-  let closed = ref false in
+      let push_line_from_buf () =
+        let s = Buffer.contents buf in
+        Buffer.clear buf;
+        Queue.add s lines_queue
+      in
 
-  let rec next_line () =
-    if !closed then None
-    else
-      (* Look for newline in buffer *)
-      try
-        let nl_pos = String.index_from !buffer !buffer_pos '\n' in
-        let line = String.sub !buffer !buffer_pos (nl_pos - !buffer_pos) in
-        buffer_pos := nl_pos + 1;
-        Some line
-      with Not_found ->
-        (* Need more data *)
-        if !offset >= handle.size then
-          (* End of file - return remaining buffer if any *)
-          if !buffer_pos < String.length !buffer then (
-            let line =
-              String.sub !buffer !buffer_pos
-                (String.length !buffer - !buffer_pos)
-            in
-            buffer := "";
-            buffer_pos := 0;
-            Some line)
-          else (
+      let rec drain_decoder () =
+        match Uutf.decode dec with
+        | `Uchar u ->
+            if Uchar.to_int u = 0x000A then push_line_from_buf ();
+            if Uchar.to_int u <> 0x000A then Uutf.Buffer.add_utf_8 buf u;
+            drain_decoder ()
+        | `Malformed _ ->
+            Uutf.Buffer.add_utf_8 buf Uutf.u_rep;
+            drain_decoder ()
+        | `Await ->
+            if !offset >= handle.size then
+              Uutf.Manual.src dec (Bytes.create 0) 0 0
+            else
+              let chunk =
+                read_mmap_chunk handle ~offset:!offset ~length:chunk_size
+              in
+              offset := !offset + String.length chunk;
+              let bytes = Bytes.of_string chunk in
+              Uutf.Manual.src dec bytes 0 (Bytes.length bytes);
+              drain_decoder ()
+        | `End ->
+            if Buffer.length buf > 0 then push_line_from_buf ();
+            ()
+      in
+
+      let rec next_line () =
+        if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
+        else if !closed then None
+        else (
+          drain_decoder ();
+          if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
+          else if !offset >= handle.size then (
             close_mmap handle;
             closed := true;
             None)
-        else
-          (* Read next chunk *)
-          let chunk =
-            read_mmap_chunk handle ~offset:!offset ~length:chunk_size
-          in
-          offset := !offset + String.length chunk;
+          else next_line ())
+      in
 
-          (* Append to remaining buffer *)
-          if !buffer_pos < String.length !buffer then
-            buffer :=
-              String.sub !buffer !buffer_pos
-                (String.length !buffer - !buffer_pos)
-              ^ chunk
-          else buffer := chunk;
-          buffer_pos := 0;
-          next_line ()
-  in
-
-  let reset () =
-    offset := 0;
-    buffer := "";
-    buffer_pos := 0;
-    closed := false
-  in
-
-  {
-    next = next_line;
-    cardinality = (fun () -> Unknown);
-    reset = Some reset;
-    spec = (fun () -> Scalar "string");
-  }
+      {
+        next = next_line;
+        cardinality = (fun () -> Unknown);
+        reset = None;
+        spec = (fun () -> Scalar "string");
+      }
 
 let from_text_files ?(encoding = `UTF8) ?(chunk_size = 65536) paths =
   let current_file = ref 0 in
@@ -262,7 +263,8 @@ let from_text_files ?(encoding = `UTF8) ?(chunk_size = 65536) paths =
         if !current_file >= List.length paths then None
         else
           let path = List.nth paths !current_file in
-          current_dataset := Some (from_text_file ~encoding ~chunk_size path);
+          let ds = from_text_file ~encoding ~chunk_size path in
+          current_dataset := Some ds;
           incr current_file;
           next ()
     | Some ds -> (
