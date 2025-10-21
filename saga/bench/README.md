@@ -10,6 +10,7 @@ dune exec saga/bench/bench_tokenizers.exe -- -q 5s
 
 ## Results
 
+```
 ┌───────────────────────────────────────┬──────────┬──────────┬─────────┬────────────┐
 │ Name                                  │ Time/Run │  mWd/Run │ Speedup │ vs Fastest │
 ├───────────────────────────────────────┼──────────┼──────────┼─────────┼────────────┤
@@ -34,3 +35,4 @@ dune exec saga/bench/bench_tokenizers.exe -- -q 5s
 │ Batch/WordPiece batch[100 items]      │ 328.46μs │  90.39kw │   0.00x │    189065% │
 │ Encoding/BPE encode[10K chars]        │ 518.13μs │  50.17kw │   0.00x │    298242% │
 └───────────────────────────────────────┴──────────┴──────────┴─────────┴────────────┘
+```

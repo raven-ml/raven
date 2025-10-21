@@ -4,6 +4,7 @@ This directory contains benchmarks for the nx library. We provide comparative be
 
 ## Results Nx
 
+```
 ┌────────────────────────────┬──────────┬─────────┬─────────┬────────────┐
 │ Name                       │ Time/Run │ mWd/Run │ Speedup │ vs Fastest │
 ├────────────────────────────┼──────────┼─────────┼─────────┼────────────┤
@@ -46,9 +47,11 @@ This directory contains benchmarks for the nx library. We provide comparative be
 │ MatMul 200x200 f32 (Nx)    │   2.02ms │ 752.00w │   0.00x │   1345131% │
 │ MatMul 200x200 f64 (Nx)    │   2.62ms │ 752.00w │   0.00x │   1745708% │
 └────────────────────────────┴──────────┴─────────┴─────────┴────────────┘
+```
 
 ## Results NumPy
 
+```
 ┌───────────────────────────────┬──────────┬─────────┬─────────┬────────────┐
 │ Name                          │ Time/Run │ mWd/Run │ Speedup │ vs Fastest │
 ├───────────────────────────────┼──────────┼─────────┼─────────┼────────────┤
@@ -91,3 +94,4 @@ This directory contains benchmarks for the nx library. We provide comparative be
 │ Mul 500x500 f64 (NumPy)       │ 162.64µs │  28.77w │   0.00x │     51647% │
 │ Add 500x500 f64 (NumPy)       │ 167.38µs │  28.13w │   0.00x │     53152% │
 └───────────────────────────────┴──────────┴─────────┴─────────┴────────────┘
+```

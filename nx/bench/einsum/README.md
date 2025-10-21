@@ -4,6 +4,7 @@ Comparative benchmarks of Nx einsum operations against NumPy.
 
 ## Results Nx
 
+```
 ┌───────────────────────────────┬──────────┬─────────┬─────────┬────────────┐
 │ Name                          │ Time/Run │ mWd/Run │ Speedup │ vs Fastest │
 ├───────────────────────────────┼──────────┼─────────┼─────────┼────────────┤
@@ -26,9 +27,11 @@ Comparative benchmarks of Nx einsum operations against NumPy.
 │ BatchMatMul 200x200 f32 (Nx)  │  12.73ms │  3.51kw │   0.00x │    313876% │
 │ BatchMatMul 200x200 f64 (Nx)  │  29.70ms │  3.51kw │   0.00x │    732604% │
 └───────────────────────────────┴──────────┴─────────┴─────────┴────────────┘
+```
 
 ## Results NumPy
 
+```
 ┌──────────────────────────────────┬──────────┬─────────┬─────────┬────────────┐
 │ Name                             │ Time/Run │ mWd/Run │ Speedup │ vs Fastest │
 ├──────────────────────────────────┼──────────┼─────────┼─────────┼────────────┤
@@ -51,3 +54,4 @@ Comparative benchmarks of Nx einsum operations against NumPy.
 │ BatchMatMul 200x200 f32 (NumPy)  │   3.43ms │ 416.19w │   0.00x │    289512% │
 │ BatchMatMul 200x200 f64 (NumPy)  │   5.89ms │ 705.33w │   0.00x │    497470% │
 └──────────────────────────────────┴──────────┴─────────┴─────────┴────────────┘
+```
