@@ -1,125 +1,105 @@
-(* bench_nx_unit.ml - Nx benchmarking framework *)
+(** Benchmark suite for Nx tensor operations *)
 
-open Ubench
-
-(* Simple benchmark configuration *)
-let config =
-  Config.default |> Config.time_limit 2.0 |> Config.warmup 3
-  |> Config.min_measurements 10
-  |> Config.gc_stabilization true
-  |> Config.geometric_scale 1.3 |> Config.fork false
-  |> Config.regressions [ (Time_per_run, [ Runs ], false) ]
-  |> Config.build
-
-(* Test parameters *)
+(** Configuration *)
 let sizes = [ 50; 100; 200; 500 ]
-let dtypes = [ Nx_core.Dtype.Pack Float32 ]
 
-(* Helper to create benchmark name *)
-let make_name op_name size dtype backend_name =
-  Printf.sprintf "%s %dx%d %s (%s)" op_name size size
-    (Nx_core.Dtype.to_string dtype)
-    backend_name
+let matmul_threshold = 200
+let backend_name = "Nx"
 
-(* Generate benchmarks for a specific backend *)
-module Make (Backend : Nx_core.Backend_intf.S) = struct
-  module Nx = Nx_core.Make_frontend (Backend)
+(** Helper to create benchmark name *)
+let benchmark_name op_name size dtype_label =
+  Printf.sprintf "%s %dx%d %s (%s)" op_name size size dtype_label backend_name
 
-  let create_benchmarks ctx backend_name =
-    let benchmarks = ref [] in
+(** Generate benchmark operations for Float32 *)
+let nx_operations_f32 ~size =
+  let shape = [| size; size |] in
+  let a = Nx.rand Nx.Float32 shape in
+  let b = Nx.rand Nx.Float32 shape in
 
-    (* Element-wise operations *)
-    List.iter
-      (fun size ->
-        List.iter
-          (fun (Nx_core.Dtype.Pack dtype) ->
-            let shape = [| size; size |] in
+  let ops =
+    [
+      ("Add", fun () -> ignore (Nx.add a b));
+      ("Mul", fun () -> ignore (Nx.mul a b));
+    ]
+  in
 
-            (* Addition *)
-            let add_bench =
-              let a = Nx.rand ctx dtype shape in
-              let b = Nx.rand ctx dtype shape in
-              bench (make_name "Add" size dtype backend_name) (fun () ->
-                  ignore (Nx.add a b))
-            in
+  let ops =
+    if size <= matmul_threshold then
+      ops @ [ ("MatMul", fun () -> ignore (Nx.matmul a b)) ]
+    else ops
+  in
 
-            (* Multiplication *)
-            let mul_bench =
-              let a = Nx.rand ctx dtype shape in
-              let b = Nx.rand ctx dtype shape in
-              bench (make_name "Mul" size dtype backend_name) (fun () ->
-                  ignore (Nx.mul a b))
-            in
+  let ops =
+    ops
+    @ [
+        ("Sum", fun () -> ignore (Nx.sum a));
+        ("Transpose", fun () -> ignore (Nx.transpose a));
+      ]
+  in
 
-            (* MatMul *)
-            let matmul_bench =
-              let a = Nx.rand ctx dtype shape in
-              let b = Nx.rand ctx dtype shape in
-              bench (make_name "MatMul" size dtype backend_name) (fun () ->
-                  ignore (Nx.matmul a b))
-            in
+  ops
 
-            (* Sum *)
-            let sum_bench =
-              let a = Nx.rand ctx dtype shape in
-              bench (make_name "Sum" size dtype backend_name) (fun () ->
-                  ignore (Nx.sum a))
-            in
+(** Generate benchmark operations for Float64 *)
+let nx_operations_f64 ~size =
+  let shape = [| size; size |] in
+  let a = Nx.rand Nx.Float64 shape in
+  let b = Nx.rand Nx.Float64 shape in
 
-            (* Conv2D for size >= 100 *)
-            let conv_bench =
-              if size >= 100 then
-                let input = Nx.rand ctx dtype [| 1; 3; size; size |] in
-                let kernel = Nx.rand ctx dtype [| 8; 3; 3; 3 |] in
-                Some
-                  (bench (make_name "Conv2D" size dtype backend_name) (fun () ->
-                       ignore (Nx.convolve2d input kernel ~padding_mode:`Same)))
-              else None
-            in
+  let ops =
+    [
+      ("Add", fun () -> ignore (Nx.add a b));
+      ("Mul", fun () -> ignore (Nx.mul a b));
+    ]
+  in
 
-            benchmarks :=
-              add_bench :: mul_bench :: matmul_bench :: sum_bench
-              :: List.filter_map (fun x -> x) [ conv_bench ]
-              @ !benchmarks)
-          dtypes)
-      sizes;
+  let ops =
+    if size <= matmul_threshold then
+      ops @ [ ("MatMul", fun () -> ignore (Nx.matmul a b)) ]
+    else ops
+  in
 
-    List.rev !benchmarks
+  let ops =
+    ops
+    @ [
+        ("Sum", fun () -> ignore (Nx.sum a));
+        ("Transpose", fun () -> ignore (Nx.transpose a));
+      ]
+  in
 
-  let run ~backend_name ctx =
-    Printf.printf "Running %s backend benchmarks...\n" backend_name;
-    let benchmarks = create_benchmarks ctx backend_name in
-    let results = run ~config benchmarks in
-    (backend_name, results)
-end
+  ops
 
-(* Helper to summarize results *)
-let summarize_results all_results =
-  Printf.printf "\n=== Performance Summary ===\n";
-
-  (* Find fastest backend for each operation *)
-  let operations = [ "Add"; "MatMul"; "Sum"; "Conv2D" ] in
-
+(** Build all benchmarks *)
+let build_benchmarks () =
+  let benchmarks = ref [] in
   List.iter
-    (fun op ->
-      Printf.printf "\n%s Performance:\n" op;
-      let op_results =
-        List.concat_map snd all_results
-        |> List.filter (fun r ->
-               try
-                 ignore (Str.search_forward (Str.regexp op) r.name 0);
-                 true
-               with Not_found -> false)
-      in
-      let sorted =
-        List.sort
-          (fun a b -> Float.compare a.time_stats.avg b.time_stats.avg)
-          op_results
-      in
-      List.iteri
-        (fun i result ->
-          if i < 3 then (* Show top 3 *)
-            Printf.printf "  %d. %s: %.2f ns/op\n" (i + 1) result.name
-              result.time_stats.avg)
-        sorted)
-    operations
+    (fun size ->
+      (* Float32 benchmarks *)
+      let ops_f32 = nx_operations_f32 ~size in
+      List.iter
+        (fun (op_name, fn) ->
+          let bench_name = benchmark_name op_name size "f32" in
+          benchmarks := Ubench.bench bench_name fn :: !benchmarks)
+        ops_f32;
+
+      (* Float64 benchmarks *)
+      let ops_f64 = nx_operations_f64 ~size in
+      List.iter
+        (fun (op_name, fn) ->
+          let bench_name = benchmark_name op_name size "f64" in
+          benchmarks := Ubench.bench bench_name fn :: !benchmarks)
+        ops_f64)
+    sizes;
+  List.rev !benchmarks
+
+(** Default configuration matching NumPy benchmark *)
+let default_config () =
+  let open Ubench.Config in
+  default |> time_limit 1.0 |> warmup 1 |> min_measurements 5
+  |> geometric_scale 1.3 |> gc_stabilization false |> build
+
+(** Main entry point *)
+let () =
+  let benchmarks = build_benchmarks () in
+  let config = default_config () in
+  (* Mirror the Python defaults for fair comparisons with NumPy benchmarks. *)
+  ignore (Ubench.run ~config benchmarks)
