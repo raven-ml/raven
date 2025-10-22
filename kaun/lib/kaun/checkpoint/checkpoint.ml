@@ -15,13 +15,59 @@ let get_named_tensors : type layout.
     layout Ptree.t -> (string * (float, layout) t) list =
  fun params -> Ptree.flatten_with_paths params
 
+let encoded_prefix = "kaun:"
+
+let encode_path path =
+  let len = String.length path in
+  let buffer = Buffer.create (String.length encoded_prefix + (len * 2)) in
+  Buffer.add_string buffer encoded_prefix;
+  for i = 0 to len - 1 do
+    Buffer.add_string buffer (Printf.sprintf "%02x" (Char.code path.[i]))
+  done;
+  Buffer.contents buffer
+
+let decode_path encoded =
+  let prefix_len = String.length encoded_prefix in
+  let is_hex_char = function
+    | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
+    | _ -> false
+  in
+  let rec is_hex_string str idx =
+    if idx >= String.length str then true
+    else if is_hex_char str.[idx] then is_hex_string str (idx + 1)
+    else false
+  in
+  if
+    String.length encoded >= prefix_len
+    && String.equal (String.sub encoded 0 prefix_len) encoded_prefix
+  then
+    let hex =
+      String.sub encoded prefix_len (String.length encoded - prefix_len)
+    in
+    if hex = "" then ""
+    else if String.length hex mod 2 = 0 && is_hex_string hex 0 then (
+      let buffer = Buffer.create (String.length hex / 2) in
+      let rec loop idx =
+        if idx < String.length hex then (
+          let byte = int_of_string ("0x" ^ String.sub hex idx 2) in
+          Buffer.add_char buffer (Char.chr byte);
+          loop (idx + 2))
+      in
+      loop 0;
+      Buffer.contents buffer)
+    else encoded
+  else encoded
+
 module Checkpointer = struct
   type t = { format : format }
 
   let create ?(format = default_format) () = { format }
 
   let save_safetensors ~path ~params ~metadata:_ =
-    let named_tensors = get_named_tensors params in
+    let named_tensors =
+      get_named_tensors params
+      |> List.map (fun (name, tensor) -> (encode_path name, tensor))
+    in
     let packed_tensors =
       List.map
         (fun (name, tensor) ->
@@ -52,6 +98,7 @@ module Checkpointer = struct
               failwith
                 (Printf.sprintf "Failed to convert tensor %s to float32" name))
         archive []
+      |> List.map (fun (name, tensor) -> (decode_path name, tensor))
     in
     Ptree.unflatten_from_paths path_tensor_pairs
 
