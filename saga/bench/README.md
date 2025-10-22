@@ -4,6 +4,21 @@ This directory contains micro-benchmarks for the `saga.tokenizers` library.
 The suite mirrors HuggingFace's `tokenizers` so we can compare wall-clock
 throughput for realistic workloads and catch regressions.
 
+## Fixtures
+
+Benchmark inputs live in `./data/`:
+
+- `news_1k.txt`, `wiki_64k.txt`, `code_excerpt.txt` — sample corpora used for
+  encoding workloads.
+- `byte_bpe.json`, `wordpiece.json`, `wordlevel.json` — tokenizers trained on
+  the fixture texts via `scripts/generate_fixtures.py`.
+
+Regenerate fixtures after editing the generator or the base texts:
+
+```bash
+uv run python saga/bench/scripts/generate_fixtures.py
+```
+
 ## Running the Benchmarks
 
 ### Saga (OCaml)
