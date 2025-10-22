@@ -5,7 +5,8 @@ let test_compute_gae () =
   let values = [| 0.0; 0.0; 0.0 |] in
   let dones = [| false; false; true |] in
   let advantages, returns =
-    Training.compute_gae ~rewards ~values ~dones ~gamma:0.99 ~gae_lambda:0.95
+    Training.compute_gae ~rewards ~values ~dones ~last_value:0.0
+      ~last_done:true ~gamma:0.99 ~gae_lambda:0.95
   in
 
   Alcotest.(check int) "advantages length" 3 (Array.length advantages);
@@ -15,6 +16,21 @@ let test_compute_gae () =
   Array.iter
     (fun adv -> Alcotest.(check bool) "advantage > 0" true (adv > 0.0))
     advantages
+
+let test_compute_gae_bootstrap () =
+  let rewards = [| 1.0 |] in
+  let values = [| 0.5 |] in
+  let dones = [| false |] in
+  let advantages, returns =
+    Training.compute_gae ~rewards ~values ~dones ~last_value:0.25
+      ~last_done:false ~gamma:0.99 ~gae_lambda:1.0
+  in
+  let expected_adv = 1.0 +. (0.99 *. 0.25) -. 0.5 in
+  let expected_return = expected_adv +. 0.5 in
+  Alcotest.(check (float 1e-6)) "bootstrapped advantage" expected_adv
+    advantages.(0);
+  Alcotest.(check (float 1e-6)) "bootstrapped return" expected_return
+    returns.(0)
 
 let test_compute_returns () =
   let rewards = [| 1.0; 1.0; 1.0 |] in
@@ -188,6 +204,7 @@ let () =
       ( "Advantage Estimation",
         [
           test_case "compute GAE" `Quick test_compute_gae;
+          test_case "compute GAE with bootstrap" `Quick test_compute_gae_bootstrap;
           test_case "compute returns" `Quick test_compute_returns;
         ] );
       ( "Loss Functions",

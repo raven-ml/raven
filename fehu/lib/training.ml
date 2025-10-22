@@ -1,4 +1,5 @@
-let compute_gae ~rewards ~values ~dones ~gamma ~gae_lambda =
+let compute_gae ~rewards ~values ~dones ~last_value ~last_done ~gamma
+    ~gae_lambda =
   let n = Array.length rewards in
   if n <> Array.length values || n <> Array.length dones then
     invalid_arg "Training.compute_gae: arrays must have same length";
@@ -8,8 +9,15 @@ let compute_gae ~rewards ~values ~dones ~gamma ~gae_lambda =
   let last_gae_lam = ref 0.0 in
 
   for t = n - 1 downto 0 do
-    let next_value = if t = n - 1 then 0.0 else values.(t + 1) in
-    let next_non_terminal = if dones.(t) then 0.0 else 1.0 in
+    let next_value =
+      if t = n - 1 then if last_done then 0.0 else last_value
+      else values.(t + 1)
+    in
+    let next_non_terminal =
+      if t = n - 1 then if last_done then 0.0 else 1.0
+      else if dones.(t) then 0.0
+      else 1.0
+    in
     let delta =
       rewards.(t) +. (gamma *. next_value *. next_non_terminal) -. values.(t)
     in
