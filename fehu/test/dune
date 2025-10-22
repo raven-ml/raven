@@ -9,6 +9,7 @@
   test_training
   test_trajectory
   test_reinforce
+  test_kaun_serialization
   test_dqn)
  (package fehu)
- (libraries fehu fehu.envs fehu.algorithms kaun rune alcotest))
+ (libraries fehu fehu.envs fehu.algorithms kaun rune alcotest yojson unix))
