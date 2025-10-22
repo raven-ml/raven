@@ -1189,6 +1189,32 @@ let test_pivot () =
       check_float "Feb B sales" 180.0 b_vals.(1)
   | _ -> Alcotest.fail "pivot columns should exist"
 
+let test_pivot_numeric_index () =
+  let df =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 1l; 2l; 2l ]);
+        ("category", Col.string_list [ "A"; "B"; "A"; "B" ]);
+        ("value", Col.float64_list [ 1.0; 2.0; 3.0; 4.0 ]);
+      ]
+  in
+  let pivoted =
+    pivot df ~index:"id" ~columns:"category" ~values:"value" ~agg_func:`Sum ()
+  in
+  check_int "numeric pivot rows" 2 (num_rows pivoted);
+  (match get_column_exn pivoted "id" with
+  | Col.S arr ->
+      check_option_string "first id" (Some "1") arr.(0);
+      check_option_string "second id" (Some "2") arr.(1)
+  | _ -> Alcotest.fail "expected string index column");
+  match (to_float64_array pivoted "A", to_float64_array pivoted "B") with
+  | Some a_vals, Some b_vals ->
+      check_float "id=1 A sum" 1.0 a_vals.(0);
+      check_float "id=2 A sum" 3.0 a_vals.(1);
+      check_float "id=1 B sum" 2.0 b_vals.(0);
+      check_float "id=2 B sum" 4.0 b_vals.(1)
+  | _ -> Alcotest.fail "pivot numeric columns should exist"
+
 let test_melt () =
   let df =
     create

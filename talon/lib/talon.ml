@@ -3537,10 +3537,57 @@ let pivot t ~index ~columns ~values ?(agg_func = `Sum) () =
   let index_values =
     match index_col with
     | Col.S arr -> Array.to_list arr
-    | Col.P (_, tensor, _) ->
-        let arr = Nx.to_array tensor in
-        Array.to_list (Array.map (fun _ -> Some "") arr)
-        (* Simplified *)
+    | Col.P (dtype, tensor, mask_opt) -> (
+        match dtype with
+        | Nx.Int32 ->
+            let arr : int32 array = Nx.to_array tensor in
+            Array.to_list
+              (Array.mapi
+                 (fun i v ->
+                   let is_null =
+                     match mask_opt with
+                     | Some mask -> mask.(i)
+                     | None -> v = Int32.min_int
+                   in
+                   if is_null then None else Some (Int32.to_string v))
+                 arr)
+        | Nx.Int64 ->
+            let arr : int64 array = Nx.to_array tensor in
+            Array.to_list
+              (Array.mapi
+                 (fun i v ->
+                   let is_null =
+                     match mask_opt with
+                     | Some mask -> mask.(i)
+                     | None -> v = Int64.min_int
+                   in
+                   if is_null then None else Some (Int64.to_string v))
+                 arr)
+        | Nx.Float32 ->
+            let arr : float array = Nx.to_array tensor in
+            Array.to_list
+              (Array.mapi
+                 (fun i v ->
+                   let is_null =
+                     match mask_opt with
+                     | Some mask -> mask.(i)
+                     | None -> classify_float v = FP_nan
+                   in
+                   if is_null then None else Some (string_of_float v))
+                 arr)
+        | Nx.Float64 ->
+            let arr : float array = Nx.to_array tensor in
+            Array.to_list
+              (Array.mapi
+                 (fun i v ->
+                   let is_null =
+                     match mask_opt with
+                     | Some mask -> mask.(i)
+                     | None -> classify_float v = FP_nan
+                   in
+                   if is_null then None else Some (string_of_float v))
+                 arr)
+        | _ -> failwith "pivot: index column type not supported")
     | _ -> failwith "pivot: index column type not supported"
   in
 
