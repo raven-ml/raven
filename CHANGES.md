@@ -2,24 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+- Only document user-facing changes (features, bug fixes, performance improvements, API changes, etc.)
+- Add new entries at the top of the appropriate section (most recent first)
+
 ## [1.0.0~alpha2] - TBD
 
-- Nx: Fix macOS ARM crash when loading extended bigarray kinds (@tmattio)
-- Nx: Documented the `Symbolic_shape` interface (@tmattio).
-- Nx: Refined `View` internals for leaner contiguity checks and stride handling, cutting redundant materialization on hot paths (@tmattio).
-- Nx: Assign unique IDs to symbolic shape variables and expose helpers to reuse them explicitly (@tmattio).
-- Nx: Documented the reworked `View` interface (@tmattio).
-- Nx: Merge `Lazy_view` into the core `View` API so movement ops operate on a single composed view; improves contiguity checks and restores precise stride/materialization guards (@tmattio).
-- Nx-datasets: Use `Logs` for dataset loader logging (#95, @Satarupa22-SD).
-- Rune: Add support for categorical sampling with `Rune.Rng.categorical` (#89, @nirnayroy).
-- Nx: Add float16 and bfloat16 support to safetensors I/O, including precise conversions that preserve denormals/NaNs (#84, @six-shot, @tmattio).
-- Talon: Allow forcing column types in Talon JSON loader (#104, @nirnayroy)
-- Nx: Update comparison and conditional operations to use boolean tensors (#54, @nirnayroy)
-- Kaun: Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD).
-- Saga: Fix Unigram `token_to_id`/`id_to_token` vocabulary lookups (#117, @RidwanAdebosin)
-- Nx: Fix `matrix_rank`/`pinv` Hermitian fast paths to use eigen-decomposition and match NumPy for complex inputs (#96, @six-shot, @tmattio).
-- Fehu: Finish clipped value loss support in Fehu.Training (#107, @nirnayroy)
-- Nx: Fix complex vdot to conjugate first tensor before multiplication, ensuring correct mathematical behavior (#123, @Arsalaan-Alam)
+### Nx
+
+- Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx (@tmattio)
+- Fix complex vdot to conjugate first tensor before multiplication, ensuring correct mathematical behavior (#123, @Arsalaan-Alam)
+- Update comparison and conditional operations to use boolean tensors (#54, @nirnayroy)
+- Add support for rcond parameter and underdetermined systems to `lstsq` (#102, @nirnayroy)
+- Fix `matrix_rank`/`pinv` Hermitian fast paths to use eigen-decomposition and match NumPy for complex inputs (#96, @six-shot, @tmattio)
+- Optimize matmul BLAS dispatch for strided tensors, improving matrix multiplication performance (@tmattio)
+- Fix slow builds reported since alpha1 (#88, @tmattio)
+- Fix macOS ARM crash when loading extended bigarray kinds (@tmattio)
+- Add float16 and bfloat16 support to safetensors I/O, including precise conversions that preserve denormals/NaNs (#84, @six-shot, @tmattio)
+- Refined `View` internals for leaner contiguity checks and stride handling, cutting redundant materialization on hot paths (@tmattio)
+- Merge `Lazy_view` into the core `View` API so movement ops operate on a single composed view (@tmattio)
+- Documented the reworked `View` interface (@tmattio)
+- Documented the `Symbolic_shape` interface (@tmattio)
+
+### Rune
+
+- Add support for categorical sampling with `Rune.Rng.categorical` (#89, @nirnayroy)
+- Allow plain `llvm-config` in discovery, fixing build in some platforms (#71, @tmattio)
+
+### Kaun
+
+- Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD)
+
+### Talon
+
+- Detect big integers as int64 in Talon CSV loader (#121, @nirnayroy)
+- Allow forcing column types in Talon JSON loader (#104, @nirnayroy)
+
+### Saga
+
+- Fix Unigram `token_to_id`/`id_to_token` vocabulary lookups (#117, @RidwanAdebosin)
+- Optimize `Pre_tokenizers.whitespace` to reduce allocations and improve tokenization performance (@tmattio)
+- Simplify tokenizers interface (@tmattio)
+
+### Fehu
+
+- Finish clipped value loss support in Fehu.Training (#107, @nirnayroy)
+
+### Nx-datasets
+
+- Use `Logs` for dataset loader logging (#95, @Satarupa22-SD)
 
 ## [1.0.0~alpha1] - 2025-10-02
 
