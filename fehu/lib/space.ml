@@ -469,13 +469,13 @@ module Sequence = struct
               | Some max_len -> len > max_len
             in
             if len < min_length || exceeds then
-              (match max_length with
+              match max_length with
               | None ->
                   errorf "Sequence length %d shorter than minimum %d" len
                     min_length
               | Some max_len ->
-                  errorf "Sequence length %d outside of [%d, %d]" len
-                    min_length max_len)
+                  errorf "Sequence length %d outside of [%d, %d]" len min_length
+                    max_len
             else
               let rec loop acc = function
                 | [] -> Ok (List.rev acc)

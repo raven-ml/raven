@@ -573,12 +573,17 @@ let test_vdot () =
 
 let test_vdot_complex () =
   (* Test complex vdot with conjugation *)
-  let a = Nx.create Nx.complex32 [| 2 |]
-    [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |] in
-  let b = Nx.create Nx.complex32 [| 2 |]
-    [| Complex.{ re = 5.; im = 6. }; Complex.{ re = 7.; im = 8. } |] in
+  let a =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
+  in
+  let b =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 5.; im = 6. }; Complex.{ re = 7.; im = 8. } |]
+  in
   let result = Nx.vdot a b in
-  (* Expected: conj(a) * b = [(1-2i)(5+6i), (3-4i)(7+8i)] = [17-4i, 53-4i] = 70-8i *)
+  (* Expected: conj(a) * b = [(1-2i)(5+6i), (3-4i)(7+8i)] = [17-4i, 53-4i] =
+     70-8i *)
   let expected = Complex.{ re = 70.; im = -8. } in
   let actual = Nx.item [] result in
   check (float 1e-6) "vdot complex real part" expected.re actual.re;
@@ -586,10 +591,14 @@ let test_vdot_complex () =
 
 let test_conjugate () =
   (* Test complex conjugate *)
-  let x = Nx.create Nx.complex32 [| 2 |]
-    [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |] in
+  let x =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
+  in
   let conj_x = Nx.conjugate x in
-  let expected = [| Complex.{ re = 1.; im = -2. }; Complex.{ re = 3.; im = -4. } |] in
+  let expected =
+    [| Complex.{ re = 1.; im = -2. }; Complex.{ re = 3.; im = -4. } |]
+  in
   let actual = Nx.to_array conj_x in
   check (float 1e-6) "conjugate[0] real" expected.(0).re actual.(0).re;
   check (float 1e-6) "conjugate[0] imag" expected.(0).im actual.(0).im;

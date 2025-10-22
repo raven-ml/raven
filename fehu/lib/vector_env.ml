@@ -23,10 +23,10 @@ let ensure_non_empty envs =
   | [] -> invalid_arg "Vector_env.create_sync: env list cannot be empty"
   | _ -> ()
 
-let compatibility_rngs =
-  Array.init 4 (fun i -> Rune.Rng.key (137 + i))
+let compatibility_rngs = Array.init 4 (fun i -> Rune.Rng.key (137 + i))
 
-let ensure_space_equivalence kind reference_space candidate_space candidate_env =
+let ensure_space_equivalence kind reference_space candidate_space candidate_env
+    =
   let env_id = Env.id candidate_env in
   let fail detail =
     let base = Printf.sprintf "Vector env requires identical %s spaces" kind in
@@ -45,7 +45,8 @@ let ensure_space_equivalence kind reference_space candidate_space candidate_env 
         match Space.unpack target packed with
         | Ok value ->
             if not (Space.contains target value) then
-              fail (Printf.sprintf "sample %d rejected by target space" sample_idx)
+              fail
+                (Printf.sprintf "sample %d rejected by target space" sample_idx)
         | Error msg ->
             fail (Printf.sprintf "sample %d unpack error: %s" sample_idx msg))
       compatibility_rngs

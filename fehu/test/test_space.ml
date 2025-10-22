@@ -125,21 +125,21 @@ let test_sequence_space_unbounded () =
   let seq_space = Space.Sequence.create ~min_length:1 elem_space in
   let rng = Rune.Rng.key 512 in
   let sample = Space.sample ~rng seq_space in
-  Alcotest.(check int) "default sample length is min_length" 1
-    (List.length sample);
+  Alcotest.(check int)
+    "default sample length is min_length" 1 (List.length sample);
   let extended =
     List.init 4 (fun i ->
         let rng = Rune.Rng.key (800 + i) in
         Space.sample ~rng elem_space)
   in
-  Alcotest.(check bool) "contains extended sequence"
-    true
+  Alcotest.(check bool)
+    "contains extended sequence" true
     (Space.contains seq_space extended);
   let packed = Space.pack seq_space extended in
   match Space.unpack seq_space packed with
   | Ok unpacked ->
-      Alcotest.(check int) "unbounded unpack preserves length" 4
-        (List.length unpacked)
+      Alcotest.(check int)
+        "unbounded unpack preserves length" 4 (List.length unpacked)
   | Error msg -> Alcotest.fail ("unbounded sequence unpack failed: " ^ msg)
 
 let test_text_space () =

@@ -166,8 +166,9 @@ let test_shuffle_preserves_shape () =
   let sorted_shuffled = Array.copy shuffled_flat in
   Array.sort compare sorted_orig;
   Array.sort compare sorted_shuffled;
-  A.check (A.array (A.float 0.0)) "shuffle preserves multiset" sorted_orig
-    sorted_shuffled;
+  A.check
+    (A.array (A.float 0.0))
+    "shuffle preserves multiset" sorted_orig sorted_shuffled;
 
   let shuffled_again = Rng.shuffle key x in
   let equality =
@@ -218,14 +219,12 @@ let test_truncated_normal_distribution () =
   in
 
   A.check A.bool
-    (Printf.sprintf
-       "truncated normal rarely clips to bounds (%d / %d clipped)" boundary_hits
-       total)
-    true (boundary_hits < total / 1000);
+    (Printf.sprintf "truncated normal rarely clips to bounds (%d / %d clipped)"
+       boundary_hits total)
+    true
+    (boundary_hits < total / 1000);
 
-  let mean =
-    Array.fold_left ( +. ) 0. values /. float_of_int total
-  in
+  let mean = Array.fold_left ( +. ) 0. values /. float_of_int total in
   A.check A.bool "truncated normal mean lies within interval" true
     (mean > lower && mean < upper)
 

@@ -65,10 +65,10 @@ let byte_to_unicode, unicode_to_byte =
   for b = 0 to 255 do
     let code =
       if is_direct.(b) then b
-      else (
+      else
         let code = 256 + !next_code in
         incr next_code;
-        code)
+        code
     in
     byte_to_unicode.(b) <- code;
     if code > !max_code then max_code := code
@@ -101,8 +101,7 @@ let byte_level_decode text =
     let code, clen = utf8_next text !i in
     (* Look up the byte value for this unicode codepoint *)
     let byte =
-      if code < Array.length unicode_to_byte then unicode_to_byte.(code)
-      else -1
+      if code < Array.length unicode_to_byte then unicode_to_byte.(code) else -1
     in
     if byte >= 0 then Buffer.add_char result (Char.chr byte)
     else

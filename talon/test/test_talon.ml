@@ -570,9 +570,7 @@ let test_fillna_replaces_nulls () =
       check_float "filled a[2]" 3.0 arr.(2);
       check_option_bool_array "mask cleared for a" None mask_opt
   | _ -> Alcotest.fail "Expected float32 column");
-  let filled_b =
-    Agg.fillna df "b" ~value:(Col.int32_list [ 0l; 99l; 0l ])
-  in
+  let filled_b = Agg.fillna df "b" ~value:(Col.int32_list [ 0l; 99l; 0l ]) in
   match filled_b with
   | Col.P (Nx.Int32, tensor, mask_opt) ->
       let arr : int32 array = Nx.to_array tensor in

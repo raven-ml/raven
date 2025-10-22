@@ -62,8 +62,7 @@ let () =
   let benign_radius = extract_by_indices !benign_indices radius in
   let benign_texture = extract_by_indices !benign_indices texture in
 
-  Logs.info (fun m ->
-      m "Creating scatter plot: Mean Radius vs Mean Texture...");
+  Logs.info (fun m -> m "Creating scatter plot: Mean Radius vs Mean Texture...");
   let fig = Figure.create () in
   let ax = Figure.add_subplot fig in
 

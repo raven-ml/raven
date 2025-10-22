@@ -1,11 +1,15 @@
 open Kaun
 
 let dtype = Rune.float32
-
 let constant_loss _ _ = Rune.scalar dtype 0.
 
 let expect_invalid_argument ~expected f =
-  match (try f (); None with exn -> Some exn) with
+  match
+    try
+      f ();
+      None
+    with exn -> Some exn
+  with
   | Some (Invalid_argument msg) ->
       Alcotest.(check string) "invalid argument message" expected msg
   | Some exn ->
@@ -78,7 +82,9 @@ let test_metric_history_handles_dynamic_metrics () =
   let optimizer = Optimizer.identity () in
   let metric_a = make_counter_metric "metric_a" in
   let metric_b = make_counter_metric "metric_b" in
-  let metrics_collection = Metrics.Collection.create [ ("metric_a", metric_a) ] in
+  let metrics_collection =
+    Metrics.Collection.create [ ("metric_a", metric_a) ]
+  in
   let x = Rune.create Rune.float32 [| 1; 1 |] [| 0.5 |] in
   let y = Rune.create Rune.float32 [| 1; 1 |] [| 0.5 |] in
   let train_data = Dataset.from_list [ (x, y) ] in
@@ -98,18 +104,17 @@ let test_metric_history_handles_dynamic_metrics () =
   in
   let _, history =
     Training.fit ~model ~optimizer ~loss_fn ~metrics:metrics_collection
-      ~train_data ~epochs:2 ~callbacks:[ callback ] ~progress:false ~rngs ~dtype ()
+      ~train_data ~epochs:2 ~callbacks:[ callback ] ~progress:false ~rngs ~dtype
+      ()
   in
   let open Training.History in
-  let metric_a_values =
-    find_metric_values "metric_a" history.train_metrics
-  in
-  Alcotest.(check int) "metric_a tracked both epochs" 2
+  let metric_a_values = find_metric_values "metric_a" history.train_metrics in
+  Alcotest.(check int)
+    "metric_a tracked both epochs" 2
     (List.length metric_a_values);
-  let metric_b_values =
-    find_metric_values "metric_b" history.train_metrics
-  in
-  Alcotest.(check int) "metric_b tracked from second epoch" 1
+  let metric_b_values = find_metric_values "metric_b" history.train_metrics in
+  Alcotest.(check int)
+    "metric_b tracked from second epoch" 1
     (List.length metric_b_values)
 
 let () =

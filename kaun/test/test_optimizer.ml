@@ -285,10 +285,8 @@ let test_clip_by_global_norm_zero_gradients () =
       let arr = Rune.to_bigarray t in
       for i = 0 to 1 do
         let value = Bigarray.Genarray.get arr [| i |] in
-        Alcotest.(check bool)
-          "value is not NaN" false (Float.is_nan value);
-        Alcotest.(check bool)
-          "value remains zero" true (abs_float value < 1e-9)
+        Alcotest.(check bool) "value is not NaN" false (Float.is_nan value);
+        Alcotest.(check bool) "value remains zero" true (abs_float value < 1e-9)
       done
   | _ -> Alcotest.fail "Expected tensor updates"
 

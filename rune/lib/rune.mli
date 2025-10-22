@@ -128,8 +128,8 @@ val no_grad : (unit -> 'a) -> 'a
 
 val detach : ('a, 'b) t -> ('a, 'b) t
 (** [detach t] returns a tensor with the same value as [t] but which is treated
-    as a constant with respect to automatic differentiation. Equivalent to
-    JAX's [lax.stop_gradient] on a single tensor. *)
+    as a constant with respect to automatic differentiation. Equivalent to JAX's
+    [lax.stop_gradient] on a single tensor. *)
 
 (** {2 Gradient Checking} *)
 

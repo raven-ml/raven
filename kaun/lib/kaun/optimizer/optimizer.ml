@@ -79,9 +79,7 @@ let clip_by_global_norm max_norm =
               let scale_factor = Rune.minimum safe_norm max_norm_tensor in
               Rune.div scale_factor safe_norm
             in
-            let scaled_grads =
-              map_params grads (fun g -> Rune.mul g scale)
-            in
+            let scaled_grads = map_params grads (fun g -> Rune.mul g scale) in
             (scaled_grads, state));
   }
 

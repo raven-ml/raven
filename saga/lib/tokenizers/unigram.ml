@@ -43,14 +43,14 @@ let tokenize model text =
           | Some id -> Some (id, s, (pos, pos + length))
           | None -> find_best_length (length - 1)
       in
-      (match find_best_length (len - pos) with
+      match find_best_length (len - pos) with
       | Some token ->
           let _, _, (_, next_pos) = token in
           consume next_pos (token :: acc)
       | None ->
           let s = String.sub text pos 1 in
           let id = match token_to_id model s with Some id -> id | None -> 0 in
-          consume (pos + 1) ((id, s, (pos, pos + 1)) :: acc))
+          consume (pos + 1) ((id, s, (pos, pos + 1)) :: acc)
   in
   consume 0 []
 

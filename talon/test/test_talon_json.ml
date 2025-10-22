@@ -105,9 +105,7 @@ let test_with_nulls () =
   check_bool "has null" true (String.contains json 'n')
 
 let test_int_null_masks_are_serialized () =
-  let df =
-    create [ ("ints", Col.int32_opt [| Some 1l; None |]) ]
-  in
+  let df = create [ ("ints", Col.int32_opt [| Some 1l; None |]) ] in
   let json = Talon_json.to_string ~orient:`Records df in
   match Yojson.Basic.from_string json with
   | `List [ `Assoc first; `Assoc second ] -> (

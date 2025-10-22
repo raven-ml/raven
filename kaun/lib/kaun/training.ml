@@ -139,7 +139,9 @@ let merge_metric_history existing new_metrics =
       existing
   in
   let new_entries =
-    List.filter (fun (name, _) -> not (List.mem name existing_names)) new_metrics
+    List.filter
+      (fun (name, _) -> not (List.mem name existing_names))
+      new_metrics
     |> List.map (fun (name, value) -> (name, [ value ]))
   in
   updated_existing @ new_entries

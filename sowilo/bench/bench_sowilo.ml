@@ -10,17 +10,14 @@ module Fixtures = struct
 
   let img_1080 = lazy (load_image "img_1920x1080.png")
   let img_720 = lazy (load_image "img_1280x720.png")
-
   let gray_1080 = lazy (Sowilo.to_grayscale (Lazy.force img_1080))
   let gray_720 = lazy (Sowilo.to_grayscale (Lazy.force img_720))
-
   let img_1080 () = Lazy.force img_1080
   let gray_1080 () = Lazy.force gray_1080
   let gray_720 () = Lazy.force gray_720
 end
 
-let force_tensor tensor =
-  ignore (Rune.to_bigarray_ext tensor)
+let force_tensor tensor = ignore (Rune.to_bigarray_ext tensor)
 
 let bench_grayscale img =
   let gray = Sowilo.to_grayscale img in

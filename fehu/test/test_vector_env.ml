@@ -28,8 +28,7 @@ let make_simple_env ?(action_space = Space.Discrete.create 2) ~rng ~id () =
     let obs = Rune.create Rune.float32 [| 1 |] [| !state |] in
     Env.transition ~observation:obs ~reward:1.0 ~terminated ()
   in
-  Env.create ~id ~rng ~observation_space:obs_space ~action_space:action_space
-    ~reset ~step ()
+  Env.create ~id ~rng ~observation_space:obs_space ~action_space ~reset ~step ()
 
 let test_vec_env_creation () =
   let rng1 = Rune.Rng.key 42 in
@@ -46,17 +45,16 @@ let test_vec_env_incompatible_action_space () =
   let rng2 = Rune.Rng.key 202 in
   let env1 = make_simple_env ~rng:rng1 ~id:"Env1" () in
   let env2 =
-    make_simple_env
-      ~action_space:(Space.Discrete.create 3)
-      ~rng:rng2 ~id:"Env2" ()
+    make_simple_env ~action_space:(Space.Discrete.create 3) ~rng:rng2 ~id:"Env2"
+      ()
   in
   match Vector_env.create_sync ~envs:[ env1; env2 ] () with
   | exception Errors.Error (Errors.Invalid_metadata msg) ->
       Alcotest.(check bool)
-        "error mentions action space"
-        true
+        "error mentions action space" true
         (string_contains ~needle:"action" msg)
-  | _ -> Alcotest.fail "expected Invalid_metadata due to mismatched action space"
+  | _ ->
+      Alcotest.fail "expected Invalid_metadata due to mismatched action space"
 
 let test_vec_env_reset () =
   let rng1 = Rune.Rng.key 42 in
