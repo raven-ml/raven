@@ -12,8 +12,8 @@ All notable changes to this project will be documented in this file.
 - Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx (@tmattio)
 - Add public `conjugate` function for complex number conjugation (#123, @Arsalaan-Alam)
 - Fix complex vdot to conjugate first tensor before multiplication, ensuring correct mathematical behavior (#123, @Arsalaan-Alam)
-- Update comparison and conditional operations to use boolean tensors (#54, @nirnayroy)
-- Add support for rcond parameter and underdetermined systems to `lstsq` (#102, @nirnayroy)
+- Update comparison and conditional operations to use boolean tensors (#115, @nirnayroy)
+- Add support for rcond parameter and underdetermined systems to `lstsq` (#102, @Shocker444)
 - Fix `matrix_rank`/`pinv` Hermitian fast paths to use eigen-decomposition and match NumPy for complex inputs (#96, @six-shot, @tmattio)
 - Optimize matmul BLAS dispatch for strided tensors, improving matrix multiplication performance (@tmattio)
 - Fix slow builds reported since alpha1 (#88, @tmattio)
@@ -26,30 +26,50 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Fix `Rune.Rng.shuffle` flattening outputs for multi-dimensional tensors; the
+  shuffle now gathers along axis 0 and keeps shapes intact (@tmattio)
+- Replace `Rune.Rng.truncated_normal` clipping with rejection sampling so
+  samples stay inside the requested interval without boundary spikes (@tmattio)
 - Add support for categorical sampling with `Rune.Rng.categorical` (#89, @nirnayroy)
-- Allow plain `llvm-config` in discovery, fixing build in some platforms (#71, @tmattio)
+- Allow plain `llvm-config` in discovery, fixing build in some platforms (#71, @stepbrobd)
 
 ### Kaun
 
+- Prevent `Training.fit`/`evaluate` from consuming entire datasets eagerly and fail fast when a dataset yields no batches, avoiding hangs and division-by-zero crashes (tests added) (@tmattio)
+- Allow metric history to tolerate metrics that appear or disappear between epochs so dynamic metric sets no longer raise during training (@tmattio)
+- Make `Optimizer.clip_by_global_norm` robust to zero gradients and empty parameter trees to avoid NaNs during training (@tmattio)
 - Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD)
 
 ### Talon
 
-- Detect big integers as int64 in Talon CSV loader (#121, @nirnayroy)
+- Fix `fillna` to honor column null masks and replacements, restoring expected nullable semantics (@tmattio)
+- Preserve null masks when reindexing during joins so sentinel values remain valid data (@tmattio)
+- Handle numeric index columns in `pivot`, preventing distinct keys from collapsing into a single bucket (@tmattio)
+- Respect null masks when serializing numeric columns to JSON, emitting JSON `null` instead of sentinel values (@tmattio)
+- Detect big integers as int64 in Talon CSV loader (#121, @Arsalaan-Alam)
 - Allow forcing column types in Talon JSON loader (#104, @nirnayroy)
 
 ### Saga
 
+- Fix Unigram tokenization so longest matches are emitted without aborting the sequence when a vocab hit occurs (@tmattio)
+- Recompute pad token ids when the pad special string changes, preventing padding with stale ids (@tmattio)
 - Fix Unigram `token_to_id`/`id_to_token` vocabulary lookups (#117, @RidwanAdebosin)
 - Optimize `Pre_tokenizers.whitespace` to reduce allocations and improve tokenization performance (@tmattio)
 - Simplify tokenizers interface (@tmattio)
 
 ### Fehu
 
-- Finish clipped value loss support in Fehu.Training (#107, @nirnayroy)
+- Treat time-limit truncations as terminals when computing rollout advantages and expose the `truncated` flag in buffer steps (@tmattio)
+- Require callers of `Training.compute_gae` to pass final bootstrapping values and ensure `Training.evaluate` feeds the current observation to policies (@tmattio)
+- Allow `Space.Sequence.create` to omit `max_length`, keeping sequences unbounded above while preserving validation and sampling semantics (@tmattio)
+- Validate vectorized environments by round-tripping sample actions/observations across every instance, preventing incompatible spaces from slipping through (@tmattio)
+- Finish clipped value loss support in Fehu.Training (#119, @nirnayroy)
 
 ### Nx-datasets
 
+- Switch CIFAR-10 loader to the binary archive so parsing succeeds again (@tmattio)
+- Add a CIFAR-10 example (@tmattio)
+- Standardize dataset examples on `Logs` (@tmattio)
 - Use `Logs` for dataset loader logging (#95, @Satarupa22-SD)
 
 ## [1.0.0~alpha1] - 2025-10-02
