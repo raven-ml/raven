@@ -202,7 +202,12 @@ let train_epoch ~state ~dataset ~loss_fn ?(progress = false) () =
       state_ref := state';
       total_loss := !total_loss +. loss;
       if progress && !batch_count mod 10 = 0 then Printf.printf ".")
-    batches;
+    dataset;
+
+  if !batch_count = 0 then
+    invalid_arg
+      "Training.train_epoch: dataset produced no batches. Ensure your dataset \
+       yields at least one batch per epoch.";
 
   (if progress then
      let avg_step_time = !total_time /. float_of_int !batch_count *. 1000. in
@@ -527,6 +532,11 @@ let evaluate ~state ~dataset ~loss_fn ?(progress = false) () =
     dataset;
 
   if progress then Printf.printf " done\n%!";
+
+  if !batch_count = 0 then
+    invalid_arg
+      "Training.evaluate: dataset produced no batches. Ensure your validation \
+       dataset yields at least one batch.";
 
   let avg_loss = !total_loss /. float_of_int !batch_count in
   let metrics = State.compute_metrics state in
