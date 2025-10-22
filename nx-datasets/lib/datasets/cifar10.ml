@@ -4,11 +4,11 @@ open Dataset_utils
 
 let dataset_name = "cifar-10"
 let base_dir = get_cache_dir dataset_name
-let archive_dir_name = "cifar-10-batches-py"
+let archive_dir_name = "cifar-10-batches-bin"
 let dataset_dir = base_dir ^ archive_dir_name ^ "/"
-let url = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
+let url = "https://www.cs.toronto.edu/~kriz/cifar-10-binary.tar.gz"
 let tar_path = base_dir ^ Filename.basename url
-let test_batch_rel_path = archive_dir_name ^ "/test_batch"
+let test_batch_rel_path = archive_dir_name ^ "/test_batch.bin"
 
 (* Logging source for this loader *)
 let src = Logs.Src.create "nx.datasets.cifar10" ~doc:"CIFAR10 dataset loader"
@@ -72,7 +72,8 @@ let load () =
   Log.info (fun m -> m "Loading CIFAR-10 dataset...");
 
   let train_batches_files =
-    List.init 5 (fun i -> dataset_dir ^ Printf.sprintf "data_batch_%d" (i + 1))
+    List.init 5 (fun i ->
+        dataset_dir ^ Printf.sprintf "data_batch_%d.bin" (i + 1))
   in
   let train_batches_data = List.map read_cifar_batch train_batches_files in
 
@@ -109,7 +110,7 @@ let load () =
       current_offset := !current_offset + batch_size)
     train_batches_data;
 
-  let test_batch_file = dataset_dir ^ "test_batch" in
+  let test_batch_file = dataset_dir ^ "test_batch.bin" in
   let test_images, test_labels = read_cifar_batch test_batch_file in
 
   Log.info (fun m -> m "CIFAR-10 loading complete.");
