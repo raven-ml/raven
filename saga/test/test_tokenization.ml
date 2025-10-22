@@ -182,6 +182,47 @@ let test_unigram_special_tokens () =
   check (option string) "id to unicode" (Some "世界")
     (Tokenizer.id_to_token tokenizer 4)
 
+let test_unigram_encode_sequence () =
+  let tokenizer =
+    Tokenizer.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] ()
+  in
+  let encoding = Tokenizer.encode tokenizer "hello world" in
+  let tokens = Encoding.get_tokens encoding |> Array.to_list in
+  check (list string) "unigram encode tokens" [ "hello"; "world" ] tokens
+
+let test_pad_token_reassignment_updates_id () =
+  let vocab =
+    [ ("hello", 0); ("world", 1); ("<unk>", 2); ("<pad>", 3); ("[PAD]", 4) ]
+  in
+  let tokenizer =
+    Tokenizer.word_level ~vocab ~unk_token:"<unk>"
+      ~pre:(Pre_tokenizers.whitespace ())
+      ~specials:[ Special.pad "<pad>" ]
+      ()
+  in
+  let tokenizer = Tokenizer.set_pad_token tokenizer (Some "[PAD]") in
+  check (option string) "pad token updated" (Some "[PAD]")
+    (Tokenizer.pad_token tokenizer);
+  let pad_id =
+    match Tokenizer.token_to_id tokenizer "[PAD]" with
+    | Some id -> id
+    | None -> failwith "missing pad id"
+  in
+  let encoding =
+    Tokenizer.encode tokenizer "hello"
+      ~padding:
+        {
+          length = `Fixed 3;
+          direction = `Right;
+          pad_id = None;
+          pad_type_id = None;
+          pad_token = None;
+        }
+  in
+  let ids = Encoding.get_ids encoding |> Array.to_list in
+  let pad_ids = List.tl ids in
+  check (list int) "pad id matches reassigned token" [ pad_id; pad_id ] pad_ids
+
 (* ───── Edge Cases ───── *)
 
 let test_tokenize_long_text () =
@@ -238,6 +279,9 @@ let tokenization_tests =
       test_unigram_id_to_token_oob;
     test_case "unigram empty vocab" `Quick test_unigram_empty_vocab;
     test_case "unigram special tokens" `Quick test_unigram_special_tokens;
+    test_case "unigram encode sequence" `Quick test_unigram_encode_sequence;
+    test_case "pad token reassignment updates id" `Quick
+      test_pad_token_reassignment_updates_id;
   ]
 
 let () =
