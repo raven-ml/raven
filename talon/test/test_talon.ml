@@ -362,7 +362,7 @@ let test_agg_cumulative () =
   check_int "diff length" 3 (num_rows df_diff)
 
 let test_agg_nulls () =
-  let df = create [ ("x", Col.float32_list [ 1.0; Float.nan; 3.0 ]) ] in
+  let df = create [ ("x", Col.float32_opt [| Some 1.0; None; Some 3.0 |]) ] in
 
   let nulls = Agg.is_null df "x" in
   check_bool "null detection" true nulls.(1);
@@ -923,7 +923,7 @@ let test_rowagg_sum () =
   let df =
     create
       [
-        ("a", Col.float64_list [ 1.0; 2.0; Float.nan ]);
+        ("a", Col.float64_opt [| Some 1.0; Some 2.0; None |]);
         ("b", Col.float64_list [ 3.0; 4.0; 5.0 ]);
         ("c", Col.int32_list [ 5l; 6l; 7l ]);
       ]
@@ -940,7 +940,7 @@ let test_rowagg_sum () =
       check_float "Row 1 sum" 12.0 arr.(1);
       (* 2 + 4 + 6 *)
       check_float "Row 2 sum" 12.0 arr.(2)
-      (* NaN + 5 + 7, NaN skipped *)
+      (* None + 5 + 7, missing skipped *)
   | None -> Alcotest.fail "row_sum should exist"
 
 let test_row_number () =

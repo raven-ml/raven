@@ -20,10 +20,9 @@
 
     {3 Null Representation}
 
-    - {b Numeric columns}: Optional boolean mask tracks null entries explicitly.
-      When no mask exists, sentinel values (NaN for floats,
-      Int32.min_int/Int64.min_int for integers) indicate nulls. The mask takes
-      precedence when present.
+    - {b Numeric columns}: An optional boolean mask tracks null entries
+      explicitly. When no mask exists the column has no missing values; numeric
+      payloads (including NaN or extremal integers) are treated as regular data.
     - {b String/Boolean columns}: [None] values represent nulls explicitly
 
     {3 Creating Nullable Columns}
@@ -44,7 +43,7 @@
 
     {3 Accessing Values with Null Awareness}
 
-    Use option-based accessors to distinguish nulls from sentinel values:
+    Use option-based accessors to surface nulls as [None]:
     {[
       (* Row-wise option accessors *)
       Row.float64_opt "score" (* Returns None for nulls *) Row.int32_opt
@@ -158,12 +157,12 @@ module Col : sig
             - [B arr]: Boolean data with explicit [None] for nulls
 
             Null representation:
-            - Float columns: NaN values indicate nulls; nullable builders also
-              track an explicit null mask to distinguish genuine NaNs from
-              missing values
-            - Integer columns: [Int32.min_int]/[Int64.min_int] remain sentinel
-              defaults in the tensor, while the explicit mask disambiguates
-              missing entries from legitimate sentinel values
+            - Float columns: the optional mask determines which rows are null.
+              The underlying tensor may contain any float values (including
+              NaN), but these are treated as data unless masked out.
+            - Integer columns: the optional mask determines null rows. Extreme
+              integer values such as [Int32.min_int] remain valid data unless
+              explicitly masked.
             - String/Boolean columns: [None] values indicate nulls
 
             Invariants:
@@ -177,40 +176,39 @@ module Col : sig
 
   (** {3 From arrays (non-nullable)}
 
-      Create columns from arrays where null values use type-specific
-      representations (NaN for floats, min_int for integers). *)
+      Create columns from arrays without introducing null masks. Values are
+      taken literally; to represent missing data, use the [_opt] constructors
+      instead. *)
 
   val float32 : float array -> t
   (** [float32 arr] creates a float32 column from array.
 
-      NaN values in the input array are preserved and treated as nulls in
-      subsequent operations. All operations that check for nulls will recognize
-      NaN as a null value.
+      The resulting column has no null mask. All values, including [nan], are
+      treated as regular data. Use [float32_opt] to create a nullable column.
 
       Time complexity: O(n) where n is array length. *)
 
   val float64 : float array -> t
   (** [float64 arr] creates a float64 column from array.
 
-      NaN values in the input array are preserved and treated as nulls in
-      subsequent operations.
+      The resulting column has no null mask. All values, including [nan], are
+      treated as regular data. Use [float64_opt] for nullable columns.
 
       Time complexity: O(n) where n is array length. *)
 
   val int32 : int32 array -> t
   (** [int32 arr] creates an int32 column from array.
 
-      Values equal to [Int32.min_int] are treated as nulls. If your data
-      legitimately contains [Int32.min_int], consider using [int64] instead or
-      handle null representation explicitly with [int32_opt].
+      The resulting column has no null mask. Values equal to [Int32.min_int] are
+      treated as ordinary data. Use [int32_opt] to represent missing values.
 
       Time complexity: O(n) where n is array length. *)
 
   val int64 : int64 array -> t
   (** [int64 arr] creates an int64 column from array.
 
-      Values equal to [Int64.min_int] are treated as nulls. This sentinel value
-      is used consistently across the library for null integer representation.
+      The resulting column has no null mask. Values equal to [Int64.min_int]
+      remain ordinary data. Use [int64_opt] to represent missing values.
 
       Time complexity: O(n) where n is array length. *)
 
@@ -233,15 +231,15 @@ module Col : sig
   (** {3 From option arrays (nullable)}
 
       Create columns from option arrays with explicit null representation.
-      Numeric types convert None to sentinel values, while string/bool types
-      preserve the option structure. *)
+      Numeric types attach a null mask (while storing placeholder values in the
+      tensor), whereas string/bool types preserve the option structure. *)
 
   val float32_opt : float option array -> t
   (** [float32_opt arr] creates a nullable float32 column.
 
-      [None] values are converted to NaN in the underlying tensor for consistent
-      null representation. This allows mixing explicit [None] inputs with NaN
-      values in float operations.
+      [None] values are recorded in the null mask. Placeholder [nan] values are
+      stored in the tensor but callers must rely on the mask (via option
+      accessors or [Agg] helpers) to detect nulls.
 
       Example:
       {[
@@ -254,15 +252,17 @@ module Col : sig
   val float64_opt : float option array -> t
   (** [float64_opt arr] creates a nullable float64 column.
 
-      [None] values are converted to NaN in the underlying tensor.
+      [None] values are recorded in the null mask. Placeholder [nan] values are
+      stored in the tensor but callers must rely on the mask to detect nulls.
 
       Time complexity: O(n) where n is array length. *)
 
   val int32_opt : int32 option array -> t
   (** [int32_opt arr] creates a nullable int32 column.
 
-      [None] values are converted to [Int32.min_int] in the underlying tensor
-      for consistent null representation.
+      [None] values are recorded in the null mask. The tensor stores a
+      placeholder value ([Int32.min_int]) for efficiency, but the mask is
+      authoritative when checking for nulls.
 
       Example:
       {[
@@ -275,7 +275,9 @@ module Col : sig
   val int64_opt : int64 option array -> t
   (** [int64_opt arr] creates a nullable int64 column.
 
-      [None] values are converted to [Int64.min_int] in the underlying tensor.
+      [None] values are recorded in the null mask. The tensor stores a
+      placeholder value ([Int64.min_int]) for efficiency, but the mask is
+      authoritative when checking for nulls.
 
       Time complexity: O(n) where n is array length. *)
 
@@ -343,9 +345,10 @@ module Col : sig
   val of_tensor : ('a, 'b) Nx.t -> t
   (** [of_tensor t] creates a column from a 1D tensor.
 
-      The tensor's dtype is preserved in the resulting column. For float
-      tensors, existing NaN values are treated as nulls. For integer tensors,
-      min_int values are treated as nulls.
+      The tensor's dtype is preserved in the resulting column. The column is
+      treated as non-nullable: existing payload values (including NaNs or
+      extremal integers) remain regular data. Use the [_opt] builders to attach
+      null masks.
 
       @raise Invalid_argument if tensor is not 1D.
 
@@ -360,9 +363,8 @@ module Col : sig
   (** [has_nulls col] returns true if column contains any null values.
 
       Checks for nulls according to column type:
-      - Float columns: scans for NaN values
-      - Integer columns: scans for min_int sentinel values
-      - String/Boolean columns: scans for [None] values
+      - Numeric columns: consult the null mask (if present)
+      - String/Boolean columns: scan for [None] values
 
       Time complexity: O(n) in worst case (scans entire column). *)
 
@@ -1232,14 +1234,14 @@ module Row : sig
 
   (** {2 Option-based accessors}
 
-      These accessors return [None] for null values instead of using sentinel
-      values or defaults. Use these when you need to distinguish genuine values
-      from missing data. *)
+      These accessors return [None] for null values instead of using placeholder
+      tensor values. Use these when you need to distinguish genuine values from
+      missing data. *)
 
   val float32_opt : string -> float option row
   (** [float32_opt name] extracts float32 values as options from column.
 
-      Returns [None] for null values (NaN or explicitly masked). Use this
+      Returns [None] for null values (as indicated by the mask). Use this
       instead of [float32] when you need to distinguish null values from valid
       data.
 
@@ -1249,7 +1251,7 @@ module Row : sig
   val float64_opt : string -> float option row
   (** [float64_opt name] extracts float64 values as options from column.
 
-      Returns [None] for null values (NaN or explicitly masked).
+      Returns [None] for null values (as indicated by the mask).
 
       @raise Not_found if column doesn't exist.
       @raise Invalid_argument if column is not float64 type. *)
@@ -1257,7 +1259,7 @@ module Row : sig
   val int32_opt : string -> int32 option row
   (** [int32_opt name] extracts int32 values as options from column.
 
-      Returns [None] for null values (Int32.min_int or explicitly masked).
+      Returns [None] for null values (as indicated by the mask).
 
       @raise Not_found if column doesn't exist.
       @raise Invalid_argument if column is not int32 type. *)
@@ -1265,7 +1267,7 @@ module Row : sig
   val int64_opt : string -> int64 option row
   (** [int64_opt name] extracts int64 values as options from column.
 
-      Returns [None] for null values (Int64.min_int or explicitly masked).
+      Returns [None] for null values (as indicated by the mask).
 
       @raise Not_found if column doesn't exist.
       @raise Invalid_argument if column is not int64 type. *)
@@ -1964,8 +1966,7 @@ module Agg : sig
     val min : t -> string -> float option
     (** [min df name] returns minimum value, [None] if empty or all nulls.
 
-        Null values are ignored during comparison. For integer columns, sentinel
-        null values (min_int) are excluded.
+        Null values are ignored during comparison.
 
         Time complexity: O(n) where n is the number of rows. *)
 
@@ -2009,8 +2010,8 @@ module Agg : sig
     (** [sum df name] returns sum as int64.
 
         Works on int32 and int64 columns. Uses int64 to avoid overflow issues
-        that could occur with int32 sums. Null values (sentinel min_int values)
-        are excluded from the sum.
+        that could occur with int32 sums. Null values (as indicated by the
+        column mask) are excluded from the sum.
 
         Time complexity: O(n) where n is the number of rows. *)
 

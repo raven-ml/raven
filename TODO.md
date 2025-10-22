@@ -1,5 +1,11 @@
 # todo
 
+## alpha
+
+- fix einsum issue
+- close rune grad performances gap (within <2x of pytorch)
+- close nx performance gaps (within <2x of numpy)
+
 ## beta (jit)
 
 goalpost: jit-compiled gpt2 matching pytorch performance

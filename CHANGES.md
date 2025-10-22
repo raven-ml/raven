@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Speed up contiguous elementwise ops via vectorized loops (@tmattio)
+- Fast-path contiguous single-axis reductions to avoid iterator fallback (@tmattio)
 - Speed up float reductions with contiguous multi-axis fast paths (@tmattio)
 - Fast-path padding-free `unfold` to lower conv2d overhead (@tmattio)
 - Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx (@tmattio)
@@ -39,7 +41,8 @@ All notable changes to this project will be documented in this file.
 
 ### Kaun
 
-- Prevent `Training.fit`/`evaluate` from consuming entire datasets eagerly and fail fast when a dataset yields no batches, avoiding hangs and division-by-zero crashes (tests added) (@tmattio)
+- Preserve empty sequential modules when unflattening so indices stay aligned for checkpoint round-tripping (@tmattio)
+- Prevent `Training.fit`/`evaluate` from consuming entire datasets eagerly and fail fast when a dataset yields no batches, avoiding hangs and division-by-zero crashes (@tmattio)
 - Allow metric history to tolerate metrics that appear or disappear between epochs so dynamic metric sets no longer raise during training (@tmattio)
 - Make `Optimizer.clip_by_global_norm` robust to zero gradients and empty parameter trees to avoid NaNs during training (@tmattio)
 - Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD)
@@ -47,6 +50,7 @@ All notable changes to this project will be documented in this file.
 
 ### Talon
 
+- Remove automatic sentinel-based null detection for numeric columns; explicit masks (via [_opt] constructors) now define missing data semantics (@tmattio)
 - Replace join nested loops with hashed join indices, cutting lookup from O(n·m) to near O(n) (@tmattio)
 - Reuse a shared Nx-based column reindexer so filter/sample paths avoid repeated array copies (@tmattio)
 - Fix `fillna` to honor column null masks and replacements, restoring expected nullable semantics (@tmattio)
@@ -65,6 +69,13 @@ All notable changes to this project will be documented in this file.
 - Fix Unigram `token_to_id`/`id_to_token` vocabulary lookups (#117, @RidwanAdebosin)
 - Optimize `Pre_tokenizers.whitespace` to reduce allocations and improve tokenization performance (@tmattio)
 - Simplify tokenizers interface (@tmattio)
+
+### Sowilo
+
+- Add `resize` (nearest & bilinear) that works for 2D, batched, and NHWC tensors (@tmattio)
+- Update grayscale conversion and RGB/BGR channel swaps to run entirely on Rune ops, keeping batched inputs compatible with JIT backends (@tmattio)
+- Make `median_blur` compute the true median so salt-and-pepper noise is removed as expected (@tmattio)
+- Fix `erode`/`dilate` so custom structuring elements (e.g. cross vs. square) and batched tensors produce the correct morphology result (@tmattio)
 
 ### Fehu
 

@@ -329,25 +329,45 @@ let unflatten_from_paths pairs =
 
         if String.length first_key > 0 && first_key.[0] = '[' then
           (* This is a list *)
-          let items =
-            List.map
-              (fun (path, tensor) ->
+          let grouped =
+            List.fold_left
+              (fun acc (path, tensor) ->
                 match path with
                 | index_str :: rest ->
                     let index =
                       int_of_string
                         (String.sub index_str 1 (String.length index_str - 2))
                     in
-                    (index, (rest, tensor))
+                    let existing =
+                      match List.assoc_opt index acc with
+                      | Some items -> items
+                      | None -> []
+                    in
+                    (index, (rest, tensor) :: existing)
+                    :: List.remove_assoc index acc
                 | _ -> failwith "unflatten_from_paths: invalid list path")
-              groups
+              [] groups
           in
-          let sorted_items =
-            List.sort (fun (i1, _) (i2, _) -> compare i1 i2) items
+          let sorted_groups =
+            List.sort (fun (i1, _) (i2, _) -> compare i1 i2) grouped
           in
-          let sub_groups = List.map (fun (_, item) -> item) sorted_items in
-          let sub_trees = List.map (fun g -> build_tree [ g ]) sub_groups in
-          List sub_trees
+          let max_index =
+            List.fold_left
+              (fun acc (idx, _) -> Stdlib.max acc idx)
+              (-1) sorted_groups
+          in
+          let rec build idx remaining =
+            match remaining with
+            | [] ->
+                if idx > max_index then [] else List [] :: build (idx + 1) []
+            | (group_idx, items) :: tl ->
+                if idx < group_idx then List [] :: build (idx + 1) remaining
+                else
+                  let subtree = build_tree (List.rev items) in
+                  subtree :: build (idx + 1) tl
+          in
+          let elements = if max_index < 0 then [] else build 0 sorted_groups in
+          List elements
         else
           (* This is a record *)
           let record_groups =

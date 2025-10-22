@@ -9,6 +9,7 @@
 #include <complex.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "nx_c_shared.h"
 
@@ -79,6 +80,110 @@ static inline long product_of_axes(const ndarray_t *input,
     prod *= dim;
   }
   return prod;
+}
+
+static inline void fill_zero_float(float *dst, long count) {
+  if (count <= 0) return;
+  memset(dst, 0, (size_t)count * sizeof(float));
+}
+
+static inline void fill_zero_double(double *dst, long count) {
+  if (count <= 0) return;
+  memset(dst, 0, (size_t)count * sizeof(double));
+}
+
+static inline bool reduce_sum_single_axis_f32(const ndarray_t *input,
+                                              ndarray_t *output, int axis,
+                                              bool keepdims) {
+  (void)keepdims;
+  if (!is_contiguous(input) || !is_contiguous(output)) return false;
+
+  float *restrict in = (float *)input->data + input->offset;
+  float *restrict out = (float *)output->data + output->offset;
+
+  long axis_size = input->shape[axis];
+  long inner = 1;
+  for (int i = axis + 1; i < input->ndim; ++i) {
+    long dim = input->shape[i];
+    inner *= dim;
+  }
+
+  if (axis_size == 0 || inner == 0) {
+    fill_zero_float(out, total_elements_safe(output));
+    return true;
+  }
+
+  long total = total_elements_safe(input);
+  if (total == 0) {
+    fill_zero_float(out, total_elements_safe(output));
+    return true;
+  }
+
+  long total_out = total_elements_safe(output);
+  if (total_out == 0) return true;
+
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (total_out > 4096)
+#endif
+  for (long idx = 0; idx < total_out; ++idx) {
+    long outer_idx = inner == 1 ? idx : idx / inner;
+    long inner_idx = inner == 1 ? 0 : idx % inner;
+    long base = outer_idx * axis_size * inner + inner_idx;
+    float acc = 0.0f;
+    for (long k = 0; k < axis_size; ++k) {
+      acc += in[base + k * inner];
+    }
+    out[idx] = acc;
+  }
+
+  return true;
+}
+
+static inline bool reduce_sum_single_axis_f64(const ndarray_t *input,
+                                              ndarray_t *output, int axis,
+                                              bool keepdims) {
+  (void)keepdims;
+  if (!is_contiguous(input) || !is_contiguous(output)) return false;
+
+  double *restrict in = (double *)input->data + input->offset;
+  double *restrict out = (double *)output->data + output->offset;
+
+  long axis_size = input->shape[axis];
+  long inner = 1;
+  for (int i = axis + 1; i < input->ndim; ++i) {
+    long dim = input->shape[i];
+    inner *= dim;
+  }
+
+  if (axis_size == 0 || inner == 0) {
+    fill_zero_double(out, total_elements_safe(output));
+    return true;
+  }
+
+  long total = total_elements_safe(input);
+  if (total == 0) {
+    fill_zero_double(out, total_elements_safe(output));
+    return true;
+  }
+
+  long total_out = total_elements_safe(output);
+  if (total_out == 0) return true;
+
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (total_out > 4096)
+#endif
+  for (long idx = 0; idx < total_out; ++idx) {
+    long outer_idx = inner == 1 ? idx : idx / inner;
+    long inner_idx = inner == 1 ? 0 : idx % inner;
+    long base = outer_idx * axis_size * inner + inner_idx;
+    double acc = 0.0;
+    for (long k = 0; k < axis_size; ++k) {
+      acc += in[base + k * inner];
+    }
+    out[idx] = acc;
+  }
+
+  return true;
 }
 
 // Helper functions
@@ -606,129 +711,135 @@ REDUCE_OP_FOR_TYPE(reduce_sum, intnat, inat, SUM_IDENTITY(intnat),
 // Optimized last-dim contiguous fast paths for f32/f64 reduce_sum
 static void nx_c_reduce_sum_f32(const ndarray_t *input, ndarray_t *output,
                                 const int *axes, int num_axes, bool keepdims) {
-  int last = input->ndim - 1;
-  if (num_axes == 1 && axes[0] == last && is_contiguous(input) &&
-      is_contiguous(output) && input->ndim >= 1) {
-    long K = input->shape[last];
-    long total = total_elements_safe(input);
-    long M = (K == 0) ? 0 : (total / K);
-    float *in = (float *)input->data;
-    float *out = (float *)output->data;
-    long in_off = input->offset;
-    long out_off = output->offset;
-    _Pragma("omp parallel for if(M > 1024)")
-    for (long r = 0; r < M; ++r) {
-      const float *row = in + in_off + r * K;
-      float acc = 0.0f;
-      for (long p = 0; p < K; ++p) acc += row[p];
-      out[out_off + r] = acc;
+  int sorted_axes[MAX_NDIM];
+  bool have_sorted = false;
+  if (num_axes > 0) {
+    have_sorted =
+        normalize_and_sort_axes(input->ndim, axes, num_axes, sorted_axes);
+    if (!have_sorted) {
+      nx_c_reduce_sum_f32_generic_wrap(input, output, axes, num_axes, keepdims);
+      return;
     }
-    return;
   }
 
   if (num_axes == input->ndim && is_contiguous(input) &&
-      total_elements_safe(output) == 1) {
+      is_contiguous(output)) {
     long total = total_elements_safe(input);
+    long out_total = total_elements_safe(output);
+    if (out_total == 0) return;
+    float *out = (float *)output->data + output->offset;
+    if (total == 0) {
+      fill_zero_float(out, out_total);
+      return;
+    }
     float *in = (float *)input->data + input->offset;
     float result = 0.0f;
-    _Pragma("omp parallel for reduction(+:result) if(total > 4096)")
+#if defined(_OPENMP)
+#pragma omp parallel for reduction(+:result) if (total > 4096)
+#endif
     for (long i = 0; i < total; ++i) {
       result += in[i];
     }
-    float *out = (float *)output->data + output->offset;
     out[0] = result;
     return;
   }
 
-  if (is_contiguous(input) && is_contiguous(output) && num_axes > 0) {
-    int sorted_axes[MAX_NDIM];
-    if (normalize_and_sort_axes(input->ndim, axes, num_axes, sorted_axes) &&
-        axes_are_trailing(input->ndim, num_axes, sorted_axes)) {
-      long total = total_elements_safe(input);
-      long K = product_of_axes(input, sorted_axes, num_axes);
-      float *out = (float *)output->data + output->offset;
-      long out_total = total_elements_safe(output);
-      if (K == 0 || total == 0 || out_total == 0) {
-        for (long i = 0; i < out_total; ++i) out[i] = 0.0f;
-        return;
-      }
-      long M = total / K;
-      float *in = (float *)input->data + input->offset;
-      _Pragma("omp parallel for if(M > 1024)")
-      for (long m = 0; m < M; ++m) {
-        const float *chunk = in + (m * K);
-        float acc = 0.0f;
-        for (long p = 0; p < K; ++p) acc += chunk[p];
-        out[m] = acc;
-      }
+  if (have_sorted && num_axes == 1) {
+    if (reduce_sum_single_axis_f32(input, output, sorted_axes[0], keepdims))
+      return;
+  }
+
+  if (have_sorted && is_contiguous(input) && is_contiguous(output) &&
+      axes_are_trailing(input->ndim, num_axes, sorted_axes)) {
+    long total = total_elements_safe(input);
+    long K = product_of_axes(input, sorted_axes, num_axes);
+    float *out = (float *)output->data + output->offset;
+    long out_total = total_elements_safe(output);
+    if (K == 0 || total == 0 || out_total == 0) {
+      fill_zero_float(out, out_total);
       return;
     }
+    long M = total / K;
+    float *in = (float *)input->data + input->offset;
+#if defined(_OPENMP)
+#pragma omp parallel for if (M > 1024)
+#endif
+    for (long m = 0; m < M; ++m) {
+      const float *chunk = in + (m * K);
+      float acc = 0.0f;
+      for (long p = 0; p < K; ++p) acc += chunk[p];
+      out[m] = acc;
+    }
+    return;
   }
-  // Fallback to generic implementation
+
   nx_c_reduce_sum_f32_generic_wrap(input, output, axes, num_axes, keepdims);
 }
 
 static void nx_c_reduce_sum_f64(const ndarray_t *input, ndarray_t *output,
                                 const int *axes, int num_axes, bool keepdims) {
-  int last = input->ndim - 1;
-  if (num_axes == 1 && axes[0] == last && is_contiguous(input) &&
-      is_contiguous(output) && input->ndim >= 1) {
-    long K = input->shape[last];
-    long total = total_elements_safe(input);
-    long M = (K == 0) ? 0 : (total / K);
-    double *in = (double *)input->data;
-    double *out = (double *)output->data;
-    long in_off = input->offset;
-    long out_off = output->offset;
-    _Pragma("omp parallel for if(M > 1024)")
-    for (long r = 0; r < M; ++r) {
-      const double *row = in + in_off + r * K;
-      double acc = 0.0;
-      for (long p = 0; p < K; ++p) acc += row[p];
-      out[out_off + r] = acc;
+  int sorted_axes[MAX_NDIM];
+  bool have_sorted = false;
+  if (num_axes > 0) {
+    have_sorted =
+        normalize_and_sort_axes(input->ndim, axes, num_axes, sorted_axes);
+    if (!have_sorted) {
+      nx_c_reduce_sum_f64_generic_wrap(input, output, axes, num_axes, keepdims);
+      return;
     }
-    return;
   }
 
   if (num_axes == input->ndim && is_contiguous(input) &&
-      total_elements_safe(output) == 1) {
+      is_contiguous(output)) {
     long total = total_elements_safe(input);
+    long out_total = total_elements_safe(output);
+    if (out_total == 0) return;
+    double *out = (double *)output->data + output->offset;
+    if (total == 0) {
+      fill_zero_double(out, out_total);
+      return;
+    }
     double *in = (double *)input->data + input->offset;
     double result = 0.0;
-    _Pragma("omp parallel for reduction(+:result) if(total > 4096)")
+#if defined(_OPENMP)
+#pragma omp parallel for reduction(+:result) if (total > 4096)
+#endif
     for (long i = 0; i < total; ++i) {
       result += in[i];
     }
-    double *out = (double *)output->data + output->offset;
     out[0] = result;
     return;
   }
 
-  if (is_contiguous(input) && is_contiguous(output) && num_axes > 0) {
-    int sorted_axes[MAX_NDIM];
-    if (normalize_and_sort_axes(input->ndim, axes, num_axes, sorted_axes) &&
-        axes_are_trailing(input->ndim, num_axes, sorted_axes)) {
-      long total = total_elements_safe(input);
-      long K = product_of_axes(input, sorted_axes, num_axes);
-      double *out = (double *)output->data + output->offset;
-      long out_total = total_elements_safe(output);
-      if (K == 0 || total == 0 || out_total == 0) {
-        for (long i = 0; i < out_total; ++i) out[i] = 0.0;
-        return;
-      }
-      long M = total / K;
-      double *in = (double *)input->data + input->offset;
-      _Pragma("omp parallel for if(M > 1024)")
-      for (long m = 0; m < M; ++m) {
-        const double *chunk = in + (m * K);
-        double acc = 0.0;
-        for (long p = 0; p < K; ++p) acc += chunk[p];
-        out[m] = acc;
-      }
+  if (have_sorted && num_axes == 1) {
+    if (reduce_sum_single_axis_f64(input, output, sorted_axes[0], keepdims))
+      return;
+  }
+
+  if (have_sorted && is_contiguous(input) && is_contiguous(output) &&
+      axes_are_trailing(input->ndim, num_axes, sorted_axes)) {
+    long total = total_elements_safe(input);
+    long K = product_of_axes(input, sorted_axes, num_axes);
+    double *out = (double *)output->data + output->offset;
+    long out_total = total_elements_safe(output);
+    if (K == 0 || total == 0 || out_total == 0) {
+      fill_zero_double(out, out_total);
       return;
     }
+    long M = total / K;
+    double *in = (double *)input->data + input->offset;
+#if defined(_OPENMP)
+#pragma omp parallel for if (M > 1024)
+#endif
+    for (long m = 0; m < M; ++m) {
+      const double *chunk = in + (m * K);
+      double acc = 0.0;
+      for (long p = 0; p < K; ++p) acc += chunk[p];
+      out[m] = acc;
+    }
+    return;
   }
-  // Fallback to generic implementation
+
   nx_c_reduce_sum_f64_generic_wrap(input, output, axes, num_axes, keepdims);
 }
 

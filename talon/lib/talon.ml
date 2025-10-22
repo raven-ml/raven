@@ -74,67 +74,27 @@ module Col = struct
     | B arr -> Array.length arr
 
   let has_nulls col =
-    match null_mask col with
-    | Some mask -> Array.exists Fun.id mask
-    | None -> (
-        match col with
-        | P (Nx.Float32, t, _) ->
-            let arr = Nx.to_array t in
-            Array.exists (fun x -> classify_float x = FP_nan) arr
-        | P (Nx.Float64, t, _) ->
-            let arr = Nx.to_array t in
-            Array.exists (fun x -> classify_float x = FP_nan) arr
-        | P (Nx.Int32, t, _) ->
-            let arr = Nx.to_array t in
-            Array.exists (fun x -> x = Int32.min_int) arr
-        | P (Nx.Int64, t, _) ->
-            let arr = Nx.to_array t in
-            Array.exists (fun x -> x = Int64.min_int) arr
-        | P _ -> false
-        | S arr -> Array.exists Option.is_none arr
-        | B arr -> Array.exists Option.is_none arr)
+    match col with
+    | P (_, _, Some mask) -> Array.exists Fun.id mask
+    | P _ -> false
+    | S arr -> Array.exists Option.is_none arr
+    | B arr -> Array.exists Option.is_none arr
 
   let null_count col =
-    match null_mask col with
-    | Some mask ->
+    match col with
+    | P (_, _, Some mask) ->
         Array.fold_left
           (fun acc is_null -> if is_null then acc + 1 else acc)
           0 mask
-    | None ->
-        if has_nulls col then
-          match col with
-          | P (Nx.Float32, t, _) ->
-              let arr = Nx.to_array t in
-              Array.fold_left
-                (fun acc x ->
-                  if classify_float x = FP_nan then acc + 1 else acc)
-                0 arr
-          | P (Nx.Float64, t, _) ->
-              let arr = Nx.to_array t in
-              Array.fold_left
-                (fun acc x ->
-                  if classify_float x = FP_nan then acc + 1 else acc)
-                0 arr
-          | P (Nx.Int32, t, _) ->
-              let arr = Nx.to_array t in
-              Array.fold_left
-                (fun acc x -> if x = Int32.min_int then acc + 1 else acc)
-                0 arr
-          | P (Nx.Int64, t, _) ->
-              let arr = Nx.to_array t in
-              Array.fold_left
-                (fun acc x -> if x = Int64.min_int then acc + 1 else acc)
-                0 arr
-          | P _ -> 0
-          | S arr ->
-              Array.fold_left
-                (fun acc x -> if Option.is_none x then acc + 1 else acc)
-                0 arr
-          | B arr ->
-              Array.fold_left
-                (fun acc x -> if Option.is_none x then acc + 1 else acc)
-                0 arr
-        else 0
+    | P _ -> 0
+    | S arr ->
+        Array.fold_left
+          (fun acc x -> if Option.is_none x then acc + 1 else acc)
+          0 arr
+    | B arr ->
+        Array.fold_left
+          (fun acc x -> if Option.is_none x then acc + 1 else acc)
+          0 arr
 
   let drop_nulls col =
     let filter_with_mask arr mask =
@@ -147,54 +107,23 @@ module Col = struct
       aux (Array.length arr - 1) []
     in
     match col with
-    | P (Nx.Float32, t, mask_opt) ->
+    | P (Nx.Float32, t, Some mask_opt) ->
         let arr = Nx.to_array t in
-        let filtered =
-          match mask_opt with
-          | Some mask -> filter_with_mask arr mask
-          | None ->
-              Array.fold_right
-                (fun value acc ->
-                  if classify_float value = FP_nan then acc else value :: acc)
-                arr []
-        in
+        let filtered = filter_with_mask arr mask_opt in
         float32 (Array.of_list filtered)
-    | P (Nx.Float64, t, mask_opt) ->
+    | P (Nx.Float64, t, Some mask_opt) ->
         let arr = Nx.to_array t in
-        let filtered =
-          match mask_opt with
-          | Some mask -> filter_with_mask arr mask
-          | None ->
-              Array.fold_right
-                (fun value acc ->
-                  if classify_float value = FP_nan then acc else value :: acc)
-                arr []
-        in
+        let filtered = filter_with_mask arr mask_opt in
         float64 (Array.of_list filtered)
-    | P (Nx.Int32, t, mask_opt) ->
+    | P (Nx.Int32, t, Some mask_opt) ->
         let arr = Nx.to_array t in
-        let filtered =
-          match mask_opt with
-          | Some mask -> filter_with_mask arr mask
-          | None ->
-              Array.fold_right
-                (fun value acc ->
-                  if value = Int32.min_int then acc else value :: acc)
-                arr []
-        in
+        let filtered = filter_with_mask arr mask_opt in
         int32 (Array.of_list filtered)
-    | P (Nx.Int64, t, mask_opt) ->
+    | P (Nx.Int64, t, Some mask_opt) ->
         let arr = Nx.to_array t in
-        let filtered =
-          match mask_opt with
-          | Some mask -> filter_with_mask arr mask
-          | None ->
-              Array.fold_right
-                (fun value acc ->
-                  if value = Int64.min_int then acc else value :: acc)
-                arr []
-        in
+        let filtered = filter_with_mask arr mask_opt in
         int64 (Array.of_list filtered)
+    | P (_, _, None) -> col
     | P (dtype, t, mask) -> numeric ?mask dtype t
     | S arr ->
         let filtered = Array.to_list arr |> List.filter_map Fun.id in
@@ -205,72 +134,76 @@ module Col = struct
 
   let fill_nulls_float32 col ~value =
     match col with
-    | P (Nx.Float32, t, mask_opt) ->
+    | P (Nx.Float32, t, Some mask_opt) ->
         let arr : float array = Nx.to_array t in
-        let filled =
-          match mask_opt with
-          | Some mask ->
-              Array.mapi
-                (fun i x ->
-                  if mask.(i) || classify_float x = FP_nan then value else x)
-                arr
-          | None ->
-              Array.map
-                (fun x -> if classify_float x = FP_nan then value else x)
-                arr
-        in
-        float32 filled
+        let filled = Array.copy arr in
+        let mask = Array.copy mask_opt in
+        Array.iteri
+          (fun i is_null ->
+            if is_null then (
+              filled.(i) <- value;
+              mask.(i) <- false))
+          mask_opt;
+        let mask = if Array.exists Fun.id mask then Some mask else None in
+        P
+          ( Nx.Float32,
+            Nx.create Nx.float32 [| Array.length filled |] filled,
+            mask )
+    | P (Nx.Float32, t, None) -> P (Nx.Float32, t, None)
     | _ -> invalid_arg "fill_nulls_float32: column must be float32"
 
   let fill_nulls_float64 col ~value =
     match col with
-    | P (Nx.Float64, t, mask_opt) ->
+    | P (Nx.Float64, t, Some mask_opt) ->
         let arr : float array = Nx.to_array t in
-        let filled =
-          match mask_opt with
-          | Some mask ->
-              Array.mapi
-                (fun i x ->
-                  if mask.(i) || classify_float x = FP_nan then value else x)
-                arr
-          | None ->
-              Array.map
-                (fun x -> if classify_float x = FP_nan then value else x)
-                arr
-        in
-        float64 filled
+        let filled = Array.copy arr in
+        let mask = Array.copy mask_opt in
+        Array.iteri
+          (fun i is_null ->
+            if is_null then (
+              filled.(i) <- value;
+              mask.(i) <- false))
+          mask_opt;
+        let mask = if Array.exists Fun.id mask then Some mask else None in
+        P
+          ( Nx.Float64,
+            Nx.create Nx.float64 [| Array.length filled |] filled,
+            mask )
+    | P (Nx.Float64, t, None) -> P (Nx.Float64, t, None)
     | _ -> invalid_arg "fill_nulls_float64: column must be float64"
 
   let fill_nulls_int32 col ~value =
     match col with
-    | P (Nx.Int32, t, mask_opt) ->
+    | P (Nx.Int32, t, Some mask_opt) ->
         let arr : int32 array = Nx.to_array t in
-        let filled =
-          match mask_opt with
-          | Some mask ->
-              Array.mapi
-                (fun i x -> if mask.(i) || x = Int32.min_int then value else x)
-                arr
-          | None ->
-              Array.map (fun x -> if x = Int32.min_int then value else x) arr
-        in
-        int32 filled
+        let filled = Array.copy arr in
+        let mask = Array.copy mask_opt in
+        Array.iteri
+          (fun i is_null ->
+            if is_null then (
+              filled.(i) <- value;
+              mask.(i) <- false))
+          mask_opt;
+        let mask = if Array.exists Fun.id mask then Some mask else None in
+        P (Nx.Int32, Nx.create Nx.int32 [| Array.length filled |] filled, mask)
+    | P (Nx.Int32, t, None) -> P (Nx.Int32, t, None)
     | _ -> invalid_arg "fill_nulls_int32: column must be int32"
 
   let fill_nulls_int64 col ~value =
     match col with
-    | P (Nx.Int64, t, mask_opt) ->
+    | P (Nx.Int64, t, Some mask_opt) ->
         let arr : int64 array = Nx.to_array t in
-        let filled =
-          match mask_opt with
-          | Some mask ->
-              Array.mapi
-                (fun i x -> if mask.(i) || x = Int64.min_int then value else x)
-                arr
-          | None ->
-              Array.map (fun x -> if x = Int64.min_int then value else x) arr
-        in
-        int64 filled
+        let filled = Array.copy arr in
+        let mask = Array.copy mask_opt in
+        Array.iteri
+          (fun i is_null ->
+            if is_null then (
+              filled.(i) <- value;
+              mask.(i) <- false))
+          mask_opt;
+        let mask = if Array.exists Fun.id mask then Some mask else None in
+        P (Nx.Int64, Nx.create Nx.int64 [| Array.length filled |] filled, mask)
+    | P (Nx.Int64, t, None) -> P (Nx.Int64, t, None)
     | _ -> invalid_arg "fill_nulls_int64: column must be int64"
 
   let fill_nulls_string col ~value =
@@ -527,16 +460,8 @@ let to_float32_options t name =
       let result =
         match mask_opt with
         | Some mask ->
-            Array.mapi
-              (fun i x ->
-                if mask.(i) then None
-                else if classify_float x = FP_nan then None
-                else Some x)
-              arr
-        | None ->
-            Array.map
-              (fun x -> if classify_float x = FP_nan then None else Some x)
-              arr
+            Array.mapi (fun i x -> if mask.(i) then None else Some x) arr
+        | None -> Array.map (fun x -> Some x) arr
       in
       Some result
   | _ -> None
@@ -548,16 +473,8 @@ let to_float64_options t name =
       let result =
         match mask_opt with
         | Some mask ->
-            Array.mapi
-              (fun i x ->
-                if mask.(i) then None
-                else if classify_float x = FP_nan then None
-                else Some x)
-              arr
-        | None ->
-            Array.map
-              (fun x -> if classify_float x = FP_nan then None else Some x)
-              arr
+            Array.mapi (fun i x -> if mask.(i) then None else Some x) arr
+        | None -> Array.map (fun x -> Some x) arr
       in
       Some result
   | _ -> None
@@ -569,14 +486,8 @@ let to_int32_options t name =
       let result =
         match mask_opt with
         | Some mask ->
-            Array.mapi
-              (fun i x ->
-                if mask.(i) then None
-                else if x = Int32.min_int then None
-                else Some x)
-              arr
-        | None ->
-            Array.map (fun x -> if x = Int32.min_int then None else Some x) arr
+            Array.mapi (fun i x -> if mask.(i) then None else Some x) arr
+        | None -> Array.map (fun x -> Some x) arr
       in
       Some result
   | _ -> None
@@ -588,14 +499,8 @@ let to_int64_options t name =
       let result =
         match mask_opt with
         | Some mask ->
-            Array.mapi
-              (fun i x ->
-                if mask.(i) then None
-                else if x = Int64.min_int then None
-                else Some x)
-              arr
-        | None ->
-            Array.map (fun x -> if x = Int64.min_int then None else Some x) arr
+            Array.mapi (fun i x -> if mask.(i) then None else Some x) arr
+        | None -> Array.map (fun x -> Some x) arr
       in
       Some result
   | _ -> None
@@ -887,9 +792,7 @@ module Row = struct
           in
           match mask_opt with
           | Some mask when mask.(i) -> None
-          | _ ->
-              let value = arr.(i) in
-              if classify_float value = FP_nan then None else Some value);
+          | _ -> Some arr.(i));
     }
 
   let float64_opt name =
@@ -913,9 +816,7 @@ module Row = struct
           in
           match mask_opt with
           | Some mask when mask.(i) -> None
-          | _ ->
-              let value = arr.(i) in
-              if classify_float value = FP_nan then None else Some value);
+          | _ -> Some arr.(i));
     }
 
   let int32_opt name =
@@ -939,9 +840,7 @@ module Row = struct
           in
           match mask_opt with
           | Some mask when mask.(i) -> None
-          | _ ->
-              let value = arr.(i) in
-              if value = Int32.min_int then None else Some value);
+          | _ -> Some arr.(i));
     }
 
   let int64_opt name =
@@ -965,9 +864,7 @@ module Row = struct
           in
           match mask_opt with
           | Some mask when mask.(i) -> None
-          | _ ->
-              let value = arr.(i) in
-              if value = Int64.min_int then None else Some value);
+          | _ -> Some arr.(i));
     }
 
   let string_opt name =
@@ -1422,51 +1319,11 @@ let drop_nulls ?subset t =
   List.iter
     (fun col_name ->
       match get_column t col_name with
-      | Some (Col.P (Nx.Float32, tensor, mask_opt)) ->
-          let arr : float array = Nx.to_array tensor in
+      | Some (Col.P (_, _, Some mask_opt)) ->
           Array.iteri
-            (fun i v ->
-              let is_null =
-                match mask_opt with
-                | Some m -> m.(i)
-                | None -> classify_float v = FP_nan
-              in
-              if is_null then mask.(i) <- false)
-            arr
-      | Some (Col.P (Nx.Float64, tensor, mask_opt)) ->
-          let arr : float array = Nx.to_array tensor in
-          Array.iteri
-            (fun i v ->
-              let is_null =
-                match mask_opt with
-                | Some m -> m.(i)
-                | None -> classify_float v = FP_nan
-              in
-              if is_null then mask.(i) <- false)
-            arr
-      | Some (Col.P (Nx.Int32, tensor, mask_opt)) ->
-          let arr : int32 array = Nx.to_array tensor in
-          Array.iteri
-            (fun i v ->
-              let is_null =
-                match mask_opt with
-                | Some m -> m.(i)
-                | None -> v = Int32.min_int
-              in
-              if is_null then mask.(i) <- false)
-            arr
-      | Some (Col.P (Nx.Int64, tensor, mask_opt)) ->
-          let arr : int64 array = Nx.to_array tensor in
-          Array.iteri
-            (fun i v ->
-              let is_null =
-                match mask_opt with
-                | Some m -> m.(i)
-                | None -> v = Int64.min_int
-              in
-              if is_null then mask.(i) <- false)
-            arr
-      | Some (Col.P (_, _, _)) -> ()
+            (fun i is_null -> if is_null then mask.(i) <- false)
+            mask_opt
+      | Some (Col.P (_, _, None)) -> ()
       | Some (Col.S arr) ->
           Array.iteri
             (fun i v -> if Option.is_none v then mask.(i) <- false)
@@ -1530,7 +1387,7 @@ let drop_duplicates ?subset t =
                      let is_null =
                        match mask_opt with
                        | Some mask -> mask.(i)
-                       | None -> classify_float arr.(i) = FP_nan
+                       | None -> false
                      in
                      if is_null then "<null>" else string_of_float arr.(i)
                  | Nx.Float64 ->
@@ -1538,7 +1395,7 @@ let drop_duplicates ?subset t =
                      let is_null =
                        match mask_opt with
                        | Some mask -> mask.(i)
-                       | None -> classify_float arr.(i) = FP_nan
+                       | None -> false
                      in
                      if is_null then "<null>" else string_of_float arr.(i)
                  | Nx.Int32 ->
@@ -1546,7 +1403,7 @@ let drop_duplicates ?subset t =
                      let is_null =
                        match mask_opt with
                        | Some mask -> mask.(i)
-                       | None -> arr.(i) = Int32.min_int
+                       | None -> false
                      in
                      if is_null then "<null>" else Int32.to_string arr.(i)
                  | Nx.Int64 ->
@@ -1554,7 +1411,7 @@ let drop_duplicates ?subset t =
                      let is_null =
                        match mask_opt with
                        | Some mask -> mask.(i)
-                       | None -> arr.(i) = Int64.min_int
+                       | None -> false
                      in
                      if is_null then "<null>" else Int64.to_string arr.(i)
                  | _ -> "")
@@ -1860,33 +1717,25 @@ let group_by_column t name =
               | Nx.Float32 ->
                   let arr : float array = Nx.to_array tensor in
                   let is_null =
-                    match mask_opt with
-                    | Some mask -> mask.(i)
-                    | None -> classify_float arr.(i) = FP_nan
+                    match mask_opt with Some mask -> mask.(i) | None -> false
                   in
                   if is_null then "<null>" else string_of_float arr.(i)
               | Nx.Float64 ->
                   let arr : float array = Nx.to_array tensor in
                   let is_null =
-                    match mask_opt with
-                    | Some mask -> mask.(i)
-                    | None -> classify_float arr.(i) = FP_nan
+                    match mask_opt with Some mask -> mask.(i) | None -> false
                   in
                   if is_null then "<null>" else string_of_float arr.(i)
               | Nx.Int32 ->
                   let arr : int32 array = Nx.to_array tensor in
                   let is_null =
-                    match mask_opt with
-                    | Some mask -> mask.(i)
-                    | None -> arr.(i) = Int32.min_int
+                    match mask_opt with Some mask -> mask.(i) | None -> false
                   in
                   if is_null then "<null>" else Int32.to_string arr.(i)
               | Nx.Int64 ->
                   let arr : int64 array = Nx.to_array tensor in
                   let is_null =
-                    match mask_opt with
-                    | Some mask -> mask.(i)
-                    | None -> arr.(i) = Int64.min_int
+                    match mask_opt with Some mask -> mask.(i) | None -> false
                   in
                   if is_null then "<null>" else Int64.to_string arr.(i)
               | _ -> "")
@@ -1949,50 +1798,44 @@ let group_by_column t name =
         groups []
 
 module Agg = struct
-  (* Helper to check if a value at index is null based on mask and sentinel *)
-  let is_null_float mask i value =
-    match mask with
-    | Some m when m.(i) -> true
-    | _ -> classify_float value = FP_nan
-
-  let is_null_int32 mask i value =
-    match mask with Some m when m.(i) -> true | _ -> value = Int32.min_int
-
-  let is_null_int64 mask i value =
-    match mask with Some m when m.(i) -> true | _ -> value = Int64.min_int
-
-  (* Helper to filter non-null float values *)
   let filter_float_array mask arr =
-    let rec aux idx acc count =
-      if idx < 0 then (Array.of_list acc, count)
-      else
-        let value = arr.(idx) in
-        if is_null_float mask idx value then aux (idx - 1) acc count
-        else aux (idx - 1) (value :: acc) (count + 1)
-    in
-    aux (Array.length arr - 1) [] 0
+    match mask with
+    | Some m ->
+        let collected = ref [] in
+        let count = ref 0 in
+        for i = Array.length arr - 1 downto 0 do
+          if not m.(i) then (
+            collected := arr.(i) :: !collected;
+            incr count)
+        done;
+        (Array.of_list !collected, !count)
+    | None -> (Array.copy arr, Array.length arr)
 
-  (* Helper to filter non-null int32 values *)
   let filter_int32_array mask arr =
-    let rec aux idx acc count =
-      if idx < 0 then (Array.of_list acc, count)
-      else
-        let value = arr.(idx) in
-        if is_null_int32 mask idx value then aux (idx - 1) acc count
-        else aux (idx - 1) (value :: acc) (count + 1)
-    in
-    aux (Array.length arr - 1) [] 0
+    match mask with
+    | Some m ->
+        let collected = ref [] in
+        let count = ref 0 in
+        for i = Array.length arr - 1 downto 0 do
+          if not m.(i) then (
+            collected := arr.(i) :: !collected;
+            incr count)
+        done;
+        (Array.of_list !collected, !count)
+    | None -> (Array.copy arr, Array.length arr)
 
-  (* Helper to filter non-null int64 values *)
   let filter_int64_array mask arr =
-    let rec aux idx acc count =
-      if idx < 0 then (Array.of_list acc, count)
-      else
-        let value = arr.(idx) in
-        if is_null_int64 mask idx value then aux (idx - 1) acc count
-        else aux (idx - 1) (value :: acc) (count + 1)
-    in
-    aux (Array.length arr - 1) [] 0
+    match mask with
+    | Some m ->
+        let collected = ref [] in
+        let count = ref 0 in
+        for i = Array.length arr - 1 downto 0 do
+          if not m.(i) then (
+            collected := arr.(i) :: !collected;
+            incr count)
+        done;
+        (Array.of_list !collected, !count)
+    | None -> (Array.copy arr, Array.length arr)
 
   module Float = struct
     let sum t name =
@@ -2784,18 +2627,7 @@ module Agg = struct
 
   let is_null t name =
     match get_column t name with
-    | Some (Col.P (Nx.Float32, tensor, _)) ->
-        let arr : float array = Nx.to_array tensor in
-        Array.map (fun x -> classify_float x = FP_nan) arr
-    | Some (Col.P (Nx.Float64, tensor, _)) ->
-        let arr : float array = Nx.to_array tensor in
-        Array.map (fun x -> classify_float x = FP_nan) arr
-    | Some (Col.P (Nx.Int32, tensor, _)) ->
-        let arr : int32 array = Nx.to_array tensor in
-        Array.map (fun x -> x = Int32.min_int) arr
-    | Some (Col.P (Nx.Int64, tensor, _)) ->
-        let arr : int64 array = Nx.to_array tensor in
-        Array.map (fun x -> x = Int64.min_int) arr
+    | Some (Col.P (_, _, Some mask)) -> Array.copy mask
     | Some (Col.P _) -> Array.make (num_rows t) false
     | Some (Col.S arr) -> Array.map Option.is_none arr
     | Some (Col.B arr) -> Array.map Option.is_none arr
@@ -3057,9 +2889,7 @@ module Agg = struct
         let result = Array.copy data in
         for i = 0 to target_len - 1 do
           let should_replace =
-            match mask_opt with
-            | Some m -> m.(i)
-            | None -> classify_float data.(i) = FP_nan
+            match mask_opt with Some m -> m.(i) | None -> false
           in
           if should_replace then
             let vi = if value_len = 1 then 0 else i in
@@ -3069,11 +2899,11 @@ module Agg = struct
               | Some m ->
                   let idx = if value_len = 1 then 0 else vi in
                   m.(idx)
-              | None -> classify_float replacement = FP_nan
+              | None -> false
             in
             if replacement_is_null then (
               mask.(i) <- true;
-              result.(i) <- nan)
+              result.(i) <- replacement)
             else (
               mask.(i) <- false;
               result.(i) <- replacement)
@@ -3093,9 +2923,7 @@ module Agg = struct
         let result = Array.copy data in
         for i = 0 to target_len - 1 do
           let should_replace =
-            match mask_opt with
-            | Some m -> m.(i)
-            | None -> classify_float data.(i) = FP_nan
+            match mask_opt with Some m -> m.(i) | None -> false
           in
           if should_replace then
             let vi = if value_len = 1 then 0 else i in
@@ -3105,11 +2933,11 @@ module Agg = struct
               | Some m ->
                   let idx = if value_len = 1 then 0 else vi in
                   m.(idx)
-              | None -> classify_float replacement = FP_nan
+              | None -> false
             in
             if replacement_is_null then (
               mask.(i) <- true;
-              result.(i) <- nan)
+              result.(i) <- replacement)
             else (
               mask.(i) <- false;
               result.(i) <- replacement)
@@ -3129,9 +2957,7 @@ module Agg = struct
         let result = Array.copy data in
         for i = 0 to target_len - 1 do
           let should_replace =
-            match mask_opt with
-            | Some m -> m.(i)
-            | None -> data.(i) = Int32.min_int
+            match mask_opt with Some m -> m.(i) | None -> false
           in
           if should_replace then
             let vi = if value_len = 1 then 0 else i in
@@ -3141,11 +2967,11 @@ module Agg = struct
               | Some m ->
                   let idx = if value_len = 1 then 0 else vi in
                   m.(idx)
-              | None -> replacement = Int32.min_int
+              | None -> false
             in
             if replacement_is_null then (
               mask.(i) <- true;
-              result.(i) <- Int32.min_int)
+              result.(i) <- replacement)
             else (
               mask.(i) <- false;
               result.(i) <- replacement)
@@ -3164,9 +2990,7 @@ module Agg = struct
         let result = Array.copy data in
         for i = 0 to target_len - 1 do
           let should_replace =
-            match mask_opt with
-            | Some m -> m.(i)
-            | None -> data.(i) = Int64.min_int
+            match mask_opt with Some m -> m.(i) | None -> false
           in
           if should_replace then
             let vi = if value_len = 1 then 0 else i in
@@ -3176,11 +3000,11 @@ module Agg = struct
               | Some m ->
                   let idx = if value_len = 1 then 0 else vi in
                   m.(idx)
-              | None -> replacement = Int64.min_int
+              | None -> false
             in
             if replacement_is_null then (
               mask.(i) <- true;
-              result.(i) <- Int64.min_int)
+              result.(i) <- replacement)
             else (
               mask.(i) <- false;
               result.(i) <- replacement)
@@ -3221,9 +3045,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
             Array.mapi
               (fun i v ->
                 let is_null =
-                  match mask_opt with
-                  | Some mask -> mask.(i)
-                  | None -> v = Int32.min_int
+                  match mask_opt with Some mask -> mask.(i) | None -> false
                 in
                 if is_null then Join_key.Null else Join_key.Int32 v)
               arr
@@ -3232,9 +3054,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
             Array.mapi
               (fun i v ->
                 let is_null =
-                  match mask_opt with
-                  | Some mask -> mask.(i)
-                  | None -> v = Int64.min_int
+                  match mask_opt with Some mask -> mask.(i) | None -> false
                 in
                 if is_null then Join_key.Null else Join_key.Int64 v)
               arr
@@ -3243,9 +3063,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
             Array.mapi
               (fun i v ->
                 let is_null =
-                  match mask_opt with
-                  | Some mask -> mask.(i)
-                  | None -> classify_float v = FP_nan
+                  match mask_opt with Some mask -> mask.(i) | None -> false
                 in
                 if is_null then Join_key.Null else Join_key.Float v)
               arr
@@ -3254,9 +3072,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
             Array.mapi
               (fun i v ->
                 let is_null =
-                  match mask_opt with
-                  | Some mask -> mask.(i)
-                  | None -> classify_float v = FP_nan
+                  match mask_opt with Some mask -> mask.(i) | None -> false
                 in
                 if is_null then Join_key.Null else Join_key.Float v)
               arr
@@ -3379,9 +3195,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
                     else
                       let value = source.(idx) in
                       let is_null =
-                        match mask_opt with
-                        | Some m -> m.(idx)
-                        | None -> classify_float value = FP_nan
+                        match mask_opt with Some m -> m.(idx) | None -> false
                       in
                       if not is_null then result.(i) <- value;
                       is_null)
@@ -3397,9 +3211,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
                     else
                       let value = source.(idx) in
                       let is_null =
-                        match mask_opt with
-                        | Some m -> m.(idx)
-                        | None -> classify_float value = FP_nan
+                        match mask_opt with Some m -> m.(idx) | None -> false
                       in
                       if not is_null then result.(i) <- value;
                       is_null)
@@ -3415,9 +3227,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
                     else
                       let value = source.(idx) in
                       let is_null =
-                        match mask_opt with
-                        | Some m -> m.(idx)
-                        | None -> value = Int32.min_int
+                        match mask_opt with Some m -> m.(idx) | None -> false
                       in
                       if not is_null then result.(i) <- value;
                       is_null)
@@ -3433,9 +3243,7 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
                     else
                       let value = source.(idx) in
                       let is_null =
-                        match mask_opt with
-                        | Some m -> m.(idx)
-                        | None -> value = Int64.min_int
+                        match mask_opt with Some m -> m.(idx) | None -> false
                       in
                       if not is_null then result.(i) <- value;
                       is_null)
@@ -3559,9 +3367,7 @@ let pivot t ~index ~columns ~values ?(agg_func = `Sum) () =
               (Array.mapi
                  (fun i v ->
                    let is_null =
-                     match mask_opt with
-                     | Some mask -> mask.(i)
-                     | None -> v = Int32.min_int
+                     match mask_opt with Some mask -> mask.(i) | None -> false
                    in
                    if is_null then None else Some (Int32.to_string v))
                  arr)
@@ -3571,9 +3377,7 @@ let pivot t ~index ~columns ~values ?(agg_func = `Sum) () =
               (Array.mapi
                  (fun i v ->
                    let is_null =
-                     match mask_opt with
-                     | Some mask -> mask.(i)
-                     | None -> v = Int64.min_int
+                     match mask_opt with Some mask -> mask.(i) | None -> false
                    in
                    if is_null then None else Some (Int64.to_string v))
                  arr)
@@ -3583,9 +3387,7 @@ let pivot t ~index ~columns ~values ?(agg_func = `Sum) () =
               (Array.mapi
                  (fun i v ->
                    let is_null =
-                     match mask_opt with
-                     | Some mask -> mask.(i)
-                     | None -> classify_float v = FP_nan
+                     match mask_opt with Some mask -> mask.(i) | None -> false
                    in
                    if is_null then None else Some (string_of_float v))
                  arr)
@@ -3595,9 +3397,7 @@ let pivot t ~index ~columns ~values ?(agg_func = `Sum) () =
               (Array.mapi
                  (fun i v ->
                    let is_null =
-                     match mask_opt with
-                     | Some mask -> mask.(i)
-                     | None -> classify_float v = FP_nan
+                     match mask_opt with Some mask -> mask.(i) | None -> false
                    in
                    if is_null then None else Some (string_of_float v))
                  arr)
