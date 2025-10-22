@@ -571,6 +571,19 @@ let test_vdot () =
   let res2 = Nx.vdot a2 b in
   check_t "vdot flatten" [||] [| 4. +. 10. +. 18. +. 16. +. 25. +. 36. |] res2
 
+let test_vdot_complex () =
+  (* Test complex vdot with conjugation *)
+  let a = Nx.create Nx.complex32 [| 2 |]
+    [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |] in
+  let b = Nx.create Nx.complex32 [| 2 |]
+    [| Complex.{ re = 5.; im = 6. }; Complex.{ re = 7.; im = 8. } |] in
+  let result = Nx.vdot a b in
+  (* Expected: conj(a) * b = [(1-2i)(5+6i), (3-4i)(7+8i)] = [17-4i, 53-4i] = 70-8i *)
+  let expected = Complex.{ re = 70.; im = -8. } in
+  let actual = Nx.item [] result in
+  check (float 1e-6) "vdot complex real part" expected.re actual.re;
+  check (float 1e-6) "vdot complex imag part" expected.im actual.im
+
 let test_vdot_mismatch () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Nx.create Nx.float32 [| 4 |] [| 4.; 5.; 6.; 7. |] in
@@ -1118,6 +1131,7 @@ let advanced_utility_tests =
 let product_tests =
   [
     ("vdot", `Quick, test_vdot);
+    ("vdot complex", `Quick, test_vdot_complex);
     ("vdot mismatch", `Quick, test_vdot_mismatch);
     ("vecdot", `Quick, test_vecdot);
     ("inner", `Quick, test_inner);

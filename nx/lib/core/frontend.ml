@@ -4546,8 +4546,7 @@ module Make (B : Backend_intf.S) = struct
     (* For complex types, conjugate first vector *)
     match dtype a with
     | (Complex32 | Complex64) when dtype a = dtype b ->
-        (* TODO: implement conj when available *)
-        sum (mul flat_a flat_b)
+        sum (mul (conjugate flat_a) flat_b)
     | _ -> sum (mul flat_a flat_b)
 
   let vecdot ?axis x1 x2 =
