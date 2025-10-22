@@ -12,7 +12,7 @@ All notable changes to this project will be documented in this file.
 - Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx (@tmattio)
 - Fix complex vdot to conjugate first tensor before multiplication, ensuring correct mathematical behavior (#123, @Arsalaan-Alam)
 - Update comparison and conditional operations to use boolean tensors (#54, @nirnayroy)
-- Add support for rcond parameter and underdetermined systems to `lstsq` (#102, @nirnayroy)
+- Add support for rcond parameter and underdetermined systems to `lstsq` (#102, @Shocker444)
 - Fix `matrix_rank`/`pinv` Hermitian fast paths to use eigen-decomposition and match NumPy for complex inputs (#96, @six-shot, @tmattio)
 - Optimize matmul BLAS dispatch for strided tensors, improving matrix multiplication performance (@tmattio)
 - Fix slow builds reported since alpha1 (#88, @tmattio)
@@ -31,6 +31,7 @@ All notable changes to this project will be documented in this file.
 ### Kaun
 
 - Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD)
+- Implement AUC-ROC in Kaun metrics (#109 @Shocker444)
 
 ### Talon
 
