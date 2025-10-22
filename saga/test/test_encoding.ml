@@ -1,233 +1,151 @@
-(* Encoding and batch processing tests for saga *)
-
 open Alcotest
 open Saga_tokenizers
 
-(* ───── Simple Encoding Tests ───── *)
+let make_word_tokenizer ?(specials = []) () =
+  Tokenizer.word_level ~pre:(Pre_tokenizers.whitespace ()) ~specials ()
 
 let test_encode_simple () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-  let _ =
-    Tokenizer.add_tokens tokenizer [ Either.Left "hello"; Either.Left "world" ]
+  let tokenizer =
+    Tokenizer.add_tokens (make_word_tokenizer ()) [ "hello"; "world" ]
   in
-  let encoding =
-    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello world hello") ()
+  let ids =
+    Tokenizer.encode tokenizer "hello world hello" |> Encoding.get_ids
   in
-  let ids = Encoding.get_ids encoding in
-  (* Should encode properly *)
   check int "encoded length" 3 (Array.length ids);
-  (* Check that repeated words get same index *)
-  check bool "repeated token same index" true (ids.(0) = ids.(2))
+  check bool "repeated token same id" true (ids.(0) = ids.(2))
 
 let test_encode_with_vocab () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-  let _ =
-    Tokenizer.add_tokens tokenizer [ Either.Left "hello"; Either.Left "world" ]
+  let tokenizer =
+    Tokenizer.add_tokens (make_word_tokenizer ()) [ "hello"; "world" ]
   in
-  let encoding =
-    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello world") ()
+  let ids =
+    Tokenizer.encode tokenizer "hello world"
+    |> Encoding.get_ids |> Array.to_list
   in
-  let ids = Array.to_list (Encoding.get_ids encoding) in
   check (list int) "encoded with vocab" [ 0; 1 ] ids
 
 let test_encode_unknown_tokens () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-  let _ = Tokenizer.add_special_tokens tokenizer [ Either.Left "<unk>" ] in
-  let _ = Tokenizer.add_tokens tokenizer [ Either.Left "hello" ] in
-  let encoding =
-    Tokenizer.encode tokenizer ~sequence:(Either.Left "hello unknown world") ()
+  let tokenizer =
+    Tokenizer.add_tokens
+      (make_word_tokenizer ~specials:[ Special.unk "<unk>" ] ())
+      [ "hello" ]
   in
-  let ids = Array.to_list (Encoding.get_ids encoding) in
-  (* Since word_level doesn't handle unknown tokens well, we just check we get
-     something *)
-  check bool "encoded with unknowns" true (List.length ids > 0)
+  let ids =
+    Tokenizer.encode tokenizer "hello unknown world"
+    |> Encoding.get_ids |> Array.to_list
+  in
+  check bool "encoded something" true (List.length ids > 0)
 
 let test_encode_empty () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left "") () in
-  let ids = Array.to_list (Encoding.get_ids encoding) in
-  check (list int) "encode empty string" [] ids
-
-(* ───── Batch Encoding Tests ───── *)
+  let tokenizer = make_word_tokenizer () in
+  let ids =
+    Tokenizer.encode tokenizer "" |> Encoding.get_ids |> Array.to_list
+  in
+  check (list int) "encode empty" [] ids
 
 let test_encode_batch_simple () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-  let _ =
-    Tokenizer.add_tokens tokenizer
-      [
-        Either.Left "hello";
-        Either.Left "world";
-        Either.Left "hi";
-        Either.Left "there";
-      ]
+  let tokenizer =
+    Tokenizer.add_tokens (make_word_tokenizer ())
+      [ "hello"; "world"; "hi"; "there" ]
   in
-  let inputs =
-    [
-      Either.Left (Either.Left "hello world");
-      Either.Left (Either.Left "hi there");
-    ]
+  let encodings =
+    Tokenizer.encode_batch tokenizer [ "hello world"; "hi there" ]
   in
-  let encodings = Tokenizer.encode_batch tokenizer ~input:inputs () in
   check int "batch size" 2 (List.length encodings);
-
-  (* Check first encoding *)
-  let first_encoding = List.hd encodings in
-  let ids = Encoding.get_ids first_encoding in
-  check bool "first encoding has tokens" true (Array.length ids > 0)
+  let first = List.hd encodings in
+  check bool "first encoding has ids" true
+    (Array.length (Encoding.get_ids first) > 0)
 
 let test_encode_batch_with_padding () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-
-  (* Add special tokens including padding *)
-  let _ = Tokenizer.add_special_tokens tokenizer [ Either.Left "<pad>" ] in
-
-  let _ =
-    Tokenizer.add_tokens tokenizer
-      [
-        Either.Left "hello";
-        Either.Left "world";
-        Either.Left "hi";
-        Either.Left "there";
-      ]
+  let tokenizer =
+    Tokenizer.add_tokens
+      (make_word_tokenizer ~specials:[ Special.pad "<pad>" ] ())
+      [ "hello"; "world"; "hi"; "there" ]
   in
-
-  (* Enable padding *)
-  Tokenizer.enable_padding tokenizer
+  let padding =
     {
-      Tokenizer.direction = `Right;
-      pad_id = 0;
-      (* <pad> token id *)
-      pad_type_id = 0;
-      pad_token = "<pad>";
-      length = Some 5;
-      (* Fixed length *)
-      pad_to_multiple_of = None;
-    };
-
-  let inputs =
-    [ Either.Left (Either.Left "hello"); Either.Left (Either.Left "hi there") ]
+      length = `Fixed 5;
+      direction = `Right;
+      pad_id = None;
+      pad_type_id = None;
+      pad_token = Some "<pad>";
+    }
   in
-  let encodings = Tokenizer.encode_batch tokenizer ~input:inputs () in
-
-  (* Check that both encodings have tokens (padding is applied during
-     encoding) *)
-  let first_ids = Encoding.get_ids (List.nth encodings 0) in
-  let second_ids = Encoding.get_ids (List.nth encodings 1) in
-  (* Note: padding happens internally, we can't guarantee exact length without
-     post-processor *)
-  check bool "first has tokens" true (Array.length first_ids > 0);
-  check bool "second has tokens" true (Array.length second_ids > 0)
+  let encodings =
+    Tokenizer.encode_batch tokenizer ~padding [ "hello"; "hi there" ]
+  in
+  let first = Encoding.get_ids (List.nth encodings 0) in
+  let second = Encoding.get_ids (List.nth encodings 1) in
+  check int "first padded length" 5 (Array.length first);
+  check int "second padded length" 5 (Array.length second)
 
 let test_encode_batch_empty () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  let encodings = Tokenizer.encode_batch tokenizer ~input:[] () in
-  check int "empty batch size" 0 (List.length encodings)
-
-let test_encode_batch_single () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  let inputs = [ Either.Left (Either.Left "hello world") ] in
-  let encodings = Tokenizer.encode_batch tokenizer ~input:inputs () in
-  check int "single item batch" 1 (List.length encodings)
-
-(* ───── Decoding Tests ───── *)
+  let tokenizer = make_word_tokenizer () in
+  let encodings = Tokenizer.encode_batch tokenizer [] in
+  check int "empty batch" 0 (List.length encodings)
 
 let test_decode_simple () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  let _ =
-    Tokenizer.add_tokens tokenizer [ Either.Left "hello"; Either.Left "world" ]
+  let tokenizer =
+    Tokenizer.add_tokens (make_word_tokenizer ()) [ "hello"; "world" ]
   in
-  let decoded = Tokenizer.decode tokenizer [ 0; 1 ] () in
+  let decoded = Tokenizer.decode tokenizer [| 0; 1 |] in
   check string "decoded text" "hello world" decoded
 
 let test_decode_with_special () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  let _ =
-    Tokenizer.add_special_tokens tokenizer
-      [ Either.Left "<bos>"; Either.Left "<eos>" ]
+  let tokenizer =
+    Tokenizer.add_tokens
+      (make_word_tokenizer
+         ~specials:[ Special.bos "<bos>"; Special.eos "<eos>" ]
+         ())
+      [ "hello" ]
   in
-  let _ = Tokenizer.add_tokens tokenizer [ Either.Left "hello" ] in
-  let decoded = Tokenizer.decode tokenizer [ 0; 2; 1 ] () in
-  (* <bos> hello <eos> *)
+  let decoded = Tokenizer.decode tokenizer [| 1; 2; 0 |] in
   check string "decoded with special" "<bos> hello <eos>" decoded
 
 let test_decode_skip_special () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  let _ =
-    Tokenizer.add_special_tokens tokenizer
-      [ Either.Left "<bos>"; Either.Left "<eos>" ]
+  let tokenizer =
+    Tokenizer.add_tokens
+      (make_word_tokenizer
+         ~specials:[ Special.bos "<bos>"; Special.eos "<eos>" ]
+         ())
+      [ "hello" ]
   in
-  let _ = Tokenizer.add_tokens tokenizer [ Either.Left "hello" ] in
   let decoded =
-    Tokenizer.decode tokenizer [ 0; 2; 1 ] ~skip_special_tokens:true ()
+    Tokenizer.decode ~skip_special_tokens:true tokenizer [| 1; 2; 0 |]
   in
-  (* Should skip special tokens *)
   check string "decoded without special" "hello" decoded
 
-let test_decode_empty () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  let decoded = Tokenizer.decode tokenizer [] () in
-  check string "decode empty" "" decoded
-
-(* ───── Batch Decoding Tests ───── *)
-
-let test_decode_batch_simple () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-  let _ =
-    Tokenizer.add_tokens tokenizer
-      [
-        Either.Left "hello";
-        Either.Left "world";
-        Either.Left "hi";
-        Either.Left "there";
-      ]
+let test_decode_batch () =
+  let tokenizer =
+    Tokenizer.add_tokens (make_word_tokenizer ())
+      [ "hello"; "world"; "hi"; "there" ]
   in
-
-  let sequences = [ [ 0; 1 ]; (* hello world *) [ 2; 3 ] (* hi there *) ] in
-
-  let decoded = Tokenizer.decode_batch tokenizer sequences () in
+  let decoded = Tokenizer.decode_batch tokenizer [ [| 0; 1 |]; [| 2; 3 |] ] in
   check int "decoded count" 2 (List.length decoded);
   check string "first decoded" "hello world" (List.nth decoded 0);
   check string "second decoded" "hi there" (List.nth decoded 1)
 
-(* ───── Tokenization with Different Models ───── *)
-
 let test_chars_model () =
-  let tokenizer = Tokenizer.create ~model:(Models.chars ()) in
-  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left "hi") () in
-  let tokens = Encoding.get_tokens encoding in
-  check int "char tokens count" 2 (Array.length tokens);
-  check string "first char" "h" tokens.(0);
-  check string "second char" "i" tokens.(1)
+  let tokenizer = Tokenizer.chars () in
+  let ids =
+    Tokenizer.encode tokenizer "abc" |> Encoding.get_ids |> Array.to_list
+  in
+  check (list int) "char ids" [ 97; 98; 99 ] ids
 
-(* ───── Test Suite ───── *)
-
-let encoding_tests =
+let suite =
   [
-    (* Simple encoding *)
     test_case "encode simple" `Quick test_encode_simple;
     test_case "encode with vocab" `Quick test_encode_with_vocab;
     test_case "encode unknown tokens" `Quick test_encode_unknown_tokens;
     test_case "encode empty" `Quick test_encode_empty;
-    (* Batch encoding *)
     test_case "batch simple" `Quick test_encode_batch_simple;
     test_case "batch with padding" `Quick test_encode_batch_with_padding;
-    test_case "batch empty" `Quick test_encode_batch_empty;
-    test_case "batch single" `Quick test_encode_batch_single;
-    (* Decoding *)
+    test_case "batch empty request" `Quick test_encode_batch_empty;
     test_case "decode simple" `Quick test_decode_simple;
     test_case "decode with special" `Quick test_decode_with_special;
     test_case "decode skip special" `Quick test_decode_skip_special;
-    test_case "decode empty" `Quick test_decode_empty;
-    (* Batch decoding *)
-    test_case "decode batch simple" `Quick test_decode_batch_simple;
-    (* Model tests *)
+    test_case "decode batch" `Quick test_decode_batch;
     test_case "chars model" `Quick test_chars_model;
   ]
 
-let () = run "Encoding tests" [ ("encoding", encoding_tests) ]
+let () = run "Encoding tests" [ ("encoding", suite) ]

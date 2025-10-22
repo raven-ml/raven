@@ -74,67 +74,27 @@ module Col = struct
     | B arr -> Array.length arr
 
   let has_nulls col =
-    match null_mask col with
-    | Some mask -> Array.exists Fun.id mask
-    | None -> (
-        match col with
-        | P (Nx.Float32, t, _) ->
-            let arr = Nx.to_array t in
-            Array.exists (fun x -> classify_float x = FP_nan) arr
-        | P (Nx.Float64, t, _) ->
-            let arr = Nx.to_array t in
-            Array.exists (fun x -> classify_float x = FP_nan) arr
-        | P (Nx.Int32, t, _) ->
-            let arr = Nx.to_array t in
-            Array.exists (fun x -> x = Int32.min_int) arr
-        | P (Nx.Int64, t, _) ->
-            let arr = Nx.to_array t in
-            Array.exists (fun x -> x = Int64.min_int) arr
-        | P _ -> false
-        | S arr -> Array.exists Option.is_none arr
-        | B arr -> Array.exists Option.is_none arr)
+    match col with
+    | P (_, _, Some mask) -> Array.exists Fun.id mask
+    | P _ -> false
+    | S arr -> Array.exists Option.is_none arr
+    | B arr -> Array.exists Option.is_none arr
 
   let null_count col =
-    match null_mask col with
-    | Some mask ->
+    match col with
+    | P (_, _, Some mask) ->
         Array.fold_left
           (fun acc is_null -> if is_null then acc + 1 else acc)
           0 mask
-    | None ->
-        if has_nulls col then
-          match col with
-          | P (Nx.Float32, t, _) ->
-              let arr = Nx.to_array t in
-              Array.fold_left
-                (fun acc x ->
-                  if classify_float x = FP_nan then acc + 1 else acc)
-                0 arr
-          | P (Nx.Float64, t, _) ->
-              let arr = Nx.to_array t in
-              Array.fold_left
-                (fun acc x ->
-                  if classify_float x = FP_nan then acc + 1 else acc)
-                0 arr
-          | P (Nx.Int32, t, _) ->
-              let arr = Nx.to_array t in
-              Array.fold_left
-                (fun acc x -> if x = Int32.min_int then acc + 1 else acc)
-                0 arr
-          | P (Nx.Int64, t, _) ->
-              let arr = Nx.to_array t in
-              Array.fold_left
-                (fun acc x -> if x = Int64.min_int then acc + 1 else acc)
-                0 arr
-          | P _ -> 0
-          | S arr ->
-              Array.fold_left
-                (fun acc x -> if Option.is_none x then acc + 1 else acc)
-                0 arr
-          | B arr ->
-              Array.fold_left
-                (fun acc x -> if Option.is_none x then acc + 1 else acc)
-                0 arr
-        else 0
+    | P _ -> 0
+    | S arr ->
+        Array.fold_left
+          (fun acc x -> if Option.is_none x then acc + 1 else acc)
+          0 arr
+    | B arr ->
+        Array.fold_left
+          (fun acc x -> if Option.is_none x then acc + 1 else acc)
+          0 arr
 
   let drop_nulls col =
     let filter_with_mask arr mask =
@@ -147,54 +107,23 @@ module Col = struct
       aux (Array.length arr - 1) []
     in
     match col with
-    | P (Nx.Float32, t, mask_opt) ->
+    | P (Nx.Float32, t, Some mask_opt) ->
         let arr = Nx.to_array t in
-        let filtered =
-          match mask_opt with
-          | Some mask -> filter_with_mask arr mask
-          | None ->
-              Array.fold_right
-                (fun value acc ->
-                  if classify_float value = FP_nan then acc else value :: acc)
-                arr []
-        in
+        let filtered = filter_with_mask arr mask_opt in
         float32 (Array.of_list filtered)
-    | P (Nx.Float64, t, mask_opt) ->
+    | P (Nx.Float64, t, Some mask_opt) ->
         let arr = Nx.to_array t in
-        let filtered =
-          match mask_opt with
-          | Some mask -> filter_with_mask arr mask
-          | None ->
-              Array.fold_right
-                (fun value acc ->
-                  if classify_float value = FP_nan then acc else value :: acc)
-                arr []
-        in
+        let filtered = filter_with_mask arr mask_opt in
         float64 (Array.of_list filtered)
-    | P (Nx.Int32, t, mask_opt) ->
+    | P (Nx.Int32, t, Some mask_opt) ->
         let arr = Nx.to_array t in
-        let filtered =
-          match mask_opt with
-          | Some mask -> filter_with_mask arr mask
-          | None ->
-              Array.fold_right
-                (fun value acc ->
-                  if value = Int32.min_int then acc else value :: acc)
-                arr []
-        in
+        let filtered = filter_with_mask arr mask_opt in
         int32 (Array.of_list filtered)
-    | P (Nx.Int64, t, mask_opt) ->
+    | P (Nx.Int64, t, Some mask_opt) ->
         let arr = Nx.to_array t in
-        let filtered =
-          match mask_opt with
-          | Some mask -> filter_with_mask arr mask
-          | None ->
-              Array.fold_right
-                (fun value acc ->
-                  if value = Int64.min_int then acc else value :: acc)
-                arr []
-        in
+        let filtered = filter_with_mask arr mask_opt in
         int64 (Array.of_list filtered)
+    | P (_, _, None) -> col
     | P (dtype, t, mask) -> numeric ?mask dtype t
     | S arr ->
         let filtered = Array.to_list arr |> List.filter_map Fun.id in
@@ -205,72 +134,76 @@ module Col = struct
 
   let fill_nulls_float32 col ~value =
     match col with
-    | P (Nx.Float32, t, mask_opt) ->
+    | P (Nx.Float32, t, Some mask_opt) ->
         let arr : float array = Nx.to_array t in
-        let filled =
-          match mask_opt with
-          | Some mask ->
-              Array.mapi
-                (fun i x ->
-                  if mask.(i) || classify_float x = FP_nan then value else x)
-                arr
-          | None ->
-              Array.map
-                (fun x -> if classify_float x = FP_nan then value else x)
-                arr
-        in
-        float32 filled
+        let filled = Array.copy arr in
+        let mask = Array.copy mask_opt in
+        Array.iteri
+          (fun i is_null ->
+            if is_null then (
+              filled.(i) <- value;
+              mask.(i) <- false))
+          mask_opt;
+        let mask = if Array.exists Fun.id mask then Some mask else None in
+        P
+          ( Nx.Float32,
+            Nx.create Nx.float32 [| Array.length filled |] filled,
+            mask )
+    | P (Nx.Float32, t, None) -> P (Nx.Float32, t, None)
     | _ -> invalid_arg "fill_nulls_float32: column must be float32"
 
   let fill_nulls_float64 col ~value =
     match col with
-    | P (Nx.Float64, t, mask_opt) ->
+    | P (Nx.Float64, t, Some mask_opt) ->
         let arr : float array = Nx.to_array t in
-        let filled =
-          match mask_opt with
-          | Some mask ->
-              Array.mapi
-                (fun i x ->
-                  if mask.(i) || classify_float x = FP_nan then value else x)
-                arr
-          | None ->
-              Array.map
-                (fun x -> if classify_float x = FP_nan then value else x)
-                arr
-        in
-        float64 filled
+        let filled = Array.copy arr in
+        let mask = Array.copy mask_opt in
+        Array.iteri
+          (fun i is_null ->
+            if is_null then (
+              filled.(i) <- value;
+              mask.(i) <- false))
+          mask_opt;
+        let mask = if Array.exists Fun.id mask then Some mask else None in
+        P
+          ( Nx.Float64,
+            Nx.create Nx.float64 [| Array.length filled |] filled,
+            mask )
+    | P (Nx.Float64, t, None) -> P (Nx.Float64, t, None)
     | _ -> invalid_arg "fill_nulls_float64: column must be float64"
 
   let fill_nulls_int32 col ~value =
     match col with
-    | P (Nx.Int32, t, mask_opt) ->
+    | P (Nx.Int32, t, Some mask_opt) ->
         let arr : int32 array = Nx.to_array t in
-        let filled =
-          match mask_opt with
-          | Some mask ->
-              Array.mapi
-                (fun i x -> if mask.(i) || x = Int32.min_int then value else x)
-                arr
-          | None ->
-              Array.map (fun x -> if x = Int32.min_int then value else x) arr
-        in
-        int32 filled
+        let filled = Array.copy arr in
+        let mask = Array.copy mask_opt in
+        Array.iteri
+          (fun i is_null ->
+            if is_null then (
+              filled.(i) <- value;
+              mask.(i) <- false))
+          mask_opt;
+        let mask = if Array.exists Fun.id mask then Some mask else None in
+        P (Nx.Int32, Nx.create Nx.int32 [| Array.length filled |] filled, mask)
+    | P (Nx.Int32, t, None) -> P (Nx.Int32, t, None)
     | _ -> invalid_arg "fill_nulls_int32: column must be int32"
 
   let fill_nulls_int64 col ~value =
     match col with
-    | P (Nx.Int64, t, mask_opt) ->
+    | P (Nx.Int64, t, Some mask_opt) ->
         let arr : int64 array = Nx.to_array t in
-        let filled =
-          match mask_opt with
-          | Some mask ->
-              Array.mapi
-                (fun i x -> if mask.(i) || x = Int64.min_int then value else x)
-                arr
-          | None ->
-              Array.map (fun x -> if x = Int64.min_int then value else x) arr
-        in
-        int64 filled
+        let filled = Array.copy arr in
+        let mask = Array.copy mask_opt in
+        Array.iteri
+          (fun i is_null ->
+            if is_null then (
+              filled.(i) <- value;
+              mask.(i) <- false))
+          mask_opt;
+        let mask = if Array.exists Fun.id mask then Some mask else None in
+        P (Nx.Int64, Nx.create Nx.int64 [| Array.length filled |] filled, mask)
+    | P (Nx.Int64, t, None) -> P (Nx.Int64, t, None)
     | _ -> invalid_arg "fill_nulls_int64: column must be int64"
 
   let fill_nulls_string col ~value =
@@ -287,6 +220,33 @@ module Col = struct
         bool filled
     | _ -> invalid_arg "fill_nulls_bool: column must be bool"
 end
+
+module Join_key = struct
+  type t =
+    | Int32 of int32
+    | Int64 of int64
+    | Float of float
+    | String of string
+    | Null
+
+  let equal a b =
+    match (a, b) with
+    | Int32 x, Int32 y -> Int32.equal x y
+    | Int64 x, Int64 y -> Int64.equal x y
+    | Float x, Float y -> Float.equal x y
+    | String x, String y -> String.equal x y
+    | Null, Null -> true
+    | _ -> false
+
+  let hash = Hashtbl.hash
+end
+
+module Join_key_tbl = Hashtbl.Make (struct
+  type t = Join_key.t
+
+  let equal = Join_key.equal
+  let hash = Join_key.hash
+end)
 
 type t = {
   columns : (string * Col.t) list;
@@ -500,16 +460,8 @@ let to_float32_options t name =
       let result =
         match mask_opt with
         | Some mask ->
-            Array.mapi
-              (fun i x ->
-                if mask.(i) then None
-                else if classify_float x = FP_nan then None
-                else Some x)
-              arr
-        | None ->
-            Array.map
-              (fun x -> if classify_float x = FP_nan then None else Some x)
-              arr
+            Array.mapi (fun i x -> if mask.(i) then None else Some x) arr
+        | None -> Array.map (fun x -> Some x) arr
       in
       Some result
   | _ -> None
@@ -521,16 +473,8 @@ let to_float64_options t name =
       let result =
         match mask_opt with
         | Some mask ->
-            Array.mapi
-              (fun i x ->
-                if mask.(i) then None
-                else if classify_float x = FP_nan then None
-                else Some x)
-              arr
-        | None ->
-            Array.map
-              (fun x -> if classify_float x = FP_nan then None else Some x)
-              arr
+            Array.mapi (fun i x -> if mask.(i) then None else Some x) arr
+        | None -> Array.map (fun x -> Some x) arr
       in
       Some result
   | _ -> None
@@ -542,14 +486,8 @@ let to_int32_options t name =
       let result =
         match mask_opt with
         | Some mask ->
-            Array.mapi
-              (fun i x ->
-                if mask.(i) then None
-                else if x = Int32.min_int then None
-                else Some x)
-              arr
-        | None ->
-            Array.map (fun x -> if x = Int32.min_int then None else Some x) arr
+            Array.mapi (fun i x -> if mask.(i) then None else Some x) arr
+        | None -> Array.map (fun x -> Some x) arr
       in
       Some result
   | _ -> None
@@ -561,14 +499,8 @@ let to_int64_options t name =
       let result =
         match mask_opt with
         | Some mask ->
-            Array.mapi
-              (fun i x ->
-                if mask.(i) then None
-                else if x = Int64.min_int then None
-                else Some x)
-              arr
-        | None ->
-            Array.map (fun x -> if x = Int64.min_int then None else Some x) arr
+            Array.mapi (fun i x -> if mask.(i) then None else Some x) arr
+        | None -> Array.map (fun x -> Some x) arr
       in
       Some result
   | _ -> None
@@ -860,9 +792,7 @@ module Row = struct
           in
           match mask_opt with
           | Some mask when mask.(i) -> None
-          | _ ->
-              let value = arr.(i) in
-              if classify_float value = FP_nan then None else Some value);
+          | _ -> Some arr.(i));
     }
 
   let float64_opt name =
@@ -886,9 +816,7 @@ module Row = struct
           in
           match mask_opt with
           | Some mask when mask.(i) -> None
-          | _ ->
-              let value = arr.(i) in
-              if classify_float value = FP_nan then None else Some value);
+          | _ -> Some arr.(i));
     }
 
   let int32_opt name =
@@ -912,9 +840,7 @@ module Row = struct
           in
           match mask_opt with
           | Some mask when mask.(i) -> None
-          | _ ->
-              let value = arr.(i) in
-              if value = Int32.min_int then None else Some value);
+          | _ -> Some arr.(i));
     }
 
   let int64_opt name =
@@ -938,9 +864,7 @@ module Row = struct
           in
           match mask_opt with
           | Some mask when mask.(i) -> None
-          | _ ->
-              let value = arr.(i) in
-              if value = Int64.min_int then None else Some value);
+          | _ -> Some arr.(i));
     }
 
   let string_opt name =
@@ -1007,7 +931,7 @@ module Row = struct
                     in
                     let mask_float = Nx.cast Nx.float64 mask_tensor in
                     let nan_tensor = Nx.full_like tensor Float.nan in
-                    Nx.where (Nx.cast Nx.uint8 mask_float) nan_tensor tensor
+                    Nx.where (Nx.cast Nx.bool mask_float) nan_tensor tensor
                 | None -> tensor
               in
               result :: acc
@@ -1023,7 +947,7 @@ module Row = struct
                     in
                     let mask_float = Nx.cast Nx.float64 mask_tensor in
                     let nan_tensor = Nx.full_like casted Float.nan in
-                    Nx.where (Nx.cast Nx.uint8 mask_float) nan_tensor casted
+                    Nx.where (Nx.cast Nx.bool mask_float) nan_tensor casted
                 | None -> casted
               in
               result :: acc
@@ -1039,7 +963,7 @@ module Row = struct
                     in
                     let mask_float = Nx.cast Nx.float64 mask_tensor in
                     let nan_tensor = Nx.full_like casted Float.nan in
-                    Nx.where (Nx.cast Nx.uint8 mask_float) nan_tensor casted
+                    Nx.where (Nx.cast Nx.bool mask_float) nan_tensor casted
                 | None -> casted
               in
               result :: acc
@@ -1055,7 +979,7 @@ module Row = struct
                     in
                     let mask_float = Nx.cast Nx.float64 mask_tensor in
                     let nan_tensor = Nx.full_like casted Float.nan in
-                    Nx.where (Nx.cast Nx.uint8 mask_float) nan_tensor casted
+                    Nx.where (Nx.cast Nx.bool mask_float) nan_tensor casted
                 | None -> casted
               in
               result :: acc
@@ -1308,8 +1232,15 @@ let sample ?n ?frac ?replace ?seed:_ t =
       (fun (name, col) ->
         match col with
         | Col.P (dtype, tensor, mask_opt) ->
-            let arr = Nx.to_array tensor in
-            let sampled = Array.map (fun i -> arr.(i)) indices in
+            let idx_tensor =
+              Nx.create Nx.int32
+                [| Array.length indices |]
+                (Array.map Int32.of_int indices)
+            in
+            let sampled =
+              if Array.length indices = 0 then Nx.empty dtype [| 0 |]
+              else Nx.take ~axis:0 idx_tensor tensor
+            in
             let mask =
               match mask_opt with
               | Some m ->
@@ -1317,10 +1248,7 @@ let sample ?n ?frac ?replace ?seed:_ t =
                   if Array.exists Fun.id sub then Some sub else None
               | None -> None
             in
-            ( name,
-              Col.P
-                (dtype, Nx.create dtype [| Array.length sampled |] sampled, mask)
-            )
+            (name, Col.P (dtype, sampled, mask))
         | Col.S arr ->
             let sampled = Array.map (fun i -> arr.(i)) indices in
             (name, Col.S sampled)
@@ -1331,6 +1259,42 @@ let sample ?n ?frac ?replace ?seed:_ t =
   in
   create columns
 
+let create_index_tensor indices =
+  Nx.create Nx.int32 [| Array.length indices |] (Array.map Int32.of_int indices)
+
+let gather_numeric dtype tensor indices =
+  if Array.length indices = 0 then Nx.empty dtype [| 0 |]
+  else
+    let idx_tensor = create_index_tensor indices in
+    Nx.take ~axis:0 idx_tensor tensor
+
+let reindex_nonneg_column col indices =
+  match col with
+  | Col.P (dtype, tensor, mask_opt) ->
+      let gathered = gather_numeric dtype tensor indices in
+      let mask =
+        match mask_opt with
+        | Some m ->
+            if Array.length indices = 0 then None
+            else
+              let sub = Array.map (fun idx -> m.(idx)) indices in
+              if Array.exists Fun.id sub then Some sub else None
+        | None -> None
+      in
+      Col.P (dtype, gathered, mask)
+  | Col.S arr ->
+      let result = Array.map (fun idx -> arr.(idx)) indices in
+      Col.S result
+  | Col.B arr ->
+      let result = Array.map (fun idx -> arr.(idx)) indices in
+      Col.B result
+
+let reindex_rows t indices =
+  List.map
+    (fun (name, col) -> (name, reindex_nonneg_column col indices))
+    t.columns
+  |> create
+
 let filter t mask =
   let n_rows = num_rows t in
   if Array.length mask <> n_rows then
@@ -1339,34 +1303,7 @@ let filter t mask =
     let indices = ref [] in
     Array.iteri (fun i b -> if b then indices := i :: !indices) mask;
     let indices = Array.of_list (List.rev !indices) in
-    let columns =
-      List.map
-        (fun (name, col) ->
-          match col with
-          | Col.P (dtype, tensor, mask_opt) ->
-              let arr = Nx.to_array tensor in
-              let filtered = Array.map (fun i -> arr.(i)) indices in
-              let mask =
-                match mask_opt with
-                | Some m ->
-                    let sub = Array.map (fun i -> m.(i)) indices in
-                    if Array.exists Fun.id sub then Some sub else None
-                | None -> None
-              in
-              ( name,
-                Col.P
-                  ( dtype,
-                    Nx.create dtype [| Array.length filtered |] filtered,
-                    mask ) )
-          | Col.S arr ->
-              let filtered = Array.map (fun i -> arr.(i)) indices in
-              (name, Col.S filtered)
-          | Col.B arr ->
-              let filtered = Array.map (fun i -> arr.(i)) indices in
-              (name, Col.B filtered))
-        t.columns
-    in
-    create columns
+    reindex_rows t indices
 
 let filter_by t pred =
   let n_rows = num_rows t in
@@ -1382,51 +1319,11 @@ let drop_nulls ?subset t =
   List.iter
     (fun col_name ->
       match get_column t col_name with
-      | Some (Col.P (Nx.Float32, tensor, mask_opt)) ->
-          let arr : float array = Nx.to_array tensor in
+      | Some (Col.P (_, _, Some mask_opt)) ->
           Array.iteri
-            (fun i v ->
-              let is_null =
-                match mask_opt with
-                | Some m -> m.(i)
-                | None -> classify_float v = FP_nan
-              in
-              if is_null then mask.(i) <- false)
-            arr
-      | Some (Col.P (Nx.Float64, tensor, mask_opt)) ->
-          let arr : float array = Nx.to_array tensor in
-          Array.iteri
-            (fun i v ->
-              let is_null =
-                match mask_opt with
-                | Some m -> m.(i)
-                | None -> classify_float v = FP_nan
-              in
-              if is_null then mask.(i) <- false)
-            arr
-      | Some (Col.P (Nx.Int32, tensor, mask_opt)) ->
-          let arr : int32 array = Nx.to_array tensor in
-          Array.iteri
-            (fun i v ->
-              let is_null =
-                match mask_opt with
-                | Some m -> m.(i)
-                | None -> v = Int32.min_int
-              in
-              if is_null then mask.(i) <- false)
-            arr
-      | Some (Col.P (Nx.Int64, tensor, mask_opt)) ->
-          let arr : int64 array = Nx.to_array tensor in
-          Array.iteri
-            (fun i v ->
-              let is_null =
-                match mask_opt with
-                | Some m -> m.(i)
-                | None -> v = Int64.min_int
-              in
-              if is_null then mask.(i) <- false)
-            arr
-      | Some (Col.P (_, _, _)) -> ()
+            (fun i is_null -> if is_null then mask.(i) <- false)
+            mask_opt
+      | Some (Col.P (_, _, None)) -> ()
       | Some (Col.S arr) ->
           Array.iteri
             (fun i v -> if Option.is_none v then mask.(i) <- false)
@@ -1490,7 +1387,7 @@ let drop_duplicates ?subset t =
                      let is_null =
                        match mask_opt with
                        | Some mask -> mask.(i)
-                       | None -> classify_float arr.(i) = FP_nan
+                       | None -> false
                      in
                      if is_null then "<null>" else string_of_float arr.(i)
                  | Nx.Float64 ->
@@ -1498,7 +1395,7 @@ let drop_duplicates ?subset t =
                      let is_null =
                        match mask_opt with
                        | Some mask -> mask.(i)
-                       | None -> classify_float arr.(i) = FP_nan
+                       | None -> false
                      in
                      if is_null then "<null>" else string_of_float arr.(i)
                  | Nx.Int32 ->
@@ -1506,7 +1403,7 @@ let drop_duplicates ?subset t =
                      let is_null =
                        match mask_opt with
                        | Some mask -> mask.(i)
-                       | None -> arr.(i) = Int32.min_int
+                       | None -> false
                      in
                      if is_null then "<null>" else Int32.to_string arr.(i)
                  | Nx.Int64 ->
@@ -1514,7 +1411,7 @@ let drop_duplicates ?subset t =
                      let is_null =
                        match mask_opt with
                        | Some mask -> mask.(i)
-                       | None -> arr.(i) = Int64.min_int
+                       | None -> false
                      in
                      if is_null then "<null>" else Int64.to_string arr.(i)
                  | _ -> "")
@@ -1769,33 +1666,7 @@ let sort t key ~compare =
   let keys = Array.init n_rows (fun i -> (i, key.f t i)) in
   Array.sort (fun (_, k1) (_, k2) -> compare k1 k2) keys;
   let indices = Array.map fst keys in
-  let columns =
-    List.map
-      (fun (name, col) ->
-        match col with
-        | Col.P (dtype, tensor, mask_opt) ->
-            let arr = Nx.to_array tensor in
-            let sorted = Array.map (fun i -> arr.(i)) indices in
-            let mask =
-              match mask_opt with
-              | Some m ->
-                  let permuted = Array.map (fun i -> m.(i)) indices in
-                  if Array.exists Fun.id permuted then Some permuted else None
-              | None -> None
-            in
-            ( name,
-              Col.P
-                (dtype, Nx.create dtype [| Array.length sorted |] sorted, mask)
-            )
-        | Col.S arr ->
-            let sorted = Array.map (fun i -> arr.(i)) indices in
-            (name, Col.S sorted)
-        | Col.B arr ->
-            let sorted = Array.map (fun i -> arr.(i)) indices in
-            (name, Col.B sorted))
-      t.columns
-  in
-  create columns
+  reindex_rows t indices
 
 let sort_values ?(ascending = true) t name =
   match get_column t name with
@@ -1826,29 +1697,7 @@ let group_by t key =
       let indices = Array.of_list (List.rev indices) in
       let columns =
         List.map
-          (fun (name, col) ->
-            match col with
-            | Col.P (dtype, tensor, mask_opt) ->
-                let arr = Nx.to_array tensor in
-                let grouped = Array.map (fun i -> arr.(i)) indices in
-                let mask =
-                  match mask_opt with
-                  | Some m ->
-                      let sub = Array.map (fun i -> m.(i)) indices in
-                      if Array.exists Fun.id sub then Some sub else None
-                  | None -> None
-                in
-                ( name,
-                  Col.P
-                    ( dtype,
-                      Nx.create dtype [| Array.length grouped |] grouped,
-                      mask ) )
-            | Col.S arr ->
-                let grouped = Array.map (fun i -> arr.(i)) indices in
-                (name, Col.S grouped)
-            | Col.B arr ->
-                let grouped = Array.map (fun i -> arr.(i)) indices in
-                (name, Col.B grouped))
+          (fun (name, col) -> (name, reindex_nonneg_column col indices))
           t.columns
       in
       (k, create columns) :: acc)
@@ -1868,33 +1717,25 @@ let group_by_column t name =
               | Nx.Float32 ->
                   let arr : float array = Nx.to_array tensor in
                   let is_null =
-                    match mask_opt with
-                    | Some mask -> mask.(i)
-                    | None -> classify_float arr.(i) = FP_nan
+                    match mask_opt with Some mask -> mask.(i) | None -> false
                   in
                   if is_null then "<null>" else string_of_float arr.(i)
               | Nx.Float64 ->
                   let arr : float array = Nx.to_array tensor in
                   let is_null =
-                    match mask_opt with
-                    | Some mask -> mask.(i)
-                    | None -> classify_float arr.(i) = FP_nan
+                    match mask_opt with Some mask -> mask.(i) | None -> false
                   in
                   if is_null then "<null>" else string_of_float arr.(i)
               | Nx.Int32 ->
                   let arr : int32 array = Nx.to_array tensor in
                   let is_null =
-                    match mask_opt with
-                    | Some mask -> mask.(i)
-                    | None -> arr.(i) = Int32.min_int
+                    match mask_opt with Some mask -> mask.(i) | None -> false
                   in
                   if is_null then "<null>" else Int32.to_string arr.(i)
               | Nx.Int64 ->
                   let arr : int64 array = Nx.to_array tensor in
                   let is_null =
-                    match mask_opt with
-                    | Some mask -> mask.(i)
-                    | None -> arr.(i) = Int64.min_int
+                    match mask_opt with Some mask -> mask.(i) | None -> false
                   in
                   if is_null then "<null>" else Int64.to_string arr.(i)
               | _ -> "")
@@ -1957,50 +1798,44 @@ let group_by_column t name =
         groups []
 
 module Agg = struct
-  (* Helper to check if a value at index is null based on mask and sentinel *)
-  let is_null_float mask i value =
-    match mask with
-    | Some m when m.(i) -> true
-    | _ -> classify_float value = FP_nan
-
-  let is_null_int32 mask i value =
-    match mask with Some m when m.(i) -> true | _ -> value = Int32.min_int
-
-  let is_null_int64 mask i value =
-    match mask with Some m when m.(i) -> true | _ -> value = Int64.min_int
-
-  (* Helper to filter non-null float values *)
   let filter_float_array mask arr =
-    let rec aux idx acc count =
-      if idx < 0 then (Array.of_list acc, count)
-      else
-        let value = arr.(idx) in
-        if is_null_float mask idx value then aux (idx - 1) acc count
-        else aux (idx - 1) (value :: acc) (count + 1)
-    in
-    aux (Array.length arr - 1) [] 0
+    match mask with
+    | Some m ->
+        let collected = ref [] in
+        let count = ref 0 in
+        for i = Array.length arr - 1 downto 0 do
+          if not m.(i) then (
+            collected := arr.(i) :: !collected;
+            incr count)
+        done;
+        (Array.of_list !collected, !count)
+    | None -> (Array.copy arr, Array.length arr)
 
-  (* Helper to filter non-null int32 values *)
   let filter_int32_array mask arr =
-    let rec aux idx acc count =
-      if idx < 0 then (Array.of_list acc, count)
-      else
-        let value = arr.(idx) in
-        if is_null_int32 mask idx value then aux (idx - 1) acc count
-        else aux (idx - 1) (value :: acc) (count + 1)
-    in
-    aux (Array.length arr - 1) [] 0
+    match mask with
+    | Some m ->
+        let collected = ref [] in
+        let count = ref 0 in
+        for i = Array.length arr - 1 downto 0 do
+          if not m.(i) then (
+            collected := arr.(i) :: !collected;
+            incr count)
+        done;
+        (Array.of_list !collected, !count)
+    | None -> (Array.copy arr, Array.length arr)
 
-  (* Helper to filter non-null int64 values *)
   let filter_int64_array mask arr =
-    let rec aux idx acc count =
-      if idx < 0 then (Array.of_list acc, count)
-      else
-        let value = arr.(idx) in
-        if is_null_int64 mask idx value then aux (idx - 1) acc count
-        else aux (idx - 1) (value :: acc) (count + 1)
-    in
-    aux (Array.length arr - 1) [] 0
+    match mask with
+    | Some m ->
+        let collected = ref [] in
+        let count = ref 0 in
+        for i = Array.length arr - 1 downto 0 do
+          if not m.(i) then (
+            collected := arr.(i) :: !collected;
+            incr count)
+        done;
+        (Array.of_list !collected, !count)
+    | None -> (Array.copy arr, Array.length arr)
 
   module Float = struct
     let sum t name =
@@ -2792,18 +2627,7 @@ module Agg = struct
 
   let is_null t name =
     match get_column t name with
-    | Some (Col.P (Nx.Float32, tensor, _)) ->
-        let arr : float array = Nx.to_array tensor in
-        Array.map (fun x -> classify_float x = FP_nan) arr
-    | Some (Col.P (Nx.Float64, tensor, _)) ->
-        let arr : float array = Nx.to_array tensor in
-        Array.map (fun x -> classify_float x = FP_nan) arr
-    | Some (Col.P (Nx.Int32, tensor, _)) ->
-        let arr : int32 array = Nx.to_array tensor in
-        Array.map (fun x -> x = Int32.min_int) arr
-    | Some (Col.P (Nx.Int64, tensor, _)) ->
-        let arr : int64 array = Nx.to_array tensor in
-        Array.map (fun x -> x = Int64.min_int) arr
+    | Some (Col.P (_, _, Some mask)) -> Array.copy mask
     | Some (Col.P _) -> Array.make (num_rows t) false
     | Some (Col.S arr) -> Array.map Option.is_none arr
     | Some (Col.B arr) -> Array.map Option.is_none arr
@@ -3042,13 +2866,167 @@ module Agg = struct
     | None -> failwith "shift: column not found"
 
   let fillna t name ~value =
-    match (get_column t name, value) with
-    | Some col, value_col
-      when Col.length value_col = 1 || Col.length value_col = Col.length col ->
-        col
-    | _ ->
-        invalid_arg
-          "fillna: value column must have 1 element or match column length"
+    let target =
+      match get_column t name with
+      | Some col -> col
+      | None -> invalid_arg ("fillna: column " ^ name ^ " not found")
+    in
+    let target_len = Col.length target in
+    let value_len = Col.length value in
+    if value_len <> 1 && value_len <> target_len then
+      invalid_arg
+        "fillna: value column must have 1 element or match column length";
+    match (target, value) with
+    | ( Col.P (Nx.Float32, tensor, mask_opt),
+        Col.P (Nx.Float32, value_tensor, value_mask) ) ->
+        let data : float array = Nx.to_array tensor in
+        let values : float array = Nx.to_array value_tensor in
+        let mask =
+          match mask_opt with
+          | Some m -> Array.copy m
+          | None -> Array.make target_len false
+        in
+        let result = Array.copy data in
+        for i = 0 to target_len - 1 do
+          let should_replace =
+            match mask_opt with Some m -> m.(i) | None -> false
+          in
+          if should_replace then
+            let vi = if value_len = 1 then 0 else i in
+            let replacement = values.(vi) in
+            let replacement_is_null =
+              match value_mask with
+              | Some m ->
+                  let idx = if value_len = 1 then 0 else vi in
+                  m.(idx)
+              | None -> false
+            in
+            if replacement_is_null then (
+              mask.(i) <- true;
+              result.(i) <- replacement)
+            else (
+              mask.(i) <- false;
+              result.(i) <- replacement)
+        done;
+        let mask_opt = if Array.exists Fun.id mask then Some mask else None in
+        Col.P
+          (Nx.Float32, Nx.create Nx.float32 [| target_len |] result, mask_opt)
+    | ( Col.P (Nx.Float64, tensor, mask_opt),
+        Col.P (Nx.Float64, value_tensor, value_mask) ) ->
+        let data : float array = Nx.to_array tensor in
+        let values : float array = Nx.to_array value_tensor in
+        let mask =
+          match mask_opt with
+          | Some m -> Array.copy m
+          | None -> Array.make target_len false
+        in
+        let result = Array.copy data in
+        for i = 0 to target_len - 1 do
+          let should_replace =
+            match mask_opt with Some m -> m.(i) | None -> false
+          in
+          if should_replace then
+            let vi = if value_len = 1 then 0 else i in
+            let replacement = values.(vi) in
+            let replacement_is_null =
+              match value_mask with
+              | Some m ->
+                  let idx = if value_len = 1 then 0 else vi in
+                  m.(idx)
+              | None -> false
+            in
+            if replacement_is_null then (
+              mask.(i) <- true;
+              result.(i) <- replacement)
+            else (
+              mask.(i) <- false;
+              result.(i) <- replacement)
+        done;
+        let mask_opt = if Array.exists Fun.id mask then Some mask else None in
+        Col.P
+          (Nx.Float64, Nx.create Nx.float64 [| target_len |] result, mask_opt)
+    | ( Col.P (Nx.Int32, tensor, mask_opt),
+        Col.P (Nx.Int32, value_tensor, value_mask) ) ->
+        let data : int32 array = Nx.to_array tensor in
+        let values : int32 array = Nx.to_array value_tensor in
+        let mask =
+          match mask_opt with
+          | Some m -> Array.copy m
+          | None -> Array.make target_len false
+        in
+        let result = Array.copy data in
+        for i = 0 to target_len - 1 do
+          let should_replace =
+            match mask_opt with Some m -> m.(i) | None -> false
+          in
+          if should_replace then
+            let vi = if value_len = 1 then 0 else i in
+            let replacement = values.(vi) in
+            let replacement_is_null =
+              match value_mask with
+              | Some m ->
+                  let idx = if value_len = 1 then 0 else vi in
+                  m.(idx)
+              | None -> false
+            in
+            if replacement_is_null then (
+              mask.(i) <- true;
+              result.(i) <- replacement)
+            else (
+              mask.(i) <- false;
+              result.(i) <- replacement)
+        done;
+        let mask_opt = if Array.exists Fun.id mask then Some mask else None in
+        Col.P (Nx.Int32, Nx.create Nx.int32 [| target_len |] result, mask_opt)
+    | ( Col.P (Nx.Int64, tensor, mask_opt),
+        Col.P (Nx.Int64, value_tensor, value_mask) ) ->
+        let data : int64 array = Nx.to_array tensor in
+        let values : int64 array = Nx.to_array value_tensor in
+        let mask =
+          match mask_opt with
+          | Some m -> Array.copy m
+          | None -> Array.make target_len false
+        in
+        let result = Array.copy data in
+        for i = 0 to target_len - 1 do
+          let should_replace =
+            match mask_opt with Some m -> m.(i) | None -> false
+          in
+          if should_replace then
+            let vi = if value_len = 1 then 0 else i in
+            let replacement = values.(vi) in
+            let replacement_is_null =
+              match value_mask with
+              | Some m ->
+                  let idx = if value_len = 1 then 0 else vi in
+                  m.(idx)
+              | None -> false
+            in
+            if replacement_is_null then (
+              mask.(i) <- true;
+              result.(i) <- replacement)
+            else (
+              mask.(i) <- false;
+              result.(i) <- replacement)
+        done;
+        let mask_opt = if Array.exists Fun.id mask then Some mask else None in
+        Col.P (Nx.Int64, Nx.create Nx.int64 [| target_len |] result, mask_opt)
+    | Col.S arr, Col.S value_arr ->
+        let idx_of i = if value_len = 1 then 0 else i in
+        let result = Array.copy arr in
+        for i = 0 to target_len - 1 do
+          if Option.is_none result.(i) then result.(i) <- value_arr.(idx_of i)
+        done;
+        Col.S result
+    | Col.B arr, Col.B value_arr ->
+        let idx_of i = if value_len = 1 then 0 else i in
+        let result = Array.copy arr in
+        for i = 0 to target_len - 1 do
+          if Option.is_none result.(i) then result.(i) <- value_arr.(idx_of i)
+        done;
+        Col.B result
+    | Col.P _, _ | Col.S _, _ | Col.B _, _ ->
+        invalid_arg "fillna: value type doesn't match column type"
 end
 
 let rec join t1 t2 ~on ~how ?(suffixes = ("_x", "_y")) () =
@@ -3059,170 +3037,256 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
   let left_col = get_column_exn t1 left_on in
   let right_col = get_column_exn t2 right_on in
 
-  (* Extract values for comparison - handle different column types *)
   let get_key_array = function
-    | Col.P (Nx.Int32, tensor, _) ->
-        let arr : int32 array = Nx.to_array tensor in
-        Array.map (fun x -> `Int32 x) arr
-    | Col.P (Nx.Int64, tensor, _) ->
-        let arr : int64 array = Nx.to_array tensor in
-        Array.map (fun x -> `Int64 x) arr
-    | Col.P (Nx.Float32, tensor, _) ->
-        let arr : float array = Nx.to_array tensor in
-        Array.map (fun x -> `Float x) arr
-    | Col.P (Nx.Float64, tensor, _) ->
-        let arr : float array = Nx.to_array tensor in
-        Array.map (fun x -> `Float x) arr
-    | Col.S arr -> Array.map (fun x -> `String x) arr
+    | Col.P (dtype, tensor, mask_opt) -> (
+        match dtype with
+        | Nx.Int32 ->
+            let arr : int32 array = Nx.to_array tensor in
+            Array.mapi
+              (fun i v ->
+                let is_null =
+                  match mask_opt with Some mask -> mask.(i) | None -> false
+                in
+                if is_null then Join_key.Null else Join_key.Int32 v)
+              arr
+        | Nx.Int64 ->
+            let arr : int64 array = Nx.to_array tensor in
+            Array.mapi
+              (fun i v ->
+                let is_null =
+                  match mask_opt with Some mask -> mask.(i) | None -> false
+                in
+                if is_null then Join_key.Null else Join_key.Int64 v)
+              arr
+        | Nx.Float32 ->
+            let arr : float array = Nx.to_array tensor in
+            Array.mapi
+              (fun i v ->
+                let is_null =
+                  match mask_opt with Some mask -> mask.(i) | None -> false
+                in
+                if is_null then Join_key.Null else Join_key.Float v)
+              arr
+        | Nx.Float64 ->
+            let arr : float array = Nx.to_array tensor in
+            Array.mapi
+              (fun i v ->
+                let is_null =
+                  match mask_opt with Some mask -> mask.(i) | None -> false
+                in
+                if is_null then Join_key.Null else Join_key.Float v)
+              arr
+        | _ -> failwith "Unsupported column type for join")
+    | Col.S arr ->
+        Array.map
+          (function Some s -> Join_key.String s | None -> Join_key.Null)
+          arr
     | _ -> failwith "Unsupported column type for join"
+  in
+
+  let build_index keys =
+    let tmp = Join_key_tbl.create (max 16 (Array.length keys)) in
+    Array.iteri
+      (fun idx key ->
+        let existing =
+          match Join_key_tbl.find_opt tmp key with
+          | Some lst -> lst
+          | None -> []
+        in
+        Join_key_tbl.replace tmp key (idx :: existing))
+      keys;
+    let final_tbl = Join_key_tbl.create (Join_key_tbl.length tmp + 1) in
+    Join_key_tbl.iter
+      (fun key lst ->
+        Join_key_tbl.add final_tbl key (Array.of_list (List.rev lst)))
+      tmp;
+    final_tbl
   in
 
   let left_keys = get_key_array left_col in
   let right_keys = get_key_array right_col in
-
-  (* Build index mappings for the join *)
-  let left_indices = ref [] in
-  let right_indices = ref [] in
-
-  let process_join () =
-    match how with
-    | `Inner ->
-        (* Inner join: only matching rows *)
-        for i = 0 to Array.length left_keys - 1 do
-          for j = 0 to Array.length right_keys - 1 do
-            if left_keys.(i) = right_keys.(j) then (
-              left_indices := i :: !left_indices;
-              right_indices := j :: !right_indices)
-          done
-        done
-    | `Left ->
-        (* Left join: all rows from left, matching from right *)
-        for i = 0 to Array.length left_keys - 1 do
-          let found = ref false in
-          for j = 0 to Array.length right_keys - 1 do
-            if left_keys.(i) = right_keys.(j) then (
-              left_indices := i :: !left_indices;
-              right_indices := j :: !right_indices;
-              found := true)
-          done;
-          if not !found then (
-            left_indices := i :: !left_indices;
-            right_indices := -1 :: !right_indices (* -1 indicates null *))
-        done
-    | `Right ->
-        (* Right join: all rows from right, matching from left *)
-        for j = 0 to Array.length right_keys - 1 do
-          let found = ref false in
-          for i = 0 to Array.length left_keys - 1 do
-            if left_keys.(i) = right_keys.(j) then (
-              left_indices := i :: !left_indices;
-              right_indices := j :: !right_indices;
-              found := true)
-          done;
-          if not !found then (
-            left_indices := -1 :: !left_indices;
-            (* -1 indicates null *)
-            right_indices := j :: !right_indices)
-        done
-    | `Outer ->
-        (* Outer join: all rows from both *)
-        (* First, do a left join *)
-        for i = 0 to Array.length left_keys - 1 do
-          let found = ref false in
-          for j = 0 to Array.length right_keys - 1 do
-            if left_keys.(i) = right_keys.(j) then (
-              left_indices := i :: !left_indices;
-              right_indices := j :: !right_indices;
-              found := true)
-          done;
-          if not !found then (
-            left_indices := i :: !left_indices;
-            right_indices := -1 :: !right_indices)
-        done;
-        (* Then add unmatched right rows *)
-        for j = 0 to Array.length right_keys - 1 do
-          let matched = ref false in
-          for i = 0 to Array.length left_keys - 1 do
-            if left_keys.(i) = right_keys.(j) then matched := true
-          done;
-          if not !matched then (
-            left_indices := -1 :: !left_indices;
-            right_indices := j :: !right_indices)
-        done
+  let right_index = build_index right_keys in
+  let left_index_for_right =
+    match how with `Right -> Some (build_index left_keys) | _ -> None
   in
 
-  process_join ();
+  let left_indices = ref [] in
+  let right_indices = ref [] in
+  let append_pair l r =
+    left_indices := l :: !left_indices;
+    right_indices := r :: !right_indices
+  in
+  let matched_right = Array.make (Array.length right_keys) false in
+
+  (match how with
+  | `Inner ->
+      for i = 0 to Array.length left_keys - 1 do
+        match Join_key_tbl.find_opt right_index left_keys.(i) with
+        | Some matches ->
+            Array.iter
+              (fun j ->
+                append_pair i j;
+                matched_right.(j) <- true)
+              matches
+        | None -> ()
+      done
+  | `Left ->
+      for i = 0 to Array.length left_keys - 1 do
+        match Join_key_tbl.find_opt right_index left_keys.(i) with
+        | Some matches ->
+            Array.iter
+              (fun j ->
+                append_pair i j;
+                matched_right.(j) <- true)
+              matches
+        | None -> append_pair i (-1)
+      done
+  | `Right ->
+      let left_index =
+        match left_index_for_right with
+        | Some tbl -> tbl
+        | None -> build_index left_keys
+      in
+      for j = 0 to Array.length right_keys - 1 do
+        match Join_key_tbl.find_opt left_index right_keys.(j) with
+        | Some matches -> Array.iter (fun i -> append_pair i j) matches
+        | None -> append_pair (-1) j
+      done
+  | `Outer ->
+      for i = 0 to Array.length left_keys - 1 do
+        match Join_key_tbl.find_opt right_index left_keys.(i) with
+        | Some matches ->
+            Array.iter
+              (fun j ->
+                append_pair i j;
+                matched_right.(j) <- true)
+              matches
+        | None -> append_pair i (-1)
+      done;
+      for j = 0 to Array.length right_keys - 1 do
+        if not matched_right.(j) then append_pair (-1) j
+      done);
 
   let left_idx = Array.of_list (List.rev !left_indices) in
   let right_idx = Array.of_list (List.rev !right_indices) in
 
   (* Helper to reindex a column based on indices *)
   let reindex_column col indices n_source =
-    match col with
-    | Col.P (dtype, tensor, _) -> (
-        match dtype with
-        | Nx.Float32 ->
-            let source_arr : float array = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
-                  let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else Float.nan)
+    let has_null = Array.exists (fun idx -> idx < 0) indices in
+    if not has_null then reindex_nonneg_column col indices
+    else
+      match col with
+      | Col.P (dtype, tensor, mask_opt) -> (
+          let len = Array.length indices in
+          let finish mask result =
+            let mask_opt =
+              if Array.exists Fun.id mask then Some mask else None
             in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
-        | Nx.Float64 ->
-            let source_arr : float array = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
-                  let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else Float.nan)
-            in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
-        | Nx.Int32 ->
-            let source_arr : int32 array = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
-                  let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else Int32.min_int)
-            in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
-        | Nx.Int64 ->
-            let source_arr : int64 array = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
-                  let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else Int64.min_int)
-            in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
-        | _ ->
-            (* For other types, just create zeros *)
-            let source_arr = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
-                  let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else source_arr.(0)
-                  (* Use first element as default *))
-            in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
-        )
-    | Col.S arr ->
-        let result =
-          Array.init (Array.length indices) (fun i ->
-              let idx = indices.(i) in
-              if idx >= 0 && idx < Array.length arr then arr.(idx) else None)
-        in
-        Col.S result
-    | Col.B arr ->
-        let result =
-          Array.init (Array.length indices) (fun i ->
-              let idx = indices.(i) in
-              if idx >= 0 && idx < Array.length arr then arr.(idx) else None)
-        in
-        Col.B result
+            Col.P (dtype, Nx.create dtype [| len |] result, mask_opt)
+          in
+          match dtype with
+          | Nx.Float32 ->
+              let source : float array = Nx.to_array tensor in
+              let result = Array.make len Float.nan in
+              let mask =
+                Array.init len (fun i ->
+                    let idx = indices.(i) in
+                    if idx < 0 || idx >= n_source then true
+                    else
+                      let value = source.(idx) in
+                      let is_null =
+                        match mask_opt with Some m -> m.(idx) | None -> false
+                      in
+                      if not is_null then result.(i) <- value;
+                      is_null)
+              in
+              finish mask result
+          | Nx.Float64 ->
+              let source : float array = Nx.to_array tensor in
+              let result = Array.make len Float.nan in
+              let mask =
+                Array.init len (fun i ->
+                    let idx = indices.(i) in
+                    if idx < 0 || idx >= n_source then true
+                    else
+                      let value = source.(idx) in
+                      let is_null =
+                        match mask_opt with Some m -> m.(idx) | None -> false
+                      in
+                      if not is_null then result.(i) <- value;
+                      is_null)
+              in
+              finish mask result
+          | Nx.Int32 ->
+              let source : int32 array = Nx.to_array tensor in
+              let result = Array.make len Int32.min_int in
+              let mask =
+                Array.init len (fun i ->
+                    let idx = indices.(i) in
+                    if idx < 0 || idx >= n_source then true
+                    else
+                      let value = source.(idx) in
+                      let is_null =
+                        match mask_opt with Some m -> m.(idx) | None -> false
+                      in
+                      if not is_null then result.(i) <- value;
+                      is_null)
+              in
+              finish mask result
+          | Nx.Int64 ->
+              let source : int64 array = Nx.to_array tensor in
+              let result = Array.make len Int64.min_int in
+              let mask =
+                Array.init len (fun i ->
+                    let idx = indices.(i) in
+                    if idx < 0 || idx >= n_source then true
+                    else
+                      let value = source.(idx) in
+                      let is_null =
+                        match mask_opt with Some m -> m.(idx) | None -> false
+                      in
+                      if not is_null then result.(i) <- value;
+                      is_null)
+              in
+              finish mask result
+          | _ ->
+              let source = Nx.to_array tensor in
+              if n_source = 0 && Array.exists (fun idx -> idx >= 0) indices then
+                invalid_arg
+                  "merge: cannot reindex numeric column with empty source";
+              let mask =
+                Array.init len (fun i ->
+                    let idx = indices.(i) in
+                    if idx < 0 || idx >= n_source then true
+                    else match mask_opt with Some m -> m.(idx) | None -> false)
+              in
+              let default = if n_source = 0 then None else Some source.(0) in
+              let result =
+                Array.init len (fun i ->
+                    let idx = indices.(i) in
+                    if idx >= 0 && idx < n_source then source.(idx)
+                    else
+                      match default with
+                      | Some v -> v
+                      | None ->
+                          invalid_arg
+                            "merge: cannot synthesize default for empty column")
+              in
+              finish mask result)
+      | Col.S arr ->
+          let result =
+            Array.init (Array.length indices) (fun i ->
+                let idx = indices.(i) in
+                if idx >= 0 && idx < Array.length arr then arr.(idx) else None)
+          in
+          Col.S result
+      | Col.B arr ->
+          let result =
+            Array.init (Array.length indices) (fun i ->
+                let idx = indices.(i) in
+                if idx >= 0 && idx < Array.length arr then arr.(idx) else None)
+          in
+          Col.B result
   in
 
   (* Build result columns *)
@@ -3295,10 +3359,49 @@ let pivot t ~index ~columns ~values ?(agg_func = `Sum) () =
   let index_values =
     match index_col with
     | Col.S arr -> Array.to_list arr
-    | Col.P (_, tensor, _) ->
-        let arr = Nx.to_array tensor in
-        Array.to_list (Array.map (fun _ -> Some "") arr)
-        (* Simplified *)
+    | Col.P (dtype, tensor, mask_opt) -> (
+        match dtype with
+        | Nx.Int32 ->
+            let arr : int32 array = Nx.to_array tensor in
+            Array.to_list
+              (Array.mapi
+                 (fun i v ->
+                   let is_null =
+                     match mask_opt with Some mask -> mask.(i) | None -> false
+                   in
+                   if is_null then None else Some (Int32.to_string v))
+                 arr)
+        | Nx.Int64 ->
+            let arr : int64 array = Nx.to_array tensor in
+            Array.to_list
+              (Array.mapi
+                 (fun i v ->
+                   let is_null =
+                     match mask_opt with Some mask -> mask.(i) | None -> false
+                   in
+                   if is_null then None else Some (Int64.to_string v))
+                 arr)
+        | Nx.Float32 ->
+            let arr : float array = Nx.to_array tensor in
+            Array.to_list
+              (Array.mapi
+                 (fun i v ->
+                   let is_null =
+                     match mask_opt with Some mask -> mask.(i) | None -> false
+                   in
+                   if is_null then None else Some (string_of_float v))
+                 arr)
+        | Nx.Float64 ->
+            let arr : float array = Nx.to_array tensor in
+            Array.to_list
+              (Array.mapi
+                 (fun i v ->
+                   let is_null =
+                     match mask_opt with Some mask -> mask.(i) | None -> false
+                   in
+                   if is_null then None else Some (string_of_float v))
+                 arr)
+        | _ -> failwith "pivot: index column type not supported")
     | _ -> failwith "pivot: index column type not supported"
   in
 

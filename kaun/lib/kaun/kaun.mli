@@ -37,9 +37,6 @@ val value_and_grad :
 val grad :
   ('layout params -> 'layout tensor) -> 'layout params -> 'layout params
 
-module Ops = Ops
-(** @inline *)
-
 module Metrics = Metrics
 (** @inline *)
 

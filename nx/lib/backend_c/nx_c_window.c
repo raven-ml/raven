@@ -313,13 +313,16 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
   long batch = in->shape[0];
   long channels = in->shape[1];
   long kernel_prod = 1;
+  bool no_padding = true;
   for (int d = 0; d < K; d++) {
     long effective_ker = dilation[d] * (kernel_size[d] - 1) + 1;
     long padded = in->shape[d + 2] + pad_before[d] + pad_after[d];
     long diff = padded - effective_ker;
     out_spatial[d] = (diff / stride[d]) + 1;
     kernel_prod *= kernel_size[d];
+    if (pad_before[d] != 0 || pad_after[d] != 0) no_padding = false;
   }
+  if (kernel_prod == 0) no_padding = false;
   long L = 1;
   for (int d = 0; d < K; d++) L *= out_spatial[d];
   long window_size = channels * kernel_prod;
@@ -335,6 +338,64 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
       out_cumprod[i] = out_cumprod[i + 1] * out_spatial[i + 1];
       kernel_cumprod[i] = kernel_cumprod[i + 1] * kernel_size[i + 1];
     }
+  }
+
+  long *kernel_offsets = NULL;
+  if (no_padding && kernel_prod > 0) {
+    kernel_offsets = (long *)malloc(kernel_prod * sizeof(long));
+    if (kernel_offsets) {
+      long coords[MAX_SPATIAL_DIMS] = {0};
+      for (long kf = 0; kf < kernel_prod; ++kf) {
+        long offset = 0;
+        for (int d = 0; d < K; ++d) {
+          offset += coords[d] * dilation[d] * in->strides[d + 2];
+        }
+        kernel_offsets[kf] = offset;
+        for (int d = K - 1; d >= 0; --d) {
+          coords[d]++;
+          if (coords[d] < kernel_size[d]) break;
+          coords[d] = 0;
+        }
+      }
+    } else {
+      no_padding = false;
+    }
+  }
+
+  if (no_padding) {
+    long stride_steps[MAX_SPATIAL_DIMS];
+    for (int d = 0; d < K; ++d) {
+      stride_steps[d] = stride[d] * in->strides[d + 2];
+    }
+
+    for (long n = 0; n < batch; ++n) {
+      long block_coords[MAX_SPATIAL_DIMS] = {0};
+      long block_offset = 0;
+      long base_in_n = n * in->strides[0];
+      long base_out_n = n * out->strides[0];
+      for (long l = 0; l < L; ++l) {
+        long out_block_base = base_out_n + l * out->strides[2];
+        long in_block_base = base_in_n + block_offset;
+        for (long c = 0; c < channels; ++c) {
+          long in_channel_base = in_block_base + c * in->strides[1];
+          long out_channel_base = out_block_base + c * kernel_prod * out->strides[1];
+          for (long kf = 0; kf < kernel_prod; ++kf) {
+            long out_off = out_channel_base + kf * out->strides[1];
+            long in_off = in_channel_base + kernel_offsets[kf];
+            ops->copy(out->data, out->offset + out_off, in->data,
+                      in->offset + in_off);
+          }
+        }
+        for (int d = K - 1; d >= 0; --d) {
+          block_coords[d]++;
+          block_offset += stride_steps[d];
+          if (block_coords[d] < out_spatial[d]) break;
+          block_offset -= out_spatial[d] * stride_steps[d];
+          block_coords[d] = 0;
+        }
+      }
+    }
+    goto cleanup;
   }
 
 #pragma omp parallel for collapse(2) if (batch * L > 1000)
@@ -382,6 +443,7 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
     }
   }
 
+cleanup:
   free(kernel_size);
   free(stride);
   free(dilation);
@@ -390,6 +452,7 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
   free(out_spatial);
   free(out_cumprod);
   free(kernel_cumprod);
+  if (kernel_offsets) free(kernel_offsets);
 }
 
 // Implementation for fold

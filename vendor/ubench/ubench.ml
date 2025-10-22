@@ -72,6 +72,7 @@ type statistics = {
 type bench_data = {
   measurements : measurement list;
   time_stats : statistics;
+  wall_stats : statistics;
   memory_stats : statistics;
   regressions : regression_result list;
   total_time : float;
@@ -82,6 +83,7 @@ type analysis_result = {
   name : string;
   measurements : measurement list;
   time_stats : statistics;
+  wall_stats : statistics;
   memory_stats : statistics;
   regressions : regression_result list;
   total_time : float;
@@ -122,11 +124,11 @@ module Config = struct
   let default =
     {
       mode = Throughput 1.0;
-      quota = Time_limit 1.0;
-      warmup_iterations = 3;
-      min_measurements = 10;
-      stabilize_gc = true;
-      geometric_scale = 1.5;
+      quota = Time_limit 0.3;
+      warmup_iterations = 1;
+      min_measurements = 3;
+      stabilize_gc = false;
+      geometric_scale = 1.3;
       fork_benchmarks = false;
       regressions =
         [
@@ -135,7 +137,7 @@ module Config = struct
       custom_measurer = None;
       ascii_only = false;
       null_loop_subtraction = true;
-      min_cpu = 0.4;
+      min_cpu = 0.002;
       repeat = 1;
       progress_callback = None;
     }
@@ -486,7 +488,8 @@ let compute_statistics values =
     let min_val = Array.fold_left min Float.max_float values in
     let max_val = Array.fold_left max Float.min_float values in
     let std_dev = std_deviation values in
-    (* Use bootstrap for more robust confidence intervals when we have enough samples *)
+    (* Use bootstrap for more robust confidence intervals when we have enough
+       samples *)
     let ci95_lower, ci95_upper =
       if Array.length values >= 20 then
         bootstrap_confidence_interval ~n_resamples:1000 ~confidence:0.95 values
@@ -497,8 +500,8 @@ let compute_statistics values =
 
 (* Statistical functions for t-tests and comparison *)
 
-(* log_gamma x computes the logarithm of the Gamma function at x using Lanczos method.
-   It is assumed x > 0. *)
+(* log_gamma x computes the logarithm of the Gamma function at x using Lanczos
+   method. It is assumed x > 0. *)
 let log_gamma =
   let c =
     [|
@@ -774,11 +777,21 @@ let run_bench_with_config config f : bench_data =
   let measurements_list = List.rev !measurements in
   let time_values =
     Array.of_list
-      (List.map (fun m -> m.time_ns /. float m.runs) measurements_list)
+      (List.map
+         (fun m -> if m.runs = 0 then 0. else m.time_ns /. float m.runs)
+         measurements_list)
+  in
+  let wall_values =
+    Array.of_list
+      (List.map
+         (fun m -> if m.runs = 0 then 0. else m.wall_ns /. float m.runs)
+         measurements_list)
   in
   let memory_values =
     Array.of_list
-      (List.map (fun m -> m.minor_words /. float m.runs) measurements_list)
+      (List.map
+         (fun m -> if m.runs = 0 then 0. else m.minor_words /. float m.runs)
+         measurements_list)
   in
 
   (* Perform regression analysis *)
@@ -793,6 +806,7 @@ let run_bench_with_config config f : bench_data =
   {
     measurements = measurements_list;
     time_stats = compute_statistics time_values;
+    wall_stats = compute_statistics wall_values;
     memory_stats = compute_statistics memory_values;
     regressions;
     total_time = !total_time;
@@ -944,12 +958,14 @@ let print_json (results : analysis_result list) =
       String.concat "," (List.map regression_to_json r.regressions)
     in
     Printf.sprintf
-      {|{"name":"%s","time_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"memory_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"total_time_ns":%.2f,"total_runs":%d,"regressions":[%s]}|}
+      {|{"name":"%s","time_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"wall_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"memory_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"total_time_ns":%.2f,"total_runs":%d,"regressions":[%s]}|}
       r.name r.time_stats.avg r.time_stats.min r.time_stats.max
       r.time_stats.std_dev r.time_stats.ci95_lower r.time_stats.ci95_upper
-      r.memory_stats.avg r.memory_stats.min r.memory_stats.max
-      r.memory_stats.std_dev r.memory_stats.ci95_lower r.memory_stats.ci95_upper
-      r.total_time r.total_runs regressions_json
+      r.wall_stats.avg r.wall_stats.min r.wall_stats.max r.wall_stats.std_dev
+      r.wall_stats.ci95_lower r.wall_stats.ci95_upper r.memory_stats.avg
+      r.memory_stats.min r.memory_stats.max r.memory_stats.std_dev
+      r.memory_stats.ci95_lower r.memory_stats.ci95_upper r.total_time
+      r.total_runs regressions_json
   in
 
   let results_json = String.concat ",\n  " (List.map result_to_json results) in
@@ -957,7 +973,7 @@ let print_json (results : analysis_result list) =
 
 let print_csv (results : analysis_result list) =
   Printf.printf
-    "name,time_avg,time_min,time_max,time_std_dev,time_ci95_lower,time_ci95_upper,memory_avg,memory_min,memory_max,memory_std_dev,memory_ci95_lower,memory_ci95_upper,total_runs,time_r_squared,time_adjusted_r_squared\n";
+    "name,time_avg,time_min,time_max,time_std_dev,time_ci95_lower,time_ci95_upper,wall_avg,wall_min,wall_max,wall_std_dev,wall_ci95_lower,wall_ci95_upper,memory_avg,memory_min,memory_max,memory_std_dev,memory_ci95_lower,memory_ci95_upper,total_runs,time_r_squared,time_adjusted_r_squared\n";
   List.iter
     (fun (r : analysis_result) ->
       let time_regression =
@@ -977,16 +993,18 @@ let print_csv (results : analysis_result list) =
           }
       in
       Printf.printf
-        "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.4f,%.4f\n"
+        "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.4f,%.4f\n"
         r.name r.time_stats.avg r.time_stats.min r.time_stats.max
         r.time_stats.std_dev r.time_stats.ci95_lower r.time_stats.ci95_upper
-        r.memory_stats.avg r.memory_stats.min r.memory_stats.max
-        r.memory_stats.std_dev r.memory_stats.ci95_lower
-        r.memory_stats.ci95_upper r.total_runs time_regression.r_squared
-        time_regression.adjusted_r_squared)
+        r.wall_stats.avg r.wall_stats.min r.wall_stats.max r.wall_stats.std_dev
+        r.wall_stats.ci95_lower r.wall_stats.ci95_upper r.memory_stats.avg
+        r.memory_stats.min r.memory_stats.max r.memory_stats.std_dev
+        r.memory_stats.ci95_lower r.memory_stats.ci95_upper r.total_runs
+        time_regression.r_squared time_regression.adjusted_r_squared)
     results
 
-(* Tabulate results for cross-benchmark comparison with statistical significance *)
+(* Tabulate results for cross-benchmark comparison with statistical
+   significance *)
 type comparison_result = {
   baseline : analysis_result;
   compared : analysis_result;
@@ -1014,12 +1032,12 @@ let compare ?(confidence = 0.95) baseline compared =
   else
     let rates1 =
       List.map
-        (fun m -> float m.runs /. (m.time_ns /. 1e9))
+        (fun m -> float m.runs /. (m.wall_ns /. 1e9))
         baseline.measurements
     in
     let rates2 =
       List.map
-        (fun m -> float m.runs /. (m.time_ns /. 1e9))
+        (fun m -> float m.runs /. (m.wall_ns /. 1e9))
         compared.measurements
     in
 
@@ -1276,8 +1294,13 @@ let print_pretty_table ?(ascii_only = false) results =
     else s ^ String.make (width - visible_len) ' '
   in
 
-  (* Find the fastest time and lowest memory for color coding *)
-  let fastest_time =
+  (* Find the fastest times and lowest memory for color coding *)
+  let fastest_wall =
+    List.fold_left
+      (fun acc r -> min acc r.wall_stats.avg)
+      Float.max_float results
+  in
+  let fastest_cpu =
     List.fold_left
       (fun acc r -> min acc r.time_stats.avg)
       Float.max_float results
@@ -1288,10 +1311,10 @@ let print_pretty_table ?(ascii_only = false) results =
       Float.max_float results
   in
 
-  (* Sort results by time *)
+  (* Sort results by wall-clock time *)
   let sorted_results =
     List.sort
-      (fun r1 r2 -> Float.compare r1.time_stats.avg r2.time_stats.avg)
+      (fun r1 r2 -> Float.compare r1.wall_stats.avg r2.wall_stats.avg)
       results
   in
 
@@ -1299,14 +1322,21 @@ let print_pretty_table ?(ascii_only = false) results =
   let rows_data =
     List.map
       (fun r ->
-        let vs_fastest = r.time_stats.avg /. fastest_time in
-        let speedup = fastest_time /. r.time_stats.avg in
+        let wall_avg = r.wall_stats.avg in
+        let cpu_avg = r.time_stats.avg in
+        let vs_fastest =
+          if fastest_wall = 0. then Float.infinity else wall_avg /. fastest_wall
+        in
+        let speedup =
+          if wall_avg = 0. then Float.infinity else fastest_wall /. wall_avg
+        in
         ( r,
           [
             r.name;
-            (if r.time_stats.avg = fastest_time then colorize green
-             else fun x -> x)
-              (format_time_ns r.time_stats.avg);
+            (if wall_avg = fastest_wall then colorize green else fun x -> x)
+              (format_time_ns wall_avg);
+            (if cpu_avg = fastest_cpu then colorize green else fun x -> x)
+              (format_time_ns cpu_avg);
             (if r.memory_stats.avg = lowest_memory then colorize cyan
              else fun x -> x)
               (format_words r.memory_stats.avg);
@@ -1318,7 +1348,9 @@ let print_pretty_table ?(ascii_only = false) results =
       sorted_results
   in
 
-  let headers = [ "Name"; "Time/Run"; "mWd/Run"; "Speedup"; "vs Fastest" ] in
+  let headers =
+    [ "Name"; "Wall/Run"; "CPU/Run"; "mWd/Run"; "Speedup"; "vs Fastest" ]
+  in
 
   (* Calculate column widths based on actual data *)
   let widths =
@@ -1500,9 +1532,9 @@ let run_with_cli_config quota output_format fork_benchmarks warmup stabilize_gc
       mode = Throughput 1.0;
       quota;
       warmup_iterations = warmup;
-      min_measurements = 10;
+      min_measurements = 3;
       stabilize_gc;
-      geometric_scale = 1.5;
+      geometric_scale = 1.3;
       fork_benchmarks;
       regressions =
         [
@@ -1511,7 +1543,7 @@ let run_with_cli_config quota output_format fork_benchmarks warmup stabilize_gc
       custom_measurer = None;
       ascii_only;
       null_loop_subtraction = true;
-      min_cpu = 0.4;
+      min_cpu = 0.002;
       repeat = 1;
       progress_callback = None;
     }
@@ -1535,6 +1567,7 @@ let run_with_cli_config quota output_format fork_benchmarks warmup stabilize_gc
                 {
                   measurements = [];
                   time_stats = compute_statistics [||];
+                  wall_stats = compute_statistics [||];
                   memory_stats = compute_statistics [||];
                   regressions = [];
                   total_time = 0.;
@@ -1548,6 +1581,7 @@ let run_with_cli_config quota output_format fork_benchmarks warmup stabilize_gc
           name;
           measurements = result.measurements;
           time_stats = result.time_stats;
+          wall_stats = result.wall_stats;
           memory_stats = result.memory_stats;
           regressions = result.regressions;
           total_time = result.total_time;
@@ -1587,6 +1621,7 @@ let run_silent ?(config = default_config) benchmarks =
                 {
                   measurements = [];
                   time_stats = compute_statistics [||];
+                  wall_stats = compute_statistics [||];
                   memory_stats = compute_statistics [||];
                   regressions = [];
                   total_time = 0.;
@@ -1600,6 +1635,7 @@ let run_silent ?(config = default_config) benchmarks =
           name;
           measurements = result.measurements;
           time_stats = result.time_stats;
+          wall_stats = result.wall_stats;
           memory_stats = result.memory_stats;
           regressions = result.regressions;
           total_time = result.total_time;
@@ -1634,10 +1670,10 @@ let run ?(config = default_config) ?(output_format = Pretty_table)
 (* CLI using standard library Arg module *)
 let run_cli benchmarks =
   let benchmarks = flatten_benchmarks benchmarks in
-  let quota = ref (Time_limit 1.0) in
+  let quota = ref (Time_limit 0.3) in
   let output_format = ref Pretty_table in
   let fork_benchmarks = ref false in
-  let warmup = ref 3 in
+  let warmup = ref 1 in
   let stabilize_gc = ref false in
   let verbose = ref false in
   let ascii_only = ref false in
@@ -1741,12 +1777,14 @@ let save_results_json filename results =
   let json =
     let result_to_json (r : analysis_result) =
       Printf.sprintf
-        {|{"name":"%s","time_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"memory_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"total_time_ns":%.2f,"total_runs":%d}|}
+        {|{"name":"%s","time_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"wall_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"memory_stats":{"avg":%.2f,"min":%.2f,"max":%.2f,"std_dev":%.2f,"ci95_lower":%.2f,"ci95_upper":%.2f},"total_time_ns":%.2f,"total_runs":%d}|}
         r.name r.time_stats.avg r.time_stats.min r.time_stats.max
         r.time_stats.std_dev r.time_stats.ci95_lower r.time_stats.ci95_upper
-        r.memory_stats.avg r.memory_stats.min r.memory_stats.max
-        r.memory_stats.std_dev r.memory_stats.ci95_lower
-        r.memory_stats.ci95_upper r.total_time r.total_runs
+        r.wall_stats.avg r.wall_stats.min r.wall_stats.max r.wall_stats.std_dev
+        r.wall_stats.ci95_lower r.wall_stats.ci95_upper r.memory_stats.avg
+        r.memory_stats.min r.memory_stats.max r.memory_stats.std_dev
+        r.memory_stats.ci95_lower r.memory_stats.ci95_upper r.total_time
+        r.total_runs
     in
     Printf.sprintf "[%s]" (String.concat "," (List.map result_to_json results))
   in
@@ -1757,15 +1795,16 @@ let save_results_json filename results =
 let save_results_csv filename results =
   let oc = open_out filename in
   Printf.fprintf oc
-    "name,time_avg,time_min,time_max,time_std_dev,time_ci95_lower,time_ci95_upper,memory_avg,memory_min,memory_max,memory_std_dev,memory_ci95_lower,memory_ci95_upper,total_runs\n";
+    "name,time_avg,time_min,time_max,time_std_dev,time_ci95_lower,time_ci95_upper,wall_avg,wall_min,wall_max,wall_std_dev,wall_ci95_lower,wall_ci95_upper,memory_avg,memory_min,memory_max,memory_std_dev,memory_ci95_lower,memory_ci95_upper,total_runs\n";
   List.iter
     (fun (r : analysis_result) ->
       Printf.fprintf oc
-        "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n"
+        "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n"
         r.name r.time_stats.avg r.time_stats.min r.time_stats.max
         r.time_stats.std_dev r.time_stats.ci95_lower r.time_stats.ci95_upper
-        r.memory_stats.avg r.memory_stats.min r.memory_stats.max
-        r.memory_stats.std_dev r.memory_stats.ci95_lower
-        r.memory_stats.ci95_upper r.total_runs)
+        r.wall_stats.avg r.wall_stats.min r.wall_stats.max r.wall_stats.std_dev
+        r.wall_stats.ci95_lower r.wall_stats.ci95_upper r.memory_stats.avg
+        r.memory_stats.min r.memory_stats.max r.memory_stats.std_dev
+        r.memory_stats.ci95_lower r.memory_stats.ci95_upper r.total_runs)
     results;
   close_out oc

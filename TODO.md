@@ -1,5 +1,11 @@
 # todo
 
+## alpha
+
+- fix einsum issue
+- close rune grad performances gap (within <2x of pytorch)
+- close nx performance gaps (within <2x of numpy)
+
 ## beta (jit)
 
 goalpost: jit-compiled gpt2 matching pytorch performance
@@ -39,7 +45,6 @@ docs/website
 
 - use upstream metal library when insulated from camlkit
 - (?) not sure we need non-polymorphic functions for perf of where, we should benchmark
-- add no_grad and detach
 - we can make jit composable by re raising all the effects (but what does it mean to write grad(jit(f)))?? What are the semantics in jax?
 - (?) remove bigarray_ext (what's the best way to implement our C backend?)
 - (?) think of using effects for prngs, does it simplify ux?

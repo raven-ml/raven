@@ -435,44 +435,12 @@ val unicode_scripts : unit -> t
 (** {1 Internal Helpers - exposed for testing} *)
 
 val split_gpt2_pattern : string -> string list
-(** [split_gpt2_pattern text] splits text using GPT-2's regex pattern.
-
-    Internal helper function that implements the exact regex pattern used by
-    GPT-2 for tokenization. Exposed primarily for testing and debugging
-    purposes.
-
-    The pattern handles:
-    - Apostrophe contractions (don't, I'm, etc.)
-    - Letter sequences (consecutive alphabetic characters)
-    - Number sequences (consecutive digits)
-    - Whitespace sequences (consecutive whitespace)
-    - Individual characters as fallback
-
-    @return List of string pieces (no offset information).
-
-    {[
-      let pieces = Pre_tokenizers.split_gpt2_pattern "I'm learning OCaml!" in
-      (* Result approximately: ["I"; "'m"; " learning"; " OCaml"; "!"] *)
-    ]} *)
+(** Internal helper implementing GPT-2's regex pattern. Returns list of string
+    pieces without offset information. *)
 
 val byte_level_decode : string -> string
-(** [byte_level_decode encoded] decodes byte-level encoded text.
-
-    Internal helper that reverses the byte-level encoding applied by
-    {!byte_level}. Converts the special Unicode characters back to their
-    original byte values. Exposed primarily for testing and debugging.
-
-    @param encoded Text that has been byte-level encoded.
-    @return Original text before byte-level encoding.
-
-    {[
-      let original = "café" in
-      let tokenizer = Pre_tokenizers.byte_level () in
-      let pieces = tokenizer original in
-      let encoded_piece = fst (List.hd pieces) in
-      let decoded = Pre_tokenizers.byte_level_decode encoded_piece in
-      assert (decoded = original || (* handle encoding differences *))
-    ]} *)
+(** Internal helper reversing byte-level encoding. Converts special Unicode
+    characters back to original byte values. *)
 
 val pre_tokenize_str : t -> string -> (string * (int * int)) list
 (** Pre-tokenize a string.

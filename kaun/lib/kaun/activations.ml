@@ -12,7 +12,7 @@ let softmax = softmax
 
 let gelu = gelu
 let silu = silu
-let swish = silu (* Alias for silu *)
+let swish = swish
 let mish = mish
 
 (* Parametric Activations *)
@@ -20,11 +20,7 @@ let mish = mish
 let leaky_relu = leaky_relu
 let elu = elu
 let selu = selu
-
-let prelu alpha x =
-  (* max(0, x) + alpha * min(0, x) *)
-  let zero = zeros_like x in
-  add (maximum zero x) (mul alpha (minimum zero x))
+let prelu = prelu
 
 (* Gated Linear Units (GLUs) *)
 
@@ -50,7 +46,4 @@ let softplus = softplus
 let softsign = softsign
 let hard_sigmoid = hard_sigmoid
 let hard_tanh = hard_tanh
-
-let hard_swish x =
-  (* x * relu6(x + 3) / 6 - Not in Rune, but hard_silu is *)
-  hard_silu x (* hard_silu is essentially the same as hard_swish *)
+let hard_swish = hard_swish

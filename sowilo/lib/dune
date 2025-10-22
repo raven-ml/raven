@@ -1,4 +1,4 @@
 (library
  (name sowilo)
  (public_name sowilo)
- (libraries rune))
+ (libraries nx_core rune))

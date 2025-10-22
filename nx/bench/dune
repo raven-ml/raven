@@ -1,4 +1,4 @@
-(library
+(executable
  (name bench_nx)
  (modules bench_nx)
- (libraries nx_core ubench str))
+ (libraries nx ubench str))

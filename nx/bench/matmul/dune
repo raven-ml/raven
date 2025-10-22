@@ -1,0 +1,4 @@
+(executable
+ (name bench_matmul_nx)
+ (modules bench_matmul_nx)
+ (libraries nx ubench))

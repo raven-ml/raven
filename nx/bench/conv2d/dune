@@ -1,0 +1,4 @@
+(executable
+ (name bench_conv2d_nx)
+ (modules bench_conv2d_nx)
+ (libraries nx ubench))

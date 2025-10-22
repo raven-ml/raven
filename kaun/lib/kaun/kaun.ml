@@ -25,7 +25,6 @@ let apply m params ~training ?rngs x = m.apply params ~training ?rngs x
 let value_and_grad = Transformations.value_and_grad
 let grad = Transformations.grad
 
-module Ops = Ops
 module Metrics = Metrics
 module Loss = Loss
 module Initializers = Initializers

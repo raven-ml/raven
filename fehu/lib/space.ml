@@ -417,14 +417,17 @@ module Sequence = struct
       invalid_arg "Space.Sequence.create: min_length must be non-negative";
     let max_length =
       match max_length with
-      | None -> min_length
+      | None -> None
       | Some max_length when max_length < min_length ->
           invalid_arg "Space.Sequence.create: max_length must be >= min_length"
-      | Some max_length -> max_length
+      | Some max_length -> Some max_length
     in
     let contains values =
       let len = List.length values in
-      len >= min_length && len <= max_length
+      let within_upper =
+        match max_length with None -> true | Some max_len -> len <= max_len
+      in
+      len >= min_length && within_upper
       && List.for_all (fun value -> base.contains value) values
     in
     {
@@ -434,14 +437,17 @@ module Sequence = struct
         (fun ?rng () ->
           let rng = default_rng rng in
           let length =
-            if max_length = min_length then min_length
-            else
-              let tensor =
-                Rune.Rng.randint rng ~min:min_length ~max:(max_length + 1)
-                  [| 1 |]
-              in
-              let arr = Rune.to_array tensor in
-              Int32.to_int arr.(0)
+            match max_length with
+            | None -> min_length
+            | Some max_len ->
+                if max_len = min_length then min_length
+                else
+                  let tensor =
+                    Rune.Rng.randint rng ~min:min_length ~max:(max_len + 1)
+                      [| 1 |]
+                  in
+                  let arr = Rune.to_array tensor in
+                  Int32.to_int arr.(0)
           in
           let rec build n acc =
             if n = 0 then List.rev acc
@@ -457,9 +463,19 @@ module Sequence = struct
         (function
         | Value.List values ->
             let len = List.length values in
-            if len < min_length || len > max_length then
-              errorf "Sequence length %d outside of [%d, %d]" len min_length
-                max_length
+            let exceeds =
+              match max_length with
+              | None -> false
+              | Some max_len -> len > max_len
+            in
+            if len < min_length || exceeds then
+              match max_length with
+              | None ->
+                  errorf "Sequence length %d shorter than minimum %d" len
+                    min_length
+              | Some max_len ->
+                  errorf "Sequence length %d outside of [%d, %d]" len min_length
+                    max_len
             else
               let rec loop acc = function
                 | [] -> Ok (List.rev acc)

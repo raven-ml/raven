@@ -2,6 +2,10 @@
 open Nx_datasets
 open Hugin
 
+let setup_logging () =
+  Logs.set_reporter (Logs_fmt.reporter ());
+  Logs.set_level (Some Logs.Info)
+
 let nd_of_float_array data = Nx.create Nx.float32 [| Array.length data |] data
 
 let get_class_features features labels target_label feature_idx1 feature_idx2 =
@@ -23,7 +27,8 @@ let get_class_features features labels target_label feature_idx1 feature_idx2 =
   (Array.of_list list1, Array.of_list list2)
 
 let () =
-  Printf.printf "Loading Iris dataset...\n%!";
+  setup_logging ();
+  Logs.info (fun m -> m "Loading Iris dataset...");
   let features, labels = load_iris () in
 
   let sepal_length_idx = 0 in
@@ -31,7 +36,7 @@ let () =
   let feature1_name = "Sepal Length (cm)" in
   let feature2_name = "Petal Length (cm)" in
 
-  Printf.printf "Preparing data for plotting...\n%!";
+  Logs.info (fun m -> m "Preparing data for plotting...");
 
   let setosa_f1, setosa_f2 =
     get_class_features features labels 0l sepal_length_idx petal_length_idx
@@ -50,7 +55,7 @@ let () =
   let nd_virginica_f1 = nd_of_float_array virginica_f1 in
   let nd_virginica_f2 = nd_of_float_array virginica_f2 in
 
-  Printf.printf "Creating plot...\n%!";
+  Logs.info (fun m -> m "Creating plot...");
   let fig = Figure.create () in
   let ax = Figure.add_subplot fig in
 
@@ -75,6 +80,6 @@ let () =
     |> Axes.grid true
   in
 
-  Printf.printf "Displaying plot...\n%!";
+  Logs.info (fun m -> m "Displaying plot...");
   Hugin.show fig;
-  Printf.printf "Plot window closed.\n%!"
+  Logs.info (fun m -> m "Plot window closed.")

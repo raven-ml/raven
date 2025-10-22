@@ -2,17 +2,21 @@
 open Nx_datasets
 open Hugin
 
+let setup_logging () =
+  Logs.set_reporter (Logs_fmt.reporter ());
+  Logs.set_level (Some Logs.Info)
+
 let () =
-  Printf.printf "Loading Diabetes dataset...\n%!";
+  setup_logging ();
+  Logs.info (fun m -> m "Loading Diabetes dataset...");
   let features, labels = load_diabetes () in
 
   let n_samples = (Nx.shape features).(0) in
   let n_features = (Nx.shape features).(1) in
 
-  Printf.printf "Dataset loaded successfully!\n";
-  Printf.printf "Number of samples: %d\n" n_samples;
-  Printf.printf "Number of features: %d\n" n_features;
-  Printf.printf "\n%!";
+  Logs.info (fun m -> m "Dataset loaded successfully.");
+  Logs.info (fun m -> m "Number of samples: %d" n_samples);
+  Logs.info (fun m -> m "Number of features: %d" n_features);
 
   let age_col = Nx.slice [ Nx.R (0, n_samples); Nx.R (0, 1) ] features in
   let age_f64 = Nx.reshape [| n_samples |] age_col in
@@ -21,7 +25,7 @@ let () =
   let labels_f64 = Nx.reshape [| n_samples |] labels in
   let labels_reshaped = Nx.cast Nx.float32 labels_f64 in
 
-  Printf.printf "Creating scatter plot: Age vs Disease Progression...\n%!";
+  Logs.info (fun m -> m "Creating scatter plot: Age vs Disease Progression...");
   let fig = Figure.create () in
   let ax = Figure.add_subplot fig in
 
@@ -38,9 +42,9 @@ let () =
     |> Axes.grid true
   in
 
-  Printf.printf "Displaying plot...\n%!";
+  Logs.info (fun m -> m "Displaying plot...");
   Hugin.show fig;
-  Printf.printf "Plot window closed.\n%!";
+  Logs.info (fun m -> m "Plot window closed.");
 
   (* Use the reshaped 1-D labels for stats to avoid indexing a [n;1] array *)
   let label_data = Array.init n_samples (fun i -> Nx.item [ i ] labels_f64) in
@@ -50,8 +54,8 @@ let () =
   let min_val = Array.fold_left min max_float label_data in
   let max_val = Array.fold_left max neg_infinity label_data in
 
-  Printf.printf "\nDataset Statistics:\n";
-  Printf.printf "Target (Disease Progression):\n";
-  Printf.printf "  Mean: %.2f\n" mean;
-  Printf.printf "  Min: %.2f\n" min_val;
-  Printf.printf "  Max: %.2f\n%!" max_val
+  Logs.info (fun m -> m "Dataset Statistics:");
+  Logs.info (fun m -> m "  Target (Disease Progression):");
+  Logs.info (fun m -> m "    Mean: %.2f" mean);
+  Logs.info (fun m -> m "    Min: %.2f" min_val);
+  Logs.info (fun m -> m "    Max: %.2f" max_val)

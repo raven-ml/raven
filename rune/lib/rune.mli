@@ -120,6 +120,17 @@ val jvps :
       - : float * float = (6., 3.5)
     ]} *)
 
+val no_grad : (unit -> 'a) -> 'a
+(** [no_grad f] evaluates [f ()] without recording operations for automatic
+    differentiation. This mirrors JAX's [lax.stop_gradient] semantics when
+    applied to a computation block: all tensors produced within [f] are treated
+    as constants for subsequent gradient calculations. *)
+
+val detach : ('a, 'b) t -> ('a, 'b) t
+(** [detach t] returns a tensor with the same value as [t] but which is treated
+    as a constant with respect to automatic differentiation. Equivalent to JAX's
+    [lax.stop_gradient] on a single tensor. *)
+
 (** {2 Gradient Checking} *)
 
 type method_ = [ `Central | `Forward | `Backward ]
@@ -383,7 +394,7 @@ module Rng : sig
       @param shape Shape of the output tensor
       @return Tensor with random integer values *)
 
-  val bernoulli : key -> p:float -> int array -> uint8_t
+  val bernoulli : key -> p:float -> int array -> bool_t
   (** Generate Bernoulli random values.
 
       [bernoulli key ~p shape] generates a tensor of boolean values where each

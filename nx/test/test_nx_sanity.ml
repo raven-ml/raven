@@ -323,27 +323,29 @@ let comparison_tests =
     test_case "equal" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 1. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 1. |] in
-        Nx.equal a b |> check_t "equal" [| 3 |] [| 1; 0; 1 |]);
+        Nx.equal a b |> check_t "equal" [| 3 |] [| true; false; true |]);
     test_case "not_equal" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 1. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 1. |] in
-        Nx.not_equal a b |> check_t "not_equal" [| 3 |] [| 0; 1; 0 |]);
+        Nx.not_equal a b |> check_t "not_equal" [| 3 |] [| false; true; false |]);
     test_case "greater" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 5.; 3.; 1. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 3.; 3.; 2. |] in
-        Nx.greater a b |> check_t "greater" [| 3 |] [| 1; 0; 0 |]);
+        Nx.greater a b |> check_t "greater" [| 3 |] [| true; false; false |]);
     test_case "greater_equal" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 5.; 3.; 1. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 3.; 3.; 2. |] in
-        Nx.greater_equal a b |> check_t "greater_equal" [| 3 |] [| 1; 1; 0 |]);
+        Nx.greater_equal a b
+        |> check_t "greater_equal" [| 3 |] [| true; true; false |]);
     test_case "less" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 5. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 3.; 3.; 2. |] in
-        Nx.less a b |> check_t "less" [| 3 |] [| 1; 0; 0 |]);
+        Nx.less a b |> check_t "less" [| 3 |] [| true; false; false |]);
     test_case "less_equal" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 5. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 3.; 3.; 2. |] in
-        Nx.less_equal a b |> check_t "less_equal" [| 3 |] [| 1; 1; 0 |]);
+        Nx.less_equal a b
+        |> check_t "less_equal" [| 3 |] [| true; true; false |]);
   ]
 
 let element_wise_unary_tests =
@@ -510,21 +512,24 @@ let special_value_tests =
   [
     test_case "isnan" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.0; nan; 0.0 |] in
-        Nx.isnan a |> check_t "isnan" [| 3 |] [| 0; 1; 0 |]);
+        Nx.isnan a |> check_t "isnan" [| 3 |] [| false; true; false |]);
     test_case "isinf" `Quick (fun () ->
         let a =
           Nx.create Nx.float32 [| 4 |] [| 1.0; infinity; neg_infinity; 0.0 |]
         in
-        Nx.isinf a |> check_t "isinf" [| 4 |] [| 0; 1; 1; 0 |]);
+        Nx.isinf a |> check_t "isinf" [| 4 |] [| false; true; true; false |]);
     test_case "isfinite" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 4 |] [| 1.0; infinity; nan; 0.0 |] in
-        Nx.isfinite a |> check_t "isfinite" [| 4 |] [| 1; 0; 0; 1 |]);
+        Nx.isfinite a
+        |> check_t "isfinite" [| 4 |] [| true; false; false; true |]);
   ]
 
 let ternary_tests =
   [
     test_case "where" `Quick (fun () ->
-        let cond = Nx.create Nx.uint8 [| 5 |] [| 1; 0; 1; 0; 1 |] in
+        let cond =
+          Nx.create Nx.bool [| 5 |] [| true; false; true; false; true |]
+        in
         let x = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
         let y = Nx.create Nx.float32 [| 5 |] [| 10.; 20.; 30.; 40.; 50. |] in
         Nx.where cond x y |> check_t "where" [| 5 |] [| 1.; 20.; 3.; 40.; 5. |]);
@@ -555,22 +560,22 @@ let reduction_tests =
         Nx.std a |> check_t ~eps:1e-6 "std" [||] [| 2.236068 |]);
     test_case "all" `Quick (fun () ->
         let a = Nx.create Nx.int [| 4 |] [| 1; 1; 0; 1 |] in
-        Nx.all a |> check_t "all with zero" [||] [| 0 |];
+        Nx.all a |> check_t "all with zero" [||] [| false |];
         let c = Nx.create Nx.int [| 3 |] [| 1; 1; 1 |] in
-        Nx.all c |> check_t "all without zero" [||] [| 1 |]);
+        Nx.all c |> check_t "all without zero" [||] [| true |]);
     test_case "any" `Quick (fun () ->
         let a = Nx.create Nx.int [| 4 |] [| 0; 0; 1; 0 |] in
-        Nx.any a |> check_t "any with one" [||] [| 1 |];
+        Nx.any a |> check_t "any with one" [||] [| true |];
         let c = Nx.create Nx.int [| 3 |] [| 0; 0; 0 |] in
-        Nx.any c |> check_t "any all zeros" [||] [| 0 |]);
+        Nx.any c |> check_t "any all zeros" [||] [| false |]);
     test_case "array_equal" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
         let b = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
         let eq1 = Nx.array_equal a b in
-        check int "array_equal same" 1 (Nx.item [] eq1);
+        check bool "array_equal same" true (Nx.item [] eq1);
         let d = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 4. |] in
         let eq2 = Nx.array_equal a d in
-        check int "array_equal different" 0 (Nx.item [] eq2));
+        check bool "array_equal different" false (Nx.item [] eq2));
   ]
 
 let shape_manipulation_tests =

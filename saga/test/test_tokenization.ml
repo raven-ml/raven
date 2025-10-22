@@ -22,13 +22,13 @@ let tokenize_text text =
   in
   let vocab = List.mapi (fun i token -> (token, i)) all_tokens in
 
-  (* Create WordLevel model with the vocabulary *)
-  let model = Models.word_level ~vocab ~unk_token:"<unk>" () in
-  let tokenizer = Tokenizer.create ~model in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-
-  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left text) () in
-  Array.to_list (Encoding.get_tokens encoding)
+  (* Create WordLevel tokenizer with the vocabulary *)
+  let tokenizer =
+    Tokenizer.word_level ~vocab ~unk_token:"<unk>"
+      ~pre:(Pre_tokenizers.whitespace ())
+      ()
+  in
+  Tokenizer.encode tokenizer text |> Encoding.get_tokens |> Array.to_list
 
 (* ───── Basic Tokenization Tests ───── *)
 
@@ -94,20 +94,134 @@ let test_tokenize_regex_custom () =
   let text = "don't stop!" in
   let pre_tokens = Pre_tokenizers.punctuation () text in
   let vocab = List.mapi (fun i (tok, _) -> (tok, i)) pre_tokens in
-  let model = Models.word_level ~vocab ~unk_token:"<unk>" () in
-  let tokenizer = Tokenizer.create ~model in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.punctuation ()));
-  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left text) () in
-  let tokens = Array.to_list (Encoding.get_tokens encoding) in
+  let tokenizer =
+    Tokenizer.word_level ~vocab ~unk_token:"<unk>"
+      ~pre:(Pre_tokenizers.punctuation ())
+      ()
+  in
+  let tokens =
+    Tokenizer.encode tokenizer text |> Encoding.get_tokens |> Array.to_list
+  in
   check bool "has tokens" true (List.length tokens > 0)
 
 let test_tokenize_regex_no_match () =
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  let encoding =
-    Tokenizer.encode tokenizer ~sequence:(Either.Left "no numbers here") ()
+  let tokenizer = Tokenizer.word_level () in
+  let tokens =
+    Tokenizer.encode tokenizer "no numbers here"
+    |> Encoding.get_tokens |> Array.to_list
   in
-  let tokens = Array.to_list (Encoding.get_tokens encoding) in
   check (list string) "regex no match" [] tokens
+
+(* ───── Unigram Model Tests ───── *)
+
+(* Round-trip lookups *)
+let test_unigram_roundtrip () =
+  let tokens = [ "hello"; "world"; "test" ] in
+  let vocab = List.map (fun token -> (token, 0.0)) tokens in
+  let tokenizer = Tokenizer.unigram ~vocab () in
+  List.iteri
+    (fun expected_id token ->
+      check (option int)
+        (Printf.sprintf "token_to_id '%s'" token)
+        (Some expected_id)
+        (Tokenizer.token_to_id tokenizer token);
+      check (option string)
+        (Printf.sprintf "id_to_token %d" expected_id)
+        (Some token)
+        (Tokenizer.id_to_token tokenizer expected_id))
+    tokens
+
+(* token_to_id - out of vocab *)
+let test_unigram_token_to_id_oov () =
+  let tokenizer =
+    Tokenizer.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] ()
+  in
+  check (option int) "token_to_id out-of-vocab" None
+    (Tokenizer.token_to_id tokenizer "missing")
+
+(* id_to_token - out of bounds *)
+let test_unigram_id_to_token_oob () =
+  let tokenizer =
+    Tokenizer.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] ()
+  in
+  check (option string) "id_to_token negative" None
+    (Tokenizer.id_to_token tokenizer (-1));
+  check (option string) "id_to_token out of bounds" None
+    (Tokenizer.id_to_token tokenizer 10)
+
+(* Test empty vocabulary *)
+let test_unigram_empty_vocab () =
+  let tokenizer = Tokenizer.unigram ~vocab:[] () in
+  check (option int) "empty vocab token_to_id" None
+    (Tokenizer.token_to_id tokenizer "test");
+  check (option string) "empty vocab id_to_token" None
+    (Tokenizer.id_to_token tokenizer 0)
+
+(* Test special characters and unicode *)
+let test_unigram_special_tokens () =
+  let tokenizer =
+    Tokenizer.unigram
+      ~vocab:
+        [
+          ("<unk>", 0.0);
+          ("<s>", 0.0);
+          ("</s>", 0.0);
+          ("▁hello", 0.0);
+          ("世界", 0.0);
+        ]
+      ()
+  in
+  check (option int) "special <unk>" (Some 0)
+    (Tokenizer.token_to_id tokenizer "<unk>");
+  check (option int) "special <s>" (Some 1)
+    (Tokenizer.token_to_id tokenizer "<s>");
+  check (option int) "sentencepiece token" (Some 3)
+    (Tokenizer.token_to_id tokenizer "▁hello");
+  check (option int) "unicode token" (Some 4)
+    (Tokenizer.token_to_id tokenizer "世界");
+  check (option string) "id to unicode" (Some "世界")
+    (Tokenizer.id_to_token tokenizer 4)
+
+let test_unigram_encode_sequence () =
+  let tokenizer =
+    Tokenizer.unigram ~vocab:[ ("hello", 0.0); ("world", 0.0) ] ()
+  in
+  let encoding = Tokenizer.encode tokenizer "hello world" in
+  let tokens = Encoding.get_tokens encoding |> Array.to_list in
+  check (list string) "unigram encode tokens" [ "hello"; "world" ] tokens
+
+let test_pad_token_reassignment_updates_id () =
+  let vocab =
+    [ ("hello", 0); ("world", 1); ("<unk>", 2); ("<pad>", 3); ("[PAD]", 4) ]
+  in
+  let tokenizer =
+    Tokenizer.word_level ~vocab ~unk_token:"<unk>"
+      ~pre:(Pre_tokenizers.whitespace ())
+      ~specials:[ Special.pad "<pad>" ]
+      ()
+  in
+  let tokenizer = Tokenizer.set_pad_token tokenizer (Some "[PAD]") in
+  check (option string) "pad token updated" (Some "[PAD]")
+    (Tokenizer.pad_token tokenizer);
+  let pad_id =
+    match Tokenizer.token_to_id tokenizer "[PAD]" with
+    | Some id -> id
+    | None -> failwith "missing pad id"
+  in
+  let encoding =
+    Tokenizer.encode tokenizer "hello"
+      ~padding:
+        {
+          length = `Fixed 3;
+          direction = `Right;
+          pad_id = None;
+          pad_type_id = None;
+          pad_token = None;
+        }
+  in
+  let ids = Encoding.get_ids encoding |> Array.to_list in
+  let pad_ids = List.tl ids in
+  check (list int) "pad id matches reassigned token" [ pad_id; pad_id ] pad_ids
 
 (* ───── Edge Cases ───── *)
 
@@ -157,6 +271,17 @@ let tokenization_tests =
     test_case "tokenize repeated punctuation" `Quick
       test_tokenize_repeated_punctuation;
     test_case "tokenize mixed whitespace" `Quick test_tokenize_mixed_whitespace;
+    (* Unigram model tests *)
+    test_case "unigram roundtrip" `Quick test_unigram_roundtrip;
+    test_case "unigram token_to_id out-of-vocab" `Quick
+      test_unigram_token_to_id_oov;
+    test_case "unigram id_to_token out-of-bounds" `Quick
+      test_unigram_id_to_token_oob;
+    test_case "unigram empty vocab" `Quick test_unigram_empty_vocab;
+    test_case "unigram special tokens" `Quick test_unigram_special_tokens;
+    test_case "unigram encode sequence" `Quick test_unigram_encode_sequence;
+    test_case "pad token reassignment updates id" `Quick
+      test_pad_token_reassignment_updates_id;
   ]
 
 let () =

@@ -75,25 +75,66 @@ let add_symbol word c byte_len =
   word.size <- word.size + 1
 
 module PQueue = struct
-  let create () = ref []
-  let push t x = t := x :: !t
+  (* Use a binary heap for O(log n) push/pop instead of O(n log n) sort *)
+  type 'a t = {
+    mutable arr : 'a array;
+    mutable size : int;
+    cmp : 'a -> 'a -> int;
+  }
 
-  let pop cmp t =
-    if !t = [] then None
-    else (
-      t := List.sort cmp !t;
-      let h = List.hd !t in
-      t := List.tl !t;
-      Some h)
+  let create cmp = { arr = [||]; size = 0; cmp }
+  let parent i = (i - 1) / 2
+  let left i = (2 * i) + 1
+  let right i = (2 * i) + 2
+
+  let swap t i j =
+    let temp = t.arr.(i) in
+    t.arr.(i) <- t.arr.(j);
+    t.arr.(j) <- temp
+
+  let rec sift_up t i =
+    if i > 0 then
+      let p = parent i in
+      if t.cmp t.arr.(i) t.arr.(p) < 0 then (
+        swap t i p;
+        sift_up t p)
+
+  let rec sift_down t i =
+    let l = left i in
+    let r = right i in
+    let smallest = ref i in
+    if l < t.size && t.cmp t.arr.(l) t.arr.(!smallest) < 0 then smallest := l;
+    if r < t.size && t.cmp t.arr.(r) t.arr.(!smallest) < 0 then smallest := r;
+    if !smallest <> i then (
+      swap t i !smallest;
+      sift_down t !smallest)
+
+  let push t x =
+    if t.size = Array.length t.arr then
+      t.arr <- Array.append t.arr (Array.make (max 16 t.size) x);
+    t.arr.(t.size) <- x;
+    sift_up t t.size;
+    t.size <- t.size + 1
+
+  let pop t =
+    if t.size = 0 then None
+    else
+      let result = t.arr.(0) in
+      t.size <- t.size - 1;
+      if t.size > 0 then (
+        t.arr.(0) <- t.arr.(t.size);
+        sift_down t 0);
+      Some result
 end
 
 let apply_merges model dropout word =
   let p = match dropout with Some p -> p | None -> 0.0 in
+  let use_dropout = p > 0.0 in
   let cmp (r1, p1, _) (r2, p2, _) =
     let c = r1 - r2 in
     if c = 0 then p1 - p2 else c
   in
-  let queue = PQueue.create () in
+  let queue = PQueue.create cmp in
   for i = 0 to word.size - 2 do
     if word.symbols.(i).len > 0 && word.symbols.(i + 1).len > 0 then
       let pair = (word.symbols.(i).c, word.symbols.(i + 1).c) in
@@ -103,7 +144,7 @@ let apply_merges model dropout word =
   done;
   let skips = ref [] in
   let rec process_queue () =
-    match PQueue.pop cmp queue with
+    match PQueue.pop queue with
     | None -> ()
     | Some top -> (
         let rank, pos, new_id = top in
@@ -116,7 +157,8 @@ let apply_merges model dropout word =
             let cur_pair = (word.symbols.(pos).c, word.symbols.(next_pos).c) in
             match IntPairMap.find_opt cur_pair model.merges with
             | Some (r, nid) when r = rank && nid = new_id ->
-                if Random.float 1.0 < p then skips := top :: !skips
+                if use_dropout && Random.float 1.0 < p then
+                  skips := top :: !skips
                 else (
                   List.iter (PQueue.push queue) !skips;
                   skips := [];
@@ -159,6 +201,8 @@ let merge_word model text =
   let decoder = Uutf.decoder (`String text) in
   let i = ref 0 in
   let pending_unk = ref None in
+  (* Reuse a single buffer for all UTF-8 encoding *)
+  let char_buf = Buffer.create 4 in
   let flush_unk () =
     match !pending_unk with
     | Some (unk_id, unk_len) ->
@@ -170,26 +214,31 @@ let merge_word model text =
     match Uutf.decode decoder with
     | `Uchar u ->
         let start = !i in
-        let char_str =
-          let buf = Buffer.create 4 in
-          Uutf.Buffer.add_utf_8 buf u;
-          Buffer.contents buf
-        in
+        (* Reuse buffer - just reset it instead of creating new *)
+        Buffer.clear char_buf;
+        Uutf.Buffer.add_utf_8 char_buf u;
+        let char_str = Buffer.contents char_buf in
         let byte_len = String.length char_str in
         i := !i + byte_len;
         let is_first = start = 0 in
         let is_last = !i >= len in
+        (* Build token_str with minimal allocations *)
         let token_str =
-          let s = ref char_str in
-          (if not is_first then
-             match model.continuing_subword_prefix with
-             | Some prefix -> s := prefix ^ !s
-             | None -> ());
-          (if is_last then
-             match model.end_of_word_suffix with
-             | Some suffix -> s := !s ^ suffix
-             | None -> ());
-          !s
+          match
+            ( is_first,
+              is_last,
+              model.continuing_subword_prefix,
+              model.end_of_word_suffix )
+          with
+          | true, true, _, _ -> char_str
+          | true, false, _, Some suffix -> char_str ^ suffix
+          | true, false, _, None -> char_str
+          | false, true, Some prefix, Some suffix -> prefix ^ char_str ^ suffix
+          | false, true, Some prefix, None -> prefix ^ char_str
+          | false, true, None, Some suffix -> char_str ^ suffix
+          | false, true, None, None -> char_str
+          | false, false, Some prefix, _ -> prefix ^ char_str
+          | false, false, None, _ -> char_str
         in
         let unk_handling () =
           match model.unk_token with
@@ -456,133 +505,23 @@ let save model ~path ?name () =
   List.iter (fun (_, a, b) -> Printf.fprintf oc "%s %s\n" a b) merges_list;
   close_out oc
 
-let create_internal = create
+let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
+    ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
+    ~end_of_word_suffix ~max_token_length texts existing =
+  let _ = (show_progress, existing) in
 
-module Builder = struct
-  type builder = {
-    mutable vocab : vocab;
-    mutable merges : merges;
-    mutable cache_capacity : int;
-    mutable dropout : float option;
-    mutable unk_token : string option;
-    mutable continuing_subword_prefix : string option;
-    mutable end_of_word_suffix : string option;
-    mutable fuse_unk : bool;
-    mutable byte_fallback : bool;
-    mutable ignore_merges : bool;
-  }
-
-  let create () =
-    {
-      vocab = Hashtbl.create 0;
-      merges = [];
-      cache_capacity = 10000;
-      dropout = None;
-      unk_token = None;
-      continuing_subword_prefix = None;
-      end_of_word_suffix = None;
-      fuse_unk = false;
-      byte_fallback = false;
-      ignore_merges = false;
-    }
-
-  let vocab_and_merges builder vocab merges =
-    builder.vocab <- vocab;
-    builder.merges <- merges;
-    builder
-
-  let cache_capacity builder capacity =
-    builder.cache_capacity <- capacity;
-    builder
-
-  let dropout builder p =
-    if p < 0.0 || p > 1.0 then failwith "Dropout must be between 0.0 and 1.0";
-    builder.dropout <- Some p;
-    builder
-
-  let unk_token builder token =
-    builder.unk_token <- Some token;
-    builder
-
-  let continuing_subword_prefix builder prefix =
-    builder.continuing_subword_prefix <- Some prefix;
-    builder
-
-  let end_of_word_suffix builder suffix =
-    builder.end_of_word_suffix <- Some suffix;
-    builder
-
-  let fuse_unk builder fuse =
-    builder.fuse_unk <- fuse;
-    builder
-
-  let byte_fallback builder fallback =
-    builder.byte_fallback <- fallback;
-    builder
-
-  let ignore_merges builder ignore =
-    builder.ignore_merges <- ignore;
-    builder
-
-  let build b =
-    create_internal
-      {
-        vocab = b.vocab;
-        merges = b.merges;
-        cache_capacity = b.cache_capacity;
-        dropout = b.dropout;
-        unk_token = b.unk_token;
-        continuing_subword_prefix = b.continuing_subword_prefix;
-        end_of_word_suffix = b.end_of_word_suffix;
-        fuse_unk = b.fuse_unk;
-        byte_fallback = b.byte_fallback;
-        ignore_merges = b.ignore_merges;
-      }
-end
-
-module Trainer = struct
-  type word_count = (string, int) Hashtbl.t
-
-  type trainer_config = {
-    min_frequency : int;
-    vocab_size : int;
-    show_progress : bool;
-    special_tokens : string list;
-    limit_alphabet : int option;
-    initial_alphabet : char list;
-    continuing_subword_prefix : string option;
-    end_of_word_suffix : string option;
-    max_token_length : int option;
-  }
-
-  type trainer = { config : trainer_config; words : word_count }
-
-  let default_config =
-    {
-      min_frequency = 0;
-      vocab_size = 30000;
-      show_progress = true;
-      special_tokens = [];
-      limit_alphabet = None;
-      initial_alphabet = [];
-      continuing_subword_prefix = None;
-      end_of_word_suffix = None;
-      max_token_length = None;
-    }
-
-  let create config = { config; words = Hashtbl.create 10000 }
-
-  let feed trainer texts =
-    List.iter
-      (fun text ->
-        let words = String.split_on_char ' ' text in
-        List.iter
-          (fun word ->
-            if String.length word > 0 then
-              Hashtbl.replace trainer.words word
-                (1 + try Hashtbl.find trainer.words word with Not_found -> 0))
-          words)
-      texts
+  (* Count words from texts *)
+  let word_counts = Hashtbl.create 10000 in
+  List.iter
+    (fun text ->
+      let words = String.split_on_char ' ' text in
+      List.iter
+        (fun word ->
+          if String.length word > 0 then
+            Hashtbl.replace word_counts word
+              (1 + try Hashtbl.find word_counts word with Not_found -> 0))
+        words)
+    texts;
 
   let compute_pair_counts words_copy =
     let pair_counts = Hashtbl.create 10000 in
@@ -598,132 +537,138 @@ module Trainer = struct
         done)
       words_copy;
     pair_counts
+  in
 
-  let train trainer _model =
-    let vocab = Hashtbl.create 10000 in
-    let vocab_size = ref 0 in
-    List.iter
-      (fun token ->
-        if not (Hashtbl.mem vocab token) then (
-          Hashtbl.add vocab token !vocab_size;
-          incr vocab_size))
-      trainer.config.special_tokens;
-    let alphabet = Hashtbl.create 10000 in
+  (* Build vocabulary *)
+  let vocab = Hashtbl.create 10000 in
+  let vocab_size_ref = ref 0 in
+  List.iter
+    (fun token ->
+      if not (Hashtbl.mem vocab token) then (
+        Hashtbl.add vocab token !vocab_size_ref;
+        incr vocab_size_ref))
+    special_tokens;
+
+  (* Build alphabet *)
+  let alphabet = Hashtbl.create 10000 in
+  Hashtbl.iter
+    (fun word count ->
+      let decoder = Uutf.decoder (`String word) in
+      let rec loop () =
+        match Uutf.decode decoder with
+        | `Uchar u ->
+            let buf = Buffer.create 4 in
+            Uutf.Buffer.add_utf_8 buf u;
+            let char_str = Buffer.contents buf in
+            Hashtbl.replace alphabet char_str
+              (count + try Hashtbl.find alphabet char_str with Not_found -> 0);
+            loop ()
+        | `End -> ()
+        | _ -> loop ()
+      in
+      loop ())
+    word_counts;
+
+  List.iter
+    (fun c ->
+      let char_str = String.make 1 c in
+      Hashtbl.replace alphabet char_str max_int)
+    initial_alphabet;
+
+  let kept = Hashtbl.fold (fun k v acc -> (k, v) :: acc) alphabet [] in
+  let kept = List.sort (fun (_, v1) (_, v2) -> compare v1 v2) kept in
+  let to_remove =
+    match limit_alphabet with
+    | Some limit -> max 0 (List.length kept - limit)
+    | None -> 0
+  in
+  let kept = List.drop to_remove kept in
+  let kept = List.sort (fun (k1, _) (k2, _) -> compare k1 k2) kept in
+  List.iter
+    (fun (c, _) ->
+      if not (Hashtbl.mem vocab c) then (
+        Hashtbl.add vocab c !vocab_size_ref;
+        incr vocab_size_ref))
+    kept;
+
+  (* Learn merges *)
+  let merges = ref [] in
+  let words_copy = ref (Hashtbl.create (Hashtbl.length word_counts)) in
+  Hashtbl.iter
+    (fun word count ->
+      let decoder = Uutf.decoder (`String word) in
+      let chars = ref [] in
+      let rec loop () =
+        match Uutf.decode decoder with
+        | `Uchar u ->
+            let buf = Buffer.create 4 in
+            Uutf.Buffer.add_utf_8 buf u;
+            chars := Buffer.contents buf :: !chars;
+            loop ()
+        | `End -> ()
+        | _ -> loop ()
+      in
+      loop ();
+      let separated = String.concat " " (List.rev !chars) in
+      Hashtbl.add !words_copy separated count)
+    word_counts;
+
+  while !vocab_size_ref < vocab_size do
+    let pair_counts = compute_pair_counts !words_copy in
+    let best_pair = ref None in
+    let best_count = ref (-1) in
+    let best_pair_tie = ref ("", "") in
     Hashtbl.iter
-      (fun word count ->
-        let decoder = Uutf.decoder (`String word) in
-        let rec loop () =
-          match Uutf.decode decoder with
-          | `Uchar u ->
-              let buf = Buffer.create 4 in
-              Uutf.Buffer.add_utf_8 buf u;
-              let char_str = Buffer.contents buf in
-              Hashtbl.replace alphabet char_str
-                (count
-                + try Hashtbl.find alphabet char_str with Not_found -> 0);
-              loop ()
-          | `End -> ()
-          | _ -> loop ()
-        in
-        loop ())
-      trainer.words;
-    List.iter
-      (fun c ->
-        let char_str = String.make 1 c in
-        Hashtbl.replace alphabet char_str max_int)
-      trainer.config.initial_alphabet;
-    let kept = Hashtbl.fold (fun k v acc -> (k, v) :: acc) alphabet [] in
-    let kept = List.sort (fun (_, v1) (_, v2) -> compare v1 v2) kept in
-    let to_remove =
-      match trainer.config.limit_alphabet with
-      | Some limit -> max 0 (List.length kept - limit)
-      | None -> 0
-    in
-    let kept = List.drop to_remove kept in
-    let kept = List.sort (fun (k1, _) (k2, _) -> compare k1 k2) kept in
-    List.iter
-      (fun (c, _) ->
-        if not (Hashtbl.mem vocab c) then (
-          Hashtbl.add vocab c !vocab_size;
-          incr vocab_size))
-      kept;
-    let merges = ref [] in
-    let words_copy = ref (Hashtbl.create (Hashtbl.length trainer.words)) in
-    Hashtbl.iter
-      (fun word count ->
-        let decoder = Uutf.decoder (`String word) in
-        let chars = ref [] in
-        let rec loop () =
-          match Uutf.decode decoder with
-          | `Uchar u ->
-              let buf = Buffer.create 4 in
-              Uutf.Buffer.add_utf_8 buf u;
-              chars := Buffer.contents buf :: !chars;
-              loop ()
-          | `End -> ()
-          | _ -> loop ()
-        in
-        loop ();
-        let separated = String.concat " " (List.rev !chars) in
-        Hashtbl.add !words_copy separated count)
-      trainer.words;
-    while !vocab_size < trainer.config.vocab_size do
-      let pair_counts = compute_pair_counts !words_copy in
-      let best_pair = ref None in
-      let best_count = ref (-1) in
-      let best_pair_tie = ref ("", "") in
-      Hashtbl.iter
-        (fun pair count ->
-          if count > !best_count then (
-            best_count := count;
-            best_pair := Some pair;
-            best_pair_tie := pair)
-          else if count = !best_count then
-            if compare pair !best_pair_tie < 0 then best_pair_tie := pair)
-        pair_counts;
-      match !best_pair with
-      | None -> vocab_size := trainer.config.vocab_size
-      | Some (a, b) ->
-          if !best_count < trainer.config.min_frequency then
-            vocab_size := trainer.config.vocab_size
-          else
-            let new_token = a ^ b in
-            let skip =
-              match trainer.config.max_token_length with
-              | Some l when String.length new_token > l -> true
-              | _ -> false
-            in
-            if not skip then (
-              if not (Hashtbl.mem vocab new_token) then (
-                Hashtbl.add vocab new_token !vocab_size;
-                incr vocab_size);
-              merges := (a, b) :: !merges;
-              let new_words = Hashtbl.create (Hashtbl.length !words_copy) in
-              Hashtbl.iter
-                (fun word count ->
-                  let merged =
-                    Str.global_replace
-                      (Str.regexp_string (a ^ " " ^ b))
-                      new_token word
-                  in
-                  Hashtbl.add new_words merged count)
-                !words_copy;
-              words_copy := new_words)
-    done;
-    let bpe_config : config =
-      {
-        vocab;
-        merges = List.rev !merges;
-        cache_capacity = 10000;
-        dropout = None;
-        unk_token = None;
-        continuing_subword_prefix = trainer.config.continuing_subword_prefix;
-        end_of_word_suffix = trainer.config.end_of_word_suffix;
-        fuse_unk = false;
-        byte_fallback = false;
-        ignore_merges = false;
-      }
-    in
-    let _trained_model = create_internal bpe_config in
-    trainer.config.special_tokens
-end
+      (fun pair count ->
+        if count > !best_count then (
+          best_count := count;
+          best_pair := Some pair;
+          best_pair_tie := pair)
+        else if count = !best_count then
+          if compare pair !best_pair_tie < 0 then best_pair_tie := pair)
+      pair_counts;
+    match !best_pair with
+    | None -> vocab_size_ref := vocab_size
+    | Some (a, b) ->
+        if !best_count < min_frequency then vocab_size_ref := vocab_size
+        else
+          let new_token = a ^ b in
+          let skip =
+            match max_token_length with
+            | Some l when String.length new_token > l -> true
+            | _ -> false
+          in
+          if not skip then (
+            if not (Hashtbl.mem vocab new_token) then (
+              Hashtbl.add vocab new_token !vocab_size_ref;
+              incr vocab_size_ref);
+            merges := (a, b) :: !merges;
+            let new_words = Hashtbl.create (Hashtbl.length !words_copy) in
+            Hashtbl.iter
+              (fun word count ->
+                let merged =
+                  Str.global_replace
+                    (Str.regexp_string (a ^ " " ^ b))
+                    new_token word
+                in
+                Hashtbl.add new_words merged count)
+              !words_copy;
+            words_copy := new_words)
+  done;
+
+  let bpe_config : config =
+    {
+      vocab;
+      merges = List.rev !merges;
+      cache_capacity = 10000;
+      dropout = None;
+      unk_token = None;
+      continuing_subword_prefix;
+      end_of_word_suffix;
+      fuse_unk = false;
+      byte_fallback = false;
+      ignore_merges = false;
+    }
+  in
+  let trained_model = create bpe_config in
+  (trained_model, special_tokens)

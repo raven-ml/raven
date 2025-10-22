@@ -511,31 +511,31 @@ module Comparison_tests = struct
       ( "equal",
         `Quick,
         test_comparison ~op:Nx.equal ~op_name:"equal" ~input1:[| 1.; 2.; 3. |]
-          ~input2:[| 1.; 5.; 3. |] ~expected:[| 1; 0; 1 |] );
+          ~input2:[| 1.; 5.; 3. |] ~expected:[| true; false; true |] );
       ( "not_equal",
         `Quick,
         test_comparison ~op:Nx.not_equal ~op_name:"not_equal"
           ~input1:[| 1.; 2.; 3. |] ~input2:[| 1.; 5.; 3. |]
-          ~expected:[| 0; 1; 0 |] );
+          ~expected:[| false; true; false |] );
       ( "greater",
         `Quick,
         test_comparison ~op:Nx.greater ~op_name:"greater"
           ~input1:[| 1.; 3.; 2. |] ~input2:[| 2.; 1.; 4. |]
-          ~expected:[| 0; 1; 0 |] );
+          ~expected:[| false; true; false |] );
       ( "greater_equal",
         `Quick,
         test_comparison ~op:Nx.greater_equal ~op_name:"greater_equal"
           ~input1:[| 1.; 3.; 4. |] ~input2:[| 2.; 3.; 3. |]
-          ~expected:[| 0; 1; 1 |] );
+          ~expected:[| false; true; true |] );
       ( "less",
         `Quick,
         test_comparison ~op:Nx.less ~op_name:"less" ~input1:[| 1.; 3.; 2. |]
-          ~input2:[| 2.; 1.; 4. |] ~expected:[| 1; 0; 1 |] );
+          ~input2:[| 2.; 1.; 4. |] ~expected:[| true; false; true |] );
       ( "less_equal",
         `Quick,
         test_comparison ~op:Nx.less_equal ~op_name:"less_equal"
           ~input1:[| 1.; 3.; 4. |] ~input2:[| 2.; 3.; 3. |]
-          ~expected:[| 1; 1; 0 |] );
+          ~expected:[| true; true; false |] );
       ( "nan comparisons",
         `Quick,
         fun () ->
@@ -547,8 +547,8 @@ module Comparison_tests = struct
           in
           let eq_result = Nx.equal t1 t2 in
           let ne_result = Nx.not_equal t1 t2 in
-          check_t "nan equal" [| 3 |] [| 0; 0; 0 |] eq_result;
-          check_t "nan not_equal" [| 3 |] [| 1; 1; 1 |] ne_result );
+          check_t "nan equal" [| 3 |] [| false; false; false |] eq_result;
+          check_t "nan not_equal" [| 3 |] [| true; true; true |] ne_result );
     ]
 end
 
@@ -782,6 +782,134 @@ module Bitwise_tests = struct
     ]
 end
 
+(* Log/standardize related tests *)
+
+let test_log_softmax_basic () =
+  let input = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let result = Nx.log_softmax input in
+  let data = [| 1.; 2.; 3. |] in
+  let max_x = Array.fold_left Float.max data.(0) data in
+  let denom =
+    Array.fold_left (fun acc v -> acc +. Float.exp (v -. max_x)) 0. data
+  in
+  let log_den = Float.log denom in
+  let expected = Array.map (fun v -> v -. max_x -. log_den) data in
+  check_t ~eps:1e-6 "log_softmax basic" [| 3 |] expected result
+
+let test_log_softmax_with_scale () =
+  let input = Nx.create Nx.float32 [| 3 |] [| 0.; 1.; 2. |] in
+  let scale = 0.5 in
+  let result = Nx.log_softmax ~scale input in
+  let data = [| 0.; 1.; 2. |] in
+  let max_x = Array.fold_left Float.max data.(0) data in
+  let denom =
+    Array.fold_left
+      (fun acc v -> acc +. Float.exp (scale *. (v -. max_x)))
+      0. data
+  in
+  let log_den = Float.log denom in
+  let expected = Array.map (fun v -> (scale *. (v -. max_x)) -. log_den) data in
+  check_t ~eps:1e-6 "log_softmax scale" [| 3 |] expected result
+
+let test_logsumexp_basic () =
+  let input = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let result = Nx.logsumexp input in
+  let data = [| 1.; 2.; 3. |] in
+  let max_x = Array.fold_left Float.max data.(0) data in
+  let denom =
+    Array.fold_left (fun acc v -> acc +. Float.exp (v -. max_x)) 0. data
+  in
+  let expected = Float.log denom +. max_x in
+  check_t ~eps:1e-6 "logsumexp basic" [||] [| expected |] result
+
+let test_logsumexp_axis () =
+  let input = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let result = Nx.logsumexp ~axes:[ 1 ] input in
+  let rows = [| [| 1.; 2. |]; [| 3.; 4. |] |] in
+  let expected =
+    Array.map
+      (fun row ->
+        let max_x = Array.fold_left Float.max row.(0) row in
+        let denom =
+          Array.fold_left (fun acc v -> acc +. Float.exp (v -. max_x)) 0. row
+        in
+        Float.log denom +. max_x)
+      rows
+  in
+  check_t ~eps:1e-6 "logsumexp axis" [| 2 |] expected result
+
+let test_logmeanexp_basic () =
+  let input = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let result = Nx.logmeanexp input in
+  let data = [| 1.; 2.; 3. |] in
+  let max_x = Array.fold_left Float.max data.(0) data in
+  let denom =
+    Array.fold_left (fun acc v -> acc +. Float.exp (v -. max_x)) 0. data
+  in
+  let log_sum = Float.log denom +. max_x in
+  let expected = log_sum -. Float.log (float_of_int (Array.length data)) in
+  check_t ~eps:1e-6 "logmeanexp basic" [||] [| expected |] result
+
+let test_logmeanexp_axis () =
+  let input = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let result = Nx.logmeanexp ~axes:[ 1 ] input in
+  let rows = [| [| 1.; 2. |]; [| 3.; 4. |] |] in
+  let expected =
+    Array.map
+      (fun row ->
+        let max_x = Array.fold_left Float.max row.(0) row in
+        let denom =
+          Array.fold_left (fun acc v -> acc +. Float.exp (v -. max_x)) 0. row
+        in
+        let log_sum = Float.log denom +. max_x in
+        log_sum -. Float.log (float_of_int (Array.length row)))
+      rows
+  in
+  check_t ~eps:1e-6 "logmeanexp axis" [| 2 |] expected result
+
+let test_standardize_global () =
+  let input = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let standardized = Nx.standardize input in
+  let mean = Nx.item [] (Nx.mean standardized) in
+  let variance = Nx.item [] (Nx.var standardized) in
+  check (float 1e-5) "standardize mean ~ 0" 0. mean;
+  check (float 1e-4) "standardize var ~ 1" 1. variance
+
+let test_standardize_axes_with_params () =
+  let input = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let axes = [ 0 ] in
+  let mean = Nx.mean ~axes ~keepdims:true input in
+  let variance = Nx.var ~axes ~keepdims:true input in
+  let expected =
+    let eps = 1e-5 in
+    let denom = Nx.sqrt (Nx.add variance (Nx.scalar Nx.float32 eps)) in
+    Nx.div (Nx.sub input mean) denom
+  in
+  let result = Nx.standardize ~axes ~mean ~variance input in
+  check_nx ~epsilon:1e-6 "standardize with params" expected result;
+  let auto = Nx.standardize ~axes input in
+  check_nx ~epsilon:1e-6 "standardize axes" expected auto
+
+module Log_tests = struct
+  let tests =
+    [
+      ("log_softmax basic", `Quick, test_log_softmax_basic);
+      ("log_softmax scale", `Quick, test_log_softmax_with_scale);
+      ("logsumexp basic", `Quick, test_logsumexp_basic);
+      ("logsumexp axis", `Quick, test_logsumexp_axis);
+      ("logmeanexp basic", `Quick, test_logmeanexp_basic);
+      ("logmeanexp axis", `Quick, test_logmeanexp_axis);
+    ]
+end
+
+module Standardize_tests = struct
+  let tests =
+    [
+      ("standardize global", `Quick, test_standardize_global);
+      ("standardize axes with params", `Quick, test_standardize_axes_with_params);
+    ]
+end
+
 (* ───── Broadcasting Tests ───── *)
 
 module Broadcasting_tests = struct
@@ -856,6 +984,8 @@ let suite =
     ("Ops :: Cumulative", Cumulative_tests.tests);
     ("Ops :: Bitwise", Bitwise_tests.tests);
     ("Ops :: Broadcasting", Broadcasting_tests.tests);
+    ("Ops :: Log", Log_tests.tests);
+    ("Ops :: Standardize", Standardize_tests.tests);
   ]
 
 let () = Alcotest.run "Nx Ops" suite

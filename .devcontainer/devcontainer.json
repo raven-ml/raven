@@ -1,0 +1,37 @@
+{
+  "name": "Raven Codespace",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": {
+      "VARIANT": "ubuntu-24.04"
+    }
+  },
+  "workspaceFolder": "/workspaces/raven",
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ocamllabs.ocaml-platform",
+        "editorconfig.editorconfig",
+        "github.vscode-github-actions"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "[ocaml]": {
+          "editor.defaultFormatter": "ocamllabs.ocaml-platform"
+        },
+        "ocaml.sandbox": {
+          "type": "opam",
+          "switch": "/workspaces/raven"
+        }
+      }
+    }
+  }
+}

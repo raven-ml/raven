@@ -2,14 +2,18 @@
 open Nx_datasets
 open Hugin
 
-let () = Printexc.record_backtrace true
+let setup_logging () =
+  Logs.set_reporter (Logs_fmt.reporter ());
+  Logs.set_level (Some Logs.Info)
+
 let astype_f32 arr = Nx.astype Nx.float32 arr
 
 let () =
-  Printf.printf "Loading California Housing dataset...\n%!";
+  setup_logging ();
+  Logs.info (fun m -> m "Loading California Housing dataset...");
   let features, labels = load_california_housing () in
 
-  Printf.printf "Preparing data for plotting...\n%!";
+  Logs.info (fun m -> m "Preparing data for plotting...");
 
   let n_samples = (Nx.shape labels).(0) in
   let labels_1d = Nx.reshape [| n_samples |] labels in
@@ -26,7 +30,7 @@ let () =
   let longitude_f32 = astype_f32 longitude in
   let latitude_f32 = astype_f32 latitude in
 
-  Printf.printf "Creating figure with subplots...\n%!";
+  Logs.info (fun m -> m "Creating figure with subplots...");
   let fig = Figure.create ~width:1200 ~height:600 () in
 
   let ax_hist = Figure.add_subplot ~nrows:1 ~ncols:2 ~index:1 fig in
@@ -53,6 +57,6 @@ let () =
   in
   ignore ax_scatter;
 
-  Printf.printf "Displaying combined plot...\n%!";
+  Logs.info (fun m -> m "Displaying combined plot...");
   Hugin.show fig;
-  Printf.printf "Plot window closed.\n%!"
+  Logs.info (fun m -> m "Plot window closed.")

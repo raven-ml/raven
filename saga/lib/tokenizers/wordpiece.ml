@@ -14,10 +14,10 @@ type config = {
 }
 
 type t = {
-  mutable vocab : vocab;
-  mutable vocab_r : vocab_r;
+  vocab : vocab;
+  vocab_r : vocab_r;
   unk_token : string;
-  mutable continuing_subword_prefix : string;
+  continuing_subword_prefix : string;
   max_input_chars_per_word : int;
 }
 
@@ -185,58 +185,6 @@ let from_bpe bpe =
   in
   create_internal vocab unk_token continuing_subword_prefix 100
 
-(* Save reference to internal create before Builder shadows it *)
-let create_wordpiece = create_internal
-
-(** Builder module *)
-module Builder = struct
-  type builder = {
-    mutable files : string option;
-    mutable vocab : vocab;
-    mutable unk_token : string;
-    mutable continuing_subword_prefix : string;
-    mutable max_input_chars_per_word : int;
-  }
-
-  let create () =
-    {
-      files = None;
-      vocab = Hashtbl.create 0;
-      unk_token = "[UNK]";
-      continuing_subword_prefix = "##";
-      max_input_chars_per_word = 100;
-    }
-
-  let files builder f =
-    builder.files <- Some f;
-    builder
-
-  let vocab builder v =
-    builder.vocab <- v;
-    builder
-
-  let unk_token builder token =
-    builder.unk_token <- token;
-    builder
-
-  let continuing_subword_prefix builder prefix =
-    builder.continuing_subword_prefix <- prefix;
-    builder
-
-  let max_input_chars_per_word builder max =
-    builder.max_input_chars_per_word <- max;
-    builder
-
-  let build builder =
-    let vocab =
-      match builder.files with
-      | None -> builder.vocab
-      | Some f -> read_file ~vocab_file:f
-    in
-    create_wordpiece vocab builder.unk_token builder.continuing_subword_prefix
-      builder.max_input_chars_per_word
-end
-
 (** Serialization *)
 let to_yojson model =
   let vocab_list =
@@ -305,60 +253,16 @@ let from_bytes bytes =
   of_yojson (Yojson.Basic.from_string str)
 
 (** Trainer module *)
-module Trainer = struct
-  type trainer_config = {
-    min_frequency : int;
-    vocab_size : int;
-    show_progress : bool;
-    special_tokens : string list;
-    limit_alphabet : int option;
-    initial_alphabet : char list;
-    continuing_subword_prefix : string;
-    end_of_word_suffix : string option;
-  }
-
-  type trainer = {
-    config : trainer_config; [@warning "-69"]
-    bpe_config : Bpe.Trainer.trainer_config; [@warning "-69"]
-    bpe_trainer : Bpe.Trainer.trainer;
-  }
-
-  let default_config =
-    {
-      min_frequency = 0;
-      vocab_size = 30000;
-      show_progress = true;
-      special_tokens = [ "[UNK]"; "[CLS]"; "[SEP]"; "[PAD]"; "[MASK]" ];
-      limit_alphabet = None;
-      initial_alphabet = [];
-      continuing_subword_prefix = "##";
-      end_of_word_suffix = None;
-    }
-
-  let create config =
-    let bpe_config =
-      {
-        Bpe.Trainer.min_frequency = config.min_frequency;
-        vocab_size = config.vocab_size;
-        show_progress = config.show_progress;
-        special_tokens = config.special_tokens;
-        limit_alphabet = config.limit_alphabet;
-        initial_alphabet = config.initial_alphabet;
-        continuing_subword_prefix = Some config.continuing_subword_prefix;
-        end_of_word_suffix = config.end_of_word_suffix;
-        max_token_length = None;
-      }
-    in
-    { config; bpe_config; bpe_trainer = Bpe.Trainer.create bpe_config }
-
-  let feed trainer texts = Bpe.Trainer.feed trainer.bpe_trainer texts
-
-  let train trainer model =
-    let bpe_model = Bpe.default () in
-    let special_tokens = Bpe.Trainer.train trainer.bpe_trainer bpe_model in
-    let new_model = from_bpe bpe_model in
-    model.vocab <- new_model.vocab;
-    model.vocab_r <- new_model.vocab_r;
-    model.continuing_subword_prefix <- new_model.continuing_subword_prefix;
-    special_tokens
-end
+let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
+    ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
+    ~end_of_word_suffix texts existing =
+  let _ = existing in
+  (* WordPiece training uses BPE algorithm internally *)
+  let bpe_trained, result_tokens =
+    Bpe.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
+      ~limit_alphabet ~initial_alphabet
+      ~continuing_subword_prefix:(Some continuing_subword_prefix)
+      ~end_of_word_suffix ~max_token_length:None texts None
+  in
+  let wordpiece_model = from_bpe bpe_trained in
+  (wordpiece_model, result_tokens)

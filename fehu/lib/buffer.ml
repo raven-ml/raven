@@ -12,6 +12,7 @@ type ('obs, 'act) step = {
   action : 'act;
   reward : float;
   terminated : bool;
+  truncated : bool;
   value : float option;
   log_prob : float option;
 }
@@ -131,13 +132,16 @@ module Rollout = struct
           for t = buffer.size - 1 downto 0 do
             let step = steps.(t).step in
             let value = Option.value step.value ~default:0.0 in
+            let terminal_step = step.terminated || step.truncated in
             let next_value =
-              if t = buffer.size - 1 then if last_done then 0.0 else last_value
+              if t = buffer.size - 1 then
+                if last_done || terminal_step then 0.0 else last_value
               else Option.value steps.(t + 1).step.value ~default:0.0
             in
             let next_non_terminal =
-              if t = buffer.size - 1 then if last_done then 0.0 else 1.0
-              else if step.terminated then 0.0
+              if t = buffer.size - 1 then
+                if last_done || terminal_step then 0.0 else 1.0
+              else if terminal_step then 0.0
               else 1.0
             in
             let delta =

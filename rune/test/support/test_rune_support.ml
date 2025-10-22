@@ -7,17 +7,13 @@ let check_rune ?eps msg expected actual =
   let testable =
     match eps with
     | None ->
-        let equal_int a b =
-          match (a, b) with 1, 1 -> true | 0, 0 -> true | _ -> false
-        in
         Alcotest.testable Rune.pp (fun a b ->
             if Rune.shape a <> Rune.shape b then false
             else
               let eq_tensor = Rune.array_equal a b in
-              (* array_equal returns a scalar uint8 tensor with 1 for true, 0
-                 for false *)
+              (* array_equal returns a scalar boolean tensor *)
               let result = Rune.item [] eq_tensor in
-              equal_int result 1)
+              result)
     | Some eps ->
         Alcotest.testable Rune.pp (fun a b ->
             let diff = Rune.sub a b in

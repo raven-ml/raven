@@ -2,13 +2,18 @@
 open Nx
 open Nx_datasets
 
+let setup_logging () =
+  Logs.set_reporter (Logs_fmt.reporter ());
+  Logs.set_level (Some Logs.Info)
+
 let astype_f32 arr = Nx.astype Nx.float32 arr
 
 let () =
-  Printf.printf "Loading Airline Passengers dataset...\n%!";
+  setup_logging ();
+  Logs.info (fun m -> m "Loading Airline Passengers dataset...");
   let passengers = load_airline_passengers () in
 
-  Printf.printf "Preparing data for plotting...\n%!";
+  Logs.info (fun m -> m "Preparing data for plotting...");
   let passengers_f32 = astype_f32 passengers in
   let n_samples = (Nx.shape passengers_f32).(0) in
 
@@ -19,12 +24,12 @@ let () =
         | _ -> failwith "Invalid index shape")
   in
 
-  Printf.printf "Creating plot...\n%!";
+  Logs.info (fun m -> m "Creating plot...");
   let fig =
     Hugin.plot ~title:"Airline Passengers 1949-1960" ~xlabel:"Month Index"
       ~ylabel:"Passengers (Thousands)" time_index passengers_f32
   in
 
-  Printf.printf "Displaying plot...\n%!";
+  Logs.info (fun m -> m "Displaying plot...");
   Hugin.show fig;
-  Printf.printf "Plot window closed.\n%!"
+  Logs.info (fun m -> m "Plot window closed.")

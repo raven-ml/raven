@@ -105,6 +105,7 @@ let test_rollout_add_and_get () =
           action;
           reward = float_of_int i;
           terminated = false;
+          truncated = false;
           value = Some (float_of_int i);
           log_prob = Some 0.0;
         }
@@ -134,6 +135,7 @@ let test_rollout_compute_advantages () =
           action;
           reward = 1.0;
           terminated = false;
+          truncated = false;
           value = Some 0.0;
           log_prob = Some 0.0;
         }
@@ -155,6 +157,30 @@ let test_rollout_compute_advantages () =
     (fun adv -> Alcotest.(check bool) "advantage > 0" true (adv > 0.0))
     advantages
 
+let test_rollout_compute_advantages_truncated () =
+  let buffer = Buffer.Rollout.create ~capacity:1 in
+  let obs = Rune.create Rune.float32 [| 1 |] [| 0.0 |] in
+  let action = Rune.create Rune.int32 [| 1 |] [| 0l |] in
+  let step =
+    Buffer.
+      {
+        observation = obs;
+        action;
+        reward = 1.0;
+        terminated = false;
+        truncated = true;
+        value = Some 0.5;
+        log_prob = None;
+      }
+  in
+  Buffer.Rollout.add buffer step;
+  Buffer.Rollout.compute_advantages buffer ~last_value:10.0 ~last_done:false
+    ~gamma:0.99 ~gae_lambda:1.0;
+  let _, advantages, returns = Buffer.Rollout.get buffer in
+  Alcotest.(check (float 1e-6))
+    "advantage treats truncation as terminal" 0.5 advantages.(0);
+  Alcotest.(check (float 1e-6)) "return respects truncation" 1.0 returns.(0)
+
 let test_rollout_clear () =
   let buffer = Buffer.Rollout.create ~capacity:5 in
 
@@ -167,6 +193,7 @@ let test_rollout_clear () =
         action;
         reward = 1.0;
         terminated = false;
+        truncated = false;
         value = None;
         log_prob = None;
       }
@@ -193,6 +220,8 @@ let () =
           test_case "create rollout buffer" `Quick test_rollout_create;
           test_case "add and get" `Quick test_rollout_add_and_get;
           test_case "compute advantages" `Quick test_rollout_compute_advantages;
+          test_case "compute advantages with truncation" `Quick
+            test_rollout_compute_advantages_truncated;
           test_case "clear buffer" `Quick test_rollout_clear;
         ] );
     ]

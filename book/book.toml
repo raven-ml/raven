@@ -1,0 +1,5 @@
+[book]
+authors = ["Thibaut Mattio"]
+language = "en"
+src = "src"
+title = "Modern Machine Learning in OCaml with Raven"

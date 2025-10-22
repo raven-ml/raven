@@ -118,13 +118,8 @@ let test_remove_emoji () =
 
 let test_tokenize_with_normalization () =
   let text = "HELLO   WORLD!" in
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  (* Add vocabulary for the expected tokens *)
-  let _ =
-    Tokenizer.add_tokens tokenizer
-      [ Either.Left "hello"; Either.Left "world"; Either.Left "!" ]
-  in
-  (* Apply normalizers *)
+  let tokenizer = Tokenizer.word_level () in
+  let tokenizer = Tokenizer.add_tokens tokenizer [ "hello"; "world"; "!" ] in
   let normalizer =
     Normalizers.sequence
       [
@@ -132,26 +127,29 @@ let test_tokenize_with_normalization () =
         Normalizers.replace ~pattern:"\\s+" ~replacement:" " ();
       ]
   in
-  Tokenizer.set_normalizer tokenizer (Some normalizer);
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-
-  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left text) () in
-  let tokens = Array.to_list (Encoding.get_tokens encoding) in
+  let tokenizer = Tokenizer.with_normalizer tokenizer (Some normalizer) in
+  let tokenizer =
+    Tokenizer.with_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()))
+  in
+  let tokens =
+    Tokenizer.encode tokenizer text |> Encoding.get_tokens |> Array.to_list
+  in
   (* Whitespace pre-tokenizer splits punctuation, so we get three tokens *)
   check (list string) "normalized tokenization" [ "hello"; "world"; "!" ] tokens
 
 let test_tokenize_unicode_words () =
   (* Test that Unicode-aware tokenization works *)
   let text = "café résumé naïve" in
-  let tokenizer = Tokenizer.create ~model:(Models.word_level ()) in
-  (* Add vocabulary for the expected tokens *)
-  let _ =
-    Tokenizer.add_tokens tokenizer
-      [ Either.Left "café"; Either.Left "résumé"; Either.Left "naïve" ]
+  let tokenizer = Tokenizer.word_level () in
+  let tokenizer =
+    Tokenizer.add_tokens tokenizer [ "café"; "résumé"; "naïve" ]
   in
-  Tokenizer.set_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()));
-  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left text) () in
-  let tokens = Array.to_list (Encoding.get_tokens encoding) in
+  let tokenizer =
+    Tokenizer.with_pre_tokenizer tokenizer (Some (Pre_tokenizers.whitespace ()))
+  in
+  let tokens =
+    Tokenizer.encode tokenizer text |> Encoding.get_tokens |> Array.to_list
+  in
   (* Our simple tokenizer treats é as a separate character, so we get more
      tokens *)
   check bool "tokenized unicode" true (List.length tokens > 0)
@@ -161,9 +159,10 @@ let test_tokenize_unicode_words () =
 let test_malformed_unicode () =
   (* Malformed sequences should be skipped, not crash *)
   let text = "Hello" ^ String.make 1 '\xFF' ^ String.make 1 '\xFE' ^ "World" in
-  let tokenizer = Tokenizer.create ~model:(Models.chars ()) in
-  let encoding = Tokenizer.encode tokenizer ~sequence:(Either.Left text) () in
-  let tokens = Array.to_list (Encoding.get_tokens encoding) in
+  let tokenizer = Tokenizer.chars () in
+  let tokens =
+    Tokenizer.encode tokenizer text |> Encoding.get_tokens |> Array.to_list
+  in
   check bool "handled malformed" true (List.length tokens > 0)
 
 (* Test Suite *)

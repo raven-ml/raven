@@ -157,6 +157,24 @@ let test_mixed_nulls () =
   check_bool "col b has nulls" true (Col.has_nulls col_b);
   check_bool "col c has nulls" true (Col.has_nulls col_c)
 
+let test_big_int_detection () =
+  (* Test that large int are detected as Int64 *)
+  let csv = "id\n9223372036854775806" in
+  let df = Talon_csv.from_string csv in
+
+  check_int "rows" 1 (num_rows df);
+
+  (* Check that the column is detected as Int64 *)
+  let col = get_column_exn df "id" in
+  let is_int64 = match col with Col.P (Nx.Int64, _, _) -> true | _ -> false in
+  check_bool "big int detected as Int64" true is_int64;
+
+  match to_int64_array df "id" with
+  | Some arr ->
+      check_int "array length" 1 (Array.length arr);
+      check_bool "correct value" true (arr.(0) = 9223372036854775806L)
+  | None -> Alcotest.fail "to_int64_array should return Some for Int64 column"
+
 (* Test suites *)
 let reading_tests =
   [
@@ -168,6 +186,7 @@ let reading_tests =
     ("empty", `Quick, test_from_string_empty);
     ("auto_detect", `Quick, test_auto_detect_dtypes);
     ("mixed_nulls", `Quick, test_mixed_nulls);
+    ("big_int_detection", `Quick, test_big_int_detection);
   ]
 
 let writing_tests =

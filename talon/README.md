@@ -43,6 +43,14 @@ let by_grade = group_by df Row.(
     else "C"))
 ```
 
+## Null Semantics
+
+Numeric columns store their data in Nx tensors plus an optional null mask. Use
+the [`Col.*_opt`] constructors to build nullable columns; if a mask is absent,
+all payload values (including `nan` or `Int32.min_int`) are treated as genuine
+data. Option-based accessors such as `Row.float64_opt` and helpers like
+`Agg.count` honor the mask when propagating missing values.
+
 ## CSV and JSON Support
 
 ```ocaml

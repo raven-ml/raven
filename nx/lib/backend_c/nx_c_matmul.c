@@ -7,6 +7,7 @@
 #include <caml/memory.h>
 #include <caml/threads.h>
 #include <cblas.h>
+#include <limits.h>
 
 #include "nx_c_shared.h"
 
@@ -319,6 +320,34 @@ GENERATE_MATMUL_OP(bool_, caml_ba_bool, uint64_t, (caml_ba_bool))
 /* BLAS-based GEMM kernels for float32/float64 using CBLAS.
    These use optimized BLAS routines when possible, falling back to
    packing for non-contiguous strides. */
+
+static inline int setup_blas_row_major_params(long rows, long cols, long row_stride,
+                                              long col_stride, CBLAS_TRANSPOSE *trans,
+                                              int *ld) {
+  if (row_stride <= 0 || col_stride <= 0) return 0;
+  if (col_stride == 1) {
+    if (row_stride < cols || row_stride > INT_MAX) return 0;
+    *trans = CblasNoTrans;
+    *ld = (int)row_stride;
+    return 1;
+  }
+  if (row_stride == 1) {
+    if (col_stride < rows || col_stride > INT_MAX) return 0;
+    *trans = CblasTrans;
+    *ld = (int)col_stride;
+    return 1;
+  }
+  return 0;
+}
+
+static inline int setup_blas_row_major_output(long rows, long cols, long row_stride,
+                                              long col_stride, int *ld) {
+  if (col_stride != 1) return 0;
+  if (row_stride < cols || row_stride > INT_MAX) return 0;
+  *ld = (int)row_stride;
+  return 1;
+}
+
 static void nx_c_matmul_f32_kernel(void *a_data, long a_off, long a_rs,
                                    long a_cs, void *b_data, long b_off,
                                    long b_rs, long b_cs, void *c_data,
@@ -328,32 +357,19 @@ static void nx_c_matmul_f32_kernel(void *a_data, long a_off, long a_rs,
   float *restrict b = (float *)b_data;
   float *restrict c = (float *)c_data;
 
-  /* Check if we can use BLAS directly (row-major with compatible strides) */
   int use_blas_direct = 0;
-  CBLAS_ORDER order;
   CBLAS_TRANSPOSE trans_a = CblasNoTrans;
   CBLAS_TRANSPOSE trans_b = CblasNoTrans;
-  int lda, ldb, ldc;
+  int lda = 0, ldb = 0, ldc = 0;
 
-  /* Check for row-major layout: inner stride is 1 */
-  if (a_cs == 1 && b_cs == 1 && c_cs == 1 && a_rs >= k && b_rs >= n && c_rs >= n) {
-    /* Row-major A, B, C - leading dimension is the row stride */
-    order = CblasRowMajor;
-    lda = a_rs;  /* A is m x k, leading dimension is row stride */
-    ldb = b_rs;  /* B is k x n, leading dimension is row stride */
-    ldc = c_rs;  /* C is m x n, leading dimension is row stride */
-    use_blas_direct = 1;
-  } else if (a_rs == 1 && b_rs == 1 && c_rs == 1 && a_cs >= m && b_cs >= k && c_cs >= m) {
-    /* Column-major A, B, C - leading dimension is the column stride */
-    order = CblasColMajor;
-    lda = a_cs;  /* A is m x k, leading dimension is column stride */
-    ldb = b_cs;  /* B is k x n, leading dimension is column stride */
-    ldc = c_cs;  /* C is m x n, leading dimension is column stride */
+  if (setup_blas_row_major_params(m, k, a_rs, a_cs, &trans_a, &lda) &&
+      setup_blas_row_major_params(k, n, b_rs, b_cs, &trans_b, &ldb) &&
+      setup_blas_row_major_output(m, n, c_rs, c_cs, &ldc)) {
     use_blas_direct = 1;
   }
 
   if (use_blas_direct) {
-    cblas_sgemm(order, trans_a, trans_b, m, n, k, 1.0f,
+    cblas_sgemm(CblasRowMajor, trans_a, trans_b, m, n, k, 1.0f,
                 a + a_off, lda, b + b_off, ldb, 0.0f, c + c_off, ldc);
   } else {
     /* Non-contiguous layout: pack matrices first */
@@ -405,32 +421,19 @@ static void nx_c_matmul_f64_kernel(void *a_data, long a_off, long a_rs,
   double *restrict b = (double *)b_data;
   double *restrict c = (double *)c_data;
 
-  /* Check if we can use BLAS directly (row-major with compatible strides) */
   int use_blas_direct = 0;
-  CBLAS_ORDER order;
   CBLAS_TRANSPOSE trans_a = CblasNoTrans;
   CBLAS_TRANSPOSE trans_b = CblasNoTrans;
-  int lda, ldb, ldc;
+  int lda = 0, ldb = 0, ldc = 0;
 
-  /* Check for row-major layout: inner stride is 1 */
-  if (a_cs == 1 && b_cs == 1 && c_cs == 1 && a_rs >= k && b_rs >= n && c_rs >= n) {
-    /* Row-major A, B, C - leading dimension is the row stride */
-    order = CblasRowMajor;
-    lda = a_rs;  /* A is m x k, leading dimension is row stride */
-    ldb = b_rs;  /* B is k x n, leading dimension is row stride */
-    ldc = c_rs;  /* C is m x n, leading dimension is row stride */
-    use_blas_direct = 1;
-  } else if (a_rs == 1 && b_rs == 1 && c_rs == 1 && a_cs >= m && b_cs >= k && c_cs >= m) {
-    /* Column-major A, B, C - leading dimension is the column stride */
-    order = CblasColMajor;
-    lda = a_cs;  /* A is m x k, leading dimension is column stride */
-    ldb = b_cs;  /* B is k x n, leading dimension is column stride */
-    ldc = c_cs;  /* C is m x n, leading dimension is column stride */
+  if (setup_blas_row_major_params(m, k, a_rs, a_cs, &trans_a, &lda) &&
+      setup_blas_row_major_params(k, n, b_rs, b_cs, &trans_b, &ldb) &&
+      setup_blas_row_major_output(m, n, c_rs, c_cs, &ldc)) {
     use_blas_direct = 1;
   }
 
   if (use_blas_direct) {
-    cblas_dgemm(order, trans_a, trans_b, m, n, k, 1.0,
+    cblas_dgemm(CblasRowMajor, trans_a, trans_b, m, n, k, 1.0,
                 a + a_off, lda, b + b_off, ldb, 0.0, c + c_off, ldc);
   } else {
     /* Non-contiguous layout: pack matrices first */
@@ -487,35 +490,22 @@ static void nx_c_matmul_c32_kernel(void *a_data, long a_off, long a_rs,
   complex32 *restrict b = (complex32 *)b_data;
   complex32 *restrict c = (complex32 *)c_data;
 
-  /* Check if we can use BLAS directly (row-major with compatible strides) */
-  int use_blas_direct = 0;
-  CBLAS_ORDER order;
-  CBLAS_TRANSPOSE trans_a = CblasNoTrans;
-  CBLAS_TRANSPOSE trans_b = CblasNoTrans;
-  int lda, ldb, ldc;
-
-  /* Check for row-major layout: inner stride is 1 */
-  if (a_cs == 1 && b_cs == 1 && c_cs == 1 && a_rs >= k && b_rs >= n && c_rs >= n) {
-    /* Row-major A, B, C - leading dimension is the row stride */
-    order = CblasRowMajor;
-    lda = a_rs;  /* A is m x k, leading dimension is row stride */
-    ldb = b_rs;  /* B is k x n, leading dimension is row stride */
-    ldc = c_rs;  /* C is m x n, leading dimension is row stride */
-    use_blas_direct = 1;
-  } else if (a_rs == 1 && b_rs == 1 && c_rs == 1 && a_cs >= m && b_cs >= k && c_cs >= m) {
-    /* Column-major A, B, C - leading dimension is the column stride */
-    order = CblasColMajor;
-    lda = a_cs;  /* A is m x k, leading dimension is column stride */
-    ldb = b_cs;  /* B is k x n, leading dimension is column stride */
-    ldc = c_cs;  /* C is m x n, leading dimension is column stride */
-    use_blas_direct = 1;
-  }
-
   complex32 alpha = 1.0f + 0.0f * I;
   complex32 beta = 0.0f + 0.0f * I;
 
+  int use_blas_direct = 0;
+  CBLAS_TRANSPOSE trans_a = CblasNoTrans;
+  CBLAS_TRANSPOSE trans_b = CblasNoTrans;
+  int lda = 0, ldb = 0, ldc = 0;
+
+  if (setup_blas_row_major_params(m, k, a_rs, a_cs, &trans_a, &lda) &&
+      setup_blas_row_major_params(k, n, b_rs, b_cs, &trans_b, &ldb) &&
+      setup_blas_row_major_output(m, n, c_rs, c_cs, &ldc)) {
+    use_blas_direct = 1;
+  }
+
   if (use_blas_direct) {
-    cblas_cgemm(order, trans_a, trans_b, m, n, k, &alpha,
+    cblas_cgemm(CblasRowMajor, trans_a, trans_b, m, n, k, &alpha,
                 a + a_off, lda, b + b_off, ldb, &beta, c + c_off, ldc);
   } else {
     /* Non-contiguous layout: pack matrices first */
@@ -567,35 +557,22 @@ static void nx_c_matmul_c64_kernel(void *a_data, long a_off, long a_rs,
   complex64 *restrict b = (complex64 *)b_data;
   complex64 *restrict c = (complex64 *)c_data;
 
-  /* Check if we can use BLAS directly (row-major with compatible strides) */
-  int use_blas_direct = 0;
-  CBLAS_ORDER order;
-  CBLAS_TRANSPOSE trans_a = CblasNoTrans;
-  CBLAS_TRANSPOSE trans_b = CblasNoTrans;
-  int lda, ldb, ldc;
-
-  /* Check for row-major layout: inner stride is 1 */
-  if (a_cs == 1 && b_cs == 1 && c_cs == 1 && a_rs >= k && b_rs >= n && c_rs >= n) {
-    /* Row-major A, B, C - leading dimension is the row stride */
-    order = CblasRowMajor;
-    lda = a_rs;  /* A is m x k, leading dimension is row stride */
-    ldb = b_rs;  /* B is k x n, leading dimension is row stride */
-    ldc = c_rs;  /* C is m x n, leading dimension is row stride */
-    use_blas_direct = 1;
-  } else if (a_rs == 1 && b_rs == 1 && c_rs == 1 && a_cs >= m && b_cs >= k && c_cs >= m) {
-    /* Column-major A, B, C - leading dimension is the column stride */
-    order = CblasColMajor;
-    lda = a_cs;  /* A is m x k, leading dimension is column stride */
-    ldb = b_cs;  /* B is k x n, leading dimension is column stride */
-    ldc = c_cs;  /* C is m x n, leading dimension is column stride */
-    use_blas_direct = 1;
-  }
-
   complex64 alpha = 1.0 + 0.0 * I;
   complex64 beta = 0.0 + 0.0 * I;
 
+  int use_blas_direct = 0;
+  CBLAS_TRANSPOSE trans_a = CblasNoTrans;
+  CBLAS_TRANSPOSE trans_b = CblasNoTrans;
+  int lda = 0, ldb = 0, ldc = 0;
+
+  if (setup_blas_row_major_params(m, k, a_rs, a_cs, &trans_a, &lda) &&
+      setup_blas_row_major_params(k, n, b_rs, b_cs, &trans_b, &ldb) &&
+      setup_blas_row_major_output(m, n, c_rs, c_cs, &ldc)) {
+    use_blas_direct = 1;
+  }
+
   if (use_blas_direct) {
-    cblas_zgemm(order, trans_a, trans_b, m, n, k, &alpha,
+    cblas_zgemm(CblasRowMajor, trans_a, trans_b, m, n, k, &alpha,
                 a + a_off, lda, b + b_off, ldb, &beta, c + c_off, ldc);
   } else {
     /* Non-contiguous layout: pack matrices first */

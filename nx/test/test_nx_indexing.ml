@@ -221,7 +221,9 @@ let test_put_along_axis () =
 
 let test_compress_no_axis () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  let condition = Nx.create Nx.uint8 [| 5 |] [| 1; 0; 1; 0; 1 |] in
+  let condition =
+    Nx.create Nx.bool [| 5 |] [| true; false; true; false; true |]
+  in
   let result = Nx.compress ~condition t in
   check_t "compress no axis" [| 3 |] [| 1.; 3.; 5. |] result
 
@@ -230,7 +232,7 @@ let test_compress_with_axis () =
     Nx.create Nx.float32 [| 3; 4 |]
       [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
   in
-  let condition = Nx.create Nx.uint8 [| 3 |] [| 0; 1; 1 |] in
+  let condition = Nx.create Nx.bool [| 3 |] [| false; true; true |] in
   let result = Nx.compress ~axis:0 ~condition t in
   check_t "compress with axis" [| 2; 4 |]
     [| 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
@@ -238,7 +240,7 @@ let test_compress_with_axis () =
 
 let test_compress_empty_result () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let condition = Nx.zeros Nx.uint8 [| 3 |] in
+  let condition = Nx.create Nx.bool [| 3 |] [| false; false; false |] in
   let result = Nx.compress ~condition t in
   check_shape "compress empty result" [| 0 |] result
 
@@ -246,7 +248,9 @@ let test_compress_empty_result () =
 
 let test_extract_basic () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let condition = Nx.create Nx.uint8 [| 2; 3 |] [| 1; 0; 1; 0; 1; 0 |] in
+  let condition =
+    Nx.create Nx.bool [| 2; 3 |] [| true; false; true; false; true; false |]
+  in
   let result = Nx.extract ~condition t in
   check_t "extract basic" [| 3 |] [| 1.; 3.; 5. |] result
 
@@ -341,14 +345,14 @@ let test_take_empty_indices () =
 
 let test_compress_condition_mismatch () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  let condition = Nx.create Nx.uint8 [| 3 |] [| 1; 0; 1 |] in
+  let condition = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
   check_raises "compress condition mismatch"
     (Invalid_argument "compress: length 3 doesn't match axis 0 size 5")
     (fun () -> ignore (Nx.compress ~axis:0 ~condition t))
 
 let test_extract_shape_mismatch () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  let condition = Nx.create Nx.uint8 [| 2; 2 |] [| 1; 0; 1; 0 |] in
+  let condition = Nx.create Nx.bool [| 2; 2 |] [| true; false; true; false |] in
   check_raises "extract shape mismatch"
     (Invalid_argument "extract: shape mismatch") (fun () ->
       ignore (Nx.extract ~condition t))
