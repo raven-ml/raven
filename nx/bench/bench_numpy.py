@@ -16,7 +16,6 @@ import ubench  # type: ignore
 
 SIZES: Sequence[int] = (50, 100, 200, 500)
 DTYPES: Sequence[np.dtype] = (np.float32, np.float64)
-MATMUL_THRESHOLD = 200
 BACKEND_NAME = "NumPy"
 _RNG = np.random.default_rng(seed=0)
 
@@ -43,9 +42,6 @@ def _numpy_operations(
         ("Add", lambda a=a, b=b: np.add(a, b)),
         ("Mul", lambda a=a, b=b: np.multiply(a, b)),
     ]
-
-    if size <= MATMUL_THRESHOLD:
-        ops.append(("MatMul", lambda a=a, b=b: np.matmul(a, b)))
 
     ops.extend(
         [

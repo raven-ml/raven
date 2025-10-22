@@ -3,7 +3,6 @@
 (** Configuration *)
 let sizes = [ 50; 100; 200; 500 ]
 
-let matmul_threshold = 200
 let backend_name = "Nx"
 
 (** Helper to create benchmark name *)
@@ -21,12 +20,6 @@ let nx_operations_f32 ~size =
       ("Add", fun () -> ignore (Nx.add a b));
       ("Mul", fun () -> ignore (Nx.mul a b));
     ]
-  in
-
-  let ops =
-    if size <= matmul_threshold then
-      ops @ [ ("MatMul", fun () -> ignore (Nx.matmul a b)) ]
-    else ops
   in
 
   let ops =
@@ -50,12 +43,6 @@ let nx_operations_f64 ~size =
       ("Add", fun () -> ignore (Nx.add a b));
       ("Mul", fun () -> ignore (Nx.mul a b));
     ]
-  in
-
-  let ops =
-    if size <= matmul_threshold then
-      ops @ [ ("MatMul", fun () -> ignore (Nx.matmul a b)) ]
-    else ops
   in
 
   let ops =
