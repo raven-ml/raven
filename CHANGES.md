@@ -49,6 +49,7 @@ All notable changes to this project will be documented in this file.
 
 ### Talon
 
+- Remove automatic sentinel-based null detection for numeric columns; explicit masks (via [_opt] constructors) now define missing data semantics (@tmattio)
 - Replace join nested loops with hashed join indices, cutting lookup from O(n·m) to near O(n) (@tmattio)
 - Reuse a shared Nx-based column reindexer so filter/sample paths avoid repeated array copies (@tmattio)
 - Fix `fillna` to honor column null masks and replacements, restoring expected nullable semantics (@tmattio)
