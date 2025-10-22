@@ -196,6 +196,39 @@ let test_truncated_normal () =
         (v >= lower && v <= upper))
     values
 
+let test_truncated_normal_distribution () =
+  let key = Rng.key 123 in
+  let shape = [| 20_000 |] in
+  let lower = -0.75 in
+  let upper = 1.25 in
+  let samples = Rng.truncated_normal key Float32 ~lower ~upper shape in
+
+  A.check (A.array A.int) "truncated_normal produces correct shape" shape
+    (Rune.shape samples);
+
+  let values = Rune.to_array samples in
+  let total = Array.length values in
+  let boundary_hits =
+    Array.fold_left
+      (fun acc v ->
+        if Float.abs (v -. lower) < 1e-6 || Float.abs (v -. upper) < 1e-6 then
+          acc + 1
+        else acc)
+      0 values
+  in
+
+  A.check A.bool
+    (Printf.sprintf
+       "truncated normal rarely clips to bounds (%d / %d clipped)" boundary_hits
+       total)
+    true (boundary_hits < total / 1000);
+
+  let mean =
+    Array.fold_left ( +. ) 0. values /. float_of_int total
+  in
+  A.check A.bool "truncated normal mean lies within interval" true
+    (mean > lower && mean < upper)
+
 let test_categorical () =
   let key = Rng.key 42 in
 
@@ -433,6 +466,8 @@ let () =
           A.test_case "shuffle_preserves_shape" `Quick
             test_shuffle_preserves_shape;
           A.test_case "truncated_normal" `Quick test_truncated_normal;
+          A.test_case "truncated_normal_distribution" `Quick
+            test_truncated_normal_distribution;
           A.test_case "categorical" `Quick test_categorical;
           A.test_case "categorical_2d" `Quick test_categorical_2d;
           A.test_case "categorical_axis_handling" `Quick
