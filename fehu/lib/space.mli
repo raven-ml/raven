@@ -216,6 +216,10 @@ module Sequence : sig
       constraints:
       - If [min_length] is provided, list length must be >= [min_length]
       - If [max_length] is provided, list length must be <= [max_length]
+        (otherwise, no upper bound is enforced)
+
+      Sampling uses the provided [max_length] range when bounded; otherwise the
+      sampler returns sequences of length [min_length] (default: 0).
 
       Common use: Variable-length observations (e.g., lists of detected objects,
       sequences of variable horizon length). *)
