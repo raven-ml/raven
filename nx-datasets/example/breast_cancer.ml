@@ -2,17 +2,21 @@
 open Nx_datasets
 open Hugin
 
+let setup_logging () =
+  Logs.set_reporter (Logs_fmt.reporter ());
+  Logs.set_level (Some Logs.Info)
+
 let () =
-  Printf.printf "Loading Breast Cancer dataset...\n%!";
+  setup_logging ();
+  Logs.info (fun m -> m "Loading Breast Cancer dataset...");
   let features, labels = load_breast_cancer () in
 
   let n_samples = (Nx.shape features).(0) in
   let n_features = (Nx.shape features).(1) in
 
-  Printf.printf "Dataset loaded successfully!\n";
-  Printf.printf "Number of samples: %d\n" n_samples;
-  Printf.printf "Number of features: %d\n" n_features;
-  Printf.printf "\n%!";
+  Logs.info (fun m -> m "Dataset loaded successfully.");
+  Logs.info (fun m -> m "Number of samples: %d" n_samples);
+  Logs.info (fun m -> m "Number of features: %d" n_features);
 
   let labels_1d =
     let shp = Nx.shape labels in
@@ -28,10 +32,9 @@ let () =
     if label = 1 then incr malignant_count else incr benign_count
   done;
 
-  Printf.printf "Class distribution:\n";
-  Printf.printf "  Malignant (M): %d samples\n" !malignant_count;
-  Printf.printf "  Benign (B): %d samples\n" !benign_count;
-  Printf.printf "\n%!";
+  Logs.info (fun m -> m "Class distribution:");
+  Logs.info (fun m -> m "  Malignant (M): %d samples" !malignant_count);
+  Logs.info (fun m -> m "  Benign (B): %d samples" !benign_count);
 
   let radius_col = Nx.slice [ Nx.R (0, n_samples); Nx.R (0, 1) ] features in
   let texture_col = Nx.slice [ Nx.R (0, n_samples); Nx.R (1, 2) ] features in
@@ -59,7 +62,8 @@ let () =
   let benign_radius = extract_by_indices !benign_indices radius in
   let benign_texture = extract_by_indices !benign_indices texture in
 
-  Printf.printf "Creating scatter plot: Mean Radius vs Mean Texture...\n%!";
+  Logs.info (fun m ->
+      m "Creating scatter plot: Mean Radius vs Mean Texture...");
   let fig = Figure.create () in
   let ax = Figure.add_subplot fig in
 
@@ -80,6 +84,6 @@ let () =
     |> Axes.grid true
   in
 
-  Printf.printf "Displaying plot...\n%!";
+  Logs.info (fun m -> m "Displaying plot...");
   Hugin.show fig;
-  Printf.printf "Plot window closed.\n%!"
+  Logs.info (fun m -> m "Plot window closed.")

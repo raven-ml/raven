@@ -2,15 +2,20 @@
 open Nx_datasets
 open Hugin
 
+let setup_logging () =
+  Logs.set_reporter (Logs_fmt.reporter ());
+  Logs.set_level (Some Logs.Info)
+
 let () =
-  Printf.printf "Loading MNIST dataset...\n%!";
+  setup_logging ();
+  Logs.info (fun m -> m "Loading MNIST dataset...");
   let (x_train, y_train), _ = load_mnist () in
 
-  Printf.printf "Preparing data for plotting...\n%!";
+  Logs.info (fun m -> m "Preparing data for plotting...");
   let n_show = 9 in
   let fig = Figure.create ~width:600 ~height:600 () in
 
-  Printf.printf "Creating subplots...\n%!";
+  Logs.info (fun m -> m "Creating subplots...");
   for i = 0 to n_show - 1 do
     let img_slice =
       Nx.slice
@@ -32,6 +37,6 @@ let () =
     ignore ax
   done;
 
-  Printf.printf "Displaying plot...\n%!";
+  Logs.info (fun m -> m "Displaying plot...");
   Hugin.show fig;
-  Printf.printf "Plot window closed.\n%!"
+  Logs.info (fun m -> m "Plot window closed.")
