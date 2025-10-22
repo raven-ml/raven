@@ -1,5 +1,6 @@
 open Alcotest
 open Unix
+open Nx_datasets
 
 let test_cache_dir_resolution () =
   let original_nx = Sys.getenv_opt "NX_DATASETS_CACHE" in
@@ -10,14 +11,14 @@ let test_cache_dir_resolution () =
       (* Test NX_DATASETS_CACHE priority *)
       putenv "NX_DATASETS_CACHE" "/tmp/nx-cache";
       putenv "XDG_CACHE_HOME" "/tmp/xdg-cache";
-      let path1 = Nx_datasets.get_cache_dir "iris" in
+      let path1 = get_cache_dir "iris" in
       check string "NX_DATASETS_CACHE takes priority"
         "/tmp/nx-cache/ocaml-nx/datasets/iris/" path1;
 
       (* Test XDG_CACHE_HOME fallback *)
       putenv "NX_DATASETS_CACHE" "";
       putenv "XDG_CACHE_HOME" "/tmp/xdg-cache";
-      let path2 = Nx_datasets.get_cache_dir "mnist" in
+      let path2 = get_cache_dir "mnist" in
       check string "XDG_CACHE_HOME used when NX_DATASETS_CACHE unset"
         "/tmp/xdg-cache/ocaml-nx/datasets/mnist/" path2;
       
@@ -26,7 +27,7 @@ let test_cache_dir_resolution () =
       putenv "XDG_CACHE_HOME" "";
       let home = Sys.getenv "HOME" in
       let expected = Filename.concat home ".cache/ocaml-nx/datasets/cifar10/" in
-      let path3 = Nx_datasets.get_cache_dir "cifar10" in
+      let path3 = get_cache_dir "cifar10" in
       check string "Falls back to HOME/.cache when no env vars set"
         expected path3)
     ~finally:(fun () ->
