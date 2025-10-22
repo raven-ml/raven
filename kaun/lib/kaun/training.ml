@@ -167,9 +167,7 @@ let train_epoch ~state ~dataset ~loss_fn ?(progress = false) () =
 
   if progress then Printf.printf "Training: ";
 
-  (* Convert to list to ensure we can iterate multiple times *)
-  let batches = Dataset.to_list dataset in
-  List.iter
+  Dataset.iter
     (fun (x, y) ->
       incr batch_count;
       let step_start = Unix.gettimeofday () in
