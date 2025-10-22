@@ -27,6 +27,7 @@ All notable changes to this project will be documented in this file.
 - Merge `Lazy_view` into the core `View` API so movement ops operate on a single composed view (@tmattio)
 - Documented the reworked `View` interface (@tmattio)
 - Documented the `Symbolic_shape` interface (@tmattio)
+- Added framework Accelerate flag when compiling using Clang on MacOS (@nirnayroy)
 
 ### Rune
 
