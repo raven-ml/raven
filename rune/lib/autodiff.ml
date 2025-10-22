@@ -4,17 +4,18 @@ module T = Tensor
 
 (* Custom hashtable module that uses physical equality to distinguish tensors *)
 module PhysicalTbl = struct
-  type ('a, 'b) t = (Obj.t * 'b) list ref
+  module Tbl = Hashtbl.Make (struct
+    type t = Obj.t
 
-  let create _ = ref []
+    let equal = ( == )
+    let hash obj = Hashtbl.hash obj
+  end)
 
-  let find_opt tbl key =
-    let key_repr = Obj.repr key in
-    List.find_opt (fun (k, _) -> k == key_repr) !tbl |> Option.map snd
+  type ('a, 'b) t = 'b Tbl.t
 
-  let add tbl key value =
-    let key_repr = Obj.repr key in
-    tbl := (key_repr, value) :: !tbl
+  let create size = Tbl.create size
+  let find_opt tbl key = Tbl.find_opt tbl (Obj.repr key)
+  let add tbl key value = Tbl.replace tbl (Obj.repr key) value
 
   let find tbl key =
     match find_opt tbl key with Some v -> v | None -> raise Not_found
