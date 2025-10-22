@@ -17,12 +17,7 @@ val get_cache_dir : string -> string
     The resolved path will be "[cache_base]/ocaml-nx/datasets/[dataset_name]/".
 
     @param dataset_name the name of the dataset
-    @return the cache directory path, including trailing slash
-
-    Environment variables:
-    - [NX_DATASETS_CACHE]: Custom cache directory (overrides all other settings)
-    - [XDG_CACHE_HOME]: XDG Base Directory cache location (standard on Linux/Unix)
-    - [HOME]: User home directory (used for fallback cache location) *)
+    @return the cache directory path, including trailing slash *)
 
 (** {2 Loading Real Datasets}
 
