@@ -10,6 +10,31 @@
 
 #include "nx_c_shared.h"
 
+#if defined(_OPENMP)
+#define NX_PARALLEL_THRESHOLD 32768
+#define NX_FOR_EACH_ELEM(total, BODY)                                           \
+  do {                                                                          \
+    if ((total) >= NX_PARALLEL_THRESHOLD) {                                     \
+      _Pragma("omp parallel for simd schedule(static)")                         \
+      for (long i = 0; i < (total); ++i) {                                      \
+        BODY;                                                                   \
+      }                                                                         \
+    } else {                                                                    \
+      _Pragma("omp simd")                                                       \
+      for (long i = 0; i < (total); ++i) {                                      \
+        BODY;                                                                   \
+      }                                                                         \
+    }                                                                           \
+  } while (0)
+#else
+#define NX_FOR_EACH_ELEM(total, BODY)                                           \
+  do {                                                                          \
+    for (long i = 0; i < (total); ++i) {                                        \
+      BODY;                                                                     \
+    }                                                                           \
+  } while (0)
+#endif
+
 // Type definitions for binary operations
 typedef void (*binary_op_t)(const ndarray_t *, const ndarray_t *, ndarray_t *);
 
@@ -80,9 +105,17 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
 
   // Create temporary iterator for inner dimensions
   int inner_ndim = x->ndim - 1;
-  int *coords = (int *)calloc(inner_ndim, sizeof(int));
-  if (!coords) {
-    caml_failwith("iterate_inner_dims: allocation failed");
+  int coords_stack[MAX_NDIM];
+  int *coords = coords_stack;
+  bool heap_alloc = false;
+  if (inner_ndim > MAX_NDIM) {
+    coords = (int *)calloc(inner_ndim, sizeof(int));
+    if (!coords) {
+      caml_failwith("iterate_inner_dims: allocation failed");
+    }
+    heap_alloc = true;
+  } else {
+    memset(coords_stack, 0, inner_ndim * sizeof(int));
   }
 
   // Iterate over inner dimensions
@@ -112,7 +145,7 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
     }
   }
 
-  free(coords);
+  if (heap_alloc) free(coords);
 }
 
 // Generic binary operation kernel
@@ -140,10 +173,7 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
       T *restrict xs = (T *)x->data + x->offset;                               \
       T *restrict ys = (T *)y->data + y->offset;                               \
       T *restrict zs = (T *)z->data + z->offset;                               \
-      _Pragma("omp parallel for simd if(total > 1000)") for (long i = 0;       \
-                                                             i < total; i++) { \
-        nx_c_##name##_##suffix##_kernel(xs, ys, zs, i, i, i);                  \
-      }                                                                        \
+      NX_FOR_EACH_ELEM(total, nx_c_##name##_##suffix##_kernel(xs, ys, zs, i, i, i)); \
     } else if (x->shape[0] > 1 && total / x->shape[0] > 50) {                  \
       _Pragma("omp parallel for if(x->shape[0] > 4)") for (long i = 0;         \
                                                            i < x->shape[0];    \
