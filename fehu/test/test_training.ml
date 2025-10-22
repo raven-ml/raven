@@ -197,6 +197,39 @@ let test_evaluate () =
   Alcotest.(check (float 0.0001)) "mean_reward" 1.0 stats.mean_reward;
   Alcotest.(check bool) "mean_length > 0" true (stats.mean_length > 0.0)
 
+let test_evaluate_updates_observation () =
+  let rng = Rune.Rng.key 123 in
+  let obs_space = Space.Box.create ~low:[| 0.0 |] ~high:[| 5.0 |] in
+  let act_space = Space.Discrete.create 1 in
+  let state = ref 0 in
+  let env =
+    Env.create ~rng ~observation_space:obs_space ~action_space:act_space
+      ~reset:(fun _ ?options:_ () ->
+        state := 0;
+        let obs =
+          Rune.create Rune.float32 [| 1 |] [| float_of_int !state |]
+        in
+        (obs, Info.empty))
+      ~step:(fun _ _ ->
+        state := !state + 1;
+        let terminated = !state >= 3 in
+        let obs =
+          Rune.create Rune.float32 [| 1 |] [| float_of_int !state |]
+        in
+        Env.transition ~observation:obs ~reward:1.0 ~terminated ())
+      ()
+  in
+  let seen = ref [] in
+  let policy obs =
+    let arr = Rune.to_array (Rune.reshape [| 1 |] obs) in
+    seen := arr.(0) :: !seen;
+    Rune.create Rune.int32 [| 1 |] [| 0l |]
+  in
+  ignore (Training.evaluate env ~policy ~n_episodes:1 ~max_steps:10 ());
+  let observed = List.rev !seen in
+  Alcotest.(check (list (float 1e-6)))
+    "policy saw evolving observations" [ 0.0; 1.0; 2.0 ] observed
+
 let () =
   let open Alcotest in
   run "Training"
@@ -221,5 +254,10 @@ let () =
           test_case "normalize" `Quick test_normalize;
           test_case "explained variance" `Quick test_explained_variance;
         ] );
-      ("Evaluation", [ test_case "evaluate policy" `Quick test_evaluate ]);
+      ( "Evaluation",
+        [
+          test_case "evaluate policy" `Quick test_evaluate;
+          test_case "evaluate updates observation" `Quick
+            test_evaluate_updates_observation;
+        ] );
     ]

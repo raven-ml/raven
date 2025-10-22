@@ -156,15 +156,17 @@ let evaluate env ~policy ?(n_episodes = 10) ?(max_steps = 1000) () =
 
   for _ = 1 to n_episodes do
     let obs, _ = Env.reset env () in
+    let current_obs = ref obs in
     let total_reward = ref 0.0 in
     let steps = ref 0 in
     let done_flag = ref false in
 
     while !steps < max_steps && not !done_flag do
-      let action = policy obs in
+      let action = policy !current_obs in
       let transition = Env.step env action in
       total_reward := !total_reward +. transition.Env.reward;
       steps := !steps + 1;
+      current_obs := transition.Env.observation;
       done_flag := transition.Env.terminated || transition.Env.truncated
     done;
 
