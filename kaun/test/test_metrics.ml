@@ -78,6 +78,20 @@ let test_f1_score () =
   let expected = Rune.scalar dtype 0.8 in
   check (tensor_testable 1e-5) "f1 score" expected result
 
+let test_auc_roc () = 
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 4 |] [| 0.1; 0.4; 0.6; 0.7;|] in
+  let targets = Rune.create dtype [| 4 |] [| 0.; 0.; 1.; 1.;|] in
+
+  let auc = Metrics.auc_roc ~num_thresholds:3 () in
+  Metrics.update auc ~predictions ~targets ();
+  let result = Metrics.compute auc in
+  (* For this simple case, AUC should be 1.0 as the predictions perfectly
+     separate the classes *)
+  let expected = Rune.scalar dtype 1.0 in
+  check (tensor_testable 1e-5) "auc roc" expected result
+
 let test_confusion_matrix () =
   let dtype = Rune.float32 in
 

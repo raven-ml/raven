@@ -297,14 +297,90 @@ let f1_score ?(threshold = 0.5) ?(averaging = Micro) ?(beta = 1.0) () =
 
 (* Placeholder implementations for complex metrics *)
 let auc_roc ?(num_thresholds = 200) ?(curve = false) () =
-  let _ = num_thresholds in
+  let thresholds = Rune.linspace Rune.float32 0.0 1.0 num_thresholds in
   let _ = curve in
   create_custom ~name:"auc_roc"
     ~init:(fun () -> [])
-    ~update:(fun state ~predictions:_ ~targets:_ ?weights:_ () -> state)
-    ~compute:(fun _ ->
-      failwith "AUC-ROC not yet implemented - requires trapezoid integration")
+    ~update:(fun state ~predictions ~targets ?weights () ->
+      let dtype = Rune.dtype predictions in
+      let n = Rune.size predictions in
+      let tprs = Rune.zeros dtype [|num_thresholds|] in
+      let fprs = Rune.zeros dtype [|num_thresholds|] in
+
+      let tp, fp, tn, fn = 
+        match state with
+        | [ tp; fp; tn; fn ] -> (tp, fp, tn, fn)
+        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0,
+                scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
+      in
+      for k = 0 to n do
+        let threshold_t = scalar_tensor dtype (Rune.item [k] thresholds) in
+        let preds = Rune.greater predictions threshold_t in
+        let preds_float = Rune.cast dtype preds in
+        let targets_float = Rune.cast dtype targets in
+        (* Compute TP, FP, FN *)
+        let batch_tp = Rune.mul preds_float targets_float in
+        let neg_targets = Rune.sub (ones_like targets_float) targets_float in
+        let batch_fp = Rune.mul preds_float neg_targets in
+        let neg_preds = Rune.sub (ones_like preds_float) preds_float in
+        let batch_fn = Rune.mul neg_preds targets_float in
+        let batch_tn = Rune.mul neg_preds neg_targets in
+        (* Apply weights if provided *)
+        let batch_tp, batch_fp, batch_fn, batch_tn =
+          match weights with
+          | Some w ->
+              (Rune.mul batch_tp w, Rune.mul batch_fp w, Rune.mul batch_fn w, Rune.mul batch_tn w)
+          | None -> (batch_tp, batch_fp, batch_fn, batch_tn)
+        in
+        let new_tp = Rune.add tp (Rune.sum batch_tp) in
+        let new_fp = Rune.add fp (Rune.sum batch_fp) in
+        let new_fn = Rune.add fn (Rune.sum batch_fn) in
+        let new_tn = Rune.add tn (Rune.sum batch_tn) in
+
+        let tpr =
+          let denom = Rune.add new_tp new_fn in
+          let eps = scalar_tensor dtype 1e-7 in
+          let tpr = Rune.div new_tp (Rune.add denom eps) in
+          Rune.item [0] tpr
+        in
+        let fpr =
+          let denom = Rune.add new_fp new_tn in
+          let eps = scalar_tensor dtype 1e-7 in
+          let fpr = Rune.div new_fp (Rune.add denom eps) in
+          Rune.item [0] fpr
+        in
+        Rune.set_item [k] tpr tprs;
+        Rune.set_item [k] fpr fprs;
+
+      done;
+      [tprs; fprs])
+    ~compute:(fun state ->
+        match state with
+        | [tprs; fprs] -> 
+            let dtype = Rune.dtype tprs in
+            let n = Rune.size tprs in
+            let sorted_fprs, idx = Rune.sort fprs in
+            let sorted_tprs = Rune.take_along_axis ~axis:0 idx tprs in
+            let diff t = 
+              let n = Rune.size t in
+              let t1 = Rune.slice [R(1, n+1)] t in
+              let t0 = Rune.slice [R(0, n-1)] t in
+              Rune.sub t1 t0
+            in
+
+            let dx = diff sorted_fprs in
+            let avg_y =
+              Rune.div
+                (Rune.add
+                   (Rune.slice [R (1, n+1)] sorted_tprs)
+                   (Rune.slice[R (1, n-1)] sorted_tprs))
+                (scalar_tensor dtype 2.0)
+            in
+            let auc = Rune.sum (Rune.mul dx avg_y) in
+            if curve then auc, state else auc
+        | _ -> failwith "Invalid confusion_matrix state")
     ~reset:(fun _ -> [])
+
 
 let auc_pr ?(num_thresholds = 200) ?(curve = false) () =
   let _ = num_thresholds in
