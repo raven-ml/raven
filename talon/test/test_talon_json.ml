@@ -104,6 +104,18 @@ let test_with_nulls () =
   (* Check that nulls are represented as JSON null *)
   check_bool "has null" true (String.contains json 'n')
 
+let test_int_null_masks_are_serialized () =
+  let df =
+    create [ ("ints", Col.int32_opt [| Some 1l; None |]) ]
+  in
+  let json = Talon_json.to_string ~orient:`Records df in
+  match Yojson.Basic.from_string json with
+  | `List [ `Assoc first; `Assoc second ] -> (
+      match (List.assoc "ints" first, List.assoc "ints" second) with
+      | `Int 1, `Null -> ()
+      | _ -> Alcotest.fail "expected null for masked integer value")
+  | _ -> Alcotest.fail "unexpected JSON structure for int mask test"
+
 let test_round_trip_records () =
   let df1 =
     create
@@ -248,6 +260,7 @@ let serialization_tests =
     ("to_string_records", `Quick, test_to_string_records);
     ("to_string_columns", `Quick, test_to_string_columns);
     ("with_nulls", `Quick, test_with_nulls);
+    ("int null masks", `Quick, test_int_null_masks_are_serialized);
     ("empty_dataframe", `Quick, test_empty_dataframe);
     ("single_row", `Quick, test_single_row);
     ("complex_types", `Quick, test_complex_types);
