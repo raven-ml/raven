@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Speed up float reductions with contiguous multi-axis fast paths (@tmattio)
+- Fast-path padding-free `unfold` to lower conv2d overhead (@tmattio)
 - Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx (@tmattio)
 - Add public `conjugate` function for complex number conjugation (#123, @Arsalaan-Alam)
 - Fix complex vdot to conjugate first tensor before multiplication, ensuring correct mathematical behavior (#123, @Arsalaan-Alam)
@@ -26,6 +28,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Add `Rune.no_grad` and `Rune.detach` to mirror JAX stop-gradient semantics (@tmattio)
+- Improve gradient performance slightly by replace the reverse-mode tape's linear PhysicalTbl with an identity hash table (@tmattio)
 - Fix `Rune.Rng.shuffle` flattening outputs for multi-dimensional tensors; the
   shuffle now gathers along axis 0 and keeps shapes intact (@tmattio)
 - Replace `Rune.Rng.truncated_normal` clipping with rejection sampling so
@@ -42,6 +46,8 @@ All notable changes to this project will be documented in this file.
 
 ### Talon
 
+- Replace join nested loops with hashed join indices, cutting lookup from O(n·m) to near O(n) (@tmattio)
+- Reuse a shared Nx-based column reindexer so filter/sample paths avoid repeated array copies (@tmattio)
 - Fix `fillna` to honor column null masks and replacements, restoring expected nullable semantics (@tmattio)
 - Preserve null masks when reindexing during joins so sentinel values remain valid data (@tmattio)
 - Handle numeric index columns in `pivot`, preventing distinct keys from collapsing into a single bucket (@tmattio)
@@ -51,6 +57,8 @@ All notable changes to this project will be documented in this file.
 
 ### Saga
 
+- Cache byte-level encode/decode lookup tables to avoid rebuilding them during tokenization, trimming avoidable allocations (@tmattio)
+- Skip BPE dropout sampling when dropout is disabled, removing redundant RNG work on common hot paths (@tmattio)
 - Fix Unigram tokenization so longest matches are emitted without aborting the sequence when a vocab hit occurs (@tmattio)
 - Recompute pad token ids when the pad special string changes, preventing padding with stale ids (@tmattio)
 - Fix Unigram `token_to_id`/`id_to_token` vocabulary lookups (#117, @RidwanAdebosin)
