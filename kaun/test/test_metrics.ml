@@ -84,7 +84,7 @@ let test_auc_roc () =
   let predictions = Rune.create dtype [| 4 |] [| 0.1; 0.4; 0.6; 0.7;|] in
   let targets = Rune.create dtype [| 4 |] [| 0.; 0.; 1.; 1.;|] in
 
-  let auc = Metrics.auc_roc ~num_thresholds:3 () in
+  let auc = Metrics.auc_roc ~num_thresholds:6 () in
   Metrics.update auc ~predictions ~targets ();
   let result = Metrics.compute auc in
   (* For this simple case, AUC should be 1.0 as the predictions perfectly
@@ -390,6 +390,7 @@ let () =
           test_case "accuracy" `Quick test_accuracy;
           test_case "precision_recall" `Quick test_precision_recall;
           test_case "f1_score" `Quick test_f1_score;
+          test_case "auc_roc" `Quick test_auc_roc;
           test_case "confusion_matrix" `Quick test_confusion_matrix;
         ] );
       ( "regression",

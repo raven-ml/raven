@@ -303,7 +303,6 @@ let auc_roc ?(num_thresholds = 200) ?(curve = false) () =
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
-      let n = Rune.size predictions in
       let tprs = Rune.zeros dtype [|num_thresholds|] in
       let fprs = Rune.zeros dtype [|num_thresholds|] in
 
@@ -313,18 +312,19 @@ let auc_roc ?(num_thresholds = 200) ?(curve = false) () =
         | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0,
                 scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
       in
-      for k = 0 to n do
+      for k = 0 to num_thresholds do
         let threshold_t = scalar_tensor dtype (Rune.item [k] thresholds) in
         let preds = Rune.greater predictions threshold_t in
         let preds_float = Rune.cast dtype preds in
         let targets_float = Rune.cast dtype targets in
-        (* Compute TP, FP, FN *)
+        (* Compute TP, FP, FN TN *)
         let batch_tp = Rune.mul preds_float targets_float in
         let neg_targets = Rune.sub (ones_like targets_float) targets_float in
         let batch_fp = Rune.mul preds_float neg_targets in
         let neg_preds = Rune.sub (ones_like preds_float) preds_float in
         let batch_fn = Rune.mul neg_preds targets_float in
         let batch_tn = Rune.mul neg_preds neg_targets in
+
         (* Apply weights if provided *)
         let batch_tp, batch_fp, batch_fn, batch_tn =
           match weights with
@@ -337,6 +337,7 @@ let auc_roc ?(num_thresholds = 200) ?(curve = false) () =
         let new_fn = Rune.add fn (Rune.sum batch_fn) in
         let new_tn = Rune.add tn (Rune.sum batch_tn) in
 
+        (* Calculate tpr and fpr for threshold *)
         let tpr =
           let denom = Rune.add new_tp new_fn in
           let eps = scalar_tensor dtype 1e-7 in
@@ -355,6 +356,8 @@ let auc_roc ?(num_thresholds = 200) ?(curve = false) () =
       done;
       [tprs; fprs])
     ~compute:(fun state ->
+
+        (* Compute the auc from the tprs and fprs list*)
         match state with
         | [tprs; fprs] -> 
             let dtype = Rune.dtype tprs in
@@ -377,7 +380,7 @@ let auc_roc ?(num_thresholds = 200) ?(curve = false) () =
                 (scalar_tensor dtype 2.0)
             in
             let auc = Rune.sum (Rune.mul dx avg_y) in
-            if curve then auc, state else auc
+            auc
         | _ -> failwith "Invalid confusion_matrix state")
     ~reset:(fun _ -> [])
 
