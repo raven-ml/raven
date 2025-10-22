@@ -3042,13 +3042,195 @@ module Agg = struct
     | None -> failwith "shift: column not found"
 
   let fillna t name ~value =
-    match (get_column t name, value) with
-    | Some col, value_col
-      when Col.length value_col = 1 || Col.length value_col = Col.length col ->
-        col
-    | _ ->
-        invalid_arg
-          "fillna: value column must have 1 element or match column length"
+    let target =
+      match get_column t name with
+      | Some col -> col
+      | None -> invalid_arg ("fillna: column " ^ name ^ " not found")
+    in
+    let target_len = Col.length target in
+    let value_len = Col.length value in
+    if value_len <> 1 && value_len <> target_len then
+      invalid_arg
+        "fillna: value column must have 1 element or match column length";
+    match (target, value) with
+    | ( Col.P (Nx.Float32, tensor, mask_opt),
+        Col.P (Nx.Float32, value_tensor, value_mask) ) ->
+        let data : float array = Nx.to_array tensor in
+        let values : float array = Nx.to_array value_tensor in
+        let mask =
+          match mask_opt with
+          | Some m -> Array.copy m
+          | None -> Array.make target_len false
+        in
+        let result = Array.copy data in
+        for i = 0 to target_len - 1 do
+          let should_replace =
+            match mask_opt with
+            | Some m -> m.(i)
+            | None -> classify_float data.(i) = FP_nan
+          in
+          if should_replace then
+            let vi = if value_len = 1 then 0 else i in
+            let replacement = values.(vi) in
+            let replacement_is_null =
+              match value_mask with
+              | Some m ->
+                  let idx = if value_len = 1 then 0 else vi in
+                  m.(idx)
+              | None -> classify_float replacement = FP_nan
+            in
+                if replacement_is_null then (
+                  mask.(i) <- true;
+                  result.(i) <- nan)
+            else (
+              mask.(i) <- false;
+              result.(i) <- replacement)
+        done;
+        let mask_opt =
+          if Array.exists Fun.id mask then Some mask else None
+        in
+        Col.P
+          ( Nx.Float32,
+            Nx.create Nx.float32 [| target_len |] result,
+            mask_opt )
+    | ( Col.P (Nx.Float64, tensor, mask_opt),
+        Col.P (Nx.Float64, value_tensor, value_mask) ) ->
+        let data : float array = Nx.to_array tensor in
+        let values : float array = Nx.to_array value_tensor in
+        let mask =
+          match mask_opt with
+          | Some m -> Array.copy m
+          | None -> Array.make target_len false
+        in
+        let result = Array.copy data in
+        for i = 0 to target_len - 1 do
+          let should_replace =
+            match mask_opt with
+            | Some m -> m.(i)
+            | None -> classify_float data.(i) = FP_nan
+          in
+          if should_replace then
+            let vi = if value_len = 1 then 0 else i in
+            let replacement = values.(vi) in
+            let replacement_is_null =
+              match value_mask with
+              | Some m ->
+                  let idx = if value_len = 1 then 0 else vi in
+                  m.(idx)
+              | None -> classify_float replacement = FP_nan
+            in
+                if replacement_is_null then (
+                  mask.(i) <- true;
+                  result.(i) <- nan)
+            else (
+              mask.(i) <- false;
+              result.(i) <- replacement)
+        done;
+        let mask_opt =
+          if Array.exists Fun.id mask then Some mask else None
+        in
+        Col.P
+          ( Nx.Float64,
+            Nx.create Nx.float64 [| target_len |] result,
+            mask_opt )
+    | ( Col.P (Nx.Int32, tensor, mask_opt),
+        Col.P (Nx.Int32, value_tensor, value_mask) ) ->
+        let data : int32 array = Nx.to_array tensor in
+        let values : int32 array = Nx.to_array value_tensor in
+        let mask =
+          match mask_opt with
+          | Some m -> Array.copy m
+          | None -> Array.make target_len false
+        in
+        let result = Array.copy data in
+        for i = 0 to target_len - 1 do
+          let should_replace =
+            match mask_opt with
+            | Some m -> m.(i)
+            | None -> data.(i) = Int32.min_int
+          in
+          if should_replace then
+            let vi = if value_len = 1 then 0 else i in
+            let replacement = values.(vi) in
+            let replacement_is_null =
+              match value_mask with
+              | Some m ->
+                  let idx = if value_len = 1 then 0 else vi in
+                  m.(idx)
+              | None -> replacement = Int32.min_int
+            in
+            if replacement_is_null then (
+              mask.(i) <- true;
+              result.(i) <- Int32.min_int)
+            else (
+              mask.(i) <- false;
+              result.(i) <- replacement)
+        done;
+        let mask_opt =
+          if Array.exists Fun.id mask then Some mask else None
+        in
+        Col.P
+          ( Nx.Int32,
+            Nx.create Nx.int32 [| target_len |] result,
+            mask_opt )
+    | ( Col.P (Nx.Int64, tensor, mask_opt),
+        Col.P (Nx.Int64, value_tensor, value_mask) ) ->
+        let data : int64 array = Nx.to_array tensor in
+        let values : int64 array = Nx.to_array value_tensor in
+        let mask =
+          match mask_opt with
+          | Some m -> Array.copy m
+          | None -> Array.make target_len false
+        in
+        let result = Array.copy data in
+        for i = 0 to target_len - 1 do
+          let should_replace =
+            match mask_opt with
+            | Some m -> m.(i)
+            | None -> data.(i) = Int64.min_int
+          in
+          if should_replace then
+            let vi = if value_len = 1 then 0 else i in
+            let replacement = values.(vi) in
+            let replacement_is_null =
+              match value_mask with
+              | Some m ->
+                  let idx = if value_len = 1 then 0 else vi in
+                  m.(idx)
+              | None -> replacement = Int64.min_int
+            in
+            if replacement_is_null then (
+              mask.(i) <- true;
+              result.(i) <- Int64.min_int)
+            else (
+              mask.(i) <- false;
+              result.(i) <- replacement)
+        done;
+        let mask_opt =
+          if Array.exists Fun.id mask then Some mask else None
+        in
+        Col.P
+          ( Nx.Int64,
+            Nx.create Nx.int64 [| target_len |] result,
+            mask_opt )
+    | Col.S arr, Col.S value_arr ->
+        let idx_of i = if value_len = 1 then 0 else i in
+        let result = Array.copy arr in
+        for i = 0 to target_len - 1 do
+          if Option.is_none result.(i) then
+            result.(i) <- value_arr.(idx_of i)
+        done;
+        Col.S result
+    | Col.B arr, Col.B value_arr ->
+        let idx_of i = if value_len = 1 then 0 else i in
+        let result = Array.copy arr in
+        for i = 0 to target_len - 1 do
+          if Option.is_none result.(i) then
+            result.(i) <- value_arr.(idx_of i)
+        done;
+        Col.B result
+    | Col.P _, _ | Col.S _, _ | Col.B _, _ ->
+        invalid_arg "fillna: value type doesn't match column type"
 end
 
 let rec join t1 t2 ~on ~how ?(suffixes = ("_x", "_y")) () =

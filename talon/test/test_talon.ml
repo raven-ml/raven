@@ -553,6 +553,35 @@ let test_fill_missing_helper () =
       check_float "filled 2" 3.0 arr.(2)
   | None -> Alcotest.fail "Expected float array"
 
+let test_fillna_replaces_nulls () =
+  let df =
+    create
+      [
+        ("a", Col.float32_opt [| Some 1.0; None; Some 3.0 |]);
+        ("b", Col.int32_opt [| Some 10l; None; Some 30l |]);
+      ]
+  in
+  let filled_a = Agg.fillna df "a" ~value:(Col.float32 [| 0.0 |]) in
+  (match filled_a with
+  | Col.P (Nx.Float32, tensor, mask_opt) ->
+      let arr : float array = Nx.to_array tensor in
+      check_float "filled a[0]" 1.0 arr.(0);
+      check_float "filled a[1]" 0.0 arr.(1);
+      check_float "filled a[2]" 3.0 arr.(2);
+      check_option_bool_array "mask cleared for a" None mask_opt
+  | _ -> Alcotest.fail "Expected float32 column");
+  let filled_b =
+    Agg.fillna df "b" ~value:(Col.int32_list [ 0l; 99l; 0l ])
+  in
+  match filled_b with
+  | Col.P (Nx.Int32, tensor, mask_opt) ->
+      let arr : int32 array = Nx.to_array tensor in
+      check_int "filled b[0]" 10 (Int32.to_int arr.(0));
+      check_int "filled b[1]" 99 (Int32.to_int arr.(1));
+      check_int "filled b[2]" 30 (Int32.to_int arr.(2));
+      check_option_bool_array "mask cleared for b" None mask_opt
+  | _ -> Alcotest.fail "Expected int32 column"
+
 let test_null_count_helper () =
   let df =
     create
@@ -591,6 +620,7 @@ let option_tests =
     ("to_options", `Quick, test_to_options);
     ("drop_nulls", `Quick, test_drop_nulls_helper);
     ("fill_missing", `Quick, test_fill_missing_helper);
+    ("fillna", `Quick, test_fillna_replaces_nulls);
     ("null_count", `Quick, test_null_count_helper);
     ("mask_aware_agg", `Quick, test_mask_aware_aggregations);
   ]
