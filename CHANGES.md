@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Speed up contiguous elementwise ops via vectorized loops (@tmattio)
+- Fast-path contiguous single-axis reductions to avoid iterator fallback (@tmattio)
 - Speed up float reductions with contiguous multi-axis fast paths (@tmattio)
 - Fast-path padding-free `unfold` to lower conv2d overhead (@tmattio)
 - Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx (@tmattio)
