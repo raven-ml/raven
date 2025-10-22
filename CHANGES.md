@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 ### Nx
 
 - Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx (@tmattio)
+- Add public `conjugate` function for complex number conjugation (#123, @Arsalaan-Alam)
 - Fix complex vdot to conjugate first tensor before multiplication, ensuring correct mathematical behavior (#123, @Arsalaan-Alam)
 - Update comparison and conditional operations to use boolean tensors (#54, @nirnayroy)
 - Add support for rcond parameter and underdetermined systems to `lstsq` (#102, @nirnayroy)

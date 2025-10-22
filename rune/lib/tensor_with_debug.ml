@@ -47,6 +47,7 @@ let minimum a b = Debug.with_context "minimum" (fun () -> T.minimum a b)
 (* Unary operations *)
 
 let neg x = Debug.with_context "neg" (fun () -> T.neg x)
+let conjugate x = Debug.with_context "conjugate" (fun () -> T.conjugate x)
 let abs x = Debug.with_context "abs" (fun () -> T.abs x)
 let sign x = Debug.with_context "sign" (fun () -> T.sign x)
 let square x = Debug.with_context "square" (fun () -> T.square x)
