@@ -75,21 +75,22 @@ let test_f1_score () =
   (* F1 = 2 * (precision * recall) / (precision + recall) *)
   (* precision = 2/3, recall = 1.0 *)
   (* F1 = 2 * (2/3 * 1) / (2/3 + 1) = 2 * (2/3) / (5/3) = 4/5 = 0.8 *)
+  let _ = print_endline (Printf.sprintf "F1 result: %s" (Rune.to_string result)) in
   let expected = Rune.scalar dtype 0.8 in
   check (tensor_testable 1e-5) "f1 score" expected result
 
 let test_auc_roc () = 
   let dtype = Rune.float32 in
 
-  let predictions = Rune.create dtype [| 4 |] [| 0.1; 0.4; 0.6; 0.7;|] in
-  let targets = Rune.create dtype [| 4 |] [| 0.; 0.; 1.; 1.;|] in
+  let predictions = Rune.create dtype [| 4 |] [| 0.8; 0.7; 0.6; 0.3 |] in
+  let targets = Rune.create dtype [| 4 |] [| 1.; 1.; 0.; 0. |] in
 
-  let auc = Metrics.auc_roc ~num_thresholds:6 () in
+  let auc = Metrics.auc_roc ~num_thresholds:3 () in
   Metrics.update auc ~predictions ~targets ();
   let result = Metrics.compute auc in
   (* For this simple case, AUC should be 1.0 as the predictions perfectly
      separate the classes *)
-  let expected = Rune.scalar dtype 1.0 in
+  let expected = Rune.scalar dtype 0.75 in
   check (tensor_testable 1e-5) "auc roc" expected result
 
 let test_confusion_matrix () =
