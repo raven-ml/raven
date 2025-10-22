@@ -67,6 +67,13 @@ All notable changes to this project will be documented in this file.
 - Optimize `Pre_tokenizers.whitespace` to reduce allocations and improve tokenization performance (@tmattio)
 - Simplify tokenizers interface (@tmattio)
 
+### Sowilo
+
+- Add `resize` (nearest & bilinear) that works for 2D, batched, and NHWC tensors (@tmattio)
+- Update grayscale conversion and RGB/BGR channel swaps to run entirely on Rune ops, keeping batched inputs compatible with JIT backends (@tmattio)
+- Make `median_blur` compute the true median so salt-and-pepper noise is removed as expected (@tmattio)
+- Fix `erode`/`dilate` so custom structuring elements (e.g. cross vs. square) and batched tensors produce the correct morphology result (@tmattio)
+
 ### Fehu
 
 - Treat time-limit truncations as terminals when computing rollout advantages and expose the `truncated` flag in buffer steps (@tmattio)

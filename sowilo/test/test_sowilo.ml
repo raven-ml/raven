@@ -80,6 +80,17 @@ let test_flip_horizontal () =
   check_pixel "bottom-left after flip" (Rune.item [ 3; 3 ] img) flipped [ 3; 0 ];
   check_shape "flip preserves shape" (Rune.shape img) flipped
 
+let test_flip_batch () =
+  let data = [| 1; 2; 3; 4; 5; 6; 7; 8 |] in
+  let img = Rune.create Rune.uint8 [| 2; 2; 2; 1 |] data in
+  let flipped_v = flip_vertical img in
+  check_shape "vertical batch shape" [| 2; 2; 2; 1 |] flipped_v;
+  check_pixel "batch 0 vertical flip" 3 flipped_v [ 0; 0; 0; 0 ];
+  check_pixel "batch 1 vertical flip" 7 flipped_v [ 1; 0; 0; 0 ];
+  let flipped_h = flip_horizontal img in
+  check_pixel "batch 0 horizontal flip" 2 flipped_h [ 0; 0; 0; 0 ];
+  check_pixel "batch 1 horizontal flip" 6 flipped_h [ 1; 0; 0; 0 ]
+
 let test_crop () =
   let img = create_checkerboard 10 10 in
   let cropped = crop ~y:2 ~x:3 ~height:5 ~width:4 img in
@@ -92,6 +103,61 @@ let test_crop () =
     (Invalid_argument
        "Invalid crop parameters: y=8, x=8, h=5, w=5 for image [10x10]")
     (fun () -> ignore (crop ~y:8 ~x:8 ~height:5 ~width:5 img))
+
+let test_crop_batch () =
+  let data = Array.init (2 * 4 * 4) (fun i -> i) in
+  let img = Rune.create Rune.uint8 [| 2; 4; 4; 1 |] data in
+  let cropped = crop ~y:1 ~x:1 ~height:2 ~width:2 img in
+  check_shape "batch crop shape" [| 2; 2; 2; 1 |] cropped;
+  check_pixel "batch crop value"
+    (Rune.item [ 0; 1; 1; 0 ] img)
+    cropped [ 0; 0; 0; 0 ];
+  check_pixel "batch crop second batch"
+    (Rune.item [ 1; 2; 2; 0 ] img)
+    cropped [ 1; 1; 1; 0 ]
+
+let test_resize_nearest () =
+  let img = Rune.create Rune.uint8 [| 2; 2 |] [| 10; 20; 30; 40 |] in
+  let resized = resize ~height:4 ~width:4 img in
+  check_shape "resize nearest shape" [| 4; 4 |] resized;
+  check_pixel "nearest top-left" 10 resized [ 0; 0 ];
+  check_pixel "nearest top-right" 20 resized [ 0; 3 ];
+  check_pixel "nearest bottom-left" 30 resized [ 3; 0 ];
+  check_pixel "nearest bottom-right" 40 resized [ 3; 3 ]
+
+let test_resize_linear () =
+  let img = Rune.create Rune.uint8 [| 2; 2 |] [| 0; 255; 0; 255 |] in
+  let resized = resize ~interpolation:Linear ~height:3 ~width:3 img in
+  check_shape "resize linear shape" [| 3; 3 |] resized;
+  check_pixel "linear left edge" 0 resized [ 0; 0 ];
+  check_pixel "linear right edge" 255 resized [ 0; 2 ];
+  let center = Rune.item [ 1; 1 ] resized in
+  if center <= 120 || center >= 140 then
+    failf "Linear resize center expected ~128, got %d" center
+
+let test_resize_batch () =
+  let img =
+    Rune.create Rune.uint8 [| 2; 2; 2 |] [| 10; 20; 30; 40; 50; 60; 70; 80 |]
+  in
+  let resized = resize ~height:4 ~width:4 img in
+  check_shape "resize batch shape" [| 2; 4; 4 |] resized;
+  check_pixel "batch0 top-left" 10 resized [ 0; 0; 0 ];
+  check_pixel "batch1 bottom-right" 80 resized [ 1; 3; 3 ]
+
+let test_resize_color_linear () =
+  let img =
+    Rune.create Rune.uint8 [| 1; 2; 2; 3 |]
+      [| 0; 0; 0; 255; 0; 0; 0; 255; 0; 255; 255; 0 |]
+  in
+  let resized = resize ~interpolation:Linear ~height:3 ~width:3 img in
+  check_shape "resize color shape" [| 1; 3; 3; 3 |] resized;
+  let center_r = Rune.item [ 0; 1; 1; 0 ] resized in
+  let center_g = Rune.item [ 0; 1; 1; 1 ] resized in
+  if center_r < 120 || center_r > 140 then
+    failf "Color linear resize R expected ~128, got %d" center_r;
+  if center_g < 120 || center_g > 140 then
+    failf "Color linear resize G expected ~128, got %d" center_g;
+  check_pixel "corner preserves blue" 0 resized [ 0; 0; 0; 2 ]
 
 (* ───── Color Conversion Tests ───── *)
 
@@ -213,6 +279,13 @@ let test_median_blur () =
   let filtered = median_blur ~ksize:3 img in
   check_shape "median blur shape" (Rune.shape img) filtered
 
+let test_median_blur_preserves_median () =
+  let img =
+    Rune.create Rune.uint8 [| 3; 3 |] [| 0; 0; 0; 0; 255; 0; 0; 0; 0 |]
+  in
+  let filtered = median_blur ~ksize:3 img in
+  check_pixel "median removes impulse noise" 0 filtered [ 1; 1 ]
+
 (* ───── Thresholding Tests ───── *)
 
 let test_threshold () =
@@ -287,6 +360,31 @@ let test_dilation () =
     done
   done;
   check int "dilation expands white area" 36 !white_count
+
+let test_dilation_kernel_shape () =
+  let data = Array.make (5 * 5) 0 in
+  data.((2 * 5) + 2) <- 255;
+  let img = Rune.create Rune.uint8 [| 5; 5 |] data in
+  let rect = get_structuring_element ~shape:Rect ~ksize:(3, 3) in
+  let cross = get_structuring_element ~shape:Cross ~ksize:(3, 3) in
+  let dilated_rect = dilate ~kernel:rect img in
+  let dilated_cross = dilate ~kernel:cross img in
+  let count_white tensor =
+    let h, w =
+      match Rune.shape tensor with
+      | [| h; w |] -> (h, w)
+      | _ -> failwith "Unexpected shape in kernel shape test"
+    in
+    let total = ref 0 in
+    for i = 0 to h - 1 do
+      for j = 0 to w - 1 do
+        if Rune.item [ i; j ] tensor = 255 then incr total
+      done
+    done;
+    !total
+  in
+  check int "rect kernel produces 3x3 block" 9 (count_white dilated_rect);
+  check int "cross kernel preserves cross shape" 5 (count_white dilated_cross)
 
 (* ───── Edge Detection Tests ───── *)
 
@@ -381,6 +479,12 @@ let () =
           test_case "flip_vertical" `Quick test_flip_vertical;
           test_case "flip_horizontal" `Quick test_flip_horizontal;
           test_case "crop" `Quick test_crop;
+          test_case "flip_batch" `Quick test_flip_batch;
+          test_case "crop_batch" `Quick test_crop_batch;
+          test_case "resize_nearest" `Quick test_resize_nearest;
+          test_case "resize_linear" `Quick test_resize_linear;
+          test_case "resize_batch" `Quick test_resize_batch;
+          test_case "resize_color_linear" `Quick test_resize_color_linear;
         ] );
       ( "color_conversion",
         [
@@ -394,6 +498,8 @@ let () =
           test_case "gaussian_blur" `Quick test_gaussian_blur;
           test_case "box_filter" `Quick test_box_filter;
           test_case "median_blur" `Quick test_median_blur;
+          test_case "median_blur_median" `Quick
+            test_median_blur_preserves_median;
         ] );
       ("thresholding", [ test_case "threshold" `Quick test_threshold ]);
       ( "morphology",
@@ -401,6 +507,7 @@ let () =
           test_case "structuring_elements" `Quick test_structuring_elements;
           test_case "erosion" `Quick test_erosion;
           test_case "dilation" `Quick test_dilation;
+          test_case "dilation_kernel_shape" `Quick test_dilation_kernel_shape;
         ] );
       ( "edge_detection",
         [
