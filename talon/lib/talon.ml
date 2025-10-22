@@ -3341,56 +3341,116 @@ and merge t1 t2 ~left_on ~right_on ~how ?(suffixes = ("_x", "_y")) () =
   (* Helper to reindex a column based on indices *)
   let reindex_column col indices n_source =
     match col with
-    | Col.P (dtype, tensor, _) -> (
+    | Col.P (dtype, tensor, mask_opt) -> (
+        let len = Array.length indices in
+        let finish mask result =
+          let mask_opt =
+            if Array.exists Fun.id mask then Some mask else None
+          in
+          Col.P (dtype, Nx.create dtype [| len |] result, mask_opt)
+        in
         match dtype with
         | Nx.Float32 ->
-            let source_arr : float array = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
+            let source : float array = Nx.to_array tensor in
+            let result = Array.make len Float.nan in
+            let mask =
+              Array.init len (fun i ->
                   let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else Float.nan)
+                  if idx < 0 || idx >= n_source then true
+                  else
+                    let value = source.(idx) in
+                    let is_null =
+                      match mask_opt with
+                      | Some m -> m.(idx)
+                      | None -> classify_float value = FP_nan
+                    in
+                    if not is_null then result.(i) <- value;
+                    is_null)
             in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
+            finish mask result
         | Nx.Float64 ->
-            let source_arr : float array = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
+            let source : float array = Nx.to_array tensor in
+            let result = Array.make len Float.nan in
+            let mask =
+              Array.init len (fun i ->
                   let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else Float.nan)
+                  if idx < 0 || idx >= n_source then true
+                  else
+                    let value = source.(idx) in
+                    let is_null =
+                      match mask_opt with
+                      | Some m -> m.(idx)
+                      | None -> classify_float value = FP_nan
+                    in
+                    if not is_null then result.(i) <- value;
+                    is_null)
             in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
+            finish mask result
         | Nx.Int32 ->
-            let source_arr : int32 array = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
+            let source : int32 array = Nx.to_array tensor in
+            let result = Array.make len Int32.min_int in
+            let mask =
+              Array.init len (fun i ->
                   let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else Int32.min_int)
+                  if idx < 0 || idx >= n_source then true
+                  else
+                    let value = source.(idx) in
+                    let is_null =
+                      match mask_opt with
+                      | Some m -> m.(idx)
+                      | None -> value = Int32.min_int
+                    in
+                    if not is_null then result.(i) <- value;
+                    is_null)
             in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
+            finish mask result
         | Nx.Int64 ->
-            let source_arr : int64 array = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
+            let source : int64 array = Nx.to_array tensor in
+            let result = Array.make len Int64.min_int in
+            let mask =
+              Array.init len (fun i ->
                   let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else Int64.min_int)
+                  if idx < 0 || idx >= n_source then true
+                  else
+                    let value = source.(idx) in
+                    let is_null =
+                      match mask_opt with
+                      | Some m -> m.(idx)
+                      | None -> value = Int64.min_int
+                    in
+                    if not is_null then result.(i) <- value;
+                    is_null)
             in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
+            finish mask result
         | _ ->
-            (* For other types, just create zeros *)
-            let source_arr = Nx.to_array tensor in
-            let result =
-              Array.init (Array.length indices) (fun i ->
+            let source = Nx.to_array tensor in
+            if n_source = 0 && Array.exists (fun idx -> idx >= 0) indices then
+              invalid_arg
+                "merge: cannot reindex numeric column with empty source";
+            let mask =
+              Array.init len (fun i ->
                   let idx = indices.(i) in
-                  if idx >= 0 && idx < n_source then source_arr.(idx)
-                  else source_arr.(0)
-                  (* Use first element as default *))
+                  if idx < 0 || idx >= n_source then true
+                  else
+                    match mask_opt with
+                    | Some m -> m.(idx)
+                    | None -> false)
             in
-            Col.P (dtype, Nx.create dtype [| Array.length result |] result, None)
-        )
+            let default =
+              if n_source = 0 then None else Some source.(0)
+            in
+            let result =
+              Array.init len (fun i ->
+                  let idx = indices.(i) in
+                  if idx >= 0 && idx < n_source then source.(idx)
+                  else
+                    match default with
+                    | Some v -> v
+                    | None ->
+                        invalid_arg
+                          "merge: cannot synthesize default for empty column")
+            in
+            finish mask result)
     | Col.S arr ->
         let result =
           Array.init (Array.length indices) (fun i ->
