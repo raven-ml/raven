@@ -39,18 +39,18 @@ uv run saga/bench/bench_tokenizers.py
 ┌───────────────────────────────┬──────────┬──────────┬──────────┬─────────┬────────────┐
 │ Name                          │ Wall/Run │  CPU/Run │  mWd/Run │ Speedup │ vs Fastest │
 ├───────────────────────────────┼──────────┼──────────┼──────────┼─────────┼────────────┤
-│ WordPiece/Decode/long         │  31.10ns │  67.99ns │   22.00w │   1.00x │       100% │
-│ WordLevel/Decode/long         │  39.11ns │  64.80ns │   22.00w │   0.80x │       126% │
-│ WordLevel/Encode/single_short │ 109.36μs │ 108.71μs │  16.70kw │   0.00x │    351653% │
-│ WordPiece/Encode/single_short │ 136.05μs │ 125.82μs │  20.81kw │   0.00x │    437479% │
-│ BPE/Encode/single_short       │ 698.17μs │ 697.98μs │  57.90kw │   0.00x │   2245047% │
-│ BPE/Decode/long               │   1.96ms │   1.96ms │ 326.58kw │   0.00x │   6289266% │
-│ WordLevel/Encode/batch_32     │   3.33ms │   3.33ms │ 534.18kw │   0.00x │  10709213% │
-│ WordPiece/Encode/batch_32     │   3.84ms │   3.83ms │ 665.58kw │   0.00x │  12353067% │
-│ WordLevel/Encode/single_long  │   5.97ms │   5.97ms │ 787.81kw │   0.00x │  19193110% │
-│ WordPiece/Encode/single_long  │   6.67ms │   6.67ms │ 984.48kw │   0.00x │  21452022% │
-│ BPE/Encode/batch_32           │  24.52ms │  23.12ms │   1.85Mw │   0.00x │  78842659% │
-│ BPE/Encode/single_long        │  52.12ms │  51.93ms │   2.79Mw │   0.00x │ 167604161% │
+│ WordPiece/Decode/long         │  31.06ns │  41.48ns │   22.00w │   1.00x │       100% │
+│ WordLevel/Decode/long         │  33.35ns │  34.81ns │   22.00w │   0.93x │       107% │
+│ WordLevel/Encode/single_short │ 109.30μs │ 109.05μs │  16.70kw │   0.00x │    351950% │
+│ WordPiece/Encode/single_short │ 115.92μs │ 115.78μs │  20.81kw │   0.00x │    373261% │
+│ BPE/Encode/single_short       │ 707.51μs │ 707.09μs │  55.81kw │   0.00x │   2278162% │
+│ BPE/Decode/long               │   2.08ms │   2.08ms │ 326.58kw │   0.00x │   6712213% │
+│ WordLevel/Encode/batch_32     │   3.29ms │   3.29ms │ 534.18kw │   0.00x │  10598314% │
+│ WordPiece/Encode/batch_32     │   4.07ms │   3.98ms │ 665.58kw │   0.00x │  13119989% │
+│ WordLevel/Encode/single_long  │   5.99ms │   5.99ms │ 787.81kw │   0.00x │  19293154% │
+│ WordPiece/Encode/single_long  │   7.01ms │   7.00ms │ 984.48kw │   0.00x │  22585690% │
+│ BPE/Encode/batch_32           │  22.27ms │  22.25ms │   1.79Mw │   0.00x │  71701143% │
+│ BPE/Encode/single_long        │  49.91ms │  49.83ms │   2.66Mw │   0.00x │ 160719732% │
 └───────────────────────────────┴──────────┴──────────┴──────────┴─────────┴────────────┘
 ```
 
