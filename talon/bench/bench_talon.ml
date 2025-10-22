@@ -51,7 +51,8 @@ let bench_filter df =
       Row.(
         map3 (float64 "amount") (int32 "quantity") (string "region")
           ~f:(fun amount quantity region ->
-            amount > 120. && Int32.compare quantity 3l >= 0
+            amount > 120.
+            && Int32.compare quantity 3l >= 0
             && String.equal region "EMEA"))
   in
   force_float_sum filtered "amount"
@@ -60,8 +61,8 @@ let bench_group df =
   let groups =
     Talon.group_by df
       Row.(
-        map2 (string "category") (string "region")
-          ~f:(fun category region -> category ^ "|" ^ region))
+        map2 (string "category") (string "region") ~f:(fun category region ->
+            category ^ "|" ^ region))
   in
   let total =
     List.fold_left
@@ -83,10 +84,9 @@ let all_benchmarks =
   let customers = Fixtures.customers () in
   [
     Ubench.bench "Filter/high_value" (fun () -> bench_filter transactions);
-    Ubench.bench "Group/category_region"
-      (fun () -> bench_group transactions);
-    Ubench.bench "Join/customer_lookup"
-      (fun () -> bench_join transactions customers);
+    Ubench.bench "Group/category_region" (fun () -> bench_group transactions);
+    Ubench.bench "Join/customer_lookup" (fun () ->
+        bench_join transactions customers);
     Ubench.bench "Sort/amount_desc" (fun () -> bench_sort transactions);
   ]
   |> fun benches -> [ Ubench.group "Talon" benches ]

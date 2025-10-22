@@ -120,8 +120,11 @@
         let rewards = Buffer.get_rewards data in
         let values = Buffer.get_values data in
         let dones = Buffer.get_dones data in
+        let last_value = 0.0 in
+        let last_done = true in
         let advantages, returns = Training.compute_gae
-          ~rewards ~values ~dones ~gamma:0.99 ~gae_lambda:0.95
+          ~rewards ~values ~dones ~last_value ~last_done ~gamma:0.99
+          ~gae_lambda:0.95
         in
         (* update policy with advantages and returns *)
     ]}

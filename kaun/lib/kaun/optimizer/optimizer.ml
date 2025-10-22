@@ -57,24 +57,30 @@ let clip_by_global_norm max_norm =
     update =
       (fun state _params grads ->
         let flat_grads = flatten_params grads in
-        let norm_sq =
-          List.fold_left
-            (fun acc g ->
-              let g_sq = Rune.sum (Rune.mul g g) in
-              Rune.add acc g_sq)
-            (let g0 = List.hd flat_grads in
-             Rune.scalar (Rune.dtype g0) 0.)
-            flat_grads
-        in
-        let norm = Rune.sqrt norm_sq in
-        let scale_factor =
-          let dt = Rune.dtype norm in
-          Rune.minimum norm (Rune.scalar dt max_norm)
-        in
-        let scaled_grads =
-          map_params grads (fun g -> Rune.div (Rune.mul g scale_factor) norm)
-        in
-        (scaled_grads, state));
+        match flat_grads with
+        | [] -> (grads, state)
+        | g0 :: _ ->
+            let norm_sq =
+              List.fold_left
+                (fun acc g ->
+                  let g_sq = Rune.sum (Rune.mul g g) in
+                  Rune.add acc g_sq)
+                (Rune.scalar (Rune.dtype g0) 0.)
+                flat_grads
+            in
+            let norm = Rune.sqrt norm_sq in
+            let dt = Rune.dtype norm in
+            let safe_norm =
+              let eps = Rune.scalar dt 1e-12 in
+              Rune.maximum norm eps
+            in
+            let scale =
+              let max_norm_tensor = Rune.scalar dt max_norm in
+              let scale_factor = Rune.minimum safe_norm max_norm_tensor in
+              Rune.div scale_factor safe_norm
+            in
+            let scaled_grads = map_params grads (fun g -> Rune.mul g scale) in
+            (scaled_grads, state));
   }
 
 let clip max_delta =

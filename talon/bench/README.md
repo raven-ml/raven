@@ -37,14 +37,14 @@ uv run --with pandas talon/bench/bench_talon.py
 ## Results Talon (Ocaml)
 
 ```
-┌─────────────────────────────┬──────────┬──────────┬─────────┬─────────┬────────────┐
-│ Name                        │ Wall/Run │  CPU/Run │ mWd/Run │ Speedup │ vs Fastest │
-├─────────────────────────────┼──────────┼──────────┼─────────┼─────────┼────────────┤
-│ Talon/Filter/high_value     │   9.93ms │   9.93ms │  1.38Mw │   1.00x │       100% │
-│ Talon/Sort/amount_desc      │  32.02ms │  32.02ms │  2.75Mw │   0.31x │       322% │
-│ Talon/Group/category_region │ 170.80ms │ 170.78ms │ 23.96Mw │   0.06x │      1720% │
-│ Talon/Join/customer_lookup  │ 805.35ms │ 799.46ms │  3.39Mw │   0.01x │      8109% │
-└─────────────────────────────┴──────────┴──────────┴─────────┴─────────┴────────────┘
+┌─────────────────────────────┬──────────┬─────────┬──────────┬─────────┬────────────┐
+│ Name                        │ Wall/Run │ CPU/Run │  mWd/Run │ Speedup │ vs Fastest │
+├─────────────────────────────┼──────────┼─────────┼──────────┼─────────┼────────────┤
+│ Talon/Filter/high_value     │   3.39ms │  3.39ms │ 468.01kw │   1.00x │       100% │
+│ Talon/Group/category_region │  19.03ms │ 19.02ms │   2.23Mw │   0.18x │       561% │
+│ Talon/Join/customer_lookup  │  26.10ms │ 26.07ms │   3.13Mw │   0.13x │       770% │
+│ Talon/Sort/amount_desc      │  32.37ms │ 32.34ms │   2.11Mw │   0.10x │       954% │
+└─────────────────────────────┴──────────┴─────────┴──────────┴─────────┴────────────┘
 ```
 
 ## Results Pandas (Python)

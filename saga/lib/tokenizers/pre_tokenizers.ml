@@ -47,32 +47,38 @@ let is_punctuation code =
 
 let is_whitespace code = Uucp.White.is_white_space (Uchar.of_int code)
 
-(** Converts bytes to unicode characters. *)
-let bytes_char () =
-  let bs = ref [] in
+(** Pre-computed byte ↔ unicode mappings for byte-level encode/decode. *)
+let byte_to_unicode, unicode_to_byte =
+  let is_direct = Array.make 256 false in
   for i = 33 to 126 do
-    bs := i :: !bs
+    is_direct.(i) <- true
   done;
   for i = 161 to 172 do
-    bs := i :: !bs
+    is_direct.(i) <- true
   done;
   for i = 174 to 255 do
-    bs := i :: !bs
+    is_direct.(i) <- true
   done;
-  let bs_list = List.rev !bs in
-  let final_bs = ref [] in
-  let final_cs = ref [] in
-  let n = ref 0 in
+  let byte_to_unicode = Array.make 256 0 in
+  let next_code = ref 0 in
+  let max_code = ref 0 in
   for b = 0 to 255 do
-    if not (List.mem b bs_list) then (
-      final_bs := !final_bs @ [ b ];
-      final_cs := !final_cs @ [ 256 + !n ];
-      incr n)
-    else (
-      final_bs := !final_bs @ [ b ];
-      final_cs := !final_cs @ [ b ])
+    let code =
+      if is_direct.(b) then b
+      else
+        let code = 256 + !next_code in
+        incr next_code;
+        code
+    in
+    byte_to_unicode.(b) <- code;
+    if code > !max_code then max_code := code
   done;
-  List.combine !final_bs !final_cs
+  let unicode_to_byte = Array.make (!max_code + 1) (-1) in
+  for b = 0 to 255 do
+    let code = byte_to_unicode.(b) in
+    if code < Array.length unicode_to_byte then unicode_to_byte.(code) <- b
+  done;
+  (byte_to_unicode, unicode_to_byte)
 
 (** Apply ByteLevel encoding to text *)
 let byte_level_encode text =
@@ -80,7 +86,7 @@ let byte_level_encode text =
   let i = ref 0 in
   while !i < String.length text do
     let b = Char.code text.[!i] in
-    let u = List.assoc b (bytes_char ()) in
+    let u = byte_to_unicode.(b) in
     add_utf8 result u;
     incr i
   done;
@@ -88,21 +94,21 @@ let byte_level_encode text =
 
 (** Decode ByteLevel encoded text back to original bytes *)
 let byte_level_decode text =
-  (* Create inverse mapping from unicode chars to bytes *)
-  let char_bytes = List.map (fun (b, c) -> (c, b)) (bytes_char ()) in
   (* Convert text to list of unicode codepoints *)
   let result = Buffer.create (String.length text) in
   let i = ref 0 in
   while !i < String.length text do
     let code, clen = utf8_next text !i in
     (* Look up the byte value for this unicode codepoint *)
-    (match List.assoc_opt code char_bytes with
-    | Some byte -> Buffer.add_char result (Char.chr byte)
-    | None ->
-        (* If not found in mapping, treat as regular UTF-8 *)
-        for j = !i to !i + clen - 1 do
-          Buffer.add_char result text.[j]
-        done);
+    let byte =
+      if code < Array.length unicode_to_byte then unicode_to_byte.(code) else -1
+    in
+    if byte >= 0 then Buffer.add_char result (Char.chr byte)
+    else
+      (* If not found in mapping, treat as regular UTF-8 *)
+      for j = !i to !i + clen - 1 do
+        Buffer.add_char result text.[j]
+      done;
     i := !i + clen
   done;
   Buffer.contents result

@@ -128,6 +128,33 @@ module History = struct
         Some best_idx
 end
 
+let merge_metric_history existing new_metrics =
+  let existing_names = List.map fst existing in
+  let updated_existing =
+    List.map
+      (fun (name, values) ->
+        match List.assoc_opt name new_metrics with
+        | Some value -> (name, values @ [ value ])
+        | None -> (name, values))
+      existing
+  in
+  let new_entries =
+    List.filter
+      (fun (name, _) -> not (List.mem name existing_names))
+      new_metrics
+    |> List.map (fun (name, value) -> (name, [ value ]))
+  in
+  updated_existing @ new_entries
+
+let update_optional_metric_history existing_opt new_metrics =
+  match existing_opt with
+  | None ->
+      if new_metrics = [] then None
+      else Some (merge_metric_history [] new_metrics)
+  | Some existing ->
+      if new_metrics = [] then Some existing
+      else Some (merge_metric_history existing new_metrics)
+
 let train_step ~state ~x ~y ~loss_fn =
   (* Forward and backward pass *)
   let loss, grads =
@@ -167,9 +194,7 @@ let train_epoch ~state ~dataset ~loss_fn ?(progress = false) () =
 
   if progress then Printf.printf "Training: ";
 
-  (* Convert to list to ensure we can iterate multiple times *)
-  let batches = Dataset.to_list dataset in
-  List.iter
+  Dataset.iter
     (fun (x, y) ->
       incr batch_count;
       let step_start = Unix.gettimeofday () in
@@ -179,7 +204,12 @@ let train_epoch ~state ~dataset ~loss_fn ?(progress = false) () =
       state_ref := state';
       total_loss := !total_loss +. loss;
       if progress && !batch_count mod 10 = 0 then Printf.printf ".")
-    batches;
+    dataset;
+
+  if !batch_count = 0 then
+    invalid_arg
+      "Training.train_epoch: dataset produced no batches. Ensure your dataset \
+       yields at least one batch per epoch.";
 
   (if progress then
      let avg_step_time = !total_time /. float_of_int !batch_count *. 1000. in
@@ -505,6 +535,11 @@ let evaluate ~state ~dataset ~loss_fn ?(progress = false) () =
 
   if progress then Printf.printf " done\n%!";
 
+  if !batch_count = 0 then
+    invalid_arg
+      "Training.evaluate: dataset produced no batches. Ensure your validation \
+       dataset yields at least one batch.";
+
   let avg_loss = !total_loss /. float_of_int !batch_count in
   let metrics = State.compute_metrics state in
   let metric_values =
@@ -608,13 +643,7 @@ let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
         !history_ref with
         train_loss = !history_ref.train_loss @ [ train_loss ];
         train_metrics =
-          (if !history_ref.train_metrics = [] then
-             List.map (fun (name, value) -> (name, [ value ])) train_metrics
-           else
-             List.map2
-               (fun (name, values) (_, new_value) ->
-                 (name, values @ [ new_value ]))
-               !history_ref.train_metrics train_metrics);
+          merge_metric_history !history_ref.train_metrics train_metrics;
       };
 
     (* Validate if data provided *)
@@ -638,16 +667,7 @@ let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
           | None -> [ val_loss ]
         in
         let val_metrics_list =
-          match !history_ref.val_metrics with
-          | Some m when m <> [] ->
-              Some
-                (List.map2
-                   (fun (name, values) (_, new_value) ->
-                     (name, values @ [ new_value ]))
-                   m val_metrics)
-          | _ ->
-              Some
-                (List.map (fun (name, value) -> (name, [ value ])) val_metrics)
+          update_optional_metric_history !history_ref.val_metrics val_metrics
         in
         history_ref :=
           {

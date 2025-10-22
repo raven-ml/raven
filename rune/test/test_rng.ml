@@ -141,6 +141,41 @@ let test_bernoulli () =
    = is_equal_val.(0) = 0 in A.check A.bool "shuffle changes order" true
    is_different *)
 
+let test_shuffle_preserves_shape () =
+  let key = Rng.key 7 in
+  let shape = [| 6; 4 |] in
+  let data =
+    Array.init (shape.(0) * shape.(1)) (fun i -> float_of_int (i + 1))
+  in
+  let x = Rune.create Rune.Float32 shape data in
+  let shuffled = Rng.shuffle key x in
+
+  A.check (A.array A.int) "shuffle preserves leading axis" shape
+    (Rune.shape shuffled);
+
+  let flatten t =
+    let dims = Rune.shape t in
+    let total = Array.fold_left ( * ) 1 dims in
+    let reshaped = Rune.reshape [| total |] t in
+    Rune.to_array reshaped
+  in
+  let orig_flat = flatten x in
+  let shuffled_flat = flatten shuffled in
+
+  let sorted_orig = Array.copy orig_flat in
+  let sorted_shuffled = Array.copy shuffled_flat in
+  Array.sort compare sorted_orig;
+  Array.sort compare sorted_shuffled;
+  A.check
+    (A.array (A.float 0.0))
+    "shuffle preserves multiset" sorted_orig sorted_shuffled;
+
+  let shuffled_again = Rng.shuffle key x in
+  let equality =
+    Rune.equal shuffled shuffled_again |> Rune.all |> Rune.to_array
+  in
+  A.check A.bool "shuffle deterministic with same key" true equality.(0)
+
 let test_truncated_normal () =
   let key = Rng.key 42 in
   let shape = [| 100 |] in
@@ -161,6 +196,37 @@ let test_truncated_normal () =
         true
         (v >= lower && v <= upper))
     values
+
+let test_truncated_normal_distribution () =
+  let key = Rng.key 123 in
+  let shape = [| 20_000 |] in
+  let lower = -0.75 in
+  let upper = 1.25 in
+  let samples = Rng.truncated_normal key Float32 ~lower ~upper shape in
+
+  A.check (A.array A.int) "truncated_normal produces correct shape" shape
+    (Rune.shape samples);
+
+  let values = Rune.to_array samples in
+  let total = Array.length values in
+  let boundary_hits =
+    Array.fold_left
+      (fun acc v ->
+        if Float.abs (v -. lower) < 1e-6 || Float.abs (v -. upper) < 1e-6 then
+          acc + 1
+        else acc)
+      0 values
+  in
+
+  A.check A.bool
+    (Printf.sprintf "truncated normal rarely clips to bounds (%d / %d clipped)"
+       boundary_hits total)
+    true
+    (boundary_hits < total / 1000);
+
+  let mean = Array.fold_left ( +. ) 0. values /. float_of_int total in
+  A.check A.bool "truncated normal mean lies within interval" true
+    (mean > lower && mean < upper)
 
 let test_categorical () =
   let key = Rng.key 42 in
@@ -396,7 +462,11 @@ let () =
           (* TODO: Enable when argsort works with lazy views *)
           (* A.test_case "permutation" `Quick test_permutation;
           A.test_case "shuffle" `Quick test_shuffle; *)
+          A.test_case "shuffle_preserves_shape" `Quick
+            test_shuffle_preserves_shape;
           A.test_case "truncated_normal" `Quick test_truncated_normal;
+          A.test_case "truncated_normal_distribution" `Quick
+            test_truncated_normal_distribution;
           A.test_case "categorical" `Quick test_categorical;
           A.test_case "categorical_2d" `Quick test_categorical_2d;
           A.test_case "categorical_axis_handling" `Quick

@@ -805,6 +805,31 @@ let test_grad_small_values () =
   let grad = T.grad (fun x -> T.mul x (T.scalar T.float32 1e10)) x in
   check_scalar ~eps "small value gradient" 1e10 (scalar_value grad)
 
+let test_no_grad_context () =
+  let x = T.scalar T.float32 2.0 in
+  let f x =
+    let y = T.no_grad (fun () -> T.mul x x) in
+    T.sum y
+  in
+  let value = f x |> scalar_value in
+  let grad = T.grad f x |> scalar_value in
+  check_scalar ~eps "no_grad preserves forward value" 4.0 value;
+  check_scalar ~eps "no_grad zeros gradient" 0.0 grad
+
+let test_detach_constant () =
+  let x = T.scalar T.float32 3.0 in
+  let f x = T.sum (T.detach x) in
+  let value = f x |> scalar_value in
+  let grad = T.grad f x |> scalar_value in
+  check_scalar ~eps "detach preserves forward value" 3.0 value;
+  check_scalar ~eps "detach removes gradient" 0.0 grad
+
+let test_detach_partial_grad () =
+  let x = T.scalar T.float32 2.5 in
+  let f x = T.sum (T.mul (T.detach x) x) in
+  let grad = T.grad f x |> scalar_value in
+  check_scalar ~eps "detach treats operand as constant" 2.5 grad
+
 let suite =
   [
     ( "binary operations",
@@ -913,6 +938,9 @@ let suite =
       [
         test_case "value_and_grad" `Quick test_grad_value_and_grad;
         test_case "value_and_grads" `Quick test_grad_value_and_grads;
+        test_case "no_grad" `Quick test_no_grad_context;
+        test_case "detach constant" `Quick test_detach_constant;
+        test_case "detach partial gradient" `Quick test_detach_partial_grad;
       ] );
     ( "special cases",
       [

@@ -16,11 +16,14 @@ val compute_gae :
   rewards:float array ->
   values:float array ->
   dones:bool array ->
+  last_value:float ->
+  last_done:bool ->
   gamma:float ->
   gae_lambda:float ->
   float array * float array
-(** [compute_gae ~rewards ~values ~dones ~gamma ~gae_lambda] computes advantages
-    and returns using Generalized Advantage Estimation.
+(** [compute_gae ~rewards ~values ~dones ~last_value ~last_done ~gamma
+      ~gae_lambda] computes advantages and returns using Generalized Advantage
+    Estimation.
 
     Returns [(advantages, returns)] where advantages measure how much better an
     action was than expected, and returns are the advantage plus value baseline.
@@ -40,6 +43,9 @@ val compute_gae :
     - [rewards]: Immediate rewards at each timestep
     - [values]: Value estimates V(s) from the critic at each timestep
     - [dones]: Terminal flags; true if episode ended (terminated OR truncated)
+    - [last_value]: Value estimate V(s_{T}) for the state following the final
+      timestep (used for bootstrapping unfinished episodes)
+    - [last_done]: Whether the final timestep ended the episode
     - [gamma]: Discount factor, typically 0.99. Higher values increase weight of
       future rewards
     - [gae_lambda]: GAE lambda parameter, typically 0.95. Lambda = 0 gives

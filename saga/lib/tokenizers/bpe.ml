@@ -129,6 +129,7 @@ end
 
 let apply_merges model dropout word =
   let p = match dropout with Some p -> p | None -> 0.0 in
+  let use_dropout = p > 0.0 in
   let cmp (r1, p1, _) (r2, p2, _) =
     let c = r1 - r2 in
     if c = 0 then p1 - p2 else c
@@ -156,7 +157,8 @@ let apply_merges model dropout word =
             let cur_pair = (word.symbols.(pos).c, word.symbols.(next_pos).c) in
             match IntPairMap.find_opt cur_pair model.merges with
             | Some (r, nid) when r = rank && nid = new_id ->
-                if Random.float 1.0 < p then skips := top :: !skips
+                if use_dropout && Random.float 1.0 < p then
+                  skips := top :: !skips
                 else (
                   List.iter (PQueue.push queue) !skips;
                   skips := [];

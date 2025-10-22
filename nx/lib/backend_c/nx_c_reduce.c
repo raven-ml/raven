@@ -37,6 +37,50 @@ static void nx_c_reduce_max_f32_generic_wrap(const ndarray_t *, ndarray_t *,
 static void nx_c_reduce_max_f64_generic_wrap(const ndarray_t *, ndarray_t *,
                                              const int *, int, bool);
 
+// Helper utilities for optimized paths
+static inline bool normalize_and_sort_axes(int ndim, const int *axes,
+                                           int num_axes, int *out_axes) {
+  if (!axes || !out_axes || num_axes <= 0) return false;
+  for (int i = 0; i < num_axes; ++i) {
+    int axis = axes[i];
+    if (axis < 0) axis += ndim;
+    if (axis < 0 || axis >= ndim) return false;
+    out_axes[i] = axis;
+  }
+  for (int i = 0; i < num_axes - 1; ++i) {
+    for (int j = i + 1; j < num_axes; ++j) {
+      if (out_axes[j] < out_axes[i]) {
+        int tmp = out_axes[i];
+        out_axes[i] = out_axes[j];
+        out_axes[j] = tmp;
+      }
+    }
+  }
+  for (int i = 1; i < num_axes; ++i) {
+    if (out_axes[i] == out_axes[i - 1]) return false;
+  }
+  return true;
+}
+
+static inline bool axes_are_trailing(int ndim, int num_axes,
+                                     const int *sorted_axes) {
+  for (int i = 0; i < num_axes; ++i) {
+    if (sorted_axes[i] != ndim - num_axes + i) return false;
+  }
+  return true;
+}
+
+static inline long product_of_axes(const ndarray_t *input,
+                                   const int *sorted_axes, int num_axes) {
+  long prod = 1;
+  for (int i = 0; i < num_axes; ++i) {
+    long dim = input->shape[sorted_axes[i]];
+    if (dim == 0) return 0;
+    prod *= dim;
+  }
+  return prod;
+}
+
 // Helper functions
 static int cmp_int(const void *a, const void *b) {
   return *(const int *)a - *(const int *)b;
@@ -581,6 +625,45 @@ static void nx_c_reduce_sum_f32(const ndarray_t *input, ndarray_t *output,
     }
     return;
   }
+
+  if (num_axes == input->ndim && is_contiguous(input) &&
+      total_elements_safe(output) == 1) {
+    long total = total_elements_safe(input);
+    float *in = (float *)input->data + input->offset;
+    float result = 0.0f;
+    _Pragma("omp parallel for reduction(+:result) if(total > 4096)")
+    for (long i = 0; i < total; ++i) {
+      result += in[i];
+    }
+    float *out = (float *)output->data + output->offset;
+    out[0] = result;
+    return;
+  }
+
+  if (is_contiguous(input) && is_contiguous(output) && num_axes > 0) {
+    int sorted_axes[MAX_NDIM];
+    if (normalize_and_sort_axes(input->ndim, axes, num_axes, sorted_axes) &&
+        axes_are_trailing(input->ndim, num_axes, sorted_axes)) {
+      long total = total_elements_safe(input);
+      long K = product_of_axes(input, sorted_axes, num_axes);
+      float *out = (float *)output->data + output->offset;
+      long out_total = total_elements_safe(output);
+      if (K == 0 || total == 0 || out_total == 0) {
+        for (long i = 0; i < out_total; ++i) out[i] = 0.0f;
+        return;
+      }
+      long M = total / K;
+      float *in = (float *)input->data + input->offset;
+      _Pragma("omp parallel for if(M > 1024)")
+      for (long m = 0; m < M; ++m) {
+        const float *chunk = in + (m * K);
+        float acc = 0.0f;
+        for (long p = 0; p < K; ++p) acc += chunk[p];
+        out[m] = acc;
+      }
+      return;
+    }
+  }
   // Fallback to generic implementation
   nx_c_reduce_sum_f32_generic_wrap(input, output, axes, num_axes, keepdims);
 }
@@ -605,6 +688,45 @@ static void nx_c_reduce_sum_f64(const ndarray_t *input, ndarray_t *output,
       out[out_off + r] = acc;
     }
     return;
+  }
+
+  if (num_axes == input->ndim && is_contiguous(input) &&
+      total_elements_safe(output) == 1) {
+    long total = total_elements_safe(input);
+    double *in = (double *)input->data + input->offset;
+    double result = 0.0;
+    _Pragma("omp parallel for reduction(+:result) if(total > 4096)")
+    for (long i = 0; i < total; ++i) {
+      result += in[i];
+    }
+    double *out = (double *)output->data + output->offset;
+    out[0] = result;
+    return;
+  }
+
+  if (is_contiguous(input) && is_contiguous(output) && num_axes > 0) {
+    int sorted_axes[MAX_NDIM];
+    if (normalize_and_sort_axes(input->ndim, axes, num_axes, sorted_axes) &&
+        axes_are_trailing(input->ndim, num_axes, sorted_axes)) {
+      long total = total_elements_safe(input);
+      long K = product_of_axes(input, sorted_axes, num_axes);
+      double *out = (double *)output->data + output->offset;
+      long out_total = total_elements_safe(output);
+      if (K == 0 || total == 0 || out_total == 0) {
+        for (long i = 0; i < out_total; ++i) out[i] = 0.0;
+        return;
+      }
+      long M = total / K;
+      double *in = (double *)input->data + input->offset;
+      _Pragma("omp parallel for if(M > 1024)")
+      for (long m = 0; m < M; ++m) {
+        const double *chunk = in + (m * K);
+        double acc = 0.0;
+        for (long p = 0; p < K; ++p) acc += chunk[p];
+        out[m] = acc;
+      }
+      return;
+    }
   }
   // Fallback to generic implementation
   nx_c_reduce_sum_f64_generic_wrap(input, output, axes, num_axes, keepdims);

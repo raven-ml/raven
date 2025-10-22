@@ -1,4 +1,5 @@
-let compute_gae ~rewards ~values ~dones ~gamma ~gae_lambda =
+let compute_gae ~rewards ~values ~dones ~last_value ~last_done ~gamma
+    ~gae_lambda =
   let n = Array.length rewards in
   if n <> Array.length values || n <> Array.length dones then
     invalid_arg "Training.compute_gae: arrays must have same length";
@@ -8,8 +9,15 @@ let compute_gae ~rewards ~values ~dones ~gamma ~gae_lambda =
   let last_gae_lam = ref 0.0 in
 
   for t = n - 1 downto 0 do
-    let next_value = if t = n - 1 then 0.0 else values.(t + 1) in
-    let next_non_terminal = if dones.(t) then 0.0 else 1.0 in
+    let next_value =
+      if t = n - 1 then if last_done then 0.0 else last_value
+      else values.(t + 1)
+    in
+    let next_non_terminal =
+      if t = n - 1 then if last_done then 0.0 else 1.0
+      else if dones.(t) then 0.0
+      else 1.0
+    in
     let delta =
       rewards.(t) +. (gamma *. next_value *. next_non_terminal) -. values.(t)
     in
@@ -148,15 +156,17 @@ let evaluate env ~policy ?(n_episodes = 10) ?(max_steps = 1000) () =
 
   for _ = 1 to n_episodes do
     let obs, _ = Env.reset env () in
+    let current_obs = ref obs in
     let total_reward = ref 0.0 in
     let steps = ref 0 in
     let done_flag = ref false in
 
     while !steps < max_steps && not !done_flag do
-      let action = policy obs in
+      let action = policy !current_obs in
       let transition = Env.step env action in
       total_reward := !total_reward +. transition.Env.reward;
       steps := !steps + 1;
+      current_obs := transition.Env.observation;
       done_flag := transition.Env.terminated || transition.Env.truncated
     done;
 

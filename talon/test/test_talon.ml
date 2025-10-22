@@ -553,6 +553,33 @@ let test_fill_missing_helper () =
       check_float "filled 2" 3.0 arr.(2)
   | None -> Alcotest.fail "Expected float array"
 
+let test_fillna_replaces_nulls () =
+  let df =
+    create
+      [
+        ("a", Col.float32_opt [| Some 1.0; None; Some 3.0 |]);
+        ("b", Col.int32_opt [| Some 10l; None; Some 30l |]);
+      ]
+  in
+  let filled_a = Agg.fillna df "a" ~value:(Col.float32 [| 0.0 |]) in
+  (match filled_a with
+  | Col.P (Nx.Float32, tensor, mask_opt) ->
+      let arr : float array = Nx.to_array tensor in
+      check_float "filled a[0]" 1.0 arr.(0);
+      check_float "filled a[1]" 0.0 arr.(1);
+      check_float "filled a[2]" 3.0 arr.(2);
+      check_option_bool_array "mask cleared for a" None mask_opt
+  | _ -> Alcotest.fail "Expected float32 column");
+  let filled_b = Agg.fillna df "b" ~value:(Col.int32_list [ 0l; 99l; 0l ]) in
+  match filled_b with
+  | Col.P (Nx.Int32, tensor, mask_opt) ->
+      let arr : int32 array = Nx.to_array tensor in
+      check_int "filled b[0]" 10 (Int32.to_int arr.(0));
+      check_int "filled b[1]" 99 (Int32.to_int arr.(1));
+      check_int "filled b[2]" 30 (Int32.to_int arr.(2));
+      check_option_bool_array "mask cleared for b" None mask_opt
+  | _ -> Alcotest.fail "Expected int32 column"
+
 let test_null_count_helper () =
   let df =
     create
@@ -591,6 +618,7 @@ let option_tests =
     ("to_options", `Quick, test_to_options);
     ("drop_nulls", `Quick, test_drop_nulls_helper);
     ("fill_missing", `Quick, test_fill_missing_helper);
+    ("fillna", `Quick, test_fillna_replaces_nulls);
     ("null_count", `Quick, test_null_count_helper);
     ("mask_aware_agg", `Quick, test_mask_aware_aggregations);
   ]
@@ -1105,6 +1133,34 @@ let test_merge () =
   check_bool "has x column" true (has_column result "x");
   check_bool "has y column" true (has_column result "y")
 
+let test_join_preserves_null_masks () =
+  let left =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 2l ]);
+        ("left_val", Col.int32_opt [| Some 10l; None |]);
+      ]
+  in
+  let right =
+    create
+      [
+        ("id", Col.int32_list [ 1l ]);
+        ("right_val", Col.int32_opt [| Some 100l |]);
+      ]
+  in
+  let joined = join left right ~on:"id" ~how:`Left () in
+  check_option_bool_array "left mask preserved"
+    (Some [| false; true |])
+    (mask_of_column joined "left_val");
+  check_option_bool_array "right mask populated"
+    (Some [| false; true |])
+    (mask_of_column joined "right_val");
+  match to_int32_options joined "right_val" with
+  | Some arr ->
+      Alcotest.(check (option int32)) "right row 0" (Some 100l) arr.(0);
+      Alcotest.(check (option int32)) "right row 1" None arr.(1)
+  | None -> Alcotest.fail "right_val column should exist"
+
 let test_pivot () =
   let df =
     create
@@ -1130,6 +1186,32 @@ let test_pivot () =
       check_float "Feb A sales" 120.0 a_vals.(1);
       check_float "Feb B sales" 180.0 b_vals.(1)
   | _ -> Alcotest.fail "pivot columns should exist"
+
+let test_pivot_numeric_index () =
+  let df =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 1l; 2l; 2l ]);
+        ("category", Col.string_list [ "A"; "B"; "A"; "B" ]);
+        ("value", Col.float64_list [ 1.0; 2.0; 3.0; 4.0 ]);
+      ]
+  in
+  let pivoted =
+    pivot df ~index:"id" ~columns:"category" ~values:"value" ~agg_func:`Sum ()
+  in
+  check_int "numeric pivot rows" 2 (num_rows pivoted);
+  (match get_column_exn pivoted "id" with
+  | Col.S arr ->
+      check_option_string "first id" (Some "1") arr.(0);
+      check_option_string "second id" (Some "2") arr.(1)
+  | _ -> Alcotest.fail "expected string index column");
+  match (to_float64_array pivoted "A", to_float64_array pivoted "B") with
+  | Some a_vals, Some b_vals ->
+      check_float "id=1 A sum" 1.0 a_vals.(0);
+      check_float "id=2 A sum" 3.0 a_vals.(1);
+      check_float "id=1 B sum" 2.0 b_vals.(0);
+      check_float "id=2 B sum" 4.0 b_vals.(1)
+  | _ -> Alcotest.fail "pivot numeric columns should exist"
 
 let test_melt () =
   let df =
@@ -1197,7 +1279,9 @@ let join_reshape_tests =
     ("join inner", `Quick, test_join_inner);
     ("join left", `Quick, test_join_left);
     ("merge", `Quick, test_merge);
+    ("join preserves masks", `Quick, test_join_preserves_null_masks);
     ("pivot", `Quick, test_pivot);
+    ("pivot numeric index", `Quick, test_pivot_numeric_index);
     ("melt", `Quick, test_melt);
     ("join with suffixes", `Quick, test_join_with_suffixes);
   ]

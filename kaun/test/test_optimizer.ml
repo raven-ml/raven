@@ -273,6 +273,33 @@ let test_learning_rate_schedule () =
     "Learning rate schedule reduces update magnitude" true
     (!late_update_norm < !early_update_norm *. 0.5)
 
+let test_clip_by_global_norm_zero_gradients () =
+  let zero_tensor = Rune.zeros Rune.float32 [| 2 |] in
+  let params = Ptree.tensor zero_tensor in
+  let grads = Ptree.tensor (Rune.zeros_like zero_tensor) in
+  let transform = Optimizer.clip_by_global_norm 1.0 in
+  let state = transform.Optimizer.init params in
+  let updates, _ = transform.Optimizer.update state params grads in
+  match updates with
+  | Ptree.Tensor t ->
+      let arr = Rune.to_bigarray t in
+      for i = 0 to 1 do
+        let value = Bigarray.Genarray.get arr [| i |] in
+        Alcotest.(check bool) "value is not NaN" false (Float.is_nan value);
+        Alcotest.(check bool) "value remains zero" true (abs_float value < 1e-9)
+      done
+  | _ -> Alcotest.fail "Expected tensor updates"
+
+let test_clip_by_global_norm_empty_tree () =
+  let params = Ptree.list_of [] in
+  let grads = Ptree.list_of [] in
+  let transform = Optimizer.clip_by_global_norm 1.0 in
+  let state = transform.Optimizer.init params in
+  let updates, _ = transform.Optimizer.update state params grads in
+  match updates with
+  | Ptree.List [] -> ()
+  | _ -> Alcotest.fail "Expected empty list updates"
+
 (* Test gradient clipping *)
 let test_gradient_clipping () =
   let x = Rune.create Rune.float32 [| 2 |] [| 100.; -50. |] in
@@ -344,6 +371,10 @@ let () =
             test_optimizer_state_persistence;
           test_case "Learning rate scheduling" `Quick
             test_learning_rate_schedule;
+          test_case "Global norm clipping handles zero gradients" `Quick
+            test_clip_by_global_norm_zero_gradients;
+          test_case "Global norm clipping handles empty parameter tree" `Quick
+            test_clip_by_global_norm_empty_tree;
           test_case "Gradient clipping" `Quick test_gradient_clipping;
         ] );
     ]

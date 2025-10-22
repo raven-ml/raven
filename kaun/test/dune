@@ -5,6 +5,7 @@
   test_dataset
   test_metrics
   test_optimizer
+  test_training
   test_gradients_vs_jax)
  (package kaun)
  (libraries

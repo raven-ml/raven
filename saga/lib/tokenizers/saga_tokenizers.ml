@@ -173,11 +173,22 @@ let merge_configs base extra =
     | Some pad, None -> Some pad
     | None, Some pad -> Some pad
     | Some base_pad, Some new_pad ->
+        let token_changed = not (String.equal base_pad.token new_pad.token) in
+        let resolved_id =
+          if token_changed then new_pad.id else merge_opt base_pad.id new_pad.id
+        in
+        let resolved_type_id =
+          if token_changed then
+            match new_pad.type_id with
+            | Some _ as t -> t
+            | None -> base_pad.type_id
+          else merge_opt base_pad.type_id new_pad.type_id
+        in
         Some
           {
             token = new_pad.token;
-            id = merge_opt base_pad.id new_pad.id;
-            type_id = merge_opt base_pad.type_id new_pad.type_id;
+            id = resolved_id;
+            type_id = resolved_type_id;
           }
   in
   let merged_extras =
