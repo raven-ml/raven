@@ -138,6 +138,7 @@ class RegressionResult:
 class BenchData:
     measurements: List[Measurement]
     time_stats: Statistics
+    wall_stats: Statistics
     memory_stats: Statistics
     regressions: List[RegressionResult]
     total_time_ns: float
@@ -149,6 +150,7 @@ class AnalysisResult:
     name: str
     measurements: List[Measurement]
     time_stats: Statistics
+    wall_stats: Statistics
     memory_stats: Statistics
     regressions: List[RegressionResult]
     total_time_ns: float
@@ -158,11 +160,11 @@ class AnalysisResult:
 @dataclass(frozen=True)
 class Config:
     mode: BenchmarkMode = BenchmarkMode.THROUGHPUT
-    quota: Quota = field(default_factory=lambda: TimeLimit(1.0))
-    warmup_iterations: int = 3
-    min_measurements_required: int = 10
-    stabilize_gc: bool = True
-    geometric_scale_factor: float = 1.5
+    quota: Quota = field(default_factory=lambda: TimeLimit(0.3))
+    warmup_iterations: int = 1
+    min_measurements_required: int = 5
+    stabilize_gc: bool = False
+    geometric_scale_factor: float = 1.3
     fork_benchmarks: bool = False
     regressions_spec: Tuple[
         Tuple[Responder, Tuple[Predictor, ...], bool], ...
@@ -177,7 +179,7 @@ class Config:
     ] = None
     ascii_only_output: bool = False
     null_loop_subtraction: bool = True
-    min_cpu_seconds: float = 0.4
+    min_cpu_seconds: float = 0.002
     repeat: int = 1
     progress_callback_fn: Optional[Callable[[ProgressInfo], None]] = None
 
@@ -896,6 +898,7 @@ def run_bench_with_config(config: Config, fn: Callable[[], None]) -> BenchData:
         batch_size = next_batch if next_batch > 0 else 1
 
     time_values = [m.time_ns / max(1, m.runs) for m in measurements]
+    wall_values = [m.wall_ns / max(1, m.runs) for m in measurements]
     memory_values = [m.minor_words / max(1, m.runs) for m in measurements]
 
     regressions = [
@@ -911,6 +914,7 @@ def run_bench_with_config(config: Config, fn: Callable[[], None]) -> BenchData:
     return BenchData(
         measurements=measurements,
         time_stats=compute_statistics(time_values),
+        wall_stats=compute_statistics(wall_values),
         memory_stats=compute_statistics(memory_values),
         regressions=regressions,
         total_time_ns=total_time_ns,
@@ -948,6 +952,7 @@ def run_silent(
                 name=bench_impl.name,
                 measurements=bench_data.measurements,
                 time_stats=bench_data.time_stats,
+                wall_stats=bench_data.wall_stats,
                 memory_stats=bench_data.memory_stats,
                 regressions=bench_data.regressions,
                 total_time_ns=bench_data.total_time_ns,
@@ -1042,39 +1047,42 @@ def print_pretty_table(
         length = visual_width(text)
         return text if length >= width else text + " " * (width - length)
 
-    fastest_time = min(r.time_stats.avg for r in results)
+    fastest_wall = min(r.wall_stats.avg for r in results)
+    fastest_cpu = min(r.time_stats.avg for r in results)
     lowest_memory = min(r.memory_stats.avg for r in results)
 
-    sorted_results = sorted(results, key=lambda r: r.time_stats.avg)
+    sorted_results = sorted(results, key=lambda r: r.wall_stats.avg)
 
     rows_data: List[Tuple[AnalysisResult, List[str]]] = []
     for entry in sorted_results:
-        time_str = format_time_ns(entry.time_stats.avg)
+        wall_avg = entry.wall_stats.avg
+        cpu_avg = entry.time_stats.avg
+        wall_str = format_time_ns(wall_avg)
+        cpu_str = format_time_ns(cpu_avg)
         mem_str = format_words(entry.memory_stats.avg)
-        speedup = (
-            fastest_time / entry.time_stats.avg if entry.time_stats.avg > 0.0 else float("inf")
-        )
-        vs_fastest = (
-            entry.time_stats.avg / fastest_time if fastest_time > 0.0 else float("inf")
-        )
+        speedup = fastest_wall / wall_avg if wall_avg > 0.0 else float("inf")
+        vs_fastest = wall_avg / fastest_wall if fastest_wall > 0.0 else float("inf")
         row = [
             entry.name,
-            time_str,
+            wall_str,
+            cpu_str,
             mem_str,
             f"{speedup:.2f}x",
             f"{vs_fastest * 100.0:.0f}%",
         ]
-        if entry.time_stats.avg == fastest_time:
+        if math.isclose(wall_avg, fastest_wall):
             row[1] = colorize(green, row[1])
+        if math.isclose(cpu_avg, fastest_cpu):
+            row[2] = colorize(green, row[2])
         if entry.memory_stats.avg == lowest_memory:
-            row[2] = colorize(cyan, row[2])
+            row[3] = colorize(cyan, row[3])
         if speedup >= 1.0:
-            row[3] = colorize(green, row[3])
-        if math.isclose(vs_fastest, 1.0):
             row[4] = colorize(green, row[4])
+        if math.isclose(vs_fastest, 1.0):
+            row[5] = colorize(green, row[5])
         rows_data.append((entry, row))
 
-    headers = ["Name", "Time/Run", "mWd/Run", "Speedup", "vs Fastest"]
+    headers = ["Name", "Wall/Run", "CPU/Run", "mWd/Run", "Speedup", "vs Fastest"]
     widths = [visual_width(h) for h in headers]
     for _, row in rows_data:
         for index, value in enumerate(row):
@@ -1131,6 +1139,7 @@ def print_json(results: Sequence[AnalysisResult]) -> None:
             {
                 "name": result.name,
                 "time_stats": dataclasses.asdict(result.time_stats),
+                "wall_stats": dataclasses.asdict(result.wall_stats),
                 "memory_stats": dataclasses.asdict(result.memory_stats),
                 "total_time_ns": result.total_time_ns,
                 "total_runs": result.total_runs,
@@ -1159,6 +1168,12 @@ def print_csv(results: Sequence[AnalysisResult]) -> None:
         "time_std_dev",
         "time_ci95_lower",
         "time_ci95_upper",
+        "wall_avg",
+        "wall_min",
+        "wall_max",
+        "wall_std_dev",
+        "wall_ci95_lower",
+        "wall_ci95_upper",
         "memory_avg",
         "memory_min",
         "memory_max",
@@ -1191,6 +1206,12 @@ def print_csv(results: Sequence[AnalysisResult]) -> None:
             f"{result.time_stats.std_dev:.2f}",
             f"{result.time_stats.ci95_lower:.2f}",
             f"{result.time_stats.ci95_upper:.2f}",
+            f"{result.wall_stats.avg:.2f}",
+            f"{result.wall_stats.min:.2f}",
+            f"{result.wall_stats.max:.2f}",
+            f"{result.wall_stats.std_dev:.2f}",
+            f"{result.wall_stats.ci95_lower:.2f}",
+            f"{result.wall_stats.ci95_upper:.2f}",
             f"{result.memory_stats.avg:.2f}",
             f"{result.memory_stats.min:.2f}",
             f"{result.memory_stats.max:.2f}",
@@ -1257,11 +1278,11 @@ def compare(
         )
 
     rates1 = [
-        float(m.runs) / (m.time_ns / 1e9) if m.time_ns > 0 else 0.0
+        float(m.runs) / (m.wall_ns / 1e9) if m.wall_ns > 0 else 0.0
         for m in baseline.measurements
     ]
     rates2 = [
-        float(m.runs) / (m.time_ns / 1e9) if m.time_ns > 0 else 0.0
+        float(m.runs) / (m.wall_ns / 1e9) if m.wall_ns > 0 else 0.0
         for m in compared.measurements
     ]
 
