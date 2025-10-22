@@ -36,7 +36,8 @@
     Use rollout buffers for on-policy data:
     {[
       let buffer = Buffer.Rollout.create ~capacity:2048 in
-      Buffer.Rollout.add buffer { observation; action; reward; terminated; value; log_prob };
+      Buffer.Rollout.add buffer
+        { observation; action; reward; terminated; truncated; value; log_prob };
       Buffer.Rollout.compute_advantages buffer ~last_value ~last_done ~gamma:0.99 ~gae_lambda:0.95;
       let steps, advantages, returns = Buffer.Rollout.get buffer
     ]} *)
@@ -60,6 +61,7 @@ type ('obs, 'act) step = {
   action : 'act;  (** Action taken at this step *)
   reward : float;  (** Immediate reward received *)
   terminated : bool;  (** Whether episode ended at this step *)
+  truncated : bool;  (** Whether the episode was truncated at this step *)
   value : float option;  (** Value estimate V(s) from critic, if available *)
   log_prob : float option;
       (** Log probability log π(a|s) from policy, if available *)
