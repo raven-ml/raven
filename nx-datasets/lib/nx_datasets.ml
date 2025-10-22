@@ -64,3 +64,6 @@ let load_airline_passengers () =
 
 (* Include generators inline *)
 include Generators
+
+(* Include dataset utilities *)
+include Dataset_utils

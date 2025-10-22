@@ -4,6 +4,26 @@
     generate synthetic datasets for testing and experimentation. Real datasets
     are downloaded and cached in the platform-specific cache directory. *)
 
+(** {2 Cache Directory Management} *)
+
+val get_cache_dir : string -> string
+(** Return the platform-specific cache directory path for the given dataset.
+
+    The cache directory is resolved using the following priority order:
+    1. [NX_DATASETS_CACHE] environment variable (highest priority)
+    2. [XDG_CACHE_HOME] environment variable (if NX_DATASETS_CACHE not set)
+    3. [$HOME/.cache] (fallback, default behavior)
+
+    The resolved path will be "[cache_base]/ocaml-nx/datasets/[dataset_name]/".
+
+    @param dataset_name the name of the dataset
+    @return the cache directory path, including trailing slash
+
+    Environment variables:
+    - [NX_DATASETS_CACHE]: Custom cache directory (overrides all other settings)
+    - [XDG_CACHE_HOME]: XDG Base Directory cache location (standard on Linux/Unix)
+    - [HOME]: User home directory (used for fallback cache location) *)
+
 (** {2 Loading Real Datasets}
 
     Functions to load classic machine learning datasets as Nx tensors. *)

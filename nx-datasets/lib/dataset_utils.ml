@@ -51,15 +51,29 @@ let mkdir_p path perm =
          initial_prefix components);
     ()
 
-module Xdg = struct
-  let home =
-    try Sys.getenv "HOME"
-    with Not_found -> failwith "HOME environment variable not set."
+let get_cache_base_dir () =
+  match Sys.getenv_opt "NX_DATASETS_CACHE" with
+  | Some dir when dir <> "" -> dir
+  | _ -> (
+      match Sys.getenv_opt "XDG_CACHE_HOME" with
+      | Some dir when dir <> "" -> dir
+      | _ ->
+          let home =
+            try Sys.getenv "HOME"
+            with Not_found ->
+              failwith "HOME environment variable not set."
+          in
+          Filename.concat home ".cache"
+    )
 
-  let cache_base = home ^ "/.cache/ocaml-nx/datasets/"
-end
+let get_cache_dir dataset_name =
+  let base = get_cache_base_dir () in
+  let path =
+    Filename.concat base
+      (Filename.concat "ocaml-nx" (Filename.concat "datasets" dataset_name))
+  in
+  path ^ "/"
 
-let get_cache_dir dataset_name = Xdg.cache_base ^ dataset_name ^ "/"
 
 let mkdir_p dir =
   try mkdir_p dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
