@@ -194,6 +194,11 @@ We've expanded Kaun with high-level APIs for deep learning. These APIs are inspi
 - Model zoo: Reference implementations of classic and modern architectures (LeNet5 for basic CNNs, BERT for masked language modeling, GPT2 for autoregressive generation) including reusable transformer components
 - Ecosystem integration: Load HuggingFace model architectures (`kaun.huggingface`), access common datasets like MNIST and CIFAR-10 (`kaun.datasets`), and use standardized model definitions (`kaun.models`)
 
+## [Unreleased]
+### Added
+- Implemented save/load serialization for Fehu's DQN agent.
+- Added regression tests to verify agent outputs after save/load.
+
 ### Contributors
 
 Thanks to everyone who contributed to this release:
