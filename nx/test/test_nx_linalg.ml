@@ -584,6 +584,22 @@ let test_vdot_complex () =
   check (float 1e-6) "vdot complex real part" expected.re actual.re;
   check (float 1e-6) "vdot complex imag part" expected.im actual.im
 
+let test_conjugate () =
+  (* Test complex conjugate *)
+  let x = Nx.create Nx.complex32 [| 2 |]
+    [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |] in
+  let conj_x = Nx.conjugate x in
+  let expected = [| Complex.{ re = 1.; im = -2. }; Complex.{ re = 3.; im = -4. } |] in
+  let actual = Nx.to_array conj_x in
+  check (float 1e-6) "conjugate[0] real" expected.(0).re actual.(0).re;
+  check (float 1e-6) "conjugate[0] imag" expected.(0).im actual.(0).im;
+  check (float 1e-6) "conjugate[1] real" expected.(1).re actual.(1).re;
+  check (float 1e-6) "conjugate[1] imag" expected.(1).im actual.(1).im;
+  (* Test that real tensors are unchanged *)
+  let real_x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+  let conj_real = Nx.conjugate real_x in
+  check_nx "conjugate real unchanged" real_x conj_real
+
 let test_vdot_mismatch () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Nx.create Nx.float32 [| 4 |] [| 4.; 5.; 6.; 7. |] in
@@ -1132,6 +1148,7 @@ let product_tests =
   [
     ("vdot", `Quick, test_vdot);
     ("vdot complex", `Quick, test_vdot_complex);
+    ("conjugate", `Quick, test_conjugate);
     ("vdot mismatch", `Quick, test_vdot_mismatch);
     ("vecdot", `Quick, test_vecdot);
     ("inner", `Quick, test_inner);

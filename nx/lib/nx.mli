@@ -1512,6 +1512,20 @@ val imod_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 val neg : ('a, 'b) t -> ('a, 'b) t
 (** [neg t] negates all elements. *)
 
+val conjugate : ('a, 'b) t -> ('a, 'b) t
+(** [conjugate x] computes the complex conjugate.
+    
+    For complex tensors, negates the imaginary part of each element.
+    For real tensors, returns the input unchanged.
+    
+    {@ocaml[
+      # let x = create complex32 [| 2 |] 
+          [|Complex.{re=1.; im=2.}; Complex.{re=3.; im=4.}|] in
+        conjugate x |> to_array
+      - : Complex.t array =
+      [|{Complex.re = 1.; im = -2.}; {Complex.re = 3.; im = -4.}|]
+    ]} *)
+
 (** {2 Mathematical Functions}
 
     Unary mathematical operations and special functions. *)
