@@ -356,10 +356,74 @@ let learn t ~env ~total_timesteps
 
   t
 
-let save _t _path =
-  (* TODO: Implement serialization *)
-  failwith "Dqn.save: not yet implemented"
+let save t dir =
+  if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+  let checkpointer = Kaun.Checkpoint.Checkpointer.create () in
+  Kaun.Checkpoint.Checkpointer.save_file checkpointer
+    ~path:(Filename.concat dir "q_params.safetensors")
+    ~params:t.q_params ();
+  Kaun.Checkpoint.Checkpointer.save_file checkpointer
+    ~path:(Filename.concat dir "target_params.safetensors")
+    ~params:t.target_params ();
+  let rng_seed = Rune.Rng.to_int t.rng in
+  let metadata = `Assoc [
+    ("n_actions", `Int t.n_actions);
+    ("rng_seed", `Int rng_seed);
+    ("learning_rate", `Float t.config.learning_rate);
+    ("gamma", `Float t.config.gamma);
+    ("epsilon_start", `Float t.config.epsilon_start);
+    ("epsilon_end", `Float t.config.epsilon_end);
+    ("epsilon_decay", `Float t.config.epsilon_decay);
+    ("batch_size", `Int t.config.batch_size);
+    ("buffer_capacity", `Int t.config.buffer_capacity);
+    ("target_update_freq", `Int t.config.target_update_freq);
+  ] in
+  let metadata_path = Filename.concat dir "metadata.json" in
+  let oc = open_out metadata_path in
+  Yojson.Basic.to_channel oc metadata;
+  close_out oc
 
-let load _path =
-  (* TODO: Implement deserialization *)
-  failwith "Dqn.load: not yet implemented"
+let load dir ~q_network ~n_actions =
+  let metadata_path = Filename.concat dir "metadata.json" in
+  let metadata = Yojson.Basic.from_file metadata_path in
+  let open Yojson.Basic.Util in
+  let config = {
+    learning_rate = metadata |> member "learning_rate" |> to_float;
+    gamma = metadata |> member "gamma" |> to_float;
+    epsilon_start = metadata |> member "epsilon_start" |> to_float;
+    epsilon_end = metadata |> member "epsilon_end" |> to_float;
+    epsilon_decay = metadata |> member "epsilon_decay" |> to_float;
+    batch_size = metadata |> member "batch_size" |> to_int;
+    buffer_capacity = metadata |> member "buffer_capacity" |> to_int;
+    target_update_freq = metadata |> member "target_update_freq" |> to_int;
+  } in
+  let saved_n_actions = metadata |> member "n_actions" |> to_int in
+  let rng_seed = metadata |> member "rng_seed" |> to_int in
+  if saved_n_actions <> n_actions then
+    failwith (Printf.sprintf "Action space mismatch: saved=%d, provided=%d"
+      saved_n_actions n_actions);
+  let rng = Rune.Rng.key rng_seed in
+  let checkpointer = Kaun.Checkpoint.Checkpointer.create () in
+  let q_params = Kaun.Checkpoint.Checkpointer.restore_file checkpointer
+    ~path:(Filename.concat dir "q_params.safetensors")
+    ~dtype:Rune.float32
+  in
+  let target_params = Kaun.Checkpoint.Checkpointer.restore_file checkpointer
+    ~path:(Filename.concat dir "target_params.safetensors")
+    ~dtype:Rune.float32
+  in
+  let optimizer = Optimizer.adam ~lr:config.learning_rate () in
+  let opt_state = optimizer.init q_params in
+  let replay_buffer = Fehu.Buffer.Replay.create ~capacity:config.buffer_capacity in
+  {
+    q_network;
+    q_params;
+    target_network = q_network;
+    target_params;
+    optimizer;
+    opt_state;
+    replay_buffer;
+    rng;
+    n_actions;
+    config;
+  }
