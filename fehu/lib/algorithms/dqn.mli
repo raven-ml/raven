@@ -1,5 +1,7 @@
 (** DQN (Deep Q-Network) algorithm.
 
+open Kaun
+
     DQN is an off-policy value-based algorithm that learns Q-values (expected
     returns) for state-action pairs using neural network function approximation.
     It combines Q-learning with experience replay and target networks for stable
@@ -128,15 +130,21 @@ val default_config : config
     These defaults work reasonably for simple environments like CartPole or
     GridWorld. Adjust for your specific problem. *)
 
-type t
-(** DQN agent state.
-
-    Encapsulates Q-network, target network, experience replay buffer, optimizer
-    state, and training configuration. The agent maintains all state needed for
-    training and inference.
-
-    Note: Observations must be float32 tensors and actions are int32 tensors
-    (discrete actions). *)
+type t = {
+  q_network : Kaun.Layer.module_;
+  mutable q_params : Bigarray.float32_elt Kaun.Ptree.t;
+  target_network : Kaun.Layer.module_;
+  mutable target_params : Bigarray.float32_elt Kaun.Ptree.t;
+  optimizer : Bigarray.float32_elt Kaun.Optimizer.gradient_transformation;
+  mutable opt_state : Bigarray.float32_elt Kaun.Optimizer.opt_state;
+  replay_buffer :
+    ((float, Bigarray.float32_elt) Rune.t,
+     (int32, Bigarray.int32_elt) Rune.t)
+    Fehu.Buffer.Replay.t;
+  mutable rng : Rune.Rng.key;
+  n_actions : int;
+  config : config;
+}
 
 type update_metrics = {
   episode_return : float;  (** Total reward for the episode *)
@@ -340,13 +348,22 @@ val learn :
     ensures the replay buffer has diverse samples before Q-network updates
     start. *)
 
+(** [save agent path] saves the agent state to the specified directory.
+    
+    Creates the following files:
+    - q_params.safetensors: Q-network weights
+    - target_params.safetensors: Target network weights  
+    - opt_state.safetensors: Optimizer state
+    - metadata.json: Config, n_actions, and RNG seed
+    Note: The replay buffer is not saved. *)
 val save : t -> string -> unit
-(** [save agent path] saves agent to disk.
 
-    Not yet implemented. Will serialize Q-network parameters, target network,
-    optimizer state, and configuration. *)
 
-val load : string -> t
-(** [load path] loads agent from disk.
-
-    Not yet implemented. Will deserialize agent state from file. *)
+(** [load path ~q_network ~n_actions] loads an agent from the specified directory.
+    
+    @param path Directory containing the saved checkpoint
+    @param q_network Network architecture (must match the saved agent)
+    @param n_actions Number of actions (must match the saved agent)
+    @raise Failure if n_actions doesn't match or files are missing
+    Note: The replay buffer starts empty and optimizer is reinitialized. *)
+val load : string -> q_network:Kaun.module_ -> n_actions:int -> t
