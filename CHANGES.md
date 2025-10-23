@@ -46,7 +46,7 @@ All notable changes to this project will be documented in this file.
 - Allow metric history to tolerate metrics that appear or disappear between epochs so dynamic metric sets no longer raise during training (@tmattio)
 - Make `Optimizer.clip_by_global_norm` robust to zero gradients and empty parameter trees to avoid NaNs during training (@tmattio)
 - Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD)
-- Implement AUC-ROC in Kaun metrics (#109 @Shocker444)
+- Implement AUC-ROC in Kaun metrics and simplify its API (#109 @Shocker444)
 
 ### Talon
 

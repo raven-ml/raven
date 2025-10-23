@@ -296,9 +296,7 @@ let f1_score ?(threshold = 0.5) ?(averaging = Micro) ?(beta = 1.0) () =
     ~reset:(fun _ -> [])
 
 (* Placeholder implementations for complex metrics *)
-let auc_roc ?(num_thresholds = 200) ?(curve = false) () =
-  let _ = num_thresholds in
-  let _ = curve in
+let auc_roc () =
   create_custom ~name:"auc_roc"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
