@@ -64,3 +64,6 @@ let load_airline_passengers () =
 
 (* Include generators inline *)
 include Generators
+
+let get_cache_dir ?getenv dataset_name =
+  Dataset_utils.get_cache_dir ?getenv dataset_name

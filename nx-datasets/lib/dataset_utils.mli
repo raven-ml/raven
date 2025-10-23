@@ -1,15 +1,34 @@
 (** Utilities for downloading and managing datasets. *)
 
-val get_cache_dir : string -> string
+val get_cache_dir : ?getenv:(string -> string option) -> string -> string
 (** Return the platform-specific cache directory path for the given dataset.
 
-    The default location is "~/.cache/ocaml-nx/datasets/[dataset_name]/".
+    The cache directory is resolved using the following priority order: 1.
+    [RAVEN_CACHE_ROOT] environment variable (highest priority; absolute cache
+    root) 2. [XDG_CACHE_HOME] environment variable (if RAVEN_CACHE_ROOT not set)
+    3. [$HOME/.cache] (fallback, default behavior)
+
+    The resolved path will be "[cache_root]/datasets/[dataset_name]/", where
+    [cache_root] is either [RAVEN_CACHE_ROOT] or
+    "[XDG_CACHE_HOME or HOME]/raven", with platform-appropriate directory
+    separators and a trailing separator.
 
     {2 Parameters}
     - dataset_name: the name of the dataset.
 
     {2 Returns}
-    - the cache directory path, including trailing slash. *)
+    - the cache directory path, including trailing slash.
+
+    @param getenv
+      optional environment lookup function (defaults to [Sys.getenv_opt]) to
+      facilitate testing.
+
+    {2 Environment Variables}
+    - [RAVEN_CACHE_ROOT]: Custom cache directory root (overrides all other
+      settings)
+    - [XDG_CACHE_HOME]: XDG Base Directory cache location (standard on
+      Linux/Unix)
+    - [HOME]: User home directory (used for fallback cache location) *)
 
 val download_file : string -> string -> unit
 (** Download a file from a URL to a destination path.
