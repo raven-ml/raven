@@ -1,0 +1,6 @@
+(library
+ (name hugin_top)
+ (public_name hugin.top)
+ (modules hugin_top)
+ (libraries hugin base64 compiler-libs.toplevel)
+ (modes byte))

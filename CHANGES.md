@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Provide `nx.top`, `rune.top`, and `hugin.top` libraries that auto-install pretty printers in the OCaml toplevel and update Quill to load them (@tmattio)
 - Speed up contiguous elementwise ops via vectorized loops (@tmattio)
 - Fast-path contiguous single-axis reductions to avoid iterator fallback (@tmattio)
 - Speed up float reductions with contiguous multi-axis fast paths (@tmattio)

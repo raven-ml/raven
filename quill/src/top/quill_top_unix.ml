@@ -120,6 +120,7 @@ let load_plugins () =
         [
           "nx_core.cma";
           "nx.cma";
+          "nx_top.cma";
           "nx_c.cma";
           "bigarray_compat.cma";
           "integers.cma";
@@ -144,10 +145,12 @@ let load_plugins () =
           "base64.cma";
           "logs.cma";
           "hugin.cma";
+          "hugin_top.cma";
           "rune_jit.cma";
           "rune_jit_metal.cma";
           "rune_metal.cma";
           "rune.cma";
+          "rune_top.cma";
           "sowilo.cma";
           "kaun.cma";
           "kaun_datasets.cma";
@@ -197,31 +200,6 @@ let load_plugins () =
       List.iter
         (fun cma -> execute_directive (Printf.sprintf "#load %S;;" cma))
         cmas;
-
-      (* Set up pretty printers *)
-      execute_directive {|
-let pp_nx fmt arr =
-  Nx.pp_data fmt arr;;
-|};
-      execute_directive "#install_printer pp_nx;;";
-
-      execute_directive {|
-let pp_rune fmt arr =
-  Rune.pp_data fmt arr;;
-|};
-      execute_directive "#install_printer pp_rune;;";
-
-      execute_directive
-        {|
-let pp_hugin_figure fmt figure =
-  let image_data = Hugin.render figure in
-  let base64_data = Base64.encode_string image_data in
-  Format.fprintf fmt "![figure](data:image/png;base64,%s)" base64_data;;
-|};
-      execute_directive "#install_printer pp_hugin_figure;;";
-
-      (* Suppress the printer installation output *)
-      execute_directive "();;";
 
       (* Set up a simple Logs reporter without ANSI codes *)
       (* Only set up logs if it's available *)
