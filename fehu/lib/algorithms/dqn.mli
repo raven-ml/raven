@@ -340,13 +340,21 @@ val learn :
     ensures the replay buffer has diverse samples before Q-network updates
     start. *)
 
+(** [save agent path] saves the agent state to disk.
+
+    Creates the following files:
+    - q_params.safetensors: Q-network weights
+    - target_params.safetensors: Target network weights
+    - opt_state.safetensors: Optimizer state
+    - metadata.json: Config, n_actions, and RNG seed
+    Note: The replay buffer is not saved. *)
 val save : t -> string -> unit
-(** [save agent path] saves agent to disk.
 
-    Not yet implemented. Will serialize Q-network parameters, target network,
-    optimizer state, and configuration. *)
+(** [load path ~q_network ~n_actions] loads an agent from disk.
 
+    @param path Directory containing the saved checkpoint
+    @param q_network Network architecture (must match the saved agent)
+    @param n_actions Number of actions (must match the saved agent)
+    @raise Failure if n_actions doesn't match or files are missing
+    Note: The replay buffer starts empty and optimizer is reinitialized. *)
 val load : string -> t
-(** [load path] loads agent from disk.
-
-    Not yet implemented. Will deserialize agent state from file. *)
