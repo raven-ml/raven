@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Clarify `reshape` documentation to match its view-only semantics (@tmattio)
 - Provide `nx.top`, `rune.top`, and `hugin.top` libraries that auto-install pretty printers in the OCaml toplevel and update Quill to load them (@tmattio)
 - Add `ifill` for explicit in-place fills and make `fill` return a copied tensor (@tmattio)
 - Speed up contiguous elementwise ops via vectorized loops (@tmattio)

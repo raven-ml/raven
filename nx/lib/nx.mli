@@ -557,10 +557,11 @@ val reshape : int array -> ('a, 'b) t -> ('a, 'b) t
 (** [reshape shape t] returns view with new shape.
 
     At most one dimension can be -1 (inferred from total elements). Product of
-    dimensions must match total elements. Returns view when possible (O(1)),
-    copies if tensor is not contiguous and cannot be viewed.
+    dimensions must match total elements. Returns a zero-copy view when the new
+    layout is compatible; raises otherwise.
 
     @raise Invalid_argument if shape incompatible or multiple -1 dimensions
+    @raise Invalid_argument if tensor layout cannot support requested reshape
 
     {@ocaml[
       # let t = create int32 [|2; 3|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
