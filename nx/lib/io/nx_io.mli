@@ -193,22 +193,41 @@ val save_npz : ?overwrite:bool -> string -> (string * packed_nx) list -> unit
 
 (** {1 Text Format} *)
 
-val save_txt : ?sep:string -> ?append:bool -> out:string -> ('a, 'b) Nx.t -> unit
-(** [save_txt ?sep ?append ~out t]
+val save_txt :
+  ?sep:string ->
+  ?append:bool ->
+  ?newline:string ->
+  ?header:string ->
+  ?footer:string ->
+  ?comments:string ->
+  out:string ->
+  ('a, 'b) Nx.t ->
+  unit
+(** [save_txt ?sep ?append ?newline ?header ?footer ?comments ~out t]
 
-    Save a 1D or 2D tensor to a text file. Each row is written on a new line,
-    values separated by [sep] (default: a single space). If [append] is [true],
-    data is appended to [out]; otherwise the file is truncated/created. Fails on
-    tensors with rank other than 1 or 2. *)
+    Save a scalar, 1D, or 2D tensor to a text file. Each row is written on a new
+    line, values separated by [sep] (default: a single space). If [append] is
+    [true], data is appended to [out]; otherwise the file is truncated/created.
+    Optional [header] and [footer] strings are emitted before and after the
+    data, prefixed with [comments] (default: ["# "]). The [newline] argument
+    controls the end-of-line separator. Only numeric and boolean dtypes are
+    supported. *)
 
-val load_txt : ?sep:string -> ('a, 'b) Nx.dtype -> string -> ('a, 'b) Nx.t
-(** [load_txt ?sep dtype path]
+val load_txt :
+  ?sep:string ->
+  ?comments:string ->
+  ?skiprows:int ->
+  ?max_rows:int ->
+  ('a, 'b) Nx.dtype ->
+  string ->
+  ('a, 'b) Nx.t
+(** [load_txt ?sep ?comments ?skiprows ?max_rows dtype path]
 
-    Load a 1D/2D tensor from a text file previously written by [save_txt] or a
-    compatible format. The number of columns is inferred from the first
-    non-empty line; all subsequent non-empty lines must have the same number of
-    columns. The resulting shape is [|rows; cols|]. For a single row, the shape
-    is [|1; cols|]. *)
+    Load a tensor from a text file previously written by [save_txt] or a
+    compatible format. Lines beginning with [comments] (after trimming leading
+    whitespace) are ignored. Leading [skiprows] raw lines are skipped. When data
+    has a single row or a single column, the result is 1D; otherwise a 2D tensor
+    of shape [|rows; cols|] is returned. *)
 
 (** {1 SafeTensors Format} *)
 
@@ -312,6 +331,10 @@ module Safe : sig
   val save_txt :
     ?sep:string ->
     ?append:bool ->
+    ?newline:string ->
+    ?header:string ->
+    ?footer:string ->
+    ?comments:string ->
     out:string ->
     ('a, 'b) Nx.t ->
     (unit, error) result
@@ -319,6 +342,9 @@ module Safe : sig
 
   val load_txt :
     ?sep:string ->
+    ?comments:string ->
+    ?skiprows:int ->
+    ?max_rows:int ->
     ('a, 'b) Nx.dtype ->
     string ->
     (('a, 'b) Nx.t, error) result

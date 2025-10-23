@@ -101,160 +101,8 @@ module Safe = struct
     Nx_npy.save_npz ~overwrite path items
 
   (* Text I/O *)
-  let save_txt ?(sep = " ") ?(append = false) ~out (type a) (type b)
-      (arr : (a, b) Nx.t) =
-    try
-      let rank = Array.length (Nx.shape arr) in
-      if rank <> 1 && rank <> 2 then Error Unsupported_shape
-      else
-        let perm = 0o666 in
-        let open_flags =
-          if append then [ Open_wronly; Open_creat; Open_append; Open_text ]
-          else [ Open_wronly; Open_creat; Open_trunc; Open_text ]
-        in
-        let oc = open_out_gen open_flags perm out in
-        Fun.protect
-          ~finally:(fun () -> close_out oc)
-          (fun () ->
-            let shape = Nx.shape arr in
-            let rows, cols =
-              match shape with
-              | [| n |] -> (1, n)
-              | [| r; c |] -> (r, c)
-              | _ -> assert false
-            in
-            let arr2d_any = Nx.reshape [| rows; cols |] arr in
-            let res =
-              match Nx.dtype arr with
-              | Nx_core.Dtype.Float32 | Nx_core.Dtype.Float64 ->
-                  let arrf : (float, Nx.float64_elt) Nx.t =
-                    Nx.astype Nx.float64 arr2d_any
-                  in
-                  for i = 0 to rows - 1 do
-                    for j = 0 to cols - 1 do
-                      if j > 0 then output_string oc sep;
-                      Printf.fprintf oc "%g" (Nx.item [ i; j ] arrf)
-                    done;
-                    output_char oc '\n'
-                  done;
-                  Ok ()
-              | Nx_core.Dtype.Int32 ->
-                  let arri32 : (int32, Nx.int32_elt) Nx.t =
-                    Nx.astype Nx.int32 arr2d_any
-                  in
-                  for i = 0 to rows - 1 do
-                    for j = 0 to cols - 1 do
-                      if j > 0 then output_string oc sep;
-                      output_string oc
-                        (Int32.to_string (Nx.item [ i; j ] arri32))
-                    done;
-                    output_char oc '\n'
-                  done;
-                  Ok ()
-              | Nx_core.Dtype.Int64 ->
-                  let arri64 : (int64, Nx.int64_elt) Nx.t =
-                    Nx.astype Nx.int64 arr2d_any
-                  in
-                  for i = 0 to rows - 1 do
-                    for j = 0 to cols - 1 do
-                      if j > 0 then output_string oc sep;
-                      output_string oc
-                        (Int64.to_string (Nx.item [ i; j ] arri64))
-                    done;
-                    output_char oc '\n'
-                  done;
-                  Ok ()
-              | _ -> Error Unsupported_dtype
-            in
-            res)
-    with
-    | Sys_error msg -> Error (Io_error msg)
-    | Unix.Unix_error (e, _, _) -> Error (Io_error (Unix.error_message e))
-    | Failure msg -> Error (Other msg)
-    | ex -> Error (Other (Printexc.to_string ex))
-
-  let load_txt ?(sep = " ") dtype path =
-    try
-      let ic = open_in path in
-      Fun.protect
-        ~finally:(fun () -> close_in ic)
-        (fun () ->
-          let rec next_nonempty () =
-            try
-              let line = input_line ic in
-              if String.trim line = "" then next_nonempty () else Some line
-            with End_of_file -> None
-          in
-          let split_line line =
-            let line = String.trim line in
-            if sep = "" then [ line ]
-            else if String.length sep = 1 then
-              List.filter (fun s -> s <> "")
-                (String.split_on_char sep.[0] line)
-            else (
-              (* split by substring 'sep' and drop empty parts *)
-              let rec aux acc start =
-                if start >= String.length line then List.rev acc
-                else
-                  match String.index_from_opt line start sep.[0] with
-                  | None ->
-                      let part = String.sub line start (String.length line - start) in
-                      let acc = if part = "" then acc else part :: acc in
-                      List.rev acc
-                  | Some idx ->
-                      if idx + String.length sep <= String.length line
-                         && String.sub line idx (String.length sep) = sep
-                      then
-                        let part = String.sub line start (idx - start) in
-                        let acc = if part = "" then acc else part :: acc in
-                        aux acc (idx + String.length sep)
-                      else aux acc (idx + 1)
-              in
-              aux [] 0)
-          in
-          match next_nonempty () with
-          | None -> Error (Format_error "Empty file")
-          | Some first_line ->
-              let first_vals = split_line first_line in
-              let cols = List.length first_vals in
-              if cols = 0 then Error (Format_error "No columns detected")
-              else (
-                let rows_rev = ref [ first_vals ] in
-                let rec loop () =
-                  match next_nonempty () with
-                  | None -> ()
-                  | Some line ->
-                      let vals = split_line line in
-                      if List.length vals <> cols then
-                        raise (Failure "Inconsistent number of columns")
-                      else (
-                        rows_rev := vals :: !rows_rev;
-                        loop ())
-                in
-                loop ();
-                let rows = List.rev !rows_rev in
-                let rows_count = List.length rows in
-                (* Read as float64 then cast to requested dtype *)
-                let ba =
-                  Bigarray_ext.Genarray.create Bigarray_ext.Float64 Bigarray.c_layout
-                    [| rows_count; cols |]
-                in
-                List.iteri
-                  (fun i vals ->
-                    List.iteri
-                      (fun j v ->
-                        Bigarray_ext.Genarray.set ba [| i; j |]
-                          (float_of_string v))
-                      vals)
-                  rows;
-                let nxf = Nx.of_bigarray_ext ba in
-                let result = Nx.astype dtype nxf in
-                Ok result))
-    with
-    | Sys_error msg -> Error (Io_error msg)
-    | Unix.Unix_error (e, _, _) -> Error (Io_error (Unix.error_message e))
-    | Failure msg -> Error (Format_error msg)
-    | ex -> Error (Other (Printexc.to_string ex))
+  let save_txt = Nx_txt.save
+  let load_txt = Nx_txt.load
 
   (* Conversions from packed arrays *)
 
@@ -321,7 +169,9 @@ let load_safetensor path = Safe.load_safetensor path |> unwrap_result
 let save_safetensor ?overwrite path items =
   Safe.save_safetensor ?overwrite path items |> unwrap_result
 
-let save_txt ?sep ?append ~out arr =
-  Safe.save_txt ?sep ?append ~out arr |> unwrap_result
+let save_txt ?sep ?append ?newline ?header ?footer ?comments ~out arr =
+  Safe.save_txt ?sep ?append ?newline ?header ?footer ?comments ~out arr
+  |> unwrap_result
 
-let load_txt ?sep dtype path = Safe.load_txt ?sep dtype path |> unwrap_result
+let load_txt ?sep ?comments ?skiprows ?max_rows dtype path =
+  Safe.load_txt ?sep ?comments ?skiprows ?max_rows dtype path |> unwrap_result

@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Add `Nx_io.save_txt` / `Nx_io.load_txt` with NumPy-compatible formatting, comments, and dtype support (#120, @six-shot)
 - Clarify `reshape` documentation to match its view-only semantics (@tmattio)
 - Provide `nx.top`, `rune.top`, and `hugin.top` libraries that auto-install pretty printers in the OCaml toplevel and update Quill to load them (@tmattio)
 - Add `ifill` for explicit in-place fills and make `fill` return a copied tensor (@tmattio)
