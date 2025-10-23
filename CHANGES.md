@@ -30,6 +30,10 @@ All notable changes to this project will be documented in this file.
 - Documented the `Symbolic_shape` interface (@tmattio)
 - Added Accelerate framework flag when compiling on macOS, fixing issues in some environments (#129, @nirnayroy)
 
+### Hugin
+
+- Let `Hugin.show` windows close cleanly via the window button or `Esc`/`q`, avoiding frozen macOS REPL sessions (@tmattio)
+
 ### Rune
 
 - Add `Rune.no_grad` and `Rune.detach` to mirror JAX stop-gradient semantics (@tmattio)
