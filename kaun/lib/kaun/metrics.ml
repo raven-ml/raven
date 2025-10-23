@@ -317,15 +317,9 @@ let auc_roc () =
       match state with
       | [] -> [ predictions; targets; weights ]
       | [ preds_acc; targets_acc; weights_acc ] ->
-          let preds_acc =
-            Rune.concatenate ~axis:0 [ preds_acc; predictions ]
-          in
-          let targets_acc =
-            Rune.concatenate ~axis:0 [ targets_acc; targets ]
-          in
-          let weights_acc =
-            Rune.concatenate ~axis:0 [ weights_acc; weights ]
-          in
+          let preds_acc = Rune.concatenate ~axis:0 [ preds_acc; predictions ] in
+          let targets_acc = Rune.concatenate ~axis:0 [ targets_acc; targets ] in
+          let weights_acc = Rune.concatenate ~axis:0 [ weights_acc; weights ] in
           [ preds_acc; targets_acc; weights_acc ]
       | _ -> failwith "Invalid auc_roc state")
     ~compute:(fun state ->
@@ -333,9 +327,7 @@ let auc_roc () =
       | [ preds; targets; weights ] ->
           let dtype = Rune.dtype preds in
           let ones = Rune.ones dtype (Rune.shape targets) in
-          let sorted_idx =
-            Rune.argsort ~axis:0 ~descending:true preds
-          in
+          let sorted_idx = Rune.argsort ~axis:0 ~descending:true preds in
           let sorted_targets =
             Rune.take_along_axis ~axis:0 sorted_idx targets
           in
@@ -382,13 +374,11 @@ let auc_roc () =
             let tail_tpr = Rune.slice [ Rune.R (1, n) ] tpr in
             let head_tpr = Rune.slice [ Rune.R (0, n - 1) ] tpr in
             let avg_tpr =
-              Rune.mul (scalar_tensor dtype 0.5)
-                (Rune.add tail_tpr head_tpr)
+              Rune.mul (scalar_tensor dtype 0.5) (Rune.add tail_tpr head_tpr)
             in
             Rune.sum (Rune.mul dx avg_tpr)
       | _ -> failwith "Invalid auc_roc state")
     ~reset:(fun _ -> [])
-
 
 let auc_pr ?(num_thresholds = 200) ?(curve = false) () =
   let _ = num_thresholds in

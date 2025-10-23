@@ -963,7 +963,9 @@ let test_rowagg_sum_skipna_false () =
   let names = [ "float_opt"; "int_opt"; "baseline" ] in
   let sum_skipna_true = Row.Agg.sum df ~names in
   let sum_skipna_false = Row.Agg.sum df ~skipna:false ~names in
-  let true_arr = unpack_float64_column sum_skipna_true "Row.Agg.sum skipna=true" in
+  let true_arr =
+    unpack_float64_column sum_skipna_true "Row.Agg.sum skipna=true"
+  in
   let false_arr =
     unpack_float64_column sum_skipna_false "Row.Agg.sum skipna=false"
   in
@@ -1038,7 +1040,7 @@ let test_rowagg_bool_reducers () =
   in
   let all_col = Row.Agg.all df ~names:[ "flag_a"; "flag_b" ] in
   let any_col = Row.Agg.any df ~names:[ "flag_a"; "flag_b" ] in
-  match all_col, any_col with
+  match (all_col, any_col) with
   | Col.B all_arr, Col.B any_arr ->
       let expect_bool msg expected = function
         | Some value -> check_bool msg expected value
