@@ -97,6 +97,29 @@ let test_from_text_file_large_lines () =
         (fun l -> Alcotest.(check int) "line length" 1000 (String.length l))
         collected)
 
+let test_from_text_file_reset () =
+  let content = "line1\nline2\n" in
+  with_temp_file content (fun path ->
+      let dataset = from_text_file path in
+      let expected = [ "line1"; "line2" ] in
+      let first_pass = collect_dataset dataset in
+      Alcotest.(check (list string)) "first pass" expected first_pass;
+      reset dataset;
+      let second_pass = collect_dataset dataset in
+      Alcotest.(check (list string)) "after reset" expected second_pass)
+
+let test_from_text_file_reset_mid_stream () =
+  let content = "alpha\nbeta\ngamma\n" in
+  with_temp_file content (fun path ->
+      let dataset = from_text_file path in
+      let first_chunk = collect_n 1 dataset in
+      Alcotest.(check (list string))
+        "consumed first element" [ "alpha" ] first_chunk;
+      reset dataset;
+      let refreshed = collect_n 2 dataset in
+      Alcotest.(check (list string))
+        "after reset first two elements" [ "alpha"; "beta" ] refreshed)
+
 let test_from_text_files () =
   let content1 = "file1_line1\nfile1_line2\n" in
   let content2 = "file2_line1\nfile2_line2\n" in
@@ -639,6 +662,9 @@ let () =
           test_case "from_text_file_latin1" `Quick test_from_text_file_latin1;
           test_case "from_text_file_large_lines" `Quick
             test_from_text_file_large_lines;
+          test_case "from_text_file_reset" `Quick test_from_text_file_reset;
+          test_case "from_text_file_reset_mid_stream" `Quick
+            test_from_text_file_reset_mid_stream;
           test_case "from_text_files" `Quick test_from_text_files;
           test_case "from_jsonl" `Quick test_from_jsonl;
           test_case "from_jsonl_custom_field" `Quick

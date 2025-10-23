@@ -195,61 +195,100 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
         | `LATIN1 -> "iso-8859-1"
       in
       let uenc_opt = Uutf.encoding_of_string enc_name in
-      let dec = Uutf.decoder ?encoding:uenc_opt `Manual in
-      let handle = create_mmap path in
+      let make_decoder () = Uutf.decoder ?encoding:uenc_opt `Manual in
+      let handle_ref = ref None in
+      let file_size = ref 0 in
       let offset = ref 0 in
       let closed = ref false in
       let buf = Buffer.create 512 in
       let lines_queue = Queue.create () in
+      let decoder = ref (make_decoder ()) in
+
+      let open_handle () =
+        let handle = create_mmap path in
+        file_size := handle.size;
+        handle_ref := Some handle;
+        handle
+      in
+      let ensure_handle () =
+        match !handle_ref with Some h -> h | None -> open_handle ()
+      in
+      let close_handle () =
+        match !handle_ref with
+        | None -> ()
+        | Some h ->
+            (* Closing twice raises EBADF; swallow it because reset can
+               reopen. *)
+            (try close_mmap h with
+            | Unix.Unix_error (Unix.EBADF, _, _) -> ()
+            | exn -> raise exn);
+            handle_ref := None
+      in
+      ignore (open_handle ());
 
       let push_line_from_buf () =
-        let s = Buffer.contents buf in
+        let line = Buffer.contents buf in
         Buffer.clear buf;
-        Queue.add s lines_queue
+        Queue.add line lines_queue
       in
 
-      let rec drain_decoder () =
-        match Uutf.decode dec with
-        | `Uchar u ->
-            if Uchar.to_int u = 0x000A then push_line_from_buf ();
-            if Uchar.to_int u <> 0x000A then Uutf.Buffer.add_utf_8 buf u;
-            drain_decoder ()
-        | `Malformed _ ->
-            Uutf.Buffer.add_utf_8 buf Uutf.u_rep;
-            drain_decoder ()
-        | `Await ->
-            if !offset >= handle.size then
-              Uutf.Manual.src dec (Bytes.create 0) 0 0
-            else
-              let chunk =
-                read_mmap_chunk handle ~offset:!offset ~length:chunk_size
-              in
-              offset := !offset + String.length chunk;
-              let bytes = Bytes.of_string chunk in
-              Uutf.Manual.src dec bytes 0 (Bytes.length bytes);
-              drain_decoder ()
-        | `End ->
-            if Buffer.length buf > 0 then push_line_from_buf ();
-            ()
+      let rec fill_queue () =
+        if Queue.is_empty lines_queue && not !closed then
+          match Uutf.decode !decoder with
+          | `Uchar u ->
+              if Uchar.to_int u = 0x000A then push_line_from_buf ()
+              else Uutf.Buffer.add_utf_8 buf u;
+              if Queue.is_empty lines_queue then fill_queue ()
+          | `Malformed _ ->
+              Uutf.Buffer.add_utf_8 buf Uutf.u_rep;
+              fill_queue ()
+          | `Await ->
+              if !offset >= !file_size then (
+                Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
+                fill_queue ())
+              else
+                let handle = ensure_handle () in
+                let chunk =
+                  read_mmap_chunk handle ~offset:!offset ~length:chunk_size
+                in
+                offset := !offset + String.length chunk;
+                if chunk = "" then (
+                  Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
+                  fill_queue ())
+                else
+                  let bytes = Bytes.of_string chunk in
+                  Uutf.Manual.src !decoder bytes 0 (Bytes.length bytes);
+                  fill_queue ()
+          | `End ->
+              if Buffer.length buf > 0 then push_line_from_buf ();
+              close_handle ();
+              closed := true
       in
 
       let rec next_line () =
         if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
         else if !closed then None
         else (
-          drain_decoder ();
+          fill_queue ();
           if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
-          else if !offset >= handle.size then (
-            close_mmap handle;
-            closed := true;
-            None)
+          else if !closed then None
           else next_line ())
+      in
+
+      let reset () =
+        Buffer.clear buf;
+        Queue.clear lines_queue;
+        offset := 0;
+        closed := false;
+        decoder := make_decoder ();
+        close_handle ();
+        ignore (open_handle ())
       in
 
       {
         next = next_line;
         cardinality = (fun () -> Unknown);
-        reset = None;
+        reset = Some reset;
         spec = (fun () -> Scalar "string");
       }
 
