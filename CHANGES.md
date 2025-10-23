@@ -86,7 +86,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx-datasets
 
-- Fix cache directory resolution to respect `NX_DATASETS_CACHE` and `XDG_CACHE_HOME` environment variables, allowing custom cache locations. (@Arsalaan-Alam)
+- Fix cache directory resolution to respect `NX_DATASETS_CACHE` and `XDG_CACHE_HOME` environment variables, allowing custom cache locations. (#128, @Arsalaan-Alam)
 - Switch CIFAR-10 loader to the binary archive so parsing succeeds again (@tmattio)
 - Add a CIFAR-10 example (@tmattio)
 - Standardize dataset examples on `Logs` (@tmattio)
