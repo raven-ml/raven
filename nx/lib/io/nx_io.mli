@@ -191,6 +191,44 @@ val save_npz : ?overwrite:bool -> string -> (string * packed_nx) list -> unit
 
     Save multiple named nxs to a NumPy `.npz` archive. *)
 
+(** {1 Text Format} *)
+
+val save_txt :
+  ?sep:string ->
+  ?append:bool ->
+  ?newline:string ->
+  ?header:string ->
+  ?footer:string ->
+  ?comments:string ->
+  out:string ->
+  ('a, 'b) Nx.t ->
+  unit
+(** [save_txt ?sep ?append ?newline ?header ?footer ?comments ~out t]
+
+    Save a scalar, 1D, or 2D tensor to a text file. Each row is written on a new
+    line, values separated by [sep] (default: a single space). If [append] is
+    [true], data is appended to [out]; otherwise the file is truncated/created.
+    Optional [header] and [footer] strings are emitted before and after the
+    data, prefixed with [comments] (default: ["# "]). The [newline] argument
+    controls the end-of-line separator. Only numeric and boolean dtypes are
+    supported. *)
+
+val load_txt :
+  ?sep:string ->
+  ?comments:string ->
+  ?skiprows:int ->
+  ?max_rows:int ->
+  ('a, 'b) Nx.dtype ->
+  string ->
+  ('a, 'b) Nx.t
+(** [load_txt ?sep ?comments ?skiprows ?max_rows dtype path]
+
+    Load a tensor from a text file previously written by [save_txt] or a
+    compatible format. Lines beginning with [comments] (after trimming leading
+    whitespace) are ignored. Leading [skiprows] raw lines are skipped. When data
+    has a single row or a single column, the result is 1D; otherwise a 2D tensor
+    of shape [|rows; cols|] is returned. *)
+
 (** {1 SafeTensors Format} *)
 
 val load_safetensor : string -> archive
@@ -287,6 +325,30 @@ module Safe : sig
     (string * packed_nx) list ->
     (unit, error) result
   (** Safe alias for [save_npz] *)
+
+  (** {2 Text Format} *)
+
+  val save_txt :
+    ?sep:string ->
+    ?append:bool ->
+    ?newline:string ->
+    ?header:string ->
+    ?footer:string ->
+    ?comments:string ->
+    out:string ->
+    ('a, 'b) Nx.t ->
+    (unit, error) result
+  (** Safe alias for [save_txt] *)
+
+  val load_txt :
+    ?sep:string ->
+    ?comments:string ->
+    ?skiprows:int ->
+    ?max_rows:int ->
+    ('a, 'b) Nx.dtype ->
+    string ->
+    (('a, 'b) Nx.t, error) result
+  (** Safe alias for [load_txt] *)
 
   (** {2 SafeTensors Format} *)
 
