@@ -479,19 +479,25 @@ let test_blit_incompatible () =
         hint: source and destination must have identical shapes") (fun () ->
       Nx.blit src dst)
 
-let test_fill_nan () =
+let test_ifill_nan () =
   let t = Nx.empty Nx.float32 [| 2; 2 |] in
-  ignore (Nx.fill Float.nan t);
+  ignore (Nx.ifill Float.nan t);
   let v = Nx.item [ 0; 0 ] t in
-  check bool "fill with NaN" true (Float.is_nan v)
+  check bool "ifill with NaN" true (Float.is_nan v)
 
-let test_fill_inf () =
+let test_ifill_inf () =
   let t = Nx.empty Nx.float32 [| 2; 2 |] in
-  ignore (Nx.fill Float.infinity t);
-  check (float 1e-6) "fill with infinity" Float.infinity (Nx.item [ 0; 0 ] t);
-  ignore (Nx.fill Float.neg_infinity t);
-  check (float 1e-6) "fill with neg_infinity" Float.neg_infinity
+  ignore (Nx.ifill Float.infinity t);
+  check (float 1e-6) "ifill with infinity" Float.infinity (Nx.item [ 0; 0 ] t);
+  ignore (Nx.ifill Float.neg_infinity t);
+  check (float 1e-6) "ifill with neg_infinity" Float.neg_infinity
     (Nx.item [ 0; 0 ] t)
+
+let test_fill_returns_copy () =
+  let t = Nx.zeros Nx.float32 [| 2; 2 |] in
+  let filled = Nx.fill 7.0 t in
+  check (float 1e-6) "fill copy result" 7.0 (Nx.item [ 0; 0 ] filled);
+  check (float 1e-6) "fill copy leaves source intact" 0.0 (Nx.item [ 0; 0 ] t)
 
 let test_blit_self () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -659,8 +665,9 @@ let utility_operations =
     ("to bigarray partial slice", `Quick, test_to_bigarray_partial_slice);
     ("copy", `Quick, test_copy);
     ("blit incompatible", `Quick, test_blit_incompatible);
-    ("fill nan", `Quick, test_fill_nan);
-    ("fill inf", `Quick, test_fill_inf);
+    ("ifill nan", `Quick, test_ifill_nan);
+    ("ifill inf", `Quick, test_ifill_inf);
+    ("fill returns copy", `Quick, test_fill_returns_copy);
     ("blit self", `Quick, test_blit_self);
     (* ("blit overlapping views", `Quick, test_blit_overlapping_views ); *)
   ]

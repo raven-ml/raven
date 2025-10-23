@@ -280,7 +280,8 @@ let full_like x value =
 
 let zeros_like x = Debug.with_context "zeros_like" (fun () -> T.zeros_like x)
 let ones_like x = Debug.with_context "ones_like" (fun () -> T.ones_like x)
-let fill x value = Debug.with_context "fill" (fun () -> T.fill x value)
+let ifill value x = Debug.with_context "ifill" (fun () -> T.ifill value x)
+let fill value x = Debug.with_context "fill" (fun () -> T.fill value x)
 
 (* Conversion operations *)
 

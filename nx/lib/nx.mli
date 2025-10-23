@@ -1100,17 +1100,13 @@ val blit : ('a, 'b) t -> ('a, 'b) t -> unit
       (* dst now contains all 1s *)
     ]} *)
 
+val ifill : 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [ifill value t] sets all elements of [t] to [value] in-place. *)
+
 val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [fill value t] sets all elements to [value].
-
-    Modifies [t] in-place and returns it for chaining.
-
-    {@ocaml[
-      # let x = zeros float32 [| 2; 3 |] in
-        let y = fill 5. x in
-        y == x
-      - : bool = true
-    ]} *)
+(** [fill value t] returns a copy of [t] filled with [value], leaving [t]
+    unchanged. Handy when wanting a filled tensor without mutating the source.
+*)
 
 (** {2 Element Access and Slicing}
 

@@ -613,11 +613,16 @@ module Make (B : Backend_intf.S) = struct
   let scalar ctx dt value = B.op_const_scalar ctx value dt
   let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
 
-  let fill value x =
+  let ifill value x =
     let value_tensor = scalar_like x value in
     let value_broadcasted = broadcast_to (shape x) value_tensor in
     B.op_assign x value_broadcasted;
     x
+
+  let fill value x =
+    let copied = B.op_copy x in
+    ignore (ifill value copied);
+    copied
 
   let empty ctx dtype shape_arr =
     let numel = array_prod shape_arr in
@@ -630,21 +635,24 @@ module Make (B : Backend_intf.S) = struct
     let buf = B.op_buffer ctx dtype numel in
     let t = reshape shape_arr buf in
     (* Explicitly clear the newly allocated buffer. *)
-    fill (Dtype.zero dtype) t
+    ignore (ifill (Dtype.zero dtype) t);
+    t
 
   let ones ctx dtype shape_arr =
     (* Create actual ones, not broadcast *)
     let numel = array_prod shape_arr in
     let buf = B.op_buffer ctx dtype numel in
     let t = reshape shape_arr buf in
-    fill (Dtype.one dtype) t
+    ignore (ifill (Dtype.one dtype) t);
+    t
 
   let full ctx dt target_shape fill_value =
     (* Create actual filled tensor, not broadcast *)
     let numel = array_prod target_shape in
     let buf = B.op_buffer ctx dt numel in
     let t = reshape target_shape buf in
-    fill fill_value t
+    ignore (ifill fill_value t);
+    t
 
   (* Generic _like helper *)
   let create_like x_ref fill_fn =

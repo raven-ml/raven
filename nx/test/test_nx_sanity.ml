@@ -143,10 +143,15 @@ let data_manipulation_tests =
         let dst = Nx.zeros Nx.float32 shape_2x3 in
         Nx.blit src dst;
         check_t "blit" shape_2x3 [| 1.; 1.; 1.; 1.; 1.; 1. |] dst);
-    test_case "fill" `Quick (fun () ->
+    test_case "fill copy" `Quick (fun () ->
         let t = Nx.zeros Nx.float32 shape_2x3 in
-        let _ = Nx.fill 5.0 t in
-        check_t "fill" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] t);
+        let filled = Nx.fill 5.0 t in
+        check_t "fill copy" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] filled;
+        check_t "fill leaves source" shape_2x3 [| 0.; 0.; 0.; 0.; 0.; 0. |] t);
+    test_case "ifill" `Quick (fun () ->
+        let t = Nx.zeros Nx.float32 shape_2x3 in
+        ignore (Nx.ifill 5.0 t);
+        check_t "ifill" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] t);
   ]
 
 let element_wise_binary_tests =
