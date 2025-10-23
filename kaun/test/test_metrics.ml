@@ -75,7 +75,6 @@ let test_f1_score () =
   (* F1 = 2 * (precision * recall) / (precision + recall) *)
   (* precision = 2/3, recall = 1.0 *)
   (* F1 = 2 * (2/3 * 1) / (2/3 + 1) = 2 * (2/3) / (5/3) = 4/5 = 0.8 *)
-  let _ = print_endline (Printf.sprintf "F1 result: %s" (Rune.to_string result)) in
   let expected = Rune.scalar dtype 0.8 in
   check (tensor_testable 1e-5) "f1 score" expected result
 
@@ -85,13 +84,34 @@ let test_auc_roc () =
   let predictions = Rune.create dtype [| 4 |] [| 0.8; 0.7; 0.6; 0.3 |] in
   let targets = Rune.create dtype [| 4 |] [| 1.; 1.; 0.; 0. |] in
 
-  let auc = Metrics.auc_roc ~num_thresholds:3 () in
+  let auc = Metrics.auc_roc () in
   Metrics.update auc ~predictions ~targets ();
   let result = Metrics.compute auc in
-  (* For this simple case, AUC should be 1.0 as the predictions perfectly
-     separate the classes *)
-  let expected = Rune.scalar dtype 0.75 in
+  (* For perfectly separable predictions, AUC should be 1.0 *)
+  let expected = Rune.scalar dtype 1.0 in
   check (tensor_testable 1e-5) "auc roc" expected result
+
+let test_auc_roc_multiple_updates () =
+  let dtype = Rune.float32 in
+
+  let predictions_full = Rune.create dtype [| 4 |] [| 0.8; 0.7; 0.6; 0.3 |] in
+  let targets_full = Rune.create dtype [| 4 |] [| 1.; 1.; 0.; 0. |] in
+
+  let auc_single = Metrics.auc_roc () in
+  Metrics.update auc_single ~predictions:predictions_full ~targets:targets_full ();
+  let full_result = Metrics.compute auc_single in
+
+  let auc_chunked = Metrics.auc_roc () in
+  let predictions_1 = Rune.create dtype [| 2 |] [| 0.8; 0.7 |] in
+  let targets_1 = Rune.create dtype [| 2 |] [| 1.; 1. |] in
+  Metrics.update auc_chunked ~predictions:predictions_1 ~targets:targets_1 ();
+  let predictions_2 = Rune.create dtype [| 2 |] [| 0.6; 0.3 |] in
+  let targets_2 = Rune.create dtype [| 2 |] [| 0.; 0. |] in
+  Metrics.update auc_chunked ~predictions:predictions_2 ~targets:targets_2 ();
+  let chunked_result = Metrics.compute auc_chunked in
+
+  check (tensor_testable 1e-5) "auc roc incremental"
+    full_result chunked_result
 
 let test_confusion_matrix () =
   let dtype = Rune.float32 in
@@ -392,6 +412,7 @@ let () =
           test_case "precision_recall" `Quick test_precision_recall;
           test_case "f1_score" `Quick test_f1_score;
           test_case "auc_roc" `Quick test_auc_roc;
+          test_case "auc_roc_multiple_updates" `Quick test_auc_roc_multiple_updates;
           test_case "confusion_matrix" `Quick test_confusion_matrix;
         ] );
       ( "regression",

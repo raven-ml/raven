@@ -120,7 +120,7 @@ val auc_roc : ?num_thresholds:int -> ?curve:bool -> unit -> 'layout t
     Area Under the Receiver Operating Characteristic Curve.
 
     @param num_thresholds
-      Number of thresholds for curve computation (default: 200)
+      Reserved for future histogram-based implementations (currently ignored)
     @param curve If true, also return the ROC curve points (default: false) *)
 
 val auc_pr : ?num_thresholds:int -> ?curve:bool -> unit -> 'layout t
