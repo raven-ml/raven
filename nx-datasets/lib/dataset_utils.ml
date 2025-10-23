@@ -54,17 +54,9 @@ let mkdir_p path perm =
 let get_cache_base_dir () =
   match Sys.getenv_opt "NX_DATASETS_CACHE" with
   | Some dir when dir <> "" -> dir
-  | _ -> (
-      match Sys.getenv_opt "XDG_CACHE_HOME" with
-      | Some dir when dir <> "" -> dir
-      | _ ->
-          let home =
-            try Sys.getenv "HOME"
-            with Not_found ->
-              failwith "HOME environment variable not set."
-          in
-          Filename.concat home ".cache"
-    )
+  | _ ->
+      let xdg = Xdg.create ~env:Sys.getenv_opt () in
+      Xdg.cache_dir xdg
 
 let get_cache_dir dataset_name =
   let base = get_cache_base_dir () in
