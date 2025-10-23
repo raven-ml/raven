@@ -943,6 +943,115 @@ let test_rowagg_sum () =
       (* None + 5 + 7, missing skipped *)
   | None -> Alcotest.fail "row_sum should exist"
 
+let rowagg_skipna_fixture () =
+  create
+    [
+      ("float_opt", Col.float64_opt [| Some 1.0; None; Some 5.0 |]);
+      ("int_opt", Col.int32_opt [| Some 2l; Some 3l; None |]);
+      ("baseline", Col.float64_list [ 10.0; 20.0; 30.0 ]);
+    ]
+
+let unpack_float64_column col label =
+  match col with
+  | Col.P (Nx.Float64, tensor, _) ->
+      let arr : float array = Nx.to_array tensor in
+      arr
+  | _ -> Alcotest.fail ("expected float64 column for " ^ label)
+
+let test_rowagg_sum_skipna_false () =
+  let df = rowagg_skipna_fixture () in
+  let names = [ "float_opt"; "int_opt"; "baseline" ] in
+  let sum_skipna_true = Row.Agg.sum df ~names in
+  let sum_skipna_false = Row.Agg.sum df ~skipna:false ~names in
+  let true_arr = unpack_float64_column sum_skipna_true "Row.Agg.sum skipna=true" in
+  let false_arr =
+    unpack_float64_column sum_skipna_false "Row.Agg.sum skipna=false"
+  in
+  check_float "skipna=true row0 sum" 13.0 true_arr.(0);
+  check_float "skipna=true row1 sum" 23.0 true_arr.(1);
+  check_float "skipna=true row2 sum" 35.0 true_arr.(2);
+  check_float "skipna=false row0 sum" 13.0 false_arr.(0);
+  check_bool "skipna=false row1 sum is nan" true (Float.is_nan false_arr.(1));
+  check_bool "skipna=false row2 sum is nan" true (Float.is_nan false_arr.(2))
+
+let test_rowagg_mean_skipna_false () =
+  let df = rowagg_skipna_fixture () in
+  let names = [ "float_opt"; "int_opt"; "baseline" ] in
+  let mean_skipna_true = Row.Agg.mean df ~names in
+  let mean_skipna_false = Row.Agg.mean df ~skipna:false ~names in
+  let true_arr =
+    unpack_float64_column mean_skipna_true "Row.Agg.mean skipna=true"
+  in
+  let false_arr =
+    unpack_float64_column mean_skipna_false "Row.Agg.mean skipna=false"
+  in
+  check_float "skipna=true row0 mean" (13. /. 3.) true_arr.(0);
+  check_float "skipna=true row1 mean" 11.5 true_arr.(1);
+  check_float "skipna=true row2 mean" 17.5 true_arr.(2);
+  check_float "skipna=false row0 mean" (13. /. 3.) false_arr.(0);
+  check_bool "skipna=false row1 mean is nan" true (Float.is_nan false_arr.(1));
+  check_bool "skipna=false row2 mean is nan" true (Float.is_nan false_arr.(2))
+
+let test_rowagg_min_skipna_false () =
+  let df = rowagg_skipna_fixture () in
+  let names = [ "float_opt"; "int_opt"; "baseline" ] in
+  let min_skipna_true = Row.Agg.min df ~names in
+  let min_skipna_false = Row.Agg.min df ~skipna:false ~names in
+  let true_arr =
+    unpack_float64_column min_skipna_true "Row.Agg.min skipna=true"
+  in
+  let false_arr =
+    unpack_float64_column min_skipna_false "Row.Agg.min skipna=false"
+  in
+  check_float "skipna=true row0 min" 1.0 true_arr.(0);
+  check_float "skipna=true row1 min" 3.0 true_arr.(1);
+  check_float "skipna=true row2 min" 5.0 true_arr.(2);
+  check_float "skipna=false row0 min" 1.0 false_arr.(0);
+  check_bool "skipna=false row1 min is nan" true (Float.is_nan false_arr.(1));
+  check_bool "skipna=false row2 min is nan" true (Float.is_nan false_arr.(2))
+
+let test_rowagg_max_skipna_false () =
+  let df = rowagg_skipna_fixture () in
+  let names = [ "float_opt"; "int_opt"; "baseline" ] in
+  let max_skipna_true = Row.Agg.max df ~names in
+  let max_skipna_false = Row.Agg.max df ~skipna:false ~names in
+  let true_arr =
+    unpack_float64_column max_skipna_true "Row.Agg.max skipna=true"
+  in
+  let false_arr =
+    unpack_float64_column max_skipna_false "Row.Agg.max skipna=false"
+  in
+  check_float "skipna=true row0 max" 10.0 true_arr.(0);
+  check_float "skipna=true row1 max" 20.0 true_arr.(1);
+  check_float "skipna=true row2 max" 30.0 true_arr.(2);
+  check_float "skipna=false row0 max" 10.0 false_arr.(0);
+  check_bool "skipna=false row1 max is nan" true (Float.is_nan false_arr.(1));
+  check_bool "skipna=false row2 max is nan" true (Float.is_nan false_arr.(2))
+
+let test_rowagg_bool_reducers () =
+  let df =
+    create
+      [
+        ("flag_a", Col.bool_opt [| Some true; Some true; Some false |]);
+        ("flag_b", Col.bool_opt [| Some true; Some false; Some false |]);
+      ]
+  in
+  let all_col = Row.Agg.all df ~names:[ "flag_a"; "flag_b" ] in
+  let any_col = Row.Agg.any df ~names:[ "flag_a"; "flag_b" ] in
+  match all_col, any_col with
+  | Col.B all_arr, Col.B any_arr ->
+      let expect_bool msg expected = function
+        | Some value -> check_bool msg expected value
+        | None -> Alcotest.fail (msg ^ " should be Some")
+      in
+      expect_bool "Row.Agg.all row0" true all_arr.(0);
+      expect_bool "Row.Agg.all row1" false all_arr.(1);
+      expect_bool "Row.Agg.all row2" false all_arr.(2);
+      expect_bool "Row.Agg.any row0" true any_arr.(0);
+      expect_bool "Row.Agg.any row1" true any_arr.(1);
+      expect_bool "Row.Agg.any row2" false any_arr.(2)
+  | _ -> Alcotest.fail "expected boolean option columns"
+
 let test_row_number () =
   let df =
     create
@@ -1295,6 +1404,11 @@ let ergonomic_tests =
     ("Row.number", `Quick, test_row_number);
     ("Row.fold_list", `Quick, test_row_fold_list);
     ("Row.Agg.sum", `Quick, test_rowagg_sum);
+    ("rowagg_sum_skipna_false", `Quick, test_rowagg_sum_skipna_false);
+    ("rowagg_mean_skipna_false", `Quick, test_rowagg_mean_skipna_false);
+    ("rowagg_min_skipna_false", `Quick, test_rowagg_min_skipna_false);
+    ("rowagg_max_skipna_false", `Quick, test_rowagg_max_skipna_false);
+    ("rowagg_bool_reducers", `Quick, test_rowagg_bool_reducers);
     ("Row.Agg.dot", `Quick, test_rowagg_dot);
   ]
 
