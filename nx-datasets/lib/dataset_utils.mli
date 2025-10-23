@@ -8,7 +8,7 @@ val get_cache_dir : string -> string
     2. [XDG_CACHE_HOME] environment variable (if NX_DATASETS_CACHE not set)
     3. [$HOME/.cache] (fallback, default behavior)
 
-    The resolved path will be "[cache_base]/ocaml-nx/datasets/[dataset_name]/".
+    The resolved path will be "[cache_base]/raven/datasets/[dataset_name]/".
 
     {2 Parameters}
     - dataset_name: the name of the dataset.

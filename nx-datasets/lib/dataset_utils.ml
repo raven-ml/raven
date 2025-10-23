@@ -62,7 +62,7 @@ let get_cache_dir dataset_name =
   let base = get_cache_base_dir () in
   let path =
     Filename.concat base
-      (Filename.concat "ocaml-nx" (Filename.concat "datasets" dataset_name))
+      (Filename.concat "raven" (Filename.concat "datasets" dataset_name))
   in
   path ^ "/"
 
@@ -83,7 +83,7 @@ let download_file url dest_path =
   h#set_timeout 300;
   (* 5 minutes *)
   (* Provide a user agent *)
-  h#set_useragent "ocaml-nx-datasets/1.0.0";
+  h#set_useragent "raven-datasets/1.0.0";
 
   let oc = open_out_bin dest_path in
   let result =
