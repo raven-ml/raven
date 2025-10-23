@@ -70,7 +70,10 @@ val from_file : (string -> 'a) -> string -> 'a t
 (** {2 Text Data Sources} *)
 
 val from_text_file :
-  ?encoding:[ `UTF8 | `ASCII ] -> ?chunk_size:int -> string -> string t
+  ?encoding:[ `UTF8 | `ASCII | `LATIN1 ] ->
+  ?chunk_size:int ->
+  string ->
+  string t
 (** [from_text_file ?encoding ?chunk_size path] creates a memory-mapped text
     dataset yielding lines as strings.
     - [encoding]: Text encoding (default: UTF8)
@@ -78,7 +81,10 @@ val from_text_file :
       memory-mapped and read lazily in chunks. *)
 
 val from_text_files :
-  ?encoding:[ `UTF8 | `ASCII ] -> ?chunk_size:int -> string list -> string t
+  ?encoding:[ `UTF8 | `ASCII | `LATIN1 ] ->
+  ?chunk_size:int ->
+  string list ->
+  string t
 (** [from_text_files paths] creates a dataset from multiple text files. Files
     are processed sequentially without loading all into memory. *)
 

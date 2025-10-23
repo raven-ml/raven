@@ -49,6 +49,7 @@ All notable changes to this project will be documented in this file.
 
 ### Kaun
 
+- Honor text dataset encodings via incremental Uutf decoding (#122, @Satarupa22-SD).
 - Preserve empty sequential modules when unflattening so indices stay aligned for checkpoint round-tripping (@tmattio)
 - Prevent `Training.fit`/`evaluate` from consuming entire datasets eagerly and fail fast when a dataset yields no batches, avoiding hangs and division-by-zero crashes (@tmattio)
 - Allow metric history to tolerate metrics that appear or disappear between epochs so dynamic metric sets no longer raise during training (@tmattio)
