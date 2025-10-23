@@ -114,14 +114,13 @@ val f1_score :
     @param averaging Multi-class averaging strategy (default: Micro)
     @param beta Weight of recall vs precision (default: 1.0 for F1) *)
 
-val auc_roc : ?num_thresholds:int -> ?curve:bool -> unit -> 'layout t
-(** [auc_roc ?num_thresholds ?curve ()] creates an AUC-ROC metric.
+val auc_roc : unit -> 'layout t
+(** [auc_roc ()] creates an AUC-ROC metric.
 
     Area Under the Receiver Operating Characteristic Curve.
 
-    @param num_thresholds
-      Number of thresholds for curve computation (default: 200)
-    @param curve If true, also return the ROC curve points (default: false) *)
+    Computes the exact ROC integral by sorting predictions and accumulating
+    true/false positive rates across all seen batches. *)
 
 val auc_pr : ?num_thresholds:int -> ?curve:bool -> unit -> 'layout t
 (** [auc_pr ?num_thresholds ?curve ()] creates an AUC-PR metric.
