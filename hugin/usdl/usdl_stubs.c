@@ -430,3 +430,16 @@ CAMLprim value caml_sdl_get_window_event_id(value event_v) {
     CAMLreturn(Val_int(-1));
   }
 }
+
+CAMLprim value caml_sdl_get_event_keycode(value event_v) {
+  CAMLparam1(event_v);
+  SDL_Event* event_ptr = Event_val(event_v);
+  if (event_ptr == NULL)
+    caml_failwith("caml_sdl_get_event_keycode: Invalid event storage");
+
+  if (event_ptr->type == SDL_KEYDOWN || event_ptr->type == SDL_KEYUP) {
+    CAMLreturn(Val_int(event_ptr->key.keysym.sym));
+  } else {
+    CAMLreturn(Val_int(-1));
+  }
+}

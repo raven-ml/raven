@@ -27,7 +27,7 @@ let test_save_and_load () =
       | Some loaded_w ->
           let is_equal = Rune.all (Rune.equal w loaded_w) in
           let is_equal_val = Rune.to_array is_equal in
-          A.check A.bool "weights match" true (is_equal_val.(0) > 0)
+          A.check A.bool "weights match" true is_equal_val.(0)
       | None -> A.fail "weight is not a tensor")
   | None -> A.fail "weight not found");
 
@@ -37,7 +37,7 @@ let test_save_and_load () =
       | Some loaded_b ->
           let is_equal = Rune.all (Rune.equal b loaded_b) in
           let is_equal_val = Rune.to_array is_equal in
-          A.check A.bool "bias matches" true (is_equal_val.(0) > 0)
+          A.check A.bool "bias matches" true is_equal_val.(0)
       | None -> A.fail "bias is not a tensor")
   | None -> A.fail "bias not found"
 
@@ -86,6 +86,42 @@ let test_checkpoint_manager () =
       | None -> A.fail "weight is not a tensor")
   | None -> A.fail "weight not found"
 
+let test_sequential_roundtrip () =
+  let dtype = Rune.float32 in
+  let rng = Rune.Rng.key 42 in
+  let obs_dim = 4 in
+  let n_actions = 2 in
+  let network =
+    Kaun.Layer.sequential
+      [
+        Kaun.Layer.linear ~in_features:obs_dim ~out_features:8 ();
+        Kaun.Layer.relu ();
+        Kaun.Layer.linear ~in_features:8 ~out_features:n_actions ();
+      ]
+  in
+  let params = network.init ~rngs:rng ~dtype in
+  let input = Rune.create dtype [| obs_dim |] [| 0.5; 0.5; 0.5; 0.5 |] in
+  let output_before = network.apply params ~training:false input in
+  let tmp_dir = Filename.get_temp_dir_name () in
+  let path = Filename.temp_file ~temp_dir:tmp_dir "kaun_seq" ".safetensors" in
+  let module C = Kaun.Checkpoint in
+  C.save_params ~path ~params ();
+  let loaded_params = C.load_params ~path ~dtype in
+  let flattened = Kaun.Ptree.flatten_with_paths loaded_params in
+  let expect_path key =
+    if not (List.exists (fun (path, _) -> String.equal path key) flattened) then
+      A.failf "missing checkpoint tensor: %s" key
+  in
+  List.iter expect_path [ "[0].weight"; "[0].bias"; "[2].weight"; "[2].bias" ];
+  let output_after = network.apply loaded_params ~training:false input in
+  let before = Rune.to_array output_before in
+  let after = Rune.to_array output_after in
+  let same =
+    Array.for_all2 (fun a b -> Float.abs (a -. b) < 1e-6) before after
+  in
+  A.check A.bool "sequential roundtrip produces identical output" true same;
+  try Sys.remove path with Sys_error _ -> ()
+
 let () =
   A.run "Kaun.Checkpoint"
     [
@@ -93,5 +129,6 @@ let () =
         [
           A.test_case "save_and_load" `Quick test_save_and_load;
           A.test_case "checkpoint_manager" `Quick test_checkpoint_manager;
+          A.test_case "sequential_roundtrip" `Quick test_sequential_roundtrip;
         ] );
     ]

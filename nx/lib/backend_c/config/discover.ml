@@ -207,7 +207,10 @@ let () =
         List.filter (fun flag -> flag <> "-fopenmp") openblas_conf.libs
       in
       let c_flags = opt_flags @ openblas_cflags in
-      let libs = openblas_libs @ openmp_libs @ default_ldlibs in
+      let libs =
+        (if system = "macosx" then [ "-framework"; "Accelerate" ] else [])
+        @ openblas_libs @ openmp_libs @ default_ldlibs
+      in
 
       if not (C.c_test c test_blas ~c_flags ~link_flags:libs) then (
         Printf.printf

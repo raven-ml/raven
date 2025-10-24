@@ -100,6 +100,10 @@ module Safe = struct
   let save_npz ?(overwrite = true) path items =
     Nx_npy.save_npz ~overwrite path items
 
+  (* Text I/O *)
+  let save_txt = Nx_txt.save
+  let load_txt = Nx_txt.load
+
   (* Conversions from packed arrays *)
 
   let as_float16 = Packed_nx.as_float16
@@ -164,3 +168,10 @@ let load_safetensor path = Safe.load_safetensor path |> unwrap_result
 
 let save_safetensor ?overwrite path items =
   Safe.save_safetensor ?overwrite path items |> unwrap_result
+
+let save_txt ?sep ?append ?newline ?header ?footer ?comments ~out arr =
+  Safe.save_txt ?sep ?append ?newline ?header ?footer ?comments ~out arr
+  |> unwrap_result
+
+let load_txt ?sep ?comments ?skiprows ?max_rows dtype path =
+  Safe.load_txt ?sep ?comments ?skiprows ?max_rows dtype path |> unwrap_result

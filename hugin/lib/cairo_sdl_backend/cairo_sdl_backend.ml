@@ -43,7 +43,12 @@ let show canvas =
                 | `Exposed ->
                     Printf.printf "Window exposed event\n%!";
                     render figure_to_show canvas
+                | `Close -> quit := true
                 | _ -> ())
+            | `Key_down ->
+                let keycode = Usdl.get_event_keycode event in
+                if keycode = Usdl.Keycode.escape || keycode = Usdl.Keycode.q
+                then quit := true
             | _ -> ())
         | Ok false -> quit := true
       done;

@@ -1,0 +1,7 @@
+(library
+ (name xdg)
+ (public_name nx-datasets.xdg)
+ (libraries unix)
+ (foreign_stubs
+  (language c)
+  (names xdg_stubs)))

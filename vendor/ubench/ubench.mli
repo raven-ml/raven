@@ -141,6 +141,7 @@ type statistics = {
 type bench_data = {
   measurements : measurement list;  (** Raw measurement data *)
   time_stats : statistics;  (** Time per run statistics *)
+  wall_stats : statistics;  (** Wall-clock time per run statistics *)
   memory_stats : statistics;  (** Memory per run statistics *)
   regressions : regression_result list;  (** Regression analysis results *)
   total_time : float;  (** Total benchmark execution time *)
@@ -152,6 +153,7 @@ type analysis_result = {
   name : string;  (** Benchmark name *)
   measurements : measurement list;  (** Raw measurement data *)
   time_stats : statistics;  (** Time per run statistics *)
+  wall_stats : statistics;  (** Wall-clock time per run statistics *)
   memory_stats : statistics;  (** Memory per run statistics *)
   regressions : regression_result list;  (** Regression analysis results *)
   total_time : float;  (** Total benchmark execution time *)

@@ -2,6 +2,43 @@ type uint8_t = Rune.uint8_t
 type int16_t = Rune.int16_t
 type float32_t = Rune.float32_t
 
+let float_range size = Rune.arange_f Rune.float32 0.0 (float size) 1.0
+
+let compute_nearest_indices ~size_in ~size_out =
+  if size_out <= 0 then
+    invalid_arg "compute_nearest_indices: size_out must be positive";
+  if size_in <= 0 then
+    invalid_arg "compute_nearest_indices: size_in must be positive";
+  let shape = [| size_out |] in
+  if size_out = 1 || size_in = 1 then Rune.full Rune.int32 shape Int32.zero
+  else
+    let scale = float size_in /. float size_out in
+    let coords = float_range size_out in
+    let src = Rune.sub_s (Rune.mul_s (Rune.add_s coords 0.5) scale) 0.5 in
+    let src_clipped = Rune.clip ~min:0.0 ~max:(float (size_in - 1)) src in
+    Rune.astype Rune.int32 (Rune.round src_clipped)
+
+let compute_linear_axis ~size_in ~size_out =
+  if size_out <= 0 then
+    invalid_arg "compute_linear_axis: size_out must be positive";
+  if size_in <= 0 then
+    invalid_arg "compute_linear_axis: size_in must be positive";
+  let shape = [| size_out |] in
+  if size_out = 1 || size_in = 1 then
+    let zeros_i = Rune.full Rune.int32 shape Int32.zero in
+    let zeros_f = Rune.full Rune.float32 shape 0.0 in
+    (zeros_i, zeros_i, zeros_f)
+  else
+    let scale = float (size_in - 1) /. float (size_out - 1) in
+    let src = Rune.mul_s (float_range size_out) scale in
+    let idx0 = src |> Rune.floor |> Rune.astype Rune.int32 in
+    let one = Rune.scalar_like idx0 Int32.(of_int 1) in
+    let max_idx = Rune.scalar_like idx0 Int32.(of_int (size_in - 1)) in
+    let idx1 = Rune.minimum (Rune.add idx0 one) max_idx in
+    let idx0_f = Rune.astype Rune.float32 idx0 in
+    let delta = Rune.sub src idx0_f in
+    (idx0, idx1, delta)
+
 let get_dims img =
   match Rune.shape img with
   | [| h; w |] -> `Gray (h, w)
@@ -19,77 +56,167 @@ let flip_axis img axis =
     let axes = [ axis ] in
     Rune.flip ~axes img
 
-let flip_vertical img = if Rune.ndim img < 1 then img else flip_axis img 0
-let flip_horizontal img = if Rune.ndim img < 2 then img else flip_axis img 1
+let flip_vertical img =
+  let shape = Rune.shape img in
+  match Array.length shape with
+  | 0 | 1 -> img
+  | 2 -> flip_axis img 0
+  | 3 ->
+      let channels = shape.(2) in
+      if channels = 1 || channels = 3 || channels = 4 then flip_axis img 0
+      else flip_axis img 1
+  | 4 -> flip_axis img 1
+  | _ -> img
+
+let flip_horizontal img =
+  let shape = Rune.shape img in
+  match Array.length shape with
+  | 0 | 1 -> img
+  | 2 -> flip_axis img 1
+  | 3 ->
+      let channels = shape.(2) in
+      if channels = 1 || channels = 3 || channels = 4 then flip_axis img 1
+      else flip_axis img 2
+  | 4 -> flip_axis img 2
+  | _ -> img
 
 let crop ~y ~x ~height ~width img =
-  match get_dims img with
-  | `Gray (h, w) ->
+  let shape = Rune.shape img in
+  let invalidate dims =
+    invalid_arg
+      (Printf.sprintf
+         "Invalid crop parameters: y=%d, x=%d, h=%d, w=%d for image %s" y x
+         height width dims)
+  in
+  match Array.length shape with
+  | 2 ->
+      let h = shape.(0) in
+      let w = shape.(1) in
       if
         y < 0 || x < 0 || height <= 0 || width <= 0
         || y + height > h
         || x + width > w
-      then
-        invalid_arg
-          (Printf.sprintf
-             "Invalid crop parameters: y=%d, x=%d, h=%d, w=%d for image [%dx%d]"
-             y x height width h w)
+      then invalidate (Printf.sprintf "[%dx%d]" h w)
       else Rune.slice [ Rune.R (y, y + height); Rune.R (x, x + width) ] img
-  | `Color (h, w, c) ->
+  | 3 ->
+      let d0 = shape.(0) in
+      let d1 = shape.(1) in
+      let d2 = shape.(2) in
+      if d2 = 1 || d2 = 3 || d2 = 4 then
+        let h = d0 and w = d1 and c = d2 in
+        if
+          y < 0 || x < 0 || height <= 0 || width <= 0
+          || y + height > h
+          || x + width > w
+        then invalidate (Printf.sprintf "[%dx%dx%d]" h w c)
+        else
+          Rune.slice
+            [ Rune.R (y, y + height); Rune.R (x, x + width); Rune.A ]
+            img
+      else
+        let n = d0 and h = d1 and w = d2 in
+        if
+          y < 0 || x < 0 || height <= 0 || width <= 0
+          || y + height > h
+          || x + width > w
+        then invalidate (Printf.sprintf "[%dx%dx%d]" n h w)
+        else
+          Rune.slice
+            [ Rune.A; Rune.R (y, y + height); Rune.R (x, x + width) ]
+            img
+  | 4 ->
+      let n = shape.(0) in
+      let h = shape.(1) in
+      let w = shape.(2) in
+      let c = shape.(3) in
       if
         y < 0 || x < 0 || height <= 0 || width <= 0
         || y + height > h
         || x + width > w
-      then
-        invalid_arg
-          (Printf.sprintf
-             "Invalid crop parameters: y=%d, x=%d, h=%d, w=%d for image \
-              [%dx%dx%d]"
-             y x height width h w c)
+      then invalidate (Printf.sprintf "[%dx%dx%dx%d]" n h w c)
       else
         Rune.slice
-          [ Rune.R (y, y + height); Rune.R (x, x + width); Rune.R (0, c) ]
+          [ Rune.A; Rune.R (y, y + height); Rune.R (x, x + width); Rune.A ]
           img
+  | _ ->
+      failwith "Unsupported image dimensions: expected 2D/3D/4D tensor for crop"
 
 let to_grayscale img =
-  match get_dims img with
-  | `Gray (_, _) -> img
-  | `Color (_h, _w, c) ->
-      if c <> 3 then
-        failwith "to_grayscale requires 3-channel (RGB) input image"
+  let shape = Rune.shape img in
+  match Array.length shape with
+  | 0 | 1 | 2 -> img
+  | 3 ->
+      let channels = shape.(2) in
+      if channels <> 3 then img
       else
+        let weights =
+          Rune.reshape [| 1; 1; 3 |]
+            (Rune.create Rune.float32 [| 3 |] [| 0.299; 0.587; 0.114 |])
+        in
         let img_f = Rune.astype Rune.float32 img in
-        let r = Rune.slice [ A; A; Rune.I 0 ] img_f in
-        let g = Rune.slice [ A; A; Rune.I 1 ] img_f in
-        let b = Rune.slice [ A; A; Rune.I 2 ] img_f in
         let gray_f =
-          Rune.add
-            (Rune.add (Rune.mul_s r 0.299) (Rune.mul_s g 0.587))
-            (Rune.mul_s b 0.114)
+          Rune.mul img_f weights |> fun weighted ->
+          Rune.sum ~axes:[ 2 ] weighted
         in
         Rune.astype Rune.uint8 gray_f
+  | 4 ->
+      let channels = shape.(3) in
+      if channels <> 3 then img
+      else
+        let weights =
+          Rune.reshape [| 1; 1; 1; 3 |]
+            (Rune.create Rune.float32 [| 3 |] [| 0.299; 0.587; 0.114 |])
+        in
+        let img_f = Rune.astype Rune.float32 img in
+        let gray_f =
+          Rune.mul img_f weights |> fun weighted ->
+          Rune.sum ~axes:[ 3 ] weighted
+        in
+        Rune.astype Rune.uint8 gray_f
+  | _ -> failwith "Unsupported image dimensions for to_grayscale"
 
 let swap_channels img =
-  match get_dims img with
-  | `Gray (_, _) -> img
-  | `Color (_h, _w, c) ->
-      if c < 3 then img
+  let shape = Rune.shape img in
+  match Array.length shape with
+  | 0 | 1 | 2 -> img
+  | 3 ->
+      let channels = shape.(2) in
+      if channels < 3 then img
       else
-        (* Use concatenation instead of element-wise operations *)
-        (* Use R[i; i+1] to keep the dimension (end is exclusive) *)
-        let chan0 = Rune.slice [ A; A; R (0, 1) ] img in
-        let chan1 = Rune.slice [ A; A; R (1, 2) ] img in
-        let chan2 = Rune.slice [ A; A; R (2, 3) ] img in
-        let chans_rest =
-          if c > 3 then Some (Rune.slice [ A; A; R (3, c) ] img) else None
+        let chan0 = Rune.slice [ Rune.A; Rune.A; Rune.R (0, 1) ] img in
+        let chan1 = Rune.slice [ Rune.A; Rune.A; Rune.R (1, 2) ] img in
+        let chan2 = Rune.slice [ Rune.A; Rune.A; Rune.R (2, 3) ] img in
+        let rest =
+          if channels > 3 then
+            Some (Rune.slice [ Rune.A; Rune.A; Rune.R (3, channels) ] img)
+          else None
         in
-
-        let swapped_chans =
-          match chans_rest with
+        let channels_swapped =
+          match rest with
           | None -> [ chan2; chan1; chan0 ]
-          | Some rest -> [ chan2; chan1; chan0; rest ]
+          | Some r -> [ chan2; chan1; chan0; r ]
         in
-        Rune.concatenate ~axis:2 swapped_chans
+        Rune.concatenate ~axis:2 channels_swapped
+  | 4 ->
+      let channels = shape.(3) in
+      if channels < 3 then img
+      else
+        let chan0 = Rune.slice [ Rune.A; Rune.A; Rune.A; Rune.R (0, 1) ] img in
+        let chan1 = Rune.slice [ Rune.A; Rune.A; Rune.A; Rune.R (1, 2) ] img in
+        let chan2 = Rune.slice [ Rune.A; Rune.A; Rune.A; Rune.R (2, 3) ] img in
+        let rest =
+          if channels > 3 then
+            Some
+              (Rune.slice [ Rune.A; Rune.A; Rune.A; Rune.R (3, channels) ] img)
+          else None
+        in
+        let channels_swapped =
+          match rest with
+          | None -> [ chan2; chan1; chan0 ]
+          | Some r -> [ chan2; chan1; chan0; r ]
+        in
+        Rune.concatenate ~axis:3 channels_swapped
+  | _ -> failwith "Unsupported image dimensions for swap_channels"
 
 let rgb_to_bgr = swap_channels
 let bgr_to_rgb = swap_channels
@@ -108,12 +235,86 @@ let to_uint8 (img : float32_t) =
 type interpolation = Nearest | Linear
 
 let resize ?(interpolation = Nearest) ~height:out_h ~width:out_w img =
-  ignore interpolation;
-  (* TODO: implement interpolation *)
   if out_h <= 0 || out_w <= 0 then
     invalid_arg "Output height and width must be positive";
-  (* For now, just return the original image *)
-  img
+
+  if Rune.dtype img <> Rune.uint8 then
+    failwith "resize currently supports uint8 images";
+
+  let resize_nhwc input =
+    let shape = Rune.shape input in
+    if Array.length shape <> 4 then failwith "Expected NHWC tensor";
+    let in_h = shape.(1) in
+    let in_w = shape.(2) in
+    match interpolation with
+    | Nearest ->
+        let y_idx = compute_nearest_indices ~size_in:in_h ~size_out:out_h in
+        let x_idx = compute_nearest_indices ~size_in:in_w ~size_out:out_w in
+        input |> Rune.take ~axis:1 y_idx |> Rune.take ~axis:2 x_idx
+    | Linear ->
+        let input_f = Rune.astype Rune.float32 input in
+        let y0, y1, dy = compute_linear_axis ~size_in:in_h ~size_out:out_h in
+        let x0, x1, dx = compute_linear_axis ~size_in:in_w ~size_out:out_w in
+        let top = Rune.take ~axis:1 y0 input_f in
+        let bottom = Rune.take ~axis:1 y1 input_f in
+        let top_left = Rune.take ~axis:2 x0 top in
+        let top_right = Rune.take ~axis:2 x1 top in
+        let bottom_left = Rune.take ~axis:2 x0 bottom in
+        let bottom_right = Rune.take ~axis:2 x1 bottom in
+        let dx_b = Rune.reshape [| 1; 1; out_w; 1 |] dx in
+        let one_minus_dx =
+          let ones = Rune.ones Rune.float32 (Rune.shape dx_b) in
+          Rune.sub ones dx_b
+        in
+        let top_interp =
+          Rune.add (Rune.mul one_minus_dx top_left) (Rune.mul dx_b top_right)
+        in
+        let bottom_interp =
+          Rune.add
+            (Rune.mul one_minus_dx bottom_left)
+            (Rune.mul dx_b bottom_right)
+        in
+        let dy_b = Rune.reshape [| 1; out_h; 1; 1 |] dy in
+        let one_minus_dy =
+          let ones = Rune.ones Rune.float32 (Rune.shape dy_b) in
+          Rune.sub ones dy_b
+        in
+        let blended =
+          Rune.add
+            (Rune.mul one_minus_dy top_interp)
+            (Rune.mul dy_b bottom_interp)
+        in
+        let clipped = Rune.clip ~min:0.0 ~max:255.0 blended in
+        let rounded = Rune.round clipped in
+        Rune.astype Rune.uint8 rounded
+  in
+
+  let shape = Rune.shape img in
+  match Array.length shape with
+  | 2 ->
+      let h = shape.(0) in
+      let w = shape.(1) in
+      let nhwc = Rune.reshape [| 1; h; w; 1 |] img in
+      let resized = resize_nhwc nhwc in
+      Rune.reshape [| out_h; out_w |] resized
+  | 3 ->
+      let d0 = shape.(0) in
+      let d1 = shape.(1) in
+      let d2 = shape.(2) in
+      if d2 = 1 || d2 = 3 || d2 = 4 then
+        let nhwc = Rune.reshape [| 1; d0; d1; d2 |] img in
+        let resized = resize_nhwc nhwc in
+        Rune.reshape [| out_h; out_w; d2 |] resized
+      else
+        let nhwc = Rune.reshape [| d0; d1; d2; 1 |] img in
+        let resized = resize_nhwc nhwc in
+        Rune.reshape [| d0; out_h; out_w |] resized
+  | 4 ->
+      let n = shape.(0) in
+      let c = shape.(3) in
+      let resized = resize_nhwc img in
+      Rune.reshape [| n; out_h; out_w; c |] resized
+  | _ -> failwith "Unsupported image dimensions for resize"
 
 let generate_gaussian_kernel size sigma =
   let sigma =
@@ -351,18 +552,53 @@ let median_blur ~ksize (img : uint8_t) : uint8_t =
   if ksize <= 0 || ksize mod 2 = 0 then
     invalid_arg "Kernel size (ksize) must be positive and odd";
 
-  match get_dims img with
-  | `Color _ -> failwith "Median blur currently only supports grayscale images"
-  | `Gray (_h, _w) ->
-      (* Use uniform filter as approximation for median filter *)
-      (* This is not a true median filter but avoids element-wise access *)
-      let kernel = Rune.ones Rune.float32 [| ksize; ksize |] in
-      let kernel_normalized =
-        Rune.div_s kernel (float_of_int (ksize * ksize))
+  let pad = ksize / 2 in
+  let shape = Rune.shape img in
+  match Array.length shape with
+  | 2 ->
+      let h = shape.(0) in
+      let w = shape.(1) in
+      let padded = Rune.pad [| (pad, pad); (pad, pad) |] 0 img in
+      let windows =
+        let acc = ref [] in
+        for dy = 0 to ksize - 1 do
+          for dx = 0 to ksize - 1 do
+            let slice =
+              Rune.slice [ Rune.R (dy, dy + h); Rune.R (dx, dx + w) ] padded
+            in
+            acc := slice :: !acc
+          done
+        done;
+        List.rev !acc
       in
-      let img_f32 = Rune.astype Rune.float32 img in
-      let filtered = convolve2d_safe kernel_normalized img_f32 in
-      Rune.astype Rune.uint8 filtered
+      let stacked = Rune.stack ~axis:0 windows in
+      let sorted, _ = Rune.sort ~axis:0 stacked in
+      let median_idx = ksize * ksize / 2 in
+      Rune.slice [ Rune.I median_idx; Rune.A; Rune.A ] sorted
+  | 3 ->
+      let h = shape.(1) in
+      let w = shape.(2) in
+      let padded = Rune.pad [| (0, 0); (pad, pad); (pad, pad) |] 0 img in
+      let windows =
+        let acc = ref [] in
+        for dy = 0 to ksize - 1 do
+          for dx = 0 to ksize - 1 do
+            let slice =
+              Rune.slice
+                [ Rune.A; Rune.R (dy, dy + h); Rune.R (dx, dx + w) ]
+                padded
+            in
+            acc := slice :: !acc
+          done
+        done;
+        List.rev !acc
+      in
+      let stacked = Rune.stack ~axis:0 windows in
+      let sorted, _ = Rune.sort ~axis:0 stacked in
+      let median_idx = ksize * ksize / 2 in
+      Rune.slice [ Rune.I median_idx; Rune.A; Rune.A; Rune.A ] sorted
+  | _ ->
+      failwith "Median blur currently only supports 2D or 3D grayscale images"
 
 let blur = box_filter
 
@@ -397,36 +633,77 @@ let morph_op ~op ~kernel (img : uint8_t) : uint8_t =
   if Rune.dtype img <> Rune.uint8 then
     failwith "Morphological operations currently require uint8 input";
 
-  match get_dims img with
-  | `Color _ ->
-      failwith "Morphological operations currently support grayscale only"
-  | `Gray (h, w) -> (
-      let kh, kw =
-        match Rune.shape kernel with
-        | [| kh; kw |] -> (kh, kw)
-        | _ -> failwith "Kernel must be 2D"
+  let kernel_shape = Rune.shape kernel in
+  let kh, kw =
+    match kernel_shape with
+    | [| kh; kw |] -> (kh, kw)
+    | _ -> failwith "Kernel must be 2D"
+  in
+
+  if kh <= 0 || kw <= 0 || kh mod 2 = 0 || kw mod 2 = 0 then
+    failwith "Kernel dimensions must be positive and odd";
+
+  let pad_h = kh / 2 in
+  let pad_w = kw / 2 in
+
+  let active_positions =
+    let positions = ref [] in
+    for i = 0 to kh - 1 do
+      for j = 0 to kw - 1 do
+        if Rune.item [ i; j ] kernel <> 0 then positions := (i, j) :: !positions
+      done
+    done;
+    match List.rev !positions with
+    | [] -> invalid_arg "Kernel must contain at least one non-zero element"
+    | xs -> xs
+  in
+
+  let reduce_max slices =
+    match slices with
+    | [] -> failwith "Empty slice list"
+    | first :: rest ->
+        List.fold_left (fun acc slice -> Rune.maximum acc slice) first rest
+  in
+  let reduce_min slices =
+    match slices with
+    | [] -> failwith "Empty slice list"
+    | first :: rest ->
+        List.fold_left (fun acc slice -> Rune.minimum acc slice) first rest
+  in
+
+  match Array.length (Rune.shape img) with
+  | 2 -> (
+      let h = (Rune.shape img).(0) in
+      let w = (Rune.shape img).(1) in
+      let pad_value = match op with `Max -> 0 | `Min -> 255 in
+      let padded =
+        Rune.pad [| (pad_h, pad_h); (pad_w, pad_w) |] pad_value img
       in
-
-      if kh <= 0 || kw <= 0 || kh mod 2 = 0 || kw mod 2 = 0 then
-        failwith "Kernel dimensions must be positive and odd";
-
-      match op with
-      | `Max ->
-          (* Dilation can use max pooling directly when kernel is all ones *)
-          let img_4d = Rune.reshape [| 1; 1; h; w |] img in
-          let result_4d, _ =
-            Rune.max_pool2d ~kernel_size:(kh, kw) ~stride:(1, 1)
-              ~padding_spec:`Same img_4d
-          in
-          Rune.reshape [| h; w |] result_4d
-      | `Min ->
-          (* Erosion can use min pooling directly when kernel is all ones *)
-          let img_4d = Rune.reshape [| 1; 1; h; w |] img in
-          let result_4d, _ =
-            Rune.min_pool2d ~kernel_size:(kh, kw) ~stride:(1, 1)
-              ~padding_spec:`Same img_4d
-          in
-          Rune.reshape [| h; w |] result_4d)
+      let slices =
+        List.map
+          (fun (dy, dx) ->
+            Rune.slice [ Rune.R (dy, dy + h); Rune.R (dx, dx + w) ] padded)
+          active_positions
+      in
+      match op with `Max -> reduce_max slices | `Min -> reduce_min slices)
+  | 3 -> (
+      let shape = Rune.shape img in
+      let h = shape.(1) in
+      let w = shape.(2) in
+      let pad_value = match op with `Max -> 0 | `Min -> 255 in
+      let padded =
+        Rune.pad [| (0, 0); (pad_h, pad_h); (pad_w, pad_w) |] pad_value img
+      in
+      let slices =
+        List.map
+          (fun (dy, dx) ->
+            Rune.slice
+              [ Rune.A; Rune.R (dy, dy + h); Rune.R (dx, dx + w) ]
+              padded)
+          active_positions
+      in
+      match op with `Max -> reduce_max slices | `Min -> reduce_min slices)
+  | _ -> failwith "Morphological operations currently support 2D or 3D tensors"
 
 let erode ~kernel img = morph_op ~op:`Min ~kernel img
 let dilate ~kernel img = morph_op ~op:`Max ~kernel img

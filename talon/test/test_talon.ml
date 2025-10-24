@@ -362,7 +362,7 @@ let test_agg_cumulative () =
   check_int "diff length" 3 (num_rows df_diff)
 
 let test_agg_nulls () =
-  let df = create [ ("x", Col.float32_list [ 1.0; Float.nan; 3.0 ]) ] in
+  let df = create [ ("x", Col.float32_opt [| Some 1.0; None; Some 3.0 |]) ] in
 
   let nulls = Agg.is_null df "x" in
   check_bool "null detection" true nulls.(1);
@@ -553,6 +553,33 @@ let test_fill_missing_helper () =
       check_float "filled 2" 3.0 arr.(2)
   | None -> Alcotest.fail "Expected float array"
 
+let test_fillna_replaces_nulls () =
+  let df =
+    create
+      [
+        ("a", Col.float32_opt [| Some 1.0; None; Some 3.0 |]);
+        ("b", Col.int32_opt [| Some 10l; None; Some 30l |]);
+      ]
+  in
+  let filled_a = Agg.fillna df "a" ~value:(Col.float32 [| 0.0 |]) in
+  (match filled_a with
+  | Col.P (Nx.Float32, tensor, mask_opt) ->
+      let arr : float array = Nx.to_array tensor in
+      check_float "filled a[0]" 1.0 arr.(0);
+      check_float "filled a[1]" 0.0 arr.(1);
+      check_float "filled a[2]" 3.0 arr.(2);
+      check_option_bool_array "mask cleared for a" None mask_opt
+  | _ -> Alcotest.fail "Expected float32 column");
+  let filled_b = Agg.fillna df "b" ~value:(Col.int32_list [ 0l; 99l; 0l ]) in
+  match filled_b with
+  | Col.P (Nx.Int32, tensor, mask_opt) ->
+      let arr : int32 array = Nx.to_array tensor in
+      check_int "filled b[0]" 10 (Int32.to_int arr.(0));
+      check_int "filled b[1]" 99 (Int32.to_int arr.(1));
+      check_int "filled b[2]" 30 (Int32.to_int arr.(2));
+      check_option_bool_array "mask cleared for b" None mask_opt
+  | _ -> Alcotest.fail "Expected int32 column"
+
 let test_null_count_helper () =
   let df =
     create
@@ -591,6 +618,7 @@ let option_tests =
     ("to_options", `Quick, test_to_options);
     ("drop_nulls", `Quick, test_drop_nulls_helper);
     ("fill_missing", `Quick, test_fill_missing_helper);
+    ("fillna", `Quick, test_fillna_replaces_nulls);
     ("null_count", `Quick, test_null_count_helper);
     ("mask_aware_agg", `Quick, test_mask_aware_aggregations);
   ]
@@ -895,7 +923,7 @@ let test_rowagg_sum () =
   let df =
     create
       [
-        ("a", Col.float64_list [ 1.0; 2.0; Float.nan ]);
+        ("a", Col.float64_opt [| Some 1.0; Some 2.0; None |]);
         ("b", Col.float64_list [ 3.0; 4.0; 5.0 ]);
         ("c", Col.int32_list [ 5l; 6l; 7l ]);
       ]
@@ -912,8 +940,119 @@ let test_rowagg_sum () =
       check_float "Row 1 sum" 12.0 arr.(1);
       (* 2 + 4 + 6 *)
       check_float "Row 2 sum" 12.0 arr.(2)
-      (* NaN + 5 + 7, NaN skipped *)
+      (* None + 5 + 7, missing skipped *)
   | None -> Alcotest.fail "row_sum should exist"
+
+let rowagg_skipna_fixture () =
+  create
+    [
+      ("float_opt", Col.float64_opt [| Some 1.0; None; Some 5.0 |]);
+      ("int_opt", Col.int32_opt [| Some 2l; Some 3l; None |]);
+      ("baseline", Col.float64_list [ 10.0; 20.0; 30.0 ]);
+    ]
+
+let unpack_float64_column col label =
+  match col with
+  | Col.P (Nx.Float64, tensor, _) ->
+      let arr : float array = Nx.to_array tensor in
+      arr
+  | _ -> Alcotest.fail ("expected float64 column for " ^ label)
+
+let test_rowagg_sum_skipna_false () =
+  let df = rowagg_skipna_fixture () in
+  let names = [ "float_opt"; "int_opt"; "baseline" ] in
+  let sum_skipna_true = Row.Agg.sum df ~names in
+  let sum_skipna_false = Row.Agg.sum df ~skipna:false ~names in
+  let true_arr =
+    unpack_float64_column sum_skipna_true "Row.Agg.sum skipna=true"
+  in
+  let false_arr =
+    unpack_float64_column sum_skipna_false "Row.Agg.sum skipna=false"
+  in
+  check_float "skipna=true row0 sum" 13.0 true_arr.(0);
+  check_float "skipna=true row1 sum" 23.0 true_arr.(1);
+  check_float "skipna=true row2 sum" 35.0 true_arr.(2);
+  check_float "skipna=false row0 sum" 13.0 false_arr.(0);
+  check_bool "skipna=false row1 sum is nan" true (Float.is_nan false_arr.(1));
+  check_bool "skipna=false row2 sum is nan" true (Float.is_nan false_arr.(2))
+
+let test_rowagg_mean_skipna_false () =
+  let df = rowagg_skipna_fixture () in
+  let names = [ "float_opt"; "int_opt"; "baseline" ] in
+  let mean_skipna_true = Row.Agg.mean df ~names in
+  let mean_skipna_false = Row.Agg.mean df ~skipna:false ~names in
+  let true_arr =
+    unpack_float64_column mean_skipna_true "Row.Agg.mean skipna=true"
+  in
+  let false_arr =
+    unpack_float64_column mean_skipna_false "Row.Agg.mean skipna=false"
+  in
+  check_float "skipna=true row0 mean" (13. /. 3.) true_arr.(0);
+  check_float "skipna=true row1 mean" 11.5 true_arr.(1);
+  check_float "skipna=true row2 mean" 17.5 true_arr.(2);
+  check_float "skipna=false row0 mean" (13. /. 3.) false_arr.(0);
+  check_bool "skipna=false row1 mean is nan" true (Float.is_nan false_arr.(1));
+  check_bool "skipna=false row2 mean is nan" true (Float.is_nan false_arr.(2))
+
+let test_rowagg_min_skipna_false () =
+  let df = rowagg_skipna_fixture () in
+  let names = [ "float_opt"; "int_opt"; "baseline" ] in
+  let min_skipna_true = Row.Agg.min df ~names in
+  let min_skipna_false = Row.Agg.min df ~skipna:false ~names in
+  let true_arr =
+    unpack_float64_column min_skipna_true "Row.Agg.min skipna=true"
+  in
+  let false_arr =
+    unpack_float64_column min_skipna_false "Row.Agg.min skipna=false"
+  in
+  check_float "skipna=true row0 min" 1.0 true_arr.(0);
+  check_float "skipna=true row1 min" 3.0 true_arr.(1);
+  check_float "skipna=true row2 min" 5.0 true_arr.(2);
+  check_float "skipna=false row0 min" 1.0 false_arr.(0);
+  check_bool "skipna=false row1 min is nan" true (Float.is_nan false_arr.(1));
+  check_bool "skipna=false row2 min is nan" true (Float.is_nan false_arr.(2))
+
+let test_rowagg_max_skipna_false () =
+  let df = rowagg_skipna_fixture () in
+  let names = [ "float_opt"; "int_opt"; "baseline" ] in
+  let max_skipna_true = Row.Agg.max df ~names in
+  let max_skipna_false = Row.Agg.max df ~skipna:false ~names in
+  let true_arr =
+    unpack_float64_column max_skipna_true "Row.Agg.max skipna=true"
+  in
+  let false_arr =
+    unpack_float64_column max_skipna_false "Row.Agg.max skipna=false"
+  in
+  check_float "skipna=true row0 max" 10.0 true_arr.(0);
+  check_float "skipna=true row1 max" 20.0 true_arr.(1);
+  check_float "skipna=true row2 max" 30.0 true_arr.(2);
+  check_float "skipna=false row0 max" 10.0 false_arr.(0);
+  check_bool "skipna=false row1 max is nan" true (Float.is_nan false_arr.(1));
+  check_bool "skipna=false row2 max is nan" true (Float.is_nan false_arr.(2))
+
+let test_rowagg_bool_reducers () =
+  let df =
+    create
+      [
+        ("flag_a", Col.bool_opt [| Some true; Some true; Some false |]);
+        ("flag_b", Col.bool_opt [| Some true; Some false; Some false |]);
+      ]
+  in
+  let all_col = Row.Agg.all df ~names:[ "flag_a"; "flag_b" ] in
+  let any_col = Row.Agg.any df ~names:[ "flag_a"; "flag_b" ] in
+  match (all_col, any_col) with
+  | Col.B all_arr, Col.B any_arr ->
+      let expect_bool msg expected = function
+        | Some value -> check_bool msg expected value
+        | None -> Alcotest.fail (msg ^ " should be Some")
+      in
+      expect_bool "Row.Agg.all row0" true all_arr.(0);
+      expect_bool "Row.Agg.all row1" false all_arr.(1);
+      expect_bool "Row.Agg.all row2" false all_arr.(2);
+      expect_bool "Row.Agg.any row0" true any_arr.(0);
+      expect_bool "Row.Agg.any row1" true any_arr.(1);
+      expect_bool "Row.Agg.any row2" false any_arr.(2)
+  | _ -> Alcotest.fail "expected boolean option columns"
 
 let test_row_number () =
   let df =
@@ -1105,6 +1244,34 @@ let test_merge () =
   check_bool "has x column" true (has_column result "x");
   check_bool "has y column" true (has_column result "y")
 
+let test_join_preserves_null_masks () =
+  let left =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 2l ]);
+        ("left_val", Col.int32_opt [| Some 10l; None |]);
+      ]
+  in
+  let right =
+    create
+      [
+        ("id", Col.int32_list [ 1l ]);
+        ("right_val", Col.int32_opt [| Some 100l |]);
+      ]
+  in
+  let joined = join left right ~on:"id" ~how:`Left () in
+  check_option_bool_array "left mask preserved"
+    (Some [| false; true |])
+    (mask_of_column joined "left_val");
+  check_option_bool_array "right mask populated"
+    (Some [| false; true |])
+    (mask_of_column joined "right_val");
+  match to_int32_options joined "right_val" with
+  | Some arr ->
+      Alcotest.(check (option int32)) "right row 0" (Some 100l) arr.(0);
+      Alcotest.(check (option int32)) "right row 1" None arr.(1)
+  | None -> Alcotest.fail "right_val column should exist"
+
 let test_pivot () =
   let df =
     create
@@ -1130,6 +1297,32 @@ let test_pivot () =
       check_float "Feb A sales" 120.0 a_vals.(1);
       check_float "Feb B sales" 180.0 b_vals.(1)
   | _ -> Alcotest.fail "pivot columns should exist"
+
+let test_pivot_numeric_index () =
+  let df =
+    create
+      [
+        ("id", Col.int32_list [ 1l; 1l; 2l; 2l ]);
+        ("category", Col.string_list [ "A"; "B"; "A"; "B" ]);
+        ("value", Col.float64_list [ 1.0; 2.0; 3.0; 4.0 ]);
+      ]
+  in
+  let pivoted =
+    pivot df ~index:"id" ~columns:"category" ~values:"value" ~agg_func:`Sum ()
+  in
+  check_int "numeric pivot rows" 2 (num_rows pivoted);
+  (match get_column_exn pivoted "id" with
+  | Col.S arr ->
+      check_option_string "first id" (Some "1") arr.(0);
+      check_option_string "second id" (Some "2") arr.(1)
+  | _ -> Alcotest.fail "expected string index column");
+  match (to_float64_array pivoted "A", to_float64_array pivoted "B") with
+  | Some a_vals, Some b_vals ->
+      check_float "id=1 A sum" 1.0 a_vals.(0);
+      check_float "id=2 A sum" 3.0 a_vals.(1);
+      check_float "id=1 B sum" 2.0 b_vals.(0);
+      check_float "id=2 B sum" 4.0 b_vals.(1)
+  | _ -> Alcotest.fail "pivot numeric columns should exist"
 
 let test_melt () =
   let df =
@@ -1197,7 +1390,9 @@ let join_reshape_tests =
     ("join inner", `Quick, test_join_inner);
     ("join left", `Quick, test_join_left);
     ("merge", `Quick, test_merge);
+    ("join preserves masks", `Quick, test_join_preserves_null_masks);
     ("pivot", `Quick, test_pivot);
+    ("pivot numeric index", `Quick, test_pivot_numeric_index);
     ("melt", `Quick, test_melt);
     ("join with suffixes", `Quick, test_join_with_suffixes);
   ]
@@ -1211,6 +1406,11 @@ let ergonomic_tests =
     ("Row.number", `Quick, test_row_number);
     ("Row.fold_list", `Quick, test_row_fold_list);
     ("Row.Agg.sum", `Quick, test_rowagg_sum);
+    ("rowagg_sum_skipna_false", `Quick, test_rowagg_sum_skipna_false);
+    ("rowagg_mean_skipna_false", `Quick, test_rowagg_mean_skipna_false);
+    ("rowagg_min_skipna_false", `Quick, test_rowagg_min_skipna_false);
+    ("rowagg_max_skipna_false", `Quick, test_rowagg_max_skipna_false);
+    ("rowagg_bool_reducers", `Quick, test_rowagg_bool_reducers);
     ("Row.Agg.dot", `Quick, test_rowagg_dot);
   ]
 

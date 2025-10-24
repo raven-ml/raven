@@ -296,14 +296,88 @@ let f1_score ?(threshold = 0.5) ?(averaging = Micro) ?(beta = 1.0) () =
     ~reset:(fun _ -> [])
 
 (* Placeholder implementations for complex metrics *)
-let auc_roc ?(num_thresholds = 200) ?(curve = false) () =
-  let _ = num_thresholds in
-  let _ = curve in
+let auc_roc () =
   create_custom ~name:"auc_roc"
     ~init:(fun () -> [])
-    ~update:(fun state ~predictions:_ ~targets:_ ?weights:_ () -> state)
-    ~compute:(fun _ ->
-      failwith "AUC-ROC not yet implemented - requires trapezoid integration")
+    ~update:(fun state ~predictions ~targets ?weights () ->
+      let predictions = Rune.reshape [| -1 |] predictions in
+      let targets = Rune.reshape [| -1 |] targets in
+      let dtype =
+        match state with
+        | [ preds_acc; _; _ ] -> Rune.dtype preds_acc
+        | _ -> Rune.dtype predictions
+      in
+      let predictions = Rune.cast dtype predictions in
+      let targets = Rune.cast dtype targets in
+      let weights =
+        match weights with
+        | Some w -> Rune.cast dtype (Rune.reshape [| -1 |] w)
+        | None -> Rune.ones dtype (Rune.shape predictions)
+      in
+      match state with
+      | [] -> [ predictions; targets; weights ]
+      | [ preds_acc; targets_acc; weights_acc ] ->
+          let preds_acc = Rune.concatenate ~axis:0 [ preds_acc; predictions ] in
+          let targets_acc = Rune.concatenate ~axis:0 [ targets_acc; targets ] in
+          let weights_acc = Rune.concatenate ~axis:0 [ weights_acc; weights ] in
+          [ preds_acc; targets_acc; weights_acc ]
+      | _ -> failwith "Invalid auc_roc state")
+    ~compute:(fun state ->
+      match state with
+      | [ preds; targets; weights ] ->
+          let dtype = Rune.dtype preds in
+          let ones = Rune.ones dtype (Rune.shape targets) in
+          let sorted_idx = Rune.argsort ~axis:0 ~descending:true preds in
+          let sorted_targets =
+            Rune.take_along_axis ~axis:0 sorted_idx targets
+          in
+          let sorted_weights =
+            Rune.take_along_axis ~axis:0 sorted_idx weights
+          in
+
+          let positives = Rune.mul sorted_targets sorted_weights in
+          let negatives =
+            Rune.mul (Rune.sub ones sorted_targets) sorted_weights
+          in
+
+          let cum_tp = Rune.cumsum ~axis:0 positives in
+          let cum_fp = Rune.cumsum ~axis:0 negatives in
+          let zero = scalar_tensor dtype 0.0 in
+          let cum_tp =
+            Rune.concatenate ~axis:0 [ Rune.reshape [| 1 |] zero; cum_tp ]
+          in
+          let cum_fp =
+            Rune.concatenate ~axis:0 [ Rune.reshape [| 1 |] zero; cum_fp ]
+          in
+
+          let total_pos = Rune.item [] (Rune.sum positives) in
+          let total_neg = Rune.item [] (Rune.sum negatives) in
+
+          let ratio cumulative total =
+            if Float.abs total < 1e-12 then
+              Rune.zeros dtype (Rune.shape cumulative)
+            else
+              let total_tensor = scalar_tensor dtype total in
+              Rune.div cumulative total_tensor
+          in
+
+          let tpr = ratio cum_tp total_pos in
+          let fpr = ratio cum_fp total_neg in
+
+          let n = Rune.size tpr in
+          if n < 2 then scalar_tensor dtype 0.0
+          else
+            let tail_fpr = Rune.slice [ Rune.R (1, n) ] fpr in
+            let head_fpr = Rune.slice [ Rune.R (0, n - 1) ] fpr in
+            let dx = Rune.sub tail_fpr head_fpr in
+
+            let tail_tpr = Rune.slice [ Rune.R (1, n) ] tpr in
+            let head_tpr = Rune.slice [ Rune.R (0, n - 1) ] tpr in
+            let avg_tpr =
+              Rune.mul (scalar_tensor dtype 0.5) (Rune.add tail_tpr head_tpr)
+            in
+            Rune.sum (Rune.mul dx avg_tpr)
+      | _ -> failwith "Invalid auc_roc state")
     ~reset:(fun _ -> [])
 
 let auc_pr ?(num_thresholds = 200) ?(curve = false) () =

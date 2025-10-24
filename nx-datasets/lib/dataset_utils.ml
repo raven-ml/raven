@@ -51,15 +51,19 @@ let mkdir_p path perm =
          initial_prefix components);
     ()
 
-module Xdg = struct
-  let home =
-    try Sys.getenv "HOME"
-    with Not_found -> failwith "HOME environment variable not set."
+let get_cache_base_dir ?(getenv = Sys.getenv_opt) () =
+  match getenv "RAVEN_CACHE_ROOT" with
+  | Some dir when dir <> "" -> dir
+  | _ ->
+      let xdg = Xdg.create ~env:getenv () in
+      Filename.concat (Xdg.cache_dir xdg) "raven"
 
-  let cache_base = home ^ "/.cache/ocaml-nx/datasets/"
-end
-
-let get_cache_dir dataset_name = Xdg.cache_base ^ dataset_name ^ "/"
+let get_cache_dir ?(getenv = Sys.getenv_opt) dataset_name =
+  let base = get_cache_base_dir ~getenv () in
+  let path = List.fold_left Filename.concat base [ "datasets"; dataset_name ] in
+  let sep = Filename.dir_sep.[0] in
+  if path <> "" && path.[String.length path - 1] = sep then path
+  else path ^ Filename.dir_sep
 
 let mkdir_p dir =
   try mkdir_p dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
@@ -77,7 +81,7 @@ let download_file url dest_path =
   h#set_timeout 300;
   (* 5 minutes *)
   (* Provide a user agent *)
-  h#set_useragent "ocaml-nx-datasets/1.0.0";
+  h#set_useragent "raven/1.0.0";
 
   let oc = open_out_bin dest_path in
   let result =

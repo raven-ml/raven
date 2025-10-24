@@ -61,6 +61,8 @@ let value_and_grads = Autodiff.value_and_grads
 let jvp = Autodiff.jvp
 let jvp_aux = Autodiff.jvp_aux
 let jvps = Autodiff.jvps
+let no_grad = Autodiff.no_grad
+let detach = Autodiff.detach
 
 (* ───── Gradient Checking ───── *)
 

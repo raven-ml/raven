@@ -3,6 +3,8 @@
   ; nx
   %{lib:nx:nx.cmi}
   %{lib:nx:nx.cma}
+  %{lib:nx.top:nx_top.cmi}
+  %{lib:nx.top:nx_top.cma}
   %{lib:nx.core:nx_core.cma}
   %{lib:nx.c:nx_c.cma}
   ; nx-io
@@ -26,12 +28,16 @@
   %{lib:base64:base64.cma}
   %{lib:hugin:hugin.cmi}
   %{lib:hugin:hugin.cma}
+  %{lib:hugin.top:hugin_top.cmi}
+  %{lib:hugin.top:hugin_top.cma}
   %{lib:cairo2:cairo.cma}
   %{lib:hugin.usdl:usdl.cma}
   ; rune
   %{lib:rune:rune.cma}
   %{lib:rune:rune.cmi}
   %{lib:rune.jit:rune_jit.cma}
+  %{lib:rune.top:rune_top.cmi}
+  %{lib:rune.top:rune_top.cma}
   ; kaun
   %{lib:kaun:kaun.cmi}
   %{lib:kaun:kaun.cma}
@@ -51,6 +57,8 @@
   (progn
    (copy %{lib:nx:nx.cmi} nx.cmi)
    (copy %{lib:nx:nx.cma} nx.cma)
+   (copy %{lib:nx.top:nx_top.cmi} nx_top.cmi)
+   (copy %{lib:nx.top:nx_top.cma} nx_top.cma)
    (copy %{lib:nx.core:nx_core.cma} nx_core.cma)
    (copy %{lib:nx.c:nx_c.cma} nx_c.cma)
    (copy %{lib:nx.io:nx_io.cmi} nx_io.cmi)
@@ -72,11 +80,15 @@
    (copy %{lib:base64:base64.cma} base64.cma)
    (copy %{lib:hugin:hugin.cmi} hugin.cmi)
    (copy %{lib:hugin:hugin.cma} hugin.cma)
+   (copy %{lib:hugin.top:hugin_top.cmi} hugin_top.cmi)
+   (copy %{lib:hugin.top:hugin_top.cma} hugin_top.cma)
    (copy %{lib:cairo2:cairo.cma} cairo.cma)
    (copy %{lib:hugin.usdl:usdl.cma} usdl.cma)
    (copy %{lib:rune:rune.cma} rune.cma)
    (copy %{lib:rune:rune.cmi} rune.cmi)
    (copy %{lib:rune.jit:rune_jit.cma} rune_jit.cma)
+   (copy %{lib:rune.top:rune_top.cmi} rune_top.cmi)
+   (copy %{lib:rune.top:rune_top.cma} rune_top.cma)
    (copy %{lib:kaun:kaun.cmi} kaun.cmi)
    (copy %{lib:kaun:kaun.cma} kaun.cma)
    (copy %{lib:kaun.datasets:kaun_datasets.cmi} kaun_datasets.cmi)

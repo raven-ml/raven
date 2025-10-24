@@ -472,6 +472,94 @@ let test_matrix_rank_tol () =
   let r = Nx.matrix_rank ~tol:1e-8 a in
   check int "matrix_rank with tol" 1 r
 
+let test_matrix_rank_hermitian () =
+  (* Create a symmetric matrix with known rank *)
+  let a =
+    Nx.create Nx.float32 [| 3; 3 |] [| 2.; 1.; 0.; 1.; 2.; 0.; 0.; 0.; 0. |]
+  in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian" 2 r;
+  (* Test that hermitian flag is actually used by checking it works on a non-square matrix *)
+  (* This will fail if hermitian flag is ignored because eigh requires square matrices *)
+  let non_square =
+    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+  in
+  check_raises "matrix_rank hermitian non-square"
+    (Failure "eig: input must be square matrix") (fun () ->
+      ignore (Nx.matrix_rank ~hermitian:true non_square))
+
+let test_matrix_rank_hermitian_negative () =
+  (* Test negative-definite matrix *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| -2.; 0.; 0.; -1. |] in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian negative" 2 r;
+  (* Compare with non-hermitian version *)
+  let r_svd = Nx.matrix_rank a in
+  check int "matrix_rank hermitian negative vs svd" r_svd r
+
+let test_matrix_rank_hermitian_complex () =
+  (* Complex Hermitian matrix with full rank *)
+  let a =
+    Nx.create Nx.complex64 [| 2; 2 |]
+      [|
+        Complex.{ re = 2.; im = 0. };
+        Complex.{ re = 0.; im = 1.5 };
+        Complex.{ re = 0.; im = -1.5 };
+        Complex.{ re = 3.; im = 0. };
+      |]
+  in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian complex" 2 r;
+  let r_svd = Nx.matrix_rank a in
+  check int "matrix_rank hermitian complex vs svd" r_svd r
+
+let test_pinv_hermitian () =
+  (* Create a symmetric matrix *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
+  let pinv_a = Nx.pinv ~hermitian:true a in
+  (* Check that a @ pinv_a @ a ≈ a (pseudoinverse property) *)
+  let recon = Nx.matmul a (Nx.matmul pinv_a a) in
+  check_nx ~epsilon:1e-5 "pinv hermitian recon" a recon;
+  (* Test that hermitian flag is actually used by checking it works on a non-square matrix *)
+  (* This will fail if hermitian flag is ignored because eigh requires square matrices *)
+  let non_square =
+    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+  in
+  check_raises "pinv hermitian non-square"
+    (Failure "eig: input must be square matrix") (fun () ->
+      ignore (Nx.pinv ~hermitian:true non_square))
+
+let test_pinv_hermitian_negative () =
+  (* Test negative-definite matrix *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| -2.; 0.; 0.; -1. |] in
+  let pinv_a = Nx.pinv ~hermitian:true a in
+  (* Check that a @ pinv_a @ a ≈ a (pseudoinverse property) *)
+  let recon = Nx.matmul a (Nx.matmul pinv_a a) in
+  check_nx ~epsilon:1e-5 "pinv hermitian negative recon" a recon;
+  (* Compare with non-hermitian version *)
+  let pinv_svd = Nx.pinv a in
+  check_nx ~epsilon:1e-5 "pinv hermitian negative vs svd" pinv_svd pinv_a
+
+let test_pinv_hermitian_complex () =
+  (* Complex Hermitian matrix *)
+  let a =
+    Nx.create Nx.complex64 [| 2; 2 |]
+      [|
+        Complex.{ re = 4.; im = 0. };
+        Complex.{ re = 1.; im = 2. };
+        Complex.{ re = 1.; im = -2. };
+        Complex.{ re = 5.; im = 0. };
+      |]
+  in
+  let pinv_a = Nx.pinv ~hermitian:true a in
+  let identity = Nx.identity Nx.complex64 2 in
+  let product = Nx.matmul a pinv_a in
+  check_nx ~epsilon:1e-5 "pinv hermitian complex identity" identity product;
+  let recon = Nx.matmul a (Nx.matmul pinv_a a) in
+  check_nx ~epsilon:1e-5 "pinv hermitian complex recon" a recon;
+  let pinv_svd = Nx.pinv a in
+  check_nx ~epsilon:1e-5 "pinv hermitian complex vs svd" pinv_svd pinv_a
+
 (* ───── Product Ops Tests ───── *)
 
 let test_vdot () =
@@ -482,6 +570,44 @@ let test_vdot () =
   let a2 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let res2 = Nx.vdot a2 b in
   check_t "vdot flatten" [||] [| 4. +. 10. +. 18. +. 16. +. 25. +. 36. |] res2
+
+let test_vdot_complex () =
+  (* Test complex vdot with conjugation *)
+  let a =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
+  in
+  let b =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 5.; im = 6. }; Complex.{ re = 7.; im = 8. } |]
+  in
+  let result = Nx.vdot a b in
+  (* Expected: conj(a) * b = [(1-2i)(5+6i), (3-4i)(7+8i)] = [17-4i, 53-4i] =
+     70-8i *)
+  let expected = Complex.{ re = 70.; im = -8. } in
+  let actual = Nx.item [] result in
+  check (float 1e-6) "vdot complex real part" expected.re actual.re;
+  check (float 1e-6) "vdot complex imag part" expected.im actual.im
+
+let test_conjugate () =
+  (* Test complex conjugate *)
+  let x =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
+  in
+  let conj_x = Nx.conjugate x in
+  let expected =
+    [| Complex.{ re = 1.; im = -2. }; Complex.{ re = 3.; im = -4. } |]
+  in
+  let actual = Nx.to_array conj_x in
+  check (float 1e-6) "conjugate[0] real" expected.(0).re actual.(0).re;
+  check (float 1e-6) "conjugate[0] imag" expected.(0).im actual.(0).im;
+  check (float 1e-6) "conjugate[1] real" expected.(1).re actual.(1).re;
+  check (float 1e-6) "conjugate[1] imag" expected.(1).im actual.(1).im;
+  (* Test that real tensors are unchanged *)
+  let real_x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+  let conj_real = Nx.conjugate real_x in
+  check_nx "conjugate real unchanged" real_x conj_real
 
 let test_vdot_mismatch () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -863,9 +989,9 @@ let test_lstsq_rcond () =
   let _, _, rank, _ = Nx.lstsq ~rcond:1e-8 a b in
   check int "lstsq rcond rank" 1 rank
 
-let test_lstsq_underdetermined () = 
-  let a = Nx.create Nx.float32 [|2; 3|] [| 1.; 0.; 2.; 3.; 2.; 4.;|] in
-  let b = Nx.create Nx.float32 [| 2 |] [|1.; 0.|] in
+let test_lstsq_underdetermined () =
+  let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 0.; 2.; 3.; 2.; 4. |] in
+  let b = Nx.create Nx.float32 [| 2 |] [| 1.; 0. |] in
 
   let x, _res, rank, _s = Nx.lstsq ~rcond:1e-8 a b in
   check_shape "lstsq x underdetermined" [| 3 |] x;
@@ -873,7 +999,6 @@ let test_lstsq_underdetermined () =
   let approx_b_underdetermined = Nx.matmul a x in
   check_nx "lstsq approx underdetermined" b approx_b_underdetermined
 
-  
 let test_pinv () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let pinv = Nx.pinv a in
@@ -1018,11 +1143,21 @@ let advanced_utility_tests =
     ("slogdet singular", `Quick, test_slogdet_singular);
     ("matrix rank", `Quick, test_matrix_rank);
     ("matrix rank tol", `Quick, test_matrix_rank_tol);
+    ("matrix rank hermitian", `Quick, test_matrix_rank_hermitian);
+    ( "matrix rank hermitian negative",
+      `Quick,
+      test_matrix_rank_hermitian_negative );
+    ("matrix rank hermitian complex", `Quick, test_matrix_rank_hermitian_complex);
+    ("pinv hermitian", `Quick, test_pinv_hermitian);
+    ("pinv hermitian negative", `Quick, test_pinv_hermitian_negative);
+    ("pinv hermitian complex", `Quick, test_pinv_hermitian_complex);
   ]
 
 let product_tests =
   [
     ("vdot", `Quick, test_vdot);
+    ("vdot complex", `Quick, test_vdot_complex);
+    ("conjugate", `Quick, test_conjugate);
     ("vdot mismatch", `Quick, test_vdot_mismatch);
     ("vecdot", `Quick, test_vecdot);
     ("inner", `Quick, test_inner);

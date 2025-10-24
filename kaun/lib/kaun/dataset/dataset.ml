@@ -185,72 +185,112 @@ let from_tensors (x, y) =
   }
 
 (* Text Data Sources *)
+let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
+  match encoding with
+  | `UTF8 | `ASCII | `LATIN1 ->
+      let enc_name =
+        match encoding with
+        | `UTF8 -> "utf-8"
+        | `ASCII -> "us-ascii"
+        | `LATIN1 -> "iso-8859-1"
+      in
+      let uenc_opt = Uutf.encoding_of_string enc_name in
+      let make_decoder () = Uutf.decoder ?encoding:uenc_opt `Manual in
+      let handle_ref = ref None in
+      let file_size = ref 0 in
+      let offset = ref 0 in
+      let closed = ref false in
+      let buf = Buffer.create 512 in
+      let lines_queue = Queue.create () in
+      let decoder = ref (make_decoder ()) in
 
-let from_text_file ?encoding ?(chunk_size = 65536) path =
-  let _ = encoding in
-  (* TODO: Handle different encodings *)
-  let handle = create_mmap path in
-  let offset = ref 0 in
-  let buffer = ref "" in
-  let buffer_pos = ref 0 in
-  let closed = ref false in
+      let open_handle () =
+        let handle = create_mmap path in
+        file_size := handle.size;
+        handle_ref := Some handle;
+        handle
+      in
+      let ensure_handle () =
+        match !handle_ref with Some h -> h | None -> open_handle ()
+      in
+      let close_handle () =
+        match !handle_ref with
+        | None -> ()
+        | Some h ->
+            (* Closing twice raises EBADF; swallow it because reset can
+               reopen. *)
+            (try close_mmap h with
+            | Unix.Unix_error (Unix.EBADF, _, _) -> ()
+            | exn -> raise exn);
+            handle_ref := None
+      in
+      ignore (open_handle ());
 
-  let rec next_line () =
-    if !closed then None
-    else
-      (* Look for newline in buffer *)
-      try
-        let nl_pos = String.index_from !buffer !buffer_pos '\n' in
-        let line = String.sub !buffer !buffer_pos (nl_pos - !buffer_pos) in
-        buffer_pos := nl_pos + 1;
-        Some line
-      with Not_found ->
-        (* Need more data *)
-        if !offset >= handle.size then
-          (* End of file - return remaining buffer if any *)
-          if !buffer_pos < String.length !buffer then (
-            let line =
-              String.sub !buffer !buffer_pos
-                (String.length !buffer - !buffer_pos)
-            in
-            buffer := "";
-            buffer_pos := 0;
-            Some line)
-          else (
-            close_mmap handle;
-            closed := true;
-            None)
-        else
-          (* Read next chunk *)
-          let chunk =
-            read_mmap_chunk handle ~offset:!offset ~length:chunk_size
-          in
-          offset := !offset + String.length chunk;
+      let push_line_from_buf () =
+        let line = Buffer.contents buf in
+        Buffer.clear buf;
+        Queue.add line lines_queue
+      in
 
-          (* Append to remaining buffer *)
-          if !buffer_pos < String.length !buffer then
-            buffer :=
-              String.sub !buffer !buffer_pos
-                (String.length !buffer - !buffer_pos)
-              ^ chunk
-          else buffer := chunk;
-          buffer_pos := 0;
-          next_line ()
-  in
+      let rec fill_queue () =
+        if Queue.is_empty lines_queue && not !closed then
+          match Uutf.decode !decoder with
+          | `Uchar u ->
+              if Uchar.to_int u = 0x000A then push_line_from_buf ()
+              else Uutf.Buffer.add_utf_8 buf u;
+              if Queue.is_empty lines_queue then fill_queue ()
+          | `Malformed _ ->
+              Uutf.Buffer.add_utf_8 buf Uutf.u_rep;
+              fill_queue ()
+          | `Await ->
+              if !offset >= !file_size then (
+                Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
+                fill_queue ())
+              else
+                let handle = ensure_handle () in
+                let chunk =
+                  read_mmap_chunk handle ~offset:!offset ~length:chunk_size
+                in
+                offset := !offset + String.length chunk;
+                if chunk = "" then (
+                  Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
+                  fill_queue ())
+                else
+                  let bytes = Bytes.of_string chunk in
+                  Uutf.Manual.src !decoder bytes 0 (Bytes.length bytes);
+                  fill_queue ()
+          | `End ->
+              if Buffer.length buf > 0 then push_line_from_buf ();
+              close_handle ();
+              closed := true
+      in
 
-  let reset () =
-    offset := 0;
-    buffer := "";
-    buffer_pos := 0;
-    closed := false
-  in
+      let rec next_line () =
+        if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
+        else if !closed then None
+        else (
+          fill_queue ();
+          if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
+          else if !closed then None
+          else next_line ())
+      in
 
-  {
-    next = next_line;
-    cardinality = (fun () -> Unknown);
-    reset = Some reset;
-    spec = (fun () -> Scalar "string");
-  }
+      let reset () =
+        Buffer.clear buf;
+        Queue.clear lines_queue;
+        offset := 0;
+        closed := false;
+        decoder := make_decoder ();
+        close_handle ();
+        ignore (open_handle ())
+      in
+
+      {
+        next = next_line;
+        cardinality = (fun () -> Unknown);
+        reset = Some reset;
+        spec = (fun () -> Scalar "string");
+      }
 
 let from_text_files ?(encoding = `UTF8) ?(chunk_size = 65536) paths =
   let current_file = ref 0 in
@@ -262,7 +302,8 @@ let from_text_files ?(encoding = `UTF8) ?(chunk_size = 65536) paths =
         if !current_file >= List.length paths then None
         else
           let path = List.nth paths !current_file in
-          current_dataset := Some (from_text_file ~encoding ~chunk_size path);
+          let ds = from_text_file ~encoding ~chunk_size path in
+          current_dataset := Some ds;
           incr current_file;
           next ()
     | Some ds -> (
@@ -317,37 +358,119 @@ let from_jsonl ?field path =
     spec = (fun () -> Scalar "string");
   }
 
-let from_csv ?(separator = ',') ?(text_column = 0) ?label_column
-    ?(has_header = true) path =
-  let _ = label_column in
-  (* TODO: Handle label column *)
+let ensure_non_negative ~name value =
+  if value < 0 then
+    raise
+      (Invalid_parameter
+         (name ^ " must be non-negative, got " ^ string_of_int value))
+
+let from_csv ?(separator = ',') ?(text_column = 0) ?(has_header = true) path =
+  ensure_non_negative ~name:"text_column" text_column;
+
   let text_ds = from_text_file path in
   let skipped_header = ref (not has_header) in
+
+  let reset =
+    match text_ds.reset with
+    | None -> None
+    | Some reset_fn ->
+        Some
+          (fun () ->
+            skipped_header := not has_header;
+            reset_fn ())
+  in
 
   let split_csv line =
     (* Simple CSV split - doesn't handle quoted fields *)
     String.split_on_char separator line
   in
 
-  let next () =
+  let consume_header () =
     if not !skipped_header then (
       skipped_header := true;
-      ignore (text_ds.next ()));
+      ignore (text_ds.next ()))
+  in
 
+  let rec take_field fields idx =
+    match (fields, idx) with
+    | [], _ -> None
+    | x :: _, 0 -> Some x
+    | _ :: tl, n -> take_field tl (n - 1)
+  in
+  let rec read_next () =
     match text_ds.next () with
     | None -> None
-    | Some line ->
+    | Some line -> (
+        match take_field (split_csv line) text_column with
+        | Some text -> Some text
+        | None -> read_next ())
+  in
+  let next () =
+    consume_header ();
+    read_next ()
+  in
+  {
+    next;
+    cardinality = text_ds.cardinality;
+    reset;
+    spec = (fun () -> Scalar "string");
+  }
+
+let from_csv_with_labels ?(separator = ',') ?(text_column = 0)
+    ?(has_header = true) ~label_column path =
+  ensure_non_negative ~name:"text_column" text_column;
+  ensure_non_negative ~name:"label_column" label_column;
+
+  let text_ds = from_text_file path in
+  let skipped_header = ref (not has_header) in
+
+  let reset =
+    match text_ds.reset with
+    | None -> None
+    | Some reset_fn ->
+        Some
+          (fun () ->
+            skipped_header := not has_header;
+            reset_fn ())
+  in
+
+  let split_csv line = String.split_on_char separator line in
+
+  let consume_header () =
+    if not !skipped_header then (
+      skipped_header := true;
+      ignore (text_ds.next ()))
+  in
+
+  let rec take_field fields idx =
+    match (fields, idx) with
+    | [], _ -> None
+    | x :: _, 0 -> Some x
+    | _ :: tl, n -> take_field tl (n - 1)
+  in
+
+  let rec read_next () =
+    match text_ds.next () with
+    | None -> None
+    | Some line -> (
         let fields = split_csv line in
-        if text_column < List.length fields then
-          Some (List.nth fields text_column)
-        else None
+        let text_opt = take_field fields text_column in
+        let label_opt = take_field fields label_column in
+        match (text_opt, label_opt) with
+        | Some text, Some label -> Some (text, label)
+        | _ -> read_next ())
+  in
+
+  let next () =
+    consume_header ();
+    read_next ()
   in
 
   {
     next;
     cardinality = text_ds.cardinality;
-    reset = text_ds.reset;
-    spec = (fun () -> Scalar "string");
+    reset;
+    spec = (fun () -> Tuple [ Scalar "string"; Scalar "string" ]);
   }
 
 let from_text ~tokenizer path =

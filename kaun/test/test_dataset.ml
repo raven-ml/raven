@@ -69,6 +69,23 @@ let test_from_text_file () =
         [ "line1"; "line2"; "line3" ]
         collected)
 
+(* Test for utf8 *)
+let test_from_text_file_utf8 () =
+  let content = "hello \xF0\x9F\x98\x8A\nsecond\n" in
+  with_temp_file content (fun path ->
+      let ds = from_text_file ~encoding:`UTF8 path in
+      let lines = collect_dataset ds in
+      Alcotest.(check (list string))
+        "utf8 emoji preserved" [ "hello 😊"; "second" ] lines)
+
+(* Test for Latin1 *)
+let test_from_text_file_latin1 () =
+  let content = "caf\xE9\nna\xEFve\n" in
+  with_temp_file content (fun path ->
+      let ds = from_text_file ~encoding:`LATIN1 path in
+      let lines = collect_dataset ds in
+      Alcotest.(check (list string)) "latin1 decoded" [ "café"; "naïve" ] lines)
+
 let test_from_text_file_large_lines () =
   let line = String.make 1000 'x' in
   let content = line ^ "\n" ^ line ^ "\n" in
@@ -79,6 +96,29 @@ let test_from_text_file_large_lines () =
       List.iter
         (fun l -> Alcotest.(check int) "line length" 1000 (String.length l))
         collected)
+
+let test_from_text_file_reset () =
+  let content = "line1\nline2\n" in
+  with_temp_file content (fun path ->
+      let dataset = from_text_file path in
+      let expected = [ "line1"; "line2" ] in
+      let first_pass = collect_dataset dataset in
+      Alcotest.(check (list string)) "first pass" expected first_pass;
+      reset dataset;
+      let second_pass = collect_dataset dataset in
+      Alcotest.(check (list string)) "after reset" expected second_pass)
+
+let test_from_text_file_reset_mid_stream () =
+  let content = "alpha\nbeta\ngamma\n" in
+  with_temp_file content (fun path ->
+      let dataset = from_text_file path in
+      let first_chunk = collect_n 1 dataset in
+      Alcotest.(check (list string))
+        "consumed first element" [ "alpha" ] first_chunk;
+      reset dataset;
+      let refreshed = collect_n 2 dataset in
+      Alcotest.(check (list string))
+        "after reset first two elements" [ "alpha"; "beta" ] refreshed)
 
 let test_from_text_files () =
   let content1 = "file1_line1\nfile1_line2\n" in
@@ -143,23 +183,77 @@ let test_from_file () =
       let collected = collect_dataset dataset in
       Alcotest.(check (list int)) "parsed integers" [ 100; 200; 300 ] collected)
 
-(** Test transformations *)
+let test_from_csv_with_labels () =
+  let content = "text,label\nhello,spam\nworld,ham\n" in
+  with_temp_csv content (fun path ->
+      let dataset = from_csv_with_labels ~label_column:1 path in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "text and labels with header"
+        [ ("hello", "spam"); ("world", "ham") ]
+        collected)
+
+let test_from_csv_with_labels_no_header () =
+  let content = "foo,bar\nbaz,qux\n" in
+  with_temp_csv content (fun path ->
+      let dataset =
+        from_csv_with_labels ~label_column:1 ~has_header:false path
+      in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "text and labels without header"
+        [ ("foo", "bar"); ("baz", "qux") ]
+        collected)
+
+let test_from_csv_with_labels_custom_columns () =
+  let content = "id,sentiment,text,score\n1,pos,great,5\n2,neg,bad,1\n" in
+  with_temp_csv content (fun path ->
+      let dataset = from_csv_with_labels ~text_column:2 ~label_column:1 path in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "custom columns"
+        [ ("great", "pos"); ("bad", "neg") ]
+        collected)
+
+let test_from_csv_with_labels_custom_separator () =
+  let content = "t1|l1\nt2|l2\n" in
+  with_temp_csv content (fun path ->
+      let dataset =
+        from_csv_with_labels ~separator:'|' ~label_column:1 ~has_header:false
+          path
+      in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "text and labels with custom sep"
+        [ ("t1", "l1"); ("t2", "l2") ]
+        collected)
+
+let test_from_csv_with_labels_malformed_rows () =
+  let content = "text,label\nhello,positive\nincomplete\nworld,negative\n" in
+  with_temp_csv content (fun path ->
+      let dataset = from_csv_with_labels ~label_column:1 path in
+      let collected = collect_dataset dataset in
+      Alcotest.(check (list (pair string string)))
+        "skip malformed rows"
+        [ ("hello", "positive"); ("world", "negative") ]
+        collected)
+
 let test_map () =
-  let dataset = from_list [ 1; 2; 3 ] |> map (fun x -> x * 2) in
-  let collected = collect_dataset dataset in
-  Alcotest.(check (list int)) "mapped values" [ 2; 4; 6 ] collected
+  let ds = from_list [ 1; 2; 3 ] |> map (fun x -> x * 2) in
+  let collected = collect_dataset ds in
+  Alcotest.(check (list int)) "map doubled" [ 2; 4; 6 ] collected
 
 let test_filter () =
-  let dataset = from_list [ 1; 2; 3; 4; 5 ] |> filter (fun x -> x mod 2 = 0) in
-  let collected = collect_dataset dataset in
-  Alcotest.(check (list int)) "filtered values" [ 2; 4 ] collected
+  let ds = from_list [ 1; 2; 3; 4; 5 ] |> filter (fun x -> x mod 2 = 0) in
+  let collected = collect_dataset ds in
+  Alcotest.(check (list int)) "filter evens" [ 2; 4 ] collected
 
 let test_flat_map () =
-  let dataset =
-    from_list [ 1; 2; 3 ] |> flat_map (fun x -> from_list [ x; x * 10 ])
+  let ds =
+    from_list [ 1; 2; 3 ] |> flat_map (fun x -> from_list [ x; x + 1 ])
   in
-  let collected = collect_dataset dataset in
-  Alcotest.(check (list int)) "flat mapped" [ 1; 10; 2; 20; 3; 30 ] collected
+  let collected = collect_dataset ds in
+  Alcotest.(check (list int)) "flat_map expanded" [ 1; 2; 2; 3; 3; 4 ] collected
 
 let test_zip () =
   let ds1 = from_list [ "a"; "b"; "c" ] in
@@ -564,8 +658,13 @@ let () =
       ( "text_files",
         [
           test_case "from_text_file" `Quick test_from_text_file;
+          test_case "from_text_file_utf8" `Quick test_from_text_file_utf8;
+          test_case "from_text_file_latin1" `Quick test_from_text_file_latin1;
           test_case "from_text_file_large_lines" `Quick
             test_from_text_file_large_lines;
+          test_case "from_text_file_reset" `Quick test_from_text_file_reset;
+          test_case "from_text_file_reset_mid_stream" `Quick
+            test_from_text_file_reset_mid_stream;
           test_case "from_text_files" `Quick test_from_text_files;
           test_case "from_jsonl" `Quick test_from_jsonl;
           test_case "from_jsonl_custom_field" `Quick
@@ -574,6 +673,15 @@ let () =
           test_case "from_csv_custom_column" `Quick test_from_csv_custom_column;
           test_case "from_csv_no_header" `Quick test_from_csv_no_header;
           test_case "from_file" `Quick test_from_file;
+          test_case "from_csv_with_labels" `Quick test_from_csv_with_labels;
+          test_case "from_csv_with_labels_no_header" `Quick
+            test_from_csv_with_labels_no_header;
+          test_case "from_csv_with_labels_custom_columns" `Quick
+            test_from_csv_with_labels_custom_columns;
+          test_case "from_csv_with_labels_custom_separator" `Quick
+            test_from_csv_with_labels_custom_separator;
+          test_case "from_csv_with_labels_malformed_rows" `Quick
+            test_from_csv_with_labels_malformed_rows;
         ] );
       ( "transformations",
         [

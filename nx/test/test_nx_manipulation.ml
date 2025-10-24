@@ -53,9 +53,11 @@ let test_reshape_empty () =
 let test_reshape_view_when_contiguous () =
   let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let r = Nx.reshape [| 2; 2 |] t in
-  (* Modify original and check if view is affected *)
-  Nx.set_item [ 0 ] 99.0 t;
-  check (float 1e-6) "reshape view modified" 99.0 (Nx.item [ 0; 0 ] r)
+  Nx.set_item [ 0 ] 77.0 t;
+  check (float 1e-6) "reshape view sees source mutations" 77.0
+    (Nx.item [ 0; 0 ] r);
+  Nx.set_item [ 0; 0 ] 42.0 r;
+  check (float 1e-6) "reshape view mutates source" 42.0 (Nx.item [ 0 ] t)
 
 let test_reshape_copy_when_not_contiguous () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in

@@ -47,6 +47,7 @@ let minimum a b = Debug.with_context "minimum" (fun () -> T.minimum a b)
 (* Unary operations *)
 
 let neg x = Debug.with_context "neg" (fun () -> T.neg x)
+let conjugate x = Debug.with_context "conjugate" (fun () -> T.conjugate x)
 let abs x = Debug.with_context "abs" (fun () -> T.abs x)
 let sign x = Debug.with_context "sign" (fun () -> T.sign x)
 let square x = Debug.with_context "square" (fun () -> T.square x)
@@ -279,7 +280,8 @@ let full_like x value =
 
 let zeros_like x = Debug.with_context "zeros_like" (fun () -> T.zeros_like x)
 let ones_like x = Debug.with_context "ones_like" (fun () -> T.ones_like x)
-let fill x value = Debug.with_context "fill" (fun () -> T.fill x value)
+let ifill value x = Debug.with_context "ifill" (fun () -> T.ifill value x)
+let fill value x = Debug.with_context "fill" (fun () -> T.fill value x)
 
 (* Conversion operations *)
 
@@ -509,7 +511,9 @@ let one_hot ~num_classes indices =
 
 (* Missing operations for BERT *)
 
-let softmax ?axes x = Debug.with_context "softmax" (fun () -> T.softmax ?axes x)
+let softmax ?axes ?scale x =
+  Debug.with_context "softmax" (fun () -> T.softmax ?axes ?scale x)
+
 let cumsum ?axis x = Debug.with_context "cumsum" (fun () -> T.cumsum ?axis x)
 let numel x = T.numel x
 let get indices x = Debug.with_context "get" (fun () -> T.get indices x)

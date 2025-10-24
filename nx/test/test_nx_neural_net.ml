@@ -442,6 +442,87 @@ let test_pool_edge_cases () =
   let empty = Nx.create Nx.float32 [| 1; 1; 0; 4 |] [||] in
   let out_empty, _ = Nx.max_pool2d ~kernel_size:(1, 1) empty in
   check_shape "pool empty spatial" [| 1; 1; 0; 4 |] out_empty
+
+(* Activation tests *)
+
+let test_swish_alias () =
+  let input = Nx.create Nx.float32 [| 3 |] [| -1.; 0.; 1. |] in
+  let swish = Nx.swish input in
+  let silu = Nx.silu input in
+  check_nx ~epsilon:1e-6 "swish equals silu" silu swish
+
+let test_hard_swish_alias () =
+  let input = Nx.create Nx.float32 [| 4 |] [| -3.; -1.; 0.; 2. |] in
+  let hard_swish = Nx.hard_swish input in
+  let hard_silu = Nx.hard_silu input in
+  check_nx ~epsilon:1e-6 "hard_swish equals hard_silu" hard_silu hard_swish
+
+let test_celu_behavior () =
+  let input = Nx.create Nx.float32 [| 3 |] [| -2.; 0.; 3. |] in
+  let result = Nx.celu input in
+  let expected =
+    Nx.create Nx.float32 [| 3 |]
+      (Array.map
+         (fun x -> if x >= 0. then x else Float.exp x -. 1.)
+         [| -2.; 0.; 3. |])
+  in
+  check_nx ~epsilon:1e-6 "celu default alpha" expected result;
+  let alpha = 0.5 in
+  let result_alpha = Nx.celu ~alpha input in
+  let expected_alpha =
+    Nx.create Nx.float32 [| 3 |]
+      (Array.map
+         (fun x ->
+           if x >= 0. then x else alpha *. (Float.exp (x /. alpha) -. 1.))
+         [| -2.; 0.; 3. |])
+  in
+  check_nx ~epsilon:1e-6 "celu custom alpha" expected_alpha result_alpha
+
+let test_squareplus_behavior () =
+  let input = Nx.create Nx.float32 [| 3 |] [| -2.; 0.; 3. |] in
+  let result = Nx.squareplus input in
+  let expected =
+    let b = 4.0 in
+    Nx.create Nx.float32 [| 3 |]
+      (Array.map
+         (fun x -> 0.5 *. (x +. Float.sqrt ((x *. x) +. b)))
+         [| -2.; 0.; 3. |])
+  in
+  check_nx ~epsilon:1e-6 "squareplus default" expected result;
+  let b = 1.0 in
+  let result_b = Nx.squareplus ~b input in
+  let expected_b =
+    Nx.create Nx.float32 [| 3 |]
+      (Array.map
+         (fun x -> 0.5 *. (x +. Float.sqrt ((x *. x) +. b)))
+         [| -2.; 0.; 3. |])
+  in
+  check_nx ~epsilon:1e-6 "squareplus custom b" expected_b result_b
+
+let test_glu_basic () =
+  let input = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; -1.; 0. |] in
+  let result = Nx.glu input in
+  check_shape "glu output shape" [| 2 |] result;
+  let sigmoid v = 1. /. (1. +. Float.exp (-.v)) in
+  let expected =
+    Nx.create Nx.float32 [| 2 |] [| 1. *. sigmoid (-1.); 2. *. sigmoid 0. |]
+  in
+  check_nx ~epsilon:1e-6 "glu values" expected result
+
+let test_sparse_plus_piecewise () =
+  let input = Nx.create Nx.float32 [| 4 |] [| -2.; -0.5; 0.5; 2. |] in
+  let result = Nx.sparse_plus input in
+  let quadratic x = 0.25 *. ((x +. 1.) ** 2.) in
+  let expected =
+    Nx.create Nx.float32 [| 4 |] [| 0.; quadratic (-0.5); quadratic 0.5; 2. |]
+  in
+  check_nx ~epsilon:1e-6 "sparse_plus piecewise" expected result
+
+let test_sparse_sigmoid_piecewise () =
+  let input = Nx.create Nx.float32 [| 4 |] [| -2.; -0.5; 0.5; 2. |] in
+  let result = Nx.sparse_sigmoid input in
+  let expected = Nx.create Nx.float32 [| 4 |] [| 0.; 0.25; 0.75; 1. |] in
+  check_nx ~epsilon:1e-6 "sparse_sigmoid piecewise" expected result
 (* Test Suite Organization *)
 
 let convolution_tests =
@@ -503,10 +584,22 @@ let pooling_tests =
     ("pool edge cases", `Quick, test_pool_edge_cases);
   ]
 
+let activation_tests =
+  [
+    ("swish alias", `Quick, test_swish_alias);
+    ("hard_swish alias", `Quick, test_hard_swish_alias);
+    ("celu behavior", `Quick, test_celu_behavior);
+    ("squareplus behavior", `Quick, test_squareplus_behavior);
+    ("glu basic", `Quick, test_glu_basic);
+    ("sparse_plus piecewise", `Quick, test_sparse_plus_piecewise);
+    ("sparse_sigmoid piecewise", `Quick, test_sparse_sigmoid_piecewise);
+  ]
+
 let suite =
   [
     ("Neural Net :: Convolution", convolution_tests);
     ("Neural Net :: Pooling", pooling_tests);
+    ("Neural Net :: Activations", activation_tests);
   ]
 
 let () = Alcotest.run "Nx Neural Net" suite

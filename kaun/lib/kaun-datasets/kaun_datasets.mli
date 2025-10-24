@@ -134,7 +134,7 @@ val train_test_split :
 
       Kaun.Dataset.iter (fun (x_batch, y_batch) ->
         let loss = train_step model x_batch y_batch in
-        Printf.printf "Loss: %f\n" (Kaun.Ops.to_float loss)
+        Printf.printf "Loss: %f\n" (Rune.item [] loss)
       ) dataset
 
       (* Text classification with IMDB *)

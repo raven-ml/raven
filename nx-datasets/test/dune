@@ -2,3 +2,8 @@
  (name test_generators)
  (package nx-datasets)
  (libraries nx nx-datasets alcotest))
+
+(test
+ (name test_dataset_utils)
+ (package nx-datasets)
+ (libraries nx nx-datasets alcotest))
