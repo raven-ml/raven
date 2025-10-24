@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Step-by-step DQN GridWorld demo notebook (`fehu/demos/dqn_plot_demo.mdx`) with code, explanations, and visualization instructions.
+- Instructions and workflow for generating episode reward plots using Hugin outside MDX, with markdown image display.
+
 ## [1.0.0~alpha2] - TBD
 
 - Nx: Fix macOS ARM crash when loading extended bigarray kinds (@tmattio)
