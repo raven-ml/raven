@@ -113,6 +113,41 @@ let test_auc_roc_multiple_updates () =
 
   check (tensor_testable 1e-5) "auc roc incremental" full_result chunked_result
 
+let test_auc_pr () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 4 |] [| 0.8; 0.7; 0.6; 0.3 |] in
+  let targets = Rune.create dtype [| 4 |] [| 1.; 1.; 0.; 0. |] in
+
+  let auc = Metrics.auc_pr () in
+  Metrics.update auc ~predictions ~targets ();
+  let result = Metrics.compute auc in
+  (* For perfectly separable predictions, AUC should be 1.0 *)
+  let expected = Rune.scalar dtype 1.0 in
+  check (tensor_testable 1e-5) "auc pr" expected result
+
+let test_auc_pr_multiple_updates () =
+  let dtype = Rune.float32 in
+
+  let predictions_full = Rune.create dtype [| 4 |] [| 0.8; 0.7; 0.6; 0.3 |] in
+  let targets_full = Rune.create dtype [| 4 |] [| 1.; 1.; 0.; 0. |] in
+
+  let auc_single = Metrics.auc_pr () in
+  Metrics.update auc_single ~predictions:predictions_full ~targets:targets_full
+    ();
+  let full_result = Metrics.compute auc_single in
+
+  let auc_chunked = Metrics.auc_pr () in
+  let predictions_1 = Rune.create dtype [| 2 |] [| 0.8; 0.7 |] in
+  let targets_1 = Rune.create dtype [| 2 |] [| 1.; 1. |] in
+  Metrics.update auc_chunked ~predictions:predictions_1 ~targets:targets_1 ();
+  let predictions_2 = Rune.create dtype [| 2 |] [| 0.6; 0.3 |] in
+  let targets_2 = Rune.create dtype [| 2 |] [| 0.; 0. |] in
+  Metrics.update auc_chunked ~predictions:predictions_2 ~targets:targets_2 ();
+  let chunked_result = Metrics.compute auc_chunked in
+
+  check (tensor_testable 1e-5) "auc pr incremental" full_result chunked_result
+
 let test_confusion_matrix () =
   let dtype = Rune.float32 in
 
@@ -414,6 +449,9 @@ let () =
           test_case "auc_roc" `Quick test_auc_roc;
           test_case "auc_roc_multiple_updates" `Quick
             test_auc_roc_multiple_updates;
+          test_case "auc_pr" `Quick test_auc_pr;
+          test_case "auc_pr_multiple_updates" `Quick
+            test_auc_pr_multiple_updates;
           test_case "confusion_matrix" `Quick test_confusion_matrix;
         ] );
       ( "regression",

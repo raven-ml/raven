@@ -32,6 +32,43 @@ type 'layout metric_fn =
 let scalar_tensor dtype value = Rune.scalar dtype value
 let ones_like t = Rune.ones (Rune.dtype t) (Rune.shape t)
 
+let accumulate_rank_metric_state metric_name state ~predictions ~targets
+    ?weights () =
+  let predictions = Rune.reshape [| -1 |] predictions in
+  let targets = Rune.reshape [| -1 |] targets in
+  let dtype =
+    match state with
+    | [ preds_acc; _; _ ] -> Rune.dtype preds_acc
+    | _ -> Rune.dtype predictions
+  in
+  let predictions = Rune.cast dtype predictions in
+  let targets = Rune.cast dtype targets in
+  let weights =
+    match weights with
+    | Some w -> Rune.cast dtype (Rune.reshape [| -1 |] w)
+    | None -> ones_like predictions
+  in
+  match state with
+  | [] -> [ predictions; targets; weights ]
+  | [ preds_acc; targets_acc; weights_acc ] ->
+      let preds_acc = Rune.concatenate ~axis:0 [ preds_acc; predictions ] in
+      let targets_acc = Rune.concatenate ~axis:0 [ targets_acc; targets ] in
+      let weights_acc = Rune.concatenate ~axis:0 [ weights_acc; weights ] in
+      [ preds_acc; targets_acc; weights_acc ]
+  | _ -> failwith (Printf.sprintf "Invalid %s state" metric_name)
+
+let prepare_rank_curve_inputs preds targets weights =
+  let dtype = Rune.dtype preds in
+  let sorted_idx = Rune.argsort ~axis:0 ~descending:true preds in
+  let sorted_targets = Rune.take_along_axis ~axis:0 sorted_idx targets in
+  let sorted_weights = Rune.take_along_axis ~axis:0 sorted_idx weights in
+  let positives = Rune.mul sorted_targets sorted_weights in
+  let negatives =
+    let ones = Rune.ones dtype (Rune.shape sorted_targets) in
+    Rune.mul (Rune.sub ones sorted_targets) sorted_weights
+  in
+  (positives, negatives)
+
 (** Core metric operations *)
 
 let update metric ~predictions ~targets ?weights () =
@@ -300,45 +337,15 @@ let auc_roc () =
   create_custom ~name:"auc_roc"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
-      let predictions = Rune.reshape [| -1 |] predictions in
-      let targets = Rune.reshape [| -1 |] targets in
-      let dtype =
-        match state with
-        | [ preds_acc; _; _ ] -> Rune.dtype preds_acc
-        | _ -> Rune.dtype predictions
-      in
-      let predictions = Rune.cast dtype predictions in
-      let targets = Rune.cast dtype targets in
-      let weights =
-        match weights with
-        | Some w -> Rune.cast dtype (Rune.reshape [| -1 |] w)
-        | None -> Rune.ones dtype (Rune.shape predictions)
-      in
-      match state with
-      | [] -> [ predictions; targets; weights ]
-      | [ preds_acc; targets_acc; weights_acc ] ->
-          let preds_acc = Rune.concatenate ~axis:0 [ preds_acc; predictions ] in
-          let targets_acc = Rune.concatenate ~axis:0 [ targets_acc; targets ] in
-          let weights_acc = Rune.concatenate ~axis:0 [ weights_acc; weights ] in
-          [ preds_acc; targets_acc; weights_acc ]
-      | _ -> failwith "Invalid auc_roc state")
+      accumulate_rank_metric_state "auc_roc" state ~predictions ~targets
+        ?weights ())
     ~compute:(fun state ->
       match state with
       | [ preds; targets; weights ] ->
-          let dtype = Rune.dtype preds in
-          let ones = Rune.ones dtype (Rune.shape targets) in
-          let sorted_idx = Rune.argsort ~axis:0 ~descending:true preds in
-          let sorted_targets =
-            Rune.take_along_axis ~axis:0 sorted_idx targets
+          let positives, negatives =
+            prepare_rank_curve_inputs preds targets weights
           in
-          let sorted_weights =
-            Rune.take_along_axis ~axis:0 sorted_idx weights
-          in
-
-          let positives = Rune.mul sorted_targets sorted_weights in
-          let negatives =
-            Rune.mul (Rune.sub ones sorted_targets) sorted_weights
-          in
+          let dtype = Rune.dtype positives in
 
           let cum_tp = Rune.cumsum ~axis:0 positives in
           let cum_fp = Rune.cumsum ~axis:0 negatives in
@@ -380,13 +387,54 @@ let auc_roc () =
       | _ -> failwith "Invalid auc_roc state")
     ~reset:(fun _ -> [])
 
-let auc_pr ?(num_thresholds = 200) ?(curve = false) () =
-  let _ = num_thresholds in
-  let _ = curve in
+let auc_pr () =
   create_custom ~name:"auc_pr"
     ~init:(fun () -> [])
-    ~update:(fun state ~predictions:_ ~targets:_ ?weights:_ () -> state)
-    ~compute:(fun _ -> failwith "AUC-PR not yet implemented")
+    ~update:(fun state ~predictions ~targets ?weights () ->
+      accumulate_rank_metric_state "auc_pr" state ~predictions ~targets ?weights
+        ())
+    ~compute:(fun state ->
+      match state with
+      | [ preds; targets; weights ] ->
+          let positives, negatives =
+            prepare_rank_curve_inputs preds targets weights
+          in
+          let dtype = Rune.dtype positives in
+
+          let cum_tp = Rune.cumsum ~axis:0 positives in
+          let cum_fp = Rune.cumsum ~axis:0 negatives in
+
+          let cum_fn = Rune.sub (Rune.sum positives) cum_tp in
+
+          let zero = scalar_tensor dtype 0.0 in
+          let cum_tp =
+            Rune.concatenate ~axis:0 [ Rune.reshape [| 1 |] zero; cum_tp ]
+          in
+          let cum_fp =
+            Rune.concatenate ~axis:0 [ Rune.reshape [| 1 |] zero; cum_fp ]
+          in
+          let cum_fn =
+            Rune.concatenate ~axis:0 [ Rune.reshape [| 1 |] zero; cum_fn ]
+          in
+
+          let precision_denom = Rune.add cum_tp cum_fp in
+          let recall_denom = Rune.add cum_tp cum_fn in
+          let eps = scalar_tensor dtype 1e-7 in
+
+          let precision = Rune.div cum_tp (Rune.add precision_denom eps) in
+          let recall = Rune.div cum_tp (Rune.add recall_denom eps) in
+
+          let n = Rune.size precision in
+          if n < 2 then scalar_tensor dtype 0.0
+          else
+            let tail_recall = Rune.slice [ Rune.R (1, n) ] recall in
+            let head_recall = Rune.slice [ Rune.R (0, n - 1) ] recall in
+            let dx = Rune.sub tail_recall head_recall in
+
+            let precision_k = Rune.slice [ Rune.R (1, n) ] precision in
+
+            Rune.sum (Rune.mul dx precision_k)
+      | _ -> failwith "Invalid auc_pr state")
     ~reset:(fun _ -> [])
 
 let confusion_matrix ~num_classes ?(normalize = `None) () =

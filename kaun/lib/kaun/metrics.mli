@@ -122,10 +122,13 @@ val auc_roc : unit -> 'layout t
     Computes the exact ROC integral by sorting predictions and accumulating
     true/false positive rates across all seen batches. *)
 
-val auc_pr : ?num_thresholds:int -> ?curve:bool -> unit -> 'layout t
-(** [auc_pr ?num_thresholds ?curve ()] creates an AUC-PR metric.
+val auc_pr : unit -> 'layout t
+(** [auc_pr ()] creates an AUC-PR metric.
 
-    Area Under the Precision-Recall Curve. *)
+    Area Under the Precision-Recall Curve.
+
+    Computes the exact precision-recall integral by sorting predictions and
+    accumulating precision/recall scores across all seen batches. *)
 
 val confusion_matrix :
   num_classes:int ->
