@@ -120,10 +120,33 @@ let accuracy ?(threshold = 0.5) ?top_k ?(averaging = Micro) () =
 
       let batch_correct, batch_total =
         match top_k with
-        | Some _k ->
-            (* Top-k accuracy - placeholder until topk is available *)
-            failwith
-              "Top-k accuracy not yet implemented - requires topk operation"
+        | Some k ->
+            (* Top-K accuracy *)
+            let correct = 
+              if 
+                Array.length (Rune.shape predictions) > 1
+                && (Rune.shape predictions).(Array.length
+                                               (Rune.shape predictions)
+                                             - 1)
+                   > 1
+              then
+
+                let topk_preds = Rune.slice [A ; Rune.R(0, k)] (Rune.argsort ~descending:true ~axis:1 predictions) in
+
+                let target_int32 = Rune.cast Rune.int32 targets in
+
+                let target_expanded = Rune.expand_dims [-1] target_int32 in
+
+                let correct_mask = Rune.equal topk_preds target_expanded in
+
+                Rune.any ~axes:[1] correct_mask
+
+              else
+                failwith
+                  "Top-k accuracy requires multi-class predictions"
+              in
+            let correct_float = Rune.cast dtype correct in
+            (correct_float, ones_like correct_float)
         | None ->
             (* Standard accuracy *)
             let correct =

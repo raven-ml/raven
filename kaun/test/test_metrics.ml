@@ -42,6 +42,27 @@ let test_accuracy () =
   (* All correct *)
   check (tensor_testable 1e-5) "multi-class accuracy" expected result
 
+let test_accuracy_topk () = 
+  let dtype = Rune.float32 in
+
+  let predictions =
+    Rune.create dtype [| 3; 3 |]
+      [| 0.9; 0.05; 0.05; 0.1; 0.8; 0.1; 0.2; 0.2; 0.6 |]
+  in
+
+  let target_int = Rune.create Rune.int32 [| 3 |] [| 0l; 1l; 2l |] in
+
+  let targets = Rune.cast dtype target_int in
+
+  let acc_topk = Metrics.accuracy ~top_k:3 () in
+  Metrics.reset acc_topk;
+  Metrics.update acc_topk ~predictions ~targets ();
+  let result = Metrics.compute acc_topk in
+  let expected = Rune.scalar dtype 1.0 in
+  (* All correct *)
+  check (tensor_testable 1e-5) "Top k multi-class accuracy" expected result
+
+
 let test_precision_recall () =
   let dtype = Rune.float32 in
 
@@ -113,7 +134,7 @@ let test_auc_roc_multiple_updates () =
 
   check (tensor_testable 1e-5) "auc roc incremental" full_result chunked_result
 
-let test_auc_pr () =
+let test_auc_pr () = 
   let dtype = Rune.float32 in
 
   let predictions = Rune.create dtype [| 4 |] [| 0.8; 0.7; 0.6; 0.3 |] in
@@ -133,8 +154,7 @@ let test_auc_pr_multiple_updates () =
   let targets_full = Rune.create dtype [| 4 |] [| 1.; 1.; 0.; 0. |] in
 
   let auc_single = Metrics.auc_pr () in
-  Metrics.update auc_single ~predictions:predictions_full ~targets:targets_full
-    ();
+  Metrics.update auc_single ~predictions:predictions_full ~targets:targets_full ();
   let full_result = Metrics.compute auc_single in
 
   let auc_chunked = Metrics.auc_pr () in
@@ -146,7 +166,8 @@ let test_auc_pr_multiple_updates () =
   Metrics.update auc_chunked ~predictions:predictions_2 ~targets:targets_2 ();
   let chunked_result = Metrics.compute auc_chunked in
 
-  check (tensor_testable 1e-5) "auc pr incremental" full_result chunked_result
+  check (tensor_testable 1e-5) "auc pr incremental"
+    full_result chunked_result
 
 let test_confusion_matrix () =
   let dtype = Rune.float32 in
@@ -444,14 +465,13 @@ let () =
       ( "classification",
         [
           test_case "accuracy" `Quick test_accuracy;
+          test_case "accuracy_topk" `Quick test_accuracy_topk;
           test_case "precision_recall" `Quick test_precision_recall;
           test_case "f1_score" `Quick test_f1_score;
           test_case "auc_roc" `Quick test_auc_roc;
-          test_case "auc_roc_multiple_updates" `Quick
-            test_auc_roc_multiple_updates;
+          test_case "auc_roc_multiple_updates" `Quick test_auc_roc_multiple_updates;
           test_case "auc_pr" `Quick test_auc_pr;
-          test_case "auc_pr_multiple_updates" `Quick
-            test_auc_pr_multiple_updates;
+          test_case "auc_pr_multiple_updates" `Quick test_auc_pr_multiple_updates;
           test_case "confusion_matrix" `Quick test_confusion_matrix;
         ] );
       ( "regression",
