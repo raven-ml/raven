@@ -57,7 +57,7 @@ All notable changes to this project will be documented in this file.
 - Make `Optimizer.clip_by_global_norm` robust to zero gradients and empty parameter trees to avoid NaNs during training (@tmattio)
 - Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD)
 - Implement AUC-ROC and AUC-PR in Kaun metrics and simplify their signatures (#109, #131, @Shocker444)
-- Add topk accuracy implementation to kaun (@Shocker444)
+- Add topk accuracy implementation to kaun (#135, @Shocker444)
 
 ### Talon
 
