@@ -33,34 +33,21 @@ type 'layout metric_fn =
 
 type reduction =
   | Mean
-  | Sum
-  | None  (** How to reduce metric values across batch dimensions *)
-
-type averaging =
-  | Micro
-  | Macro
-  | Weighted
-  | Samples
-      (** Averaging strategy for multi-class/multi-label metrics:
-          - Micro: Calculate metric globally across all samples
-          - Macro: Calculate metric for each class and average
-          - Weighted: Like macro but weighted by class support
-          - Samples: Average across samples (for multi-label) *)
+  | Sum  (** How to reduce metric values across batch dimensions *)
 
 (** {1 Metric Creation} *)
 
 (** {2 Classification Metrics} *)
 
-val accuracy :
-  ?threshold:float -> ?top_k:int -> ?averaging:averaging -> unit -> 'layout t
-(** [accuracy ?threshold ?top_k ?averaging ()] creates an accuracy metric.
+val accuracy : ?threshold:float -> ?top_k:int -> unit -> 'layout t
+(** [accuracy ?threshold ?top_k ()] creates an accuracy metric.
 
     @param threshold
       For binary classification, threshold for positive class (default: 0.5)
     @param top_k
       For multi-class, count as correct if true label is in top-k predictions
-    @param averaging
-      Averaging strategy for multi-class problems (default: Micro)
+    @note For per-class or aggregated variants, combine
+      [Metrics.confusion_matrix] with custom post-processing.
 
     {4 Example}
     {[
@@ -68,50 +55,35 @@ val accuracy :
       let top5_acc = Metrics.accuracy ~top_k:5 ()
     ]} *)
 
-val precision :
-  ?threshold:float ->
-  ?averaging:averaging ->
-  ?zero_division:float ->
-  unit ->
-  'layout t
-(** [precision ?threshold ?averaging ?zero_division ()] creates a precision
-    metric.
+val precision : ?threshold:float -> ?zero_division:float -> unit -> 'layout t
+(** [precision ?threshold ?zero_division ()] creates a precision metric.
 
     Precision = True Positives / (True Positives + False Positives)
 
     @param threshold Binary classification threshold (default: 0.5)
-    @param averaging Multi-class averaging strategy (default: Micro)
     @param zero_division
       Value to return when there are no positive predictions (default: 0.0)
 
     {4 Example}
     {[
-      let prec = Metrics.precision ~averaging:Macro ()
+      let prec = Metrics.precision ()
     ]} *)
 
-val recall :
-  ?threshold:float ->
-  ?averaging:averaging ->
-  ?zero_division:float ->
-  unit ->
-  'layout t
-(** [recall ?threshold ?averaging ?zero_division ()] creates a recall metric.
+val recall : ?threshold:float -> ?zero_division:float -> unit -> 'layout t
+(** [recall ?threshold ?zero_division ()] creates a recall metric.
 
     Recall = True Positives / (True Positives + False Negatives)
 
     @param threshold Binary classification threshold (default: 0.5)
-    @param averaging Multi-class averaging strategy (default: Micro)
     @param zero_division
       Value to return when there are no actual positives (default: 0.0) *)
 
-val f1_score :
-  ?threshold:float -> ?averaging:averaging -> ?beta:float -> unit -> 'layout t
-(** [f1_score ?threshold ?averaging ?beta ()] creates an F-score metric.
+val f1_score : ?threshold:float -> ?beta:float -> unit -> 'layout t
+(** [f1_score ?threshold ?beta ()] creates an F-score metric.
 
     F-score = (1 + β²) * (Precision * Recall) / (β² * Precision + Recall)
 
     @param threshold Binary classification threshold (default: 0.5)
-    @param averaging Multi-class averaging strategy (default: Micro)
     @param beta Weight of recall vs precision (default: 1.0 for F1) *)
 
 val auc_roc : unit -> 'layout t
@@ -153,7 +125,7 @@ val rmse : ?reduction:reduction -> unit -> 'layout t
 
     RMSE = sqrt(mean((predictions - targets)²)) *)
 
-val mae : ?reduction:reduction -> unit -> Bigarray.float32_elt t
+val mae : ?reduction:reduction -> unit -> 'layout t
 (** [mae ?reduction ()] creates a Mean Absolute Error metric.
 
     MAE = mean(|predictions - targets|) *)
@@ -212,7 +184,7 @@ val perplexity : ?base:float -> unit -> 'layout t
 
     Perplexity = base^(cross_entropy)
 
-    @param base Base for exponentiation (default: e ≈ 2.718) *)
+    @param base Base for exponentiation (default: e) *)
 
 (** {2 Ranking Metrics} *)
 
@@ -226,51 +198,54 @@ val map : ?k:int -> unit -> 'layout t
 
     @param k Consider only top-k items (default: all) *)
 
-val mrr : unit -> 'layout t
-(** [mrr ()] creates a Mean Reciprocal Rank metric.
+val mrr : ?k:int -> unit -> 'layout t
+(** [mrr ?k ()] creates a Mean Reciprocal Rank metric.
 
-    MRR = mean(1 / rank_of_first_relevant_item) *)
+    MRR = mean(1 / rank_of_first_relevant_item)
+
+    @param k
+      Consider only top-k items when computing the reciprocal rank (default:
+      all) *)
 
 (** {2 Natural Language Metrics} *)
 
 val bleu :
-  ?max_n:int ->
-  ?weights:float array ->
-  ?smoothing:bool ->
-  tokenizer:(string -> int array) ->
-  unit ->
-  'layout t
-(** [bleu ?max_n ?weights ?smoothing ~tokenizer ()] creates a BLEU score metric.
+  ?max_n:int -> ?weights:float array -> ?smoothing:bool -> unit -> 'layout t
+(** [bleu ?max_n ?weights ?smoothing ()] creates a BLEU score metric for
+    pre-tokenized integer sequences.
 
     @param max_n Maximum n-gram order (default: 4)
     @param weights Weights for each n-gram order (default: uniform)
     @param smoothing Apply smoothing for zero counts (default: true)
-    @param tokenizer Function to tokenize text into token IDs *)
+
+    Predictions and targets must be shaped [batch, seq_len] with integer token
+    identifiers. Zero values are treated as padding and ignored. *)
 
 val rouge :
   variant:[ `Rouge1 | `Rouge2 | `RougeL ] ->
   ?use_stemmer:bool ->
-  tokenizer:(string -> int array) ->
   unit ->
   'layout t
-(** [rouge ~variant ?use_stemmer ~tokenizer ()] creates a ROUGE score metric.
+(** [rouge ~variant ?use_stemmer ()] creates a ROUGE score metric for
+    pre-tokenized integer sequences.
 
     @param variant Which ROUGE variant to compute
-    @param use_stemmer Apply stemming before comparison (default: false)
-    @param tokenizer Function to tokenize text *)
+    @param use_stemmer Enable stemming (currently unsupported; raises when set)
 
-val meteor :
-  ?alpha:float ->
-  ?beta:float ->
-  ?gamma:float ->
-  tokenizer:(string -> int array) ->
-  unit ->
-  'layout t
-(** [meteor ?alpha ?beta ?gamma ~tokenizer ()] creates a METEOR score metric.
+    Predictions and targets must be shaped [batch, seq_len] with integer token
+    identifiers. Zero values are treated as padding and ignored. *)
 
-    @param alpha Parameter for recall weight (default: 0.9)
-    @param beta Parameter for precision weight (default: 3.0)
-    @param gamma Penalty for fragmentation (default: 0.5) *)
+val meteor : ?alpha:float -> ?beta:float -> ?gamma:float -> unit -> 'layout t
+(** [meteor ?alpha ?beta ?gamma ()] creates a METEOR score metric for
+    pre-tokenized integer sequences.
+
+    @param alpha
+      Parameter controlling precision vs recall balance (default: 0.9)
+    @param beta Exponent for the chunk penalty (default: 3.0)
+    @param gamma Weight of the chunk penalty (default: 0.5)
+
+    Predictions and targets must be shaped [batch, seq_len] with integer token
+    identifiers. Zero values are treated as padding and ignored. *)
 
 (** {2 Image Metrics} *)
 
@@ -284,25 +259,24 @@ val psnr : ?max_val:float -> unit -> 'layout t
 val ssim : ?window_size:int -> ?k1:float -> ?k2:float -> unit -> 'layout t
 (** [ssim ?window_size ?k1 ?k2 ()] creates a Structural Similarity Index metric.
 
-    @param window_size Size of the gaussian window (default: 11)
-    @param k1 Constant for luminance (default: 0.01)
-    @param k2 Constant for contrast (default: 0.03) *)
+    The implementation evaluates the global SSIM across the full prediction and
+    target tensors using scalar statistics derived from [window_size], [k1], and
+    [k2]. *)
 
 val iou :
   ?threshold:float -> ?per_class:bool -> num_classes:int -> unit -> 'layout t
 (** [iou ?threshold ?per_class ~num_classes ()] creates an Intersection over
     Union metric.
 
-    @param threshold Threshold for binary segmentation (default: 0.5)
-    @param per_class Return IoU per class (default: false)
-    @param num_classes Number of segmentation classes *)
+    Inputs must contain integer class indices in [0, num_classes). When
+    [num_classes = 2], [threshold] binarises predictions before computing IoU.
+    When [per_class = true], the metric reports one IoU per class; otherwise it
+    returns the mean over classes with non-zero support. *)
 
 val dice :
   ?threshold:float -> ?per_class:bool -> num_classes:int -> unit -> 'layout t
-(** [dice ?threshold ?per_class ~num_classes ()] creates a Dice coefficient
-    metric.
-
-    Dice = 2 * |A ∩ B| / (|A| + |B|) *)
+(** [dice ?threshold ?per_class ~num_classes ()] creates a Sørenson Dice
+    coefficient metric with the same input conventions as {!iou}. *)
 
 (** {1 Metric Operations} *)
 

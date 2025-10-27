@@ -42,6 +42,22 @@ let test_accuracy () =
   (* All correct *)
   check (tensor_testable 1e-5) "multi-class accuracy" expected result
 
+let test_accuracy_topk () =
+  let dtype = Rune.float32 in
+
+  let predictions =
+    Rune.create dtype [| 3; 4 |]
+      [| 0.1; 0.6; 0.2; 0.1; 0.3; 0.4; 0.2; 0.1; 0.5; 0.4; 0.3; 0.2 |]
+  in
+  let targets_int = Rune.create Rune.int32 [| 3 |] [| 1l; 2l; 0l |] in
+  let targets = Rune.cast dtype targets_int in
+
+  let acc = Metrics.accuracy ~top_k:2 () in
+  Metrics.update acc ~predictions ~targets ();
+  let result = Metrics.compute acc in
+  let expected = Rune.scalar dtype (2. /. 3.) in
+  check (tensor_testable 1e-5) "top-k accuracy" expected result
+
 let test_precision_recall () =
   let dtype = Rune.float32 in
 
@@ -206,6 +222,19 @@ let test_mae () =
   let expected = Rune.scalar dtype 0.5 in
   check (tensor_testable 1e-5) "mae" expected result
 
+let test_mape () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 4 |] [| 90.0; 110.0; 95.0; 105.0 |] in
+  let targets = Rune.create dtype [| 4 |] [| 100.0; 100.0; 100.0; 100.0 |] in
+
+  (* Absolute percentage errors: [0.1; 0.1; 0.05; 0.05] -> MAPE = 7.5% *)
+  let mape = Metrics.mape () in
+  Metrics.update mape ~predictions ~targets ();
+  let result = Metrics.compute mape in
+  let expected = Rune.scalar dtype 7.5 in
+  check (tensor_testable 1e-5) "mape" expected result
+
 let test_r2_score () =
   let dtype = Rune.float32 in
 
@@ -222,12 +251,70 @@ let test_r2_score () =
   (* Test with some error *)
   let predictions = Rune.create dtype [| 4 |] [| 1.5; 2.5; 3.5; 4.5 |] in
   let r2 = Metrics.r2_score () in
-  Metrics.reset r2;
   Metrics.update r2 ~predictions ~targets ();
   let result = Metrics.compute r2 in
   (* R² should be high but < 1.0 *)
   let result_val = Rune.item [] result in
-  check bool "r2 with error" true (result_val > 0.8 && result_val < 1.0)
+  check bool "r2 with error" true (result_val > 0.8 && result_val < 1.0);
+
+  (* Constant targets - perfect prediction should yield R² = 1.0 *)
+  let targets_const = Rune.create dtype [| 4 |] [| 5.0; 5.0; 5.0; 5.0 |] in
+  let predictions_const = Rune.create dtype [| 4 |] [| 5.0; 5.0; 5.0; 5.0 |] in
+  let r2_const = Metrics.r2_score () in
+  Metrics.update r2_const ~predictions:predictions_const ~targets:targets_const
+    ();
+  let result = Metrics.compute r2_const in
+  let expected = Rune.scalar dtype 1.0 in
+  check (tensor_testable 1e-5) "r2 constant perfect" expected result;
+
+  (* Constant targets - imperfect prediction should fallback to 0.0 *)
+  let predictions_bad = Rune.create dtype [| 4 |] [| 4.0; 6.0; 5.0; 7.0 |] in
+  let r2_bad = Metrics.r2_score () in
+  Metrics.update r2_bad ~predictions:predictions_bad ~targets:targets_const ();
+  let result = Metrics.compute r2_bad in
+  let expected = Rune.scalar dtype 0.0 in
+  check (tensor_testable 1e-5) "r2 constant imperfect" expected result;
+
+  (* Adjusted R² with known closed-form expectation *)
+  let predictions_adj =
+    Rune.create dtype [| 5 |] [| 1.1; 1.9; 3.0; 4.1; 4.9 |]
+  in
+  let targets_adj = Rune.create dtype [| 5 |] [| 1.0; 2.0; 3.0; 4.0; 5.0 |] in
+  let r2_adjusted = Metrics.r2_score ~adjusted:true ~num_features:1 () in
+  Metrics.update r2_adjusted ~predictions:predictions_adj ~targets:targets_adj
+    ();
+  let result = Metrics.compute r2_adjusted in
+  let expected = Rune.scalar dtype 0.9946666667 in
+  check (tensor_testable 1e-5) "r2 adjusted" expected result
+
+let test_explained_variance () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
+  let targets = Rune.create dtype [| 4 |] [| 2.0; 4.0; 6.0; 8.0 |] in
+
+  let ev = Metrics.explained_variance () in
+  Metrics.update ev ~predictions ~targets ();
+  let result = Metrics.compute ev in
+  let expected = Rune.scalar dtype 0.75 in
+  check (tensor_testable 1e-5) "explained variance" expected result;
+
+  let targets_const = Rune.create dtype [| 3 |] [| 2.0; 2.0; 2.0 |] in
+  let predictions_const = Rune.create dtype [| 3 |] [| 2.0; 2.0; 2.0 |] in
+  let ev_const = Metrics.explained_variance () in
+  Metrics.update ev_const ~predictions:predictions_const ~targets:targets_const
+    ();
+  let result = Metrics.compute ev_const in
+  let expected = Rune.scalar dtype 1.0 in
+  check (tensor_testable 1e-5) "explained variance constant" expected result;
+
+  let predictions_bad = Rune.create dtype [| 3 |] [| 1.0; 3.0; 2.0 |] in
+  let ev_bad = Metrics.explained_variance () in
+  Metrics.update ev_bad ~predictions:predictions_bad ~targets:targets_const ();
+  let result = Metrics.compute ev_bad in
+  let expected = Rune.scalar dtype 0.0 in
+  check (tensor_testable 1e-5) "explained variance constant imperfect" expected
+    result
 
 let test_cross_entropy () =
   let dtype = Rune.float32 in
@@ -259,6 +346,146 @@ let test_binary_cross_entropy () =
   (* Perfect predictions should give very low loss *)
   let result_val = Rune.item [] result in
   check bool "binary cross entropy perfect" true (result_val < 0.01)
+
+let test_ndcg () =
+  let dtype = Rune.float32 in
+
+  let predictions =
+    Rune.create dtype [| 2; 3 |] [| 0.3; 0.2; 0.1; 0.9; 0.8; 0.7 |]
+  in
+  let targets = Rune.create dtype [| 2; 3 |] [| 1.; 2.; 3.; 3.; 2.; 1. |] in
+
+  let ndcg = Metrics.ndcg () in
+  Metrics.update ndcg ~predictions ~targets ();
+  let result = Metrics.compute ndcg in
+  let expected = Rune.scalar dtype ((0.6806060568 +. 1.0) /. 2.0) in
+  check (tensor_testable 1e-5) "ndcg" expected result
+
+let test_map_metric () =
+  let dtype = Rune.float32 in
+
+  let predictions =
+    Rune.create dtype [| 2; 4 |] [| 0.9; 0.8; 0.7; 0.1; 0.4; 0.3; 0.2; 0.1 |]
+  in
+  let targets =
+    Rune.create dtype [| 2; 4 |] [| 1.; 0.; 1.; 0.; 1.; 1.; 0.; 0. |]
+  in
+
+  let map = Metrics.map () in
+  Metrics.update map ~predictions ~targets ();
+  let result = Metrics.compute map in
+  let expected = Rune.scalar dtype (11. /. 12.) in
+  check (tensor_testable 1e-5) "map" expected result
+
+let test_mrr_metric () =
+  let dtype = Rune.float32 in
+
+  let predictions =
+    Rune.create dtype [| 2; 3 |] [| 0.9; 0.8; 0.7; 0.9; 0.2; 0.1 |]
+  in
+  let targets = Rune.create dtype [| 2; 3 |] [| 0.; 0.; 1.; 0.; 1.; 0. |] in
+
+  let mrr = Metrics.mrr () in
+  Metrics.update mrr ~predictions ~targets ();
+  let result = Metrics.compute mrr in
+  let expected = Rune.scalar dtype (5. /. 12.) in
+  check (tensor_testable 1e-5) "mrr" expected result
+
+let test_bleu () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 1; 4 |] [| 1.; 2.; 3.; 4. |] in
+  let targets = Rune.create dtype [| 1; 4 |] [| 1.; 2.; 3.; 4. |] in
+
+  let bleu = Metrics.bleu () in
+  Metrics.update bleu ~predictions ~targets ();
+  let result = Metrics.compute bleu in
+  let expected = Rune.scalar dtype 1.0 in
+  check (tensor_testable 1e-5) "bleu" expected result
+
+let test_rouge () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 1; 3 |] [| 1.; 2.; 3. |] in
+  let targets = Rune.create dtype [| 1; 3 |] [| 1.; 3.; 4. |] in
+
+  let rouge = Metrics.rouge ~variant:`Rouge1 () in
+  Metrics.update rouge ~predictions ~targets ();
+  let result = Metrics.compute rouge in
+  let expected = Rune.scalar dtype (2. /. 3.) in
+  check (tensor_testable 1e-5) "rouge1" expected result
+
+let test_meteor_metric () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 1; 4 |] [| 1.; 2.; 3.; 0. |] in
+  let targets = Rune.create dtype [| 1; 4 |] [| 1.; 2.; 3.; 4. |] in
+
+  let meteor = Metrics.meteor () in
+  Metrics.update meteor ~predictions ~targets ();
+  let result = Metrics.compute meteor in
+  let expected = Rune.scalar dtype 0.75498576 in
+  check (tensor_testable 1e-5) "meteor" expected result
+
+let test_ssim () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 4 |] [| 0.0; 1.0; 0.0; 1.0 |] in
+  let targets = Rune.create dtype [| 4 |] [| 0.0; 1.0; 0.0; 1.0 |] in
+
+  let metric = Metrics.ssim () in
+  Metrics.update metric ~predictions ~targets ();
+  let result = Metrics.compute metric in
+  let expected = Rune.scalar dtype 1.0 in
+  check (tensor_testable 1e-5) "ssim" expected result
+
+let test_iou () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 4 |] [| 0.; 1.; 1.; 0. |] in
+  let targets = Rune.create dtype [| 4 |] [| 0.; 1.; 0.; 0. |] in
+
+  let metric = Metrics.iou ~num_classes:2 () in
+  Metrics.update metric ~predictions ~targets ();
+  let result = Metrics.compute metric in
+  let expected = Rune.scalar dtype ((2. /. 3.) +. 0.5 |> fun x -> x /. 2.) in
+  check (tensor_testable 1e-5) "iou" expected result
+
+let test_dice () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 4 |] [| 0.; 1.; 1.; 0. |] in
+  let targets = Rune.create dtype [| 4 |] [| 0.; 1.; 0.; 0. |] in
+
+  let metric = Metrics.dice ~num_classes:2 () in
+  Metrics.update metric ~predictions ~targets ();
+  let result = Metrics.compute metric in
+  let expected = Rune.scalar dtype ((0.8 +. (2. /. 3.)) /. 2.) in
+  check (tensor_testable 1e-5) "dice" expected result
+
+let test_kl_divergence () =
+  let dtype = Rune.float32 in
+
+  let predictions = Rune.create dtype [| 2; 2 |] [| 0.6; 0.4; 0.5; 0.5 |] in
+  let targets = Rune.create dtype [| 2; 2 |] [| 0.7; 0.3; 0.4; 0.6 |] in
+
+  let kl = Metrics.kl_divergence () in
+  Metrics.update kl ~predictions ~targets ();
+  let result = Metrics.compute kl in
+  let expected_value =
+    let open Float in
+    let kl1 = (0.7 *. log (0.7 /. 0.6)) +. (0.3 *. log (0.3 /. 0.4)) in
+    let kl2 = (0.4 *. log (0.4 /. 0.5)) +. (0.6 *. log (0.6 /. 0.5)) in
+    (kl1 +. kl2) /. 2.0
+  in
+  let expected = Rune.scalar dtype expected_value in
+  check (tensor_testable 1e-5) "kl divergence" expected result;
+
+  let kl_zero = Metrics.kl_divergence () in
+  Metrics.update kl_zero ~predictions:targets ~targets ();
+  let result = Metrics.compute kl_zero in
+  let expected = Rune.scalar dtype 0.0 in
+  check (tensor_testable 1e-5) "kl divergence zero" expected result
 
 let test_metric_collection () =
   let dtype = Rune.float32 in
@@ -444,6 +671,7 @@ let () =
       ( "classification",
         [
           test_case "accuracy" `Quick test_accuracy;
+          test_case "accuracy_topk" `Quick test_accuracy_topk;
           test_case "precision_recall" `Quick test_precision_recall;
           test_case "f1_score" `Quick test_f1_score;
           test_case "auc_roc" `Quick test_auc_roc;
@@ -454,16 +682,37 @@ let () =
             test_auc_pr_multiple_updates;
           test_case "confusion_matrix" `Quick test_confusion_matrix;
         ] );
+      ( "ranking",
+        [
+          test_case "ndcg" `Quick test_ndcg;
+          test_case "map" `Quick test_map_metric;
+          test_case "mrr" `Quick test_mrr_metric;
+        ] );
+      ( "nlp",
+        [
+          test_case "bleu" `Quick test_bleu;
+          test_case "rouge" `Quick test_rouge;
+          test_case "meteor" `Quick test_meteor_metric;
+        ] );
+      ( "vision",
+        [
+          test_case "ssim" `Quick test_ssim;
+          test_case "iou" `Quick test_iou;
+          test_case "dice" `Quick test_dice;
+        ] );
       ( "regression",
         [
           test_case "mse_rmse" `Quick test_mse_rmse;
           test_case "mae" `Quick test_mae;
+          test_case "mape" `Quick test_mape;
           test_case "r2_score" `Quick test_r2_score;
+          test_case "explained_variance" `Quick test_explained_variance;
         ] );
       ( "probabilistic",
         [
           test_case "cross_entropy" `Quick test_cross_entropy;
           test_case "binary_cross_entropy" `Quick test_binary_cross_entropy;
+          test_case "kl_divergence" `Quick test_kl_divergence;
         ] );
       ( "collections",
         [

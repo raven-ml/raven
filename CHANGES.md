@@ -57,6 +57,10 @@ All notable changes to this project will be documented in this file.
 - Make `Optimizer.clip_by_global_norm` robust to zero gradients and empty parameter trees to avoid NaNs during training (@tmattio)
 - Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD)
 - Implement AUC-ROC and AUC-PR in Kaun metrics and simplify their signatures (#109, #131, @Shocker444)
+- Add mean absolute percentage error, explained variance, R² (with optional adjustment), KL-divergence, and top-k accuracy to Kaun metrics (@tmattio)
+- Add NDCG, MAP, and MRR ranking metrics to Kaun metrics (@tmattio)
+- Add BLEU, ROUGE, and METEOR metrics to Kaun for pre-tokenized sequences, removing tokenizer dependencies (@tmattio)
+- Add SSIM, IoU, and Dice metrics for vision workloads in Kaun (@tmattio)
 
 ### Talon
 
