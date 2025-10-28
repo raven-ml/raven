@@ -68,7 +68,7 @@ let detach = Autodiff.detach
 
 module Finite_diff = Finite_diff
 module Gradcheck = Gradcheck
-module Cache = Nx.Cache
+module Xdg_cache = Nx_core.Xdg_cache
 
 type method_ = Finite_diff.method_
 

@@ -1,9 +1,6 @@
 module F = Nx_core.Make_frontend (Nx_c)
 include F
 
-(* Re-export core modules *)
-module Cache = Nx_core.Cache
-
 (* Re-export extended type aliases *)
 type bfloat16_t = (float, Bigarray_ext.bfloat16_elt) t
 type bool_t = (bool, Bigarray_ext.bool_elt) t

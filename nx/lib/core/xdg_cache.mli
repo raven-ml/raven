@@ -1,7 +1,7 @@
 (** Cache directory utilities for the Raven ecosystem. *)
 
-val get_cache_base_dir : ?getenv:(string -> string option) -> unit -> string
-(** [get_cache_base_dir ?getenv ()] returns the base cache directory for Raven.
+val get_root : ?getenv:(string -> string option) -> unit -> string
+(** [get_root ?getenv ()] returns the base cache directory for Raven.
 
     The cache directory is resolved using the following priority order: 
     1. [RAVEN_CACHE_ROOT] environment variable (highest priority; absolute cache root) 
@@ -20,13 +20,14 @@ val get_cache_base_dir : ?getenv:(string -> string option) -> unit -> string
     - [XDG_CACHE_HOME]: XDG Base Directory cache location (standard on Linux/Unix)
     - [HOME]: User home directory (used for fallback cache location) *)
 
-val get_cache_dir :
-  ?getenv:(string -> string option) -> scope:string -> string -> string
-(** [get_cache_dir ?getenv ~scope name] returns the cache directory path for a
-    specific component.
+val get_path_in_cache :
+  ?getenv:(string -> string option) -> scope:string list -> string -> string
+(** [get_path_in_cache ?getenv ~scope name] returns the cache directory path for
+    a specific component.
 
     {2 Parameters}
-    - [scope]: the component scope (e.g. "datasets", "models")
+    - [scope]: list of directory names forming the scope (e.g. [\["datasets"\]],
+      [\["models"; "bert"\]])
     - [name]: the specific name within that scope (e.g. "iris", "gpt2")
 
     {2 Returns}
@@ -40,8 +41,16 @@ val get_cache_dir :
 
     Getting cache directory for the iris dataset:
     {[
-      let cache_dir = Nx.Cache.get_cache_dir ~scope:"datasets" "iris" in
+      let cache_dir = Nx_core.Xdg_cache.get_path_in_cache ~scope:["datasets"] "iris" in
       (* With default environment: ~/.cache/raven/datasets/iris/ *)
+    ]}
+
+    Getting cache directory for a BERT model:
+    {[
+      let cache_dir =
+        Nx_core.Xdg_cache.get_path_in_cache ~scope:["models"; "bert"] "vocab"
+      in
+      (* Result: ~/.cache/raven/models/bert/vocab/ *)
     ]}
 
     Getting cache directory with custom root:
@@ -50,7 +59,7 @@ val get_cache_dir :
         if var = "RAVEN_CACHE_ROOT" then Some "/tmp/my-cache" else None
       in
       let cache_dir =
-        Nx.Cache.get_cache_dir ~getenv ~scope:"models" "bert-base-uncased"
+        Nx_core.Xdg_cache.get_path_in_cache ~getenv ~scope:["models"] "bert-base-uncased"
       in
       (* Result: /tmp/my-cache/models/bert-base-uncased/ *)
     ]} *)

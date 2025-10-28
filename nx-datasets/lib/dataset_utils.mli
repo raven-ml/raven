@@ -4,9 +4,9 @@ val get_cache_dir : ?getenv:(string -> string option) -> string -> string
 (** [get_cache_dir ?getenv dataset_name] returns the cache directory path for
     the given dataset.
 
-    This is a convenience wrapper around {!Nx.Cache.get_cache_dir} with
-    [~scope:"datasets"]. See {!Nx.Cache.get_cache_dir} for details on cache
-    directory resolution and environment variable priority.
+    This is a convenience wrapper around {!Nx_core.Xdg_cache.get_path_in_cache}
+    with [~scope:\["datasets"\]]. See {!Nx_core.Xdg_cache.get_path_in_cache} for
+    details on cache directory resolution and environment variable priority.
 
     {2 Parameters}
     - dataset_name: the name of the dataset.

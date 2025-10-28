@@ -3901,10 +3901,3 @@ val print : ('a, 'b) t -> unit
 
 val to_string : ('a, 'b) t -> string
 (** [to_string t] converts tensor info and data to string. *)
-
-(** {2 Cache Management} *)
-
-module Cache : sig
-  include module type of Nx_core.Cache
-end
-(** Cache directory utilities for the Raven ecosystem. *)

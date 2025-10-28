@@ -52,7 +52,7 @@ let mkdir_p path perm =
     ()
 
 let get_cache_dir ?(getenv = Sys.getenv_opt) dataset_name =
-  Nx.Cache.get_cache_dir ~getenv ~scope:"datasets" dataset_name
+  Nx_core.Xdg_cache.get_path_in_cache ~getenv ~scope:["datasets"] dataset_name
 
 let mkdir_p dir =
   try mkdir_p dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
