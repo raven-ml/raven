@@ -41,7 +41,11 @@ type tokenizer = string -> int array
 (** Function type for pluggable tokenizers *)
 
 val whitespace_tokenizer : tokenizer
-(** Built-in whitespace tokenizer *)
+(** Built-in whitespace tokenizer.
+
+    @warning The tokenizer maintains an internal mutable vocabulary and is not
+    thread-safe. Create a fresh tokenizer when you need an isolated
+    vocabulary. *)
 
 (** {1 Dataset Creation} *)
 
@@ -76,9 +80,12 @@ val from_text_file :
   string t
 (** [from_text_file ?encoding ?chunk_size path] creates a memory-mapped text
     dataset yielding lines as strings.
-    - [encoding]: Text encoding (default: UTF8)
-    - [chunk_size]: Size of chunks to read at once (default: 64KB) The file is
-      memory-mapped and read lazily in chunks. *)
+    - [encoding]: Text encoding (default: UTF8). [`LATIN1] is rejected with an
+      [Invalid_parameter] error; use UTF-8 instead. [`ASCII] is treated as a
+      UTF-8 subset.
+    - [chunk_size]: Size of chunks to read at once (default: 64KB) Lines are
+      streamed lazily and Windows style line endings ([\\r\\n]) are normalised
+      to [\\n]. *)
 
 val from_text_files :
   ?encoding:[ `UTF8 | `ASCII | `LATIN1 ] ->
@@ -86,7 +93,8 @@ val from_text_files :
   string list ->
   string t
 (** [from_text_files paths] creates a dataset from multiple text files. Files
-    are processed sequentially without loading all into memory. *)
+    are processed sequentially without loading all into memory. The resulting
+    dataset supports [reset], restarting from the first file. *)
 
 val from_jsonl : ?field:string -> string -> string t
 (** [from_jsonl ?field path] reads a JSONL file where each line is a JSON
@@ -147,14 +155,14 @@ val from_csv_with_labels :
 
 val from_text : tokenizer:tokenizer -> string -> int array t
 (** [from_text ~tokenizer path] reads a text file and returns a dataset of token
-    ID arrays. The file is read as a single document and tokenized. This is
-    useful for language modeling tasks where you want the entire document as a
-    sequence of tokens. *)
+    ID arrays. The entire file is loaded into memory as a single document before
+    tokenization. For streaming inputs prefer [from_text_file] pipelines. *)
 
 (** {1 Transformations} *)
 
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f dataset] applies function [f] to each element *)
+val map : ?spec:element_spec -> ('a -> 'b) -> 'a t -> 'b t
+(** [map ?spec f dataset] applies function [f] to each element. Provide [spec]
+    to describe the resulting element type when it is known. *)
 
 val filter : ('a -> bool) -> 'a t -> 'a t
 (** [filter pred dataset] keeps only elements satisfying [pred] *)
@@ -225,17 +233,20 @@ val batch_map : ?drop_remainder:bool -> int -> ('a array -> 'b) -> 'a t -> 'b t
 val bucket_by_length :
   ?boundaries:int list ->
   ?batch_sizes:int list ->
+  ?drop_remainder:bool ->
   ('a -> int) ->
   'a t ->
   'a array t
-(** [bucket_by_length ?boundaries ?batch_sizes length_fn dataset] groups
-    elements into buckets by length for efficient padding. Example:
+(** [bucket_by_length ?boundaries ?batch_sizes ?drop_remainder length_fn
+     dataset] groups elements into buckets by length for efficient padding.
+    Example:
     {[
       bucket_by_length ~boundaries:[ 10; 20; 30 ] ~batch_sizes:[ 32; 16; 8; 4 ]
         (fun text -> String.length text)
         dataset
     ]}
-    Creates 4 buckets: <10, 10-20, 20-30, >30 with different batch sizes *)
+    Creates 4 buckets: <10, 10-20, 20-30, >30 with different batch sizes.
+    Partial batches are dropped when [drop_remainder] is [true]. *)
 
 (** {2 Shuffling and Sampling} *)
 
@@ -267,9 +278,10 @@ val window :
   ?shift:int -> ?stride:int -> ?drop_remainder:bool -> int -> 'a t -> 'a array t
 (** [window ?shift ?stride ?drop_remainder size dataset] creates sliding
     windows.
-    - [shift]: How many elements to shift window (default: size)
-    - [stride]: Stride within window (default: 1) Example:
-      [window ~shift:1 3 dataset] creates overlapping windows of size 3 *)
+    - [shift]: How far to advance between windows (default: [size])
+    - [stride]: Subsample stride within each emitted window (default: 1)
+      Example: [window ~shift:1 3 dataset] produces overlapping windows of size
+      3. *)
 
 (** {2 Caching and Prefetching} *)
 
@@ -278,15 +290,20 @@ val cache : ?directory:string -> 'a t -> 'a t
     - [directory]: Directory for file cache, in-memory if not specified *)
 
 val prefetch : ?buffer_size:int -> 'a t -> 'a t
-(** [prefetch ?buffer_size dataset] pre-fetches elements in background.
-    - [buffer_size]: Number of elements to prefetch (default: 2) Uses a separate
-      thread to prepare next elements while current is processed. *)
+(** [prefetch ?buffer_size dataset] pre-fetches elements on a background domain.
+    - [buffer_size]: Number of elements to prefetch (default: 2) Prefetching
+      stops automatically when the dataset is exhausted or reset. *)
 
 (** {2 Parallel Processing} *)
 
-val parallel_map : ?num_workers:int -> ('a -> 'b) -> 'a t -> 'b t
-(** [parallel_map ?num_workers f dataset] applies f using multiple workers.
-    - [num_workers]: Number of parallel workers (default: CPU count) *)
+val parallel_map :
+  ?pool:Domainslib.Task.pool -> ?num_workers:int -> ('a -> 'b) -> 'a t -> 'b t
+(** [parallel_map ?pool ?num_workers f dataset] applies f using multiple
+    workers.
+    - [pool]: Reuse an existing [Domainslib.Task.pool]; when omitted an internal
+      pool is created and torn down automatically.
+    - [num_workers]: Number of parallel workers (default: CPU count) Exceptions
+      raised by [f] are propagated to the consumer immediately. *)
 
 val parallel_interleave :
   ?num_workers:int -> ?block_length:int -> ('a -> 'b t) -> 'a t -> 'b t

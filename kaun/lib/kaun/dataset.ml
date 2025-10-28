@@ -14,6 +14,32 @@ type element_spec =
   | Tuple of element_spec list
   | Array of element_spec
 
+type 'a job_result =
+  | Job_value of 'a
+  | Job_error of exn * Printexc.raw_backtrace
+
+let arrays_equal arr1 arr2 =
+  let len = Array.length arr1 in
+  len = Array.length arr2
+  &&
+  let rec loop idx =
+    if idx = len then true
+    else if arr1.(idx) = arr2.(idx) then loop (idx + 1)
+    else false
+  in
+  loop 0
+
+let rec element_spec_equal a b =
+  match (a, b) with
+  | Unknown, Unknown -> true
+  | Scalar s1, Scalar s2 -> String.equal s1 s2
+  | Tensor (shape1, dtype1), Tensor (shape2, dtype2) ->
+      arrays_equal shape1 shape2 && String.equal dtype1 dtype2
+  | Tuple l1, Tuple l2 ->
+      List.length l1 = List.length l2 && List.for_all2 element_spec_equal l1 l2
+  | Array spec1, Array spec2 -> element_spec_equal spec1 spec2
+  | _ -> false
+
 (* Core dataset type - lazy sequence with metadata *)
 type 'a t = {
   next : unit -> 'a option; (* Get next element *)
@@ -82,11 +108,12 @@ let read_mmap_chunk handle ~offset ~length =
   let actual_length = min length (handle.size - offset) in
   if actual_length <= 0 then ""
   else
+    let src = Bigarray.Array1.sub handle.data offset actual_length in
     let bytes = Bytes.create actual_length in
     for i = 0 to actual_length - 1 do
-      Bytes.set bytes i (Bigarray.Array1.get handle.data (offset + i))
+      Bytes.unsafe_set bytes i (Bigarray.Array1.unsafe_get src i)
     done;
-    Bytes.to_string bytes
+    Bytes.unsafe_to_string bytes
 
 (** {1 Dataset Creation} *)
 
@@ -139,11 +166,20 @@ let from_seq seq =
   }
 
 let from_tensor tensor =
-  let n = (Rune.shape tensor).(0) in
+  let shape = Rune.shape tensor in
+  if Array.length shape = 0 then
+    raise
+      (Invalid_parameter
+         "from_tensor: tensor must have at least one dimension to create a \
+          dataset");
+  let n = shape.(0) in
   let idx = ref 0 in
   let reset () = idx := 0 in
-  let shape = Rune.shape tensor in
-  let slice_shape = Array.sub shape 1 (Array.length shape - 1) in
+  let slice_shape =
+    if Array.length shape <= 1 then [||]
+    else Array.sub shape 1 (Array.length shape - 1)
+  in
+  let dtype = Nx_core.Dtype.to_string (Rune.dtype tensor) in
   {
     next =
       (fun () ->
@@ -154,17 +190,35 @@ let from_tensor tensor =
         else None);
     cardinality = (fun () -> Finite n);
     reset = Some reset;
-    spec = (fun () -> Tensor (slice_shape, "float32"));
+    spec = (fun () -> Tensor (slice_shape, dtype));
   }
 
 let from_tensors (x, y) =
-  let n = (Rune.shape x).(0) in
-  let idx = ref 0 in
-  let reset () = idx := 0 in
   let x_shape = Rune.shape x in
   let y_shape = Rune.shape y in
-  let x_slice_shape = Array.sub x_shape 1 (Array.length x_shape - 1) in
-  let y_slice_shape = Array.sub y_shape 1 (Array.length y_shape - 1) in
+  if Array.length x_shape = 0 || Array.length y_shape = 0 then
+    raise
+      (Invalid_parameter
+         "from_tensors: tensors must have at least one dimension to create a \
+          dataset");
+  if x_shape.(0) <> y_shape.(0) then
+    raise
+      (Invalid_parameter
+         (Printf.sprintf "from_tensors: mismatched leading dimension (%d vs %d)"
+            x_shape.(0) y_shape.(0)));
+  let n = x_shape.(0) in
+  let idx = ref 0 in
+  let reset () = idx := 0 in
+  let x_slice_shape =
+    if Array.length x_shape <= 1 then [||]
+    else Array.sub x_shape 1 (Array.length x_shape - 1)
+  in
+  let y_slice_shape =
+    if Array.length y_shape <= 1 then [||]
+    else Array.sub y_shape 1 (Array.length y_shape - 1)
+  in
+  let x_dtype = Nx_core.Dtype.to_string (Rune.dtype x) in
+  let y_dtype = Nx_core.Dtype.to_string (Rune.dtype y) in
   {
     next =
       (fun () ->
@@ -179,129 +233,136 @@ let from_tensors (x, y) =
     spec =
       (fun () ->
         Tuple
-          [
-            Tensor (x_slice_shape, "float32"); Tensor (y_slice_shape, "float32");
-          ]);
+          [ Tensor (x_slice_shape, x_dtype); Tensor (y_slice_shape, y_dtype) ]);
   }
 
 (* Text Data Sources *)
 let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
-  match encoding with
-  | `UTF8 | `ASCII | `LATIN1 ->
-      let enc_name =
-        match encoding with
-        | `UTF8 -> "utf-8"
-        | `ASCII -> "us-ascii"
-        | `LATIN1 -> "iso-8859-1"
-      in
-      let uenc_opt = Uutf.encoding_of_string enc_name in
-      let make_decoder () = Uutf.decoder ?encoding:uenc_opt `Manual in
-      let handle_ref = ref None in
-      let file_size = ref 0 in
-      let offset = ref 0 in
-      let closed = ref false in
-      let buf = Buffer.create 512 in
-      let lines_queue = Queue.create () in
-      let decoder = ref (make_decoder ()) in
+  let decoder_encoding =
+    match encoding with
+    | `UTF8 -> Some `UTF_8
+    | `ASCII -> Some `UTF_8
+    | `LATIN1 ->
+        raise
+          (Invalid_parameter
+             "from_text_file: LATIN1 is not supported, please re-encode the \
+              file to UTF-8")
+  in
+  let make_decoder () = Uutf.decoder ?encoding:decoder_encoding `Manual in
+  let handle_ref = ref None in
+  let file_size = ref 0 in
+  let offset = ref 0 in
+  let closed = ref false in
+  let buf = Buffer.create 512 in
+  let lines_queue = Queue.create () in
+  let decoder = ref (make_decoder ()) in
 
-      let open_handle () =
-        let handle = create_mmap path in
-        file_size := handle.size;
-        handle_ref := Some handle;
-        handle
-      in
-      let ensure_handle () =
-        match !handle_ref with Some h -> h | None -> open_handle ()
-      in
-      let close_handle () =
-        match !handle_ref with
-        | None -> ()
-        | Some h ->
-            (* Closing twice raises EBADF; swallow it because reset can
-               reopen. *)
-            (try close_mmap h with
-            | Unix.Unix_error (Unix.EBADF, _, _) -> ()
-            | exn -> raise exn);
-            handle_ref := None
-      in
-      ignore (open_handle ());
+  let open_handle () =
+    let handle = create_mmap path in
+    file_size := handle.size;
+    handle_ref := Some handle;
+    handle
+  in
+  let ensure_handle () =
+    match !handle_ref with Some h -> h | None -> open_handle ()
+  in
+  let close_handle () =
+    match !handle_ref with
+    | None -> ()
+    | Some h ->
+        (try close_mmap h with
+        | Unix.Unix_error (Unix.EBADF, _, _) -> ()
+        | exn -> raise exn);
+        handle_ref := None
+  in
+  ignore (open_handle ());
 
-      let push_line_from_buf () =
-        let line = Buffer.contents buf in
-        Buffer.clear buf;
-        Queue.add line lines_queue
-      in
+  let push_line_from_buf () =
+    let line = Buffer.contents buf in
+    Buffer.clear buf;
+    let line =
+      let len = String.length line in
+      if len > 0 && line.[len - 1] = '\r' then String.sub line 0 (len - 1)
+      else line
+    in
+    Queue.add line lines_queue
+  in
 
-      let rec fill_queue () =
-        if Queue.is_empty lines_queue && not !closed then
-          match Uutf.decode !decoder with
-          | `Uchar u ->
-              if Uchar.to_int u = 0x000A then push_line_from_buf ()
-              else Uutf.Buffer.add_utf_8 buf u;
-              if Queue.is_empty lines_queue then fill_queue ()
-          | `Malformed _ ->
-              Uutf.Buffer.add_utf_8 buf Uutf.u_rep;
+  let rec fill_queue () =
+    if Queue.is_empty lines_queue && not !closed then
+      match Uutf.decode !decoder with
+      | `Uchar u ->
+          if Uchar.to_int u = 0x000A then push_line_from_buf ()
+          else Uutf.Buffer.add_utf_8 buf u;
+          if Queue.is_empty lines_queue then fill_queue ()
+      | `Malformed _ ->
+          Uutf.Buffer.add_utf_8 buf Uutf.u_rep;
+          fill_queue ()
+      | `Await ->
+          if !offset >= !file_size then (
+            Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
+            fill_queue ())
+          else
+            let handle = ensure_handle () in
+            let chunk =
+              read_mmap_chunk handle ~offset:!offset ~length:chunk_size
+            in
+            offset := !offset + String.length chunk;
+            if chunk = "" then (
+              Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
+              fill_queue ())
+            else
+              let bytes = Bytes.unsafe_of_string chunk in
+              Uutf.Manual.src !decoder bytes 0 (Bytes.length bytes);
               fill_queue ()
-          | `Await ->
-              if !offset >= !file_size then (
-                Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
-                fill_queue ())
-              else
-                let handle = ensure_handle () in
-                let chunk =
-                  read_mmap_chunk handle ~offset:!offset ~length:chunk_size
-                in
-                offset := !offset + String.length chunk;
-                if chunk = "" then (
-                  Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
-                  fill_queue ())
-                else
-                  let bytes = Bytes.of_string chunk in
-                  Uutf.Manual.src !decoder bytes 0 (Bytes.length bytes);
-                  fill_queue ()
-          | `End ->
-              if Buffer.length buf > 0 then push_line_from_buf ();
-              close_handle ();
-              closed := true
-      in
+      | `End ->
+          if Buffer.length buf > 0 then push_line_from_buf ();
+          close_handle ();
+          closed := true
+  in
 
-      let rec next_line () =
-        if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
-        else if !closed then None
-        else (
-          fill_queue ();
-          if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
-          else if !closed then None
-          else next_line ())
-      in
+  let rec next_line () =
+    if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
+    else if !closed then None
+    else (
+      fill_queue ();
+      if not (Queue.is_empty lines_queue) then Some (Queue.take lines_queue)
+      else if !closed then None
+      else next_line ())
+  in
 
-      let reset () =
-        Buffer.clear buf;
-        Queue.clear lines_queue;
-        offset := 0;
-        closed := false;
-        decoder := make_decoder ();
-        close_handle ();
-        ignore (open_handle ())
-      in
+  let reset =
+    let reset_state () =
+      Buffer.clear buf;
+      Queue.clear lines_queue;
+      offset := 0;
+      closed := false;
+      decoder := make_decoder ();
+      close_handle ();
+      ignore (open_handle ())
+    in
+    Some reset_state
+  in
 
-      {
-        next = next_line;
-        cardinality = (fun () -> Unknown);
-        reset = Some reset;
-        spec = (fun () -> Scalar "string");
-      }
+  {
+    next = next_line;
+    cardinality = (fun () -> Unknown);
+    reset;
+    spec = (fun () -> Scalar "string");
+  }
 
 let from_text_files ?(encoding = `UTF8) ?(chunk_size = 65536) paths =
+  let paths_array = Array.of_list paths in
+  let total_paths = Array.length paths_array in
   let current_file = ref 0 in
   let current_dataset = ref None in
 
   let rec next () =
     match !current_dataset with
     | None ->
-        if !current_file >= List.length paths then None
+        if !current_file >= total_paths then None
         else
-          let path = List.nth paths !current_file in
+          let path = paths_array.(!current_file) in
           let ds = from_text_file ~encoding ~chunk_size path in
           current_dataset := Some ds;
           incr current_file;
@@ -314,10 +375,21 @@ let from_text_files ?(encoding = `UTF8) ?(chunk_size = 65536) paths =
         | some_line -> some_line)
   in
 
+  let reset =
+    (* Resetting recreates datasets lazily on demand *)
+    Some
+      (fun () ->
+        (match !current_dataset with
+        | None -> ()
+        | Some ds -> ( match ds.reset with Some f -> f () | None -> ()));
+        current_dataset := None;
+        current_file := 0)
+  in
+
   {
     next;
     cardinality = (fun () -> Unknown);
-    reset = None;
+    reset;
     spec = (fun () -> Scalar "string");
   }
 
@@ -530,13 +602,17 @@ let sliding_window ~block_size ~tokenize texts =
 
 (** {1 Transformations} *)
 
-let map f dataset =
+let map ?spec f dataset =
+  let spec_fn =
+    match spec with
+    | Some provided -> fun () -> provided
+    | None -> fun () -> Unknown
+  in
   {
     next = (fun () -> Option.map f (dataset.next ()));
     cardinality = dataset.cardinality;
     reset = dataset.reset;
-    spec = (fun () -> Unknown);
-    (* Can't infer spec from arbitrary map *)
+    spec = spec_fn;
   }
 
 let from_file parser path =
@@ -623,8 +699,13 @@ let concatenate ds1 ds2 =
     | Infinite, _ | _, Infinite -> Infinite
     | _ -> Unknown
   in
+  let combined_spec =
+    let spec1 = ds1.spec () in
+    let spec2 = ds2.spec () in
+    if element_spec_equal spec1 spec2 then spec1 else Unknown
+  in
 
-  { next; cardinality; reset = None; spec = ds1.spec }
+  { next; cardinality; reset = None; spec = (fun () -> combined_spec) }
 
 let interleave datasets =
   let n = List.length datasets in
@@ -740,7 +821,9 @@ let batch_generic ?(drop_remainder = false) size dataset =
           incr filled
     done;
     if !buffer = [] then None
-    else if List.length !buffer < size && drop_remainder then None
+    else if List.length !buffer < size && drop_remainder then (
+      buffer := [];
+      None)
     else
       let batch = Array.of_list (List.rev !buffer) in
       buffer := [];
@@ -771,7 +854,8 @@ let batch_map ?(drop_remainder = false) size f dataset =
   let batched = batch_generic ~drop_remainder size dataset in
   map f batched
 
-let bucket_by_length ?boundaries ?batch_sizes length_fn dataset =
+let bucket_by_length ?boundaries ?batch_sizes ?(drop_remainder = false)
+    length_fn dataset =
   let boundaries = Option.value boundaries ~default:[ 100; 200; 300 ] in
   let batch_sizes = Option.value batch_sizes ~default:[ 64; 32; 16; 8 ] in
 
@@ -831,13 +915,20 @@ let bucket_by_length ?boundaries ?batch_sizes length_fn dataset =
       (* Dataset exhausted - flush remaining buckets *)
       let found_batch = ref false in
       Array.iteri
-        (fun _bucket_idx bucket ->
+        (fun bucket_idx bucket ->
           if (not (Queue.is_empty bucket)) && not !found_batch then (
-            let batch =
-              Array.init (Queue.length bucket) (fun _ -> Queue.take bucket)
+            let bucket_size = Queue.length bucket in
+            let target_size =
+              if bucket_idx < Array.length bucket_batch_sizes then
+                bucket_batch_sizes.(bucket_idx)
+              else 8
             in
-            Queue.add batch pending_batches;
-            found_batch := true))
+            if drop_remainder && bucket_size < target_size then
+              Queue.clear bucket
+            else
+              let batch = Array.init bucket_size (fun _ -> Queue.take bucket) in
+              Queue.add batch pending_batches;
+              found_batch := true))
         buckets;
       if Queue.is_empty pending_batches then None
       else Some (Queue.take pending_batches))
@@ -878,12 +969,23 @@ let take n dataset =
       dataset.next ())
   in
 
-  {
-    next;
-    cardinality = (fun () -> Finite n);
-    reset = None;
-    spec = dataset.spec;
-  }
+  let cardinality () =
+    match dataset.cardinality () with
+    | Finite l -> Finite (min n l)
+    | Infinite -> Finite n
+    | Unknown -> Unknown
+  in
+  let reset =
+    match dataset.reset with
+    | None -> None
+    | Some reset_fn ->
+        Some
+          (fun () ->
+            count := 0;
+            reset_fn ())
+  in
+
+  { next; cardinality; reset; spec = dataset.spec }
 
 let skip n dataset =
   if n < 0 then
@@ -952,47 +1054,51 @@ let window ?(shift = -1) ?(stride = 1) ?(drop_remainder = false) size dataset =
          ("window: stride must be positive, got " ^ string_of_int stride));
 
   let actual_shift = if shift = -1 then size else shift in
-
   if actual_shift <= 0 then
     raise
       (Invalid_parameter
          ("window: shift must be positive, got " ^ string_of_int actual_shift));
 
-  let buffer = Queue.create () in
-  let exhausted = ref false in
+  let buffer = Array.make size (Obj.magic 0) in
+  let start = ref 0 in
+  let filled = ref 0 in
+  let finished = ref false in
 
-  (* Lazy window generation *)
-  let next () =
-    (* Ensure we have enough elements for a window or we're exhausted *)
-    while Queue.length buffer < size && not !exhausted do
+  let fill () =
+    while !filled < size && not !finished do
       match dataset.next () with
-      | None -> exhausted := true
-      | Some x -> Queue.add x buffer
-    done;
+      | None -> finished := true
+      | Some x ->
+          let idx = (!start + !filled) mod size in
+          buffer.(idx) <- x;
+          incr filled
+    done
+  in
 
-    (* Check if we can make a window *)
-    let available = Queue.length buffer in
-    if available = 0 then None
-    else if available < size && drop_remainder then None
+  let next () =
+    fill ();
+    if !filled = 0 then None
     else
-      (* Create window array *)
-      let window_size = min size available in
-      let window = Array.make window_size (Obj.magic 0) in
-
-      (* Copy elements from buffer to window *)
-      let buffer_list =
-        Queue.fold (fun acc x -> x :: acc) [] buffer |> List.rev
-      in
-      for i = 0 to window_size - 1 do
-        if i < List.length buffer_list then window.(i) <- List.nth buffer_list i
-      done;
-
-      (* Shift buffer for next window *)
-      for _ = 1 to min actual_shift available do
-        ignore (Queue.take buffer)
-      done;
-
-      Some window
+      let window_len = if !filled >= size then size else !filled in
+      if window_len < size && drop_remainder && !finished then (
+        filled := 0;
+        None)
+      else
+        let out_len =
+          if window_len <= 0 then 0 else 1 + ((window_len - 1) / stride)
+        in
+        if out_len = 0 then None
+        else
+          let tail = !start in
+          let out =
+            Array.init out_len (fun i ->
+                let idx = (tail + (i * stride)) mod size in
+                buffer.(idx))
+          in
+          let to_drop = min actual_shift window_len in
+          start := (!start + to_drop) mod size;
+          filled := !filled - to_drop;
+          Some out
   in
 
   {
@@ -1014,13 +1120,15 @@ let shuffle ?rng ?(buffer_size = 10000) dataset =
   let buffer = Array.make buffer_size None in
   let buffer_count = ref 0 in
   (* Use provided RNG or create new one *)
-  let rand_state =
-    match rng with
-    | Some key ->
-        (* Convert Rune.Rng.key to Random.State.t using to_int as seed *)
-        Random.State.make [| Rune.Rng.to_int key |]
+  let seed =
+    match rng with Some key -> Some [| Rune.Rng.to_int key |] | None -> None
+  in
+  let create_rand_state () =
+    match seed with
+    | Some arr -> Random.State.make (Array.copy arr)
     | None -> Random.State.make_self_init ()
   in
+  let rand_state = ref (create_rand_state ()) in
 
   (* Fill initial buffer *)
   let exhausted = ref false in
@@ -1039,7 +1147,7 @@ let shuffle ?rng ?(buffer_size = 10000) dataset =
     if !buffer_count = 0 then None
     else
       (* Pick random element from buffer *)
-      let idx = Random.State.int rand_state !buffer_count in
+      let idx = Random.State.int !rand_state !buffer_count in
       let result = buffer.(idx) in
 
       (* Try to refill that position *)
@@ -1066,6 +1174,7 @@ let shuffle ?rng ?(buffer_size = 10000) dataset =
           done;
           buffer_count := 0;
           exhausted := false;
+          rand_state := create_rand_state ();
           fill_buffer ());
     spec = dataset.spec;
   }
@@ -1076,6 +1185,15 @@ let sample ?rng ?(replacement = false) n dataset =
     (* This is inherently eager, but we can make it lazy by deferring collection *)
     let elements = ref None in
     let collected = ref false in
+    let seed =
+      match rng with Some key -> Some [| Rune.Rng.to_int key |] | None -> None
+    in
+    let create_rand_state () =
+      match seed with
+      | Some arr -> Random.State.make (Array.copy arr)
+      | None -> Random.State.make_self_init ()
+    in
+    let rand_state = ref (create_rand_state ()) in
 
     let ensure_collected () =
       if not !collected then (
@@ -1100,21 +1218,23 @@ let sample ?rng ?(replacement = false) n dataset =
         | None | Some [||] -> None
         | Some arr ->
             let len = Array.length arr in
-            (* Use provided RNG if available *)
-            let rand_state =
-              match rng with
-              | Some key ->
-                  (* Convert Rune.Rng.key to Random.State.t *)
-                  Random.State.make [| Rune.Rng.to_int key |]
-              | None -> Random.State.make_self_init ()
-            in
             incr count;
-            Some arr.(Random.State.int rand_state len))
+            Some arr.(Random.State.int !rand_state len))
     in
     {
       next;
       cardinality = (fun () -> Finite n);
-      reset = None;
+      reset =
+        Some
+          (fun () ->
+            count := 0;
+            rand_state := create_rand_state ();
+            match dataset.reset with
+            | None -> ()
+            | Some reset_fn ->
+                elements := None;
+                collected := false;
+                reset_fn ());
       spec = dataset.spec;
     }
   else
@@ -1122,22 +1242,38 @@ let sample ?rng ?(replacement = false) n dataset =
     take n (shuffle ?rng ~buffer_size:(min 10000 n) dataset)
 
 let weighted_sample ?rng ~weights n dataset =
-  (* Use provided RNG or create new one *)
-  let rand_state =
-    match rng with
-    | Some key -> Random.State.make [| Rune.Rng.to_int key |]
+  let weights_len = Array.length weights in
+  if weights_len = 0 then
+    raise (Invalid_parameter "weighted_sample: weights array must be non-empty");
+  Array.iteri
+    (fun idx w ->
+      if Float.is_nan w || w < 0. then
+        raise
+          (Invalid_parameter
+             (Printf.sprintf
+                "weighted_sample: weight at index %d must be >= 0 and finite"
+                idx)))
+    weights;
+  let total_weight = Array.fold_left ( +. ) 0. weights in
+  if (not (Float.is_finite total_weight)) || total_weight <= 0. then
+    raise
+      (Invalid_parameter
+         "weighted_sample: sum of weights must be positive and finite");
+  let cumulative = Array.make weights_len 0. in
+  let sum = ref 0. in
+  for i = 0 to weights_len - 1 do
+    sum := !sum +. weights.(i);
+    cumulative.(i) <- !sum /. total_weight
+  done;
+  let seed =
+    match rng with Some key -> Some [| Rune.Rng.to_int key |] | None -> None
+  in
+  let create_rand_state () =
+    match seed with
+    | Some arr -> Random.State.make (Array.copy arr)
     | None -> Random.State.make_self_init ()
   in
-
-  (* Compute cumulative weights *)
-  let total_weight = Array.fold_left ( +. ) 0. weights in
-  let cumulative = Array.make (Array.length weights) 0. in
-  let sum = ref 0. in
-  Array.iteri
-    (fun i w ->
-      sum := !sum +. w;
-      cumulative.(i) <- !sum /. total_weight)
-    weights;
+  let rand_state = ref (create_rand_state ()) in
 
   (* Lazy sampling - collect elements only when needed *)
   let elements = ref None in
@@ -1153,7 +1289,15 @@ let weighted_sample ?rng ~weights n dataset =
         | None -> continue := false
         | Some x -> items := x :: !items
       done;
-      elements := Some (Array.of_list (List.rev !items));
+      let arr = Array.of_list (List.rev !items) in
+      if Array.length arr <> weights_len then
+        raise
+          (Invalid_parameter
+             (Printf.sprintf
+                "weighted_sample: weights length (%d) must equal dataset \
+                 length (%d)"
+                weights_len (Array.length arr)));
+      elements := Some arr;
       collected := true)
   in
 
@@ -1165,7 +1309,7 @@ let weighted_sample ?rng ~weights n dataset =
       match !elements with
       | None | Some [||] -> None
       | Some arr ->
-          let r = Random.State.float rand_state 1.0 in
+          let r = Random.State.float !rand_state 1.0 in
           (* Binary search for the right bucket *)
           let idx =
             let rec find_bucket low high =
@@ -1175,8 +1319,7 @@ let weighted_sample ?rng ~weights n dataset =
                 if cumulative.(mid) < r then find_bucket (mid + 1) high
                 else find_bucket low mid
             in
-            find_bucket 0
-              (min (Array.length cumulative - 1) (Array.length arr - 1))
+            find_bucket 0 (weights_len - 1)
           in
           incr count;
           if idx < Array.length arr then Some arr.(idx) else None)
@@ -1185,7 +1328,17 @@ let weighted_sample ?rng ~weights n dataset =
   {
     next;
     cardinality = (fun () -> Finite n);
-    reset = None;
+    reset =
+      Some
+        (fun () ->
+          count := 0;
+          rand_state := create_rand_state ();
+          match dataset.reset with
+          | None -> ()
+          | Some reset_fn ->
+              elements := None;
+              collected := false;
+              reset_fn ());
     spec = dataset.spec;
   }
 
@@ -1238,189 +1391,334 @@ let rec cache ?directory dataset =
       cache dataset
 
 let prefetch ?(buffer_size = 2) dataset =
-  (* Create a buffer for prefetched elements *)
-  let buffer = Queue.create () in
-  let fetching = ref false in
-  let exhausted = ref false in
+  if buffer_size <= 0 then
+    raise
+      (Invalid_parameter
+         ("prefetch: buffer_size must be positive, got "
+        ^ string_of_int buffer_size));
 
-  let fetch_to_buffer () =
-    if (not !fetching) && (not !exhausted) && Queue.length buffer < buffer_size
-    then (
-      fetching := true;
-      match dataset.next () with
+  let buffer = Queue.create () in
+  let mutex = Mutex.create () in
+  let condition = Condition.create () in
+  let finished = Atomic.make false in
+  let cancelled = Atomic.make false in
+  let producer_started = ref false in
+  let producer_thread = ref None in
+  let first_error : (exn * Printexc.raw_backtrace) option ref = ref None in
+
+  let record_error exn bt =
+    match !first_error with
+    | Some _ -> ()
+    | None ->
+        first_error := Some (exn, bt);
+        Atomic.set cancelled true;
+        Condition.broadcast condition
+  in
+
+  let rec produce () =
+    if Atomic.get cancelled then ()
+    else
+      let next_item =
+        try dataset.next ()
+        with exn ->
+          let bt = Printexc.get_raw_backtrace () in
+          Mutex.lock mutex;
+          record_error exn bt;
+          Mutex.unlock mutex;
+          None
+      in
+      match next_item with
       | None ->
-          exhausted := true;
-          fetching := false
-      | Some x ->
-          Queue.add x buffer;
-          fetching := false)
+          Atomic.set finished true;
+          Mutex.lock mutex;
+          Condition.broadcast condition;
+          Mutex.unlock mutex
+      | Some value ->
+          Mutex.lock mutex;
+          while
+            Queue.length buffer >= buffer_size && not (Atomic.get cancelled)
+          do
+            Condition.wait condition mutex
+          done;
+          if not (Atomic.get cancelled) then (
+            Queue.add value buffer;
+            Condition.signal condition);
+          Mutex.unlock mutex;
+          if not (Atomic.get cancelled) then produce ()
+  in
+
+  let join_producer () =
+    match !producer_thread with
+    | None -> ()
+    | Some t -> (
+        producer_thread := None;
+        try Domain.join t
+        with exn ->
+          let bt = Printexc.get_raw_backtrace () in
+          Mutex.lock mutex;
+          record_error exn bt;
+          Mutex.unlock mutex)
+  in
+
+  let stop_producer () =
+    if !producer_started then (
+      Atomic.set cancelled true;
+      Mutex.lock mutex;
+      Condition.broadcast condition;
+      Mutex.unlock mutex;
+      join_producer ();
+      Atomic.set cancelled false;
+      Atomic.set finished false;
+      producer_started := false)
+  in
+
+  let start_producer () =
+    if not !producer_started then (
+      producer_started := true;
+      Atomic.set cancelled false;
+      Atomic.set finished false;
+      let thread = Domain.spawn produce in
+      producer_thread := Some thread)
   in
 
   let next () =
-    (* Try to maintain buffer *)
-    while Queue.length buffer < buffer_size && not !exhausted do
-      fetch_to_buffer ()
-    done;
-
-    if Queue.is_empty buffer then
-      if !exhausted then None
-      else (
-        fetch_to_buffer ();
-        if Queue.is_empty buffer then None else Some (Queue.take buffer))
-    else Some (Queue.take buffer)
+    start_producer ();
+    Mutex.lock mutex;
+    let rec wait () =
+      if not (Queue.is_empty buffer) then (
+        let value = Queue.take buffer in
+        Condition.signal condition;
+        `Value value)
+      else
+        match !first_error with
+        | Some (exn, bt) -> `Error (exn, bt)
+        | None ->
+            if Atomic.get finished then `Finished
+            else (
+              Condition.wait condition mutex;
+              wait ())
+    in
+    let outcome = wait () in
+    Mutex.unlock mutex;
+    match outcome with
+    | `Value v -> Some v
+    | `Finished ->
+        stop_producer ();
+        None
+    | `Error (exn, bt) ->
+        stop_producer ();
+        Printexc.raise_with_backtrace exn bt
   in
 
-  {
-    next;
-    cardinality = dataset.cardinality;
-    reset = dataset.reset;
-    spec = dataset.spec;
-  }
+  let reset =
+    match dataset.reset with
+    | None -> None
+    | Some reset_fn ->
+        Some
+          (fun () ->
+            stop_producer ();
+            Mutex.lock mutex;
+            Queue.clear buffer;
+            first_error := None;
+            Mutex.unlock mutex;
+            reset_fn ())
+  in
+
+  { next; cardinality = dataset.cardinality; reset; spec = dataset.spec }
 
 (* Parallel Processing *)
 
-let parallel_map ?num_workers f dataset =
-  let num_workers = Option.value num_workers ~default:4 in
+let parallel_map ?pool ?num_workers f dataset =
+  let default_workers =
+    let count = Domain.recommended_domain_count () in
+    if count > 0 then count else 4
+  in
+  let num_workers = Option.value num_workers ~default:default_workers in
+  if num_workers <= 1 then map f dataset
+  else
+    let num_workers = max 2 num_workers in
 
-  (* Bounded work queue and result queue for backpressure *)
-  let work_queue = Queue.create () in
-  let work_mutex = Mutex.create () in
-  let work_condition = Condition.create () in
+    (* Bounded work queue and result queue for backpressure *)
+    let work_queue = Queue.create () in
+    let work_mutex = Mutex.create () in
+    let work_condition = Condition.create () in
 
-  let result_queue = Queue.create () in
-  let result_mutex = Mutex.create () in
-  let result_condition = Condition.create () in
+    let result_queue = Queue.create () in
+    let result_mutex = Mutex.create () in
+    let result_condition = Condition.create () in
 
-  let input_exhausted = ref false in
-  let workers_done = Atomic.make 0 in
-  let pool_created = ref false in
-  let pool = ref None in
+    let input_exhausted = ref false in
+    let workers_done = Atomic.make 0 in
+    let pool_holder = ref None in
+    let internal_pool = ref None in
+    let tasks_started = ref false in
+    let error_state : (exn * Printexc.raw_backtrace) option ref = ref None in
 
-  (* Producer task - reads from dataset and fills work queue *)
-  let producer pool_ref =
-    Domainslib.Task.async pool_ref (fun () ->
-        let rec produce () =
-          match dataset.next () with
-          | None ->
-              input_exhausted := true;
-              (* Wake up all workers so they can exit *)
-              Condition.broadcast work_condition
-          | Some item ->
-              (* Add to work queue with backpressure *)
+    let push_error exn bt =
+      Mutex.lock result_mutex;
+      if Option.is_some !error_state then Mutex.unlock result_mutex
+      else (
+        error_state := Some (exn, bt);
+        Queue.clear result_queue;
+        Queue.add (Job_error (exn, bt)) result_queue;
+        Condition.broadcast result_condition;
+        Mutex.unlock result_mutex;
+        input_exhausted := true;
+        Mutex.lock work_mutex;
+        Condition.broadcast work_condition;
+        Mutex.unlock work_mutex)
+    in
+
+    (* Producer task - reads from dataset and fills work queue *)
+    let producer pool_ref =
+      Domainslib.Task.async pool_ref (fun () ->
+          let rec produce () =
+            if Option.is_some !error_state then ()
+            else
+              let next_item =
+                try dataset.next ()
+                with exn ->
+                  let bt = Printexc.get_raw_backtrace () in
+                  push_error exn bt;
+                  None
+              in
+              match next_item with
+              | None ->
+                  input_exhausted := true;
+                  Condition.broadcast work_condition
+              | Some item ->
+                  Mutex.lock work_mutex;
+                  while
+                    Queue.length work_queue >= num_workers * 4
+                    && (not !input_exhausted)
+                    && Option.is_none !error_state
+                  do
+                    Condition.wait work_condition work_mutex
+                  done;
+                  if (not !input_exhausted) && Option.is_none !error_state then (
+                    Queue.add item work_queue;
+                    Condition.signal work_condition);
+                  Mutex.unlock work_mutex;
+                  if (not !input_exhausted) && Option.is_none !error_state then
+                    produce ()
+          in
+          produce ())
+    in
+
+    (* Worker tasks - process items from work queue *)
+    let worker pool_ref _idx =
+      Domainslib.Task.async pool_ref (fun () ->
+          let rec process () =
+            if Option.is_some !error_state then ()
+            else (
               Mutex.lock work_mutex;
               while
-                Queue.length work_queue >= num_workers * 4
-                && not !input_exhausted
+                Queue.is_empty work_queue && (not !input_exhausted)
+                && Option.is_none !error_state
               do
                 Condition.wait work_condition work_mutex
               done;
-              if not !input_exhausted then (
-                Queue.add item work_queue;
-                Condition.signal work_condition);
+              let item_opt =
+                if Queue.is_empty work_queue then None
+                else Some (Queue.take work_queue)
+              in
+              Condition.signal work_condition;
               Mutex.unlock work_mutex;
-              if not !input_exhausted then produce ()
-        in
-        produce ())
-  in
 
-  (* Worker tasks - process items from work queue *)
-  let worker pool_ref _id =
-    Domainslib.Task.async pool_ref (fun () ->
-        let rec process () =
-          (* Get work item *)
-          Mutex.lock work_mutex;
-          while Queue.is_empty work_queue && not !input_exhausted do
-            Condition.wait work_condition work_mutex
-          done;
-          let item_opt =
-            if Queue.is_empty work_queue then None
-            else Some (Queue.take work_queue)
+              match item_opt with
+              | None ->
+                  Atomic.incr workers_done;
+                  Condition.broadcast result_condition
+              | Some item -> (
+                  match
+                    try Some (f item)
+                    with exn ->
+                      let bt = Printexc.get_raw_backtrace () in
+                      push_error exn bt;
+                      None
+                  with
+                  | None ->
+                      Atomic.incr workers_done;
+                      Condition.broadcast result_condition
+                  | Some result ->
+                      Mutex.lock result_mutex;
+                      Queue.add (Job_value result) result_queue;
+                      Condition.signal result_condition;
+                      Mutex.unlock result_mutex;
+                      process ()))
           in
-          Condition.signal work_condition;
-          (* Signal producer if waiting *)
-          Mutex.unlock work_mutex;
-
-          match item_opt with
-          | None ->
-              (* No more work *)
-              Atomic.incr workers_done;
-              Condition.broadcast result_condition
-          | Some item ->
-              (* Process item *)
-              let result = f item in
-
-              (* Add result to queue *)
-              Mutex.lock result_mutex;
-              Queue.add result result_queue;
-              Condition.signal result_condition;
-              Mutex.unlock result_mutex;
-
-              process ()
-        in
-        process ())
-  in
-
-  let ensure_pool () =
-    if not !pool_created then (
-      pool_created := true;
-      let p = Domainslib.Task.setup_pool ~num_domains:(num_workers - 1) () in
-      pool := Some p;
-
-      (* Start producer and workers *)
-      let _ = producer p in
-      let _ = List.init (num_workers - 1) (fun i -> worker p i) in
-
-      (* Store pool for cleanup *)
-      pool := Some p;
-      p)
-    else
-      match !pool with
-      | Some p -> p
-      | None -> failwith "Pool was cleaned up unexpectedly"
-  in
-
-  let cleanup () =
-    match !pool with
-    | Some p ->
-        Domainslib.Task.teardown_pool p;
-        pool := None;
-        pool_created := false
-    | None -> ()
-  in
-
-  let next () =
-    (* Ensure pool is created *)
-    let _ = ensure_pool () in
-
-    (* Try to get a result *)
-    Mutex.lock result_mutex;
-
-    (* Wait for result or completion *)
-    while
-      Queue.is_empty result_queue
-      && ((not !input_exhausted) || Atomic.get workers_done < num_workers - 1)
-    do
-      Condition.wait result_condition result_mutex
-    done;
-
-    let result =
-      if Queue.is_empty result_queue then None
-      else Some (Queue.take result_queue)
+          process ())
     in
-    Mutex.unlock result_mutex;
 
-    (* Cleanup if done *)
-    if result = None then cleanup ();
+    let start_workers pool_inst =
+      if not !tasks_started then (
+        tasks_started := true;
+        ignore (producer pool_inst);
+        ignore (List.init (num_workers - 1) (fun i -> worker pool_inst i)))
+    in
 
-    result
-  in
+    let ensure_pool () =
+      match !pool_holder with
+      | Some p -> p
+      | None -> (
+          match pool with
+          | Some external_pool ->
+              pool_holder := Some external_pool;
+              start_workers external_pool;
+              external_pool
+          | None ->
+              let p =
+                Domainslib.Task.setup_pool ~num_domains:(num_workers - 1) ()
+              in
+              internal_pool := Some p;
+              pool_holder := Some p;
+              start_workers p;
+              p)
+    in
 
-  {
-    next;
-    cardinality = dataset.cardinality;
-    reset = None;
-    spec = (fun () -> Unknown);
-  }
+    let cleanup () =
+      match !internal_pool with
+      | Some p ->
+          Domainslib.Task.teardown_pool p;
+          internal_pool := None;
+          pool_holder := None;
+          tasks_started := false
+      | None -> ()
+    in
+
+    let next () =
+      (match !error_state with
+      | Some (exn, bt) -> Printexc.raise_with_backtrace exn bt
+      | None -> ());
+      let _ = ensure_pool () in
+      Mutex.lock result_mutex;
+      while
+        Queue.is_empty result_queue
+        && ((not !input_exhausted) || Atomic.get workers_done < num_workers - 1)
+      do
+        Condition.wait result_condition result_mutex
+      done;
+      let result =
+        if Queue.is_empty result_queue then None
+        else Some (Queue.take result_queue)
+      in
+      Mutex.unlock result_mutex;
+      match result with
+      | Some (Job_error (exn, bt)) ->
+          cleanup ();
+          Printexc.raise_with_backtrace exn bt
+      | Some (Job_value v) -> Some v
+      | None ->
+          cleanup ();
+          None
+    in
+
+    {
+      next;
+      cardinality = dataset.cardinality;
+      reset = None;
+      spec = (fun () -> Unknown);
+    }
 
 let parallel_interleave ?num_workers ?block_length f dataset =
   let num_workers = Option.value num_workers ~default:4 in
