@@ -45,14 +45,6 @@ val get_path_in_cache :
       (* With default environment: ~/.cache/raven/datasets/iris/ *)
     ]}
 
-    Getting cache directory for a BERT model:
-    {[
-      let cache_dir =
-        Nx_core.Xdg_cache.get_path_in_cache ~scope:["models"; "bert"] "vocab"
-      in
-      (* Result: ~/.cache/raven/models/bert/vocab/ *)
-    ]}
-
     Getting cache directory with custom root:
     {[
       let getenv var =
