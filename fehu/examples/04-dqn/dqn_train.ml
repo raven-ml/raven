@@ -103,15 +103,15 @@ let () =
   close_out oc;
 
   let save_positions positions filename =
-    let oc = open_out (out_dir ^ filename) in
-    List.iter (fun obs ->
-      let arr = Rune.to_array obs in
-      Printf.fprintf oc "%f %f\n" arr.(0) arr.(1)
-    ) positions;
-    close_out oc
-  in
-  save_positions !early_positions "early_positions.txt";
-  save_positions !late_positions "late_positions.txt";
+  let oc = open_out (out_dir ^ filename) in
+  List.iter (fun obs ->
+    let arr = Rune.to_array obs in
+    Printf.fprintf oc "%f %f\n" (arr.(0) +. 0.5) (arr.(1) +. 0.5)
+  ) positions;
+  close_out oc
+in
+save_positions !early_positions "early_positions.txt";
+save_positions !late_positions "late_positions.txt";
 
   (* Save state visitation heatmap *)
   let oc_heatmap = open_out (out_dir ^ "visit_counts.txt") in
