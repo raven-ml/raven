@@ -22,7 +22,7 @@
     Create a discrete action space and sample from it:
     {[
       let action_space = Space.Discrete.create 4 in
-      let action = Space.sample action_space
+      let action, next_rng = Space.sample action_space
     ]}
 
     Create a continuous observation space:
@@ -72,8 +72,8 @@ end
 type 'a t = {
   shape : int array option;  (** Dimensionality, if applicable *)
   contains : 'a -> bool;  (** Validates whether a value belongs to this space *)
-  sample : ?rng:Rune.Rng.key -> unit -> 'a;
-      (** Generates a random valid value *)
+  sample : ?rng:Rune.Rng.key -> unit -> 'a * Rune.Rng.key;
+      (** Generates a random valid value and the next RNG key *)
   pack : 'a -> Value.t;  (** Converts to universal value representation *)
   unpack : Value.t -> ('a, string) result;
       (** Parses from universal representation *)
@@ -98,10 +98,20 @@ val contains : 'a t -> 'a -> bool
 
     Returns [true] if [value] satisfies all constraints of [space]. *)
 
-val sample : ?rng:Rune.Rng.key -> 'a t -> 'a
-(** [sample ~rng space] generates a random valid value from [space].
+val boundary_values : 'a t -> Value.t list
+(** [boundary_values space] returns representative edge-case values for [space].
 
-    If [rng] is not provided, uses a default RNG. *)
+    The list includes lower/upper bounds or canonical sentinels when known.
+    Values are expressed in {!Value} form and can be used for deterministic
+    compatibility checks between spaces. Returns [] when no boundary samples are
+    registered for the space. *)
+
+val sample : ?rng:Rune.Rng.key -> 'a t -> 'a * Rune.Rng.key
+(** [sample ~rng space] generates a random valid value and next RNG key.
+
+    Returns [(value, next_key)]. The input key (or the default key when omitted)
+    must be treated as single-use; callers should continue with [next_key].
+    Internally, samplers split keys to maintain independence across draws. *)
 
 val pack : 'a t -> 'a -> Value.t
 (** [pack space value] converts [value] to a universal representation. *)
@@ -145,6 +155,10 @@ module Box : sig
       @raise Invalid_argument
         if [low] and [high] have different lengths or if any
         [low.(i) > high.(i)]. *)
+
+  val bounds : element t -> float array * float array
+  (** [bounds space] returns copies of the [low] and [high] vectors used to
+      create [space]. The returned arrays are safe to mutate. *)
 end
 
 module Multi_binary : sig

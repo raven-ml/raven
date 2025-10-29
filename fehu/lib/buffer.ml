@@ -45,13 +45,14 @@ module Replay = struct
       truncateds = Array.make capacity false;
     }
 
-  let add buffer (transition : ('obs, 'act) transition) =
-    let needs_init = buffer.size = 0 in
-    if needs_init then (
+  let ensure_initialized buffer (transition : ('obs, 'act) transition) =
+    if Array.length buffer.observations = 0 then (
       buffer.observations <- Array.make buffer.capacity transition.observation;
       buffer.actions <- Array.make buffer.capacity transition.action;
       buffer.next_observations <-
-        Array.make buffer.capacity transition.next_observation);
+        Array.make buffer.capacity transition.next_observation)
+
+  let write buffer (transition : ('obs, 'act) transition) =
     buffer.observations.(buffer.pos) <- transition.observation;
     buffer.actions.(buffer.pos) <- transition.action;
     buffer.rewards.(buffer.pos) <- transition.reward;
@@ -59,26 +60,60 @@ module Replay = struct
     buffer.terminateds.(buffer.pos) <- transition.terminated;
     buffer.truncateds.(buffer.pos) <- transition.truncated;
     buffer.pos <- (buffer.pos + 1) mod buffer.capacity;
-    buffer.size <- min (buffer.size + 1) buffer.capacity
+    if buffer.size < buffer.capacity then buffer.size <- buffer.size + 1
 
-  let sample buffer ~rng ~batch_size =
+  let add buffer (transition : ('obs, 'act) transition) =
+    ensure_initialized buffer transition;
+    write buffer transition
+
+  let add_many buffer (transitions : ('obs, 'act) transition array) =
+    if Array.length transitions = 0 then ()
+    else (
+      ensure_initialized buffer transitions.(0);
+      Array.iter (write buffer) transitions)
+
+  let sample_indices buffer ~rng ~batch_size =
     if buffer.size = 0 then invalid_arg "Buffer.Replay.sample: buffer is empty";
     if batch_size <= 0 then
       invalid_arg "Buffer.Replay.sample: batch_size must be positive";
     let actual_batch_size = min batch_size buffer.size in
-    let indices =
+    let raw_indices =
       Rune.Rng.randint rng ~min:0 ~max:buffer.size [| actual_batch_size |]
     in
-    let indices_arr : Int32.t array = Rune.to_array indices in
-    Array.init actual_batch_size (fun i ->
-        let idx = Int32.to_int indices_arr.(i) in
+    let indices_arr : Int32.t array = Rune.to_array raw_indices in
+    ( actual_batch_size,
+      Array.init actual_batch_size (fun i -> Int32.to_int indices_arr.(i)) )
+
+  let sample_arrays buffer ~rng ~batch_size =
+    let actual_batch_size, indices = sample_indices buffer ~rng ~batch_size in
+    let gather arr =
+      Array.init actual_batch_size (fun i -> arr.(indices.(i)))
+    in
+    ( gather buffer.observations,
+      gather buffer.actions,
+      Array.init actual_batch_size (fun i -> buffer.rewards.(indices.(i))),
+      gather buffer.next_observations,
+      Array.init actual_batch_size (fun i -> buffer.terminateds.(indices.(i))),
+      Array.init actual_batch_size (fun i -> buffer.truncateds.(indices.(i))) )
+
+  let sample buffer ~rng ~batch_size =
+    let ( observations,
+          actions,
+          rewards,
+          next_observations,
+          terminateds,
+          truncateds ) =
+      sample_arrays buffer ~rng ~batch_size
+    in
+    let batch_size = Array.length rewards in
+    Array.init batch_size (fun i ->
         {
-          observation = buffer.observations.(idx);
-          action = buffer.actions.(idx);
-          reward = buffer.rewards.(idx);
-          next_observation = buffer.next_observations.(idx);
-          terminated = buffer.terminateds.(idx);
-          truncated = buffer.truncateds.(idx);
+          observation = observations.(i);
+          action = actions.(i);
+          reward = rewards.(i);
+          next_observation = next_observations.(i);
+          terminated = terminateds.(i);
+          truncated = truncateds.(i);
         })
 
   let size buffer = buffer.size

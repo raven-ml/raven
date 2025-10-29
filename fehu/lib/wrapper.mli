@@ -101,6 +101,33 @@ val map_reward :
       Wrapper.map_reward ~f:clip env
     ]} *)
 
+val map_info :
+  f:(Info.t -> Info.t) ->
+  ('obs, 'act, 'render) Env.t ->
+  ('obs, 'act, 'render) Env.t
+(** [map_info ~f env] post-processes the info dictionary returned by
+    {!Env.reset} and {!Env.step}.
+
+    Use this to inject diagnostics, strip keys, or normalize info payloads
+    without mutating the underlying environment. *)
+
+val clip_action :
+  ('obs, Space.Box.element, 'render) Env.t ->
+  ('obs, Space.Box.element, 'render) Env.t
+(** [clip_action env] clamps continuous actions to the bounds of the wrapped
+    environment's {!Space.Box} action space.
+
+    The wrapper exposes a relaxed external action space that accepts any float
+    values, then clips them before forwarding to the inner environment. This is
+    equivalent to Gymnasium's [ActionClipWrapper] and is useful when a policy
+    may produce out-of-range actions. *)
+
+val clip_observation :
+  (Space.Box.element, 'act, 'render) Env.t ->
+  (Space.Box.element, 'act, 'render) Env.t
+(** [clip_observation env] clamps continuous observations to the bounds of the
+    wrapped environment's {!Space.Box} observation space. *)
+
 val time_limit :
   max_episode_steps:int ->
   ('obs, 'act, 'render) Env.t ->

@@ -104,6 +104,12 @@ module Replay : sig
 
       Time complexity: O(1). *)
 
+  val add_many : ('obs, 'act) t -> ('obs, 'act) transition array -> unit
+  (** [add_many buffer transitions] appends a batch of transitions.
+
+      Equivalent to repeated calls to {!add} but initializes internal storage at
+      most once and avoids repeated bounds checks. *)
+
   val sample :
     ('obs, 'act) t ->
     rng:Rune.Rng.key ->
@@ -119,6 +125,17 @@ module Replay : sig
 
       @raise Invalid_argument if [batch_size <= 0] or buffer is empty. *)
 
+  val sample_arrays :
+    ('obs, 'act) t ->
+    rng:Rune.Rng.key ->
+    batch_size:int ->
+    'obs array * 'act array * float array * 'obs array * bool array * bool array
+  (** [sample_arrays buffer ~rng ~batch_size] returns a struct-of-arrays batch.
+
+      The arrays share references with the underlying transitions (no copying of
+      observations/actions is performed). Useful for vectorized algorithms that
+      operate on homogeneous arrays. *)
+
   val size : ('obs, 'act) t -> int
   (** [size buffer] returns the current number of transitions stored.
 
@@ -130,8 +147,8 @@ module Replay : sig
   val clear : ('obs, 'act) t -> unit
   (** [clear buffer] removes all transitions from the buffer.
 
-      Resets size to 0 and write position to 0. Does not deallocate internal
-      storage arrays. *)
+      Resets size to 0 and write position to 0 while keeping internal storage
+      arrays allocated for reuse. *)
 end
 
 (** {1 Rollout Buffer (On-Policy: PPO, A2C)} *)

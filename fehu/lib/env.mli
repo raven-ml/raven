@@ -79,6 +79,7 @@ type ('obs, 'act, 'render) t
 val create :
   ?id:string ->
   ?metadata:Metadata.t ->
+  ?validate_transition:(('obs, 'act, 'render) transition -> unit) ->
   rng:Rune.Rng.key ->
   observation_space:'obs Space.t ->
   action_space:'act Space.t ->
@@ -101,6 +102,8 @@ val create :
       reset [options] and returns initial observation and info
     - [step]: Function to advance environment by one timestep. Receives an
       action and returns a transition
+    - [validate_transition]: Optional hook invoked after each [step] to enforce
+      custom invariants (e.g., value bounds)
     - [render]: Optional function to render environment state
     - [close]: Optional cleanup function to release resources *)
 

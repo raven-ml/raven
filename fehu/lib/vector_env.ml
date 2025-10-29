@@ -25,6 +25,22 @@ let ensure_non_empty envs =
 
 let compatibility_rngs = Array.init 4 (fun i -> Rune.Rng.key (137 + i))
 
+let rec info_of_space_value = function
+  | Space.Value.Int i -> Info.int i
+  | Space.Value.Float f -> Info.float f
+  | Space.Value.Bool b -> Info.bool b
+  | Space.Value.Int_array arr -> Info.int_array arr
+  | Space.Value.Float_array arr -> Info.float_array arr
+  | Space.Value.Bool_array arr -> Info.bool_array arr
+  | Space.Value.String s -> Info.string s
+  | Space.Value.List values -> Info.list (List.map info_of_space_value values)
+  | Space.Value.Tuple values -> Info.list (List.map info_of_space_value values)
+  | Space.Value.Dict entries ->
+      Info.dict
+        (List.map
+           (fun (key, value) -> (key, info_of_space_value value))
+           entries)
+
 let ensure_space_equivalence kind reference_space candidate_space candidate_env
     =
   let env_id = Env.id candidate_env in
@@ -40,7 +56,7 @@ let ensure_space_equivalence kind reference_space candidate_space candidate_env
   let check source target =
     Array.iteri
       (fun sample_idx rng ->
-        let sample = Space.sample ~rng source in
+        let sample, _ = Space.sample ~rng source in
         let packed = Space.pack source sample in
         match Space.unpack target packed with
         | Ok value ->
@@ -51,8 +67,26 @@ let ensure_space_equivalence kind reference_space candidate_space candidate_env
             fail (Printf.sprintf "sample %d unpack error: %s" sample_idx msg))
       compatibility_rngs
   in
+  let check_boundaries source target =
+    List.iter
+      (fun boundary ->
+        match Space.unpack target boundary with
+        | Ok value ->
+            if not (Space.contains target value) then
+              fail
+                (Printf.sprintf "boundary value %s rejected by target space"
+                   (Space.Value.to_string boundary))
+        | Error msg ->
+            fail
+              (Printf.sprintf "boundary value %s unpack error: %s"
+                 (Space.Value.to_string boundary)
+                 msg))
+      (Space.boundary_values source)
+  in
   check reference_space candidate_space;
-  check candidate_space reference_space
+  check candidate_space reference_space;
+  check_boundaries reference_space candidate_space;
+  check_boundaries candidate_space reference_space
 
 let ensure_consistent_spaces envs =
   match envs with
@@ -130,8 +164,8 @@ let step vector_env actions =
                 let packed =
                   Space.pack (Env.observation_space env) transition.observation
                 in
-                Info.set "vector.final_observation"
-                  (Info.string (Space.Value.to_string packed))
+                Info.set "final_observation"
+                  (info_of_space_value packed)
                   transition.info
               in
               let obs_reset, info_reset = Env.reset env () in

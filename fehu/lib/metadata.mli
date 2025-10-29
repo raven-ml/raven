@@ -58,6 +58,12 @@ val with_description : string option -> t -> t
 val with_version : string option -> t -> t
 (** [with_version version metadata] sets the version string. *)
 
+val with_render_modes : string list -> t -> t
+val with_supported_vector_modes : string list -> t -> t
+val with_authors : string list -> t -> t
+val with_extra : Yojson.Safe.t option -> t -> t
+val add_supported_vector_mode : string -> t -> t
+
 val add_author : string -> t -> t
 (** [add_author name metadata] adds [name] to the authors list. *)
 

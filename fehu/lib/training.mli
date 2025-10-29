@@ -37,7 +37,8 @@ val compute_gae :
 
     Terminal states ([dones] = true) have zero value for the next state,
     truncating the advantage sum. This prevents bootstrapping across episode
-    boundaries.
+    boundaries. Pass [dones.(t) = terminated.(t) || truncated.(t)] for
+    compatibility with Gymnasium-style APIs.
 
     Parameters:
     - [rewards]: Immediate rewards at each timestep
@@ -219,14 +220,17 @@ val evaluate :
 
     Helper functions for data processing and diagnostics. *)
 
-val normalize : float array -> ?eps:float -> unit -> float array
-(** [normalize arr ~eps ()] normalizes an array to zero mean and unit variance.
+val normalize :
+  float array -> ?eps:float -> ?unbiased:bool -> unit -> float array
+(** [normalize arr ~eps ~unbiased ()] normalizes an array to zero mean and unit
+    variance.
 
     Returns a new array where elements are transformed to:
     {v (x - mean) / (std + eps) v}
 
     Numerical stability constant [eps] prevents division by zero when the array
-    has no variance (default: 1e-8).
+    has no variance (default: 1e-8). When [unbiased] is [true], the standard
+    deviation uses the [n-1] denominator.
 
     Empty arrays are returned unchanged.
 

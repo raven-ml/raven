@@ -21,7 +21,7 @@
       let rng = Rune.Rng.key 42 in
       let env = Fehu_envs.Random_walk.make ~rng () in
       let obs, info = Env.reset env () in
-      let action = Space.sample (Env.action_space env) in
+      let action, _ = Space.sample (Env.action_space env) in
       let transition = Env.step env action in
       Printf.printf "Reward: %.2f\n" transition.reward
     ]}

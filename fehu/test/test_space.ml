@@ -3,7 +3,7 @@ open Fehu
 let test_discrete_basic () =
   let space = Space.Discrete.create 5 in
   let rng = Rune.Rng.key 42 in
-  let sample = Space.sample ~rng space in
+  let sample, _ = Space.sample ~rng space in
   Alcotest.(check bool)
     "discrete sample in range" true
     (Space.contains space sample);
@@ -13,7 +13,7 @@ let test_discrete_basic () =
 let test_discrete_with_start () =
   let space = Space.Discrete.create ~start:10 5 in
   let rng = Rune.Rng.key 99 in
-  let sample = Space.sample ~rng space in
+  let sample, _ = Space.sample ~rng space in
   Alcotest.(check bool)
     "discrete sample valid" true
     (Space.contains space sample);
@@ -26,7 +26,7 @@ let test_discrete_with_start () =
 let test_box_1d () =
   let space = Space.Box.create ~low:[| -1.0 |] ~high:[| 1.0 |] in
   let rng = Rune.Rng.key 123 in
-  let sample = Space.sample ~rng space in
+  let sample, _ = Space.sample ~rng space in
   Alcotest.(check bool) "box 1d sample valid" true (Space.contains space sample);
   let shape = Space.shape space in
   Alcotest.(check (option (array int))) "box 1d shape" (Some [| 1 |]) shape
@@ -36,7 +36,7 @@ let test_box_multidim () =
     Space.Box.create ~low:[| -1.0; -2.0; -3.0 |] ~high:[| 1.0; 2.0; 3.0 |]
   in
   let rng = Rune.Rng.key 456 in
-  let sample = Space.sample ~rng space in
+  let sample, _ = Space.sample ~rng space in
   Alcotest.(check bool) "box multidim valid" true (Space.contains space sample);
   let shape = Space.shape space in
   Alcotest.(check (option (array int)))
@@ -54,7 +54,7 @@ let test_box_multidim () =
 let test_multi_binary () =
   let space = Space.Multi_binary.create 4 in
   let rng = Rune.Rng.key 789 in
-  let sample = Space.sample ~rng space in
+  let sample, _ = Space.sample ~rng space in
   Alcotest.(check bool)
     "multi_binary sample valid" true
     (Space.contains space sample);
@@ -69,7 +69,7 @@ let test_multi_binary () =
 let test_multi_discrete () =
   let space = Space.Multi_discrete.create [| 3; 4; 5 |] in
   let rng = Rune.Rng.key 321 in
-  let sample = Space.sample ~rng space in
+  let sample, _ = Space.sample ~rng space in
   Alcotest.(check bool)
     "multi_discrete sample valid" true
     (Space.contains space sample);
@@ -84,7 +84,7 @@ let test_tuple_space () =
     Space.Tuple.create [ Space.Pack space1; Space.Pack space2 ]
   in
   let rng = Rune.Rng.key 654 in
-  let sample = Space.sample ~rng tuple_space in
+  let sample, _ = Space.sample ~rng tuple_space in
   Alcotest.(check bool)
     "tuple sample valid" true
     (Space.contains tuple_space sample);
@@ -98,7 +98,7 @@ let test_dict_space () =
       [ ("action", Space.Pack disc_space); ("value", Space.Pack box_space) ]
   in
   let rng = Rune.Rng.key 987 in
-  let sample = Space.sample ~rng dict_space in
+  let sample, _ = Space.sample ~rng dict_space in
   Alcotest.(check bool)
     "dict sample valid" true
     (Space.contains dict_space sample);
@@ -113,7 +113,7 @@ let test_sequence_space () =
     Space.Sequence.create ~min_length:2 ~max_length:5 elem_space
   in
   let rng = Rune.Rng.key 111 in
-  let sample = Space.sample ~rng seq_space in
+  let sample, _ = Space.sample ~rng seq_space in
   Alcotest.(check bool)
     "sequence sample valid" true
     (Space.contains seq_space sample);
@@ -124,13 +124,13 @@ let test_sequence_space_unbounded () =
   let elem_space = Space.Discrete.create 4 in
   let seq_space = Space.Sequence.create ~min_length:1 elem_space in
   let rng = Rune.Rng.key 512 in
-  let sample = Space.sample ~rng seq_space in
+  let sample, _ = Space.sample ~rng seq_space in
   Alcotest.(check int)
     "default sample length is min_length" 1 (List.length sample);
   let extended =
     List.init 4 (fun i ->
         let rng = Rune.Rng.key (800 + i) in
-        Space.sample ~rng elem_space)
+        fst (Space.sample ~rng elem_space))
   in
   Alcotest.(check bool)
     "contains extended sequence" true
@@ -145,7 +145,7 @@ let test_sequence_space_unbounded () =
 let test_text_space () =
   let space = Space.Text.create ~max_length:10 () in
   let rng = Rune.Rng.key 222 in
-  let sample = Space.sample ~rng space in
+  let sample, _ = Space.sample ~rng space in
   Alcotest.(check bool) "text sample valid" true (Space.contains space sample);
   Alcotest.(check bool)
     "text length respects max" true
@@ -154,7 +154,7 @@ let test_text_space () =
 let test_text_custom_charset () =
   let space = Space.Text.create ~charset:"ABC" ~max_length:5 () in
   let rng = Rune.Rng.key 333 in
-  let sample = Space.sample ~rng space in
+  let sample, _ = Space.sample ~rng space in
   Alcotest.(check bool)
     "text custom charset valid" true
     (Space.contains space sample);
@@ -166,7 +166,7 @@ let test_text_custom_charset () =
 let test_pack_unpack () =
   let space = Space.Discrete.create 10 in
   let rng = Rune.Rng.key 444 in
-  let sample = Space.sample ~rng space in
+  let sample, _ = Space.sample ~rng space in
   let packed = Space.pack space sample in
   match Space.unpack space packed with
   | Ok unpacked ->

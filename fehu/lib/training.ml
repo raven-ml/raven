@@ -45,19 +45,30 @@ let compute_returns ~rewards ~dones ~gamma =
 
   returns
 
-let normalize_array arr ?(eps = 1e-8) () =
+let normalize_array arr ?(eps = 1e-8) ?(unbiased = false) () =
   let n = Array.length arr in
   if n = 0 then arr
   else
-    let sum = Array.fold_left ( +. ) 0.0 arr in
-    let mean = sum /. float_of_int n in
-    let variance_sum =
-      Array.fold_left (fun acc x -> acc +. ((x -. mean) ** 2.0)) 0.0 arr
+    let mean = ref 0.0 in
+    let m2 = ref 0.0 in
+    Array.iteri
+      (fun idx x ->
+        let k = float_of_int (idx + 1) in
+        let delta = x -. !mean in
+        mean := !mean +. (delta /. k);
+        let delta2 = x -. !mean in
+        m2 := !m2 +. (delta *. delta2))
+      arr;
+    let variance =
+      if unbiased && n > 1 then !m2 /. float_of_int (n - 1)
+      else !m2 /. float_of_int n
     in
-    let std = sqrt (variance_sum /. float_of_int n) +. eps in
-    Array.map (fun x -> (x -. mean) /. std) arr
+    let std = sqrt variance +. eps in
+    let mean_val = !mean in
+    Array.map (fun x -> (x -. mean_val) /. std) arr
 
-let normalize arr ?(eps = 1e-8) () = normalize_array arr ~eps ()
+let normalize arr ?(eps = 1e-8) ?unbiased () =
+  normalize_array arr ?unbiased ~eps ()
 
 let policy_gradient_loss ~log_probs ~advantages ?(normalize = true) () =
   let n = Array.length log_probs in
@@ -141,7 +152,7 @@ let explained_variance ~y_pred ~y_true =
       var_y := !var_y +. ((y_true.(i) -. mean_true) ** 2.0)
     done;
 
-    if !var_y = 0.0 then 0.0 else 1.0 -. (!var_diff /. !var_y)
+    if !var_y = 0.0 then Float.nan else 1.0 -. (!var_diff /. !var_y)
 
 type stats = {
   mean_reward : float;

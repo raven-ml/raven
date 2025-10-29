@@ -40,8 +40,9 @@ let ensure_reset env ~operation =
       (Reset_needed
          (Printf.sprintf "Operation '%s' requires calling reset first" operation))
 
-let create ?id ?(metadata = Metadata.default) ~rng ~observation_space
-    ~action_space ~reset:reset_handler ~step:step_handler ?render ?close () =
+let create ?id ?(metadata = Metadata.default) ?validate_transition ~rng
+    ~observation_space ~action_space ~reset:reset_handler ~step:step_handler
+    ?render ?close () =
   let render_impl = Option.value render ~default:(fun _ -> None) in
   let close_impl = Option.value close ~default:(fun _ -> ()) in
   let rec env =
@@ -62,22 +63,43 @@ let create ?id ?(metadata = Metadata.default) ~rng ~observation_space
     ensure_open env ~operation:"reset";
     let observation, info = reset_handler env ?options () in
     if not (Space.contains env.observation_space observation) then
+      let value =
+        Space.pack env.observation_space observation |> Space.Value.to_string
+      in
       raise_error
         (Invalid_metadata
-           "Reset produced an observation outside observation_space")
+           (Printf.sprintf
+              "Reset produced an observation outside observation_space \
+               (value=%s)"
+              value))
     else (
       env.needs_reset <- false;
       (observation, info))
   and step_impl env action =
     ensure_open env ~operation:"step";
     ensure_reset env ~operation:"step";
-    if not (Space.contains env.action_space action) then
-      raise_error (Invalid_action "Action outside of action_space");
+    (if not (Space.contains env.action_space action) then
+       let value =
+         Space.pack env.action_space action |> Space.Value.to_string
+       in
+       ignore
+         (raise_error
+            (Invalid_action
+               (Printf.sprintf "Action outside of action_space (value=%s)" value))));
     let transition = step_handler env action in
-    if not (Space.contains env.observation_space transition.observation) then
-      raise_error
-        (Invalid_metadata
-           "Step produced an observation outside observation_space");
+    (if not (Space.contains env.observation_space transition.observation) then
+       let value =
+         Space.pack env.observation_space transition.observation
+         |> Space.Value.to_string
+       in
+       ignore
+         (raise_error
+            (Invalid_metadata
+               (Printf.sprintf
+                  "Step produced an observation outside observation_space \
+                   (value=%s)"
+                  value))));
+    Option.iter (fun validate -> validate transition) validate_transition;
     if transition.terminated || transition.truncated then
       env.needs_reset <- true;
     transition

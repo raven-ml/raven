@@ -33,9 +33,38 @@ let test_replay_add_and_sample () =
   Alcotest.(check int) "size after adding 3" 3 (Buffer.Replay.size buffer);
 
   (* Sample *)
-  let rng = (Rune.Rng.split rng ~n:2).(0) in
-  let samples = Buffer.Replay.sample buffer ~rng ~batch_size:2 in
-  Alcotest.(check int) "sampled batch size" 2 (Array.length samples)
+  let keys = Rune.Rng.split rng ~n:2 in
+  let samples = Buffer.Replay.sample buffer ~rng:keys.(0) ~batch_size:2 in
+  Alcotest.(check int) "sampled batch size" 2 (Array.length samples);
+  let observations, actions, rewards, next_obs, terminateds, truncateds =
+    Buffer.Replay.sample_arrays buffer ~rng:keys.(1) ~batch_size:2
+  in
+  Alcotest.(check int) "soa observations" 2 (Array.length observations);
+  Alcotest.(check int) "soa actions" 2 (Array.length actions);
+  Alcotest.(check int) "soa rewards" 2 (Array.length rewards);
+  Alcotest.(check int) "soa next observations" 2 (Array.length next_obs);
+  Alcotest.(check int) "soa terminateds" 2 (Array.length terminateds);
+  Alcotest.(check int) "soa truncateds" 2 (Array.length truncateds)
+
+let test_replay_add_many () =
+  let buffer = Buffer.Replay.create ~capacity:5 in
+  let mk_transition idx =
+    let float_value = float_of_int idx in
+    let obs = Rune.create Rune.float32 [| 1 |] [| float_value |] in
+    let action = Rune.create Rune.int32 [| 1 |] [| Int32.of_int idx |] in
+    Buffer.
+      {
+        observation = obs;
+        action;
+        reward = float_value;
+        next_observation = obs;
+        terminated = false;
+        truncated = false;
+      }
+  in
+  let batch = Array.init 3 mk_transition in
+  Buffer.Replay.add_many buffer batch;
+  Alcotest.(check int) "size after add_many" 3 (Buffer.Replay.size buffer)
 
 let test_replay_circular () =
   let buffer = Buffer.Replay.create ~capacity:3 in
@@ -212,6 +241,7 @@ let () =
         [
           test_case "create replay buffer" `Quick test_replay_create;
           test_case "add and sample" `Quick test_replay_add_and_sample;
+          test_case "add_many" `Quick test_replay_add_many;
           test_case "circular buffer behavior" `Quick test_replay_circular;
           test_case "clear buffer" `Quick test_replay_clear;
         ] );

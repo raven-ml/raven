@@ -102,6 +102,8 @@ val step : ('obs, 'act, 'render) t -> 'act array -> ('obs, 'act, 'render) step
     If autoreset is enabled ([Next_step]), terminated environments automatically
     reset and return their initial observation. The [terminations] and
     [truncations] arrays indicate which environments ended before resetting.
+    Infos for terminated environments include a [`final_observation`] key with
+    the structured final observation encoded as an {!Info.value}.
 
     @raise Invalid_argument if [actions] length doesn't match {!num_envs}. *)
 

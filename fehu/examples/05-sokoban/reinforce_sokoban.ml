@@ -229,7 +229,7 @@ let () =
   let random_policy _obs =
     let keys = Rune.Rng.split !rng ~n:2 in
     rng := keys.(0);
-    Space.sample ~rng:keys.(1) (Env.action_space env)
+    fst (Space.sample ~rng:keys.(1) (Env.action_space env))
   in
 
   let random_stats =

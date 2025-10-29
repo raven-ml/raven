@@ -33,9 +33,9 @@ let env = Fehu_envs.Cartpole.make ~rng ()
 let obs, _info = Env.reset env ()
 
 (* Run one episode *)
-let rec run_episode total_reward =
+let rec run_episode rng total_reward =
   (* Sample random action *)
-  let action = Space.sample ~rng (Env.action_space env) in
+  let action, rng = Space.sample ~rng (Env.action_space env) in
 
   (* Take step *)
   let transition = Env.step env action in
@@ -44,10 +44,10 @@ let rec run_episode total_reward =
   if transition.terminated || transition.truncated then
     Printf.printf "Episode finished. Total reward: %.0f\n" new_total
   else
-    run_episode new_total
+    run_episode rng new_total
 in
 
-run_episode 0.0
+run_episode rng 0.0
 ```
 
 ## Training with REINFORCE
