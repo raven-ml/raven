@@ -74,24 +74,30 @@ let plot_overlay_trajectories early_xs early_ys late_xs late_ys filename =
                     ~y:(create float32 [|2|] [|x; x|])
                     ax |> ignore;
     done;
-    Plotting.scatter ~x:(create float32 [| Array.length early_xs |] early_xs)
-                     ~y:(create float32 [| Array.length early_ys |] early_ys)
+    (* Shift dots to center of squares *)
+    let shift arr = Array.map (fun v -> v +. 0.5) arr in
+       Plotting.scatter ~x:(create float32 [| Array.length early_xs |] (shift early_xs))
+                     ~y:(create float32 [| Array.length early_ys |] (shift early_ys))
                      ~c:Artist.Color.orange
+                     ~s:150.
                      ~label:"Early Trajectory"
                      ax |> ignore;
-    Plotting.scatter ~x:(create float32 [| Array.length late_xs |] late_xs)
-                     ~y:(create float32 [| Array.length late_ys |] late_ys)
+    Plotting.scatter ~x:(create float32 [| Array.length late_xs |] (shift late_xs))
+                     ~y:(create float32 [| Array.length late_ys |] (shift late_ys))
                      ~c:Artist.Color.blue
+                     ~s:150.
                      ~label:"Late Trajectory"
                      ax |> ignore;
-    Plotting.scatter ~x:(create float32 [|1|] [|0.|])
-                     ~y:(create float32 [|1|] [|0.|])
+    Plotting.scatter ~x:(create float32 [|1|] [|0.5|])
+                     ~y:(create float32 [|1|] [|0.5|])
                      ~c:Artist.Color.green
+                     ~s:150.
                      ~label:"Start"
                      ax |> ignore;
-    Plotting.scatter ~x:(create float32 [|1|] [|4.|])
-                     ~y:(create float32 [|1|] [|4.|])
+    Plotting.scatter ~x:(create float32 [|1|] [|4.5|])
+                     ~y:(create float32 [|1|] [|4.5|])
                      ~c:Artist.Color.red
+                     ~s:150.
                      ~label:"Goal"
                      ax |> ignore;
     Axes.set_xlabel "X Position" ax |> ignore;
