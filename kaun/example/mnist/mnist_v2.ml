@@ -50,8 +50,8 @@ let () =
 
   (* Training with new high-level API *)
   let state, history =
-    Training.fit ~model
-      ~optimizer:(Optimizer.adam ~lr:learning_rate ())
+    let lr = Optimizer.Schedule.constant learning_rate in
+    Training.fit ~model ~optimizer:(Optimizer.adam ~lr ())
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~metrics ~train_data
       ~val_data:test_data ~epochs ~progress:true ~rngs ~dtype ()
   in

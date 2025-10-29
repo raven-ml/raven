@@ -2,6 +2,33 @@
 
 open Rune
 
+let with_float_tensor node ~f =
+  match node with
+  | Kaun.Ptree.Tensor tensor ->
+      Kaun.Ptree.with_tensor tensor
+        {
+          run =
+            (fun (type a) (type layout) (t : (a, layout) Rune.t) ->
+              let t = Rune.cast Rune.float32 t in
+              f t);
+        }
+  | _ -> failwith "Expected tensor node"
+
+let tensor_to_float32 node = with_float_tensor node ~f:(fun t -> t)
+
+let get_by_path_exn path tree =
+  let path = Kaun.Ptree.Path.of_string path in
+  match Kaun.Ptree.get ~path tree with
+  | Some node -> node
+  | None ->
+      let name = Kaun.Ptree.Path.to_string path in
+      failwith (Printf.sprintf "Ptree path not found: %s" name)
+
+let tensor_field_exn fields name =
+  match Kaun.Ptree.Dict.find name fields with
+  | Some node -> tensor_to_float32 node
+  | None -> failwith (Printf.sprintf "Expected tensor field %s" name)
+
 let check_gradient_match ~eps name expected_grad computed_grad =
   let expected_arr = to_array expected_grad in
   let computed_arr = to_array computed_grad in
@@ -44,19 +71,13 @@ let test_matmul_gradient () =
   let grad_w =
     Kaun.grad
       (fun w_param ->
-        match w_param with
-        | Kaun.Ptree.Tensor w_t ->
+        with_float_tensor w_param ~f:(fun w_t ->
             let y = matmul x w_t in
-            mean y
-        | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor w)
+            mean y))
+      (Kaun.Ptree.tensor w)
   in
 
-  let computed_grad =
-    match grad_w with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad = tensor_to_float32 grad_w in
 
   (* Expected gradient from JAX *)
   let expected_grad =
@@ -90,20 +111,14 @@ let test_add_broadcast_gradient () =
   let grad_b =
     Kaun.grad
       (fun b_param ->
-        match b_param with
-        | Kaun.Ptree.Tensor b_t ->
+        with_float_tensor b_param ~f:(fun b_t ->
             let b_expanded = reshape [| 1; 3 |] b_t in
             let y = add x b_expanded in
-            mean y
-        | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor b)
+            mean y))
+      (Kaun.Ptree.tensor b)
   in
 
-  let computed_grad =
-    match grad_b with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad = tensor_to_float32 grad_b in
 
   (* Expected gradient from JAX *)
   let expected_grad =
@@ -120,19 +135,13 @@ let test_relu_gradient () =
   let grad_x =
     Kaun.grad
       (fun x_param ->
-        match x_param with
-        | Kaun.Ptree.Tensor x_t ->
+        with_float_tensor x_param ~f:(fun x_t ->
             let y = relu x_t in
-            mean y
-        | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+            mean y))
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad =
-    match grad_x with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad = tensor_to_float32 grad_x in
 
   (* Expected gradient from JAX *)
   let expected_grad =
@@ -149,19 +158,13 @@ let test_gelu_gradient () =
   let grad_x =
     Kaun.grad
       (fun x_param ->
-        match x_param with
-        | Kaun.Ptree.Tensor x_t ->
+        with_float_tensor x_param ~f:(fun x_t ->
             let y = gelu x_t in
-            mean y
-        | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+            mean y))
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad =
-    match grad_x with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad = tensor_to_float32 grad_x in
 
   (* Expected gradient from JAX *)
   let expected_grad =
@@ -183,25 +186,17 @@ let test_linear_gradient () =
 
   (* Compute gradients for linear: y = x @ w + b *)
   let params =
-    Kaun.Ptree.record_of
-      [ ("weight", Kaun.Ptree.Tensor w); ("bias", Kaun.Ptree.Tensor b) ]
+    Kaun.Ptree.dict
+      [ ("weight", Kaun.Ptree.tensor w); ("bias", Kaun.Ptree.tensor b) ]
   in
 
   let grads =
     Kaun.grad
       (fun params ->
         match params with
-        | Kaun.Ptree.Record fields ->
-            let w_t =
-              match Kaun.Ptree.Record.find "weight" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected weight tensor"
-            in
-            let b_t =
-              match Kaun.Ptree.Record.find "bias" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected bias tensor"
-            in
+        | Kaun.Ptree.Dict fields ->
+            let w_t = tensor_field_exn fields "weight" in
+            let b_t = tensor_field_exn fields "bias" in
             let y = matmul x w_t in
             let y = add y (reshape [| 1; 4 |] b_t) in
             mean y
@@ -209,16 +204,8 @@ let test_linear_gradient () =
       params
   in
 
-  let grad_w =
-    match Kaun.Ptree.get_by_path "weight" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected weight gradient"
-  in
-  let grad_b =
-    match Kaun.Ptree.get_by_path "bias" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected bias gradient"
-  in
+  let grad_w = tensor_to_float32 (get_by_path_exn "weight" grads) in
+  let grad_b = tensor_to_float32 (get_by_path_exn "bias" grads) in
 
   (* Expected gradients from JAX *)
   let expected_grad_w =
@@ -261,12 +248,12 @@ let test_mlp_gradient () =
 
   (* Compute gradients for MLP *)
   let params =
-    Kaun.Ptree.record_of
+    Kaun.Ptree.dict
       [
-        ("w1", Kaun.Ptree.Tensor w1);
-        ("b1", Kaun.Ptree.Tensor b1);
-        ("w2", Kaun.Ptree.Tensor w2);
-        ("b2", Kaun.Ptree.Tensor b2);
+        ("w1", Kaun.Ptree.tensor w1);
+        ("b1", Kaun.Ptree.tensor b1);
+        ("w2", Kaun.Ptree.tensor w2);
+        ("b2", Kaun.Ptree.tensor b2);
       ]
   in
 
@@ -274,27 +261,11 @@ let test_mlp_gradient () =
     Kaun.grad
       (fun params ->
         match params with
-        | Kaun.Ptree.Record fields ->
-            let w1_t =
-              match Kaun.Ptree.Record.find "w1" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected w1 tensor"
-            in
-            let b1_t =
-              match Kaun.Ptree.Record.find "b1" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected b1 tensor"
-            in
-            let w2_t =
-              match Kaun.Ptree.Record.find "w2" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected w2 tensor"
-            in
-            let b2_t =
-              match Kaun.Ptree.Record.find "b2" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected b2 tensor"
-            in
+        | Kaun.Ptree.Dict fields ->
+            let w1_t = tensor_field_exn fields "w1" in
+            let b1_t = tensor_field_exn fields "b1" in
+            let w2_t = tensor_field_exn fields "w2" in
+            let b2_t = tensor_field_exn fields "b2" in
             (* First layer *)
             let h = matmul x w1_t in
             let h = add h (reshape [| 1; 3 |] b1_t) in
@@ -307,26 +278,10 @@ let test_mlp_gradient () =
       params
   in
 
-  let grad_w1 =
-    match Kaun.Ptree.get_by_path "w1" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected w1 gradient"
-  in
-  let grad_b1 =
-    match Kaun.Ptree.get_by_path "b1" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected b1 gradient"
-  in
-  let grad_w2 =
-    match Kaun.Ptree.get_by_path "w2" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected w2 gradient"
-  in
-  let grad_b2 =
-    match Kaun.Ptree.get_by_path "b2" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected b2 gradient"
-  in
+  let grad_w1 = tensor_to_float32 (get_by_path_exn "w1" grads) in
+  let grad_b1 = tensor_to_float32 (get_by_path_exn "b1" grads) in
+  let grad_w2 = tensor_to_float32 (get_by_path_exn "w2" grads) in
+  let grad_b2 = tensor_to_float32 (get_by_path_exn "b2" grads) in
 
   (* Expected gradients from JAX *)
   let expected_grad_w1 =
@@ -360,17 +315,14 @@ let test_reduction_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = sum x_t ~axes:[ 1 ] in
-            sum y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = sum x_t ~axes:[ 1 ] in
+                sum y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_axis0 =
-    match grad_sum_axis0 with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_axis0 = tensor_to_float32 grad_sum_axis0 in
 
   let expected_grad_axis0 =
     create float32 [| 2; 3 |]
@@ -386,17 +338,14 @@ let test_reduction_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = sum x_t ~axes:[ 1 ] in
-            sum y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = sum x_t ~axes:[ 1 ] in
+                sum y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_axis1 =
-    match grad_sum_axis1 with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_axis1 = tensor_to_float32 grad_sum_axis1 in
 
   let expected_grad_axis1 =
     create float32 [| 2; 3 |]
@@ -412,17 +361,14 @@ let test_reduction_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = mean x_t ~axes:[ 1 ] ~keepdims:true in
-            sum y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = mean x_t ~axes:[ 1 ] ~keepdims:true in
+                sum y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_keepdims =
-    match grad_mean_keepdims with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_keepdims = tensor_to_float32 grad_mean_keepdims in
 
   let expected_grad_keepdims =
     create float32 [| 2; 3 |]
@@ -442,17 +388,14 @@ let test_activation_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = sigmoid x_t in
-            mean y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = sigmoid x_t in
+                mean y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_sigmoid =
-    match grad_sigmoid with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_sigmoid = tensor_to_float32 grad_sigmoid in
 
   let expected_grad_sigmoid =
     create float32 [| 2; 3 |]
@@ -468,17 +411,14 @@ let test_activation_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = tanh x_t in
-            mean y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = tanh x_t in
+                mean y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_tanh =
-    match grad_tanh with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_tanh = tensor_to_float32 grad_tanh in
 
   let expected_grad_tanh =
     create float32 [| 2; 3 |]
@@ -497,17 +437,14 @@ let test_softmax_gradient () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = softmax x_t ~axes:[ -1 ] in
-            mean y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = softmax x_t ~axes:[ -1 ] in
+                mean y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad =
-    match grad_softmax with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad = tensor_to_float32 grad_softmax in
 
   (* Note: Softmax gradients are very small, essentially 0 *)
   let expected_grad =
@@ -527,17 +464,14 @@ let test_transpose_reshape_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = transpose x_t in
-            mean y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = transpose x_t in
+                mean y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_transpose =
-    match grad_transpose with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_transpose = tensor_to_float32 grad_transpose in
 
   let expected_grad_transpose =
     create float32 [| 2; 3 |]
@@ -553,17 +487,14 @@ let test_transpose_reshape_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = reshape [| 3; 2 |] x_t in
-            mean y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = reshape [| 3; 2 |] x_t in
+                mean y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_reshape =
-    match grad_reshape with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_reshape = tensor_to_float32 grad_reshape in
 
   let expected_grad_reshape =
     create float32 [| 2; 3 |]
@@ -583,17 +514,14 @@ let test_elementwise_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = exp x_t in
-            mean y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = exp x_t in
+                mean y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_exp =
-    match grad_exp with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_exp = tensor_to_float32 grad_exp in
 
   (* Gradient of exp is exp(x) * grad_output / n *)
   let expected_grad_exp =
@@ -617,17 +545,14 @@ let test_elementwise_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = log x_t in
-            mean y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = log x_t in
+                mean y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_log =
-    match grad_log with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_log = tensor_to_float32 grad_log in
 
   (* Gradient of log is 1/x * grad_output / n *)
   let expected_grad_log =
@@ -651,17 +576,14 @@ let test_elementwise_gradients () =
       (fun x_param ->
         match x_param with
         | Kaun.Ptree.Tensor x_t ->
-            let y = sqrt x_t in
-            mean y
+            with_float_tensor (Kaun.Ptree.Tensor x_t) ~f:(fun x_t ->
+                let y = sqrt x_t in
+                mean y)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor x)
+      (Kaun.Ptree.tensor x)
   in
 
-  let computed_grad_sqrt =
-    match grad_sqrt with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_sqrt = tensor_to_float32 grad_sqrt in
 
   (* Gradient of sqrt is 0.5/sqrt(x) * grad_output / n *)
   let expected_grad_sqrt =
@@ -687,41 +609,25 @@ let test_concat_gradient () =
 
   (* Test concatenation along axis 1 *)
   let params =
-    Kaun.Ptree.record_of
-      [ ("x1", Kaun.Ptree.Tensor x1); ("x2", Kaun.Ptree.Tensor x2) ]
+    Kaun.Ptree.dict
+      [ ("x1", Kaun.Ptree.tensor x1); ("x2", Kaun.Ptree.tensor x2) ]
   in
 
   let grads =
     Kaun.grad
       (fun params ->
         match params with
-        | Kaun.Ptree.Record fields ->
-            let x1_t =
-              match Kaun.Ptree.Record.find "x1" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected x1 tensor"
-            in
-            let x2_t =
-              match Kaun.Ptree.Record.find "x2" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected x2 tensor"
-            in
+        | Kaun.Ptree.Dict fields ->
+            let x1_t = tensor_field_exn fields "x1" in
+            let x2_t = tensor_field_exn fields "x2" in
             let y = concatenate [ x1_t; x2_t ] ~axis:1 in
             mean y
         | _ -> failwith "Expected record")
       params
   in
 
-  let grad_x1 =
-    match Kaun.Ptree.get_by_path "x1" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected x1 gradient"
-  in
-  let grad_x2 =
-    match Kaun.Ptree.get_by_path "x2" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected x2 gradient"
-  in
+  let grad_x1 = tensor_to_float32 (get_by_path_exn "x1" grads) in
+  let grad_x2 = tensor_to_float32 (get_by_path_exn "x2" grads) in
 
   (* Gradients should be uniform 1/8 for all elements *)
   let expected_grad =
@@ -750,11 +656,11 @@ let test_attention_gradient () =
   in
 
   let params =
-    Kaun.Ptree.record_of
+    Kaun.Ptree.dict
       [
-        ("q", Kaun.Ptree.Tensor q);
-        ("k", Kaun.Ptree.Tensor k);
-        ("v", Kaun.Ptree.Tensor v);
+        ("q", Kaun.Ptree.tensor q);
+        ("k", Kaun.Ptree.tensor k);
+        ("v", Kaun.Ptree.tensor v);
       ]
   in
 
@@ -762,22 +668,10 @@ let test_attention_gradient () =
     Kaun.grad
       (fun params ->
         match params with
-        | Kaun.Ptree.Record fields ->
-            let q_t =
-              match Kaun.Ptree.Record.find "q" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected q tensor"
-            in
-            let k_t =
-              match Kaun.Ptree.Record.find "k" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected k tensor"
-            in
-            let v_t =
-              match Kaun.Ptree.Record.find "v" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected v tensor"
-            in
+        | Kaun.Ptree.Dict fields ->
+            let q_t = tensor_field_exn fields "q" in
+            let k_t = tensor_field_exn fields "k" in
+            let v_t = tensor_field_exn fields "v" in
             (* Scaled dot-product attention *)
             let shape_q = shape q_t in
             let d_k = Float.of_int shape_q.(Array.length shape_q - 1) in
@@ -791,21 +685,9 @@ let test_attention_gradient () =
       params
   in
 
-  let grad_q =
-    match Kaun.Ptree.get_by_path "q" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected q gradient"
-  in
-  let grad_k =
-    match Kaun.Ptree.get_by_path "k" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected k gradient"
-  in
-  let grad_v =
-    match Kaun.Ptree.get_by_path "v" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected v gradient"
-  in
+  let grad_q = tensor_to_float32 (get_by_path_exn "q" grads) in
+  let grad_k = tensor_to_float32 (get_by_path_exn "k" grads) in
+  let grad_v = tensor_to_float32 (get_by_path_exn "v" grads) in
 
   (* Expected gradients from JAX - reshape from [1,3,4] to [3,4] for
      comparison *)
@@ -889,18 +771,15 @@ let test_loss_functions () =
       (fun pred ->
         match pred with
         | Kaun.Ptree.Tensor pred_t ->
-            let diff = sub pred_t targets in
-            let squared = mul diff diff in
-            mean squared
+            with_float_tensor (Kaun.Ptree.Tensor pred_t) ~f:(fun pred_t ->
+                let diff = sub pred_t targets in
+                let squared = mul diff diff in
+                mean squared)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor predictions)
+      (Kaun.Ptree.tensor predictions)
   in
 
-  let computed_grad_mse =
-    match grad_mse with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_mse = tensor_to_float32 grad_mse in
 
   let expected_grad_mse =
     create float32 [| 2; 3 |]
@@ -916,18 +795,15 @@ let test_loss_functions () =
       (fun pred ->
         match pred with
         | Kaun.Ptree.Tensor pred_t ->
-            let diff = sub pred_t targets in
-            let abs_diff = abs diff in
-            mean abs_diff
+            with_float_tensor (Kaun.Ptree.Tensor pred_t) ~f:(fun pred_t ->
+                let diff = sub pred_t targets in
+                let abs_diff = abs diff in
+                mean abs_diff)
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor predictions)
+      (Kaun.Ptree.tensor predictions)
   in
 
-  let computed_grad_mae =
-    match grad_mae with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad_mae = tensor_to_float32 grad_mae in
 
   let expected_grad_mae =
     create float32 [| 2; 3 |]
@@ -946,42 +822,39 @@ let test_cross_entropy_gradient () =
       (fun logits_param ->
         match logits_param with
         | Kaun.Ptree.Tensor logits_t ->
-            (* Compute log_softmax *)
-            let max_logits = max logits_t ~axes:[ -1 ] ~keepdims:true in
-            let shifted = sub logits_t max_logits in
-            let exp_shifted = exp shifted in
-            let sum_exp = sum exp_shifted ~axes:[ -1 ] ~keepdims:true in
-            let log_sum_exp = log sum_exp in
-            let log_probs = sub shifted log_sum_exp in
+            with_float_tensor (Kaun.Ptree.Tensor logits_t) ~f:(fun logits_t ->
+                (* Compute log_softmax *)
+                let max_logits = max logits_t ~axes:[ -1 ] ~keepdims:true in
+                let shifted = sub logits_t max_logits in
+                let exp_shifted = exp shifted in
+                let sum_exp = sum exp_shifted ~axes:[ -1 ] ~keepdims:true in
+                let log_sum_exp = log sum_exp in
+                let log_probs = sub shifted log_sum_exp in
 
-            (* Create one-hot labels - simplified for this test *)
-            let one_hot =
-              create float32 [| 2; 3 |]
-                [|
-                  1.0;
-                  0.0;
-                  0.0;
-                  (* label 0 *)
-                  0.0;
-                  1.0;
-                  0.0;
-                  (* label 1 *)
-                |]
-            in
+                (* Create one-hot labels - simplified for this test *)
+                let one_hot =
+                  create float32 [| 2; 3 |]
+                    [|
+                      1.0;
+                      0.0;
+                      0.0;
+                      (* label 0 *)
+                      0.0;
+                      1.0;
+                      0.0;
+                      (* label 1 *)
+                    |]
+                in
 
-            (* Compute cross-entropy loss *)
-            let ce = mul one_hot log_probs in
-            let ce_sum = sum ce ~axes:[ -1 ] in
-            neg (mean ce_sum)
+                (* Compute cross-entropy loss *)
+                let ce = mul one_hot log_probs in
+                let ce_sum = sum ce ~axes:[ -1 ] in
+                neg (mean ce_sum))
         | _ -> failwith "Expected tensor")
-      (Kaun.Ptree.Tensor logits)
+      (Kaun.Ptree.tensor logits)
   in
 
-  let computed_grad =
-    match grad_ce with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected tensor gradient"
-  in
+  let computed_grad = tensor_to_float32 grad_ce in
 
   let expected_grad =
     create float32 [| 2; 3 |]
@@ -1001,11 +874,11 @@ let test_batchnorm_gradient () =
   let beta = create float32 [| 3 |] [| 0.0; 0.0; 0.0 |] in
 
   let params =
-    Kaun.Ptree.record_of
+    Kaun.Ptree.dict
       [
-        ("x", Kaun.Ptree.Tensor x);
-        ("gamma", Kaun.Ptree.Tensor gamma);
-        ("beta", Kaun.Ptree.Tensor beta);
+        ("x", Kaun.Ptree.tensor x);
+        ("gamma", Kaun.Ptree.tensor gamma);
+        ("beta", Kaun.Ptree.tensor beta);
       ]
   in
 
@@ -1013,22 +886,10 @@ let test_batchnorm_gradient () =
     Kaun.grad
       (fun params ->
         match params with
-        | Kaun.Ptree.Record fields ->
-            let x_t =
-              match Kaun.Ptree.Record.find "x" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected x tensor"
-            in
-            let gamma_t =
-              match Kaun.Ptree.Record.find "gamma" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected gamma tensor"
-            in
-            let beta_t =
-              match Kaun.Ptree.Record.find "beta" fields with
-              | Kaun.Ptree.Tensor t -> t
-              | _ -> failwith "Expected beta tensor"
-            in
+        | Kaun.Ptree.Dict fields ->
+            let x_t = tensor_field_exn fields "x" in
+            let gamma_t = tensor_field_exn fields "gamma" in
+            let beta_t = tensor_field_exn fields "beta" in
             (* BatchNorm computation *)
             let eps = scalar_like x_t 1e-5 in
             let mean_val = mean x_t ~axes:[ 1 ] ~keepdims:true in
@@ -1046,11 +907,7 @@ let test_batchnorm_gradient () =
       params
   in
 
-  let grad_beta =
-    match Kaun.Ptree.get_by_path "beta" grads with
-    | Kaun.Ptree.Tensor t -> t
-    | _ -> failwith "Expected beta gradient"
-  in
+  let grad_beta = tensor_to_float32 (get_by_path_exn "beta" grads) in
 
   (* For BatchNorm, beta gradient is simpler to verify *)
   let expected_grad_beta =

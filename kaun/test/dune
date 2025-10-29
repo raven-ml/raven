@@ -1,6 +1,7 @@
 (tests
  (names
   test_checkpoint
+  test_checkpoint_tree
   test_ptree
   test_dataset
   test_metrics
@@ -12,8 +13,10 @@
   rune
   nx
   nx.io
+  nx.core
   kaun
   kaun.huggingface
   kaun.models
   bigarray_ext
+  yojson
   alcotest))

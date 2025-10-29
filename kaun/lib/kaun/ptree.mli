@@ -1,194 +1,195 @@
-(** Parameter tree data structures and operations *)
+(** Heterogeneous parameter tree structure. *)
 
-module Record : module type of Map.Make (String)
+(** Path submodule for advanced use *)
+module Path : sig
+  type t
+  (** Path segments. *)
 
-(** Parameter tree type - recursive structure for model parameters *)
-type 'layout t =
-  | Tensor of (float, 'layout) Rune.t
-  | List of 'layout t list
-  | Record of 'layout t Record.t
+  val root : t
+  (** Root path. *)
 
-type mask_tree =
-  | Mask_tensor of bool
-  | Mask_list of mask_tree list
-  | Mask_record of mask_tree Record.t
+  val of_string : string -> t
+  (** Parse string to path. *)
 
-(** {2 Builders} *)
+  val to_string : t -> string
+  (** Convert path to string. *)
 
-val tensor : (float, 'layout) Rune.t -> 'layout t
-(** Create a leaf tensor node *)
+  val key : string -> t -> t
+  (** Add key segment. *)
 
-val list_of : 'layout t list -> 'layout t
-(** Create a list node *)
+  val index : int -> t -> t
+  (** Add index segment. *)
+end
 
-val record_of : (string * 'layout t) list -> 'layout t
-(** Create a record node from bindings. Raises if duplicate keys. *)
+type tensor =
+  | P : ('a, 'layout) Rune.t -> tensor
+      (** Existential wrapper for tensor tensors. *)
 
-(** {2 Accessors} *)
+type t =
+  | Tensor of tensor
+  | List of t list
+  | Dict of (string * t) list  (** Parameter tree: tensors or containers. *)
 
-val get_tensor : 'layout t -> (float, 'layout) Rune.t option
-(** [get_tensor tree] returns [Some tensor] if tree is a Tensor, [None]
-    otherwise *)
+(** Tensor utilities *)
+module Tensor : sig
+  val dtype : tensor -> Nx_core.Dtype.packed
+  (** Get the dtype of the tensor. *)
 
-val get_list : 'layout t -> 'layout t list option
-(** [get_list tree] returns [Some list] if tree is a List, [None] otherwise *)
+  val shape : tensor -> int array
+  (** Get the shape of the tensor. *)
 
-val get_record : 'layout t -> 'layout t Record.t option
-(** [get_record tree] returns [Some record] if tree is a Record, [None]
-    otherwise *)
+  val numel : tensor -> int
+  (** Get the number of elements in the tensor. *)
 
-val find_in_record : string -> 'layout t -> 'layout t option
-(** [find_in_record key tree] returns [Some value] if tree is a Record
-    containing key, [None] otherwise *)
+  val to_typed : ('a, 'l) Rune.dtype -> tensor -> ('a, 'l) Rune.t option
+  (** [to_typed dtype t] returns [Some x] when the packed tensor [t] has the
+      given [dtype], with [x] the typed tensor. Returns [None] if the dtype does
+      not match. *)
 
-(** {2 Tree Operations} *)
+  val to_typed_exn : ('a, 'l) Rune.dtype -> tensor -> ('a, 'l) Rune.t
+  (** [to_typed_exn dtype t] returns the typed tensor when the dtype matches, or
+      raises [Invalid_argument] on mismatch. *)
+end
 
-val map :
-  ((float, 'layout) Rune.t -> (float, 'layout) Rune.t) -> 'layout t -> 'layout t
-(** [map f tree] applies function [f] to all tensors in the tree *)
+module List : sig
+  val items_exn : ?ctx:string -> t -> t list
+  (** Extract list items or fail with a helpful [ctx]-prefixed message. *)
+end
+
+module Dict : sig
+  type fields = (string * t) list
+
+  val fields_exn : ?ctx:string -> t -> fields
+  (** Extract dict fields or fail with a helpful [ctx]-prefixed message. *)
+
+  val find : string -> fields -> t option
+  val find_exn : ?ctx:string -> string -> fields -> t
+  val set : string -> t -> fields -> fields
+  val update : (t -> t) -> string -> fields -> fields
+  val mem : string -> fields -> bool
+
+  val get_tensor :
+    fields -> name:string -> ('a, 'l) Nx_core.Dtype.t -> ('a, 'l) Rune.t option
+
+  val get_tensor_exn :
+    fields -> name:string -> ('a, 'l) Nx_core.Dtype.t -> ('a, 'l) Rune.t
+end
+
+(** Builders *)
+
+val tensor : ('a, 'layout) Rune.t -> t
+(** Create a tensor node from a tensor. *)
+
+val list : t list -> t
+(** Create a list container. *)
+
+val dict : (string * t) list -> t
+(** Create a dict container from key-value pairs. Keys must be unique. *)
+
+(* *)
+
+type 'r tensor_handler = { run : 'a 'layout. ('a, 'layout) Rune.t -> 'r }
+
+val with_tensor : tensor -> 'a tensor_handler -> 'a
+
+(* *)
+
+val as_tensor : t -> tensor option
+(** Extract tensor if the tree is a single leaf, else None. *)
+
+val as_tensor_exn : ?ctx:string -> t -> tensor
+(** Extract tensor or raise. Optional context for error message. *)
+
+(** Walking / zipping *)
+
+val map : (('a, 'l) Rune.t -> ('a, 'l) Rune.t) -> t -> t
+(** Typed map over tensors. Result dtype must equal input dtype. *)
 
 val map2 :
-  ((float, 'layout) Rune.t ->
-  (float, 'layout) Rune.t ->
-  (float, 'layout) Rune.t) ->
-  'layout t ->
-  'layout t ->
-  'layout t
-(** [map2 f tree1 tree2] applies binary function [f] to corresponding tensors in
-    both trees. Raises [Invalid_argument] if trees have different structures. *)
+  (('a, 'l) Rune.t -> ('a, 'l) Rune.t -> ('a, 'l) Rune.t) -> t -> t -> t
+(** Typed zip-with over tensors. Structures must match; dtype per-pair must
+    match. *)
 
-val zip :
-  ((float, 'layout) Rune.t -> (float, 'layout) Rune.t -> 'a) ->
-  'layout t ->
-  'layout t ->
-  'a list
-(** [zip f tree1 tree2] applies [f] to pairs of corresponding tensors, returning
-    a flat list of results. Useful for pairing without building a new tree. *)
+val map_packed : (tensor -> tensor) -> t -> t
+(** Packed map over tensors (escape hatch if types are dynamic). *)
 
-val iter : ((float, 'layout) Rune.t -> unit) -> 'layout t -> unit
-(** [iter f tree] applies function [f] to all tensors in the tree for side
-    effects *)
+val iter : (tensor -> unit) -> t -> unit
+(** Iterate over tensors. *)
 
-val fold : ('a -> (float, 'layout) Rune.t -> 'a) -> 'a -> 'layout t -> 'a
-(** [fold f init tree] folds function [f] over all tensors in the tree *)
+val fold : ('acc -> tensor -> 'acc) -> 'acc -> t -> 'acc
+(** Fold over tensors. *)
 
-val equal_structure : 'layout t -> 'layout t -> bool
-(** [equal_structure tree1 tree2] returns true if both trees have the same
-    structure (ignoring tensor values) *)
+(** Flatten & rebuild *)
 
-val filter : ((float, 'layout) Rune.t -> bool) -> 'layout t -> 'layout t
-(** [filter pred tree] replaces tensors where [pred] is false with zeros_like *)
+val flatten : t -> tensor list * (tensor list -> t)
+(** Flatten to tensors and a rebuilder function. *)
 
-val apply_mask : mask_tree -> 'layout t -> 'layout t
-(** [apply_mask mask tree] zeros out tensors where mask is false. Raises if
-    structures differ. *)
+(** Path access *)
 
-(** {2 Tree Construction} *)
+val get : path:Path.t -> t -> t option
+(** Get subtree at path. *)
 
-val zeros_like : 'layout t -> 'layout t
-(** [zeros_like tree] creates a new tree with same structure but all tensors
-    filled with zeros *)
+val get_exn : path:Path.t -> t -> t
+(** Get subtree or raise. *)
 
-val ones_like : 'layout t -> 'layout t
-(** [ones_like tree] creates a new tree with same structure but all tensors
-    filled with ones *)
+val set : path:Path.t -> value:t -> t -> t
+(** Set subtree at path. *)
 
-val copy : 'layout t -> 'layout t
-(** [copy tree] creates a deep copy of the tree *)
+val update : path:Path.t -> (t -> t) -> t -> t
+(** Update subtree at path with function. *)
 
-(** {2 Tree Inspection} *)
+val mem : path:Path.t -> t -> bool
+(** Check if path exists. *)
 
-val count_tensors : 'layout t -> int
-(** [count_tensors tree] returns the number of tensors in the tree *)
+(** Typed path access for tensors *)
 
-val count_parameters : 'layout t -> int
-(** [count_parameters tree] returns the total number of scalar parameters across
-    all tensors *)
+val get_tensor :
+  path:Path.t -> t -> ('a, 'l) Rune.dtype -> ('a, 'l) Rune.t option
+(** Get typed tensor at path, checking dtype. *)
 
-val flatten :
-  'layout t ->
-  (float, 'layout) Rune.t list * ((float, 'layout) Rune.t list -> 'layout t)
-(** [flatten tree] returns flat tensor list and a rebuild function *)
+val get_tensor_exn : path:Path.t -> t -> ('a, 'l) Rune.dtype -> ('a, 'l) Rune.t
+(** Get typed tensor or raise. *)
 
-(** {2 Arithmetic Operations} *)
+(** Flatten with paths *)
 
-val add : 'layout t -> 'layout t -> 'layout t
-(** [add tree1 tree2] performs element-wise addition of corresponding tensors *)
+val flatten_with_paths : t -> (Path.t * tensor) list
+(** Flatten to (path, tensor) pairs. *)
 
-val sub : 'layout t -> 'layout t -> 'layout t
-(** [sub tree1 tree2] performs element-wise subtraction of corresponding tensors
-*)
+val filter_tensors : t -> (Path.t -> tensor -> bool) -> (Path.t * tensor) list
+(** Filter tensors by predicate on path and tensor. *)
 
-val mul : 'layout t -> 'layout t -> 'layout t
-(** [mul tree1 tree2] performs element-wise multiplication of corresponding
-    tensors *)
+(** Float dtype discovery *)
 
-val div : 'layout t -> 'layout t -> 'layout t
-(** [div tree1 tree2] performs element-wise division of corresponding tensors *)
+type float_dtype =
+  | F : (float, 'l) Rune.dtype -> float_dtype
+      (** Witness that the dtype is a floating-point dtype. Encodes
+          [('a = float)] at the type level to avoid enumerating float
+          constructors at call sites. *)
 
-val scale : float -> 'layout t -> 'layout t
-(** [scale alpha tree] multiplies all tensors in the tree by scalar [alpha] *)
+val first_float_dtype : t -> float_dtype option
+(** Find the first floating-point tensor in the tree and return a float dtype
+    witness, if any. Floating-point dtypes include float32/float64/float16,
+    bfloat16, and float8 variants. *)
 
-val neg : 'layout t -> 'layout t
-(** [neg tree] negates all tensors in the tree *)
+val first_float_dtype_exn : t -> float_dtype
+(** Like {!first_float_dtype} but raises if no floating-point tensors are
+    present. *)
 
-(** {2 Utility Functions} *)
+(** Convenience *)
 
-val pp : Format.formatter -> 'layout t -> unit
-(** Pretty printer for parameter trees *)
+val zeros_like : t -> t
+(** Create tree with zeros_like tensors. *)
 
-val to_string : 'layout t -> string
-(** [to_string tree] returns a string representation of the tree structure *)
+val copy : t -> t
+(** Deep copy the tree. *)
 
-(** {2 Path-based Flattening} *)
+val count_tensors : t -> int
+(** Count number of tensors. *)
 
-val flatten_with_paths : 'layout t -> (string * (float, 'layout) Rune.t) list
-(** [flatten_with_paths tree] returns a list of (path, tensor) pairs where paths
-    use dot notation for records (e.g., "layer1.weight") and bracket notation
-    for lists (e.g., "layers[0]"). *)
+val count_parameters : t -> int
+(** Total elements across all tensors. *)
 
-val unflatten_from_paths : (string * (float, 'layout) Rune.t) list -> 'layout t
-(** [unflatten_from_paths pairs] reconstructs a parameter tree from path-tensor
-    pairs. Raises [Invalid_argument] if paths are malformed or inconsistent. *)
+val pp : Format.formatter -> t -> unit
+(** Printing *)
 
-(** {2 Path-based Access} *)
-
-val get_by_path : string -> 'layout t -> 'layout t
-(** [get_by_path path tree] retrieves the subtree at the given path. Path uses
-    dot notation for records and bracket notation for lists. Examples:
-    "encoder.weight", "layers[0].attention.q_proj"
-    @raise Invalid_argument if the path doesn't exist or is malformed *)
-
-val set_by_path : string -> 'layout t -> 'layout t -> 'layout t
-(** [set_by_path path value tree] returns a new tree with the value at path
-    replaced. Creates intermediate records if they don't exist.
-    @raise Invalid_argument
-      if the path is malformed or incompatible with tree structure *)
-
-val validate_tree : ?path:string -> 'layout t -> unit
-(** [validate_tree ?path tree] checks for structural issues:
-    - Empty keys
-    - Duplicate keys within records
-    - Invalid characters in keys (. [ ])
-    - Warnings for empty lists/records
-
-    @param path Starting path for error messages (default: "root")
-    @raise Failure if validation fails *)
-
-(** {2 Enhanced Introspection} *)
-
-val list_named_params : 'layout t -> (string * string * int) list
-(** [list_named_params tree] returns a list of (path, shape_string,
-    num_elements). Shape strings are formatted as "2×3×4" for tensors or
-    "scalar" for 0-d tensors. Useful for inspecting model architecture. *)
-
-val find_params_by_pattern :
-  string -> 'layout t -> (string * (float, 'layout) Rune.t) list
-(** [find_params_by_pattern pattern tree] returns all params whose paths match
-    the regex pattern. Example: find_params_by_pattern ".*weight$" finds all
-    weight tensors. *)
-
-val get_param_stats : 'layout t -> int * (string * int) list
-(** [get_param_stats tree] returns (total_params, [(group_name, count), ...]).
-    Groups parameters by top-level key for a summary view. Example: (1000000,
-    [("encoder", 800000); ("decoder", 200000)]) *)
+val to_string : t -> string

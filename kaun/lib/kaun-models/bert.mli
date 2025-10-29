@@ -71,7 +71,7 @@ type 'a output = {
 
 type 'a bert = {
   model : Kaun.module_;
-  params : 'a Kaun.params;
+  params : Kaun.params;
   config : config;
   dtype : (float, 'a) dtype;
 }
@@ -142,7 +142,8 @@ module For_masked_lm : sig
 
   val forward :
     model:Kaun.module_ ->
-    params:'a Kaun.params ->
+    params:Kaun.params ->
+    compute_dtype:(float, 'a) dtype ->
     input_ids:(int32, int32_elt) Rune.t ->
     ?attention_mask:(int32, int32_elt) Rune.t ->
     ?token_type_ids:(int32, int32_elt) Rune.t ->
@@ -160,7 +161,8 @@ module For_sequence_classification : sig
 
   val forward :
     model:Kaun.module_ ->
-    params:'a Kaun.params ->
+    params:Kaun.params ->
+    compute_dtype:(float, 'a) dtype ->
     input_ids:(int32, int32_elt) Rune.t ->
     ?attention_mask:(int32, int32_elt) Rune.t ->
     ?token_type_ids:(int32, int32_elt) Rune.t ->
@@ -177,7 +179,8 @@ module For_token_classification : sig
 
   val forward :
     model:Kaun.module_ ->
-    params:'a Kaun.params ->
+    params:Kaun.params ->
+    compute_dtype:(float, 'a) dtype ->
     input_ids:(int32, int32_elt) Rune.t ->
     ?attention_mask:(int32, int32_elt) Rune.t ->
     ?token_type_ids:(int32, int32_elt) Rune.t ->
@@ -233,7 +236,7 @@ val create_attention_mask :
 (** Get BERT embeddings for text analysis *)
 val get_embeddings :
   model:Kaun.module_ ->
-  params:'a Kaun.params ->
+  params:Kaun.params ->
   input_ids:(int32, int32_elt) Rune.t ->
   ?attention_mask:(int32, int32_elt) Rune.t ->
   layer_index:int ->
@@ -242,10 +245,10 @@ val get_embeddings :
 (** Extract embeddings from a specific layer (0 = embeddings, 1..n = encoder
     layers) *)
 
-val num_parameters : 'a Kaun.params -> int
+val num_parameters : Kaun.params -> int
 (** Count total parameters in the model *)
 
-val parameter_stats : 'a Kaun.params -> string
+val parameter_stats : Kaun.params -> string
 (** Get human-readable parameter statistics *)
 
 (** {1 BERT Configuration Parsing} *)

@@ -32,8 +32,9 @@ let run_dqn () =
   let target_params = ref (Ptree.copy params) in
 
   (* Optimizer *)
-  let optimizer = Optimizer.adam ~lr:0.001 () in
-  let opt_state = ref (optimizer.init params) in
+  let lr = Optimizer.Schedule.constant 0.001 in
+  let optimizer = Optimizer.adam ~lr () in
+  let opt_state = ref (Optimizer.init optimizer params) in
 
   (* Experience replay *)
   let replay_buffer = Buffer.Replay.create ~capacity:10_000 in
@@ -198,7 +199,9 @@ let run_dqn () =
         in
 
         (* Update Q-network *)
-        let updates, new_state = optimizer.update !opt_state params grads in
+        let updates, new_state =
+          Optimizer.step optimizer !opt_state params grads
+        in
         opt_state := new_state;
         Optimizer.apply_updates_inplace params updates)
     done;

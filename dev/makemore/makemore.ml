@@ -104,7 +104,7 @@ let train_bigram ~vocab_size ~epochs ~lr ~weight_decay ~val_data train_data =
       ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
-  fun x -> apply model state.Training.State.params ~training:false x
+  fun x -> apply model state.params ~training:false x
 
 let train_mlp ~vocab_size ~block_size ~n_embd ~n_embd2 ~epochs ~lr ~weight_decay
     ~val_data train_data =
@@ -127,7 +127,7 @@ let train_mlp ~vocab_size ~block_size ~n_embd ~n_embd2 ~epochs ~lr ~weight_decay
       ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
-  fun x -> apply model state.Training.State.params ~training:false x
+  fun x -> apply model state.params ~training:false x
 
 let train_rnn ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
     ~weight_decay ~val_data train_data =
@@ -140,7 +140,7 @@ let train_rnn ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
           ~learned_init:true ();
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -157,7 +157,7 @@ let train_rnn ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
       ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
-  fun x -> apply model state.Training.State.params ~training:false x
+  fun x -> apply model state.params ~training:false x
 
 let train_lstm ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
     ~weight_decay ~val_data train_data =
@@ -170,7 +170,7 @@ let train_lstm ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
           ~learned_init:true ();
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -187,7 +187,7 @@ let train_lstm ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
       ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
-  fun x -> apply model state.Training.State.params ~training:false x
+  fun x -> apply model state.params ~training:false x
 
 let train_gru ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
     ~weight_decay ~val_data train_data =
@@ -200,7 +200,7 @@ let train_gru ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
           ~learned_init:true ();
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -217,7 +217,7 @@ let train_gru ~vocab_size ~block_size:_ ~n_embd ~n_embd2 ~epochs ~lr
       ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
-  fun x -> apply model state.Training.State.params ~training:false x
+  fun x -> apply model state.params ~training:false x
 
 let train_cnn ~vocab_size ~block_size:_ ~epochs ~lr ~weight_decay ~val_data
     train_data =
@@ -228,7 +228,7 @@ let train_cnn ~vocab_size ~block_size:_ ~epochs ~lr ~weight_decay ~val_data
         embedding ~vocab_size ~embed_dim:32 ();
         (* to [b; channels; length] for conv1d *)
         {
-          init = (fun ~rngs:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
           apply =
             (fun _ ~training:_ ?rngs:_ x -> Rune.transpose ~axes:[ 0; 2; 1 ] x);
         };
@@ -236,13 +236,13 @@ let train_cnn ~vocab_size ~block_size:_ ~epochs ~lr ~weight_decay ~val_data
           ();
         (* back to [b; length; channels] *)
         {
-          init = (fun ~rngs:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
           apply =
             (fun _ ~training:_ ?rngs:_ x -> Rune.transpose ~axes:[ 0; 2; 1 ] x);
         };
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -259,7 +259,7 @@ let train_cnn ~vocab_size ~block_size:_ ~epochs ~lr ~weight_decay ~val_data
       ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
-  fun x -> apply model state.Training.State.params ~training:false x
+  fun x -> apply model state.params ~training:false x
 
 let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
     ~weight_decay ~epochs ~val_data train_data =
@@ -282,7 +282,7 @@ let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
         ln_f;
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -300,7 +300,7 @@ let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
       ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
-  fun x -> apply model state.Training.State.params ~training:false x
+  fun x -> apply model state.params ~training:false x
 
 (* BoW model *)
 let bow_block ~n_embd ~n_embd2 () : Layer.module_ =
@@ -317,51 +317,54 @@ let bow_block ~n_embd ~n_embd2 () : Layer.module_ =
           glorot (Rune.Rng.to_int keys.(1)) [| n_embd2; n_embd |] dtype
         in
         let b2 = Rune.zeros dtype [| n_embd |] in
-        Ptree.record_of
+        Ptree.dict
           [
-            ("w1", Ptree.Tensor w1);
-            ("b1", Ptree.Tensor b1);
-            ("w2", Ptree.Tensor w2);
-            ("b2", Ptree.Tensor b2);
+            ("w1", Ptree.tensor w1);
+            ("b1", Ptree.tensor b1);
+            ("w2", Ptree.tensor w2);
+            ("b2", Ptree.tensor b2);
           ]);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
-        match params with
-        | Ptree.Record fields ->
-            let get name =
-              match Ptree.Record.find_opt name fields with
-              | Some (Ptree.Tensor t) -> t
-              | _ -> failwith ("bow_block: missing " ^ name)
-            in
-            let w1 = get "w1"
-            and b1 = get "b1"
-            and w2 = get "w2"
-            and b2 = get "b2" in
-            let b, s, _ =
-              match Rune.shape x with
-              | [| b; s; c |] -> (b, s, c)
-              | _ -> failwith "bow_block: expected [b; s; c]"
-            in
-            (* causal uniform attention weights *)
-            let dt = Rune.dtype x in
-            let ones = Rune.ones dt [| s; s |] in
-            let lower = Rune.tril ones in
-            let counts =
-              Rune.arange Rune.int32 1 (s + 1) 1
-              |> Rune.cast dt
-              |> Rune.reshape [| 1; s; 1 |]
-            in
-            let weights =
-              Rune.reshape [| 1; s; s |] lower
-              |> Rune.div counts
-              |> Rune.expand [| b; s; s |]
-            in
-            let ctx = Rune.matmul weights x in
-            let y = Rune.add x ctx in
-            let h1 = Rune.add (Rune.matmul y w1) b1 |> Rune.tanh in
-            let h2 = Rune.add (Rune.matmul h1 w2) b2 in
-            Rune.add y h2
-        | _ -> failwith "bow_block: invalid params");
+        (* Use dtype-aware path lookups to avoid unpacking existential
+           tensors *)
+        let dt = Rune.dtype x in
+        let w1 =
+          Ptree.get_tensor_exn ~path:(Ptree.Path.of_string "w1") params dt
+        in
+        let b1 =
+          Ptree.get_tensor_exn ~path:(Ptree.Path.of_string "b1") params dt
+        in
+        let w2 =
+          Ptree.get_tensor_exn ~path:(Ptree.Path.of_string "w2") params dt
+        in
+        let b2 =
+          Ptree.get_tensor_exn ~path:(Ptree.Path.of_string "b2") params dt
+        in
+        let b, s, _ =
+          match Rune.shape x with
+          | [| b; s; c |] -> (b, s, c)
+          | _ -> failwith "bow_block: expected [b; s; c]"
+        in
+        (* causal uniform attention weights *)
+        let dt = Rune.dtype x in
+        let ones = Rune.ones dt [| s; s |] in
+        let lower = Rune.tril ones in
+        let counts =
+          Rune.arange Rune.int32 1 (s + 1) 1
+          |> Rune.cast dt
+          |> Rune.reshape [| 1; s; 1 |]
+        in
+        let weights =
+          Rune.reshape [| 1; s; s |] lower
+          |> Rune.div counts
+          |> Rune.expand [| b; s; s |]
+        in
+        let ctx = Rune.matmul weights x in
+        let y = Rune.add x ctx in
+        let h1 = Rune.add (Rune.matmul y w1) b1 |> Rune.tanh in
+        let h2 = Rune.add (Rune.matmul h1 w2) b2 in
+        Rune.add y h2);
   }
 
 let train_bow ~vocab_size ~block_size ~n_embd ~n_embd2 ~epochs ~lr ~weight_decay
@@ -379,7 +382,7 @@ let train_bow ~vocab_size ~block_size ~n_embd ~n_embd2 ~epochs ~lr ~weight_decay
         block;
         (* take last time step *)
         {
-          init = (fun ~rngs:_ ~dtype:_ -> List []);
+          init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
           apply =
             (fun _ ~training:_ ?rngs:_ x ->
               let s = (Rune.shape x).(1) in
@@ -396,7 +399,7 @@ let train_bow ~vocab_size ~block_size ~n_embd ~n_embd2 ~epochs ~lr ~weight_decay
       ~epochs ~progress:true ~rngs:(Rng.key 42) ~dtype:float32 ()
   in
   Printf.printf "[makemore] Training complete.\n%!";
-  fun x -> apply model state.Training.State.params ~training:false x
+  fun x -> apply model state.params ~training:false x
 
 let generate ~model_fn ~eos_id ~encode ~decode ~max_new =
   let tokenizer (s : string) = encode s in
@@ -466,6 +469,7 @@ let main () =
       0 names
   in
   let train_names, val_names = split_names_for_val names in
+  let lr = Optimizer.Schedule.constant !learning_rate in
   let block_size, fwd =
     match String.lowercase_ascii !model_choice with
     | "bigram" ->
@@ -484,8 +488,9 @@ let main () =
         Printf.printf "[makemore] Bigram MLE loss (nats): %.4f\n%!" mle;
         Printf.printf "[makemore] Dataset ready.\n%!";
         Printf.printf "[makemore] Training for %d epoch(s)...\n%!" !epochs;
+
         ( 1,
-          train_bigram ~vocab_size ~epochs:!epochs ~lr:!learning_rate
+          train_bigram ~vocab_size ~epochs:!epochs ~lr
             ~weight_decay:!weight_decay ~val_data:val_ds train_ds )
     | "mlp" ->
         let bs = 3 in
@@ -504,8 +509,8 @@ let main () =
         Printf.printf "[makemore] Training for %d epoch(s)...\n%!" !epochs;
         ( bs,
           train_mlp ~vocab_size ~block_size:bs ~n_embd:!n_embd ~n_embd2:!n_embd2
-            ~epochs:!epochs ~lr:!learning_rate ~weight_decay:!weight_decay
-            ~val_data:val_ds train_ds )
+            ~epochs:!epochs ~lr ~weight_decay:!weight_decay ~val_data:val_ds
+            train_ds )
     | "rnn" ->
         let bs = 16 in
         Printf.printf "[makemore] Model: rnn (block_size=%d)\n%!" bs;
@@ -522,8 +527,8 @@ let main () =
         Printf.printf "[makemore] Dataset ready.\n%!";
         ( bs,
           train_rnn ~vocab_size ~block_size:bs ~n_embd:!n_embd ~n_embd2:!n_embd2
-            ~epochs:!epochs ~lr:!learning_rate ~weight_decay:!weight_decay
-            ~val_data:val_ds train_ds )
+            ~epochs:!epochs ~lr ~weight_decay:!weight_decay ~val_data:val_ds
+            train_ds )
     | "lstm" ->
         let bs = 16 in
         Printf.printf "[makemore] Model: lstm (block_size=%d)\n%!" bs;
@@ -540,8 +545,8 @@ let main () =
         Printf.printf "[makemore] Dataset ready.\n%!";
         ( bs,
           train_lstm ~vocab_size ~block_size:bs ~n_embd:!n_embd
-            ~n_embd2:!n_embd2 ~epochs:!epochs ~lr:!learning_rate
-            ~weight_decay:!weight_decay ~val_data:val_ds train_ds )
+            ~n_embd2:!n_embd2 ~epochs:!epochs ~lr ~weight_decay:!weight_decay
+            ~val_data:val_ds train_ds )
     | "gru" ->
         let bs = 16 in
         Printf.printf "[makemore] Model: gru (block_size=%d)\n%!" bs;
@@ -558,8 +563,8 @@ let main () =
         Printf.printf "[makemore] Dataset ready.\n%!";
         ( bs,
           train_gru ~vocab_size ~block_size:bs ~n_embd:!n_embd ~n_embd2:!n_embd2
-            ~epochs:!epochs ~lr:!learning_rate ~weight_decay:!weight_decay
-            ~val_data:val_ds train_ds )
+            ~epochs:!epochs ~lr ~weight_decay:!weight_decay ~val_data:val_ds
+            train_ds )
     | "cnn" ->
         let bs = 16 in
         Printf.printf "[makemore] Model: cnn (block_size=%d)\n%!" bs;
@@ -575,9 +580,8 @@ let main () =
         in
         Printf.printf "[makemore] Dataset ready.\n%!";
         ( bs,
-          train_cnn ~vocab_size ~block_size:bs ~epochs:!epochs
-            ~lr:!learning_rate ~weight_decay:!weight_decay ~val_data:val_ds
-            train_ds )
+          train_cnn ~vocab_size ~block_size:bs ~epochs:!epochs ~lr
+            ~weight_decay:!weight_decay ~val_data:val_ds train_ds )
     | "bow" ->
         let bs = 16 in
         Printf.printf "[makemore] Model: bow (block_size=%d)\n%!" bs;
@@ -594,8 +598,8 @@ let main () =
         Printf.printf "[makemore] Dataset ready.\n%!";
         ( bs,
           train_bow ~vocab_size ~block_size:bs ~n_embd:!n_embd ~n_embd2:!n_embd2
-            ~epochs:!epochs ~lr:!learning_rate ~weight_decay:!weight_decay
-            ~val_data:val_ds train_ds )
+            ~epochs:!epochs ~lr ~weight_decay:!weight_decay ~val_data:val_ds
+            train_ds )
     | "transformer" ->
         let bs = 16 in
         Printf.printf "[makemore] Model: transformer (block_size=%d)\n%!" bs;
@@ -612,9 +616,8 @@ let main () =
         Printf.printf "[makemore] Dataset ready.\n%!";
         ( bs,
           train_transformer ~vocab_size ~block_size:bs ~n_layer:!n_layer
-            ~n_head:!n_head ~n_embd:!n_embd ~lr:!learning_rate
-            ~weight_decay:!weight_decay ~epochs:!epochs ~val_data:val_ds
-            train_ds )
+            ~n_head:!n_head ~n_embd:!n_embd ~lr ~weight_decay:!weight_decay
+            ~epochs:!epochs ~val_data:val_ds train_ds )
     | x ->
         Printf.eprintf "Unknown model: %s\n%!" x;
         exit 2

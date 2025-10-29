@@ -50,6 +50,8 @@ All notable changes to this project will be documented in this file.
 
 ### Kaun
 
+- API simplification: removed type parameters from public types; `Ptree` now supports mixed‑dtype trees via packed tensors with typed getters. (@tmattio)
+- Checkpointing overhaul: versioned `Train_state` with schema tagging, explicit `Checkpoint.{Snapshot,Artifact,Manifest,Repository}` (retention, tags, metadata), and simple save/load helpers for snapshots and params. (@tmattio)
 - Honor text dataset encodings via incremental Uutf decoding (#122, @Satarupa22-SD).
 - Preserve empty sequential modules when unflattening so indices stay aligned for checkpoint round-tripping (@tmattio)
 - Prevent `Training.fit`/`evaluate` from consuming entire datasets eagerly and fail fast when a dataset yields no batches, avoiding hangs and division-by-zero crashes (@tmattio)

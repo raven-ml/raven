@@ -69,8 +69,9 @@ let train () =
   Printf.printf "Initializing model...\n%!";
   let start = Unix.gettimeofday () in
   let params = Kaun.init model ~rngs ~dtype:Rune.float32 in
-  let optimizer = Optimizer.adam ~lr:0.001 () in
-  let opt_state = ref (optimizer.init params) in
+  let lr = Optimizer.Schedule.constant 0.001 in
+  let optimizer = Optimizer.adam ~lr () in
+  let opt_state = ref (Optimizer.init optimizer params) in
   Printf.printf "Model initialized in %.2fs\n%!" (Unix.gettimeofday () -. start);
 
   (* Training loop *)
@@ -109,7 +110,9 @@ let train () =
 
         (* Update weights *)
         let opt_start = Unix.gettimeofday () in
-        let updates, new_state = optimizer.update !opt_state params grads in
+        let updates, new_state =
+          Optimizer.step optimizer !opt_state params grads
+        in
         opt_state := new_state;
         Optimizer.apply_updates_inplace params updates;
         let opt_time = Unix.gettimeofday () -. opt_start in
@@ -135,9 +138,7 @@ let train () =
     (* Print training metrics *)
     let train_metrics = Metrics.Collection.compute metrics in
     List.iter
-      (fun (name, value) ->
-        let scalar_value = Rune.item [] value in
-        Printf.printf "  %s: %.4f\n" name scalar_value)
+      (fun (name, value) -> Printf.printf "  %s: %.4f\n" name value)
       train_metrics;
     Printf.printf "  Epoch time: %.2fs\n" (Unix.gettimeofday () -. epoch_start);
 
@@ -156,9 +157,7 @@ let train () =
     (* Print test metrics *)
     Printf.printf "  Test: ";
     List.iter
-      (fun (name, value) ->
-        let scalar_value = Rune.item [] value in
-        Printf.printf "%s=%.4f " name scalar_value)
+      (fun (name, value) -> Printf.printf "%s=%.4f " name value)
       (Metrics.Collection.compute metrics);
     Printf.printf " (eval time: %.2fs)\n\n%!"
       (Unix.gettimeofday () -. eval_start)

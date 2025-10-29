@@ -21,14 +21,13 @@ let default_config =
 
 type t = {
   policy_network : module_;
-  mutable policy_params : Rune.float32_elt params;
+  mutable policy_params : params;
   baseline_network : module_ option;
-  mutable baseline_params : Rune.float32_elt params option;
-  policy_optimizer : Rune.float32_elt Optimizer.gradient_transformation;
-  mutable policy_opt_state : Rune.float32_elt Optimizer.opt_state;
-  baseline_optimizer :
-    Rune.float32_elt Optimizer.gradient_transformation option;
-  mutable baseline_opt_state : Rune.float32_elt Optimizer.opt_state option;
+  mutable baseline_params : params option;
+  policy_optimizer : Optimizer.algorithm;
+  mutable policy_opt_state : Optimizer.state;
+  baseline_optimizer : Optimizer.algorithm option;
+  mutable baseline_opt_state : Optimizer.state option;
   mutable rng : Rune.Rng.key;
   n_actions : int;
   config : config;
@@ -52,8 +51,9 @@ let create ~policy_network ?baseline_network ~n_actions ~rng config =
   let keys = Rune.Rng.split ~n:2 rng in
 
   let policy_params = init policy_network ~rngs:keys.(0) ~dtype:Rune.float32 in
-  let policy_optimizer = Optimizer.adam ~lr:config.learning_rate () in
-  let policy_opt_state = policy_optimizer.init policy_params in
+  let lr = Optimizer.Schedule.constant config.learning_rate in
+  let policy_optimizer = Optimizer.adam ~lr () in
+  let policy_opt_state = Optimizer.init policy_optimizer policy_params in
 
   let ( baseline_network_state,
         baseline_params,
@@ -62,8 +62,9 @@ let create ~policy_network ?baseline_network ~n_actions ~rng config =
     match baseline_network with
     | Some net when config.use_baseline ->
         let params = init net ~rngs:keys.(1) ~dtype:Rune.float32 in
-        let opt = Optimizer.adam ~lr:config.learning_rate () in
-        let opt_state = opt.init params in
+        let lr = Optimizer.Schedule.constant config.learning_rate in
+        let opt = Optimizer.adam ~lr () in
+        let opt_state = Optimizer.init opt params in
         (Some net, Some params, Some opt, Some opt_state)
     | _ -> (None, None, None, None)
   in
@@ -289,7 +290,8 @@ let update t trajectory =
   in
 
   let policy_updates, new_policy_opt_state =
-    t.policy_optimizer.update t.policy_opt_state t.policy_params policy_grads
+    Optimizer.step t.policy_optimizer t.policy_opt_state t.policy_params
+      policy_grads
   in
 
   t.policy_params <- Optimizer.apply_updates t.policy_params policy_updates;
@@ -342,7 +344,7 @@ let update t trajectory =
 
          let _, baseline_grads = value_and_grad baseline_loss_grad params in
          let baseline_updates, new_baseline_opt_state =
-           opt.update opt_state params baseline_grads
+           Optimizer.step opt opt_state params baseline_grads
          in
 
          t.baseline_params <-

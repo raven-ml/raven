@@ -67,7 +67,7 @@ module Registry = struct
     config_file : string;
     weight_files : string list;
     load_config : Yojson.Safe.t -> 'params;
-    build_params : dtype:(float, 'a) dtype -> 'params -> 'a Kaun.params;
+    build_params : dtype:(float, 'a) dtype -> 'params -> Kaun.params;
   }
 
   let registry : (string, Obj.t) Hashtbl.t = Hashtbl.create 10
@@ -149,7 +149,7 @@ let download_file ?(config = Config.default) ?(revision = Latest) ~model_id
     Downloaded (local_path, progress)
 
 let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
-    ~dtype () =
+    () =
   (* Try common safetensors filenames *)
   let filenames =
     [
@@ -171,13 +171,12 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
             | Downloaded (path, _) -> path
           in
 
-          (* Load using Kaun_checkpoint *)
-          let checkpointer = Kaun.Checkpoint.Checkpointer.create () in
+          (* Load parameters using the checkpoint API *)
           let params =
-            Kaun.Checkpoint.Checkpointer.restore_file checkpointer
-              ~path:local_path ~dtype
+            match Kaun.Checkpoint.load_params_file ~path:local_path with
+            | Ok ptree -> ptree
+            | Error err -> failwith (Kaun.Checkpoint.error_to_string err)
           in
-
           match result with
           | Cached _ -> Cached params
           | Downloaded (_, progress) -> Downloaded (params, progress)
@@ -202,10 +201,10 @@ let load_config ?(config = Config.default) ?(revision = Latest) ~model_id () =
 
 (* High-level Model Loading *)
 
-let from_pretrained ?(config = Config.default) ?(revision = Latest) ~model_id
-    ~dtype () =
+let from_pretrained ?(config = Config.default) ?(revision = Latest) ~model_id ()
+    =
   (* Load safetensors weights *)
-  match load_safetensors ~config ~revision ~model_id ~dtype () with
+  match load_safetensors ~config ~revision ~model_id () with
   | Cached params -> params
   | Downloaded (params, _) -> params
 

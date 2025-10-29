@@ -37,10 +37,11 @@ let test_evaluate_empty_dataset_raises () =
   let model = Layer.relu () in
   let optimizer = Optimizer.identity () in
   let rngs = Rune.Rng.key 1 in
-  let state = Training.State.create ~model ~optimizer ~rngs ~dtype () in
+  let metrics = Metrics.Collection.create [] in
+  let state = Train_state.init ~model ~optimizer ~metrics ~rngs ~dtype () in
   let dataset = Dataset.from_list [] in
   let run () =
-    ignore (Training.evaluate ~state ~dataset ~loss_fn:constant_loss ())
+    ignore (Training.evaluate ~model ~state ~dataset ~loss_fn:constant_loss ())
   in
   expect_invalid_argument
     ~expected:
@@ -69,7 +70,7 @@ let make_counter_metric name =
     | [ tensor ] -> [ Rune.zeros_like tensor ]
     | _ -> init ()
   in
-  Metrics.create_custom ~name ~init ~update ~compute ~reset
+  Metrics.create_custom ~dtype:Rune.float32 ~name ~init ~update ~compute ~reset
 
 let find_metric_values name metrics =
   match List.assoc_opt name metrics with
@@ -93,7 +94,6 @@ let test_metric_history_handles_dynamic_metrics () =
     Training.Callbacks.custom
       ~on_epoch_end:(fun ctx ->
         if ctx.epoch = 1 then
-          let open Training.State in
           match ctx.state.metrics with
           | Some collection ->
               Metrics.Collection.add collection "metric_b" metric_b;

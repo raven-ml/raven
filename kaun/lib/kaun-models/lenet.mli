@@ -66,7 +66,7 @@ val for_cifar10 : unit -> t
 (** Forward pass through the model *)
 val forward :
   model:t ->
-  params:'a Kaun.params ->
+  params:Kaun.params ->
   training:bool ->
   input:(float, 'a) Rune.t ->
   (float, 'a) Rune.t
@@ -81,7 +81,7 @@ val forward :
 (** Extract feature representations *)
 val extract_features :
   model:t ->
-  params:'a Kaun.params ->
+  params:Kaun.params ->
   input:(float, 'a) Rune.t ->
   (float, 'a) Rune.t
 (** [extract_features ~model ~params ~input] extracts feature representations
@@ -89,11 +89,11 @@ val extract_features :
     visualization. Returns features of shape [batch_size; 84]. *)
 
 (** Model statistics *)
-val num_parameters : 'a Kaun.params -> int
+val num_parameters : Kaun.params -> int
 (** [num_parameters params] returns the total number of parameters in the model.
 *)
 
-val parameter_breakdown : 'a Kaun.params -> string
+val parameter_breakdown : Kaun.params -> string
 (** [parameter_breakdown params] returns a detailed breakdown of parameters by
     layer. *)
 

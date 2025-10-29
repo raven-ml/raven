@@ -25,8 +25,9 @@ let train_xor () =
   let params = Kaun.init model ~rngs ~dtype:Rune.float32 in
 
   (* Create optimizer - using new Optax-style API *)
-  let optimizer = Optimizer.adam ~lr:0.1 () in
-  let opt_state = ref (optimizer.init params) in
+  let lr = Optimizer.Schedule.constant 0.1 in
+  let optimizer = Optimizer.adam ~lr () in
+  let opt_state = ref (Optimizer.init optimizer params) in
 
   (* Training loop *)
   let epochs = 500 in
@@ -41,7 +42,7 @@ let train_xor () =
     in
 
     (* Update weights *)
-    let updates, new_state = optimizer.update !opt_state params grads in
+    let updates, new_state = Optimizer.step optimizer !opt_state params grads in
     opt_state := new_state;
     (* Apply updates to params in place *)
     Optimizer.apply_updates_inplace params updates;

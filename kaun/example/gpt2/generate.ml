@@ -38,7 +38,8 @@ let () =
         (* Run forward pass *)
         let logits, _ =
           GPT2.For_causal_lm.forward ~model:gpt2.GPT2.model
-            ~params:gpt2.GPT2.params ~input_ids ~training:false ()
+            ~params:gpt2.GPT2.params ~compute_dtype:gpt2.GPT2.dtype ~input_ids
+            ~training:false ()
         in
 
         (* Get logits for the last token *)

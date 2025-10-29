@@ -58,6 +58,10 @@ val as_uint16 : packed_nx -> Nx.uint16_t
 (** [as_uint16 packed] converts a packed Nx to a [Nx.uint16_t], or [Error] if
     dtype mismatch. *)
 
+val as_bool : packed_nx -> Nx.bool_t
+(** [as_bool packed] converts a packed Nx to a [Nx.bool_t], or [Error] if dtype
+    mismatch. *)
+
 val as_complex32 : packed_nx -> Nx.complex32_t
 (** [as_complex32 packed] converts a packed Nx to a [Nx.complex32_t], or [Error]
     if dtype mismatch. *)
@@ -282,6 +286,9 @@ module Safe : sig
 
   val as_uint16 : packed_nx -> (Nx.uint16_t, error) result
   (** Safe alias for [as_uint16] *)
+
+  val as_bool : packed_nx -> (Nx.bool_t, error) result
+  (** Safe alias for [as_bool] *)
 
   val as_complex32 : packed_nx -> (Nx.complex32_t, error) result
   (** Safe alias for [as_complex32] *)

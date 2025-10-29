@@ -1,45 +1,50 @@
 type 'layout tensor = (float, 'layout) Rune.t
 
+module Dtype = Nx_core.Dtype
+
 type module_ = {
   init :
-    'layout 'dev.
-    rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t;
+    'layout. rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> Ptree.t;
   apply :
-    'layout 'dev.
-    'layout Ptree.t ->
+    'layout.
+    Ptree.t ->
     training:bool ->
     ?rngs:Rune.Rng.key ->
     'layout tensor ->
     'layout tensor;
 }
 
+let list_items_exn context = function
+  | Ptree.List items -> items
+  | _ -> failwith (context ^ ": invalid params structure")
+
 let relu () =
   {
-    init = (fun ~rngs:_ ~dtype:_ -> List []);
+    init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
     apply = (fun _params ~training:_ ?rngs:_ x -> Rune.relu x);
   }
 
 let sigmoid () =
   {
-    init = (fun ~rngs:_ ~dtype:_ -> List []);
+    init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
     apply = (fun _params ~training:_ ?rngs:_ x -> Rune.sigmoid x);
   }
 
 let tanh () =
   {
-    init = (fun ~rngs:_ ~dtype:_ -> List []);
+    init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
     apply = (fun _params ~training:_ ?rngs:_ x -> Rune.tanh x);
   }
 
 let gelu () =
   {
-    init = (fun ~rngs:_ ~dtype:_ -> List []);
+    init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
     apply = (fun _params ~training:_ ?rngs:_ x -> Activations.gelu x);
   }
 
 let swish () =
   {
-    init = (fun ~rngs:_ ~dtype:_ -> List []);
+    init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
     apply = (fun _params ~training:_ ?rngs:_ x -> Activations.swish x);
   }
 
@@ -64,45 +69,36 @@ let conv1d ~in_channels ~out_channels ?(kernel_size = 3) ?(stride = 1)
                 (Rune.scalar dtype limit)
             in
             let b = Rune.zeros dtype [| out_channels |] in
-            Ptree.record_of [ ("weight", Tensor w); ("bias", Tensor b) ]));
+            Ptree.dict [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ]));
     apply =
-      (fun (type l) (params : l Ptree.t) ~training:_ ?rngs:_ (x : l tensor) ->
-        match params with
-        | Record fields ->
-            let w =
-              match Ptree.Record.find_opt "weight" fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith "conv1d: missing or invalid weight parameter"
+      (fun (type l) (params : Ptree.t) ~training:_ ?rngs:_ (x : l tensor) ->
+        let fields = Ptree.Dict.fields_exn ~ctx:"conv1d" params in
+        let dtype = Rune.dtype x in
+        let weight = Ptree.Dict.get_tensor_exn fields ~name:"weight" dtype in
+        let bias = Ptree.Dict.get_tensor_exn fields ~name:"bias" dtype in
+        Rune.debug_with_context
+          (Printf.sprintf "conv1d_%dx%d_%d" in_channels out_channels kernel_size)
+          (fun () ->
+            let x =
+              match padding with
+              | `Same -> x
+              | `Valid -> x
+              | `Causal ->
+                  let pad_left = (kernel_size - 1) * dilation in
+                  let pad_cfg = [| (0, 0); (0, 0); (pad_left, 0) |] in
+                  Rune.pad pad_cfg 0.0 x
             in
-            let b =
-              match Ptree.Record.find_opt "bias" fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith "conv1d: missing or invalid bias parameter"
+            let padding_mode =
+              match padding with
+              | `Same -> `Same
+              | `Valid -> `Valid
+              | `Causal -> `Valid
             in
-            Rune.debug_with_context
-              (Printf.sprintf "conv1d_%dx%d_%d" in_channels out_channels
-                 kernel_size) (fun () ->
-                let x =
-                  match padding with
-                  | `Same -> x
-                  | `Valid -> x
-                  | `Causal ->
-                      let pad_left = (kernel_size - 1) * dilation in
-                      let pad_cfg = [| (0, 0); (0, 0); (pad_left, 0) |] in
-                      Rune.pad pad_cfg 0.0 x
-                in
-                let padding_mode =
-                  match padding with
-                  | `Same -> `Same
-                  | `Valid -> `Valid
-                  | `Causal -> `Valid
-                in
-                let conv =
-                  Rune.convolve1d x w ~stride ~dilation ~padding_mode
-                in
-                let b_reshaped = Rune.reshape [| 1; out_channels; 1 |] b in
-                Rune.add conv b_reshaped)
-        | _ -> failwith "conv1d: invalid params structure");
+            let conv =
+              Rune.convolve1d x weight ~stride ~dilation ~padding_mode
+            in
+            let b_reshaped = Rune.reshape [| 1; out_channels; 1 |] bias in
+            Rune.add conv b_reshaped));
   }
 
 let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
@@ -126,30 +122,21 @@ let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
                 (Rune.scalar dtype limit)
             in
             let b = Rune.zeros dtype [| out_channels |] in
-            Ptree.record_of [ ("weight", Tensor w); ("bias", Tensor b) ]));
+            Ptree.dict [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ]));
     apply =
-      (fun (type l) (params : l Ptree.t) ~training:_ ?rngs:_ (x : l tensor) ->
-        match params with
-        | Record fields ->
-            let w =
-              match Ptree.Record.find_opt "weight" fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith "conv2d: missing or invalid weight parameter"
+      (fun (type l) (params : Ptree.t) ~training:_ ?rngs:_ (x : l tensor) ->
+        let fields = Ptree.Dict.fields_exn ~ctx:"conv2d" params in
+        let dtype = Rune.dtype x in
+        let weight = Ptree.Dict.get_tensor_exn fields ~name:"weight" dtype in
+        let bias = Ptree.Dict.get_tensor_exn fields ~name:"bias" dtype in
+        Rune.debug_with_context
+          (Printf.sprintf "conv2d_%dx%d_%dx%d" in_channels out_channels kh kw)
+          (fun () ->
+            let conv =
+              Rune.convolve2d x weight ~stride:(1, 1) ~padding_mode:`Same
             in
-            let b =
-              match Ptree.Record.find_opt "bias" fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith "conv2d: missing or invalid bias parameter"
-            in
-            Rune.debug_with_context
-              (Printf.sprintf "conv2d_%dx%d_%dx%d" in_channels out_channels kh
-                 kw) (fun () ->
-                let conv =
-                  Rune.convolve2d x w ~stride:(1, 1) ~padding_mode:`Same
-                in
-                let b_reshaped = Rune.reshape [| 1; out_channels; 1; 1 |] b in
-                Rune.add conv b_reshaped)
-        | _ -> failwith "conv2d: invalid params structure");
+            let b_reshaped = Rune.reshape [| 1; out_channels; 1; 1 |] bias in
+            Rune.add conv b_reshaped));
   }
 
 let linear ~in_features ~out_features ?weight_init ?bias_init () =
@@ -180,31 +167,24 @@ let linear ~in_features ~out_features ?weight_init ?bias_init () =
             let b =
               bias_init_f (Rune.Rng.to_int rng2) [| out_features |] dtype
             in
-            Ptree.record_of [ ("weight", Tensor w); ("bias", Tensor b) ]));
+            Ptree.dict [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ]));
     apply =
-      (fun (type l) (params : l Ptree.t) ~training:_ ?rngs:_ (x : l tensor) ->
+      (fun (type l) (params : Ptree.t) ~training:_ ?rngs:_ (x : l tensor) ->
         Rune.debug_with_context
           (Printf.sprintf "linear_%dx%d" in_features out_features) (fun () ->
-            match params with
-            | Record fields ->
-                let w =
-                  match Ptree.Record.find_opt "weight" fields with
-                  | Some (Tensor t) -> t
-                  | _ -> failwith "linear: missing or invalid weight parameter"
-                in
-                let b =
-                  match Ptree.Record.find_opt "bias" fields with
-                  | Some (Tensor t) -> t
-                  | _ -> failwith "linear: missing or invalid bias parameter"
-                in
-                let z = Rune.matmul x w in
-                Rune.add z b
-            | _ -> failwith "linear: invalid params structure"));
+            let fields = Ptree.Dict.fields_exn ~ctx:"linear" params in
+            let dtype = Rune.dtype x in
+            let weight =
+              Ptree.Dict.get_tensor_exn fields ~name:"weight" dtype
+            in
+            let bias = Ptree.Dict.get_tensor_exn fields ~name:"bias" dtype in
+            let z = Rune.matmul x weight in
+            Rune.add z bias));
   }
 
 let dropout ~rate () =
   {
-    init = (fun ~rngs:_ ~dtype:_ -> List []);
+    init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
     apply =
       (fun _params ~training ?rngs x ->
         if (not training) || rate = 0.0 then x
@@ -228,31 +208,23 @@ let batch_norm ~num_features () =
             let _rngs_split = Rune.Rng.split rngs in
             let scale = Rune.ones dtype [| num_features |] in
             let bias = Rune.zeros dtype [| num_features |] in
-            Ptree.record_of [ ("scale", Tensor scale); ("bias", Tensor bias) ]));
+            Ptree.dict
+              [ ("scale", Ptree.tensor scale); ("bias", Ptree.tensor bias) ]));
     apply =
       (fun params ~training:_ ?rngs:_ x ->
-        match params with
-        | Record fields ->
-            let scale =
-              match Ptree.Record.find_opt "scale" fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith "batch_norm: missing or invalid scale parameter"
-            in
-            let bias =
-              match Ptree.Record.find_opt "bias" fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith "batch_norm: missing or invalid bias parameter"
-            in
-            Rune.debug_with_context
-              (Printf.sprintf "batch_norm_%d_apply" num_features) (fun () ->
-                Rune.batch_norm ~scale ~bias x)
-        | _ -> failwith "batch_norm: invalid params structure");
+        let fields = Ptree.Dict.fields_exn ~ctx:"batch_norm" params in
+        let dtype = Rune.dtype x in
+        let scale = Ptree.Dict.get_tensor_exn fields ~name:"scale" dtype in
+        let bias = Ptree.Dict.get_tensor_exn fields ~name:"bias" dtype in
+        Rune.debug_with_context
+          (Printf.sprintf "batch_norm_%d_apply" num_features) (fun () ->
+            Rune.batch_norm ~scale ~bias x));
   }
 
 let max_pool2d ~kernel_size ?stride () =
   let stride = match stride with Some s -> s | None -> kernel_size in
   {
-    init = (fun ~rngs:_ ~dtype:_ -> List []);
+    init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
     apply =
       (fun _params ~training:_ ?rngs:_ x ->
         let pooled, _ = Rune.max_pool2d x ~kernel_size ~stride in
@@ -262,7 +234,7 @@ let max_pool2d ~kernel_size ?stride () =
 let avg_pool2d ~kernel_size ?stride () =
   let stride = match stride with Some s -> s | None -> kernel_size in
   {
-    init = (fun ~rngs:_ ~dtype:_ -> List []);
+    init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
     apply =
       (fun _params ~training:_ ?rngs:_ x ->
         Rune.avg_pool2d x ~kernel_size ~stride);
@@ -270,7 +242,7 @@ let avg_pool2d ~kernel_size ?stride () =
 
 let flatten () =
   {
-    init = (fun ~rngs:_ ~dtype:_ -> List []);
+    init = (fun ~rngs:_ ~dtype:_ -> Ptree.list []);
     apply =
       (fun _params ~training:_ ?rngs:_ x ->
         let shape = Rune.shape x in
@@ -299,18 +271,16 @@ let sequential models =
         init_layers models [] rngs);
     apply =
       (fun params ~training ?rngs:_ x ->
-        match params with
-        | List param_list ->
-            let rec apply_layers models params x layer_idx =
-              match (models, params) with
-              | [], [] -> x
-              | m :: ms, p :: ps ->
-                  let x' = m.apply p ~training x in
-                  apply_layers ms ps x' (layer_idx + 1)
-              | _ -> failwith "sequential: mismatched models and params"
-            in
-            apply_layers models param_list x 1
-        | _ -> failwith "sequential: invalid params structure");
+        let param_list = list_items_exn "sequential" params in
+        let rec apply_layers models params x layer_idx =
+          match (models, params) with
+          | [], [] -> x
+          | m :: ms, p :: ps ->
+              let x' = m.apply p ~training x in
+              apply_layers ms ps x' (layer_idx + 1)
+          | _ -> failwith "sequential: mismatched models and params"
+        in
+        apply_layers models param_list x 1);
   }
 
 let einsum ~einsum_str ~shape ?kernel_init () =
@@ -324,12 +294,13 @@ let einsum ~einsum_str ~shape ?kernel_init () =
         in
         let key = (Rune.Rng.split rngs).(0) in
         let w = kernel_init_f (Rune.Rng.to_int key) shape dtype in
-        Ptree.Tensor w);
+        Ptree.dict [ ("weight", Ptree.tensor w) ]);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
-        match params with
-        | Tensor w -> Rune.einsum einsum_str [| x; w |]
-        | _ -> failwith "einsum: invalid params");
+        let fields = Ptree.Dict.fields_exn ~ctx:"einsum" params in
+        let dtype = Rune.dtype x in
+        let w = Ptree.Dict.get_tensor_exn fields ~name:"weight" dtype in
+        Rune.einsum einsum_str [| x; w |]);
   }
 
 let rms_norm ~dim ?(eps = 1e-6) ?scale_init () =
@@ -343,12 +314,13 @@ let rms_norm ~dim ?(eps = 1e-6) ?scale_init () =
         in
         let key = (Rune.Rng.split rngs).(0) in
         let scale = scale_init_f (Rune.Rng.to_int key) [| dim |] dtype in
-        Ptree.Tensor scale);
+        Ptree.dict [ ("scale", Ptree.tensor scale) ]);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
-        match params with
-        | Tensor scale -> Rune.rms_norm ~gamma:scale ~epsilon:eps x
-        | _ -> failwith "rms_norm: invalid params");
+        let fields = Ptree.Dict.fields_exn ~ctx:"rms_norm" params in
+        let dtype = Rune.dtype x in
+        let scale = Ptree.Dict.get_tensor_exn fields ~name:"scale" dtype in
+        Rune.rms_norm ~gamma:scale ~epsilon:eps x);
   }
 
 let layer_norm ~dim ?(eps = 1e-5) ?(elementwise_affine = true) () =
@@ -358,25 +330,17 @@ let layer_norm ~dim ?(eps = 1e-5) ?(elementwise_affine = true) () =
         if elementwise_affine then
           let gamma = Rune.ones dtype [| dim |] in
           let beta = Rune.zeros dtype [| dim |] in
-          Ptree.record_of [ ("gamma", Tensor gamma); ("beta", Tensor beta) ]
-        else List []);
+          Ptree.dict
+            [ ("gamma", Ptree.tensor gamma); ("beta", Ptree.tensor beta) ]
+        else Ptree.list []);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
         if elementwise_affine then
-          match params with
-          | Record fields ->
-              let gamma =
-                match Ptree.Record.find_opt "gamma" fields with
-                | Some (Tensor t) -> t
-                | _ -> failwith "layer_norm: missing gamma"
-              in
-              let beta =
-                match Ptree.Record.find_opt "beta" fields with
-                | Some (Tensor t) -> t
-                | _ -> failwith "layer_norm: missing beta"
-              in
-              Rune.layer_norm ~gamma ~beta ~epsilon:eps x
-          | _ -> failwith "layer_norm: invalid params"
+          let fields = Ptree.Dict.fields_exn ~ctx:"layer_norm" params in
+          let dtype = Rune.dtype x in
+          let gamma = Ptree.Dict.get_tensor_exn fields ~name:"gamma" dtype in
+          let beta = Ptree.Dict.get_tensor_exn fields ~name:"beta" dtype in
+          Rune.layer_norm ~gamma ~beta ~epsilon:eps x
         else Rune.layer_norm ~epsilon:eps x);
   }
 
@@ -395,15 +359,16 @@ let embedding ~vocab_size ~embed_dim ?(scale = true) ?embedding_init () =
             [| vocab_size; embed_dim |]
             dtype
         in
-        Ptree.Tensor embedding);
+        Ptree.dict [ ("embedding", Ptree.tensor embedding) ]);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
-        match params with
-        | Tensor embedding ->
-            (* Cast input to int32 for embedding lookup *)
-            let indices = Rune.cast Rune.int32 x in
-            Rune.embedding ~scale ~embedding indices
-        | _ -> failwith "embedding: invalid params");
+        let fields = Ptree.Dict.fields_exn ~ctx:"embedding" params in
+        let dtype = Rune.dtype x in
+        let embedding =
+          Ptree.Dict.get_tensor_exn fields ~name:"embedding" dtype
+        in
+        let indices = Rune.cast Rune.int32 x in
+        Rune.embedding ~scale ~embedding indices);
   }
 
 let compute_attention_from_projected ?attention_mask ?(is_causal = false)
@@ -512,10 +477,10 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
         in
         let params_list =
           [
-            ("q_proj", Ptree.Tensor q_proj);
-            ("k_proj", Ptree.Tensor k_proj);
-            ("v_proj", Ptree.Tensor v_proj);
-            ("out_proj", Ptree.Tensor out_proj);
+            ("q_proj", Ptree.tensor q_proj);
+            ("k_proj", Ptree.tensor k_proj);
+            ("v_proj", Ptree.tensor v_proj);
+            ("out_proj", Ptree.tensor out_proj);
           ]
         in
         (* Add QK normalization parameters if enabled *)
@@ -525,12 +490,12 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
             let k_norm_scale = Rune.ones dtype [| head_dim |] in
             params_list
             @ [
-                ("q_norm_scale", Ptree.Tensor q_norm_scale);
-                ("k_norm_scale", Ptree.Tensor k_norm_scale);
+                ("q_norm_scale", Ptree.tensor q_norm_scale);
+                ("k_norm_scale", Ptree.tensor k_norm_scale);
               ]
           else params_list
         in
-        Ptree.record_of params_list);
+        Ptree.dict params_list);
     apply =
       (fun params ~training ?rngs x ->
         (* TODO: Support attention masks properly The current module interface
@@ -552,67 +517,61 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
               (* For now, assume self-attention *)
               (x, None, None, None)
         in
-        match params with
-        | Record fields ->
-            let get_weight name =
-              match Ptree.Record.find_opt name fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith ("multi_head_attention: missing " ^ name)
-            in
-            let q_proj = get_weight "q_proj" in
-            let k_proj = get_weight "k_proj" in
-            let v_proj = get_weight "v_proj" in
-            let out_proj = get_weight "out_proj" in
+        let fields = Ptree.Dict.fields_exn ~ctx:"multi_head_attention" params in
+        let query_input = query in
+        let key_input = Option.value key ~default:query_input in
+        let value_input = Option.value value ~default:query_input in
+        let dtype = Rune.dtype query_input in
+        let q_proj = Ptree.Dict.get_tensor_exn fields ~name:"q_proj" dtype in
+        let k_proj = Ptree.Dict.get_tensor_exn fields ~name:"k_proj" dtype in
+        let v_proj = Ptree.Dict.get_tensor_exn fields ~name:"v_proj" dtype in
+        let out_proj =
+          Ptree.Dict.get_tensor_exn fields ~name:"out_proj" dtype
+        in
+        (* Apply query pre-attention scalar if specified *)
+        let scale =
+          match query_pre_attn_scalar with
+          | Some s -> s
+          | None -> 1.0 /. sqrt (float_of_int head_dim)
+        in
 
-            (* Apply query pre-attention scalar if specified *)
-            let scale =
-              match query_pre_attn_scalar with
-              | Some s -> s
-              | None -> 1.0 /. sqrt (float_of_int head_dim)
-            in
+        (* Apply dropout only during training *)
+        let effective_dropout = if training then dropout else 0.0 in
 
-            (* Apply dropout only during training *)
-            let effective_dropout = if training then dropout else 0.0 in
+        (* Pass RNGs only when dropout > 0 and training *)
+        let dropout_rng =
+          if effective_dropout > 0.0 then
+            match rngs with
+            | Some rng -> Some rng
+            | None -> failwith "dropout requires RNG if rate > 0.0"
+          else None
+        in
+        let q_projected = Rune.matmul query_input q_proj in
+        let k_projected = Rune.matmul key_input k_proj in
+        let v_projected = Rune.matmul value_input v_proj in
+        let dropout_rate_opt =
+          if effective_dropout > 0.0 then Some effective_dropout else None
+        in
+        let context =
+          compute_attention_from_projected ?attention_mask ?scale:(Some scale)
+            ?dropout_rate:dropout_rate_opt ?dropout_rng ~is_causal:false
+            ~q:q_projected ~k:k_projected ~v:v_projected ~embed_dim ~num_heads
+            ~num_kv_heads ~head_dim ()
+        in
+        let output = Rune.matmul context out_proj in
 
-            (* Pass RNGs only when dropout > 0 and training *)
-            let dropout_rng =
-              if effective_dropout > 0.0 then
-                match rngs with
-                | Some rng -> Some rng
-                | None -> failwith "dropout requires RNG if rate > 0.0"
-              else None
-            in
-            let query_input = query in
-            let key_input = Option.value key ~default:query_input in
-            let value_input = Option.value value ~default:query_input in
-            let q_projected = Rune.matmul query_input q_proj in
-            let k_projected = Rune.matmul key_input k_proj in
-            let v_projected = Rune.matmul value_input v_proj in
-            let dropout_rate_opt =
-              if effective_dropout > 0.0 then Some effective_dropout else None
-            in
-            let context =
-              compute_attention_from_projected ?attention_mask
-                ?scale:(Some scale) ?dropout_rate:dropout_rate_opt ?dropout_rng
-                ~is_causal:false ~q:q_projected ~k:k_projected ~v:v_projected
-                ~embed_dim ~num_heads ~num_kv_heads ~head_dim ()
-            in
-            let output = Rune.matmul context out_proj in
-
-            (* Apply attention logits soft cap if specified *)
-            let output =
-              match attn_logits_soft_cap with
-              | Some cap ->
-                  (* Soft capping: tanh(logits / cap) * cap *)
-                  let scaled =
-                    Rune.div output (Rune.scalar (Rune.dtype output) cap)
-                  in
-                  let capped = Rune.tanh scaled in
-                  Rune.mul capped (Rune.scalar (Rune.dtype output) cap)
-              | None -> output
-            in
-            output
-        | _ -> failwith "multi_head_attention: invalid params");
+        (* Apply attention logits soft cap if specified *)
+        let output =
+          match attn_logits_soft_cap with
+          | Some cap ->
+              let scaled =
+                Rune.div output (Rune.scalar (Rune.dtype output) cap)
+              in
+              let capped = Rune.tanh scaled in
+              Rune.mul capped (Rune.scalar (Rune.dtype output) cap)
+          | None -> output
+        in
+        output);
   }
 
 let mlp ~in_features ~hidden_features ~out_features ?(activation = `gelu)
@@ -687,14 +646,14 @@ let transformer_encoder_layer ~hidden_size ~num_attention_heads
           if use_bias then
             let zero_init = (Initializers.zeros ()).f in
             [
-              ("q_bias", Ptree.Tensor (zero_init 0 [| hidden_size |] dtype));
-              ("k_bias", Ptree.Tensor (zero_init 0 [| hidden_size |] dtype));
-              ("v_bias", Ptree.Tensor (zero_init 0 [| hidden_size |] dtype));
+              ("q_bias", Ptree.tensor (zero_init 0 [| hidden_size |] dtype));
+              ("k_bias", Ptree.tensor (zero_init 0 [| hidden_size |] dtype));
+              ("v_bias", Ptree.tensor (zero_init 0 [| hidden_size |] dtype));
               ( "attn_out_bias",
-                Ptree.Tensor (zero_init 0 [| hidden_size |] dtype) );
+                Ptree.tensor (zero_init 0 [| hidden_size |] dtype) );
               ( "inter_bias",
-                Ptree.Tensor (zero_init 0 [| intermediate_size |] dtype) );
-              ("out_bias", Ptree.Tensor (zero_init 0 [| hidden_size |] dtype));
+                Ptree.tensor (zero_init 0 [| intermediate_size |] dtype) );
+              ("out_bias", Ptree.tensor (zero_init 0 [| hidden_size |] dtype));
             ]
           else []
         in
@@ -705,34 +664,47 @@ let transformer_encoder_layer ~hidden_size ~num_attention_heads
         let ffn_gamma = Rune.ones dtype [| hidden_size |] in
         let ffn_beta = Rune.zeros dtype [| hidden_size |] in
 
-        Ptree.record_of
+        Ptree.dict
           ([
-             ("q_weight", Ptree.Tensor q_weight);
-             ("k_weight", Ptree.Tensor k_weight);
-             ("v_weight", Ptree.Tensor v_weight);
-             ("attn_out_weight", Ptree.Tensor attn_out_weight);
-             ("inter_weight", Ptree.Tensor inter_weight);
-             ("out_weight", Ptree.Tensor out_weight);
-             ("attn_gamma", Ptree.Tensor attn_gamma);
-             ("attn_beta", Ptree.Tensor attn_beta);
-             ("ffn_gamma", Ptree.Tensor ffn_gamma);
-             ("ffn_beta", Ptree.Tensor ffn_beta);
+             ("q_weight", Ptree.tensor q_weight);
+             ("k_weight", Ptree.tensor k_weight);
+             ("v_weight", Ptree.tensor v_weight);
+             ("attn_out_weight", Ptree.tensor attn_out_weight);
+             ("inter_weight", Ptree.tensor inter_weight);
+             ("out_weight", Ptree.tensor out_weight);
+             ("attn_gamma", Ptree.tensor attn_gamma);
+             ("attn_beta", Ptree.tensor attn_beta);
+             ("ffn_gamma", Ptree.tensor ffn_gamma);
+             ("ffn_beta", Ptree.tensor ffn_beta);
            ]
           @ bias_params));
     apply =
       (fun params ~training ?rngs hidden_states ->
         match params with
-        | Ptree.Record fields ->
-            let get_weight name =
-              match Ptree.Record.find_opt name fields with
-              | Some (Ptree.Tensor t) -> t
-              | _ -> failwith ("transformer_encoder_layer: missing " ^ name)
+        | Ptree.Dict fields ->
+            let dtype = Rune.dtype hidden_states in
+            let weight_exn name =
+              Ptree.Dict.get_tensor_exn fields ~name dtype
             in
-            let get_bias_opt name =
-              match Ptree.Record.find_opt name fields with
-              | Some (Ptree.Tensor t) -> Some t
-              | _ -> None
-            in
+            let bias_opt name = Ptree.Dict.get_tensor fields ~name dtype in
+
+            let q_weight = weight_exn "q_weight" in
+            let k_weight = weight_exn "k_weight" in
+            let v_weight = weight_exn "v_weight" in
+            let attn_out_weight = weight_exn "attn_out_weight" in
+            let inter_weight = weight_exn "inter_weight" in
+            let out_weight = weight_exn "out_weight" in
+            let attn_gamma = weight_exn "attn_gamma" in
+            let attn_beta = weight_exn "attn_beta" in
+            let ffn_gamma = weight_exn "ffn_gamma" in
+            let ffn_beta = weight_exn "ffn_beta" in
+
+            let q_bias = bias_opt "q_bias" in
+            let k_bias = bias_opt "k_bias" in
+            let v_bias = bias_opt "v_bias" in
+            let attn_out_bias = bias_opt "attn_out_bias" in
+            let inter_bias = bias_opt "inter_bias" in
+            let out_bias = bias_opt "out_bias" in
 
             let apply_linear weight bias input =
               let projected = Rune.matmul input weight in
@@ -742,18 +714,9 @@ let transformer_encoder_layer ~hidden_size ~num_attention_heads
                   bias
               else projected
             in
-            let q =
-              apply_linear (get_weight "q_weight") (get_bias_opt "q_bias")
-                hidden_states
-            in
-            let k =
-              apply_linear (get_weight "k_weight") (get_bias_opt "k_bias")
-                hidden_states
-            in
-            let v =
-              apply_linear (get_weight "v_weight") (get_bias_opt "v_bias")
-                hidden_states
-            in
+            let q = apply_linear q_weight q_bias hidden_states in
+            let k = apply_linear k_weight k_bias hidden_states in
+            let v = apply_linear v_weight v_bias hidden_states in
             let num_heads = num_attention_heads in
             let head_dim = hidden_size / num_heads in
             let attn_dropout_rate =
@@ -775,14 +738,12 @@ let transformer_encoder_layer ~hidden_size ~num_attention_heads
                 ~embed_dim:hidden_size ~num_heads ~num_kv_heads:num_heads
                 ~head_dim ()
             in
-            let attn_output =
-              Rune.matmul attn_context (get_weight "attn_out_weight")
-            in
+            let attn_output = Rune.matmul attn_context attn_out_weight in
             let attn_output =
               if use_bias then
                 Option.fold ~none:attn_output
                   ~some:(fun b -> Rune.add attn_output b)
-                  (get_bias_opt "attn_out_bias")
+                  attn_out_bias
               else attn_output
             in
             let attn_output =
@@ -796,18 +757,15 @@ let transformer_encoder_layer ~hidden_size ~num_attention_heads
             in
             let hidden_states = Rune.add hidden_states attn_output in
             let hidden_states =
-              Rune.layer_norm ~gamma:(get_weight "attn_gamma")
-                ~beta:(get_weight "attn_beta") ~epsilon:layer_norm_eps
-                hidden_states
+              Rune.layer_norm ~gamma:attn_gamma ~beta:attn_beta
+                ~epsilon:layer_norm_eps hidden_states
             in
-            let intermediate =
-              Rune.matmul hidden_states (get_weight "inter_weight")
-            in
+            let intermediate = Rune.matmul hidden_states inter_weight in
             let intermediate =
               if use_bias then
                 Option.fold ~none:intermediate
                   ~some:(fun b -> Rune.add intermediate b)
-                  (get_bias_opt "inter_bias")
+                  inter_bias
               else intermediate
             in
             let inter_shape = Rune.shape intermediate in
@@ -823,12 +781,12 @@ let transformer_encoder_layer ~hidden_size ~num_attention_heads
               | `relu -> Activations.relu intermediate
               | `swish -> Activations.swish intermediate
             in
-            let output = Rune.matmul activated (get_weight "out_weight") in
+            let output = Rune.matmul activated out_weight in
             let output =
               if use_bias then
                 Option.fold ~none:output
                   ~some:(fun b -> Rune.add output b)
-                  (get_bias_opt "out_bias")
+                  out_bias
               else output
             in
             let output =
@@ -841,9 +799,8 @@ let transformer_encoder_layer ~hidden_size ~num_attention_heads
               else output
             in
             let hidden_states = Rune.add hidden_states output in
-            Rune.layer_norm ~gamma:(get_weight "ffn_gamma")
-              ~beta:(get_weight "ffn_beta") ~epsilon:layer_norm_eps
-              hidden_states
+            Rune.layer_norm ~gamma:ffn_gamma ~beta:ffn_beta
+              ~epsilon:layer_norm_eps hidden_states
         | _ -> failwith "transformer_encoder_layer: invalid params");
   }
 
@@ -877,40 +834,39 @@ let rnn ~input_size ~hidden_size ?(return_sequences = false)
         let b = Rune.zeros dtype [| hidden_size |] in
         let base =
           [
-            ("w_xh", Ptree.Tensor w_xh);
-            ("w_hh", Ptree.Tensor w_hh);
-            ("b", Ptree.Tensor b);
+            ("w_xh", Ptree.tensor w_xh);
+            ("w_hh", Ptree.tensor w_hh);
+            ("b", Ptree.tensor b);
           ]
         in
         let base =
           if learned_init then
             let h0 = Rune.zeros dtype [| hidden_size |] in
-            base @ [ ("h0", Ptree.Tensor h0) ]
+            base @ [ ("h0", Ptree.tensor h0) ]
           else base
         in
-        Ptree.record_of base);
+        Ptree.dict base);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
         match params with
-        | Record fields ->
-            let get name =
-              match Ptree.Record.find_opt name fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith ("rnn: missing " ^ name)
-            in
-            let w_xh = get "w_xh" and w_hh = get "w_hh" and b = get "b" in
+        | Ptree.Dict fields ->
+            let dt = Rune.dtype x in
+            let param_exn name = Ptree.Dict.get_tensor_exn fields ~name dt in
+            let param_opt name = Ptree.Dict.get_tensor fields ~name dt in
+            let w_xh = param_exn "w_xh"
+            and w_hh = param_exn "w_hh"
+            and b = param_exn "b" in
             let batch, seq_len, _ =
               match Rune.shape x with
               | [| b; s; i |] -> (b, s, i)
               | _ -> failwith "rnn: expected [b; s; i]"
             in
-            let dt = Rune.dtype x in
             let h_init =
-              match Ptree.Record.find_opt "h0" fields with
-              | Some (Tensor h0) ->
+              match param_opt "h0" with
+              | Some h0 ->
                   Rune.reshape [| 1; hidden_size |] h0
                   |> Rune.expand [| batch; hidden_size |]
-              | _ -> Rune.zeros dt [| batch; hidden_size |]
+              | None -> Rune.zeros dt [| batch; hidden_size |]
             in
             let h = ref h_init in
             let outputs =
@@ -965,40 +921,39 @@ let gru ~input_size ~hidden_size ?(return_sequences = false)
         let b = Rune.zeros dtype [| hidden_size * 3 |] in
         let base =
           [
-            ("w_ih", Ptree.Tensor w_ih);
-            ("w_hh", Ptree.Tensor w_hh);
-            ("b", Ptree.Tensor b);
+            ("w_ih", Ptree.tensor w_ih);
+            ("w_hh", Ptree.tensor w_hh);
+            ("b", Ptree.tensor b);
           ]
         in
         let base =
           if learned_init then
             let h0 = Rune.zeros dtype [| hidden_size |] in
-            base @ [ ("h0", Ptree.Tensor h0) ]
+            base @ [ ("h0", Ptree.tensor h0) ]
           else base
         in
-        Ptree.record_of base);
+        Ptree.dict base);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
         match params with
-        | Record fields ->
-            let get name =
-              match Ptree.Record.find_opt name fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith ("gru: missing " ^ name)
-            in
-            let w_ih = get "w_ih" and w_hh = get "w_hh" and b = get "b" in
+        | Ptree.Dict fields ->
+            let dt = Rune.dtype x in
+            let param_exn name = Ptree.Dict.get_tensor_exn fields ~name dt in
+            let param_opt name = Ptree.Dict.get_tensor fields ~name dt in
+            let w_ih = param_exn "w_ih"
+            and w_hh = param_exn "w_hh"
+            and b = param_exn "b" in
             let batch, seq_len, _ =
               match Rune.shape x with
               | [| b; s; i |] -> (b, s, i)
               | _ -> failwith "gru: expected [b; s; i]"
             in
-            let dt = Rune.dtype x in
             let h_init =
-              match Ptree.Record.find_opt "h0" fields with
-              | Some (Tensor h0) ->
+              match param_opt "h0" with
+              | Some h0 ->
                   Rune.reshape [| 1; hidden_size |] h0
                   |> Rune.expand [| batch; hidden_size |]
-              | _ -> Rune.zeros dt [| batch; hidden_size |]
+              | None -> Rune.zeros dt [| batch; hidden_size |]
             in
             let h = ref h_init in
             let outputs =
@@ -1096,48 +1051,47 @@ let lstm ~input_size ~hidden_size ?(return_sequences = false)
         let b = Rune.zeros dtype [| hidden_size * 4 |] in
         let base =
           [
-            ("w_ih", Ptree.Tensor w_ih);
-            ("w_hh", Ptree.Tensor w_hh);
-            ("b", Ptree.Tensor b);
+            ("w_ih", Ptree.tensor w_ih);
+            ("w_hh", Ptree.tensor w_hh);
+            ("b", Ptree.tensor b);
           ]
         in
         let base =
           if learned_init then
             let h0 = Rune.zeros dtype [| hidden_size |] in
             let c0 = Rune.zeros dtype [| hidden_size |] in
-            base @ [ ("h0", Ptree.Tensor h0); ("c0", Ptree.Tensor c0) ]
+            base @ [ ("h0", Ptree.tensor h0); ("c0", Ptree.tensor c0) ]
           else base
         in
-        Ptree.record_of base);
+        Ptree.dict base);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
         match params with
-        | Record fields ->
-            let get name =
-              match Ptree.Record.find_opt name fields with
-              | Some (Tensor t) -> t
-              | _ -> failwith ("lstm: missing " ^ name)
-            in
-            let w_ih = get "w_ih" and w_hh = get "w_hh" and b = get "b" in
+        | Ptree.Dict fields ->
+            let dt = Rune.dtype x in
+            let param_exn name = Ptree.Dict.get_tensor_exn fields ~name dt in
+            let param_opt name = Ptree.Dict.get_tensor fields ~name dt in
+            let w_ih = param_exn "w_ih"
+            and w_hh = param_exn "w_hh"
+            and b = param_exn "b" in
             let batch, seq_len, _ =
               match Rune.shape x with
               | [| b; s; i |] -> (b, s, i)
               | _ -> failwith "lstm: expected [b; s; i]"
             in
-            let dt = Rune.dtype x in
             let h_init =
-              match Ptree.Record.find_opt "h0" fields with
-              | Some (Tensor h0) ->
+              match param_opt "h0" with
+              | Some h0 ->
                   Rune.reshape [| 1; hidden_size |] h0
                   |> Rune.expand [| batch; hidden_size |]
-              | _ -> Rune.zeros dt [| batch; hidden_size |]
+              | None -> Rune.zeros dt [| batch; hidden_size |]
             in
             let c_init =
-              match Ptree.Record.find_opt "c0" fields with
-              | Some (Tensor c0) ->
+              match param_opt "c0" with
+              | Some c0 ->
                   Rune.reshape [| 1; hidden_size |] c0
                   |> Rune.expand [| batch; hidden_size |]
-              | _ -> Rune.zeros dt [| batch; hidden_size |]
+              | None -> Rune.zeros dt [| batch; hidden_size |]
             in
             let h = ref h_init in
             let c = ref c_init in
@@ -1226,11 +1180,13 @@ let positional_embedding_learned ~max_len ~embed_dim () =
         let table =
           initf (Rune.Rng.to_int key) [| max_len; embed_dim |] dtype
         in
-        Ptree.Tensor table);
+        Ptree.dict [ ("table", Ptree.tensor table) ]);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
         match params with
-        | Tensor table ->
+        | Ptree.Dict fields ->
+            let dtype = Rune.dtype x in
+            let table = Ptree.Dict.get_tensor_exn fields ~name:"table" dtype in
             let b, s, _ =
               match Rune.shape x with
               | [| b; s; e |] -> (b, s, e)
@@ -1290,7 +1246,7 @@ let transformer_decoder_block ~embed_dim ~num_heads ~mlp_hidden ?(dropout = 0.0)
     init =
       (fun ~rngs ~dtype ->
         let ks = Rune.Rng.split ~n:4 rngs in
-        Ptree.record_of
+        Ptree.dict
           [
             ("attn", attn.init ~rngs:ks.(0) ~dtype);
             ("ln1", ln1.init ~rngs:ks.(1) ~dtype);
@@ -1300,9 +1256,9 @@ let transformer_decoder_block ~embed_dim ~num_heads ~mlp_hidden ?(dropout = 0.0)
     apply =
       (fun params ~training ?rngs x ->
         match params with
-        | Record fields ->
+        | Ptree.Dict fields ->
             let get name =
-              match Ptree.Record.find_opt name fields with
+              match List.assoc_opt name fields with
               | Some p -> p
               | None -> failwith ("decoder_block: missing " ^ name)
             in
@@ -1314,16 +1270,13 @@ let transformer_decoder_block ~embed_dim ~num_heads ~mlp_hidden ?(dropout = 0.0)
             (* Extract weights from attention module to run causal attention *)
             let attn_out =
               match p_attn with
-              | Record f ->
-                  let getw n =
-                    match Ptree.Record.find_opt n f with
-                    | Some (Tensor t) -> t
-                    | _ -> failwith ("attn param " ^ n)
-                  in
-                  let q = getw "q_proj"
-                  and k = getw "k_proj"
-                  and v = getw "v_proj"
-                  and o = getw "out_proj" in
+              | Ptree.Dict f ->
+                  let dtype = Rune.dtype x_norm in
+                  let param name = Ptree.Dict.get_tensor_exn f ~name dtype in
+                  let q = param "q_proj"
+                  and k = param "k_proj"
+                  and v = param "v_proj"
+                  and o = param "out_proj" in
                   let head_dim = embed_dim / num_heads in
                   let effective_dropout = if training then dropout else 0.0 in
                   let dropout_rng =

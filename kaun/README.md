@@ -46,7 +46,8 @@ let optimizer = Optimizer.adam ~lr:0.001
 (* Training step *)
 let train_step params x y opt_state =
   let loss, grads = Rune.value_and_grad loss_fn params x y in
-  let params, opt_state = Optimizer.update opt_state grads params in
+  let updates, opt_state = Optimizer.step optimizer opt_state params grads in
+  let params = Optimizer.apply_updates params updates in
   (params, opt_state, loss)
 ```
 

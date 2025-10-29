@@ -2,29 +2,24 @@
 
 type reduction = Mean | Sum
 
-type 'layout metric_state = {
-  mutable state_tensors : (float, 'layout) Rune.t list;
-  name : string;
-  init_fn : unit -> (float, 'layout) Rune.t list;
-  update_fn :
-    (float, 'layout) Rune.t list ->
-    predictions:(float, 'layout) Rune.t ->
-    targets:(float, 'layout) Rune.t ->
-    ?weights:(float, 'layout) Rune.t ->
-    unit ->
-    (float, 'layout) Rune.t list;
-  compute_fn : (float, 'layout) Rune.t list -> (float, 'layout) Rune.t;
-  reset_fn : (float, 'layout) Rune.t list -> (float, 'layout) Rune.t list;
-}
-
-type 'layout t = 'layout metric_state
-
-type 'layout metric_fn =
-  predictions:(float, 'layout) Rune.t ->
-  targets:(float, 'layout) Rune.t ->
-  ?weights:(float, 'layout) Rune.t ->
-  unit ->
-  (float, 'layout) Rune.t
+type metric =
+  | Metric : {
+      mutable state_tensors : (float, 'layout) Rune.t list;
+      dtype : (float, 'layout) Rune.dtype;
+      name : string;
+      init_fn : unit -> (float, 'layout) Rune.t list;
+      update_fn :
+        (float, 'layout) Rune.t list ->
+        predictions:(float, 'layout) Rune.t ->
+        targets:(float, 'layout) Rune.t ->
+        ?loss:(float, 'layout) Rune.t ->
+        ?weights:(float, 'layout) Rune.t ->
+        unit ->
+        (float, 'layout) Rune.t list;
+      compute_fn : (float, 'layout) Rune.t list -> (float, 'layout) Rune.t;
+      reset_fn : (float, 'layout) Rune.t list -> (float, 'layout) Rune.t list;
+    }
+      -> metric
 
 (** Helper functions *)
 
@@ -433,26 +428,56 @@ let prepare_rank_curve_inputs preds targets weights =
 
 (** Core metric operations *)
 
-let update metric ~predictions ~targets ?weights () =
-  metric.state_tensors <-
-    metric.update_fn metric.state_tensors ~predictions ~targets ?weights ()
+let update : type layout.
+    metric ->
+    predictions:(float, layout) Rune.t ->
+    targets:(_, layout) Rune.t ->
+    ?loss:(float, layout) Rune.t ->
+    ?weights:(float, layout) Rune.t ->
+    unit ->
+    unit =
+ fun metric ~predictions ~targets ?loss ?weights () ->
+  match metric with
+  | Metric record ->
+      let predictions' = Rune.cast record.dtype predictions in
+      let targets' = Rune.cast record.dtype targets in
+      let weights' = Option.map (Rune.cast record.dtype) weights in
+      let loss' = Option.map (Rune.cast record.dtype) loss in
+      record.state_tensors <-
+        record.update_fn record.state_tensors ~predictions:predictions'
+          ~targets:targets' ?loss:loss' ?weights:weights' ()
 
-let compute metric = metric.compute_fn metric.state_tensors
-let reset metric = metric.state_tensors <- metric.reset_fn metric.state_tensors
-let clone metric = { metric with state_tensors = metric.init_fn () }
-let name metric = metric.name
+let compute (Metric metric) =
+  let tensor = metric.compute_fn metric.state_tensors in
+  Rune.item [] tensor
+
+let compute_tensor (Metric metric) =
+  let t = metric.compute_fn metric.state_tensors in
+  Ptree.P t
+
+let reset (Metric metric) =
+  metric.state_tensors <- metric.reset_fn metric.state_tensors
+
+let clone (Metric metric) =
+  Metric { metric with state_tensors = metric.init_fn () }
+
+let name (Metric metric) = metric.name
 
 (** Custom metric creation *)
 
-let create_custom ~name ~init ~update ~compute ~reset =
-  {
-    state_tensors = init ();
-    name;
-    init_fn = init;
-    update_fn = update;
-    compute_fn = compute;
-    reset_fn = reset;
-  }
+let create_custom ~dtype ~name ~init ~update ~compute ~reset =
+  Metric
+    {
+      state_tensors = init ();
+      dtype;
+      name;
+      init_fn = init;
+      update_fn =
+        (fun state ~predictions ~targets ?loss:_ ?weights () ->
+          update state ~predictions ~targets ?weights ());
+      compute_fn = compute;
+      reset_fn = reset;
+    }
 
 (** Classification Metrics *)
 
@@ -462,8 +487,12 @@ let accuracy ?(threshold = 0.5) ?top_k () =
     | Some k -> Printf.sprintf "accuracy@%d" k
     | None -> "accuracy"
   in
-  create_custom ~name
-    ~init:(fun () -> [])
+  create_custom ~dtype:Rune.float32 ~name
+    ~init:(fun () ->
+      (* We need to create these with a device and dtype, but we don't have them
+         yet So we'll initialize with dummy values and replace on first
+         update *)
+      [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
       let correct_acc, total_acc =
@@ -522,7 +551,7 @@ let accuracy ?(threshold = 0.5) ?top_k () =
     ~reset:(fun _ -> [])
 
 let precision ?(threshold = 0.5) ?(zero_division = 0.0) () =
-  create_custom ~name:"precision"
+  create_custom ~dtype:Rune.float32 ~name:"precision"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -557,7 +586,7 @@ let precision ?(threshold = 0.5) ?(zero_division = 0.0) () =
     ~reset:(fun _ -> [])
 
 let recall ?(threshold = 0.5) ?(zero_division = 0.0) () =
-  create_custom ~name:"recall"
+  create_custom ~dtype:Rune.float32 ~name:"recall"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -590,7 +619,7 @@ let recall ?(threshold = 0.5) ?(zero_division = 0.0) () =
     ~reset:(fun _ -> [])
 
 let f1_score ?(threshold = 0.5) ?(beta = 1.0) () =
-  create_custom
+  create_custom ~dtype:Rune.float32
     ~name:(Printf.sprintf "f%.1f_score" beta)
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
@@ -661,7 +690,7 @@ let auc_roc () =
     | [ x ] -> x
     | xs -> Rune.concatenate ~axis xs
   in
-  create_custom ~name:"auc_roc"
+  create_custom ~dtype:Rune.float32 ~name:"auc_roc"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let _ = state in
@@ -744,7 +773,7 @@ let auc_pr () =
     | [ x ] -> x
     | xs -> Rune.concatenate ~axis xs
   in
-  create_custom ~name:"auc_pr"
+  create_custom ~dtype:Rune.float32 ~name:"auc_pr"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let _ = state in
@@ -807,7 +836,7 @@ let auc_pr () =
       [])
 
 let confusion_matrix ~num_classes ?(normalize = `None) () =
-  create_custom ~name:"confusion_matrix"
+  create_custom ~dtype:Rune.float32 ~name:"confusion_matrix"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -884,7 +913,7 @@ let confusion_matrix ~num_classes ?(normalize = `None) () =
 (** Regression Metrics *)
 
 let mse ?(reduction = Mean) () =
-  create_custom ~name:"mse"
+  create_custom ~dtype:Rune.float32 ~name:"mse"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -909,16 +938,42 @@ let mse ?(reduction = Mean) () =
     ~reset:(fun _ -> [])
 
 let rmse ?(reduction = Mean) () =
-  let mse_metric = mse ~reduction () in
-  create_custom ~name:"rmse" ~init:mse_metric.init_fn
-    ~update:mse_metric.update_fn
+  let _ = reduction in
+  create_custom ~dtype:Rune.float32 ~name:"rmse"
+    ~init:(fun () -> [])
+    ~update:(fun state ~predictions ~targets ?weights () ->
+      let dtype = Rune.dtype predictions in
+
+      let sse, count =
+        match state with
+        | [ s; c ] -> (s, c)
+        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
+      in
+
+      let diff = Rune.sub predictions targets in
+      let squared_diff = Rune.mul diff diff in
+
+      let squared_diff, batch_count =
+        match weights with
+        | Some w -> (Rune.mul squared_diff w, Rune.sum w)
+        | None ->
+            let n = float_of_int (Rune.numel squared_diff) in
+            (squared_diff, scalar_tensor dtype n)
+      in
+
+      let new_sse = Rune.add sse (Rune.sum squared_diff) in
+      let new_count = Rune.add count batch_count in
+      [ new_sse; new_count ])
     ~compute:(fun state ->
-      let mse_val = mse_metric.compute_fn state in
-      Rune.sqrt mse_val)
-    ~reset:mse_metric.reset_fn
+      match state with
+      | [ sse; count ] ->
+          let mse_val = Rune.div sse count in
+          Rune.sqrt mse_val
+      | _ -> failwith "Invalid rmse state")
+    ~reset:(fun _ -> [])
 
 let mae ?(reduction = Mean) () =
-  create_custom ~name:"mae"
+  create_custom ~dtype:Rune.float32 ~name:"mae"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -946,7 +1001,7 @@ let mae ?(reduction = Mean) () =
 (** Loss Metric - tracks running average of loss values *)
 
 let loss () =
-  create_custom ~name:"loss"
+  create_custom ~dtype:Rune.float32 ~name:"loss"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions:_ ~targets:_ ?weights () ->
       (* The loss value should be passed via weights parameter *)
@@ -977,7 +1032,7 @@ let loss () =
     ~reset:(fun _ -> [])
 
 let mape ?(eps = 1e-7) () =
-  create_custom ~name:"mape"
+  create_custom ~dtype:Rune.float32 ~name:"mape"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -1006,7 +1061,7 @@ let mape ?(eps = 1e-7) () =
     ~reset:(fun _ -> [])
 
 let r2_score ?(adjusted = false) ?num_features () =
-  create_custom ~name:"r2_score"
+  create_custom ~dtype:Rune.float32 ~name:"r2_score"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -1078,7 +1133,7 @@ let r2_score ?(adjusted = false) ?num_features () =
     ~reset:(fun _ -> [])
 
 let explained_variance () =
-  create_custom ~name:"explained_variance"
+  create_custom ~dtype:Rune.float32 ~name:"explained_variance"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -1149,7 +1204,7 @@ let explained_variance () =
 
 let cross_entropy ?(from_logits = true) () =
   let dtype_ref = ref None in
-  create_custom ~name:"cross_entropy"
+  create_custom ~dtype:Rune.float32 ~name:"cross_entropy"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -1240,7 +1295,7 @@ let cross_entropy ?(from_logits = true) () =
 
 let binary_cross_entropy ?(from_logits = true) () =
   let dtype_ref = ref None in
-  create_custom ~name:"binary_cross_entropy"
+  create_custom ~dtype:Rune.float32 ~name:"binary_cross_entropy"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -1276,7 +1331,7 @@ let binary_cross_entropy ?(from_logits = true) () =
       [])
 
 let kl_divergence ?(eps = 1e-7) () =
-  create_custom ~name:"kl_divergence"
+  create_custom ~dtype:Rune.float32 ~name:"kl_divergence"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -1322,18 +1377,20 @@ let kl_divergence ?(eps = 1e-7) () =
     ~reset:(fun _ -> [])
 
 let perplexity ?(base = Float.exp 1.) () =
-  let ce_metric = cross_entropy ~from_logits:true () in
-  create_custom ~name:"perplexity" ~init:ce_metric.init_fn
-    ~update:ce_metric.update_fn
-    ~compute:(fun state ->
-      let ce = ce_metric.compute_fn state in
-      let dtype = Rune.dtype ce in
-      let base_t = scalar_tensor dtype base in
-      Rune.pow base_t ce)
-    ~reset:ce_metric.reset_fn
+  match cross_entropy ~from_logits:true () with
+  | Metric ce ->
+      create_custom ~dtype:ce.dtype ~name:"perplexity" ~init:ce.init_fn
+        ~update:(fun state ~predictions ~targets ?weights () ->
+          ce.update_fn state ~predictions ~targets ?weights ())
+        ~compute:(fun state ->
+          let ce_t = ce.compute_fn state in
+          let dtype = Rune.dtype ce_t in
+          let base_t = scalar_tensor dtype base in
+          Rune.pow base_t ce_t)
+        ~reset:ce.reset_fn
 
 let ndcg ?k () =
-  create_custom ~name:"ndcg"
+  create_custom ~dtype:Rune.float32 ~name:"ndcg"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype, axis, depth, leading_shape, _, sorted_targets =
@@ -1378,7 +1435,7 @@ let ndcg ?k () =
     ~reset:(fun _ -> [])
 
 let map ?k () =
-  create_custom ~name:"map"
+  create_custom ~dtype:Rune.float32 ~name:"map"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype, axis, depth, leading_shape, _, sorted_targets =
@@ -1411,7 +1468,7 @@ let map ?k () =
     ~reset:(fun _ -> [])
 
 let mrr ?k () =
-  create_custom ~name:"mrr"
+  create_custom ~dtype:Rune.float32 ~name:"mrr"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype, axis, depth, leading_shape, _, sorted_targets =
@@ -1458,7 +1515,7 @@ let bleu ?(max_n = 4) ?weights ?(smoothing = true) () =
           invalid_arg "Metrics.bleu: weights must sum to a positive value";
         Array.map (fun v -> v /. sum) w
   in
-  create_custom ~name:"bleu"
+  create_custom ~dtype:Rune.float32 ~name:"bleu"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights:sample_weights () ->
       let candidates = tensor_to_sequence_batch "bleu" predictions in
@@ -1548,7 +1605,7 @@ let rouge ~variant ?use_stemmer () =
             if recall = 0.0 && precision = 0.0 then 0.0
             else 2.0 *. precision *. recall /. (precision +. recall)
   in
-  create_custom ~name:"rouge"
+  create_custom ~dtype:Rune.float32 ~name:"rouge"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let candidates = tensor_to_sequence_batch "rouge" predictions in
@@ -1572,7 +1629,7 @@ let meteor ?(alpha = 0.9) ?(beta = 3.0) ?(gamma = 0.5) () =
     invalid_arg "Metrics.meteor: alpha must be in (0, 1)";
   if beta <= 0.0 then invalid_arg "Metrics.meteor: beta must be positive";
   if gamma < 0.0 then invalid_arg "Metrics.meteor: gamma must be non-negative";
-  create_custom ~name:"meteor"
+  create_custom ~dtype:Rune.float32 ~name:"meteor"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let candidates = tensor_to_sequence_batch "meteor" predictions in
@@ -1612,31 +1669,34 @@ let meteor ?(alpha = 0.9) ?(beta = 3.0) ?(gamma = 0.5) () =
 
 let psnr ?(max_val = 1.0) () =
   let mse_metric = mse () in
-  create_custom ~name:"psnr" ~init:mse_metric.init_fn
-    ~update:mse_metric.update_fn
-    ~compute:(fun state ->
-      let mse_val = mse_metric.compute_fn state in
-      let dtype = Rune.dtype mse_val in
-      let max_val_sq = max_val *. max_val in
-      let max_val_sq_t = scalar_tensor dtype max_val_sq in
-      let eps = scalar_tensor dtype 1e-12 in
-      let mse_clamped = Rune.maximum eps mse_val in
-      let ratio = Rune.div max_val_sq_t mse_clamped in
-      let ten = scalar_tensor dtype 10.0 in
-      (* log10(x) = log(x) / log(10) *)
-      let log_ratio = Rune.log ratio in
-      let log10_val = 2.302585093 in
-      (* log(10) *)
-      let log10_t = scalar_tensor dtype log10_val in
-      Rune.mul ten (Rune.div log_ratio log10_t))
-    ~reset:mse_metric.reset_fn
+  match mse_metric with
+  | Metric m ->
+      create_custom ~dtype:m.dtype ~name:"psnr" ~init:m.init_fn
+        ~update:(fun state ~predictions ~targets ?weights () ->
+          m.update_fn state ~predictions ~targets ?weights ())
+        ~compute:(fun state ->
+          let mse_val = m.compute_fn state in
+          let dtype = Rune.dtype mse_val in
+          let max_val_sq = max_val *. max_val in
+          let max_val_sq_t = scalar_tensor dtype max_val_sq in
+          let eps = scalar_tensor dtype 1e-12 in
+          let mse_clamped = Rune.maximum eps mse_val in
+          let ratio = Rune.div max_val_sq_t mse_clamped in
+          let ten = scalar_tensor dtype 10.0 in
+          (* log10(x) = log(x) / log(10) *)
+          let log_ratio = Rune.log ratio in
+          let log10_val = 2.302585093 in
+          (* log(10) *)
+          let log10_t = scalar_tensor dtype log10_val in
+          Rune.mul ten (Rune.div log_ratio log10_t))
+        ~reset:m.reset_fn
 
 let ssim ?(window_size = 11) ?(k1 = 0.01) ?(k2 = 0.03) () =
   if window_size <= 0 then
     invalid_arg "Metrics.ssim: window_size must be positive";
   if k1 < 0.0 || k2 < 0.0 then
     invalid_arg "Metrics.ssim: k1 and k2 must be non-negative";
-  create_custom ~name:"ssim"
+  create_custom ~dtype:Rune.float32 ~name:"ssim"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       let dtype = Rune.dtype predictions in
@@ -1686,7 +1746,7 @@ let ssim ?(window_size = 11) ?(k1 = 0.01) ?(k2 = 0.03) () =
 let iou ?(threshold = 0.5) ?(per_class = false) ~num_classes () =
   if num_classes <= 0 then
     invalid_arg "Metrics.iou: num_classes must be positive";
-  create_custom ~name:"iou"
+  create_custom ~dtype:Rune.float32 ~name:"iou"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       (match weights with
@@ -1729,7 +1789,7 @@ let iou ?(threshold = 0.5) ?(per_class = false) ~num_classes () =
 let dice ?(threshold = 0.5) ?(per_class = false) ~num_classes () =
   if num_classes <= 0 then
     invalid_arg "Metrics.dice: num_classes must be positive";
-  create_custom ~name:"dice"
+  create_custom ~dtype:Rune.float32 ~name:"dice"
     ~init:(fun () -> [])
     ~update:(fun state ~predictions ~targets ?weights () ->
       (match weights with
@@ -1778,33 +1838,33 @@ let dice ?(threshold = 0.5) ?(per_class = false) ~num_classes () =
 (** Metric Collections *)
 
 (* Capture outer module functions to avoid shadowing *)
-let outer_update = update
-let outer_compute = compute
-let outer_reset = reset
+let compute_metric = compute
 
 module Collection = struct
-  type 'layout metric = 'layout t
-  type 'layout t = { mutable metrics : (string * 'layout metric) list }
+  type t = { mutable metrics : (string * metric) list }
 
-  let create metrics = { metrics }
+  let empty () = { metrics = [] }
+  let of_list metrics = { metrics }
+  let create metrics = of_list metrics
 
-  let update collection ~predictions ~targets ?weights () =
+  let add collection name metric =
+    collection.metrics <- (name, metric) :: collection.metrics
+
+  let remove collection name =
+    collection.metrics <-
+      List.filter (fun (n, _) -> not (String.equal n name)) collection.metrics
+
+  let reset collection =
+    List.iter (fun (_, metric) -> reset metric) collection.metrics
+
+  let update collection ~predictions ~targets ?loss ?weights () =
     List.iter
-      (fun (_, m) -> outer_update m ~predictions ~targets ?weights ())
-      collection.metrics
-
-  let update_with_loss collection ~loss ~predictions ~targets () =
-    List.iter
-      (fun (name, m) ->
-        if name = "loss" then
-          (* Pass loss value as weights for the loss metric *)
-          outer_update m ~predictions ~targets ~weights:loss ()
-        else outer_update m ~predictions ~targets ())
+      (fun (_, metric) -> update metric ~predictions ~targets ?loss ?weights ())
       collection.metrics
 
   let compute collection =
     let handle_compute m =
-      try outer_compute m
+      try compute m
       with Failure msg ->
         let suffix = "metric has no data" in
         let len_msg = String.length msg in
@@ -1812,32 +1872,24 @@ module Collection = struct
         if
           len_msg >= len_suffix
           && String.sub msg (len_msg - len_suffix) len_suffix = suffix
-        then
-          (* Fallback for metrics that have not been updated yet. We return a
-             float32 zero and coerce it back to the caller's layout so that the
-             collection keeps its original type parameters. *)
-          let zero = Rune.scalar Rune.float32 0.0 in
-          (Obj.magic zero : (float, 'layout) Rune.t)
+        then 0.0
         else raise (Failure msg)
     in
     List.map (fun (name, m) -> (name, handle_compute m)) collection.metrics
 
-  let compute_dict collection =
-    let tbl = Hashtbl.create (List.length collection.metrics) in
+  let compute_tensors collection =
+    List.map
+      (fun (name, metric) -> (name, compute_tensor metric))
+      collection.metrics
+
+  let compute_dict (collection : t) =
+    let tbl : (string, float) Hashtbl.t =
+      Hashtbl.create (List.length collection.metrics)
+    in
     List.iter
-      (fun (name, m) -> Hashtbl.add tbl name (outer_compute m))
+      (fun (name, metric) -> Hashtbl.add tbl name (compute_metric metric))
       collection.metrics;
     tbl
-
-  let reset collection =
-    List.iter (fun (_, m) -> outer_reset m) collection.metrics
-
-  let add collection name m =
-    collection.metrics <- (name, m) :: collection.metrics
-
-  let remove collection name =
-    collection.metrics <-
-      List.filter (fun (n, _) -> n <> name) collection.metrics
 end
 
 (** Utilities *)
@@ -1845,7 +1897,4 @@ end
 let is_better _metric ~higher_better ~old_val ~new_val =
   if higher_better then new_val > old_val else new_val < old_val
 
-let format metric value =
-  (* Extract scalar value *)
-  let scalar_val = Rune.item [] value in
-  Printf.sprintf "%s: %.4f" (name metric) scalar_val
+let format metric value = Printf.sprintf "%s: %.4f" (name metric) value

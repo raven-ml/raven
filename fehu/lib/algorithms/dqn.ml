@@ -25,11 +25,11 @@ let default_config =
 
 type t = {
   q_network : module_;
-  mutable q_params : Rune.float32_elt params;
+  mutable q_params : params;
   target_network : module_;
-  mutable target_params : Rune.float32_elt params;
-  optimizer : Rune.float32_elt Optimizer.gradient_transformation;
-  mutable opt_state : Rune.float32_elt Optimizer.opt_state;
+  mutable target_params : params;
+  optimizer : Optimizer.algorithm;
+  mutable opt_state : Optimizer.state;
   replay_buffer :
     ( (float, Bigarray.float32_elt) Rune.t,
       (int32, Bigarray.int32_elt) Rune.t )
@@ -57,8 +57,9 @@ let create ~q_network ~n_actions ~rng config =
   let target_params = Ptree.copy q_params in
 
   (* Create optimizer *)
-  let optimizer = Optimizer.adam ~lr:config.learning_rate () in
-  let opt_state = optimizer.init q_params in
+  let lr = Optimizer.Schedule.constant config.learning_rate in
+  let optimizer = Optimizer.adam ~lr () in
+  let opt_state = Optimizer.init optimizer q_params in
 
   (* Create replay buffer *)
   let replay_buffer =
@@ -238,7 +239,7 @@ let update t =
 
     (* Apply gradients *)
     let updates, new_opt_state =
-      t.optimizer.update t.opt_state t.q_params grads
+      Optimizer.step t.optimizer t.opt_state t.q_params grads
     in
     t.q_params <- Optimizer.apply_updates t.q_params updates;
     t.opt_state <- new_opt_state;

@@ -37,8 +37,7 @@
 
 type module_ = {
   init :
-    'layout.
-    rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t;
+    'layout. rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> Ptree.t;
       (** [init ~rngs ~dtype] initializes module parameters.
 
           Creates a parameter tree containing all trainable parameters for this
@@ -54,7 +53,7 @@ type module_ = {
           parameters to ensure independent initialization. *)
   apply :
     'layout.
-    'layout Ptree.t ->
+    Ptree.t ->
     training:bool ->
     ?rngs:Rune.Rng.key ->
     (float, 'layout) Rune.t ->

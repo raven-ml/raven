@@ -5,9 +5,9 @@ let eps = 1e-3
 (* Simple quadratic function for testing: f(x) = 0.5 * x^2 *)
 let quadratic_loss params =
   match params with
-  | Ptree.Tensor x ->
-      let dt = Rune.dtype x in
-      Rune.(mul (scalar dt 0.5) (sum (mul x x)))
+  | Ptree.Tensor (P x) ->
+      let x = Rune.cast Rune.float32 x in
+      Rune.mul (Rune.scalar Rune.float32 0.5) (Rune.sum (Rune.mul x x))
   | _ -> failwith "Expected tensor parameter"
 
 (* Test that optimizer reduces loss *)
@@ -17,8 +17,8 @@ let test_optimizer_reduces_loss optimizer_fn name () =
   let params = Ptree.tensor x in
 
   (* Create optimizer *)
-  let optimizer : 'a Optimizer.gradient_transformation = optimizer_fn () in
-  let opt_state = ref (optimizer.Optimizer.init params) in
+  let optimizer : Optimizer.algorithm = optimizer_fn () in
+  let opt_state = ref (Optimizer.init optimizer params) in
 
   (* Initial loss *)
   let initial_loss = quadratic_loss params |> fun x -> Rune.item [] x in
@@ -26,9 +26,7 @@ let test_optimizer_reduces_loss optimizer_fn name () =
   (* Training loop *)
   for _ = 1 to 200 do
     let loss, grads = value_and_grad quadratic_loss params in
-    let updates, new_state =
-      optimizer.Optimizer.update !opt_state params grads
-    in
+    let updates, new_state = Optimizer.step optimizer !opt_state params grads in
     opt_state := new_state;
     Optimizer.apply_updates_inplace params updates;
     ignore loss
@@ -46,18 +44,13 @@ let test_optimizer_reduces_loss optimizer_fn name () =
   (* Loss should reduce by at least 90% *)
 
   (* Check that we're close to optimum (x = 0) *)
-  let final_x =
-    match params with
-    | Ptree.Tensor x -> Rune.to_bigarray x
-    | _ -> failwith "Expected tensor"
-  in
   let x_norm =
-    let sum = ref 0. in
-    for i = 0 to 1 do
-      let v = Bigarray.Genarray.get final_x [| i |] in
-      sum := !sum +. (v *. v)
-    done;
-    sqrt !sum
+    match params with
+    | Ptree.Tensor (P x) ->
+        let x = Rune.cast Rune.float32 x in
+        let norm = Rune.sqrt (Rune.sum (Rune.mul x x)) in
+        Rune.item [] norm
+    | _ -> failwith "Expected tensor"
   in
   Alcotest.(check (float 0.2)) (* More lenient for convergence *)
     (Printf.sprintf "%s converges to optimum" name)
@@ -88,8 +81,9 @@ let test_xor_convergence () =
   let params = Kaun.init model ~rngs ~dtype:Rune.float32 in
 
   (* Create optimizer *)
-  let optimizer = Optimizer.adam ~lr:0.01 () in
-  let opt_state = ref (optimizer.Optimizer.init params) in
+  let lr = Optimizer.Schedule.constant 0.01 in
+  let optimizer = Optimizer.adam ~lr () in
+  let opt_state = ref (Optimizer.init optimizer params) in
 
   (* Training loop *)
   let initial_loss = ref 0. in
@@ -109,9 +103,7 @@ let test_xor_convergence () =
     if epoch = 500 then final_loss := Rune.item [] loss;
 
     (* Update weights *)
-    let updates, new_state =
-      optimizer.Optimizer.update !opt_state params grads
-    in
+    let updates, new_state = Optimizer.step optimizer !opt_state params grads in
     opt_state := new_state;
     Optimizer.apply_updates_inplace params updates
   done;
@@ -145,28 +137,29 @@ let test_optimizer_differences () =
     let x = Rune.create Rune.float32 [| 2 |] [| 10.; -5. |] in
     let params = Ptree.tensor x in
     let optimizer = opt_fn () in
-    let opt_state = ref (optimizer.Optimizer.init params) in
+    let opt_state = ref (Optimizer.init optimizer params) in
 
     (* Take one step *)
     let _, grads = value_and_grad quadratic_loss params in
-    let updates, new_state =
-      optimizer.Optimizer.update !opt_state params grads
-    in
+    let updates, new_state = Optimizer.step optimizer !opt_state params grads in
     opt_state := new_state;
     Optimizer.apply_updates_inplace params updates;
 
     (* Return parameter values *)
     match params with
-    | Ptree.Tensor x ->
-        let arr = Rune.to_bigarray x in
-        [|
-          Bigarray.Genarray.get arr [| 0 |]; Bigarray.Genarray.get arr [| 1 |];
-        |]
+    | Ptree.Tensor (P x) ->
+        let x = Rune.cast Rune.float32 x in
+        [| Rune.item [ 0 ] x; Rune.item [ 1 ] x |]
     | _ -> failwith "Expected tensor"
   in
 
-  let sgd_params = test_optimizer (fun () -> Optimizer.sgd ~lr:0.1 ()) in
-  let adam_params = test_optimizer (fun () -> Optimizer.adam ~lr:0.1 ()) in
+  let sgd_params =
+    test_optimizer (fun () -> Optimizer.(sgd ~lr:(Schedule.constant 0.1) ()))
+  in
+  let adam_params =
+    test_optimizer (fun () ->
+        Optimizer.adam ~lr:(Optimizer.Schedule.constant 0.1) ())
+  in
 
   (* Check that they produce different results (they should due to different
      update rules) *)
@@ -184,8 +177,8 @@ let test_optimizer_state_persistence () =
   let params = Ptree.tensor x in
 
   (* Create Adam optimizer (which has internal state) *)
-  let optimizer = Optimizer.adam ~lr:0.1 () in
-  let opt_state = ref (optimizer.Optimizer.init params) in
+  let optimizer = Optimizer.adam ~lr:(Optimizer.Schedule.constant 0.1) () in
+  let opt_state = ref (Optimizer.init optimizer params) in
 
   (* Take multiple steps and check that momentum is building up *)
   let first_update_norm = ref 0. in
@@ -193,22 +186,16 @@ let test_optimizer_state_persistence () =
 
   for i = 1 to 5 do
     let _, grads = value_and_grad quadratic_loss params in
-    let updates, new_state =
-      optimizer.Optimizer.update !opt_state params grads
-    in
+    let updates, new_state = Optimizer.step optimizer !opt_state params grads in
     opt_state := new_state;
 
     (* Calculate update norm *)
     let update_norm =
       match updates with
-      | Ptree.Tensor u ->
-          let arr = Rune.to_bigarray u in
-          let n = ref 0. in
-          for j = 0 to 1 do
-            let v = Bigarray.Genarray.get arr [| j |] in
-            n := !n +. (v *. v)
-          done;
-          sqrt !n
+      | Ptree.Tensor (P u) ->
+          let u = Rune.cast Rune.float32 u in
+          let norm = Rune.sqrt (Rune.sum (Rune.mul u u)) in
+          Rune.item [] norm
       | _ -> failwith "Expected tensor"
     in
 
@@ -241,7 +228,7 @@ let test_learning_rate_schedule () =
       ]
   in
 
-  let opt_state = ref (optimizer.Optimizer.init params) in
+  let opt_state = ref (Optimizer.init optimizer params) in
 
   (* Collect update magnitudes *)
   let early_update_norm = ref 0. in
@@ -249,16 +236,14 @@ let test_learning_rate_schedule () =
 
   for i = 1 to 10 do
     let _, grads = value_and_grad quadratic_loss params in
-    let updates, new_state =
-      optimizer.Optimizer.update !opt_state params grads
-    in
+    let updates, new_state = Optimizer.step optimizer !opt_state params grads in
     opt_state := new_state;
 
     let update_norm =
       match updates with
-      | Ptree.Tensor u ->
-          let arr = Rune.to_bigarray u in
-          abs_float (Bigarray.Genarray.get arr [| 0 |])
+      | Ptree.Tensor (P u) ->
+          let u = Rune.cast Rune.float32 u in
+          abs_float (Rune.item [ 0 ] u)
       | _ -> failwith "Expected tensor"
     in
 
@@ -278,24 +263,32 @@ let test_clip_by_global_norm_zero_gradients () =
   let params = Ptree.tensor zero_tensor in
   let grads = Ptree.tensor (Rune.zeros_like zero_tensor) in
   let transform = Optimizer.clip_by_global_norm 1.0 in
-  let state = transform.Optimizer.init params in
-  let updates, _ = transform.Optimizer.update state params grads in
+  let state = Optimizer.init transform params in
+  let updates, _ = Optimizer.step transform state params grads in
   match updates with
-  | Ptree.Tensor t ->
-      let arr = Rune.to_bigarray t in
-      for i = 0 to 1 do
-        let value = Bigarray.Genarray.get arr [| i |] in
-        Alcotest.(check bool) "value is not NaN" false (Float.is_nan value);
-        Alcotest.(check bool) "value remains zero" true (abs_float value < 1e-9)
-      done
+  | Ptree.Tensor tensor ->
+      Ptree.with_tensor tensor
+        {
+          run =
+            (fun (type a) (type layout) (t : (a, layout) Rune.t) ->
+              let t = Rune.cast Rune.float32 t in
+              for i = 0 to 1 do
+                let value = Rune.item [ i ] t in
+                Alcotest.(check bool)
+                  "value is not NaN" false (Float.is_nan value);
+                Alcotest.(check bool)
+                  "value remains zero" true
+                  (abs_float value < 1e-9)
+              done);
+        }
   | _ -> Alcotest.fail "Expected tensor updates"
 
 let test_clip_by_global_norm_empty_tree () =
-  let params = Ptree.list_of [] in
-  let grads = Ptree.list_of [] in
+  let params = Ptree.list [] in
+  let grads = Ptree.list [] in
   let transform = Optimizer.clip_by_global_norm 1.0 in
-  let state = transform.Optimizer.init params in
-  let updates, _ = transform.Optimizer.update state params grads in
+  let state = Optimizer.init transform params in
+  let updates, _ = Optimizer.step transform state params grads in
   match updates with
   | Ptree.List [] -> ()
   | _ -> Alcotest.fail "Expected empty list updates"
@@ -316,18 +309,17 @@ let test_gradient_clipping () =
       ]
   in
 
-  let opt_state = ref (optimizer.Optimizer.init params) in
+  let opt_state = ref (Optimizer.init optimizer params) in
   let _, grads = value_and_grad quadratic_loss params in
 
   (* Gradients should be [100, -50] before clipping *)
-  let updates, _ = optimizer.Optimizer.update !opt_state params grads in
+  let updates, _ = Optimizer.step optimizer !opt_state params grads in
 
   match updates with
-  | Ptree.Tensor u ->
-      let arr = Rune.to_bigarray u in
-      let update0 = Bigarray.Genarray.get arr [| 0 |] in
-      let update1 = Bigarray.Genarray.get arr [| 1 |] in
-
+  | Ptree.Tensor (P u) ->
+      let u = Rune.cast Rune.float32 u in
+      let update0 = Rune.item [ 0 ] u in
+      let update1 = Rune.item [ 1 ] u in
       (* Updates should be clipped: -0.1 * clip(100, 1) = -0.1 and -0.1 *
          clip(-50, 1) = 0.1 *)
       Alcotest.(check (float eps)) "First update clipped" (-0.1) update0;
@@ -342,23 +334,28 @@ let () =
         [
           test_case "SGD reduces loss" `Quick
             (test_optimizer_reduces_loss
-               (fun () -> Optimizer.sgd ~lr:0.1 ())
+               (fun () ->
+                 Optimizer.sgd ~lr:(Optimizer.Schedule.constant 0.1) ())
                "SGD");
           test_case "Adam reduces loss" `Quick
             (test_optimizer_reduces_loss
-               (fun () -> Optimizer.adam ~lr:0.1 ())
+               (fun () ->
+                 Optimizer.adam ~lr:(Optimizer.Schedule.constant 0.1) ())
                "Adam");
           test_case "AdamW reduces loss" `Quick
             (test_optimizer_reduces_loss
-               (fun () -> Optimizer.adamw ~lr:0.1 ())
+               (fun () ->
+                 Optimizer.adamw ~lr:(Optimizer.Schedule.constant 0.1) ())
                "AdamW");
           test_case "RMSprop reduces loss" `Quick
             (test_optimizer_reduces_loss
-               (fun () -> Optimizer.rmsprop ~lr:0.1 ())
+               (fun () ->
+                 Optimizer.rmsprop ~lr:(Optimizer.Schedule.constant 0.1) ())
                "RMSprop");
           test_case "Adagrad reduces loss" `Quick
             (test_optimizer_reduces_loss
-               (fun () -> Optimizer.adagrad ~lr:1.0 ())
+               (fun () ->
+                 Optimizer.adagrad ~lr:(Optimizer.Schedule.constant 1.0) ())
                "Adagrad");
         ] );
       ( "Complex problems",

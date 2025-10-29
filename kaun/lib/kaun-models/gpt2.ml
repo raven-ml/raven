@@ -1,4 +1,5 @@
 open Rune
+module Ptree = Kaun.Ptree
 
 (* Configuration *)
 
@@ -64,6 +65,8 @@ type inputs = {
   attention_mask : (int32, int32_elt) Rune.t option;
   position_ids : (int32, int32_elt) Rune.t option;
 }
+
+(* Removed dtype inference; dtype is provided by caller/policy *)
 
 (* GPT-2 specific tokenizer with BPE *)
 module Tokenizer = struct
@@ -267,7 +270,7 @@ let embeddings ~config () =
     Kaun.init =
       (fun ~rngs ~dtype ->
         let keys = Rune.Rng.split ~n:3 rngs in
-        Kaun.Ptree.record_of
+        Ptree.dict
           [
             ("token_embeddings", token_embeddings.init ~rngs:keys.(0) ~dtype);
             ( "position_embeddings",
@@ -278,94 +281,72 @@ let embeddings ~config () =
       (fun params ~training ?rngs x ->
         (* x is expected to be float tensor, but we need int indices *)
         let input_ids = Rune.cast Rune.int32 x in
-        match params with
-        | Kaun.Ptree.Record fields ->
-            (* Get each embedding layer's params *)
-            let get_params name =
-              match Kaun.Ptree.Record.find_opt name fields with
-              | Some p -> p
-              | None -> failwith ("Embeddings: missing " ^ name)
-            in
+        let dtype = Rune.dtype x in
+        let token_embeddings_table =
+          Ptree.get_tensor_exn
+            ~path:(Ptree.Path.of_string "token_embeddings.embedding")
+            params dtype
+        in
+        let position_embeddings_table =
+          Ptree.get_tensor_exn
+            ~path:(Ptree.Path.of_string "position_embeddings.embedding")
+            params dtype
+        in
+        let lookup_embeddings embedding_table indices =
+          let shape = Rune.shape indices in
+          let batch_size = shape.(0) in
+          let seq_len = shape.(1) in
+          let table_shape = Rune.shape embedding_table in
+          if Array.length table_shape <> 2 then
+            failwith
+              (Printf.sprintf
+                 "Embedding table has wrong shape: %d dims, expected 2"
+                 (Array.length table_shape));
+          let embed_dim = table_shape.(1) in
+          let indices_flat = Rune.reshape [| batch_size * seq_len |] indices in
+          let gathered = Rune.take ~axis:0 indices_flat embedding_table in
+          Rune.reshape [| batch_size; seq_len; embed_dim |] gathered
+        in
+        let token_embeds = lookup_embeddings token_embeddings_table input_ids in
+        let seq_len =
+          (Rune.shape input_ids).(Array.length (Rune.shape input_ids) - 1)
+        in
+        let batch_size = (Rune.shape input_ids).(0) in
+        let position_ids =
+          let pos_ids = Rune.zeros Rune.int32 [| batch_size; seq_len |] in
+          for b = 0 to batch_size - 1 do
+            for s = 0 to seq_len - 1 do
+              Rune.set [ b; s ] pos_ids
+                (Rune.scalar Rune.int32 (Int32.of_int s))
+            done
+          done;
+          pos_ids
+        in
+        let position_embeds =
+          lookup_embeddings position_embeddings_table position_ids
+        in
 
-            (* Manually perform embedding lookups *)
-            let get_embedding_table name =
-              match get_params name with
-              | Tensor t -> t
-              | _ -> failwith ("Expected tensor for " ^ name)
-            in
+        (* Sum embeddings *)
+        let embeddings = Rune.add token_embeds position_embeds in
 
-            let token_embeddings_table =
-              get_embedding_table "token_embeddings"
-            in
-            let position_embeddings_table =
-              get_embedding_table "position_embeddings"
-            in
+        (* Apply dropout *)
+        let dropout_params =
+          match Ptree.get ~path:(Ptree.Path.of_string "dropout") params with
+          | Some p -> p
+          | None -> Ptree.List []
+        in
+        let embeddings =
+          dropout.apply dropout_params ~training ?rngs embeddings
+        in
 
-            (* Perform embedding lookups using differentiable operations *)
-            let lookup_embeddings embedding_table indices =
-              let batch_size = (Rune.shape indices).(0) in
-              let seq_len = (Rune.shape indices).(1) in
-              let table_shape = Rune.shape embedding_table in
-              if Array.length table_shape <> 2 then
-                failwith
-                  (Printf.sprintf
-                     "Embedding table has wrong shape: %d dims, expected 2"
-                     (Array.length table_shape));
-              let embed_dim = table_shape.(1) in
-
-              (* Flatten indices for gather operation *)
-              let indices_flat =
-                Rune.reshape [| batch_size * seq_len |] indices
-              in
-
-              (* Use take to gather embeddings - this is differentiable *)
-              let gathered = Rune.take ~axis:0 indices_flat embedding_table in
-
-              (* Reshape to [batch_size, seq_len, embed_dim] *)
-              Rune.reshape [| batch_size; seq_len; embed_dim |] gathered
-            in
-
-            (* Apply token embeddings *)
-            let token_embeds =
-              lookup_embeddings token_embeddings_table input_ids
-            in
-
-            (* Create position ids: [0, 1, 2, ..., seq_len-1] *)
-            let seq_len =
-              (Rune.shape input_ids).(Array.length (Rune.shape input_ids) - 1)
-            in
-            let batch_size = (Rune.shape input_ids).(0) in
-            let position_ids =
-              let pos_ids = Rune.zeros Rune.int32 [| batch_size; seq_len |] in
-              for b = 0 to batch_size - 1 do
-                for s = 0 to seq_len - 1 do
-                  Rune.set [ b; s ] pos_ids
-                    (Rune.scalar Rune.int32 (Int32.of_int s))
-                done
-              done;
-              pos_ids
-            in
-            let position_embeds =
-              lookup_embeddings position_embeddings_table position_ids
-            in
-
-            (* Sum embeddings *)
-            let embeddings = Rune.add token_embeds position_embeds in
-
-            (* Apply dropout *)
-            let embeddings =
-              dropout.apply (get_params "dropout") ~training ?rngs embeddings
-            in
-
-            embeddings
-        | _ -> failwith "Embeddings: invalid params");
+        embeddings);
   }
 
 (* Main Model *)
 
 type 'a gpt2 = {
   model : Kaun.Layer.module_;
-  params : 'a Kaun.Ptree.t;
+  params : Ptree.t;
   config : config;
   dtype : (float, 'a) Rune.dtype;
 }
@@ -397,11 +378,7 @@ module Gpt2_block = struct
     let dtype = dtype x in
 
     (* Get Q, K, V weights and biases *)
-    let get_param name =
-      match Kaun.Ptree.Record.find_opt name params with
-      | Some (Kaun.Ptree.Tensor t) -> t
-      | _ -> failwith ("Missing parameter: " ^ name)
-    in
+    let get_param name = Ptree.Dict.get_tensor_exn params ~name dtype in
 
     let qkv_weight = get_param "qkv_weight" in
     let qkv_bias = get_param "qkv_bias" in
@@ -465,11 +442,8 @@ module Gpt2_block = struct
 
   (* Feed-forward network *)
   let mlp ~n_inner ~hidden_size ~params x =
-    let get_param name =
-      match Kaun.Ptree.Record.find_opt name params with
-      | Some (Kaun.Ptree.Tensor t) -> t
-      | _ -> failwith ("Missing parameter: " ^ name)
-    in
+    let dtype = dtype x in
+    let get_param name = Ptree.Dict.get_tensor_exn params ~name dtype in
 
     let inter_weight = get_param "inter_weight" in
     let inter_bias = get_param "inter_bias" in
@@ -487,11 +461,8 @@ module Gpt2_block = struct
 
   (* GPT-2 transformer block with pre-layer normalization *)
   let gpt2_block ~config ~params x =
-    let get_param name =
-      match Kaun.Ptree.Record.find_opt name params with
-      | Some (Kaun.Ptree.Tensor t) -> t
-      | _ -> failwith ("Missing parameter: " ^ name)
-    in
+    let dtype = dtype x in
+    let get_param name = Ptree.Dict.get_tensor_exn params ~name dtype in
 
     let ln1_weight = get_param "attn_gamma" in
     let ln1_bias = get_param "attn_beta" in
@@ -545,70 +516,68 @@ let create ?(config = default_config) () =
         let embeddings_params = Kaun.init embeddings_layer ~rngs ~dtype in
 
         (* Initialize transformer blocks *)
-        let layer_params =
-          List.init config.n_layer (fun _ ->
-              (* Each layer needs initialized parameters *)
-              (* For now, return empty - will be filled by from_pretrained *)
-              Kaun.Ptree.Record.empty)
-        in
+        let layer_params = List.init config.n_layer (fun _ -> []) in
 
         (* Initialize final layer norm *)
         let ln_f_gamma = Rune.ones dtype [| config.n_embd |] in
         let ln_f_beta = Rune.zeros dtype [| config.n_embd |] in
 
         (* Return params structure *)
-        Kaun.Ptree.List
+        Ptree.List
           [
             embeddings_params;
-            Kaun.Ptree.List
-              (List.map (fun p -> Kaun.Ptree.Record p) layer_params);
-            Kaun.Ptree.Record
-              (Kaun.Ptree.Record.empty
-              |> Kaun.Ptree.Record.add "gamma" (Kaun.Ptree.Tensor ln_f_gamma)
-              |> Kaun.Ptree.Record.add "beta" (Kaun.Ptree.Tensor ln_f_beta));
+            Ptree.List (List.map (fun p -> Ptree.Dict p) layer_params);
+            Ptree.dict
+              [
+                ("gamma", Ptree.tensor ln_f_gamma);
+                ("beta", Ptree.tensor ln_f_beta);
+              ];
           ]);
     Kaun.apply =
       (fun params ~training:_ ?rngs:_ x ->
-        match params with
-        | Kaun.Ptree.List [ embeddings_params; layer_params_list; ln_f_params ]
-          -> (
-            (* Apply embeddings *)
-            let embeddings_layer = embeddings ~config () in
-            let x =
-              Kaun.apply embeddings_layer embeddings_params ~training:false x
-            in
+        (* Access sub-structures via explicit paths *)
+        let embeddings_params =
+          Ptree.get_exn ~path:(Ptree.Path.index 0 Ptree.Path.root) params
+        in
+        let layer_params_list =
+          Ptree.get_exn ~path:(Ptree.Path.index 1 Ptree.Path.root) params
+        in
+        let ln_f_params =
+          Ptree.get_exn ~path:(Ptree.Path.index 2 Ptree.Path.root) params
+        in
 
-            (* Extract layer params *)
-            let layer_params =
-              match layer_params_list with
-              | Kaun.Ptree.List lst ->
-                  List.map
-                    (function
-                      | Kaun.Ptree.Record r -> r
-                      | _ -> failwith "Invalid layer params structure")
-                    lst
-              | _ -> failwith "Invalid layer params list"
-            in
+        (* Apply embeddings *)
+        let embeddings_layer = embeddings ~config () in
+        let x =
+          Kaun.apply embeddings_layer embeddings_params ~training:false x
+        in
 
-            (* Apply GPT-2 transformer blocks *)
-            let x = Gpt2_block.gpt2_transformer ~config ~layer_params x in
+        (* Extract layer params as dict fields *)
+        let layer_params =
+          let items =
+            Ptree.List.items_exn ~ctx:"gpt2: layer_params" layer_params_list
+          in
+          List.map
+            (fun item ->
+              Ptree.Dict.fields_exn ~ctx:"gpt2: layer_params item" item)
+            items
+        in
 
-            (* Apply final layer norm *)
-            match ln_f_params with
-            | Kaun.Ptree.Record fields ->
-                let gamma =
-                  match Kaun.Ptree.Record.find_opt "gamma" fields with
-                  | Some (Kaun.Ptree.Tensor t) -> t
-                  | _ -> failwith "Missing ln_f gamma"
-                in
-                let beta =
-                  match Kaun.Ptree.Record.find_opt "beta" fields with
-                  | Some (Kaun.Ptree.Tensor t) -> t
-                  | _ -> failwith "Missing ln_f beta"
-                in
-                layer_norm x ~gamma ~beta ~epsilon:config.layer_norm_epsilon
-            | _ -> failwith "Invalid ln_f params")
-        | _ -> failwith "Invalid params structure");
+        (* Apply GPT-2 transformer blocks *)
+        let x = Gpt2_block.gpt2_transformer ~config ~layer_params x in
+
+        (* Apply final layer norm using path lookups *)
+        let gamma =
+          Ptree.get_tensor_exn
+            ~path:(Ptree.Path.key "gamma" Ptree.Path.root)
+            ln_f_params (Rune.dtype x)
+        in
+        let beta =
+          Ptree.get_tensor_exn
+            ~path:(Ptree.Path.key "beta" Ptree.Path.root)
+            ln_f_params (Rune.dtype x)
+        in
+        layer_norm x ~gamma ~beta ~epsilon:config.layer_norm_epsilon);
   }
 
 let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
@@ -686,8 +655,7 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
 
   (* Load weights using HuggingFace infrastructure *)
   let hf_params =
-    Kaun_huggingface.from_pretrained ~config:cache_config ~revision ~model_id
-      ~dtype ()
+    Kaun_huggingface.from_pretrained ~config:cache_config ~revision ~model_id ()
   in
 
   (* Map HuggingFace parameter names to our expected structure *)
@@ -695,27 +663,27 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
     (* Flatten the nested HuggingFace structure *)
     let rec flatten_ptree prefix tree =
       match tree with
-      | Kaun.Ptree.Tensor t -> [ (prefix, t) ]
-      | Kaun.Ptree.List lst ->
+      | Ptree.Tensor tensor -> [ (prefix, tensor) ]
+      | Ptree.List lst ->
           List.concat
             (List.mapi
                (fun i subtree ->
                  flatten_ptree (prefix ^ "." ^ string_of_int i) subtree)
                lst)
-      | Kaun.Ptree.Record fields ->
-          Kaun.Ptree.Record.fold
-            (fun name subtree acc ->
+      | Ptree.Dict fields ->
+          List.fold_left
+            (fun acc (name, subtree) ->
               let new_prefix =
                 if prefix = "" then name else prefix ^ "." ^ name
               in
               flatten_ptree new_prefix subtree @ acc)
-            fields []
+            [] fields
     in
 
     let flat_params = flatten_ptree "" hf_params in
-    let embeddings_params = ref Kaun.Ptree.Record.empty in
+    let embeddings_params = ref [] in
     let decoder_layers = ref [] in
-    let final_layer_norm_params = ref Kaun.Ptree.Record.empty in
+    let final_layer_norm_params = ref [] in
 
     List.iter
       (fun (hf_name, tensor) ->
@@ -723,12 +691,12 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
         (* Embeddings *)
         | s when String.starts_with ~prefix:"wte.weight" s ->
             embeddings_params :=
-              Kaun.Ptree.Record.add "token_embeddings"
-                (Kaun.Ptree.Tensor tensor) !embeddings_params
+              Ptree.Dict.set "token_embeddings" (Ptree.Tensor tensor)
+                !embeddings_params
         | s when String.starts_with ~prefix:"wpe.weight" s ->
             embeddings_params :=
-              Kaun.Ptree.Record.add "position_embeddings"
-                (Kaun.Ptree.Tensor tensor) !embeddings_params
+              Ptree.Dict.set "position_embeddings" (Ptree.Tensor tensor)
+                !embeddings_params
         (* Transformer blocks *)
         | s when String.starts_with ~prefix:"h." s -> (
             let rest = String.sub s 2 (String.length s - 2) in
@@ -739,8 +707,7 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
 
                 (* Ensure we have enough layers *)
                 while List.length !decoder_layers <= layer_idx_int do
-                  decoder_layers :=
-                    !decoder_layers @ [ ref Kaun.Ptree.Record.empty ]
+                  decoder_layers := !decoder_layers @ [ ref [] ]
                 done;
 
                 (* Get the layer params ref *)
@@ -752,92 +719,90 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
                     (* Keep combined QKV weight, will split after matmul *)
                     (* GPT-2 stores as [in_features, out_features] = [768, 2304] *)
                     layer_params :=
-                      Kaun.Ptree.Record.add "qkv_weight"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "qkv_weight" (Ptree.Tensor tensor)
+                        !layer_params
                 | "attn.c_attn.bias" ->
                     (* Keep combined QKV bias *)
                     layer_params :=
-                      Kaun.Ptree.Record.add "qkv_bias"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "qkv_bias" (Ptree.Tensor tensor)
+                        !layer_params
                 | "attn.c_proj.weight" ->
                     (* GPT-2 stores as [in, out] which is [768, 768] *)
                     (* We need [768, 768] for x[*,*,768] @ W -> [*,*,768] *)
                     (* So NO transpose needed! *)
                     layer_params :=
-                      Kaun.Ptree.Record.add "attn_out_weight"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "attn_out_weight" (Ptree.Tensor tensor)
+                        !layer_params
                 | "attn.c_proj.bias" ->
                     layer_params :=
-                      Kaun.Ptree.Record.add "attn_out_bias"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "attn_out_bias" (Ptree.Tensor tensor)
+                        !layer_params
                 | "mlp.c_fc.weight" ->
                     (* GPT-2 stores as [in, out] which is [768, 3072] *)
                     (* We need [768, 3072] for x[*,*,768] @ W -> [*,*,3072] *)
                     (* So NO transpose needed! *)
                     layer_params :=
-                      Kaun.Ptree.Record.add "inter_weight"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "inter_weight" (Ptree.Tensor tensor)
+                        !layer_params
                 | "mlp.c_proj.weight" ->
                     (* GPT-2 stores as [in, out] which is [3072, 768] *)
                     (* We need [3072, 768] for h[*,*,3072] @ W -> [*,*,768] *)
                     (* So NO transpose needed! *)
                     layer_params :=
-                      Kaun.Ptree.Record.add "out_weight"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "out_weight" (Ptree.Tensor tensor)
+                        !layer_params
                 | "mlp.c_fc.bias" ->
                     layer_params :=
-                      Kaun.Ptree.Record.add "inter_bias"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "inter_bias" (Ptree.Tensor tensor)
+                        !layer_params
                 | "mlp.c_proj.bias" ->
                     layer_params :=
-                      Kaun.Ptree.Record.add "out_bias"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "out_bias" (Ptree.Tensor tensor)
+                        !layer_params
                 | "ln_1.weight" ->
                     layer_params :=
-                      Kaun.Ptree.Record.add "attn_gamma"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "attn_gamma" (Ptree.Tensor tensor)
+                        !layer_params
                 | "ln_1.bias" ->
                     layer_params :=
-                      Kaun.Ptree.Record.add "attn_beta"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "attn_beta" (Ptree.Tensor tensor)
+                        !layer_params
                 | "ln_2.weight" ->
                     layer_params :=
-                      Kaun.Ptree.Record.add "ffn_gamma"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "ffn_gamma" (Ptree.Tensor tensor)
+                        !layer_params
                 | "ln_2.bias" ->
                     layer_params :=
-                      Kaun.Ptree.Record.add "ffn_beta"
-                        (Kaun.Ptree.Tensor tensor) !layer_params
+                      Ptree.Dict.set "ffn_beta" (Ptree.Tensor tensor)
+                        !layer_params
                 | _ -> () (* Ignore other parameters like attn.bias *))
             | _ -> ())
         (* Final layer norm *)
         | s when String.starts_with ~prefix:"ln_f.weight" s ->
             final_layer_norm_params :=
-              Kaun.Ptree.Record.add "gamma" (Kaun.Ptree.Tensor tensor)
+              Ptree.Dict.set "gamma" (Ptree.Tensor tensor)
                 !final_layer_norm_params
         | s when String.starts_with ~prefix:"ln_f.bias" s ->
             final_layer_norm_params :=
-              Kaun.Ptree.Record.add "beta" (Kaun.Ptree.Tensor tensor)
+              Ptree.Dict.set "beta" (Ptree.Tensor tensor)
                 !final_layer_norm_params
         | _ -> () (* Ignore other parameters *))
       flat_params;
 
     (* Build the final sequential structure *)
-    let decoder_list =
-      List.map (fun r -> Kaun.Ptree.Record !r) !decoder_layers
-    in
+    let decoder_list = List.map (fun r -> Ptree.Dict !r) !decoder_layers in
 
     (* Add dropout placeholder for embeddings *)
     embeddings_params :=
-      Kaun.Ptree.Record.add "dropout" (Kaun.Ptree.List []) !embeddings_params;
+      Ptree.Dict.set "dropout" (Ptree.List []) !embeddings_params;
 
     (* Create sequential structure: embeddings, decoder layers, final layer
        norm *)
-    Kaun.Ptree.List
+    Ptree.List
       [
-        Kaun.Ptree.Record !embeddings_params;
-        Kaun.Ptree.List decoder_list;
-        Kaun.Ptree.Record !final_layer_norm_params;
+        Ptree.Dict !embeddings_params;
+        Ptree.List decoder_list;
+        Ptree.Dict !final_layer_norm_params;
       ]
   in
 
@@ -848,18 +813,12 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
 
 let forward gpt2 inputs ?(training = false) ?(output_hidden_states = false)
     ?(output_attentions = false) () =
-  let { model; params; _ } = gpt2 in
+  let { model; params; dtype = target_dtype; _ } = gpt2 in
   let { input_ids; attention_mask = _; position_ids = _ } = inputs in
 
   (* GPT-2 forward pass using the Kaun model *)
   let open Rune in
   (* Get dtype from params to maintain polymorphism *)
-  let dtype_tensor =
-    match Kaun.Ptree.flatten_with_paths params with
-    | [] -> failwith "Empty params"
-    | (_, t) :: _ -> t
-  in
-  let target_dtype = dtype dtype_tensor in
   let float_input = cast target_dtype input_ids in
 
   (* Apply the model using Kaun *)
@@ -892,55 +851,52 @@ module For_causal_lm = struct
         linear ~in_features:config.n_embd ~out_features:config.vocab_size ();
       ]
 
-  let forward ~model ~params ~input_ids ?attention_mask:_ ?position_ids:_
-      ?labels ~training () =
+  let forward ~model ~params ~compute_dtype ~input_ids ?attention_mask:_
+      ?position_ids:_ ?labels ~training () =
     let open Rune in
-    (* Get the dtype from params to maintain polymorphism *)
-    let dtype_tensor =
-      match Kaun.Ptree.flatten_with_paths params with
-      | [] -> failwith "Empty params"
-      | (_, t) :: _ -> t
-    in
-    let target_dtype = dtype dtype_tensor in
-    let float_input = cast target_dtype input_ids in
+    let dtype = compute_dtype in
+    let float_input = cast dtype input_ids in
     let hidden_states = Kaun.apply model params ~training float_input in
 
-    (* Apply LM head: project hidden states to vocabulary GPT-2 uses weight
-       tying, so we use the transposed token embeddings *)
-    let logits =
-      (* Try to find token embeddings in params structure *)
-      match params with
-      | Kaun.Ptree.List param_list -> (
-          (* params is a list where first element is embeddings module *)
-          match List.nth_opt param_list 0 with
-          | Some (Kaun.Ptree.Record emb_fields) -> (
-              match
-                Kaun.Ptree.Record.find_opt "token_embeddings" emb_fields
-              with
-              | Some (Kaun.Ptree.Tensor wte) ->
-                  (* Token embeddings have shape [vocab_size, hidden_size] We
-                     need to use them as [hidden_size, vocab_size] for the LM
-                     head *)
-                  let wte_transposed = transpose ~axes:[ 1; 0 ] wte in
-                  matmul hidden_states wte_transposed
-              | _ -> hidden_states)
-          | _ -> hidden_states)
-      | _ -> hidden_states
+    let find_token_embedding_weight () =
+      let open Ptree in
+      let try_paths =
+        [
+          "[0][0].token_embeddings.embedding";
+          "[0].token_embeddings.embedding";
+          "[0][0].token_embeddings";
+          "[0].token_embeddings";
+        ]
+      in
+      let rec loop = function
+        | [] -> None
+        | p :: ps -> (
+            match get_tensor ~path:(Path.of_string p) params dtype with
+            | Some t -> Some t
+            | None -> (
+                (* get_tensor may raise on dtype mismatch; treat as miss *)
+                try Some (get_tensor_exn ~path:(Path.of_string p) params dtype)
+                with _ -> loop ps))
+      in
+      loop try_paths
     in
 
-    (* Compute loss if labels provided *)
+    let logits =
+      match find_token_embedding_weight () with
+      | Some wte ->
+          let wte_t = transpose ~axes:[ 1; 0 ] wte in
+          matmul hidden_states wte_t
+      | None -> hidden_states
+    in
+
     let loss =
       match labels with
       | Some labels ->
-          (* Shift labels for next token prediction *)
           let batch_size = (shape labels).(0) in
           let seq_length = (shape labels).(1) in
           let vocab_size = (shape logits).(2) in
-
-          (* Shift logits and labels: predict next token *)
           let shift_logits = slice [ A; R (0, seq_length - 1); A ] logits in
           let shift_labels = slice [ A; R (1, seq_length); A ] labels in
-
           let flat_logits =
             Rune.reshape
               [| batch_size * (seq_length - 1); vocab_size |]
@@ -1015,9 +971,9 @@ let parse_gpt2_config json =
   }
 
 let num_parameters params =
-  let tensors = Kaun.Ptree.flatten_with_paths params in
+  let tensors = Ptree.flatten_with_paths params in
   List.fold_left
-    (fun acc (_, t) -> acc + Array.fold_left ( * ) 1 (Rune.shape t))
+    (fun acc (_, t) -> acc + Array.fold_left ( * ) 1 (Ptree.Tensor.shape t))
     0 tensors
 
 let parameter_stats params =

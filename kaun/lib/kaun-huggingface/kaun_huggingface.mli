@@ -61,7 +61,7 @@ module Registry : sig
             ["model.safetensors", "pytorch_model.bin"]) *)
     load_config : Yojson.Safe.t -> 'params;
         (** Parse config JSON into model parameters *)
-    build_params : dtype:(float, 'a) Rune.dtype -> 'params -> 'a Kaun.params;
+    build_params : dtype:(float, 'a) Rune.dtype -> 'params -> Kaun.params;
         (** Build parameter tree from config *)
   }
 
@@ -89,9 +89,8 @@ val load_safetensors :
   ?config:Config.t ->
   ?revision:revision ->
   model_id:model_id ->
-  dtype:(float, 'a) Rune.dtype ->
   unit ->
-  'a Kaun.params download_result
+  Kaun.params download_result
 (** [load_safetensors ~model_id ~dtype ()] downloads and loads safetensors
     weights. Automatically tries common filenames like "model.safetensors". *)
 
@@ -109,9 +108,8 @@ val from_pretrained :
   ?config:Config.t ->
   ?revision:revision ->
   model_id:model_id ->
-  dtype:(float, 'a) Rune.dtype ->
   unit ->
-  'a Kaun.params
+  Kaun.params
 (** [from_pretrained ~model_id ~dtype ()] loads a complete model.
 
     This is the main entry point for loading models. It: 1. Downloads the model
