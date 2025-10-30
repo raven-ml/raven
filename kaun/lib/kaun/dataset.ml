@@ -238,15 +238,25 @@ let from_tensors (x, y) =
 
 (* Text Data Sources *)
 let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
-  let decoder_encoding =
+  let decoder_encoding, preprocess_chunk =
     match encoding with
-    | `UTF8 -> Some `UTF_8
-    | `ASCII -> Some `UTF_8
+    | `UTF8 -> (Some `UTF_8, Fun.id)
+    | `ASCII -> (Some `UTF_8, Fun.id)
     | `LATIN1 ->
-        raise
-          (Invalid_parameter
-             "from_text_file: LATIN1 is not supported, please re-encode the \
-              file to UTF-8")
+        let convert chunk =
+          let len = String.length chunk in
+          let buf = Buffer.create len in
+          for i = 0 to len - 1 do
+            let code = Char.code chunk.[i] in
+            if code < 0x80 then
+              Buffer.add_char buf chunk.[i]
+            else (
+              Buffer.add_char buf (Char.unsafe_chr (0xC0 lor (code lsr 6)));
+              Buffer.add_char buf (Char.unsafe_chr (0x80 lor (code land 0x3F))))
+          done;
+          Buffer.contents buf
+        in
+        (Some `UTF_8, convert)
   in
   let make_decoder () = Uutf.decoder ?encoding:decoder_encoding `Manual in
   let handle_ref = ref None in
@@ -304,10 +314,11 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
             fill_queue ())
           else
             let handle = ensure_handle () in
-            let chunk =
+            let raw_chunk =
               read_mmap_chunk handle ~offset:!offset ~length:chunk_size
             in
-            offset := !offset + String.length chunk;
+            offset := !offset + String.length raw_chunk;
+            let chunk = preprocess_chunk raw_chunk in
             if chunk = "" then (
               Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
               fill_queue ())
