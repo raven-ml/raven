@@ -121,8 +121,7 @@ let run_dqn () =
      last loss: %.4f, avg Q: %.4f\n\
      %!"
     final_metrics.total_steps final_metrics.total_episodes target_episodes
-    final_metrics.epsilon
-    final_metrics.loss final_metrics.avg_q_value;
+    final_metrics.epsilon final_metrics.loss final_metrics.avg_q_value;
   Env.close training_env;
 
   let eval_env = float_grid_env (Rune.Rng.key 1337) in
