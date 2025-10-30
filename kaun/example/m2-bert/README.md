@@ -1,8 +1,7 @@
 # `m2-bert`
 
-This example exercises Kaun’s BERT integration. It loads `bert-base-uncased`
-from Hugging Face, tokenizes input text, and evaluates a few inspection tasks to
-illustrate how to work with contextual embeddings.
+This example shows how to load a pretrained BERT encoder with Kaun, extract
+vector representations, and run lightweight probes on top of them.
 
 - **Source**: [`bert.ml`](./bert.ml)
 - **Downloads**: Weights and vocabulary files are cached on first run
@@ -16,49 +15,47 @@ dune exec kaun/example/m2-bert/bert.exe
 
 `bert.ml` performs three steps:
 
-1. Validate the small configuration block (`model_id`, `max_length`,
+1. Validate a tiny configuration block (`model_id`, `max_length`,
    `similarity_threshold`).
-2. Instantiate the model and tokenizer via `Kaun_models.Bert.from_pretrained` and
-   `Bert.Tokenizer.create`.
-3. Run two analysis routines:
-   - **Sentence similarity** – encodes pairs of sentences, extracts CLS and
-     mean-pooled embeddings, computes cosine similarity, and reports decisions
-     relative to the configured threshold.
-   - **Word-in-context** – encodes sentences containing the same surface word in
-     different contexts, selects the corresponding token embeddings, and measures
-     how far the representations diverge.
-   - A Hugging Face regression test now lives under
-     `kaun/test/bert/test_bert_matches_hf.ml`.
+2. Instantiate the encoder and tokenizer via `Kaun_models.Bert.from_pretrained`
+   and `Bert.Tokenizer.create`.
+3. Run two probes:
+   - **Sentence similarity** – pool CLS and mean embeddings, compute cosine
+     scores for a few sentence pairs, and compare them against the configured
+     threshold.
+   - **Word in context** – locate the same surface word in two sentences,
+     extract its contextual embedding in each sentence, and report how far they
+     drift.
 
 ### Sample output
 
 ```
 Configuration:
-  Model: bert-base-uncased
-  Max length: 128
-  Similarity threshold: 0.80
+  model_id              : bert-base-uncased
+  max_length            : 96
+ similarity_threshold  : 0.80
 
-=== Sentence Similarity Task ===
-1. Sentence 1: "The cat sits on the mat"
-   Sentence 2: "A feline rests on the rug"
-   Similarity (CLS): 0.8321
-   Similarity (Mean): 0.8576
-   Expected: Similar | Predicted: Similar | ✓
+=== Sentence Similarity ===
+1. "The cat curls up on the sofa"
+   "A feline naps on the couch"
+   cosine(CLS) : 0.88
+   cosine(mean): 0.87 → Similar (expected Similar)
 
-=== Word-in-Context (Polysemy Verification) ===
-plant    | The chemical plant employs hundreds
-         | She watered the plant in her garden
-         | CosineSim: 0.3625 | ✓
+=== Word-in-Context (Polysemy) ===
+Word    Context A                                | Context B                                | Cosine
+--------------------------------------------------------------------------------------------------------
+bank    The bank raised interest rates           | We sat on the bank of the river          | 0.41 ✓
+         token positions: 2 vs 5 (max 96)
 ```
 
 ### Experiments
 
 - Adjust `Config.similarity_threshold` to see how sensitive the decision rule
   is to the chosen cutoff.
-- Switch the pooling strategy in `extract_sentence_embedding` (CLS, mean, max)
-  and observe how it alters the similarity rankings.
-- Use `Bert.Tokenizer.encode_batch` to process multiple sentence pairs at once;
-  this highlights Kaun’s handling of batched inputs.
+- Try different pooling strategies in `sentence_embeddings` (e.g. max pooling)
+  and observe how the ranking changes.
+- Replace the hard-coded sentences with your own pairs to test domain-specific
+  wording.
 
 ### Next steps
 

@@ -1,204 +1,177 @@
 open Rune
 module Bert = Kaun_models.Bert
 
-(** Configuration for BERT tasks *)
+(* Lightweight knobs for the demo. Tweak these and re-run to see how the probes
+   react. *)
 module Config = struct
   let model_id = "bert-base-uncased"
-  let max_length = 128
-  let similarity_threshold = 0.8 (* Cosine similarity threshold *)
+  let max_length = 96
+  let similarity_threshold = 0.80
 end
 
-(** Validate configuration *)
+(* Guardrails – catching a typo up-front is better than chasing NaNs later. *)
 let validate_config () =
-  if Config.max_length <= 0 then failwith "max_length must be positive";
+  if Config.max_length <= 0 then failwith "Config.max_length must be positive";
   if Config.similarity_threshold <= 0.0 || Config.similarity_threshold > 1.0
-  then failwith "similarity_threshold must be in (0, 1]"
+  then failwith "Config.similarity_threshold must lie in (0, 1]"
 
-(** Safe model loading with error handling *)
-let load_model_safe () =
-  try
-    Printf.printf "Loading BERT model '%s'...\n%!" Config.model_id;
-    let bert = Bert.from_pretrained ~dtype:Float32 () in
-    let tokenizer = Bert.Tokenizer.create () in
-    Printf.printf "✓ Model loaded successfully\n\n%!";
-    (bert, tokenizer)
-  with exn ->
-    Printf.eprintf "✗ Failed to load model: %s\n" (Printexc.to_string exn);
-    exit 1
+(* Clip 2-D tensors (batch × seq) so we never ask the model to read beyond
+   [max_length]. *)
+let truncate_sequence tensor =
+  let shape = Rune.shape tensor in
+  if Array.length shape <> 2 then tensor
+  else
+    let seq_len = shape.(1) in
+    if seq_len <= Config.max_length then tensor
+    else slice [ A; R (0, Config.max_length) ] tensor
 
-(** Calculate cosine similarity between two vectors *)
-let cosine_similarity vec1 vec2 =
-  let dot_product = sum (mul vec1 vec2) |> item [] in
-  let norm1 = sqrt (sum (mul vec1 vec1)) |> item [] in
-  let norm2 = sqrt (sum (mul vec2 vec2)) |> item [] in
-  if norm1 = 0.0 || norm2 = 0.0 then 0.0 else dot_product /. (norm1 *. norm2)
+(* Extend truncation to the structured inputs that `Bert.Tokenizer.encode`
+   returns. *)
+let truncate_inputs (inputs : Bert.inputs) =
+  let open Bert in
+  {
+    input_ids = truncate_sequence inputs.input_ids;
+    attention_mask = truncate_sequence inputs.attention_mask;
+    token_type_ids = Option.map truncate_sequence inputs.token_type_ids;
+    position_ids = inputs.position_ids;
+  }
 
-(** Extract sentence embedding from BERT output *)
-let extract_sentence_embedding last_hidden_state method_ =
-  match method_ with
-  | `CLS ->
-      (* Use CLS token embedding *)
-      slice [ I 0; I 0; A ] last_hidden_state
-  | `Mean ->
-      (* Mean pooling of all token embeddings *)
-      let all_tokens = slice [ I 0; A; A ] last_hidden_state in
-      mean all_tokens ~axes:[ 0 ]
-  | `Max ->
-      (* Max pooling of all token embeddings *)
-      let all_tokens = slice [ I 0; A; A ] last_hidden_state in
-      max all_tokens ~axes:[ 0 ]
+(* Keep the raw ID arrays in sync with the tensor truncation. *)
+let clip_token_ids ids =
+  if Array.length ids <= Config.max_length then ids
+  else Array.sub ids 0 Config.max_length
 
-(** Sentence similarity task *)
-let sentence_similarity_task bert tokenizer =
-  Printf.printf "=== Sentence Similarity Task ===\n";
+(* Helpers for cosine similarity; we cache them because they appear in both
+   probes. *)
+let scalar tensor = item [] tensor
 
-  let sentence_pairs =
-    [
-      ("The cat sits on the mat", "A feline rests on the rug", true);
-      ("I love machine learning", "Machine learning is fascinating", true);
-      ("The weather is sunny today", "It's raining heavily outside", false);
-      ("Programming is fun", "Coding is enjoyable", true);
-      ("Dogs are loyal animals", "Cars are fast vehicles", false);
-      ("Paris is the capital of France", "The capital of France is Paris", true);
-    ]
+let norm tensor =
+  let squared = scalar (sum (mul tensor tensor)) in
+  Float.sqrt (Float.max squared 1e-12)
+
+let cosine_similarity lhs rhs =
+  let dot = scalar (sum (mul lhs rhs)) in
+  let denom = norm lhs *. norm rhs in
+  if denom = 0.0 then 0.0 else dot /. denom
+
+(* Load the pretrained model + tokenizer and report progress so the console
+   tells a story. *)
+let load_model () =
+  Printf.printf "Loading BERT model '%s'...\n%!" Config.model_id;
+  let bert = Bert.from_pretrained ~dtype:Float32 () in
+  let tokenizer = Bert.Tokenizer.create ~model_id:Config.model_id () in
+  Printf.printf "✓ Model ready\n\n%!";
+  (bert, tokenizer)
+
+(* One-stop helper: encode → truncate → forward. *)
+let forward_sentence bert tokenizer text =
+  let inputs = Bert.Tokenizer.encode tokenizer text |> truncate_inputs in
+  Bert.forward bert inputs ()
+
+(* Retrieve both CLS and mean-pooled embeddings so we can compare pooling
+   strategies. *)
+let sentence_embeddings bert tokenizer text =
+  let hidden = (forward_sentence bert tokenizer text).Bert.last_hidden_state in
+  let cls = slice [ I 0; I 0; A ] hidden in
+  let tokens = slice [ I 0; A; A ] hidden in
+  let mean_pool = mean tokens ~axes:[ 0 ] in
+  (cls, mean_pool)
+
+(* Focus on a specific word: find its token position and pull the contextual
+   embedding. *)
+let contextual_embedding bert tokenizer ~word sentence =
+  let word_lc = String.lowercase_ascii word in
+  let hidden =
+    (forward_sentence bert tokenizer sentence).Bert.last_hidden_state
   in
-
-  let correct_predictions = ref 0 in
-  let total_predictions = List.length sentence_pairs in
-
-  Printf.printf "Comparing sentence pairs (threshold=%.2f):\n\n"
-    Config.similarity_threshold;
-
-  List.iteri
-    (fun i (sent1, sent2, expected_similar) ->
-      Printf.printf "%d. Sentence 1: \"%s\"\n" (i + 1) sent1;
-      Printf.printf "   Sentence 2: \"%s\"\n" sent2;
-
-      (* Encode both sentences *)
-      let inputs1 = Bert.Tokenizer.encode tokenizer sent1 in
-      let inputs2 = Bert.Tokenizer.encode tokenizer sent2 in
-
-      (* Get embeddings *)
-      let output1 = Bert.forward bert inputs1 () in
-      let output2 = Bert.forward bert inputs2 () in
-
-      (* Extract sentence embeddings using different methods *)
-      let embedding1_cls =
-        extract_sentence_embedding output1.last_hidden_state `CLS
-      in
-      let embedding2_cls =
-        extract_sentence_embedding output2.last_hidden_state `CLS
-      in
-      let embedding1_mean =
-        extract_sentence_embedding output1.last_hidden_state `Mean
-      in
-      let embedding2_mean =
-        extract_sentence_embedding output2.last_hidden_state `Mean
-      in
-
-      (* Calculate similarities *)
-      let sim_cls = cosine_similarity embedding1_cls embedding2_cls in
-      let sim_mean = cosine_similarity embedding1_mean embedding2_mean in
-
-      (* Make prediction based on CLS similarity *)
-      let predicted_similar = sim_mean >= Config.similarity_threshold in
-      let correct = predicted_similar = expected_similar in
-      if correct then incr correct_predictions;
-
-      Printf.printf "   Similarity (CLS): %.4f\n" sim_cls;
-      Printf.printf "   Similarity (Mean): %.4f\n" sim_mean;
-      Printf.printf "   Expected: %s | Predicted: %s | %s\n"
-        (if expected_similar then "Similar" else "Different")
-        (if predicted_similar then "Similar" else "Different")
-        (if correct then "✓" else "✗");
-      Printf.printf "\n%!")
-    sentence_pairs;
-
-  let accuracy =
-    Float.of_int !correct_predictions /. Float.of_int total_predictions
+  let token_ids =
+    Bert.Tokenizer.encode_to_array tokenizer sentence |> clip_token_ids
   in
-  Printf.printf "Similarity Task Accuracy: %.3f (%d/%d)\n\n" accuracy
-    !correct_predictions total_predictions
-
-(** Word-in-Context Polysemy Verification *)
-let word_in_context_task bert tokenizer =
-  Printf.printf "=== Word-in-Context (Polysemy Verification) ===\n";
-
-  (* Each pair = same word, two different contexts *)
-  let polysemy_pairs =
-    [
-      ( "bank",
-        "I went to the bank to deposit money",
-        "The river bank was covered with flowers",
-        "financial vs riverside" );
-      ( "plant",
-        "The chemical plant employs hundreds",
-        "She watered the plant in her garden",
-        "factory vs vegetation" );
-      ( "bat",
-        "He swung the bat hard",
-        "A bat flew into the cave",
-        "sports equipment vs animal" );
-    ]
+  let seq_len = Array.length token_ids in
+  let find_index () =
+    let rec aux i =
+      if i >= seq_len - 1 then None
+      else
+        let token_id = token_ids.(i) in
+        if i = 0 then aux (i + 1)
+        else
+          let token =
+            Bert.Tokenizer.decode tokenizer [| token_id |]
+            |> String.trim |> String.lowercase_ascii
+          in
+          if String.equal token word_lc then Some i else aux (i + 1)
+    in
+    aux 0
   in
+  let index = match find_index () with Some idx -> idx | None -> 1 in
+  let embedding = slice [ I 0; I index; A ] hidden in
+  (embedding, index)
 
-  Printf.printf "%-8s | %-45s | %-45s | %-10s | %-8s\n" "Word" "Context 1"
-    "Context 2" "CosineSim" "Status";
-  Printf.printf "%s\n" (String.make 120 '-');
+(* Tiny corpora keep the output readable; add your own pairs when
+   experimenting. *)
+let sentence_pairs =
+  [
+    ("The cat curls up on the sofa", "A feline naps on the couch", true);
+    ("The project deadline is tomorrow", "We have weeks before delivery", false);
+    ("Dogs are loyal companions", "Canines make faithful pets", true);
+  ]
 
-  List.iter
-    (fun (word, sent1, sent2, desc) ->
-      (* Encode both sentences *)
-      let inputs1 = Bert.Tokenizer.encode tokenizer sent1 in
-      let inputs2 = Bert.Tokenizer.encode tokenizer sent2 in
-      let output1 = Bert.forward bert inputs1 () in
-      let output2 = Bert.forward bert inputs2 () in
+(* Print a single similarity comparison with both pooling flavours. *)
+let report_sentence_pair bert tokenizer index (text_a, text_b, expected) =
+  let cls_a, mean_a = sentence_embeddings bert tokenizer text_a in
+  let cls_b, mean_b = sentence_embeddings bert tokenizer text_b in
+  let sim_cls = cosine_similarity cls_a cls_b in
+  let sim_mean = cosine_similarity mean_a mean_b in
+  let decide sim =
+    if sim >= Config.similarity_threshold then "Similar" else "Different"
+  in
+  Printf.printf "%d. \"%s\"\n   \"%s\"\n" (index + 1) text_a text_b;
+  Printf.printf "   cosine(CLS) : %.4f\n" sim_cls;
+  Printf.printf "   cosine(mean): %.4f → %s (expected %s)\n\n" sim_mean
+    (decide sim_mean)
+    (if expected then "Similar" else "Different")
 
-      (* Get token embeddings - for simplicity use middle token as proxy *)
-      let token_ids1 = Bert.Tokenizer.encode_to_array tokenizer sent1 in
-      let token_ids2 = Bert.Tokenizer.encode_to_array tokenizer sent2 in
-      let idx1 = Array.length token_ids1 / 2 in
-      let idx2 = Array.length token_ids2 / 2 in
-      let emb1 = slice [ I 0; I idx1; A ] output1.last_hidden_state in
-      let emb2 = slice [ I 0; I idx2; A ] output2.last_hidden_state in
+let sentence_similarity bert tokenizer =
+  Printf.printf "=== Sentence Similarity ===\n";
+  List.iteri (report_sentence_pair bert tokenizer) sentence_pairs
 
-      (* Compute cosine similarity between contextual embeddings *)
-      let sim = cosine_similarity emb1 emb2 in
+(* Word-in-context examples that expose common polysemy cases. *)
+let polysemy_examples =
+  [
+    ("bank", "The bank raised interest rates", "We sat on the bank of the river");
+    ( "plant",
+      "The chemical plant runs three shifts",
+      "She watered the plant before sunrise" );
+    ("bat", "He hit a home run with the bat", "A bat fluttered across the cave");
+  ]
 
-      let status = if sim < Config.similarity_threshold then "✓" else "✗" in
+(* Show how far two contextual embeddings drift for the same surface word. *)
+let report_polysemy bert tokenizer (word, ctx_a, ctx_b) =
+  let emb_a, idx_a = contextual_embedding bert tokenizer ~word ctx_a in
+  let emb_b, idx_b = contextual_embedding bert tokenizer ~word ctx_b in
+  let cosine = cosine_similarity emb_a emb_b in
+  let separated = if cosine < Config.similarity_threshold then "✓" else "✗" in
+  Printf.printf "%-6s  %-40s | %-40s | %-8.4f %s\n" word ctx_a ctx_b cosine
+    separated;
+  Printf.printf "         token positions: %d vs %d (max %d)\n\n" idx_a idx_b
+    Config.max_length
 
-      Printf.printf "%-8s | %-45s | %-45s | %-10.4f | %-8s\n" word sent1 sent2
-        sim status;
-
-      Printf.printf "   Meaning contrast: %s\n\n%!" desc)
-    polysemy_pairs;
-
+let polysemy_probe bert tokenizer =
+  Printf.printf "=== Word-in-Context (Polysemy) ===\n";
+  Printf.printf "%-6s  %-40s | %-40s | %-8s\n" "Word" "Context A" "Context B"
+    "Cosine";
+  Printf.printf "%s\n" (String.make 104 '-');
+  List.iter (report_polysemy bert tokenizer) polysemy_examples;
   Printf.printf
-    "✓  = Distinct senses recognized (low similarity)\n\
-     ✗  = Senses conflated (high similarity)\n\n\
-     %!"
+    "✓  suggests BERT separates the senses (low cosine); ✗ means the contexts \
+     stay close.\n\n"
 
 let () =
-  try
-    (* Validate configuration *)
-    validate_config ();
-
-    Printf.printf "Configuration:\n";
-    Printf.printf "  Model: %s\n" Config.model_id;
-    Printf.printf "  Max length: %d\n" Config.max_length;
-    Printf.printf "  Similarity threshold: %.2f\n" Config.similarity_threshold;
-    Printf.printf "\n";
-
-    (* Load model safely *)
-    let bert, tokenizer = load_model_safe () in
-
-    (* Run different tasks *)
-    sentence_similarity_task bert tokenizer;
-    word_in_context_task bert tokenizer
-  with
-  | Failure msg ->
-      Printf.eprintf "Error: %s\n" msg;
-      exit 1
-  | exn ->
-      Printf.eprintf "Unexpected error: %s\n" (Printexc.to_string exn);
-      exit 1
+  validate_config ();
+  Printf.printf "Configuration:\n";
+  Printf.printf "  model_id              : %s\n" Config.model_id;
+  Printf.printf "  max_length            : %d\n" Config.max_length;
+  Printf.printf "  similarity_threshold  : %.2f\n\n" Config.similarity_threshold;
+  let bert, tokenizer = load_model () in
+  sentence_similarity bert tokenizer;
+  polysemy_probe bert tokenizer
