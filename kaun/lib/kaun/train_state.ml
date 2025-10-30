@@ -50,22 +50,22 @@ let schema_key = "schema"
 let schema_value = "kaun.train_state/1"
 let checkpoint_slug = "state"
 
-let to_snapshot ?encode_metrics ({ step; params; opt_state; rng; metrics } : t)
-    =
+let to_snapshot ?encode_metrics
+    ({ step; params; opt_state; rng = rng_key; metrics } : t) =
   let open Snapshot in
   let base_entries =
     [
-      (schema_key, scalar_string schema_value);
-      ("step", scalar_int step);
-      ("params", of_ptree params);
+      (schema_key, string schema_value);
+      ("step", int step);
+      ("params", ptree params);
       ("optimizer_state", Optimizer.serialize opt_state);
-      ("rng", scalar_int (Rune.Rng.to_int rng));
+      ("rng", Snapshot.rng rng_key);
     ]
   in
   match (metrics, encode_metrics) with
-  | None, _ -> record_of base_entries
+  | None, _ -> record base_entries
   | Some metrics_value, Some encode ->
-      record_of (("metrics", encode metrics_value) :: base_entries)
+      record (("metrics", encode metrics_value) :: base_entries)
   | Some _, None ->
       invalid_arg
         "Train_state.to_snapshot: metrics present but encode_metrics missing"

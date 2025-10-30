@@ -139,9 +139,9 @@ let decode_tree tensor_lookup scalar_lookup =
                       (key, aux child value))
                     fields
                 in
-                Snapshot.record_of record))
+                Snapshot.record record))
     | `List items ->
-        Snapshot.list_of
+        Snapshot.list
           (List.mapi
              (fun idx item ->
                let child =

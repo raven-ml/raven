@@ -76,5 +76,12 @@ val save_snapshot_file :
   path:string -> snapshot:Snapshot.t -> (unit, error) result
 
 val load_snapshot_file : path:string -> (Snapshot.t, error) result
+val write_snapshot_file_with :
+  path:string -> encode:(unit -> Snapshot.t) -> (unit, error) result
+
+val load_snapshot_file_with :
+  path:string ->
+  decode:(Snapshot.t -> ('a, string) result) ->
+  ('a, error) result
 val save_params_file : path:string -> params:Ptree.t -> (unit, error) result
 val load_params_file : path:string -> (Ptree.t, error) result

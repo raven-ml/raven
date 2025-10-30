@@ -56,7 +56,7 @@ let test_checkpoint_manager () =
   (* Save multiple checkpoints *)
   for i = 1 to 5 do
     let params = create_params (float_of_int i) in
-    let snapshot = C.Snapshot.of_ptree params in
+    let snapshot = C.Snapshot.ptree params in
     let artifacts =
       [ C.artifact ~label:"params" ~kind:C.Params ~snapshot () ]
     in

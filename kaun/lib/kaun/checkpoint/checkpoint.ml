@@ -102,8 +102,18 @@ let load_snapshot_file ~path =
   | Ok snapshot -> Ok snapshot
   | Error msg -> Error (classify_snapshot_error path msg)
 
+let write_snapshot_file_with ~path ~encode =
+  save_snapshot_file ~path ~snapshot:(encode ())
+
+let load_snapshot_file_with ~path ~decode =
+  let ( let* ) = Result.bind in
+  let* snapshot = load_snapshot_file ~path in
+  match decode snapshot with
+  | Ok value -> Ok value
+  | Error msg -> Error (Invalid msg)
+
 let save_params_file ~path ~params =
-  let snapshot = Snapshot.of_ptree params in
+  let snapshot = Snapshot.ptree params in
   save_snapshot_file ~path ~snapshot
 
 let load_params_file ~path =

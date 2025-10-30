@@ -16,17 +16,19 @@ type t =
   | Record of t Record.t
 
 let tensor value = Tensor (Pack value)
-let scalar_bool b = Scalar (Bool b)
-let scalar_int i = Scalar (Int i)
-let scalar_float f = Scalar (Float f)
-let scalar_string s = Scalar (String s)
-let scalar_json json = Scalar (Json json)
-let list_of items = List items
+let scalar value = Scalar value
+let bool value = scalar (Bool value)
+let int value = scalar (Int value)
+let float value = scalar (Float value)
+let string value = scalar (String value)
+let json value = scalar (Json value)
+let list items = List items
+let rng key = int (Rune.Rng.to_int key)
 
-let record_of entries =
+let record entries =
   let add_unique map (key, value) =
     if Record.mem key map then
-      invalid_arg ("Snapshot.record_of: duplicate key " ^ key)
+      invalid_arg ("Snapshot.record: duplicate key " ^ key)
     else Record.add key value map
   in
   let record = List.fold_left add_unique Record.empty entries in
@@ -34,10 +36,12 @@ let record_of entries =
 
 let is_tensor = function Tensor _ -> true | _ -> false
 let is_scalar = function Scalar _ -> true | _ -> false
+let is_list = function List _ -> true | _ -> false
+let is_record = function Record _ -> true | _ -> false
 let get_tensor = function Tensor pack -> Some pack | _ -> None
 let get_scalar = function Scalar s -> Some s | _ -> None
-let to_list = function List l -> Some l | _ -> None
-let to_record = function Record r -> Some r | _ -> None
+let get_list = function List l -> Some l | _ -> None
+let get_record = function Record r -> Some r | _ -> None
 
 let iter ?on_tensor ?on_scalar tree =
   let rec aux path = function
@@ -163,13 +167,13 @@ let scalar_of_yojson = function
       | _ -> failwith "Snapshot.scalar_of_yojson: missing type field")
   | _ -> failwith "Snapshot.scalar_of_yojson: expected object"
 
-let rec of_ptree = function
+let rec ptree = function
   | Ptree.Tensor (Ptree.P tensor) -> Tensor (Pack tensor)
-  | Ptree.List items -> List (List.map of_ptree items)
+  | Ptree.List items -> List (List.map ptree items)
   | Ptree.Dict bindings ->
       let record =
         List.fold_left
-          (fun acc (key, value) -> Record.add key (of_ptree value) acc)
+          (fun acc (key, value) -> Record.add key (ptree value) acc)
           Record.empty bindings
       in
       Record record

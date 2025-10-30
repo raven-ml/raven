@@ -92,7 +92,7 @@ let rec find_int field =
       fold entries
 
 let step_count state = find_int "count" (serialize state)
-let encode_unit () = Snapshot.scalar_string "unit"
+let encode_unit () = Snapshot.string "unit"
 
 let decode_unit label = function
   | Snapshot.Scalar (Snapshot.String "unit") | Snapshot.Scalar (Snapshot.Int 0)
@@ -100,7 +100,7 @@ let decode_unit label = function
       Ok ()
   | _ -> Error (Printf.sprintf "%s: expected unit state" label)
 
-let encode_ptree state = Snapshot.of_ptree state
+let encode_ptree state = Snapshot.ptree state
 
 let decode_ptree label tree =
   match Snapshot.to_ptree tree with
@@ -285,12 +285,12 @@ let scale_by_rms ?(decay = 0.999) ?(eps = 1e-8) () =
 
 let scale_by_adam ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
   let encode (mu, nu, count) =
-    Snapshot.record_of
+    Snapshot.record
       [
-        ("kind", Snapshot.scalar_string "adam_inner");
-        ("mu", Snapshot.of_ptree mu);
-        ("nu", Snapshot.of_ptree nu);
-        ("count", Snapshot.scalar_int count);
+        ("kind", Snapshot.string "adam_inner");
+        ("mu", Snapshot.ptree mu);
+        ("nu", Snapshot.ptree nu);
+        ("count", Snapshot.int count);
       ]
   in
   let decode tree =
@@ -377,12 +377,12 @@ let scale_by_adam ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
 
 let scale_by_belief ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-16) () =
   let encode (mu, s, count) =
-    Snapshot.record_of
+    Snapshot.record
       [
-        ("kind", Snapshot.scalar_string "adabelief_inner");
-        ("mu", Snapshot.of_ptree mu);
-        ("s", Snapshot.of_ptree s);
-        ("count", Snapshot.scalar_int count);
+        ("kind", Snapshot.string "adabelief_inner");
+        ("mu", Snapshot.ptree mu);
+        ("s", Snapshot.ptree s);
+        ("count", Snapshot.int count);
       ]
   in
   let decode tree =
@@ -541,7 +541,7 @@ let scale_by_schedule schedule =
               grads
           in
           (updates, step));
-      encode = (fun step -> Snapshot.scalar_int step);
+      encode = (fun step -> Snapshot.int step);
       decode =
         (function
         | Snapshot.Scalar (Snapshot.Int step) -> Ok step
@@ -574,7 +574,7 @@ let chain transforms =
               invalid_arg "Optimizer.chain: state length mismatch"
             else List.map serialize states
           in
-          Snapshot.list_of encodes);
+          Snapshot.list encodes);
       decode =
         (fun tree ->
           match tree with
@@ -695,7 +695,7 @@ let multi_transform ~transforms ~labels =
       encode =
         (fun states ->
           let nodes = Array.to_list (Array.map serialize states) in
-          Snapshot.list_of nodes);
+          Snapshot.list nodes);
       decode =
         (fun tree ->
           match tree with
@@ -810,11 +810,11 @@ let multi_steps ~every transform =
             (zero_updates, (inner_state, new_grads_accum, step_count)));
       encode =
         (fun (inner_state, grads_accum, step) ->
-          Snapshot.record_of
+          Snapshot.record
             [
               ("inner", serialize inner_state);
-              ("accum", Snapshot.of_ptree grads_accum);
-              ("step", Snapshot.scalar_int step);
+              ("accum", Snapshot.ptree grads_accum);
+              ("step", Snapshot.int step);
             ]);
       decode =
         (fun tree ->
@@ -938,12 +938,12 @@ let adabelief ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-16) () =
 
 let lamb ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-6) ?(weight_decay = 0.01) () =
   let encode (mu, nu, count) =
-    Snapshot.record_of
+    Snapshot.record
       [
-        ("kind", Snapshot.scalar_string "lamb_inner");
-        ("mu", Snapshot.of_ptree mu);
-        ("nu", Snapshot.of_ptree nu);
-        ("count", Snapshot.scalar_int count);
+        ("kind", Snapshot.string "lamb_inner");
+        ("mu", Snapshot.ptree mu);
+        ("nu", Snapshot.ptree nu);
+        ("count", Snapshot.int count);
       ]
   in
   let decode tree =
@@ -1058,12 +1058,12 @@ let lamb ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-6) ?(weight_decay = 0.01) () =
    preferred, but for consistency, use chain. *)
 let radam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
   let encode (mu, nu, count) =
-    Snapshot.record_of
+    Snapshot.record
       [
-        ("kind", Snapshot.scalar_string "radam_inner");
-        ("mu", Snapshot.of_ptree mu);
-        ("nu", Snapshot.of_ptree nu);
-        ("count", Snapshot.scalar_int count);
+        ("kind", Snapshot.string "radam_inner");
+        ("mu", Snapshot.ptree mu);
+        ("nu", Snapshot.ptree nu);
+        ("count", Snapshot.int count);
       ]
   in
   let decode tree =
@@ -1172,12 +1172,12 @@ let radam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
 
 let yogi ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-3) () =
   let encode (mu, nu, count) =
-    Snapshot.record_of
+    Snapshot.record
       [
-        ("kind", Snapshot.scalar_string "yogi_inner");
-        ("mu", Snapshot.of_ptree mu);
-        ("nu", Snapshot.of_ptree nu);
-        ("count", Snapshot.scalar_int count);
+        ("kind", Snapshot.string "yogi_inner");
+        ("mu", Snapshot.ptree mu);
+        ("nu", Snapshot.ptree nu);
+        ("count", Snapshot.int count);
       ]
   in
   let decode tree =
