@@ -1,5 +1,5 @@
 (library
  (name fehu_algorithms)
  (public_name fehu.algorithms)
- (libraries fehu kaun rune yojson unix)
+ (libraries fehu kaun rune)
  (modules reinforce dqn fehu_algorithms))
