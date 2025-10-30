@@ -51,6 +51,7 @@ All notable changes to this project will be documented in this file.
 
 ### Kaun
 
+- Added Similarity and Polysemy analysis to the BERT example (#137, @nirnayroy)
 - API simplification: removed type parameters from public types; `Ptree` now supports mixed‑dtype trees via packed tensors with typed getters. (@tmattio)
 - Checkpointing overhaul: versioned `Train_state` with schema tagging, explicit `Checkpoint.{Snapshot,Artifact,Manifest,Repository}` (retention, tags, metadata), and simple save/load helpers for snapshots and params. (@tmattio)
 - Overhaul dataset combinators: derive tensor specs from Rune dtype, fix sampling/window bugs, validate weighted sampling, and respect `drop_remainder` (@tmattio)
