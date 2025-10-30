@@ -40,7 +40,8 @@ let test () =
 
   let cls_token = Rune.slice [ I 0; I 0 ] last_hidden_state in
   let cls_values =
-    list_prefix ~n:(List.length expected_cls) (fun i -> Rune.item [ i ] cls_token)
+    list_prefix ~n:(List.length expected_cls) (fun i ->
+        Rune.item [ i ] cls_token)
   in
   check_close_list "cls" ~epsilon:1e-2 expected_cls cls_values;
 
@@ -57,4 +58,5 @@ let test () =
 
 let () =
   Printexc.record_backtrace true;
-  Alcotest.run "BERT matches HuggingFace" [ ("bert", [ Alcotest.test_case "forward" `Quick test ]) ]
+  Alcotest.run "BERT matches HuggingFace"
+    [ ("bert", [ Alcotest.test_case "forward" `Quick test ]) ]

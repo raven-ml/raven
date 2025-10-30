@@ -1021,8 +1021,7 @@ let loss () =
           let sum_loss, count =
             match state with
             | [ s; c ] -> (s, c)
-            | [] ->
-                (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
+            | [] -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
             | _ -> failwith "Invalid loss state"
           in
           let new_sum = Rune.add sum_loss loss_value in

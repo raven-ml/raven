@@ -13,4 +13,3 @@ let get_path_in_cache ?(getenv = Sys.getenv_opt) ~scope name =
   let sep = Filename.dir_sep.[0] in
   if path <> "" && path.[String.length path - 1] = sep then path
   else path ^ Filename.dir_sep
-

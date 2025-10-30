@@ -43,4 +43,7 @@ let run_comparison () =
 let () =
   Printexc.record_backtrace true;
   Alcotest.run "GPT-2 parity"
-    [ ("gpt2", [ Alcotest.test_case "compare-with-python" `Quick run_comparison ]) ]
+    [
+      ( "gpt2",
+        [ Alcotest.test_case "compare-with-python" `Quick run_comparison ] );
+    ]

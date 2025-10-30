@@ -83,7 +83,9 @@ module Tokenizer = struct
 
   let download_vocab_file model_id =
     (* Download vocab file from HuggingFace if not present *)
-    let vocab_cache = Nx_core.Cache_dir.get_path_in_cache ~scope:["models"; "bert"] "vocab" in
+    let vocab_cache =
+      Nx_core.Cache_dir.get_path_in_cache ~scope:[ "models"; "bert" ] "vocab"
+    in
     let vocab_file = Filename.concat vocab_cache (model_id ^ "-vocab.txt") in
 
     (* Create cache directory if it doesn't exist *)

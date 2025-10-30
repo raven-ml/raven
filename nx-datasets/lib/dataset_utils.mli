@@ -5,7 +5,7 @@ val get_cache_dir : ?getenv:(string -> string option) -> string -> string
     the given dataset.
 
     This is a convenience wrapper around {!Nx_core.Cache_dir.get_path_in_cache}
-    with [~scope:\["datasets"\]]. See {!Nx_core.Cache_dir.get_path_in_cache} for
+    with [~scope:["datasets"]]. See {!Nx_core.Cache_dir.get_path_in_cache} for
     details on cache directory resolution and environment variable priority.
 
     {2 Parameters}
