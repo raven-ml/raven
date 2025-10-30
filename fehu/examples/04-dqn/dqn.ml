@@ -1,6 +1,59 @@
 open Fehu
 open Kaun
 
+module FV = Fehu_visualize
+module Policy = Fehu.Policy
+
+let float_state obs =
+  let arr : Int32.t array = Rune.to_array obs in
+  Array.map (fun x -> float_of_int (Int32.to_int x)) arr
+
+let q_scores q_net params obs =
+  let state = float_state obs in
+  let state_tensor = Rune.create Rune.float32 [| 1; 2 |] state in
+  let q_values = Kaun.apply q_net params ~training:false state_tensor in
+  Rune.to_array (Rune.reshape [| 4 |] q_values)
+
+let greedy_action q_net params state =
+  let scores =
+    let state_tensor = Rune.create Rune.float32 [| 1; 2 |] state in
+    let q_values = Kaun.apply q_net params ~training:false state_tensor in
+    Rune.to_array (Rune.reshape [| 4 |] q_values)
+  in
+  let best = ref 0 in
+  let best_val = ref scores.(0) in
+  for i = 1 to Array.length scores - 1 do
+    if scores.(i) > !best_val then (
+      best := i;
+      best_val := scores.(i))
+  done;
+  !best
+
+let record_guard description f =
+  try f ()
+  with Invalid_argument msg ->
+    Printf.eprintf "Warning: %s (%s)\n%!" description msg
+
+let record_random_rollout ~path ~steps =
+  let env =
+    Fehu_envs.Grid_world.make ~rng:(Rune.Rng.key 73) ~render_mode:`Rgb_array ()
+  in
+  let policy = Policy.random env in
+  FV.Sink.with_ffmpeg ~fps:6 ~path (fun sink ->
+      FV.record_rollout ~env ~policy ~steps ~sink ());
+  Env.close env
+
+let record_trained_rollout ~path ~steps ~q_net ~params =
+  let env =
+    Fehu_envs.Grid_world.make ~rng:(Rune.Rng.key 137) ~render_mode:`Rgb_array ()
+  in
+  let policy =
+    Policy.greedy_discrete env ~score:(fun obs -> q_scores q_net params obs)
+  in
+  FV.Sink.with_ffmpeg ~fps:6 ~path (fun sink ->
+      FV.record_rollout ~env ~policy ~steps ~sink ());
+  Env.close env
+
 (* Q-network: takes state (flattened grid position) and outputs Q-values for
    each action *)
 let create_q_network () =
@@ -13,12 +66,6 @@ let create_q_network () =
       Layer.linear ~in_features:64 ~out_features:4 ();
       (* 4 actions *)
     ]
-
-(* Use Fehu's built-in replay buffer *)
-
-let float_state obs =
-  let arr : Int32.t array = Rune.to_array obs in
-  Array.map (fun x -> float_of_int (Int32.to_int x)) arr
 
 let run_dqn () =
   (* Create RNG *)
@@ -53,6 +100,17 @@ let run_dqn () =
   let split_keys = Rune.Rng.split root_key in
   let env = Fehu_envs.Grid_world.make ~rng:split_keys.(0) () in
   let agent_key = ref split_keys.(1) in
+
+  let record_dir = Sys.getenv_opt "FEHU_DQN_RECORD_DIR" in
+  let record_path suffix =
+    Option.map (fun dir -> Filename.concat dir suffix) record_dir
+  in
+  Option.iter
+    (fun path ->
+      Printf.printf "Recording untrained rollout to %s\n%!" path;
+      record_guard "recording untrained rollout"
+        (fun () -> record_random_rollout ~path ~steps:100))
+    (record_path "gridworld_random.mp4");
 
   let take_key () =
     let next = Rune.Rng.split !agent_key in
@@ -94,22 +152,7 @@ let run_dqn () =
           let tensor = Rune.Rng.randint (take_key ()) ~min:0 ~max:4 [| 1 |] in
           let values : Int32.t array = Rune.to_array tensor in
           Int32.to_int values.(0)
-        else
-          let state_tensor = Rune.create Rune.float32 [| 1; 2 |] !state in
-          let q_values = Kaun.apply q_net params ~training:false state_tensor in
-          let q0 = Rune.item [ 0; 0 ] q_values in
-          let q1 = Rune.item [ 0; 1 ] q_values in
-          let q2 = Rune.item [ 0; 2 ] q_values in
-          let q3 = Rune.item [ 0; 3 ] q_values in
-          let best = ref 0 in
-          let best_val = ref q0 in
-          let candidates = [| q0; q1; q2; q3 |] in
-          for i = 1 to Array.length candidates - 1 do
-            if candidates.(i) > !best_val then (
-              best := i;
-              best_val := candidates.(i))
-          done;
-          !best
+        else greedy_action q_net params !state
       in
       let action = Rune.scalar Rune.int32 (Int32.of_int action_index) in
 
@@ -219,39 +262,22 @@ let run_dqn () =
   Printf.printf "\n=== Evaluation ===\n%!";
   let eval_episodes = 20 in
   let total_rewards = ref 0.0 in
+  let eval_policy =
+    Policy.greedy_discrete env ~score:(fun obs -> q_scores q_net params obs)
+  in
 
   for episode = 1 to eval_episodes do
     let obs, _info = Env.reset env () in
-    let state = ref (float_state obs) in
+    let current_obs = ref obs in
     let done_ = ref false in
     let episode_reward = ref 0.0 in
 
     while not !done_ do
-      (* Greedy policy *)
-      let state_tensor = Rune.create Rune.float32 [| 1; 2 |] !state in
-      let q_values = Kaun.apply q_net params ~training:false state_tensor in
-      let q0 = Rune.item [ 0; 0 ] q_values in
-      let q1 = Rune.item [ 0; 1 ] q_values in
-      let q2 = Rune.item [ 0; 2 ] q_values in
-      let q3 = Rune.item [ 0; 3 ] q_values in
-      let action =
-        let best = ref 0 in
-        let best_val = ref q0 in
-        let candidates = [| q0; q1; q2; q3 |] in
-        for i = 1 to Array.length candidates - 1 do
-          if candidates.(i) > !best_val then (
-            best := i;
-            best_val := candidates.(i))
-        done;
-        !best
-      in
-
-      let transition =
-        Env.step env (Rune.scalar Rune.int32 (Int32.of_int action))
-      in
+      let action, _, _ = eval_policy !current_obs in
+      let transition = Env.step env action in
       episode_reward := !episode_reward +. transition.reward;
       done_ := transition.terminated || transition.truncated;
-      if not !done_ then state := float_state transition.observation
+      if not !done_ then current_obs := transition.observation
     done;
 
     total_rewards := !total_rewards +. !episode_reward;
@@ -260,6 +286,14 @@ let run_dqn () =
 
   Printf.printf "Average evaluation reward: %.2f\n%!"
     (!total_rewards /. float_of_int eval_episodes);
+
+  Option.iter
+    (fun path ->
+      Printf.printf "Recording trained rollout to %s\n%!" path;
+      record_guard "recording trained rollout"
+        (fun () ->
+          record_trained_rollout ~path ~steps:100 ~q_net ~params))
+    (record_path "gridworld_trained.mp4");
 
   Env.close env
 
