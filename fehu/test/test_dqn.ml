@@ -309,7 +309,7 @@ let test_learn_early_stop () =
       ()
   in
   Alcotest.(check int) "stopped after 3 episodes" 3 !episodes
-  
+
 let test_save_load () =
   let rng = Rune.Rng.key 42 in
   let q_net =
@@ -320,22 +320,26 @@ let test_save_load () =
         Kaun.Layer.linear ~in_features:8 ~out_features:2 ();
       ]
   in
-  let config = Dqn.{ default_config with batch_size = 4; buffer_capacity = 50 } in
+  let config =
+    Dqn.{ default_config with batch_size = 4; buffer_capacity = 50 }
+  in
   let agent = Dqn.create ~q_network:q_net ~n_actions:2 ~rng config in
 
   (* Save agent to a temp directory *)
-  let temp_dir = Filename.concat "/tmp" ("dqn_test_" ^ string_of_int (Random.bits ())) in
-  if not (Sys.file_exists temp_dir) then Unix.mkdir temp_dir 0o755;
-  let snapshot_path =
-    Filename.concat temp_dir "dqn_checkpoint.safetensors"
+  let temp_dir =
+    Filename.concat "/tmp" ("dqn_test_" ^ string_of_int (Random.bits ()))
   in
+  if not (Sys.file_exists temp_dir) then Unix.mkdir temp_dir 0o755;
+  let snapshot_path = Filename.concat temp_dir "dqn_checkpoint.safetensors" in
   Dqn.save_to_file agent ~path:snapshot_path;
 
   (* Load agent back *)
   let lr = Kaun.Optimizer.Schedule.constant config.learning_rate in
   let optimizer = Kaun.Optimizer.adam ~lr () in
   let loaded_agent =
-    match Dqn.load_from_file ~path:snapshot_path ~q_network:q_net ~optimizer with
+    match
+      Dqn.load_from_file ~path:snapshot_path ~q_network:q_net ~optimizer
+    with
     | Ok agent -> agent
     | Error msg -> Alcotest.failf "failed to load DQN snapshot: %s" msg
   in
@@ -344,8 +348,10 @@ let test_save_load () =
   let obs = Rune.create Rune.float32 [| 2 |] [| 0.5; 0.5 |] in
   let action1 = Dqn.predict agent obs ~epsilon:0.0 in
   let action2 = Dqn.predict loaded_agent obs ~epsilon:0.0 in
-  Alcotest.(check int32) "greedy actions match"
-    (Rune.to_array action1).(0) (Rune.to_array action2).(0);
+  Alcotest.(check int32)
+    "greedy actions match"
+    (Rune.to_array action1).(0)
+    (Rune.to_array action2).(0);
 
   (* Clean up temp files *)
   let cleanup suffix =
@@ -357,7 +363,6 @@ let test_save_load () =
   cleanup ".tensors.json";
   cleanup ".tensors.safetensors";
   Sys.rmdir temp_dir
-
 
 let () =
   let open Alcotest in
@@ -376,7 +381,8 @@ let () =
       ( "Buffer",
         [
           test_case "add transition" `Quick test_add_transition;
-          test_case "update insufficient samples" `Quick test_update_insufficient_samples;
+          test_case "update insufficient samples" `Quick
+            test_update_insufficient_samples;
         ] );
       ( "Training",
         [
@@ -386,7 +392,5 @@ let () =
           test_case "learn with early stop" `Quick test_learn_early_stop;
         ] );
       ( "Serialization",
-        [
-          test_case "save and load agent" `Quick test_save_load;
-        ] );
+        [ test_case "save and load agent" `Quick test_save_load ] );
     ]

@@ -1,5 +1,4 @@
 open Kaun
-
 module Snapshot = Checkpoint.Snapshot
 
 type config = {
@@ -177,7 +176,9 @@ let of_snapshot ~policy_network ~policy_optimizer ?baseline_network
       in
       let* policy_optimizer_state_node = find "policy_optimizer_state" in
       let* policy_opt_state =
-        match Optimizer.restore policy_optimizer policy_optimizer_state_node with
+        match
+          Optimizer.restore policy_optimizer policy_optimizer_state_node
+        with
         | Ok state -> Ok state
         | Error msg -> error msg
       in
@@ -196,15 +197,14 @@ let of_snapshot ~policy_network ~policy_optimizer ?baseline_network
         | Some node -> (
             match baseline_optimizer with
             | None ->
-                error
-                  "baseline optimizer is required to restore baseline state"
+                error "baseline optimizer is required to restore baseline state"
             | Some optimizer -> (
                 match Optimizer.restore optimizer node with
                 | Ok state -> Ok (Some state)
                 | Error msg -> error msg))
       in
       let* baseline_opt_state = baseline_opt_state_result in
-      if config.use_baseline then (
+      if config.use_baseline then
         let* baseline_network_module =
           expect_baseline "baseline_network" baseline_network
         in
@@ -234,7 +234,7 @@ let of_snapshot ~policy_network ~policy_optimizer ?baseline_network
             rng;
             n_actions;
             config;
-          })
+          }
       else
         Ok
           {
@@ -251,6 +251,7 @@ let of_snapshot ~policy_network ~policy_optimizer ?baseline_network
             config;
           }
   | _ -> error "expected snapshot record"
+
 let create ~policy_network ?baseline_network ~n_actions ~rng config =
   if config.use_baseline && Option.is_none baseline_network then
     invalid_arg
@@ -669,8 +670,7 @@ let save_to_file t ~path =
 let load_from_file ~path ~policy_network ~policy_optimizer ?baseline_network
     ?baseline_optimizer () =
   match
-    Checkpoint.load_snapshot_file_with ~path
-      ~decode:(fun snapshot ->
+    Checkpoint.load_snapshot_file_with ~path ~decode:(fun snapshot ->
         of_snapshot ~policy_network ~policy_optimizer ?baseline_network
           ?baseline_optimizer snapshot)
   with

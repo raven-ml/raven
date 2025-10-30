@@ -1,5 +1,4 @@
 open Kaun
-
 module Snapshot = Checkpoint.Snapshot
 
 type config = {
@@ -504,18 +503,19 @@ let learn t ~env ~total_timesteps
   t
 
 let save_to_file (t : t) ~path =
-  match Checkpoint.write_snapshot_file_with ~path ~encode:(fun () -> to_snapshot t) with
+  match
+    Checkpoint.write_snapshot_file_with ~path ~encode:(fun () -> to_snapshot t)
+  with
   | Ok () -> ()
   | Error err ->
       failwith
-        (Printf.sprintf "Dqn.save_to_file: %s"
-           (Checkpoint.error_to_string err))
+        (Printf.sprintf "Dqn.save_to_file: %s" (Checkpoint.error_to_string err))
 
-let load_from_file ~path ~(q_network : module_) ~(optimizer : Optimizer.algorithm)
-    =
+let load_from_file ~path ~(q_network : module_)
+    ~(optimizer : Optimizer.algorithm) =
   match
-    Checkpoint.load_snapshot_file_with ~path
-      ~decode:(fun snapshot -> of_snapshot ~q_network ~optimizer snapshot)
+    Checkpoint.load_snapshot_file_with ~path ~decode:(fun snapshot ->
+        of_snapshot ~q_network ~optimizer snapshot)
   with
   | Ok agent -> Ok agent
   | Error err -> Error (Checkpoint.error_to_string err)

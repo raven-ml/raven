@@ -179,7 +179,7 @@ val load_from_file :
   unit ->
   (t, string) result
 (** [load_from_file ~policy_network ~policy_optimizer ?baseline_network
-    ?baseline_optimizer ~path] reconstructs an agent from a snapshot file
+     ?baseline_optimizer ~path] reconstructs an agent from a snapshot file
     produced by {!save_to_file}.
 
     When the saved configuration uses a baseline, both [baseline_network] and
