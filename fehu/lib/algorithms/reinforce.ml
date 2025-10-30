@@ -26,6 +26,8 @@ type params = Ptree.t
 type metrics = {
   episode_return : float;
   episode_length : int;
+  episode_won : bool;
+  stage_desc : string;
   avg_entropy : float;
   avg_log_prob : float;
   adv_mean : float;
@@ -37,6 +39,8 @@ type metrics = {
 
 type episode_step = {
   observation : (float, Bigarray.float32_elt) Rune.t;
+  next_observation : (float, Bigarray.float32_elt) Rune.t;
+  info : Info.t;
   action_index : int;
   reward : float;
   terminated : bool;
@@ -56,6 +60,7 @@ type state = {
   total_steps : int;
   total_episodes : int;
   current_obs : (float, Bigarray.float32_elt) Rune.t;
+  current_info : Info.t;
   episode_steps_rev : episode_step list;
   episode_return_acc : float;
   episode_length_acc : int;
@@ -83,6 +88,39 @@ let reshape_observation obs =
   | [| 1; _ |] -> obs
   | [| batch; _ |] when batch = 1 -> obs
   | _ -> obs
+
+let invalid_logit_offset = -1e9
+
+let mask_offsets_of_info ~n_actions info =
+  match Info.find "action_mask" info with
+  | Some (Info.Bool_array arr) ->
+      let len = Array.length arr in
+      let offsets =
+        Array.init n_actions (fun idx ->
+            if idx < len && arr.(idx) then 0.0 else invalid_logit_offset)
+      in
+      Some offsets
+  | _ -> None
+
+let batch_mask_tensor_of_infos ~n_actions infos =
+  let rows = Array.length infos in
+  if rows = 0 then None
+  else
+    let has_mask = ref false in
+    let data = Array.make (rows * n_actions) 0.0 in
+    for row = 0 to rows - 1 do
+      match mask_offsets_of_info ~n_actions infos.(row) with
+      | Some offsets ->
+          has_mask := true;
+          Array.blit offsets 0 data (row * n_actions) n_actions
+      | None -> ()
+    done;
+    if !has_mask then Some (Rune.create Rune.float32 [| rows; n_actions |] data)
+    else None
+
+let add_mask_to_logits logits = function
+  | Some mask -> Rune.add logits mask
+  | None -> logits
 
 let compute_returns ~gamma ~rewards ~terminateds ~truncateds =
   let n = Array.length rewards in
@@ -116,6 +154,8 @@ let initial_metrics =
   {
     episode_return = 0.0;
     episode_length = 0;
+    episode_won = false;
+    stage_desc = "unknown-stage";
     avg_entropy = 0.0;
     avg_log_prob = 0.0;
     adv_mean = 0.0;
@@ -133,8 +173,10 @@ let log_softmax logits =
   let sum_exp = Rune.sum (Rune.exp shifted) ~axes:[ -1 ] ~keepdims:true in
   Rune.sub shifted (Rune.log sum_exp)
 
-let policy_statistics ~n_actions ~action_indices ~obs_batch ~network ~params =
+let policy_statistics ?mask ~n_actions ~action_indices ~obs_batch ~network
+    ~params () =
   let logits = apply network params ~training:false obs_batch in
+  let logits = add_mask_to_logits logits mask in
   let log_probs = log_softmax logits in
   let gather_axis = Array.length (Rune.shape log_probs) - 1 in
   let one_hot =
@@ -161,6 +203,8 @@ type episode_update = {
   baseline_opt_state : Optimizer.state option;
   episode_return : float;
   episode_length : int;
+  episode_won : bool;
+  stage_desc : string;
   avg_entropy : float;
   avg_log_prob : float;
   adv_mean : float;
@@ -179,6 +223,8 @@ let perform_episode_update ~params ~(algo_state : state) steps =
       baseline_opt_state = algo_state.baseline_opt_state;
       episode_return = 0.0;
       episode_length = 0;
+      episode_won = false;
+      stage_desc = algo_state.last_metrics.stage_desc;
       avg_entropy = 0.0;
       avg_log_prob = 0.0;
       adv_mean = 0.0;
@@ -189,21 +235,27 @@ let perform_episode_update ~params ~(algo_state : state) steps =
     let observations =
       Array.of_list (List.map (fun step -> step.observation) steps)
     in
-    let obs_batch = Rune.stack ~axis:0 (Array.to_list observations) in
-    let rewards = Array.of_list (List.map (fun step -> step.reward) steps) in
+    let obs_batch =
+      Rune.stack ~axis:0 (Array.to_list observations) |> Rune.cast Rune.float32
+    in
+    let raw_rewards =
+      Array.of_list (List.map (fun step -> step.reward) steps)
+    in
+    let rewards =
+      Array.map
+        (fun reward -> reward *. algo_state.config.reward_scale)
+        raw_rewards
+    in
     let terminateds =
       Array.of_list (List.map (fun step -> step.terminated) steps)
     in
     let truncateds =
       Array.of_list (List.map (fun step -> step.truncated) steps)
     in
-    let returns_raw =
-      compute_returns ~gamma:algo_state.config.gamma ~rewards ~terminateds
-        ~truncateds
+    let dones =
+      Array.init n_steps (fun idx -> terminateds.(idx) || truncateds.(idx))
     in
-    let returns_scaled =
-      Array.map (fun r -> r *. algo_state.config.reward_scale) returns_raw
-    in
+    let infos = Array.of_list (List.map (fun step -> step.info) steps) in
     let action_indices_array =
       Array.of_list (List.map (fun step -> step.action_index) steps)
     in
@@ -211,45 +263,75 @@ let perform_episode_update ~params ~(algo_state : state) steps =
       Array.map (fun idx -> Int32.of_int idx) action_indices_array
       |> Rune.create Rune.int32 [| n_steps |]
     in
+    let mask_tensor =
+      batch_mask_tensor_of_infos ~n_actions:algo_state.n_actions infos
+    in
     let baseline_values =
       if algo_state.config.use_baseline then
         match (algo_state.baseline_network, algo_state.baseline_params) with
         | Some net, Some params ->
-            let values =
-              apply net params ~training:false obs_batch
-              |> Rune.reshape [| n_steps |]
-            in
-            Rune.to_array values
+            apply net params ~training:false obs_batch
+            |> Rune.reshape [| n_steps |] |> Rune.to_array
         | _ ->
             invalid_arg
               "Reinforce.step: baseline parameters missing despite \
                use_baseline=true"
-      else [||]
+      else Array.make n_steps 0.0
     in
-    let advantages =
+    let last_step =
+      match List.rev steps with last :: _ -> last | [] -> assert false
+    in
+    let last_done = last_step.terminated || last_step.truncated in
+    let last_value =
+      if algo_state.config.use_baseline && not last_done then
+        match (algo_state.baseline_network, algo_state.baseline_params) with
+        | Some net, Some params ->
+            let next_obs =
+              reshape_observation last_step.next_observation
+              |> Rune.cast Rune.float32
+            in
+            let value =
+              apply net params ~training:false next_obs
+              |> Rune.reshape [| 1 |] |> Rune.to_array
+            in
+            value.(0)
+        | _ ->
+            invalid_arg
+              "Reinforce.step: baseline parameters missing despite \
+               use_baseline=true"
+      else 0.0
+    in
+    let stage_desc =
+      match Info.find "stage" last_step.info with
+      | Some (Info.String s) -> s
+      | _ -> "unknown-stage"
+    in
+    let episode_won = last_step.terminated in
+    let advantages_raw, returns_raw =
       if algo_state.config.use_baseline then
-        Array.mapi
-          (fun idx return_scaled -> return_scaled -. baseline_values.(idx))
-          returns_scaled
-      else Array.copy returns_scaled
+        Training.compute_gae ~rewards ~values:baseline_values ~dones ~last_value
+          ~last_done ~gamma:algo_state.config.gamma ~gae_lambda:0.95
+      else
+        let returns =
+          compute_returns ~gamma:algo_state.config.gamma ~rewards ~terminateds
+            ~truncateds
+        in
+        (Array.copy returns, returns)
     in
-    let adv_mean = float_array_mean advantages in
-    let adv_std = float_array_std advantages ~mean:adv_mean in
+    let adv_mean = float_array_mean advantages_raw in
+    let adv_std = float_array_std advantages_raw ~mean:adv_mean in
     let denom = if adv_std < 1e-6 then 1.0 else adv_std in
     let advantages_norm =
-      Array.map (fun a -> (a -. adv_mean) /. denom) advantages
+      Array.map (fun a -> (a -. adv_mean) /. denom) advantages_raw
     in
     let advantages_tensor =
       Rune.create Rune.float32 [| n_steps |] advantages_norm
-    in
-    let obs_batch =
-      (* Ensure policy sees float32 tensors *)
-      Rune.cast Rune.float32 obs_batch
     in
     let policy_loss_fn current_params =
       let logits =
         apply algo_state.policy_network current_params ~training:true obs_batch
       in
+      let logits = add_mask_to_logits logits mask_tensor in
       let log_probs = log_softmax logits in
       let gather_axis = Array.length (Rune.shape log_probs) - 1 in
       let one_hot =
@@ -283,8 +365,8 @@ let perform_episode_update ~params ~(algo_state : state) steps =
     in
     let params = Optimizer.apply_updates params updates in
     let avg_log_prob, avg_entropy =
-      policy_statistics ~n_actions:algo_state.n_actions ~action_indices
-        ~obs_batch ~network:algo_state.policy_network ~params
+      policy_statistics ?mask:mask_tensor ~n_actions:algo_state.n_actions
+        ~action_indices ~obs_batch ~network:algo_state.policy_network ~params ()
     in
     let baseline_params, baseline_opt_state, value_loss =
       if algo_state.config.use_baseline then
@@ -296,7 +378,7 @@ let perform_episode_update ~params ~(algo_state : state) steps =
         with
         | Some net, Some base_params, Some optimizer, Some opt_state ->
             let returns_tensor =
-              Rune.create Rune.float32 [| n_steps |] returns_scaled
+              Rune.create Rune.float32 [| n_steps |] returns_raw
             in
             let baseline_loss params =
               let values =
@@ -319,13 +401,16 @@ let perform_episode_update ~params ~(algo_state : state) steps =
                use_baseline=true"
       else (algo_state.baseline_params, algo_state.baseline_opt_state, None)
     in
+    let episode_return = Array.fold_left ( +. ) 0.0 raw_rewards in
     {
       params;
       policy_opt_state;
       baseline_params;
       baseline_opt_state;
-      episode_return = returns_raw.(0);
+      episode_return;
       episode_length = n_steps;
+      episode_won;
+      stage_desc;
       avg_entropy;
       avg_log_prob;
       adv_mean;
@@ -357,7 +442,7 @@ let init ?baseline_network ~env ~policy_network ~rng ~config () =
         (Some net, Some params, Some optimizer, Some opt_state)
     | _ -> (None, None, None, None)
   in
-  let current_obs, _info = Env.reset env () in
+  let current_obs, current_info = Env.reset env () in
   let state =
     {
       policy_network;
@@ -372,6 +457,7 @@ let init ?baseline_network ~env ~policy_network ~rng ~config () =
       total_steps = 0;
       total_episodes = 0;
       current_obs;
+      current_info;
       episode_steps_rev = [];
       episode_return_acc = 0.0;
       episode_length_acc = 0;
@@ -387,8 +473,17 @@ let step ~env ~params ~state =
   let sample_key = keys.(0) in
   let rng_after = keys.(1) in
   let obs = state.current_obs in
-  let obs_batched = reshape_observation obs in
+  let obs_batched = reshape_observation obs |> Rune.cast Rune.float32 in
+  let mask_tensor =
+    match
+      mask_offsets_of_info ~n_actions:state.n_actions state.current_info
+    with
+    | Some offsets ->
+        Some (Rune.create Rune.float32 [| 1; state.n_actions |] offsets)
+    | None -> None
+  in
   let logits = apply state.policy_network params ~training:true obs_batched in
+  let logits = add_mask_to_logits logits mask_tensor in
   let indices =
     Rune.Rng.categorical sample_key logits |> Rune.reshape [| 1 |]
   in
@@ -408,6 +503,8 @@ let step ~env ~params ~state =
   let episode_step =
     {
       observation = state.current_obs;
+      next_observation = transition.observation;
+      info = state.current_info;
       action_index;
       reward = transition.reward;
       terminated = transition.terminated;
@@ -430,6 +527,8 @@ let step ~env ~params ~state =
         {
           episode_return = update.episode_return;
           episode_length = update.episode_length;
+          episode_won = update.episode_won;
+          stage_desc = update.stage_desc;
           avg_entropy = update.avg_entropy;
           avg_log_prob = update.avg_log_prob;
           adv_mean = update.adv_mean;
@@ -451,8 +550,9 @@ let step ~env ~params ~state =
         state.baseline_opt_state,
         state.last_metrics )
   in
-  let next_obs =
-    if episode_done then fst (Env.reset env ()) else transition.observation
+  let next_obs, next_info =
+    if episode_done then Env.reset env ()
+    else (transition.observation, transition.info)
   in
   let episode_steps_rev = if episode_done then [] else episode_steps_rev in
   let episode_return_acc = if episode_done then 0.0 else episode_return_acc in
@@ -462,6 +562,7 @@ let step ~env ~params ~state =
       state with
       rng = rng_after;
       current_obs = next_obs;
+      current_info = next_info;
       episode_steps_rev;
       episode_return_acc;
       episode_length_acc;
@@ -556,6 +657,8 @@ let metrics_to_snapshot (m : metrics) =
     [
       ("episode_return", Snapshot.float m.episode_return);
       ("episode_length", Snapshot.int m.episode_length);
+      ("episode_won", Snapshot.bool m.episode_won);
+      ("stage_desc", Snapshot.string m.stage_desc);
       ("avg_entropy", Snapshot.float m.avg_entropy);
       ("avg_log_prob", Snapshot.float m.avg_log_prob);
       ("adv_mean", Snapshot.float m.adv_mean);
@@ -592,6 +695,18 @@ let metrics_of_snapshot snapshot =
       in
       let* episode_return = find_float "episode_return" in
       let* episode_length = find_int "episode_length" in
+      let episode_won =
+        match Snapshot.Record.find_opt "episode_won" record with
+        | Some (Scalar (Bool value)) -> value
+        | Some _ -> false
+        | None -> false
+      in
+      let stage_desc =
+        match Snapshot.Record.find_opt "stage_desc" record with
+        | Some (Scalar (String value)) -> value
+        | Some _ -> "unknown-stage"
+        | None -> "unknown-stage"
+      in
       let* avg_entropy = find_float "avg_entropy" in
       let* avg_log_prob = find_float "avg_log_prob" in
       let* adv_mean = find_float "adv_mean" in
@@ -608,6 +723,8 @@ let metrics_of_snapshot snapshot =
         {
           episode_return;
           episode_length;
+          episode_won;
+          stage_desc;
           avg_entropy;
           avg_log_prob;
           adv_mean;
@@ -775,7 +892,7 @@ let load ~path ~env ~policy_network ?baseline_network ~config () =
                     | Error _ -> initial_metrics)
                 | None -> initial_metrics
               in
-              let current_obs, _ = Env.reset env () in
+              let current_obs, current_info = Env.reset env () in
               let state =
                 {
                   policy_network;
@@ -790,6 +907,7 @@ let load ~path ~env ~policy_network ?baseline_network ~config () =
                   total_steps;
                   total_episodes;
                   current_obs;
+                  current_info;
                   episode_steps_rev = [];
                   episode_return_acc = 0.0;
                   episode_length_acc = 0;
