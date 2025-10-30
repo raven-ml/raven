@@ -208,6 +208,24 @@ let test_put_mode_clip () =
   Nx.put ~indices ~values ~mode:`clip t;
   check_t "put mode clip" [| 3 |] [| 2.; 0.; 4. |] t
 
+let test_index_put_basic () =
+  let t = Nx.zeros Nx.float32 [| 3; 3 |] in
+  let rows = Nx.create Nx.int32 [| 4 |] [| 0l; 2l; 1l; 2l |] in
+  let cols = Nx.create Nx.int32 [| 4 |] [| 1l; 0l; 2l; 2l |] in
+  let values = Nx.arange_f Nx.float32 10. 14. 1. in
+  Nx.index_put ~indices:[| rows; cols |] ~values t;
+  check_t "index_put basic" [| 3; 3 |]
+    [| 0.; 10.; 0.; 0.; 0.; 12.; 11.; 0.; 13. |]
+    t
+
+let test_index_put_mode_wrap () =
+  let t = Nx.zeros Nx.float32 [| 2; 2 |] in
+  let rows = Nx.create Nx.int32 [| 3 |] [| -1l; 0l; 1l |] in
+  let cols = Nx.create Nx.int32 [| 3 |] [| 0l; -1l; 1l |] in
+  let values = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  Nx.index_put ~indices:[| rows; cols |] ~values ~mode:`wrap t;
+  check_t "index_put mode wrap" [| 2; 2 |] [| 0.; 2.; 1.; 3. |] t
+
 (* ───── put_along_axis Tests ───── *)
 
 let test_put_along_axis () =
@@ -409,6 +427,8 @@ let put_tests =
     ("put with axis", `Quick, test_put_with_axis);
     ("put mode wrap", `Quick, test_put_mode_wrap);
     ("put mode clip", `Quick, test_put_mode_clip);
+    ("index_put basic", `Quick, test_index_put_basic);
+    ("index_put mode wrap", `Quick, test_index_put_mode_wrap);
     ("put_along_axis", `Quick, test_put_along_axis);
   ]
 

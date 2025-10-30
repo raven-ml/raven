@@ -3516,6 +3516,110 @@ module Make (B : Backend_intf.S) = struct
         in
         blit result t
 
+  let index_put ~indices ~values ?(mode = `raise) t =
+    let context = B.context t in
+    let t_shape = shape t in
+    let ndim = Array.length t_shape in
+
+    if ndim = 0 then
+      Error.invalid ~op:"index_put" ~what:"tensor rank"
+        ~reason:"cannot index into scalar tensor" ();
+
+    let indices_count = Array.length indices in
+    if indices_count <> ndim then
+      Error.invalid ~op:"index_put" ~what:"indices"
+        ~reason:
+          (Printf.sprintf "expected %d index tensors, got %d" ndim
+             indices_count)
+        ();
+
+    (* Ensure all indices are int32 and broadcastable to a common shape *)
+    let indices_int32 =
+      Array.map
+        (fun idx -> if dtype idx = Int32 then idx else astype Int32 idx)
+        indices
+    in
+    let indices_broadcasted =
+      indices_int32 |> Array.to_list |> broadcast_arrays |> Array.of_list
+    in
+
+    (* Apply bounds handling per-axis and validate zero-sized axes *)
+    let indices_processed =
+      Array.mapi
+        (fun axis idx ->
+          let axis_size = t_shape.(axis) in
+          let has_updates = numel idx <> 0 in
+          if axis_size = 0 && has_updates then
+            Error.invalid ~op:"index_put"
+              ~what:(Printf.sprintf "axis %d" axis)
+              ~reason:"cannot index into zero-sized dimension" ();
+
+          if not has_updates then idx
+          else
+            match mode with
+            | `raise -> idx
+            | `wrap ->
+                if axis_size = 0 then idx
+                else
+                  let modulus_scalar =
+                    scalar (B.context idx) Int32 (Int32.of_int axis_size)
+                  in
+                  let modulus =
+                    broadcast_to (shape idx) modulus_scalar
+                  in
+                  let wrapped = mod_ idx modulus in
+                  let zeros_idx =
+                    zeros (B.context idx) Int32 (shape idx)
+                  in
+                  let needs_fix = cmplt wrapped zeros_idx in
+                  let wrapped_plus_mod = add wrapped modulus in
+                  where needs_fix wrapped_plus_mod wrapped
+            | `clip ->
+                if axis_size = 0 then idx
+                else
+                  let zeros_idx =
+                    zeros (B.context idx) Int32 (shape idx)
+                  in
+                  let max_idx =
+                    full (B.context idx) Int32 (shape idx)
+                      (Int32.of_int (axis_size - 1))
+                  in
+                  minimum (maximum idx zeros_idx) max_idx)
+        indices_broadcasted
+    in
+
+    let target_shape = shape indices_processed.(0) in
+    let num_updates = array_prod target_shape in
+
+    if num_updates = 0 then ()
+    else (
+      let values =
+        if shape values = target_shape then values
+        else broadcast_to target_shape values
+      in
+
+      let strides = Shape.c_contiguous_strides t_shape in
+      let flat_indices =
+        let acc = ref (zeros context Int32 target_shape) in
+        for axis = 0 to ndim - 1 do
+          let idx = indices_processed.(axis) in
+          let stride = strides.(axis) in
+          let contribution =
+            if stride = 0 || stride = 1 then idx
+            else
+              let stride_tensor =
+                full context Int32 target_shape (Int32.of_int stride)
+              in
+              mul idx stride_tensor
+          in
+          acc := add !acc contribution
+        done;
+        !acc
+      in
+
+      (* Flatten scatter into the original tensor *)
+      put ~indices:flat_indices ~values ~mode:`raise t)
+
   let put_along_axis ~axis ~indices ~values t =
     let axis = resolve_single_axis t axis in
 

@@ -1285,6 +1285,42 @@ val put :
       - : (int32, int32_elt) t = [99, 0, 0, 0, 99]
     ]} *)
 
+val index_put :
+  indices:(int32, int32_elt) t array ->
+  values:('a, 'b) t ->
+  ?mode:[ `raise | `wrap | `clip ] ->
+  ('a, 'b) t ->
+  unit
+(** [index_put ~indices ~values ?mode t] writes [values] into [t] at the
+    coordinates specified by [indices].
+
+    [indices] is an array that contains one tensor per axis of [t]. Each tensor
+    provides integer coordinates for its axis; they are broadcast to a common
+    shape that also determines how many updates are performed. [values] is
+    broadcast to the same shape. Updates follow element-wise order and leave the
+    shape of [t] unchanged. Duplicate coordinates overwrite previous updates,
+    matching {!put}.
+
+    [mode] controls how out-of-bounds indices are handled per axis:
+    `raise (default) checks bounds, `wrap performs modular indexing, and `clip
+    clamps to the valid range.
+
+    @raise Invalid_argument if the number of index tensors does not match the
+    rank of [t], or if any axis is zero-sized while a non-empty update set is
+    requested.
+
+    {@ocaml[
+      # let t = zeros float32 [| 3; 3 |] in
+        let rows = create int32 [| 4 |] [| 0l; 2l; 1l; 2l |] in
+        let cols = create int32 [| 4 |] [| 1l; 0l; 2l; 2l |] in
+        index_put ~indices:[| rows; cols |]
+          ~values:(arange_f float32 0. 4. 1.) t;
+        t
+      - : (float, float32_elt) t = [[0, 0, 0],
+                                    [0, 0, 2],
+                                    [1, 0, 3]]
+    ]} *)
+
 val put_along_axis :
   axis:int ->
   indices:(int32, int32_elt) t ->
