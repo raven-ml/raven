@@ -211,6 +211,11 @@ type _ Effect.t +=
     }
       -> (float, Dtype.float64_elt) t Effect.t
   | E_psum : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
+  | E_qr : {
+      t_in : ('a, 'b) t;
+      reduced : bool;
+    }
+    -> (('a, 'b) t * ('a, 'b) t) Effect.t
 
 (* Native_context creation *)
 let create_context () : context = Native_context (Nx_c.create_context ())
@@ -611,7 +616,16 @@ let op_irfft (type a c) (t : (Complex.t, a) t) ~(dtype : (float, c) Dtype.t)
 let op_cholesky ~upper:_ _ =
   failwith "op_cholesky: not implemented in Rune backend"
 
-let op_qr ~reduced:_ _ = failwith "op_qr: not implemented in Rune backend"
+let op_qr ~reduced t_in =
+  try Effect.perform (E_qr { t_in; reduced })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Native_tensor t ->
+        let q, r = Nx_c.op_qr ~reduced t in
+        (Native_tensor q, Native_tensor r)
+    | Symbolic_tensor _ ->
+        failwith "op_qr: symbolic tensors not supported in Rune backend")
+
 
 let op_svd ~full_matrices:_ _ =
   failwith "op_svd: not implemented in Rune backend"
