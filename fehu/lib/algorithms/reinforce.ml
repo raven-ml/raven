@@ -1,4 +1,5 @@
 open Kaun
+module Snapshot = Checkpoint.Snapshot
 
 type config = {
   learning_rate : float;
@@ -42,6 +43,214 @@ type update_metrics = {
   adv_std : float;
   value_loss : float option;
 }
+
+let reinforce_schema_key = "schema"
+let reinforce_schema_value = "fehu.reinforce/1"
+
+let config_to_snapshot (c : config) =
+  Snapshot.record
+    [
+      ("learning_rate", Snapshot.float c.learning_rate);
+      ("gamma", Snapshot.float c.gamma);
+      ("use_baseline", Snapshot.bool c.use_baseline);
+      ("reward_scale", Snapshot.float c.reward_scale);
+      ("entropy_coef", Snapshot.float c.entropy_coef);
+      ("max_episode_steps", Snapshot.int c.max_episode_steps);
+    ]
+
+let config_of_snapshot snapshot =
+  let open Result in
+  let ( let* ) = Result.bind in
+  let open Snapshot in
+  let error field message =
+    Error (Printf.sprintf "Reinforce config field %s %s" field message)
+  in
+  match snapshot with
+  | Record record ->
+      let find_float field =
+        match Snapshot.Record.find_opt field record with
+        | Some (Scalar (Float value)) -> Ok value
+        | Some (Scalar (Int value)) -> Ok (float_of_int value)
+        | Some _ -> error field "must be float"
+        | None -> error field "missing"
+      in
+      let find_int field =
+        match Snapshot.Record.find_opt field record with
+        | Some (Scalar (Int value)) -> Ok value
+        | Some (Scalar (Float value)) -> Ok (int_of_float value)
+        | Some _ -> error field "must be int"
+        | None -> error field "missing"
+      in
+      let find_bool field =
+        match Snapshot.Record.find_opt field record with
+        | Some (Scalar (Bool value)) -> Ok value
+        | Some _ -> error field "must be bool"
+        | None -> error field "missing"
+      in
+      let* learning_rate = find_float "learning_rate" in
+      let* gamma = find_float "gamma" in
+      let* use_baseline = find_bool "use_baseline" in
+      let* reward_scale = find_float "reward_scale" in
+      let* entropy_coef = find_float "entropy_coef" in
+      let* max_episode_steps = find_int "max_episode_steps" in
+      Ok
+        {
+          learning_rate;
+          gamma;
+          use_baseline;
+          reward_scale;
+          entropy_coef;
+          max_episode_steps;
+        }
+  | _ -> Error "Reinforce config must be a record"
+
+let to_snapshot (t : t) =
+  let baseline_entries =
+    match (t.baseline_params, t.baseline_opt_state) with
+    | Some params, Some opt_state ->
+        [
+          ("baseline_params", Snapshot.ptree params);
+          ("baseline_optimizer_state", Optimizer.serialize opt_state);
+        ]
+    | _ -> []
+  in
+  Snapshot.record
+    ([
+       (reinforce_schema_key, Snapshot.string reinforce_schema_value);
+       ("n_actions", Snapshot.int t.n_actions);
+       ("rng", Snapshot.rng t.rng);
+       ("config", config_to_snapshot t.config);
+       ("policy_params", Snapshot.ptree t.policy_params);
+       ("policy_optimizer_state", Optimizer.serialize t.policy_opt_state);
+     ]
+    @ baseline_entries)
+
+let of_snapshot ~policy_network ~policy_optimizer ?baseline_network
+    ?baseline_optimizer snapshot =
+  let open Result in
+  let ( let* ) = Result.bind in
+  let open Snapshot in
+  let error msg = Error ("Reinforce.of_snapshot: " ^ msg) in
+  let expect_baseline label value =
+    match value with
+    | Some v -> Ok v
+    | None -> error ("missing baseline field " ^ label)
+  in
+  match snapshot with
+  | Record record ->
+      let validate_schema () =
+        match Snapshot.Record.find_opt reinforce_schema_key record with
+        | None -> Ok ()
+        | Some (Scalar (String value)) ->
+            if String.equal value reinforce_schema_value then Ok ()
+            else error ("unsupported schema " ^ value)
+        | Some _ -> error "invalid schema field"
+      in
+      let* () = validate_schema () in
+      let find field =
+        match Snapshot.Record.find_opt field record with
+        | Some value -> Ok value
+        | None -> error ("missing field " ^ field)
+      in
+      let decode_int = function
+        | Scalar (Int value) -> Ok value
+        | Scalar (Float value) -> Ok (int_of_float value)
+        | _ -> error "expected int scalar"
+      in
+      let decode_rng = function
+        | Scalar (Int seed) -> Ok (Rune.Rng.key seed)
+        | Scalar (Float value) -> Ok (Rune.Rng.key (int_of_float value))
+        | _ -> error "expected rng scalar"
+      in
+      let* n_actions_node = find "n_actions" in
+      let* n_actions = decode_int n_actions_node in
+      let* rng_node = find "rng" in
+      let* rng = decode_rng rng_node in
+      let* config_node = find "config" in
+      let* config = config_of_snapshot config_node in
+      let* policy_params_node = find "policy_params" in
+      let* policy_params =
+        match Snapshot.to_ptree policy_params_node with
+        | Ok params -> Ok params
+        | Error msg -> error msg
+      in
+      let* policy_optimizer_state_node = find "policy_optimizer_state" in
+      let* policy_opt_state =
+        match
+          Optimizer.restore policy_optimizer policy_optimizer_state_node
+        with
+        | Ok state -> Ok state
+        | Error msg -> error msg
+      in
+      let baseline_params_result =
+        match Snapshot.Record.find_opt "baseline_params" record with
+        | None -> Ok None
+        | Some node -> (
+            match Snapshot.to_ptree node with
+            | Ok params -> Ok (Some params)
+            | Error msg -> error msg)
+      in
+      let* baseline_params = baseline_params_result in
+      let baseline_opt_state_result =
+        match Snapshot.Record.find_opt "baseline_optimizer_state" record with
+        | None -> Ok None
+        | Some node -> (
+            match baseline_optimizer with
+            | None ->
+                error "baseline optimizer is required to restore baseline state"
+            | Some optimizer -> (
+                match Optimizer.restore optimizer node with
+                | Ok state -> Ok (Some state)
+                | Error msg -> error msg))
+      in
+      let* baseline_opt_state = baseline_opt_state_result in
+      if config.use_baseline then
+        let* baseline_network_module =
+          expect_baseline "baseline_network" baseline_network
+        in
+        let* baseline_optimizer_algorithm =
+          expect_baseline "baseline_optimizer" baseline_optimizer
+        in
+        let* baseline_params_value =
+          match baseline_params with
+          | Some params -> Ok params
+          | None -> error "missing baseline_params field"
+        in
+        let* baseline_opt_state_value =
+          match baseline_opt_state with
+          | Some state -> Ok state
+          | None -> error "missing baseline_optimizer_state field"
+        in
+        Ok
+          {
+            policy_network;
+            policy_params;
+            baseline_network = Some baseline_network_module;
+            baseline_params = Some baseline_params_value;
+            policy_optimizer;
+            policy_opt_state;
+            baseline_optimizer = Some baseline_optimizer_algorithm;
+            baseline_opt_state = Some baseline_opt_state_value;
+            rng;
+            n_actions;
+            config;
+          }
+      else
+        Ok
+          {
+            policy_network;
+            policy_params;
+            baseline_network = None;
+            baseline_params = None;
+            policy_optimizer;
+            policy_opt_state;
+            baseline_optimizer = None;
+            baseline_opt_state = None;
+            rng;
+            n_actions;
+            config;
+          }
+  | _ -> error "expected snapshot record"
 
 let create ~policy_network ?baseline_network ~n_actions ~rng config =
   if config.use_baseline && Option.is_none baseline_network then
@@ -448,10 +657,22 @@ let learn t ~env ~total_timesteps
 
   t
 
-let save _t _path =
-  (* TODO: Implement serialization *)
-  failwith "Reinforce.save: not yet implemented"
+let save_to_file t ~path =
+  match
+    Checkpoint.write_snapshot_file_with ~path ~encode:(fun () -> to_snapshot t)
+  with
+  | Ok () -> ()
+  | Error err ->
+      failwith
+        (Printf.sprintf "Reinforce.save_to_file: %s"
+           (Checkpoint.error_to_string err))
 
-let load _path =
-  (* TODO: Implement deserialization *)
-  failwith "Reinforce.load: not yet implemented"
+let load_from_file ~path ~policy_network ~policy_optimizer ?baseline_network
+    ?baseline_optimizer () =
+  match
+    Checkpoint.load_snapshot_file_with ~path ~decode:(fun snapshot ->
+        of_snapshot ~policy_network ~policy_optimizer ?baseline_network
+          ?baseline_optimizer snapshot)
+  with
+  | Ok agent -> Ok agent
+  | Error err -> Error (Checkpoint.error_to_string err)
