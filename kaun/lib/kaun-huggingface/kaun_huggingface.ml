@@ -150,8 +150,67 @@ let download_file ?(config = Config.default) ?(revision = Latest) ~model_id
 
 let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
     () =
-  (* Try common safetensors filenames *)
-  let filenames =
+  let load_entries ?allowed_names path =
+    let archive = Nx_io.load_safetensor path in
+    match allowed_names with
+    | None ->
+        Hashtbl.fold
+          (fun name (Nx_io.P nx_tensor) acc ->
+            let rune_tensor = Rune.of_nx nx_tensor in
+            (name, Kaun.Ptree.tensor rune_tensor) :: acc)
+          archive []
+    | Some names ->
+        List.map
+          (fun name ->
+            match Hashtbl.find_opt archive name with
+            | Some (Nx_io.P nx_tensor) ->
+                let rune_tensor = Rune.of_nx nx_tensor in
+                (name, Kaun.Ptree.tensor rune_tensor)
+            | None ->
+                failwith
+                  (Printf.sprintf
+                     "Shard for %s missing tensor '%s' while loading %s"
+                     model_id name path))
+          names
+  in
+
+  let params_from_entries entries = Kaun.Ptree.dict entries in
+
+  let apply_progress progress_list params =
+    let combine acc next =
+      let accumulated_time =
+        if acc.rate <= 0. then 0.
+        else float_of_int acc.downloaded_bytes /. acc.rate
+      in
+      let next_time =
+        if next.rate <= 0. then 0.
+        else float_of_int next.downloaded_bytes /. next.rate
+      in
+      let total_bytes = acc.downloaded_bytes + next.downloaded_bytes in
+      let total_time = accumulated_time +. next_time in
+      let rate =
+        if total_time <= 0. then acc.rate
+        else float_of_int total_bytes /. total_time
+      in
+      let total_size =
+        match (acc.total_bytes, next.total_bytes) with
+        | Some a, Some b -> Some (a + b)
+        | _ -> None
+      in
+      { downloaded_bytes = total_bytes; total_bytes = total_size; rate }
+    in
+    match progress_list with
+    | [] -> Cached params
+    | first :: rest ->
+        let total = List.fold_left combine first rest in
+        Downloaded (params, total)
+  in
+
+  let index_filenames =
+    [ "model.safetensors.index.json"; "pytorch_model.bin.index.json" ]
+  in
+
+  let fallback_filenames =
     [
       "model.safetensors";
       "pytorch_model.safetensors";
@@ -159,43 +218,144 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
     ]
   in
 
-  let load_from_path path =
-    let archive = Nx_io.load_safetensor path in
-    let entries =
-      Hashtbl.fold
-        (fun name (Nx_io.P nx_tensor) acc ->
-          let rune_tensor = Rune.of_nx nx_tensor in
-          (name, Kaun.Ptree.tensor rune_tensor) :: acc)
-        archive []
-    in
-    Kaun.Ptree.dict entries
+  let local_path_of_result = function
+    | Cached path -> path
+    | Downloaded (path, _) -> path
   in
 
-  let rec try_files = function
-    | [] ->
-        failwith (Printf.sprintf "No safetensors file found for %s" model_id)
+  let progress_of_result acc = function
+    | Cached _ -> acc
+    | Downloaded (_, progress) -> progress :: acc
+  in
+
+  let attempt_index filename =
+    try
+      let result = download_file ~config ~revision ~model_id ~filename () in
+      let index_path = local_path_of_result result in
+      let progress_acc = progress_of_result [] result in
+
+      let json = Yojson.Safe.from_file index_path in
+      let weight_map =
+        match Yojson.Safe.Util.member "weight_map" json with
+        | `Assoc entries ->
+            List.map
+              (fun (tensor_name, shard_json) ->
+                match shard_json with
+                | `String shard -> (tensor_name, shard)
+                | _ -> failwith "Invalid shard entry in weight_map")
+              entries
+        | _ -> failwith "Missing weight_map in index file"
+      in
+
+      if weight_map = [] then failwith "Empty weight_map in index file";
+
+      let shards_by_file = Hashtbl.create 8 in
+      let file_order = ref [] in
+      List.iter
+        (fun (tensor_name, shard_filename) ->
+          let existing = Hashtbl.find_opt shards_by_file shard_filename in
+          match existing with
+          | Some tensors ->
+              Hashtbl.replace shards_by_file shard_filename
+                (tensor_name :: tensors)
+          | None ->
+              Hashtbl.add shards_by_file shard_filename [ tensor_name ];
+              file_order := shard_filename :: !file_order)
+        weight_map;
+
+      let file_order = List.rev !file_order in
+      let seen_tensors = Hashtbl.create (List.length weight_map) in
+
+      let progress_list, entries_rev =
+        List.fold_left
+          (fun (progresses, acc_entries_rev) shard_filename ->
+            let shard_result =
+              download_file ~config ~revision ~model_id ~filename:shard_filename
+                ()
+            in
+            let shard_path = local_path_of_result shard_result in
+            let progresses = progress_of_result progresses shard_result in
+            let tensors =
+              match Hashtbl.find_opt shards_by_file shard_filename with
+              | Some names -> List.rev names
+              | None ->
+                  failwith
+                    (Printf.sprintf "Shard mapping missing for file '%s' in %s"
+                       shard_filename filename)
+            in
+            let new_entries = load_entries ~allowed_names:tensors shard_path in
+            List.iter
+              (fun (tensor_name, _) ->
+                if Hashtbl.mem seen_tensors tensor_name then
+                  failwith
+                    (Printf.sprintf
+                       "Tensor '%s' defined multiple times across shards"
+                       tensor_name);
+                Hashtbl.add seen_tensors tensor_name ())
+              new_entries;
+            let acc_entries_rev =
+              List.fold_left
+                (fun acc entry -> entry :: acc)
+                acc_entries_rev (List.rev new_entries)
+            in
+            (progresses, acc_entries_rev))
+          (progress_acc, []) file_order
+      in
+
+      if Hashtbl.length seen_tensors <> List.length weight_map then
+        failwith
+          "Incomplete shard loading: not all tensors listed in the weight_map \
+           were found";
+
+      let entries = List.rev entries_rev in
+      let params = params_from_entries entries in
+      Some (apply_progress progress_list params)
+    with
+    | Failure msg
+      when String.starts_with ~prefix:"Failed to download" msg
+           || String.starts_with ~prefix:"No such file" msg
+           || String.starts_with ~prefix:"File not in cache (offline mode)" msg
+      ->
+        None
+    | Yojson.Json_error _ -> None
+    | Sys_error _ -> None
+  in
+
+  let rec try_indexes = function
+    | [] -> None
     | filename :: rest -> (
-        try
-          let result = download_file ~config ~revision ~model_id ~filename () in
-          let local_path =
-            match result with
-            | Cached path -> path
-            | Downloaded (path, _) -> path
-          in
-          let params = load_from_path local_path in
-          match result with
-          | Cached _ -> Cached params
-          | Downloaded (_, progress) -> Downloaded (params, progress)
-        with
-        | Failure msg
-          when String.starts_with ~prefix:"Failed to download" msg
-               || String.starts_with ~prefix:"No such file" msg ->
-            try_files rest
-        | Failure _ -> try_files rest
-        | _ -> try_files rest)
+        match attempt_index filename with
+        | Some result -> Some result
+        | None -> try_indexes rest)
   in
 
-  try_files filenames
+  match try_indexes index_filenames with
+  | Some result -> result
+  | None ->
+      let rec try_files = function
+        | [] ->
+            failwith
+              (Printf.sprintf "No safetensors file found for %s" model_id)
+        | filename :: rest -> (
+            try
+              let result =
+                download_file ~config ~revision ~model_id ~filename ()
+              in
+              let local_path = local_path_of_result result in
+              let entries = load_entries local_path in
+              let params = params_from_entries entries in
+              match result with
+              | Cached _ -> Cached params
+              | Downloaded (_, progress) -> Downloaded (params, progress)
+            with
+            | Failure msg
+              when String.starts_with ~prefix:"Failed to download" msg
+                   || String.starts_with ~prefix:"No such file" msg ->
+                try_files rest
+            | Failure _ -> try_files rest
+            | _ -> try_files rest)
+      in
+      try_files fallback_filenames
 
 let load_config ?(config = Config.default) ?(revision = Latest) ~model_id () =
   let result =

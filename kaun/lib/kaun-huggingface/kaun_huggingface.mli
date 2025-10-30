@@ -92,7 +92,9 @@ val load_safetensors :
   unit ->
   Kaun.params download_result
 (** [load_safetensors ~model_id ~dtype ()] downloads and loads safetensors
-    weights. Automatically tries common filenames like "model.safetensors". *)
+    weights. Checks for sharded checkpoints via ["model.safetensors.index.json"]
+    (and similar) and merges the shards, falling back to single-file safetensors
+    names only when no index is present. *)
 
 val load_config :
   ?config:Config.t ->

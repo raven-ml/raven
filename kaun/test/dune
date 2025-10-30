@@ -7,7 +7,8 @@
   test_metrics
   test_optimizer
   test_training
-  test_gradients_vs_jax)
+  test_gradients_vs_jax
+  test_huggingface)
  (package kaun)
  (libraries
   rune
@@ -19,4 +20,5 @@
   kaun.models
   bigarray_ext
   yojson
+  unix
   alcotest))
