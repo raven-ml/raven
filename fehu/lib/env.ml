@@ -12,9 +12,24 @@ let transition ?(reward = 0.) ?(terminated = false) ?(truncated = false)
     ?(info = Info.empty) ~observation () =
   { observation; reward; terminated; truncated; info }
 
+type render_mode =
+  [ `Human
+  | `Rgb_array
+  | `Ansi
+  | `Svg
+  | `Custom of string ]
+
+let render_mode_to_string = function
+  | `Human -> "human"
+  | `Rgb_array -> "rgb_array"
+  | `Ansi -> "ansi"
+  | `Svg -> "svg"
+  | `Custom name -> name
+
 type ('obs, 'act, 'render) t = {
   id : string option;
   mutable metadata : Metadata.t;
+  render_mode : render_mode option;
   observation_space : 'obs Space.t;
   action_space : 'act Space.t;
   mutable rng : Rune.Rng.key;
@@ -40,15 +55,33 @@ let ensure_reset env ~operation =
       (Reset_needed
          (Printf.sprintf "Operation '%s' requires calling reset first" operation))
 
-let create ?id ?(metadata = Metadata.default) ?validate_transition ~rng
-    ~observation_space ~action_space ~reset:reset_handler ~step:step_handler
+let create ?id ?(metadata = Metadata.default) ?render_mode ?validate_transition
+    ~rng ~observation_space ~action_space ~reset:reset_handler ~step:step_handler
     ?render ?close () =
+  (match render_mode with
+  | None -> ()
+  | Some mode ->
+      let mode_key = render_mode_to_string mode in
+      if not (Metadata.supports_render_mode mode_key metadata) then
+        raise_error
+          (Invalid_metadata
+             (Printf.sprintf
+                "Render mode '%s' is not declared in metadata.render_modes" mode_key)));
   let render_impl = Option.value render ~default:(fun _ -> None) in
   let close_impl = Option.value close ~default:(fun _ -> ()) in
+  let render_mode = render_mode in
+  let maybe_human_render env =
+    match env.render_mode with
+    | Some `Human ->
+        (* Ignore return value; human mode renders side effects such as windows. *)
+        ignore (env.render_impl env)
+    | _ -> ()
+  in
   let rec env =
     {
       id;
       metadata;
+      render_mode;
       observation_space;
       action_space;
       rng;
@@ -73,6 +106,7 @@ let create ?id ?(metadata = Metadata.default) ?validate_transition ~rng
                (value=%s)"
               value))
     else (
+      maybe_human_render env;
       env.needs_reset <- false;
       (observation, info))
   and step_impl env action =
@@ -98,17 +132,30 @@ let create ?id ?(metadata = Metadata.default) ?validate_transition ~rng
                (Printf.sprintf
                   "Step produced an observation outside observation_space \
                    (value=%s)"
-                  value))));
+                   value))));
     Option.iter (fun validate -> validate transition) validate_transition;
     if transition.terminated || transition.truncated then
       env.needs_reset <- true;
+    maybe_human_render env;
     transition
   in
   env
 
 let id env = env.id
 let metadata env = env.metadata
-let set_metadata env metadata = env.metadata <- metadata
+let render_mode env = env.render_mode
+
+let set_metadata env metadata =
+  Option.iter
+    (fun mode ->
+      let mode_key = render_mode_to_string mode in
+      if not (Metadata.supports_render_mode mode_key metadata) then
+        raise_error
+          (Invalid_metadata
+             (Printf.sprintf
+                "Render mode '%s' is not declared in metadata.render_modes" mode_key)))
+    env.render_mode;
+  env.metadata <- metadata
 let rng env = env.rng
 
 let set_rng env rng =

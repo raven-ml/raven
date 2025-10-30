@@ -107,6 +107,16 @@ val step : ('obs, 'act, 'render) t -> 'act array -> ('obs, 'act, 'render) step
 
     @raise Invalid_argument if [actions] length doesn't match {!num_envs}. *)
 
+val render : ('obs, 'act, 'render) t -> 'render option array
+(** [render vec_env] calls {!Env.render} on each underlying environment.
+
+    Returns an array of render outputs (or [None] if an environment does not
+    produce a frame). *)
+
+val envs : ('obs, 'act, 'render) t -> ('obs, 'act, 'render) Env.t array
+(** [envs vec_env] returns the array of underlying environments. Mutating the
+    array updates the vector environment in place. *)
+
 val close : ('obs, 'act, 'render) t -> unit
 (** [close vec_env] closes all constituent environments.
 

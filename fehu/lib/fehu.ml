@@ -2,6 +2,7 @@ module Errors = Errors
 module Info = Info
 module Metadata = Metadata
 module Space = Space
+module Render = Render
 module Env = Env
 module Wrapper = Wrapper
 module Vector_env = Vector_env

@@ -176,6 +176,9 @@ module Metadata = Metadata
     Metadata includes supported render modes, environment version, author
     information, and tags. *)
 
+module Render = Render
+(** Typed render payloads shared across environments. *)
+
 module Space = Space
 (** Observation and action space definitions.
 
