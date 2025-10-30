@@ -163,13 +163,25 @@ val learn :
 
     Time complexity: O(total_timesteps × network_forward_time). *)
 
-val save : t -> string -> unit
-(** [save agent path] saves agent state to disk.
+val save_to_file : t -> path:string -> unit
+(** [save_to_file agent ~path] writes the agent state to a single snapshot file.
 
-    Saves policy parameters, baseline parameters (if present), optimizer states,
-    and configuration. The agent can be restored with {!load}. *)
+    The snapshot stores configuration, RNG, policy and optional baseline
+    parameters, and optimizer state. Trajectories and replay buffers are not
+    included. *)
 
-val load : string -> t
-(** [load path] loads a saved agent from disk.
+val load_from_file :
+  path:string ->
+  policy_network:Kaun.module_ ->
+  policy_optimizer:Kaun.Optimizer.algorithm ->
+  ?baseline_network:Kaun.module_ ->
+  ?baseline_optimizer:Kaun.Optimizer.algorithm ->
+  unit ->
+  (t, string) result
+(** [load_from_file ~policy_network ~policy_optimizer ?baseline_network
+    ?baseline_optimizer ~path] reconstructs an agent from a snapshot file
+    produced by {!save_to_file}.
 
-    @raise Sys_error if file doesn't exist or is corrupted. *)
+    When the saved configuration uses a baseline, both [baseline_network] and
+    [baseline_optimizer] must be provided. Returns either the restored agent or
+    an error message. *)

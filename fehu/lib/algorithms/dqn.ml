@@ -1,5 +1,7 @@
 open Kaun
 
+module Snapshot = Checkpoint.Snapshot
+
 type config = {
   learning_rate : float;
   gamma : float;
@@ -46,6 +48,151 @@ type update_metrics = {
   avg_q_value : float;
   loss : float;
 }
+
+let dqn_schema_key = "schema"
+let dqn_schema_value = "fehu.dqn/1"
+
+let config_to_snapshot (c : config) : Snapshot.t =
+  Snapshot.record
+    [
+      ("learning_rate", Snapshot.float c.learning_rate);
+      ("gamma", Snapshot.float c.gamma);
+      ("epsilon_start", Snapshot.float c.epsilon_start);
+      ("epsilon_end", Snapshot.float c.epsilon_end);
+      ("epsilon_decay", Snapshot.float c.epsilon_decay);
+      ("batch_size", Snapshot.int c.batch_size);
+      ("buffer_capacity", Snapshot.int c.buffer_capacity);
+      ("target_update_freq", Snapshot.int c.target_update_freq);
+    ]
+
+let config_of_snapshot (snapshot : Snapshot.t) : (config, string) result =
+  let open Result in
+  let ( let* ) = Result.bind in
+  let open Snapshot in
+  match snapshot with
+  | Record record ->
+      let find_float field =
+        match Snapshot.Record.find_opt field record with
+        | Some (Scalar (Float value)) -> Ok value
+        | Some (Scalar (Int value)) -> Ok (float_of_int value)
+        | Some _ ->
+            Error (Printf.sprintf "DQN config field %s must be float" field)
+        | None -> Error (Printf.sprintf "Missing DQN config field %s" field)
+      in
+      let find_int field =
+        match Snapshot.Record.find_opt field record with
+        | Some (Scalar (Int value)) -> Ok value
+        | Some (Scalar (Float value)) -> Ok (int_of_float value)
+        | Some _ ->
+            Error (Printf.sprintf "DQN config field %s must be int" field)
+        | None -> Error (Printf.sprintf "Missing DQN config field %s" field)
+      in
+      let* learning_rate = find_float "learning_rate" in
+      let* gamma = find_float "gamma" in
+      let* epsilon_start = find_float "epsilon_start" in
+      let* epsilon_end = find_float "epsilon_end" in
+      let* epsilon_decay = find_float "epsilon_decay" in
+      let* batch_size = find_int "batch_size" in
+      let* buffer_capacity = find_int "buffer_capacity" in
+      let* target_update_freq = find_int "target_update_freq" in
+      Ok
+        {
+          learning_rate;
+          gamma;
+          epsilon_start;
+          epsilon_end;
+          epsilon_decay;
+          batch_size;
+          buffer_capacity;
+          target_update_freq;
+        }
+  | _ -> Error "DQN config must be a record"
+
+let to_snapshot (t : t) : Snapshot.t =
+  Snapshot.record
+    [
+      (dqn_schema_key, Snapshot.string dqn_schema_value);
+      ("n_actions", Snapshot.int t.n_actions);
+      ("rng", Snapshot.rng t.rng);
+      ("config", config_to_snapshot t.config);
+      ("optimizer_state", Optimizer.serialize t.opt_state);
+      ("q_params", Snapshot.ptree t.q_params);
+      ("target_params", Snapshot.ptree t.target_params);
+    ]
+
+let of_snapshot ~(q_network : module_) ~(optimizer : Optimizer.algorithm)
+    (snapshot : Snapshot.t) : (t, string) result =
+  let open Result in
+  let open Snapshot in
+  let ( let* ) = bind in
+  let error msg = Error ("Dqn.of_snapshot: " ^ msg) in
+  match snapshot with
+  | Record record ->
+      let validate_schema () =
+        match Snapshot.Record.find_opt dqn_schema_key record with
+        | None -> Ok ()
+        | Some (Scalar (String value)) ->
+            if String.equal value dqn_schema_value then Ok ()
+            else error ("unsupported schema " ^ value)
+        | Some _ -> error "invalid schema field"
+      in
+      let* () = validate_schema () in
+      let find field =
+        match Snapshot.Record.find_opt field record with
+        | Some value -> Ok value
+        | None -> error ("missing field " ^ field)
+      in
+      let decode_int = function
+        | Scalar (Int value) -> Ok value
+        | Scalar (Float value) -> Ok (int_of_float value)
+        | _ -> error "expected int scalar"
+      in
+      let decode_rng = function
+        | Scalar (Int seed) -> Ok (Rune.Rng.key seed)
+        | Scalar (Float value) -> Ok (Rune.Rng.key (int_of_float value))
+        | _ -> error "expected rng scalar"
+      in
+      let* n_actions_node = find "n_actions" in
+      let* n_actions = decode_int n_actions_node in
+      let* rng_node = find "rng" in
+      let* rng = decode_rng rng_node in
+      let* config_node = find "config" in
+      let* config = config_of_snapshot config_node in
+      let* q_params_node = find "q_params" in
+      let* q_params =
+        match Snapshot.to_ptree q_params_node with
+        | Ok params -> Ok params
+        | Error msg -> error msg
+      in
+      let* target_params_node = find "target_params" in
+      let* target_params =
+        match Snapshot.to_ptree target_params_node with
+        | Ok params -> Ok params
+        | Error msg -> error msg
+      in
+      let* opt_state_node = find "optimizer_state" in
+      let* opt_state =
+        match Optimizer.restore optimizer opt_state_node with
+        | Ok state -> Ok state
+        | Error msg -> error msg
+      in
+      let replay_buffer =
+        Fehu.Buffer.Replay.create ~capacity:config.buffer_capacity
+      in
+      Ok
+        {
+          q_network;
+          q_params;
+          target_network = q_network;
+          target_params;
+          optimizer;
+          opt_state;
+          replay_buffer;
+          rng;
+          n_actions;
+          config;
+        }
+  | _ -> error "expected snapshot record"
 
 let create ~q_network ~n_actions ~rng config =
   let keys = Rune.Rng.split ~n:2 rng in
@@ -356,81 +503,19 @@ let learn t ~env ~total_timesteps
 
   t
 
-let save t dir =
-  if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-  let checkpointer = Kaun.Checkpoint.Checkpointer.create () in
-  Kaun.Checkpoint.Checkpointer.save_file checkpointer
-    ~path:(Filename.concat dir "q_params.safetensors")
-    ~params:t.q_params ();
-  Kaun.Checkpoint.Checkpointer.save_file checkpointer
-    ~path:(Filename.concat dir "target_params.safetensors")
-    ~params:t.target_params ();
-  let rng_seed = Rune.Rng.to_int t.rng in
-  let metadata = `Assoc [
-    ("n_actions", `Int t.n_actions);
-    ("rng_seed", `Int rng_seed);
-    ("learning_rate", `Float t.config.learning_rate);
-    ("gamma", `Float t.config.gamma);
-    ("epsilon_start", `Float t.config.epsilon_start);
-    ("epsilon_end", `Float t.config.epsilon_end);
-    ("epsilon_decay", `Float t.config.epsilon_decay);
-    ("batch_size", `Int t.config.batch_size);
-    ("buffer_capacity", `Int t.config.buffer_capacity);
-    ("target_update_freq", `Int t.config.target_update_freq);
-  ] in
-  let metadata_path = Filename.concat dir "metadata.json" in
-  let oc = open_out metadata_path in
-  Yojson.Basic.to_channel oc metadata;
-  close_out oc
+let save_to_file (t : t) ~path =
+  match Checkpoint.write_snapshot_file_with ~path ~encode:(fun () -> to_snapshot t) with
+  | Ok () -> ()
+  | Error err ->
+      failwith
+        (Printf.sprintf "Dqn.save_to_file: %s"
+           (Checkpoint.error_to_string err))
 
-let load dir = 
-  let metadata_path = Filename.concat dir "metadata.json" in
-  let metadata = Yojson.Basic.from_file metadata_path in
-  let open Yojson.Basic.Util in
-  let config = {
-    learning_rate = metadata |> member "learning_rate" |> to_float;
-    gamma = metadata |> member "gamma" |> to_float;
-    epsilon_start = metadata |> member "epsilon_start" |> to_float;
-    epsilon_end = metadata |> member "epsilon_end" |> to_float;
-    epsilon_decay = metadata |> member "epsilon_decay" |> to_float;
-    batch_size = metadata |> member "batch_size" |> to_int;
-    buffer_capacity = metadata |> member "buffer_capacity" |> to_int;
-    target_update_freq = metadata |> member "target_update_freq" |> to_int;
-  } in
-  let n_actions = metadata |> member "n_actions" |> to_int in
-  let rng_seed = metadata |> member "rng_seed" |> to_int in
-  let rng = Rune.Rng.key rng_seed in
-  let checkpointer = Kaun.Checkpoint.Checkpointer.create () in
-
-  (* Example: fixed architecture for 2 input features and n_actions *)
-  let q_network =
-    Kaun.Layer.sequential [
-      Kaun.Layer.linear ~in_features:2 ~out_features:8 ();
-      Kaun.Layer.relu ();
-      Kaun.Layer.linear ~in_features:8 ~out_features:n_actions ();
-    ]
-  in
-
-  let q_params = Kaun.Checkpoint.Checkpointer.restore_file checkpointer
-    ~path:(Filename.concat dir "q_params.safetensors")
-    ~dtype:Rune.float32
-  in
-  let target_params = Kaun.Checkpoint.Checkpointer.restore_file checkpointer
-    ~path:(Filename.concat dir "target_params.safetensors")
-    ~dtype:Rune.float32
-  in
-  let optimizer = Optimizer.adam ~lr:config.learning_rate () in
-  let opt_state = optimizer.init q_params in
-  let replay_buffer = Fehu.Buffer.Replay.create ~capacity:config.buffer_capacity in
-  {
-    q_network;
-    q_params;
-    target_network = q_network;
-    target_params;
-    optimizer;
-    opt_state;
-    replay_buffer;
-    rng;
-    n_actions;
-    config;
-  }
+let load_from_file ~path ~(q_network : module_) ~(optimizer : Optimizer.algorithm)
+    =
+  match
+    Checkpoint.load_snapshot_file_with ~path
+      ~decode:(fun snapshot -> of_snapshot ~q_network ~optimizer snapshot)
+  with
+  | Ok agent -> Ok agent
+  | Error err -> Error (Checkpoint.error_to_string err)

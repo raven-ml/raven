@@ -340,21 +340,22 @@ val learn :
     ensures the replay buffer has diverse samples before Q-network updates
     start. *)
 
-(** [save agent path] saves the agent state to disk.
+(** [save_to_file agent ~path] writes the agent state to a snapshot file.
 
-    Creates the following files:
-    - q_params.safetensors: Q-network weights
-    - target_params.safetensors: Target network weights
-    - opt_state.safetensors: Optimizer state
-    - metadata.json: Config, n_actions, and RNG seed
-    Note: The replay buffer is not saved. *)
-val save : t -> string -> unit
+    The snapshot stores the full configuration, RNG seed, Q/target parameters,
+    and optimizer state. The replay buffer is intentionally omitted. *)
+val save_to_file : t -> path:string -> unit
 
-(** [load path ~q_network ~n_actions] loads an agent from disk.
+(** [load_from_file ~path ~q_network ~optimizer] restores an agent from a
+    snapshot file created by {!save_to_file}.
 
-    @param path Directory containing the saved checkpoint
-    @param q_network Network architecture (must match the saved agent)
-    @param n_actions Number of actions (must match the saved agent)
-    @raise Failure if n_actions doesn't match or files are missing
-    Note: The replay buffer starts empty and optimizer is reinitialized. *)
-val load : string -> t
+    The caller must supply the network architecture and optimizer algorithm so
+    the parameters and optimizer state can be reconstructed safely. Returns
+    either the restored agent or an error message describing what went wrong.
+
+    The replay buffer starts empty after loading. *)
+val load_from_file :
+  path:string ->
+  q_network:Kaun.module_ ->
+  optimizer:Kaun.Optimizer.algorithm ->
+  (t, string) result

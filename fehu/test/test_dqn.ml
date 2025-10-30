@@ -326,10 +326,19 @@ let test_save_load () =
   (* Save agent to a temp directory *)
   let temp_dir = Filename.concat "/tmp" ("dqn_test_" ^ string_of_int (Random.bits ())) in
   if not (Sys.file_exists temp_dir) then Unix.mkdir temp_dir 0o755;
-  Dqn.save agent temp_dir;
+  let snapshot_path =
+    Filename.concat temp_dir "dqn_checkpoint.safetensors"
+  in
+  Dqn.save_to_file agent ~path:snapshot_path;
 
   (* Load agent back *)
-  let loaded_agent = Dqn.load temp_dir in
+  let lr = Kaun.Optimizer.Schedule.constant config.learning_rate in
+  let optimizer = Kaun.Optimizer.adam ~lr () in
+  let loaded_agent =
+    match Dqn.load_from_file ~path:snapshot_path ~q_network:q_net ~optimizer with
+    | Ok agent -> agent
+    | Error msg -> Alcotest.failf "failed to load DQN snapshot: %s" msg
+  in
 
   (* Compare greedy actions for a fixed observation *)
   let obs = Rune.create Rune.float32 [| 2 |] [| 0.5; 0.5 |] in
@@ -339,9 +348,14 @@ let test_save_load () =
     (Rune.to_array action1).(0) (Rune.to_array action2).(0);
 
   (* Clean up temp files *)
-  Sys.remove (Filename.concat temp_dir "q_params.safetensors");
-  Sys.remove (Filename.concat temp_dir "target_params.safetensors");
-  Sys.remove (Filename.concat temp_dir "metadata.json");
+  let cleanup suffix =
+    let path = snapshot_path ^ suffix in
+    if Sys.file_exists path then Sys.remove path
+  in
+  cleanup ".structure.json";
+  cleanup ".scalars.json";
+  cleanup ".tensors.json";
+  cleanup ".tensors.safetensors";
   Sys.rmdir temp_dir
 
 
