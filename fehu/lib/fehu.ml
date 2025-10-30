@@ -9,3 +9,4 @@ module Vector_env = Vector_env
 module Buffer = Buffer
 module Training = Training
 module Trajectory = Trajectory
+module Policy = Policy

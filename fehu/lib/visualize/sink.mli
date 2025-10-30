@@ -20,3 +20,16 @@ val close : t -> unit
 
 val push : t -> Fehu.Render.t -> unit
 (** Push a single frame to the sink. *)
+
+val with_sink : (unit -> t) -> (t -> 'a) -> 'a
+(** [with_sink create f] creates a sink via [create], runs [f], and guarantees
+    the sink is closed afterwards. *)
+
+val with_ffmpeg : ?fps:int -> path:string -> (t -> 'a) -> 'a
+(** Convenience wrapper around {!ffmpeg} that automatically closes the sink. *)
+
+val with_gif : ?fps:int -> path:string -> (t -> 'a) -> 'a
+(** Convenience wrapper around {!gif} that automatically closes the sink. *)
+
+val with_wandb : ?fps:int -> project:string -> run:string -> (t -> 'a) -> 'a
+(** Convenience wrapper around {!wandb} that automatically closes the sink. *)

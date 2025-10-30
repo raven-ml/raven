@@ -151,3 +151,13 @@ let wandb ?(fps = 30) ~project ~run () =
         log_to_wandb ~project ~run ~path:temp_path ~fps)
   in
   custom ~close push
+
+let with_sink create f =
+  let sink = create () in
+  Fun.protect ~finally:(fun () -> close sink) (fun () -> f sink)
+
+let with_ffmpeg ?fps ~path f = with_sink (fun () -> ffmpeg ?fps ~path ()) f
+let with_gif ?fps ~path f = with_sink (fun () -> gif ?fps ~path ()) f
+
+let with_wandb ?fps ~project ~run f =
+  with_sink (fun () -> wandb ?fps ~project ~run ()) f

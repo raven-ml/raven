@@ -220,6 +220,10 @@ module Training = Training
     losses, value losses, and evaluation functions. See {!Training} for
     computational tools. *)
 
+module Policy = Policy
+(** Lightweight helpers for constructing policies (random, deterministic, or
+    greedy discrete). *)
+
 module Trajectory = Trajectory
 (** Trajectory management for experience sequences.
 
