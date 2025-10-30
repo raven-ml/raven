@@ -1301,13 +1301,13 @@ val index_put :
     shape of [t] unchanged. Duplicate coordinates overwrite previous updates,
     matching {!put}.
 
-    [mode] controls how out-of-bounds indices are handled per axis:
-    `raise (default) checks bounds, `wrap performs modular indexing, and `clip
-    clamps to the valid range.
+    [mode] controls how out-of-bounds indices are handled per axis: `raise
+    (default) checks bounds, `wrap performs modular indexing, and `clip clamps
+    to the valid range.
 
-    @raise Invalid_argument if the number of index tensors does not match the
-    rank of [t], or if any axis is zero-sized while a non-empty update set is
-    requested.
+    @raise Invalid_argument
+      if the number of index tensors does not match the rank of [t], or if any
+      axis is zero-sized while a non-empty update set is requested.
 
     {@ocaml[
       # let t = zeros float32 [| 3; 3 |] in

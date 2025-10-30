@@ -3529,8 +3529,7 @@ module Make (B : Backend_intf.S) = struct
     if indices_count <> ndim then
       Error.invalid ~op:"index_put" ~what:"indices"
         ~reason:
-          (Printf.sprintf "expected %d index tensors, got %d" ndim
-             indices_count)
+          (Printf.sprintf "expected %d index tensors, got %d" ndim indices_count)
         ();
 
     (* Ensure all indices are int32 and broadcastable to a common shape *)
@@ -3564,22 +3563,16 @@ module Make (B : Backend_intf.S) = struct
                   let modulus_scalar =
                     scalar (B.context idx) Int32 (Int32.of_int axis_size)
                   in
-                  let modulus =
-                    broadcast_to (shape idx) modulus_scalar
-                  in
+                  let modulus = broadcast_to (shape idx) modulus_scalar in
                   let wrapped = mod_ idx modulus in
-                  let zeros_idx =
-                    zeros (B.context idx) Int32 (shape idx)
-                  in
+                  let zeros_idx = zeros (B.context idx) Int32 (shape idx) in
                   let needs_fix = cmplt wrapped zeros_idx in
                   let wrapped_plus_mod = add wrapped modulus in
                   where needs_fix wrapped_plus_mod wrapped
             | `clip ->
                 if axis_size = 0 then idx
                 else
-                  let zeros_idx =
-                    zeros (B.context idx) Int32 (shape idx)
-                  in
+                  let zeros_idx = zeros (B.context idx) Int32 (shape idx) in
                   let max_idx =
                     full (B.context idx) Int32 (shape idx)
                       (Int32.of_int (axis_size - 1))
@@ -3592,7 +3585,7 @@ module Make (B : Backend_intf.S) = struct
     let num_updates = array_prod target_shape in
 
     if num_updates = 0 then ()
-    else (
+    else
       let values =
         if shape values = target_shape then values
         else broadcast_to target_shape values
@@ -3618,7 +3611,7 @@ module Make (B : Backend_intf.S) = struct
       in
 
       (* Flatten scatter into the original tensor *)
-      put ~indices:flat_indices ~values ~mode:`raise t)
+      put ~indices:flat_indices ~values ~mode:`raise t
 
   let put_along_axis ~axis ~indices ~values t =
     let axis = resolve_single_axis t axis in

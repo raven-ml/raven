@@ -19,7 +19,8 @@ type image = {
   height : int;
   pixel_format : Pixel.format;
   data_u8 :
-    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t option;
+    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+    option;
   data_f32 :
     (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t option;
 }
@@ -38,8 +39,7 @@ type frame =
   | Image of image
   | Text of text
   | Svg of svg
-  | None
-(** Render frame variant. *)
+  | None  (** Render frame variant. *)
 
 type t = frame
 (** Alias for render frames. *)
@@ -48,8 +48,7 @@ val image_u8 :
   width:int ->
   height:int ->
   pixel_format:Pixel.format ->
-  data:
-    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  data:(char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t ->
   unit ->
   image
 (** Helper to construct an 8-bit image payload. *)
@@ -58,8 +57,7 @@ val image_f32 :
   width:int ->
   height:int ->
   pixel_format:Pixel.format ->
-  data:
-    (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  data:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
   unit ->
   image
 (** Helper to construct a float32 image payload. *)

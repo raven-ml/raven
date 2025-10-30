@@ -193,7 +193,5 @@ let step vector_env actions =
   { observations; rewards; terminations; truncations; infos }
 
 let render vector_env = Array.map Env.render vector_env.envs
-
 let envs vector_env = vector_env.envs
-
 let close vector_env = Array.iter Env.close vector_env.envs

@@ -248,8 +248,7 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
           let buf = Buffer.create len in
           for i = 0 to len - 1 do
             let code = Char.code chunk.[i] in
-            if code < 0x80 then
-              Buffer.add_char buf chunk.[i]
+            if code < 0x80 then Buffer.add_char buf chunk.[i]
             else (
               Buffer.add_char buf (Char.unsafe_chr (0xC0 lor (code lsr 6)));
               Buffer.add_char buf (Char.unsafe_chr (0x80 lor (code land 0x3F))))

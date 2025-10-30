@@ -12,11 +12,8 @@ let test_constructors () =
         ("step", CT.int 3);
         ("flags", CT.list [ CT.bool true; CT.bool false ]);
         ( "nested",
-          CT.record
-            [
-              ("lr", CT.float 1e-3);
-              ("note", CT.string "checkpoint");
-            ] );
+          CT.record [ ("lr", CT.float 1e-3); ("note", CT.string "checkpoint") ]
+        );
       ]
   in
   check bool "is record" true (Option.is_some (CT.get_record tree));
@@ -33,8 +30,7 @@ let test_constructors () =
 
 let test_json_roundtrip () =
   let scalar =
-    CT.json
-      (`Assoc [ ("dataset", `String "CartPole"); ("epochs", `Int 10) ])
+    CT.json (`Assoc [ ("dataset", `String "CartPole"); ("epochs", `Int 10) ])
   in
   match CT.get_scalar scalar with
   | None -> fail "expected scalar"

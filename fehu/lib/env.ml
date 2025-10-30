@@ -12,12 +12,7 @@ let transition ?(reward = 0.) ?(terminated = false) ?(truncated = false)
     ?(info = Info.empty) ~observation () =
   { observation; reward; terminated; truncated; info }
 
-type render_mode =
-  [ `Human
-  | `Rgb_array
-  | `Ansi
-  | `Svg
-  | `Custom of string ]
+type render_mode = [ `Human | `Rgb_array | `Ansi | `Svg | `Custom of string ]
 
 let render_mode_to_string = function
   | `Human -> "human"
@@ -56,8 +51,8 @@ let ensure_reset env ~operation =
          (Printf.sprintf "Operation '%s' requires calling reset first" operation))
 
 let create ?id ?(metadata = Metadata.default) ?render_mode ?validate_transition
-    ~rng ~observation_space ~action_space ~reset:reset_handler ~step:step_handler
-    ?render ?close () =
+    ~rng ~observation_space ~action_space ~reset:reset_handler
+    ~step:step_handler ?render ?close () =
   (match render_mode with
   | None -> ()
   | Some mode ->
@@ -66,14 +61,16 @@ let create ?id ?(metadata = Metadata.default) ?render_mode ?validate_transition
         raise_error
           (Invalid_metadata
              (Printf.sprintf
-                "Render mode '%s' is not declared in metadata.render_modes" mode_key)));
+                "Render mode '%s' is not declared in metadata.render_modes"
+                mode_key)));
   let render_impl = Option.value render ~default:(fun _ -> None) in
   let close_impl = Option.value close ~default:(fun _ -> ()) in
   let render_mode = render_mode in
   let maybe_human_render env =
     match env.render_mode with
     | Some `Human ->
-        (* Ignore return value; human mode renders side effects such as windows. *)
+        (* Ignore return value; human mode renders side effects such as
+           windows. *)
         ignore (env.render_impl env)
     | _ -> ()
   in
@@ -132,7 +129,7 @@ let create ?id ?(metadata = Metadata.default) ?render_mode ?validate_transition
                (Printf.sprintf
                   "Step produced an observation outside observation_space \
                    (value=%s)"
-                   value))));
+                  value))));
     Option.iter (fun validate -> validate transition) validate_transition;
     if transition.terminated || transition.truncated then
       env.needs_reset <- true;
@@ -153,9 +150,11 @@ let set_metadata env metadata =
         raise_error
           (Invalid_metadata
              (Printf.sprintf
-                "Render mode '%s' is not declared in metadata.render_modes" mode_key)))
+                "Render mode '%s' is not declared in metadata.render_modes"
+                mode_key)))
     env.render_mode;
   env.metadata <- metadata
+
 let rng env = env.rng
 
 let set_rng env rng =

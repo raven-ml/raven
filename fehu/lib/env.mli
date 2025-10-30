@@ -67,12 +67,7 @@ val transition :
     Defaults: [reward = 0.0], [terminated = false], [truncated = false],
     [info = Info.empty]. *)
 
-type render_mode =
-  [ `Human
-  | `Rgb_array
-  | `Ansi
-  | `Svg
-  | `Custom of string ]
+type render_mode = [ `Human | `Rgb_array | `Ansi | `Svg | `Custom of string ]
 (** Rendering modes supported by environments. *)
 
 val render_mode_to_string : render_mode -> string
@@ -107,8 +102,8 @@ val create :
     Parameters:
     - [id]: Optional identifier for the environment
     - [metadata]: Environment metadata (default: {!Metadata.default})
-    - [render_mode]: Optional render mode requested for the environment.
-      When provided, it must be listed in [metadata.render_modes]
+    - [render_mode]: Optional render mode requested for the environment. When
+      provided, it must be listed in [metadata.render_modes]
     - [rng]: Random number generator key for reproducibility
     - [observation_space]: Space defining valid observations
     - [action_space]: Space defining valid actions
