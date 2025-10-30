@@ -1001,35 +1001,41 @@ let mae ?(reduction = Mean) () =
 (** Loss Metric - tracks running average of loss values *)
 
 let loss () =
-  create_custom ~dtype:Rune.float32 ~name:"loss"
-    ~init:(fun () -> [])
-    ~update:(fun state ~predictions:_ ~targets:_ ?weights () ->
-      (* The loss value should be passed via weights parameter *)
-      let dtype =
-        match weights with
-        | Some w -> Rune.dtype w
-        | None ->
-            failwith "loss metric requires loss value in weights parameter"
-      in
-
-      let sum_loss, count =
-        match state with
-        | [ s; c ] -> (s, c)
-        | _ -> (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
-      in
-
-      match weights with
-      | Some loss_value ->
-          (* Accumulate loss value *)
+  let dtype = Rune.float32 in
+  let name = "loss" in
+  let init () = [] in
+  Metric
+    {
+      state_tensors = init ();
+      dtype;
+      name;
+      init_fn = init;
+      update_fn =
+        (fun state ~predictions:_ ~targets:_ ?loss ?weights:_ () ->
+          let loss_value =
+            match loss with
+            | Some l -> l
+            | None -> failwith "loss metric requires loss value"
+          in
+          let dtype = Rune.dtype loss_value in
+          let sum_loss, count =
+            match state with
+            | [ s; c ] -> (s, c)
+            | [] ->
+                (scalar_tensor dtype 0.0, scalar_tensor dtype 0.0)
+            | _ -> failwith "Invalid loss state"
+          in
           let new_sum = Rune.add sum_loss loss_value in
           let new_count = Rune.add count (scalar_tensor dtype 1.0) in
-          [ new_sum; new_count ]
-      | None -> state)
-    ~compute:(fun state ->
-      match state with
-      | [ sum_loss; count ] -> Rune.div sum_loss count
-      | _ -> failwith "Invalid loss state")
-    ~reset:(fun _ -> [])
+          [ new_sum; new_count ]);
+      compute_fn =
+        (fun state ->
+          match state with
+          | [ sum_loss; count ] -> Rune.div sum_loss count
+          | [] -> failwith "loss: metric has no data"
+          | _ -> failwith "Invalid loss state");
+      reset_fn = (fun _ -> []);
+    }
 
 let mape ?(eps = 1e-7) () =
   create_custom ~dtype:Rune.float32 ~name:"mape"

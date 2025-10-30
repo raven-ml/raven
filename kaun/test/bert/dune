@@ -1,0 +1,12 @@
+(test
+ (name test_bert_matches_hf)
+ (package kaun)
+ (libraries
+  rune
+  nx
+  nx.core
+  kaun
+  kaun.models
+  kaun.huggingface
+  alcotest)
+ (deps reference_hf_output.py))

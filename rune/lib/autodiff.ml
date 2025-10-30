@@ -1075,7 +1075,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                       (* grad_B = A^T @ grad_C *)
                       let b_transposed = T.transpose ~axes:[ 0; 2; 1 ] b_val in
                       let grad_a_3d = T.matmul d_loss_d_result b_transposed in
-                      let grad_a = T.sum grad_a_3d ~axes:[ 1 ] in
+                      let grad_a = T.sum grad_a_3d ~axes:[ 0 ] in
                       let a_expanded = T.expand_dims [ 0 ] a_val in
                       let a_transposed =
                         T.transpose ~axes:[ 0; 2; 1 ] a_expanded
@@ -1092,7 +1092,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                       in
                       let a_transposed = T.transpose ~axes:[ 0; 2; 1 ] a_val in
                       let grad_b_3d = T.matmul a_transposed d_loss_d_result in
-                      let grad_b = T.sum grad_b_3d ~axes:[ 1 ] in
+                      let grad_b = T.sum grad_b_3d ~axes:[ 0 ] in
                       (grad_a, grad_b)
                     else
                       (* Standard case - both same dimensionality *)

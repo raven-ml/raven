@@ -1,0 +1,3 @@
+(executables
+ (names xor_eval)
+ (libraries rune kaun unix))

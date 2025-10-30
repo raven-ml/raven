@@ -83,6 +83,7 @@ let train () =
 
     (* Training *)
     Printf.printf "Starting training iteration...\n%!";
+    Metrics.Collection.reset metrics;
     Kaun.Dataset.iter
       (fun (x_batch, y_batch) ->
         incr batch_count;
@@ -122,7 +123,7 @@ let train () =
         let logits = Kaun.apply model params ~training:false x_batch in
         (* Update metrics - need to compute predictions from logits *)
         let predictions = Rune.softmax logits ~axes:[ -1 ] in
-        Metrics.Collection.update metrics ~predictions ~targets:y_batch ();
+        Metrics.Collection.update metrics ~loss ~predictions ~targets:y_batch ();
         let metric_time = Unix.gettimeofday () -. metric_start in
 
         let batch_time = Unix.gettimeofday () -. batch_start in
@@ -151,7 +152,8 @@ let train () =
         let logits = Kaun.apply model params ~training:false x_batch in
         (* Update metrics with predictions instead of loss/logits/labels *)
         let predictions = Rune.softmax logits ~axes:[ -1 ] in
-        Metrics.Collection.update metrics ~predictions ~targets:y_batch ())
+        let loss = Loss.softmax_cross_entropy_with_indices logits y_batch in
+        Metrics.Collection.update metrics ~loss ~predictions ~targets:y_batch ())
       test_ds;
 
     (* Print test metrics *)
