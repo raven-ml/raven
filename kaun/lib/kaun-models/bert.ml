@@ -289,15 +289,16 @@ let embeddings ~config () =
   (* BERT embeddings: token + position + token_type *)
   (* We'll create a custom module that combines them *)
   let token_embeddings =
-    embedding ~vocab_size:config.vocab_size ~embed_dim:config.hidden_size ()
+    embedding ~vocab_size:config.vocab_size ~embed_dim:config.hidden_size
+      ~scale:false ()
   in
   let position_embeddings =
     embedding ~vocab_size:config.max_position_embeddings
-      ~embed_dim:config.hidden_size ()
+      ~embed_dim:config.hidden_size ~scale:false ()
   in
   let token_type_embeddings =
     embedding ~vocab_size:config.type_vocab_size ~embed_dim:config.hidden_size
-      ()
+      ~scale:false ()
   in
   let layer_norm =
     layer_norm ~dim:config.hidden_size ~eps:config.layer_norm_eps ()
@@ -575,6 +576,11 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
     let embeddings_params = ref [] in
     let encoder_layers = ref [] in
     let pooler_params = ref [] in
+    let set_embedding params key tensor =
+      Kaun.Ptree.Dict.set key
+        (Kaun.Ptree.dict [ ("embedding", Kaun.Ptree.Tensor tensor) ])
+        params
+    in
 
     List.iter
       (fun (hf_name, tensor) ->
@@ -592,20 +598,17 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
           when String.starts_with ~prefix:"embeddings.word_embeddings.weight" s
           ->
             embeddings_params :=
-              Kaun.Ptree.Dict.set "token_embeddings" (Kaun.Ptree.Tensor tensor)
-                !embeddings_params
+              set_embedding !embeddings_params "token_embeddings" tensor
         | s
           when String.starts_with
                  ~prefix:"embeddings.position_embeddings.weight" s ->
             embeddings_params :=
-              Kaun.Ptree.Dict.set "position_embeddings"
-                (Kaun.Ptree.Tensor tensor) !embeddings_params
+              set_embedding !embeddings_params "position_embeddings" tensor
         | s
           when String.starts_with
                  ~prefix:"embeddings.token_type_embeddings.weight" s ->
             embeddings_params :=
-              Kaun.Ptree.Dict.set "token_type_embeddings"
-                (Kaun.Ptree.Tensor tensor) !embeddings_params
+              set_embedding !embeddings_params "token_type_embeddings" tensor
         | s when String.starts_with ~prefix:"embeddings.LayerNorm" s ->
             let ln_params =
               match List.assoc_opt "layer_norm" !embeddings_params with
@@ -696,6 +699,22 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
                 !pooler_params
         | _ -> () (* Ignore other parameters *))
       flat_params;
+
+    let ensure_embedding params key =
+      match List.assoc_opt key params with
+      | Some (Kaun.Ptree.Dict fields) ->
+          if
+            not
+              (List.exists
+                 (fun (name, _) -> String.equal name "embedding")
+                 fields)
+          then failwith (key ^ " missing embedding field")
+      | Some _ -> failwith (key ^ " is not a dict")
+      | None -> failwith (key ^ " missing")
+    in
+    ensure_embedding !embeddings_params "token_embeddings";
+    ensure_embedding !embeddings_params "position_embeddings";
+    ensure_embedding !embeddings_params "token_type_embeddings";
 
     (* Build the final sequential structure *)
     let encoder_list = List.map (fun r -> Kaun.Ptree.Dict !r) !encoder_layers in

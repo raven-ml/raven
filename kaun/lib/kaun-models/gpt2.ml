@@ -1,5 +1,6 @@
 open Rune
 module Ptree = Kaun.Ptree
+module Activations = Kaun.Activations
 
 (* Configuration *)
 
@@ -250,10 +251,12 @@ let embeddings ~config () =
   let open Kaun.Layer in
   (* GPT-2 embeddings: token + position *)
   let token_embeddings =
-    embedding ~vocab_size:config.vocab_size ~embed_dim:config.n_embd ()
+    embedding ~vocab_size:config.vocab_size ~embed_dim:config.n_embd
+      ~scale:false ()
   in
   let position_embeddings =
-    embedding ~vocab_size:config.n_positions ~embed_dim:config.n_embd ()
+    embedding ~vocab_size:config.n_positions ~embed_dim:config.n_embd
+      ~scale:false ()
   in
   let dropout = dropout ~rate:config.embd_pdrop () in
 
@@ -433,7 +436,21 @@ module Gpt2_block = struct
       (reshape [| 1; 1; hidden_size |] out_bias)
 
   (* Feed-forward network *)
-  let mlp ~n_inner ~hidden_size ~params x =
+  let gelu_new x =
+    let dtype = Rune.dtype x in
+    let half = Rune.scalar dtype 0.5 in
+    let one = Rune.scalar dtype 1.0 in
+    let sqrt_2_over_pi =
+      Rune.scalar dtype 0.7978845608028654
+      (* sqrt(2/pi) *)
+    in
+    let coeff = Rune.scalar dtype 0.044715 in
+    let x_cubed = Rune.mul x (Rune.mul x x) in
+    let inner = Rune.mul sqrt_2_over_pi (Rune.add x (Rune.mul coeff x_cubed)) in
+    let tanh_inner = Rune.tanh inner in
+    Rune.mul (Rune.mul half x) (Rune.add one tanh_inner)
+
+  let mlp ~n_inner ~hidden_size ~activation ~params x =
     let dtype = dtype x in
     let get_param name = Ptree.Dict.get_tensor_exn params ~name dtype in
 
@@ -447,7 +464,13 @@ module Gpt2_block = struct
       add (matmul x inter_weight) (reshape [| 1; 1; n_inner |] inter_bias)
     in
     (* GELU activation *)
-    let h = gelu h in
+    let h =
+      match activation with
+      | `gelu -> gelu h
+      | `gelu_new -> gelu_new h
+      | `relu -> Activations.relu h
+      | `swish -> Activations.swish h
+    in
     (* Second linear layer *)
     add (matmul h out_weight) (reshape [| 1; 1; hidden_size |] out_bias)
 
@@ -482,7 +505,10 @@ module Gpt2_block = struct
 
     (* FFN with residual *)
     let n_inner = Option.value config.n_inner ~default:(4 * config.n_embd) in
-    let ffn_out = mlp ~n_inner ~hidden_size:config.n_embd ~params normed in
+    let ffn_out =
+      mlp ~n_inner ~activation:config.activation_function
+        ~hidden_size:config.n_embd ~params normed
+    in
     add x ffn_out
 
   (* Stack of GPT-2 blocks *)
@@ -676,6 +702,11 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
     let embeddings_params = ref [] in
     let decoder_layers = ref [] in
     let final_layer_norm_params = ref [] in
+    let set_embedding params key tensor =
+      Ptree.Dict.set key
+        (Ptree.dict [ ("embedding", Ptree.Tensor tensor) ])
+        params
+    in
 
     List.iter
       (fun (hf_name, tensor) ->
@@ -683,12 +714,10 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
         (* Embeddings *)
         | s when String.starts_with ~prefix:"wte.weight" s ->
             embeddings_params :=
-              Ptree.Dict.set "token_embeddings" (Ptree.Tensor tensor)
-                !embeddings_params
+              set_embedding !embeddings_params "token_embeddings" tensor
         | s when String.starts_with ~prefix:"wpe.weight" s ->
             embeddings_params :=
-              Ptree.Dict.set "position_embeddings" (Ptree.Tensor tensor)
-                !embeddings_params
+              set_embedding !embeddings_params "position_embeddings" tensor
         (* Transformer blocks *)
         | s when String.starts_with ~prefix:"h." s -> (
             let rest = String.sub s 2 (String.length s - 2) in
@@ -780,6 +809,21 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
                 !final_layer_norm_params
         | _ -> () (* Ignore other parameters *))
       flat_params;
+
+    let ensure_embedding params key =
+      match List.assoc_opt key params with
+      | Some (Ptree.Dict fields) ->
+          if
+            not
+              (List.exists
+                 (fun (name, _) -> String.equal name "embedding")
+                 fields)
+          then failwith (key ^ " missing embedding field")
+      | Some _ -> failwith (key ^ " is not a dict")
+      | None -> failwith (key ^ " missing")
+    in
+    ensure_embedding !embeddings_params "token_embeddings";
+    ensure_embedding !embeddings_params "position_embeddings";
 
     (* Build the final sequential structure *)
     let decoder_list = List.map (fun r -> Ptree.Dict !r) !decoder_layers in

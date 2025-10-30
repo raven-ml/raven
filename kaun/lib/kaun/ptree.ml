@@ -197,12 +197,20 @@ module Path = struct
             let idx = int_of_string (String.sub path_str (i + 1) (j - i - 1)) in
             parse (j + 1) (Index idx :: acc)
         | _ ->
+            let next_dot =
+              try Some (String.index_from path_str i '.')
+              with Not_found -> None
+            in
+            let next_bracket =
+              try Some (String.index_from path_str i '[')
+              with Not_found -> None
+            in
             let next_sep =
-              try
-                min
-                  (String.index_from path_str i '.')
-                  (String.index_from path_str i '[')
-              with Not_found -> len
+              match (next_dot, next_bracket) with
+              | None, None -> len
+              | Some idx, None -> idx
+              | None, Some idx -> idx
+              | Some dot_idx, Some bracket_idx -> min dot_idx bracket_idx
             in
             let key = String.sub path_str i (next_sep - i) in
             parse next_sep (Key key :: acc)

@@ -1,4 +1,4 @@
 (library
  (public_name kaun.huggingface)
  (name kaun_huggingface)
- (libraries rune kaun unix yojson))
+ (libraries nx.io rune kaun unix yojson))

@@ -159,6 +159,18 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
     ]
   in
 
+  let load_from_path path =
+    let archive = Nx_io.load_safetensor path in
+    let entries =
+      Hashtbl.fold
+        (fun name (Nx_io.P nx_tensor) acc ->
+          let rune_tensor = Rune.of_nx nx_tensor in
+          (name, Kaun.Ptree.tensor rune_tensor) :: acc)
+        archive []
+    in
+    Kaun.Ptree.dict entries
+  in
+
   let rec try_files = function
     | [] ->
         failwith (Printf.sprintf "No safetensors file found for %s" model_id)
@@ -170,17 +182,17 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
             | Cached path -> path
             | Downloaded (path, _) -> path
           in
-
-          (* Load parameters using the checkpoint API *)
-          let params =
-            match Kaun.Checkpoint.load_params_file ~path:local_path with
-            | Ok ptree -> ptree
-            | Error err -> failwith (Kaun.Checkpoint.error_to_string err)
-          in
+          let params = load_from_path local_path in
           match result with
           | Cached _ -> Cached params
           | Downloaded (_, progress) -> Downloaded (params, progress)
-        with _ -> try_files rest)
+        with
+        | Failure msg
+          when String.starts_with ~prefix:"Failed to download" msg
+               || String.starts_with ~prefix:"No such file" msg ->
+            try_files rest
+        | Failure _ -> try_files rest
+        | _ -> try_files rest)
   in
 
   try_files filenames
