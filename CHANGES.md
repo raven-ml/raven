@@ -9,7 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
-- Add `Nx.Cache` module with consolidated cache directory utilities respecting `RAVEN_CACHE_ROOT`, `XDG_CACHE_HOME`, and `HOME` fallback, replacing project-specific cache logic across the whole raven ecosystem (#133, @Arsalaan-Alam)
+- Add `Nx_core.Cache_dir` module with consolidated cache directory utilities respecting `RAVEN_CACHE_ROOT`, `XDG_CACHE_HOME`, and `HOME` fallback, replacing project-specific cache logic across the whole raven ecosystem (#133, @Arsalaan-Alam)
 - Add `Nx_io.save_txt` / `Nx_io.load_txt` with NumPy-compatible formatting, comments, and dtype support (#120, @six-shot)
 - Clarify `reshape` documentation to match its view-only semantics (@tmattio)
 - Provide `nx.top`, `rune.top`, and `hugin.top` libraries that auto-install pretty printers in the OCaml toplevel and update Quill to load them (@tmattio)

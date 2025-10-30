@@ -41,7 +41,7 @@ val get_path_in_cache :
 
     Getting cache directory for the iris dataset:
     {[
-      let cache_dir = Nx_core.Xdg_cache.get_path_in_cache ~scope:["datasets"] "iris" in
+      let cache_dir = Nx_core.Cache_dir.get_path_in_cache ~scope:["datasets"] "iris" in
       (* With default environment: ~/.cache/raven/datasets/iris/ *)
     ]}
 
@@ -51,7 +51,7 @@ val get_path_in_cache :
         if var = "RAVEN_CACHE_ROOT" then Some "/tmp/my-cache" else None
       in
       let cache_dir =
-        Nx_core.Xdg_cache.get_path_in_cache ~getenv ~scope:["models"] "bert-base-uncased"
+        Nx_core.Cache_dir.get_path_in_cache ~getenv ~scope:["models"] "bert-base-uncased"
       in
       (* Result: /tmp/my-cache/models/bert-base-uncased/ *)
     ]} *)

@@ -1,4 +1,4 @@
-(* xdg_cache.ml *)
+(* cache_dir.ml *)
 
 let get_root ?(getenv = Sys.getenv_opt) () =
   match getenv "RAVEN_CACHE_ROOT" with
