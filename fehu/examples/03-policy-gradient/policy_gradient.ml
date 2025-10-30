@@ -21,33 +21,26 @@ let run_policy_gradient () =
   (* Create policy network *)
   let policy_net = create_policy_network () in
 
-  (* Initialize REINFORCE agent *)
+  (* Train REINFORCE *)
   let rng = Rune.Rng.key 42 in
-  let agent =
-    Fehu_algorithms.Reinforce.create ~policy_network:policy_net ~n_actions:2
-      ~rng
-      Fehu_algorithms.Reinforce.
-        {
-          learning_rate = 0.001;
-          (* Reduced for more stable learning *)
-          gamma = 0.95;
-          (* Lower gamma to value immediate rewards *)
-          use_baseline = false;
-          reward_scale = 0.1;
-          (* Scale down rewards to reduce variance *)
-          entropy_coef = 0.01;
-          max_episode_steps = 200;
-        }
+  let config =
+    {
+      Fehu_algorithms.Reinforce.default_config with
+      learning_rate = 0.001;
+      gamma = 0.95;
+      reward_scale = 0.1;
+      entropy_coef = 0.01;
+      max_episode_steps = 200;
+    }
   in
-
-  (* Train for 500 episodes *)
-  let agent =
-    Fehu_algorithms.Reinforce.learn agent ~env ~total_timesteps:50_000
-      ~callback:(fun ~iteration ~metrics ->
-        if iteration mod 50 = 0 then
-          Printf.printf "Episode %d: Return = %.2f, Length = %d\n%!" iteration
-            metrics.episode_return metrics.episode_length;
-        true)
+  let params, _state =
+    Fehu_algorithms.Reinforce.train ~env ~policy_network:policy_net ~rng ~config
+      ~total_timesteps:50_000
+      ~callback:(fun metrics ->
+        if metrics.total_episodes > 0 && metrics.total_episodes mod 50 = 0 then
+          Printf.printf "Episode %d: Return = %.2f, Length = %d\n%!"
+            metrics.total_episodes metrics.episode_return metrics.episode_length;
+        `Continue)
       ()
   in
 
@@ -64,9 +57,20 @@ let run_policy_gradient () =
 
     while not !done_flag do
       (* Use greedy policy *)
-      let action, _ =
-        Fehu_algorithms.Reinforce.predict agent !obs_ref ~training:false
+      let obs_batched =
+        match Rune.shape !obs_ref with
+        | [| features |] -> Rune.reshape [| 1; features |] !obs_ref
+        | [| 1; _ |] -> !obs_ref
+        | _ -> !obs_ref
       in
+      let logits = apply policy_net params ~training:false obs_batched in
+      let action_idx =
+        Rune.argmax logits ~axis:(-1) ~keepdims:false |> Rune.cast Rune.int32
+      in
+      let action_scalar =
+        Rune.reshape [||] action_idx |> Rune.to_array |> fun arr -> arr.(0)
+      in
+      let action = Rune.scalar Rune.int32 action_scalar in
       let transition = Env.step env action in
       episode_reward := !episode_reward +. transition.reward;
       obs_ref := transition.observation;

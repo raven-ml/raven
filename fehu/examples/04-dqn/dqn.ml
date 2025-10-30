@@ -1,33 +1,13 @@
 open Fehu
 open Kaun
-
 module FV = Fehu_visualize
 module Policy = Fehu.Policy
 
-let float_state obs =
-  let arr : Int32.t array = Rune.to_array obs in
-  Array.map (fun x -> float_of_int (Int32.to_int x)) arr
-
 let q_scores q_net params obs =
-  let state = float_state obs in
-  let state_tensor = Rune.create Rune.float32 [| 1; 2 |] state in
+  let obs_f = Rune.cast Rune.float32 obs in
+  let state_tensor = Rune.reshape [| 1; 2 |] obs_f in
   let q_values = Kaun.apply q_net params ~training:false state_tensor in
   Rune.to_array (Rune.reshape [| 4 |] q_values)
-
-let greedy_action q_net params state =
-  let scores =
-    let state_tensor = Rune.create Rune.float32 [| 1; 2 |] state in
-    let q_values = Kaun.apply q_net params ~training:false state_tensor in
-    Rune.to_array (Rune.reshape [| 4 |] q_values)
-  in
-  let best = ref 0 in
-  let best_val = ref scores.(0) in
-  for i = 1 to Array.length scores - 1 do
-    if scores.(i) > !best_val then (
-      best := i;
-      best_val := scores.(i))
-  done;
-  !best
 
 let record_guard description f =
   try f ()
@@ -101,6 +81,22 @@ let run_dqn () =
   let env = Fehu_envs.Grid_world.make ~rng:split_keys.(0) () in
   let agent_key = ref split_keys.(1) in
 
+  let take_key () =
+    let next = Rune.Rng.split !agent_key in
+    agent_key := next.(0);
+    next.(1)
+  in
+
+  let epsilon_schedule =
+    Optimizer.Schedule.polynomial_decay ~init_value:epsilon_start
+      ~end_value:epsilon_end ~power:1.0
+      ~decay_steps:(int_of_float epsilon_decay)
+  in
+  let epsilon_step = ref 0 in
+  let epsilon_rng = ref (take_key ()) in
+  let random_policy = Policy.random env in
+  let last_epsilon = ref (epsilon_schedule 0) in
+
   let record_dir = Sys.getenv_opt "FEHU_DQN_RECORD_DIR" in
   let record_path suffix =
     Option.map (fun dir -> Filename.concat dir suffix) record_dir
@@ -108,16 +104,9 @@ let run_dqn () =
   Option.iter
     (fun path ->
       Printf.printf "Recording untrained rollout to %s\n%!" path;
-      record_guard "recording untrained rollout"
-        (fun () -> record_random_rollout ~path ~steps:100))
+      record_guard "recording untrained rollout" (fun () ->
+          record_random_rollout ~path ~steps:100))
     (record_path "gridworld_random.mp4");
-
-  let take_key () =
-    let next = Rune.Rng.split !agent_key in
-    agent_key := next.(0);
-    next.(1)
-  in
-  let last_epsilon = ref epsilon_start in
 
   Printf.printf "Training DQN on GridWorld...\n%!";
   Printf.printf "Episodes: %d, Batch size: %d, Replay capacity: 10000\n%!"
@@ -126,118 +115,112 @@ let run_dqn () =
   (* Training loop *)
   for episode = 1 to episodes do
     let obs, _info = Env.reset env () in
-    let state = ref (float_state obs) in
+    let current_obs = ref obs in
     let done_ = ref false in
     let episode_reward = ref 0.0 in
     let steps = ref 0 in
 
+    let greedy_policy observation =
+      let scores = q_scores q_net params observation in
+      let best_idx = ref 0 in
+      let best_val = ref scores.(0) in
+      for i = 1 to Array.length scores - 1 do
+        if scores.(i) > !best_val then (
+          best_idx := i;
+          best_val := scores.(i))
+      done;
+      Rune.scalar Rune.int32 (Int32.of_int !best_idx)
+    in
+
     while not !done_ do
       incr steps;
 
-      (* Epsilon-greedy exploration *)
-      let epsilon =
-        epsilon_end
-        +. (epsilon_start -. epsilon_end)
-           *. exp (-.float_of_int ((episode * 10) + !steps) /. epsilon_decay)
+      let epsilon = epsilon_schedule !epsilon_step in
+      let keys = Rune.Rng.split ~n:2 !epsilon_rng in
+      epsilon_rng := keys.(0);
+      let sample_key = keys.(1) in
+      let coin =
+        Rune.Rng.uniform sample_key Rune.float32 [| 1 |]
+        |> Rune.to_array |> fun arr -> arr.(0)
+      in
+      let action =
+        if coin < epsilon then
+          let action, _, _ = random_policy !current_obs in
+          action
+        else greedy_policy !current_obs
       in
       last_epsilon := epsilon;
-
-      let action_index =
-        if
-          let sample =
-            Rune.Rng.uniform (take_key ()) Rune.float32 [| 1 |] |> Rune.to_array
-          in
-          sample.(0) < epsilon
-        then
-          let tensor = Rune.Rng.randint (take_key ()) ~min:0 ~max:4 [| 1 |] in
-          let values : Int32.t array = Rune.to_array tensor in
-          Int32.to_int values.(0)
-        else greedy_action q_net params !state
-      in
-      let action = Rune.scalar Rune.int32 (Int32.of_int action_index) in
+      incr epsilon_step;
 
       (* Take action *)
       let transition = Env.step env action in
       let reward = transition.reward in
       let terminated = transition.terminated in
       let truncated = transition.truncated in
-      let next_state = float_state transition.observation in
 
       episode_reward := !episode_reward +. reward;
       done_ := terminated || truncated;
 
       (* Store experience - Fehu's Buffer.Replay uses tensors *)
-      let obs_tensor = Rune.create Rune.float32 [| 2 |] !state in
-      let action_tensor = Rune.scalar Rune.int32 (Int32.of_int action_index) in
-      let next_obs_tensor = Rune.create Rune.float32 [| 2 |] next_state in
-
       Buffer.Replay.add replay_buffer
         Buffer.
           {
-            observation = obs_tensor;
-            action = action_tensor;
+            observation = !current_obs;
+            action;
             reward;
-            next_observation = next_obs_tensor;
+            next_observation = transition.observation;
             terminated;
             truncated;
           };
-
-      state := next_state;
+      current_obs := transition.observation;
 
       (* Train if enough experiences *)
       if Buffer.Replay.size replay_buffer >= batch_size then (
-        let batch =
-          Buffer.Replay.sample replay_buffer ~rng:(take_key ()) ~batch_size
+        let ( observations_t,
+              actions_t,
+              rewards_t,
+              next_obs_t,
+              terminated_t,
+              truncated_t ) =
+          Buffer.Replay.sample_tensors replay_buffer ~rng:(take_key ())
+            ~batch_size
         in
-
+        let batch_len =
+          match Rune.shape rewards_t with
+          | [| len |] -> len
+          | _ -> invalid_arg "sample_tensors: rewards tensor must be rank-1"
+        in
         let _loss, grads =
           value_and_grad
             (fun params ->
-              let total_loss = ref 0.0 in
-
-              Array.iter
-                (fun Buffer.
-                       {
-                         observation;
-                         action;
-                         reward;
-                         next_observation;
-                         terminated;
-                         _;
-                       } ->
-                  (* Current Q-value *)
-                  let obs_batch = Rune.reshape [| 1; 2 |] observation in
-                  let q_values =
-                    Kaun.apply q_net params ~training:false obs_batch
-                  in
-                  let act_idx = Int32.to_int (Rune.to_array action).(0) in
-                  let current_q = Rune.item [ 0; act_idx ] q_values in
-
-                  (* Target Q-value *)
-                  let target_q =
-                    if terminated then reward
-                    else
-                      let next_obs_batch =
-                        Rune.reshape [| 1; 2 |] next_observation
-                      in
-                      let next_q_values =
-                        Kaun.apply target_net !target_params ~training:false
-                          next_obs_batch
-                      in
-                      let q0 = Rune.item [ 0; 0 ] next_q_values in
-                      let q1 = Rune.item [ 0; 1 ] next_q_values in
-                      let q2 = Rune.item [ 0; 2 ] next_q_values in
-                      let q3 = Rune.item [ 0; 3 ] next_q_values in
-                      let max_next_q = max (max q0 q1) (max q2 q3) in
-                      reward +. (gamma *. max_next_q)
-                  in
-
-                  let diff = current_q -. target_q in
-                  total_loss := !total_loss +. (diff *. diff))
-                batch;
-
-              let loss_val = !total_loss /. float_of_int (Array.length batch) in
-              Rune.create Rune.float32 [||] [| loss_val |])
+              let observations_f = Rune.cast Rune.float32 observations_t in
+              let next_obs_f = Rune.cast Rune.float32 next_obs_t in
+              let q_values =
+                Kaun.apply q_net params ~training:true observations_f
+              in
+              let action_indices = Rune.reshape [| batch_len; 1 |] actions_t in
+              let chosen_q =
+                Rune.take_along_axis ~axis:1 action_indices q_values
+                |> Rune.squeeze ~axes:[ 1 ]
+              in
+              let next_q_values =
+                Kaun.apply target_net !target_params ~training:false next_obs_f
+              in
+              let max_next_q = Rune.max next_q_values ~axes:[ 1 ] in
+              let done_mask = Rune.logical_or terminated_t truncated_t in
+              let done_float = Rune.cast Rune.float32 done_mask in
+              let not_done =
+                let ones = Rune.full_like done_float 1.0 in
+                Rune.sub ones done_float
+              in
+              let discount =
+                Rune.mul
+                  (Rune.scalar Rune.float32 gamma)
+                  (Rune.mul not_done max_next_q)
+              in
+              let target_q = Rune.add rewards_t discount in
+              let td_error = Rune.sub chosen_q target_q in
+              Rune.mean (Rune.square td_error))
             params
         in
 
@@ -290,8 +273,7 @@ let run_dqn () =
   Option.iter
     (fun path ->
       Printf.printf "Recording trained rollout to %s\n%!" path;
-      record_guard "recording trained rollout"
-        (fun () ->
+      record_guard "recording trained rollout" (fun () ->
           record_trained_rollout ~path ~steps:100 ~q_net ~params))
     (record_path "gridworld_trained.mp4");
 

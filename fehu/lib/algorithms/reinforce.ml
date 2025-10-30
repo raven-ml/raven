@@ -1,4 +1,5 @@
 open Kaun
+open Fehu
 module Snapshot = Checkpoint.Snapshot
 
 type config = {
@@ -20,21 +21,144 @@ let default_config =
     max_episode_steps = 1000;
   }
 
-type t = {
-  policy_network : module_;
-  mutable policy_params : params;
-  baseline_network : module_ option;
-  mutable baseline_params : params option;
-  policy_optimizer : Optimizer.algorithm;
-  mutable policy_opt_state : Optimizer.state;
-  baseline_optimizer : Optimizer.algorithm option;
-  mutable baseline_opt_state : Optimizer.state option;
-  mutable rng : Rune.Rng.key;
-  n_actions : int;
-  config : config;
+type params = Ptree.t
+
+type metrics = {
+  episode_return : float;
+  episode_length : int;
+  avg_entropy : float;
+  avg_log_prob : float;
+  adv_mean : float;
+  adv_std : float;
+  value_loss : float option;
+  total_steps : int;
+  total_episodes : int;
 }
 
-type update_metrics = {
+type episode_step = {
+  observation : (float, Bigarray.float32_elt) Rune.t;
+  action_index : int;
+  reward : float;
+  terminated : bool;
+  truncated : bool;
+}
+
+type state = {
+  policy_network : module_;
+  baseline_network : module_ option;
+  policy_optimizer : Optimizer.algorithm;
+  baseline_optimizer : Optimizer.algorithm option;
+  policy_opt_state : Optimizer.state;
+  baseline_opt_state : Optimizer.state option;
+  baseline_params : params option;
+  rng : Rune.Rng.key;
+  config : config;
+  total_steps : int;
+  total_episodes : int;
+  current_obs : (float, Bigarray.float32_elt) Rune.t;
+  episode_steps_rev : episode_step list;
+  episode_return_acc : float;
+  episode_length_acc : int;
+  action_offset : int;
+  n_actions : int;
+  last_metrics : metrics;
+}
+
+let make_optimizer config =
+  let schedule = Optimizer.Schedule.constant config.learning_rate in
+  Optimizer.adam ~lr:schedule ()
+
+let discrete_action_info action_space =
+  match Space.boundary_values action_space with
+  | [ Space.Value.Int start; Int finish ] -> (start, finish - start + 1)
+  | [ Space.Value.Int start ] -> (start, 1)
+  | _ ->
+      invalid_arg
+        "Reinforce.init: action space must provide discrete boundary values"
+
+let reshape_observation obs =
+  match Rune.shape obs with
+  | [||] -> Rune.reshape [| 1 |] obs
+  | [| features |] -> Rune.reshape [| 1; features |] obs
+  | [| 1; _ |] -> obs
+  | [| batch; _ |] when batch = 1 -> obs
+  | _ -> obs
+
+let compute_returns ~gamma ~rewards ~terminateds ~truncateds =
+  let n = Array.length rewards in
+  let returns = Array.make n 0.0 in
+  let running = ref 0.0 in
+  for idx = n - 1 downto 0 do
+    if terminateds.(idx) || truncateds.(idx) then running := 0.0;
+    running := rewards.(idx) +. (gamma *. !running);
+    returns.(idx) <- !running
+  done;
+  returns
+
+let float_array_mean arr =
+  let n = Array.length arr in
+  if n = 0 then 0.0 else Array.fold_left ( +. ) 0.0 arr /. float_of_int n
+
+let float_array_std arr ~mean =
+  let n = Array.length arr in
+  if n = 0 then 0.0
+  else
+    let variance =
+      Array.fold_left
+        (fun acc value ->
+          let diff = value -. mean in
+          acc +. (diff *. diff /. float_of_int n))
+        0.0 arr
+    in
+    sqrt variance
+
+let initial_metrics =
+  {
+    episode_return = 0.0;
+    episode_length = 0;
+    avg_entropy = 0.0;
+    avg_log_prob = 0.0;
+    adv_mean = 0.0;
+    adv_std = 0.0;
+    value_loss = None;
+    total_steps = 0;
+    total_episodes = 0;
+  }
+
+let metrics state = state.last_metrics
+
+let log_softmax logits =
+  let max_logits = Rune.max logits ~axes:[ -1 ] ~keepdims:true in
+  let shifted = Rune.sub logits max_logits in
+  let sum_exp = Rune.sum (Rune.exp shifted) ~axes:[ -1 ] ~keepdims:true in
+  Rune.sub shifted (Rune.log sum_exp)
+
+let policy_statistics ~n_actions ~action_indices ~obs_batch ~network ~params =
+  let logits = apply network params ~training:false obs_batch in
+  let log_probs = log_softmax logits in
+  let gather_axis = Array.length (Rune.shape log_probs) - 1 in
+  let one_hot =
+    Rune.cast Rune.float32 (Rune.one_hot ~num_classes:n_actions action_indices)
+  in
+  let selected =
+    Rune.mul log_probs one_hot |> Rune.sum ~axes:[ gather_axis ] ~keepdims:false
+  in
+  let probs = Rune.exp log_probs in
+  let entropy =
+    Rune.mul probs log_probs |> Rune.neg
+    |> Rune.sum ~axes:[ gather_axis ] ~keepdims:false
+  in
+  let log_prob_array = Rune.to_array selected in
+  let entropy_array = Rune.to_array entropy in
+  let avg_log_prob = float_array_mean log_prob_array in
+  let avg_entropy = float_array_mean entropy_array in
+  (avg_log_prob, avg_entropy)
+
+type episode_update = {
+  params : params;
+  policy_opt_state : Optimizer.state;
+  baseline_params : params option;
+  baseline_opt_state : Optimizer.state option;
   episode_return : float;
   episode_length : int;
   avg_entropy : float;
@@ -44,8 +168,331 @@ type update_metrics = {
   value_loss : float option;
 }
 
+let perform_episode_update ~params ~(algo_state : state) steps =
+  let steps = List.rev steps in
+  let n_steps = List.length steps in
+  if n_steps = 0 then
+    {
+      params;
+      policy_opt_state = algo_state.policy_opt_state;
+      baseline_params = algo_state.baseline_params;
+      baseline_opt_state = algo_state.baseline_opt_state;
+      episode_return = 0.0;
+      episode_length = 0;
+      avg_entropy = 0.0;
+      avg_log_prob = 0.0;
+      adv_mean = 0.0;
+      adv_std = 0.0;
+      value_loss = None;
+    }
+  else
+    let observations =
+      Array.of_list (List.map (fun step -> step.observation) steps)
+    in
+    let obs_batch = Rune.stack ~axis:0 (Array.to_list observations) in
+    let rewards = Array.of_list (List.map (fun step -> step.reward) steps) in
+    let terminateds =
+      Array.of_list (List.map (fun step -> step.terminated) steps)
+    in
+    let truncateds =
+      Array.of_list (List.map (fun step -> step.truncated) steps)
+    in
+    let returns_raw =
+      compute_returns ~gamma:algo_state.config.gamma ~rewards ~terminateds
+        ~truncateds
+    in
+    let returns_scaled =
+      Array.map (fun r -> r *. algo_state.config.reward_scale) returns_raw
+    in
+    let action_indices_array =
+      Array.of_list (List.map (fun step -> step.action_index) steps)
+    in
+    let action_indices =
+      Array.map (fun idx -> Int32.of_int idx) action_indices_array
+      |> Rune.create Rune.int32 [| n_steps |]
+    in
+    let baseline_values =
+      if algo_state.config.use_baseline then
+        match (algo_state.baseline_network, algo_state.baseline_params) with
+        | Some net, Some params ->
+            let values =
+              apply net params ~training:false obs_batch
+              |> Rune.reshape [| n_steps |]
+            in
+            Rune.to_array values
+        | _ ->
+            invalid_arg
+              "Reinforce.step: baseline parameters missing despite \
+               use_baseline=true"
+      else [||]
+    in
+    let advantages =
+      if algo_state.config.use_baseline then
+        Array.mapi
+          (fun idx return_scaled -> return_scaled -. baseline_values.(idx))
+          returns_scaled
+      else Array.copy returns_scaled
+    in
+    let adv_mean = float_array_mean advantages in
+    let adv_std = float_array_std advantages ~mean:adv_mean in
+    let denom = if adv_std < 1e-6 then 1.0 else adv_std in
+    let advantages_norm =
+      Array.map (fun a -> (a -. adv_mean) /. denom) advantages
+    in
+    let advantages_tensor =
+      Rune.create Rune.float32 [| n_steps |] advantages_norm
+    in
+    let obs_batch =
+      (* Ensure policy sees float32 tensors *)
+      Rune.cast Rune.float32 obs_batch
+    in
+    let policy_loss_fn current_params =
+      let logits =
+        apply algo_state.policy_network current_params ~training:true obs_batch
+      in
+      let log_probs = log_softmax logits in
+      let gather_axis = Array.length (Rune.shape log_probs) - 1 in
+      let one_hot =
+        Rune.cast Rune.float32
+          (Rune.one_hot ~num_classes:algo_state.n_actions action_indices)
+      in
+      let selected =
+        Rune.mul log_probs one_hot
+        |> Rune.sum ~axes:[ gather_axis ] ~keepdims:false
+      in
+      let entropy =
+        let probs = Rune.exp log_probs in
+        Rune.mul probs log_probs |> Rune.neg
+        |> Rune.sum ~axes:[ gather_axis ] ~keepdims:false
+      in
+      let policy_term =
+        Rune.mul advantages_tensor selected |> Rune.neg |> Rune.mean
+      in
+      let entropy_term =
+        let entropy_mean = Rune.mean entropy in
+        Rune.mul
+          (Rune.scalar Rune.float32 algo_state.config.entropy_coef)
+          entropy_mean
+      in
+      Rune.sub policy_term entropy_term
+    in
+    let _loss, policy_grads = value_and_grad policy_loss_fn params in
+    let updates, policy_opt_state =
+      Optimizer.step algo_state.policy_optimizer algo_state.policy_opt_state
+        params policy_grads
+    in
+    let params = Optimizer.apply_updates params updates in
+    let avg_log_prob, avg_entropy =
+      policy_statistics ~n_actions:algo_state.n_actions ~action_indices
+        ~obs_batch ~network:algo_state.policy_network ~params
+    in
+    let baseline_params, baseline_opt_state, value_loss =
+      if algo_state.config.use_baseline then
+        match
+          ( algo_state.baseline_network,
+            algo_state.baseline_params,
+            algo_state.baseline_optimizer,
+            algo_state.baseline_opt_state )
+        with
+        | Some net, Some base_params, Some optimizer, Some opt_state ->
+            let returns_tensor =
+              Rune.create Rune.float32 [| n_steps |] returns_scaled
+            in
+            let baseline_loss params =
+              let values =
+                apply net params ~training:true obs_batch
+                |> Rune.reshape [| n_steps |]
+              in
+              let diff = Rune.sub values returns_tensor in
+              Rune.mean (Rune.square diff)
+            in
+            let loss_tensor, grads = value_and_grad baseline_loss base_params in
+            let updates, opt_state =
+              Optimizer.step optimizer opt_state base_params grads
+            in
+            let base_params = Optimizer.apply_updates base_params updates in
+            let loss = (Rune.to_array loss_tensor).(0) in
+            (Some base_params, Some opt_state, Some loss)
+        | _ ->
+            invalid_arg
+              "Reinforce.step: baseline optimizer state missing despite \
+               use_baseline=true"
+      else (algo_state.baseline_params, algo_state.baseline_opt_state, None)
+    in
+    {
+      params;
+      policy_opt_state;
+      baseline_params;
+      baseline_opt_state;
+      episode_return = returns_raw.(0);
+      episode_length = n_steps;
+      avg_entropy;
+      avg_log_prob;
+      adv_mean;
+      adv_std;
+      value_loss;
+    }
+
+let init ?baseline_network ~env ~policy_network ~rng ~config () =
+  if config.use_baseline && Option.is_none baseline_network then
+    invalid_arg
+      "Reinforce.init: baseline_network required when use_baseline = true";
+  let action_space = Env.action_space env in
+  let action_offset, n_actions = discrete_action_info action_space in
+  let key_count = if config.use_baseline then 3 else 2 in
+  let keys = Rune.Rng.split ~n:key_count rng in
+  let policy_key = keys.(0) in
+  let rng_key = keys.(key_count - 1) in
+  let baseline_key = if config.use_baseline then Some keys.(1) else None in
+  let params = init policy_network ~rngs:policy_key ~dtype:Rune.float32 in
+  let policy_optimizer = make_optimizer config in
+  let policy_opt_state = Optimizer.init policy_optimizer params in
+  let baseline_network, baseline_params, baseline_optimizer, baseline_opt_state
+      =
+    match (config.use_baseline, baseline_network, baseline_key) with
+    | true, Some net, Some key ->
+        let params = init net ~rngs:key ~dtype:Rune.float32 in
+        let optimizer = make_optimizer config in
+        let opt_state = Optimizer.init optimizer params in
+        (Some net, Some params, Some optimizer, Some opt_state)
+    | _ -> (None, None, None, None)
+  in
+  let current_obs, _info = Env.reset env () in
+  let state =
+    {
+      policy_network;
+      baseline_network;
+      policy_optimizer;
+      baseline_optimizer;
+      policy_opt_state;
+      baseline_opt_state;
+      baseline_params;
+      rng = rng_key;
+      config;
+      total_steps = 0;
+      total_episodes = 0;
+      current_obs;
+      episode_steps_rev = [];
+      episode_return_acc = 0.0;
+      episode_length_acc = 0;
+      action_offset;
+      n_actions;
+      last_metrics = initial_metrics;
+    }
+  in
+  (params, state)
+
+let step ~env ~params ~state =
+  let keys = Rune.Rng.split state.rng ~n:2 in
+  let sample_key = keys.(0) in
+  let rng_after = keys.(1) in
+  let obs = state.current_obs in
+  let obs_batched = reshape_observation obs in
+  let logits = apply state.policy_network params ~training:true obs_batched in
+  let indices =
+    Rune.Rng.categorical sample_key logits |> Rune.reshape [| 1 |]
+  in
+  let idx_array = Rune.to_array indices in
+  let action_index = Int32.to_int idx_array.(0) in
+  if action_index < 0 || action_index >= state.n_actions then
+    invalid_arg "Reinforce.step produced invalid action index";
+  let action_value = state.action_offset + action_index in
+  let action = Rune.scalar Rune.int32 (Int32.of_int action_value) in
+  let transition = Env.step env action in
+  let length_after = state.episode_length_acc + 1 in
+  let limit_reached = length_after >= state.config.max_episode_steps in
+  let truncated =
+    transition.truncated || (limit_reached && not transition.terminated)
+  in
+  let episode_done = transition.terminated || truncated in
+  let episode_step =
+    {
+      observation = state.current_obs;
+      action_index;
+      reward = transition.reward;
+      terminated = transition.terminated;
+      truncated;
+    }
+  in
+  let episode_steps_rev = episode_step :: state.episode_steps_rev in
+  let episode_return_acc = state.episode_return_acc +. transition.reward in
+  let episode_length_acc = length_after in
+  let total_steps = state.total_steps + 1 in
+  let total_episodes =
+    if episode_done then state.total_episodes + 1 else state.total_episodes
+  in
+  let params, policy_opt_state, baseline_params, baseline_opt_state, metrics =
+    if episode_done then
+      let update =
+        perform_episode_update ~params ~algo_state:state episode_steps_rev
+      in
+      let metrics =
+        {
+          episode_return = update.episode_return;
+          episode_length = update.episode_length;
+          avg_entropy = update.avg_entropy;
+          avg_log_prob = update.avg_log_prob;
+          adv_mean = update.adv_mean;
+          adv_std = update.adv_std;
+          value_loss = update.value_loss;
+          total_steps;
+          total_episodes;
+        }
+      in
+      ( update.params,
+        update.policy_opt_state,
+        update.baseline_params,
+        update.baseline_opt_state,
+        metrics )
+    else
+      ( params,
+        state.policy_opt_state,
+        state.baseline_params,
+        state.baseline_opt_state,
+        state.last_metrics )
+  in
+  let next_obs =
+    if episode_done then fst (Env.reset env ()) else transition.observation
+  in
+  let episode_steps_rev = if episode_done then [] else episode_steps_rev in
+  let episode_return_acc = if episode_done then 0.0 else episode_return_acc in
+  let episode_length_acc = if episode_done then 0 else episode_length_acc in
+  ( params,
+    {
+      state with
+      rng = rng_after;
+      current_obs = next_obs;
+      episode_steps_rev;
+      episode_return_acc;
+      episode_length_acc;
+      total_steps;
+      total_episodes;
+      policy_opt_state;
+      baseline_opt_state;
+      baseline_params;
+      last_metrics = metrics;
+    } )
+
+let train ?baseline_network ~env ~policy_network ~rng ~config ~total_timesteps
+    ?callback () =
+  let params, state =
+    init ?baseline_network ~env ~policy_network ~rng ~config ()
+  in
+  let rec loop params state =
+    if state.total_steps >= total_timesteps then (params, state)
+    else
+      let params, state = step ~env ~params ~state in
+      let continue =
+        match callback with None -> `Continue | Some f -> f (metrics state)
+      in
+      match continue with
+      | `Stop -> (params, state)
+      | `Continue -> loop params state
+  in
+  loop params state
+
 let reinforce_schema_key = "schema"
-let reinforce_schema_value = "fehu.reinforce/1"
+let reinforce_schema_value = "fehu.reinforce/2"
 
 let config_to_snapshot (c : config) =
   Snapshot.record
@@ -60,7 +507,7 @@ let config_to_snapshot (c : config) =
 
 let config_of_snapshot snapshot =
   let open Result in
-  let ( let* ) = Result.bind in
+  let ( let* ) = bind in
   let open Snapshot in
   let error field message =
     Error (Printf.sprintf "Reinforce config field %s %s" field message)
@@ -104,9 +551,76 @@ let config_of_snapshot snapshot =
         }
   | _ -> Error "Reinforce config must be a record"
 
-let to_snapshot (t : t) =
+let metrics_to_snapshot (m : metrics) =
+  Snapshot.record
+    [
+      ("episode_return", Snapshot.float m.episode_return);
+      ("episode_length", Snapshot.int m.episode_length);
+      ("avg_entropy", Snapshot.float m.avg_entropy);
+      ("avg_log_prob", Snapshot.float m.avg_log_prob);
+      ("adv_mean", Snapshot.float m.adv_mean);
+      ("adv_std", Snapshot.float m.adv_std);
+      ( "value_loss",
+        match m.value_loss with
+        | Some loss -> Snapshot.list [ Snapshot.float loss ]
+        | None -> Snapshot.list [] );
+      ("total_steps", Snapshot.int m.total_steps);
+      ("total_episodes", Snapshot.int m.total_episodes);
+    ]
+
+let metrics_of_snapshot snapshot =
+  let open Result in
+  let ( let* ) = bind in
+  let open Snapshot in
+  match snapshot with
+  | Record record ->
+      let find_float field =
+        match Snapshot.Record.find_opt field record with
+        | Some (Scalar (Float value)) -> Ok value
+        | Some (Scalar (Int value)) -> Ok (float_of_int value)
+        | Some _ ->
+            Error (Printf.sprintf "Reinforce metrics %s must be float" field)
+        | None -> Error (Printf.sprintf "Reinforce metrics missing %s" field)
+      in
+      let find_int field =
+        match Snapshot.Record.find_opt field record with
+        | Some (Scalar (Int value)) -> Ok value
+        | Some (Scalar (Float value)) -> Ok (int_of_float value)
+        | Some _ ->
+            Error (Printf.sprintf "Reinforce metrics %s must be int" field)
+        | None -> Error (Printf.sprintf "Reinforce metrics missing %s" field)
+      in
+      let* episode_return = find_float "episode_return" in
+      let* episode_length = find_int "episode_length" in
+      let* avg_entropy = find_float "avg_entropy" in
+      let* avg_log_prob = find_float "avg_log_prob" in
+      let* adv_mean = find_float "adv_mean" in
+      let* adv_std = find_float "adv_std" in
+      let value_loss =
+        match Snapshot.Record.find_opt "value_loss" record with
+        | Some (List [ Scalar (Float value) ]) -> Some value
+        | Some (List [ Scalar (Int value) ]) -> Some (float_of_int value)
+        | _ -> None
+      in
+      let* total_steps = find_int "total_steps" in
+      let* total_episodes = find_int "total_episodes" in
+      Ok
+        {
+          episode_return;
+          episode_length;
+          avg_entropy;
+          avg_log_prob;
+          adv_mean;
+          adv_std;
+          value_loss;
+          total_steps;
+          total_episodes;
+        }
+  | _ -> Error "Reinforce metrics must be a record"
+
+let save ~path ~params ~(state : state) =
   let baseline_entries =
-    match (t.baseline_params, t.baseline_opt_state) with
+    match (state.baseline_params, state.baseline_opt_state) with
     | Some params, Some opt_state ->
         [
           ("baseline_params", Snapshot.ptree params);
@@ -114,565 +628,179 @@ let to_snapshot (t : t) =
         ]
     | _ -> []
   in
-  Snapshot.record
-    ([
-       (reinforce_schema_key, Snapshot.string reinforce_schema_value);
-       ("n_actions", Snapshot.int t.n_actions);
-       ("rng", Snapshot.rng t.rng);
-       ("config", config_to_snapshot t.config);
-       ("policy_params", Snapshot.ptree t.policy_params);
-       ("policy_optimizer_state", Optimizer.serialize t.policy_opt_state);
-     ]
-    @ baseline_entries)
-
-let of_snapshot ~policy_network ~policy_optimizer ?baseline_network
-    ?baseline_optimizer snapshot =
-  let open Result in
-  let ( let* ) = Result.bind in
-  let open Snapshot in
-  let error msg = Error ("Reinforce.of_snapshot: " ^ msg) in
-  let expect_baseline label value =
-    match value with
-    | Some v -> Ok v
-    | None -> error ("missing baseline field " ^ label)
+  let snapshot =
+    Snapshot.record
+      ([
+         (reinforce_schema_key, Snapshot.string reinforce_schema_value);
+         ("config", config_to_snapshot state.config);
+         ("rng", Snapshot.rng state.rng);
+         ("policy_params", Snapshot.ptree params);
+         ("policy_optimizer_state", Optimizer.serialize state.policy_opt_state);
+         ("n_actions", Snapshot.int state.n_actions);
+         ("action_offset", Snapshot.int state.action_offset);
+         ("total_steps", Snapshot.int state.total_steps);
+         ("total_episodes", Snapshot.int state.total_episodes);
+         ("last_metrics", metrics_to_snapshot state.last_metrics);
+       ]
+      @ baseline_entries)
   in
-  match snapshot with
-  | Record record ->
-      let validate_schema () =
-        match Snapshot.Record.find_opt reinforce_schema_key record with
-        | None -> Ok ()
-        | Some (Scalar (String value)) ->
-            if String.equal value reinforce_schema_value then Ok ()
-            else error ("unsupported schema " ^ value)
-        | Some _ -> error "invalid schema field"
-      in
-      let* () = validate_schema () in
-      let find field =
-        match Snapshot.Record.find_opt field record with
-        | Some value -> Ok value
-        | None -> error ("missing field " ^ field)
-      in
-      let decode_int = function
-        | Scalar (Int value) -> Ok value
-        | Scalar (Float value) -> Ok (int_of_float value)
-        | _ -> error "expected int scalar"
-      in
-      let decode_rng = function
-        | Scalar (Int seed) -> Ok (Rune.Rng.key seed)
-        | Scalar (Float value) -> Ok (Rune.Rng.key (int_of_float value))
-        | _ -> error "expected rng scalar"
-      in
-      let* n_actions_node = find "n_actions" in
-      let* n_actions = decode_int n_actions_node in
-      let* rng_node = find "rng" in
-      let* rng = decode_rng rng_node in
-      let* config_node = find "config" in
-      let* config = config_of_snapshot config_node in
-      let* policy_params_node = find "policy_params" in
-      let* policy_params =
-        match Snapshot.to_ptree policy_params_node with
-        | Ok params -> Ok params
-        | Error msg -> error msg
-      in
-      let* policy_optimizer_state_node = find "policy_optimizer_state" in
-      let* policy_opt_state =
-        match
-          Optimizer.restore policy_optimizer policy_optimizer_state_node
-        with
-        | Ok state -> Ok state
-        | Error msg -> error msg
-      in
-      let baseline_params_result =
-        match Snapshot.Record.find_opt "baseline_params" record with
-        | None -> Ok None
-        | Some node -> (
-            match Snapshot.to_ptree node with
-            | Ok params -> Ok (Some params)
-            | Error msg -> error msg)
-      in
-      let* baseline_params = baseline_params_result in
-      let baseline_opt_state_result =
-        match Snapshot.Record.find_opt "baseline_optimizer_state" record with
-        | None -> Ok None
-        | Some node -> (
-            match baseline_optimizer with
-            | None ->
-                error "baseline optimizer is required to restore baseline state"
-            | Some optimizer -> (
-                match Optimizer.restore optimizer node with
-                | Ok state -> Ok (Some state)
-                | Error msg -> error msg))
-      in
-      let* baseline_opt_state = baseline_opt_state_result in
-      if config.use_baseline then
-        let* baseline_network_module =
-          expect_baseline "baseline_network" baseline_network
-        in
-        let* baseline_optimizer_algorithm =
-          expect_baseline "baseline_optimizer" baseline_optimizer
-        in
-        let* baseline_params_value =
-          match baseline_params with
-          | Some params -> Ok params
-          | None -> error "missing baseline_params field"
-        in
-        let* baseline_opt_state_value =
-          match baseline_opt_state with
-          | Some state -> Ok state
-          | None -> error "missing baseline_optimizer_state field"
-        in
-        Ok
-          {
-            policy_network;
-            policy_params;
-            baseline_network = Some baseline_network_module;
-            baseline_params = Some baseline_params_value;
-            policy_optimizer;
-            policy_opt_state;
-            baseline_optimizer = Some baseline_optimizer_algorithm;
-            baseline_opt_state = Some baseline_opt_state_value;
-            rng;
-            n_actions;
-            config;
-          }
-      else
-        Ok
-          {
-            policy_network;
-            policy_params;
-            baseline_network = None;
-            baseline_params = None;
-            policy_optimizer;
-            policy_opt_state;
-            baseline_optimizer = None;
-            baseline_opt_state = None;
-            rng;
-            n_actions;
-            config;
-          }
-  | _ -> error "expected snapshot record"
-
-let create ~policy_network ?baseline_network ~n_actions ~rng config =
-  if config.use_baseline && Option.is_none baseline_network then
-    invalid_arg
-      "Reinforce.create: baseline_network required when use_baseline = true";
-
-  let keys = Rune.Rng.split ~n:2 rng in
-
-  let policy_params = init policy_network ~rngs:keys.(0) ~dtype:Rune.float32 in
-  let lr = Optimizer.Schedule.constant config.learning_rate in
-  let policy_optimizer = Optimizer.adam ~lr () in
-  let policy_opt_state = Optimizer.init policy_optimizer policy_params in
-
-  let ( baseline_network_state,
-        baseline_params,
-        baseline_optimizer,
-        baseline_opt_state ) =
-    match baseline_network with
-    | Some net when config.use_baseline ->
-        let params = init net ~rngs:keys.(1) ~dtype:Rune.float32 in
-        let lr = Optimizer.Schedule.constant config.learning_rate in
-        let opt = Optimizer.adam ~lr () in
-        let opt_state = Optimizer.init opt params in
-        (Some net, Some params, Some opt, Some opt_state)
-    | _ -> (None, None, None, None)
-  in
-
-  {
-    policy_network;
-    policy_params;
-    baseline_network = baseline_network_state;
-    baseline_params;
-    policy_optimizer;
-    policy_opt_state;
-    baseline_optimizer;
-    baseline_opt_state;
-    rng = keys.(0);
-    n_actions;
-    config;
-  }
-
-let predict t obs ~training =
-  (* Add batch dimension if needed: [features] -> [1, features] *)
-  let obs_shape = Rune.shape obs in
-  let obs_batched =
-    if Array.length obs_shape = 1 then
-      (* No batch dimension, add it *)
-      let features = obs_shape.(0) in
-      Rune.reshape [| 1; features |] obs
-    else
-      (* Already has batch dimension *)
-      obs
-  in
-
-  let logits = apply t.policy_network t.policy_params ~training obs_batched in
-
-  if training then (
-    (* Sample from policy distribution using Rune RNG *)
-    let probs = Rune.softmax logits ~axes:[ -1 ] in
-    let probs_array = Rune.to_array probs in
-
-    (* Split RNG and sample *)
-    let keys = Rune.Rng.split t.rng ~n:2 in
-    t.rng <- keys.(0);
-    let sample_rng = keys.(1) in
-
-    let uniform_sample = Rune.Rng.uniform sample_rng Rune.float32 [| 1 |] in
-    let r = (Rune.to_array uniform_sample).(0) in
-
-    let rec sample_idx i cumsum =
-      if i >= Array.length probs_array - 1 then i
-      else if r <= cumsum +. probs_array.(i) then i
-      else sample_idx (i + 1) (cumsum +. probs_array.(i))
-    in
-
-    let action_idx = sample_idx 0 0.0 in
-    let action = Rune.scalar Rune.int32 (Int32.of_int action_idx) in
-
-    (* Compute log_softmax manually *)
-    let max_logits = Rune.max logits ~axes:[ -1 ] ~keepdims:true in
-    let exp_logits = Rune.exp (Rune.sub logits max_logits) in
-    let sum_exp = Rune.sum exp_logits ~axes:[ -1 ] ~keepdims:true in
-    let log_probs = Rune.sub logits (Rune.add max_logits (Rune.log sum_exp)) in
-    let log_prob_array = Rune.to_array log_probs in
-    let log_prob = log_prob_array.(action_idx) in
-
-    (action, log_prob))
-  else
-    (* Greedy selection *)
-    let action_idx = Rune.argmax logits ~axis:(-1) ~keepdims:false in
-    let action = Rune.cast Rune.int32 action_idx in
-    (action, 0.0)
-
-let predict_value t obs =
-  match (t.baseline_network, t.baseline_params) with
-  | Some net, Some params ->
-      (* Add batch dimension if needed *)
-      let obs_shape = Rune.shape obs in
-      let obs_batched =
-        if Array.length obs_shape = 1 then
-          let features = obs_shape.(0) in
-          Rune.reshape [| 1; features |] obs
-        else obs
-      in
-      let value = apply net params ~training:false obs_batched in
-      let value_array = Rune.to_array value in
-      value_array.(0)
-  | _ -> 0.0
-
-let update t trajectory =
-  let open Fehu in
-  (* Compute returns using Monte Carlo *)
-  let compute_returns ~rewards ~dones ~gamma =
-    let n = Array.length rewards in
-    let returns = Array.make n 0.0 in
-    let running_return = ref 0.0 in
-
-    for i = n - 1 downto 0 do
-      if dones.(i) then running_return := 0.0;
-      running_return := rewards.(i) +. (gamma *. !running_return);
-      returns.(i) <- !running_return
-    done;
-
-    returns
-  in
-
-  let returns_raw =
-    compute_returns ~rewards:trajectory.Trajectory.rewards
-      ~dones:trajectory.Trajectory.terminateds ~gamma:t.config.gamma
-  in
-
-  let returns = Array.map (fun r -> r *. t.config.reward_scale) returns_raw in
-
-  (* Compute advantages *)
-  let advantages =
-    if t.config.use_baseline then
-      match trajectory.Trajectory.values with
-      | Some values -> Array.mapi (fun i r -> r -. values.(i)) returns
-      | None -> returns
-    else returns
-  in
-
-  let n_steps = Array.length advantages in
-  let steps_f = float_of_int n_steps in
-
-  (* Compute advantage statistics *)
-  let adv_mean =
-    if n_steps = 0 then 0.0
-    else Array.fold_left ( +. ) 0.0 advantages /. steps_f
-  in
-  let adv_var =
-    if n_steps = 0 then 0.0
-    else
-      Array.fold_left
-        (fun acc a ->
-          let diff = a -. adv_mean in
-          acc +. (diff *. diff))
-        0.0 advantages
-      /. steps_f
-  in
-  let adv_std = sqrt adv_var in
-
-  (* Normalize advantages *)
-  let advantages_norm =
-    if n_steps = 0 then [||]
-    else
-      let denom = if adv_std < 1e-6 then 1.0 else adv_std in
-      Array.map (fun a -> (a -. adv_mean) /. denom) advantages
-  in
-
-  let entropy_acc = ref 0.0 in
-  let log_prob_acc = ref 0.0 in
-
-  (* Policy gradient loss *)
-  let policy_loss_grad params =
-    let total_loss = ref (Rune.scalar Rune.float32 0.0) in
-
-    for i = 0 to Array.length trajectory.Trajectory.observations - 1 do
-      let obs = trajectory.Trajectory.observations.(i) in
-      let action = trajectory.Trajectory.actions.(i) in
-      let advantage = advantages_norm.(i) in
-
-      (* Add batch dimension if needed: [features] -> [1, features] *)
-      let obs_shape = Rune.shape obs in
-      let obs_batched =
-        if Array.length obs_shape = 1 then
-          let features = obs_shape.(0) in
-          Rune.reshape [| 1; features |] obs
-        else obs
-      in
-
-      let logits = apply t.policy_network params ~training:true obs_batched in
-
-      (* Compute log_softmax *)
-      let max_logits = Rune.max logits ~axes:[ -1 ] ~keepdims:true in
-      let exp_logits = Rune.exp (Rune.sub logits max_logits) in
-      let sum_exp = Rune.sum exp_logits ~axes:[ -1 ] ~keepdims:true in
-      let log_probs_pred =
-        Rune.sub logits (Rune.add max_logits (Rune.log sum_exp))
-      in
-
-      (* Compute entropy for logging *)
-      let probs = Rune.softmax logits ~axes:[ -1 ] in
-      let probs_arr = Rune.to_array (Rune.reshape [| t.n_actions |] probs) in
-      let entropy =
-        Array.fold_left
-          (fun acc p -> if p > 0. then acc -. (p *. log p) else acc)
-          0.0 probs_arr
-      in
-      entropy_acc := !entropy_acc +. entropy;
-
-      (* Select log_prob for taken action *)
-      let log_probs_flat = Rune.reshape [| t.n_actions |] log_probs_pred in
-      let indices = Rune.reshape [| 1 |] (Rune.cast Rune.int32 action) in
-      let selected = Rune.take indices log_probs_flat |> Rune.reshape [||] in
-
-      let log_prob_float = (Rune.to_array selected).(0) in
-      log_prob_acc := !log_prob_acc +. log_prob_float;
-
-      (* Policy gradient: -log π(a|s) × advantage *)
-      let loss = Rune.mul_s (Rune.neg selected) advantage in
-      total_loss := Rune.add !total_loss loss;
-
-      (* Entropy regularization *)
-      if t.config.entropy_coef <> 0. then
-        let entropy_scalar =
-          Rune.sum (Rune.mul probs log_probs_pred) ~axes:[ -1 ] ~keepdims:false
-          |> Rune.reshape [||]
-        in
-        let entropy_term =
-          Rune.mul_s entropy_scalar (-.t.config.entropy_coef)
-        in
-        total_loss := Rune.add !total_loss entropy_term
-    done;
-
-    let avg_loss =
-      Rune.div_s !total_loss
-        (float_of_int (Array.length trajectory.Trajectory.observations))
-    in
-    avg_loss
-  in
-
-  (* Update policy *)
-  let _policy_loss, policy_grads =
-    value_and_grad policy_loss_grad t.policy_params
-  in
-
-  let policy_updates, new_policy_opt_state =
-    Optimizer.step t.policy_optimizer t.policy_opt_state t.policy_params
-      policy_grads
-  in
-
-  t.policy_params <- Optimizer.apply_updates t.policy_params policy_updates;
-  t.policy_opt_state <- new_policy_opt_state;
-
-  (* Update baseline if present *)
-  let value_loss_acc = ref 0.0 in
-
-  (if t.config.use_baseline then
-     match
-       ( t.baseline_network,
-         t.baseline_params,
-         t.baseline_optimizer,
-         t.baseline_opt_state )
-     with
-     | Some net, Some params, Some opt, Some opt_state ->
-         let baseline_loss_grad params =
-           let total_loss = ref (Rune.scalar Rune.float32 0.0) in
-
-           for i = 0 to Array.length trajectory.Trajectory.observations - 1 do
-             let obs = trajectory.Trajectory.observations.(i) in
-             let return = returns.(i) in
-
-             (* Add batch dimension if needed: [features] -> [1, features] *)
-             let obs_shape = Rune.shape obs in
-             let obs_batched =
-               if Array.length obs_shape = 1 then
-                 let features = obs_shape.(0) in
-                 Rune.reshape [| 1; features |] obs
-               else obs
-             in
-
-             let value_pred = apply net params ~training:true obs_batched in
-             let value = Rune.reshape [||] value_pred in
-             let value_float = (Rune.to_array value).(0) in
-             let diff = value_float -. return in
-             value_loss_acc := !value_loss_acc +. (diff *. diff);
-             let target = Rune.scalar Rune.float32 return in
-             let loss = Rune.square (Rune.sub value target) in
-
-             total_loss := Rune.add !total_loss loss
-           done;
-
-           let avg_loss =
-             Rune.div_s !total_loss
-               (float_of_int (Array.length trajectory.Trajectory.observations))
-           in
-           avg_loss
-         in
-
-         let _, baseline_grads = value_and_grad baseline_loss_grad params in
-         let baseline_updates, new_baseline_opt_state =
-           Optimizer.step opt opt_state params baseline_grads
-         in
-
-         t.baseline_params <-
-           Some (Optimizer.apply_updates params baseline_updates);
-         t.baseline_opt_state <- Some new_baseline_opt_state
-     | _ -> ());
-
-  (* Compute metrics *)
-  let episode_return = if n_steps > 0 then returns_raw.(0) else 0.0 in
-  let avg_entropy = if n_steps = 0 then 0.0 else !entropy_acc /. steps_f in
-  let avg_log_prob = if n_steps = 0 then 0.0 else !log_prob_acc /. steps_f in
-  let value_loss_avg =
-    if n_steps = 0 then None
-    else if t.config.use_baseline then Some (!value_loss_acc /. steps_f)
-    else None
-  in
-
-  let metrics =
-    {
-      episode_return;
-      episode_length = n_steps;
-      avg_entropy;
-      avg_log_prob;
-      adv_mean;
-      adv_std;
-      value_loss = value_loss_avg;
-    }
-  in
-
-  (t, metrics)
-
-let learn t ~env ~total_timesteps
-    ?(callback = fun ~iteration:_ ~metrics:_ -> true) () =
-  let open Fehu in
-  let timesteps = ref 0 in
-  let iteration = ref 0 in
-
-  while !timesteps < total_timesteps do
-    (* Collect episode *)
-    let observations = ref [] in
-    let actions = ref [] in
-    let rewards = ref [] in
-    let terminateds = ref [] in
-    let truncateds = ref [] in
-    let log_probs = ref [] in
-    let values = ref [] in
-
-    let obs, _info = Env.reset env () in
-    let current_obs = ref obs in
-    let steps = ref 0 in
-    let done_flag = ref false in
-
-    while !steps < t.config.max_episode_steps && not !done_flag do
-      let action, log_prob = predict t !current_obs ~training:true in
-      let value =
-        if t.config.use_baseline then predict_value t !current_obs else 0.0
-      in
-
-      observations := !current_obs :: !observations;
-      actions := action :: !actions;
-      log_probs := log_prob :: !log_probs;
-      values := value :: !values;
-
-      let transition = Env.step env action in
-
-      rewards := transition.Env.reward :: !rewards;
-      terminateds := transition.Env.terminated :: !terminateds;
-      truncateds := transition.Env.truncated :: !truncateds;
-
-      current_obs := transition.Env.observation;
-      steps := !steps + 1;
-      done_flag := transition.Env.terminated || transition.Env.truncated
-    done;
-
-    timesteps := !timesteps + !steps;
-
-    (* Create trajectory *)
-    let log_probs_array = Array.of_list (List.rev !log_probs) in
-    let values_array = Array.of_list (List.rev !values) in
-    let trajectory =
-      Trajectory.create
-        ~observations:(Array.of_list (List.rev !observations))
-        ~actions:(Array.of_list (List.rev !actions))
-        ~rewards:(Array.of_list (List.rev !rewards))
-        ~terminateds:(Array.of_list (List.rev !terminateds))
-        ~truncateds:(Array.of_list (List.rev !truncateds))
-        ~log_probs:log_probs_array
-        ?values:(if t.config.use_baseline then Some values_array else None)
-        ()
-    in
-
-    (* Update *)
-    let _t, metrics = update t trajectory in
-
-    iteration := !iteration + 1;
-
-    (* Call callback *)
-    let continue = callback ~iteration:!iteration ~metrics in
-    if not continue then timesteps := total_timesteps
-  done;
-
-  t
-
-let save_to_file t ~path =
   match
-    Checkpoint.write_snapshot_file_with ~path ~encode:(fun () -> to_snapshot t)
+    Checkpoint.write_snapshot_file_with ~path ~encode:(fun () -> snapshot)
   with
   | Ok () -> ()
   | Error err ->
       failwith
-        (Printf.sprintf "Reinforce.save_to_file: %s"
-           (Checkpoint.error_to_string err))
+        (Printf.sprintf "Reinforce.save: %s" (Checkpoint.error_to_string err))
 
-let load_from_file ~path ~policy_network ~policy_optimizer ?baseline_network
-    ?baseline_optimizer () =
-  match
-    Checkpoint.load_snapshot_file_with ~path ~decode:(fun snapshot ->
-        of_snapshot ~policy_network ~policy_optimizer ?baseline_network
-          ?baseline_optimizer snapshot)
-  with
-  | Ok agent -> Ok agent
+let load ~path ~env ~policy_network ?baseline_network ~config () =
+  let open Result in
+  let action_space = Env.action_space env in
+  let action_offset_env, n_actions_env = discrete_action_info action_space in
+  let decode snapshot =
+    let open Snapshot in
+    let ( let* ) = bind in
+    match snapshot with
+    | Record record ->
+        let validate_schema () =
+          match Snapshot.Record.find_opt reinforce_schema_key record with
+          | Some (Scalar (String value))
+            when String.equal value reinforce_schema_value ->
+              Ok ()
+          | Some (Scalar (String value)) ->
+              Error ("REINFORCE: unsupported snapshot schema " ^ value)
+          | Some _ -> Error "REINFORCE: invalid schema field"
+          | None -> Ok ()
+        in
+        let* () = validate_schema () in
+        let* stored_config =
+          match Snapshot.Record.find_opt "config" record with
+          | Some cfg -> config_of_snapshot cfg
+          | None -> Error "REINFORCE: missing config field"
+        in
+        if stored_config <> config then
+          Error "REINFORCE: config mismatch between snapshot and request"
+        else
+          let require field =
+            match Snapshot.Record.find_opt field record with
+            | Some value -> Ok value
+            | None -> Error ("REINFORCE: missing field " ^ field)
+          in
+          let decode_int = function
+            | Scalar (Int value) -> Ok value
+            | Scalar (Float value) -> Ok (int_of_float value)
+            | _ -> Error "REINFORCE: expected integer field"
+          in
+          let decode_rng = function
+            | Scalar (Int seed) -> Ok (Rune.Rng.key seed)
+            | Scalar (Float seed) -> Ok (Rune.Rng.key (int_of_float seed))
+            | _ -> Error "REINFORCE: rng field must be scalar"
+          in
+          let* rng_node = require "rng" in
+          let* rng = decode_rng rng_node in
+          let* policy_params_node = require "policy_params" in
+          let* params =
+            match Snapshot.to_ptree policy_params_node with
+            | Ok tree -> Ok tree
+            | Error msg -> Error ("REINFORCE: " ^ msg)
+          in
+          let policy_optimizer = make_optimizer config in
+          let* policy_opt_state_node = require "policy_optimizer_state" in
+          let* policy_opt_state =
+            match Optimizer.restore policy_optimizer policy_opt_state_node with
+            | Ok state -> Ok state
+            | Error msg -> Error ("REINFORCE: " ^ msg)
+          in
+          let baseline_entries =
+            match
+              ( Snapshot.Record.find_opt "baseline_params" record,
+                Snapshot.Record.find_opt "baseline_optimizer_state" record )
+            with
+            | Some params_node, Some opt_state_node ->
+                let* baseline_module =
+                  match baseline_network with
+                  | Some net -> Ok (Some net)
+                  | None ->
+                      Error
+                        "REINFORCE: baseline snapshot found but no baseline \
+                         network provided"
+                in
+                let* baseline_params =
+                  match Snapshot.to_ptree params_node with
+                  | Ok tree -> Ok tree
+                  | Error msg -> Error ("REINFORCE: " ^ msg)
+                in
+                let optimizer = make_optimizer config in
+                let* baseline_opt_state =
+                  match Optimizer.restore optimizer opt_state_node with
+                  | Ok state -> Ok state
+                  | Error msg -> Error ("REINFORCE: " ^ msg)
+                in
+                Ok
+                  ( baseline_module,
+                    Some baseline_params,
+                    Some optimizer,
+                    Some baseline_opt_state )
+            | _ ->
+                if config.use_baseline then
+                  Error "REINFORCE: snapshot missing baseline parameters/state"
+                else Ok (baseline_network, None, None, None)
+          in
+          let* ( baseline_network,
+                 baseline_params,
+                 baseline_optimizer,
+                 baseline_opt_state ) =
+            baseline_entries
+          in
+          if config.use_baseline && Option.is_none baseline_network then
+            Error
+              "REINFORCE: snapshot requires baseline network but none provided"
+          else
+            let* n_actions_node = require "n_actions" in
+            let* n_actions = decode_int n_actions_node in
+            let* action_offset_node = require "action_offset" in
+            let* action_offset = decode_int action_offset_node in
+            if n_actions <> n_actions_env || action_offset <> action_offset_env
+            then
+              Error "REINFORCE: environment action space mismatch for snapshot"
+            else
+              let* total_steps_node = require "total_steps" in
+              let* total_steps = decode_int total_steps_node in
+              let* total_episodes_node = require "total_episodes" in
+              let* total_episodes = decode_int total_episodes_node in
+              let last_metrics =
+                match Snapshot.Record.find_opt "last_metrics" record with
+                | Some snapshot -> (
+                    match metrics_of_snapshot snapshot with
+                    | Ok metrics -> metrics
+                    | Error _ -> initial_metrics)
+                | None -> initial_metrics
+              in
+              let current_obs, _ = Env.reset env () in
+              let state =
+                {
+                  policy_network;
+                  baseline_network;
+                  policy_optimizer;
+                  baseline_optimizer;
+                  policy_opt_state;
+                  baseline_opt_state;
+                  baseline_params;
+                  rng;
+                  config;
+                  total_steps;
+                  total_episodes;
+                  current_obs;
+                  episode_steps_rev = [];
+                  episode_return_acc = 0.0;
+                  episode_length_acc = 0;
+                  action_offset;
+                  n_actions;
+                  last_metrics;
+                }
+              in
+              Ok (params, state)
+    | _ -> Error "REINFORCE: invalid snapshot format"
+  in
+  match Checkpoint.load_snapshot_file_with ~path ~decode with
+  | Ok result -> Ok result
   | Error err -> Error (Checkpoint.error_to_string err)

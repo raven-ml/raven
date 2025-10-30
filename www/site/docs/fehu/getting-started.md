@@ -69,36 +69,46 @@ let policy_net = Layer.sequential [
 let rng = Rune.Rng.key 42 in
 let env = Fehu_envs.Cartpole.make ~rng () in
 
-let agent = Fehu_algorithms.Reinforce.create
-  ~policy_network:policy_net
-  ~n_actions:2
-  ~rng
-  Fehu_algorithms.Reinforce.{
-    learning_rate = 0.001;
-    gamma = 0.99;
-    use_baseline = false;
-    reward_scale = 0.01;
-    entropy_coef = 0.01;
-    max_episode_steps = 500;
-  }
+let config = {
+  Fehu_algorithms.Reinforce.default_config with
+  learning_rate = 0.001;
+  gamma = 0.99;
+  reward_scale = 0.01;
+  entropy_coef = 0.01;
+  max_episode_steps = 500;
+}
 
 (* Train for 100,000 timesteps *)
-let agent = Fehu_algorithms.Reinforce.learn
-  agent ~env ~total_timesteps:100_000
-  ~callback:(fun ~iteration ~metrics ->
-    if iteration mod 10 = 0 then
+let params, state = Fehu_algorithms.Reinforce.train
+  ~env ~policy_network:policy_net ~rng ~config
+  ~total_timesteps:100_000
+  ~callback:(fun metrics ->
+    if metrics.total_episodes > 0 && metrics.total_episodes mod 10 = 0 then
       Printf.printf "Episode %d: Return = %.2f, Length = %d\n"
-        iteration metrics.episode_return metrics.episode_length;
-    true)
+        metrics.total_episodes metrics.episode_return metrics.episode_length;
+    `Continue)
   ()
+
+let greedy_action params obs =
+  let obs_batched =
+    match Rune.shape obs with
+    | [| features |] -> Rune.reshape [| 1; features |] obs
+    | [| 1; _ |] -> obs
+    | _ -> obs
+  in
+  let logits = Kaun.apply policy_net params ~training:false obs_batched in
+  let action_idx =
+    Rune.argmax logits ~axis:(-1) ~keepdims:false |> Rune.cast Rune.int32
+  in
+  let scalar =
+    Rune.reshape [||] action_idx |> Rune.to_array |> fun arr -> arr.(0)
+  in
+  Rune.scalar Rune.int32 scalar
 
 (* Evaluate trained agent *)
 let eval_stats = Training.evaluate env
-  ~policy:(fun obs ->
-    let action, _ = Fehu_algorithms.Reinforce.predict agent obs ~training:false in
-    action)
-  ~n_episodes:10
-  ()
+  ~policy:(fun obs -> greedy_action params obs)
+  ~n_episodes:10 ()
 
 Printf.printf "Average reward: %.2f\n" eval_stats.mean_reward
 ```

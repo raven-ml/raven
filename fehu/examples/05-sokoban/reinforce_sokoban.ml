@@ -88,92 +88,85 @@ let train env config =
     if config.use_baseline then Some (create_value_network ()) else None
   in
 
-  (* Initialize agent *)
   let rng = Rune.Rng.key config.seed in
-  let agent =
-    Fehu_algorithms.Reinforce.create ~policy_network:policy_net
-      ?baseline_network:value_net ~n_actions:4 ~rng
-      Fehu_algorithms.Reinforce.
-        {
-          learning_rate = config.learning_rate;
-          gamma = config.gamma;
-          use_baseline = config.use_baseline;
-          reward_scale = config.reward_scale;
-          entropy_coef = config.entropy_coef;
-          max_episode_steps = config.max_steps;
-        }
+  let alg_config =
+    {
+      Fehu_algorithms.Reinforce.learning_rate = config.learning_rate;
+      gamma = config.gamma;
+      use_baseline = config.use_baseline;
+      reward_scale = config.reward_scale;
+      entropy_coef = config.entropy_coef;
+      max_episode_steps = config.max_steps;
+    }
   in
 
-  (* Training metrics *)
+  (* Tracking metrics *)
   let rewards_history = ref [] in
   let wins_history = ref [] in
   let total_wins = ref 0 in
-
-  (* Training loop with callback *)
-  let episode = ref 0 in
-  let agent =
-    Fehu_algorithms.Reinforce.learn agent ~env
+  let last_episode = ref 0 in
+  let params, state =
+    Fehu_algorithms.Reinforce.train ~env ~policy_network:policy_net
+      ?baseline_network:value_net ~rng ~config:alg_config
       ~total_timesteps:(config.episodes * config.max_steps)
-      ~callback:(fun ~iteration ~metrics ->
-        episode := iteration;
+      ~callback:(fun metrics ->
+        if metrics.total_episodes > !last_episode then (
+          last_episode := metrics.total_episodes;
+          rewards_history := metrics.episode_return :: !rewards_history;
+          let won = metrics.episode_return > 50.0 in
+          if won then incr total_wins;
+          wins_history := (if won then 1.0 else 0.0) :: !wins_history;
 
-        (* Track metrics *)
-        rewards_history := metrics.episode_return :: !rewards_history;
-        let won = metrics.episode_return > 50.0 in
-        if won then incr total_wins;
-        wins_history := (if won then 1.0 else 0.0) :: !wins_history;
+          if metrics.total_episodes mod 100 = 0 then (
+            let take_recent lst = List.filteri (fun i _ -> i < 100) lst in
+            let recent_rewards = take_recent !rewards_history in
+            let avg_reward =
+              if recent_rewards = [] then 0.0
+              else
+                List.fold_left ( +. ) 0.0 recent_rewards
+                /. float_of_int (List.length recent_rewards)
+            in
+            let recent_wins = take_recent !wins_history in
+            let recent_win_rate =
+              if recent_wins = [] then 0.0
+              else
+                List.fold_left ( +. ) 0.0 recent_wins
+                /. float_of_int (List.length recent_wins)
+                *. 100.0
+            in
 
-        (* Log progress *)
-        if iteration mod 100 = 0 then (
-          let take_recent lst = List.filteri (fun i _ -> i < 100) lst in
-          let recent_rewards = take_recent !rewards_history in
-          let avg_reward =
-            if recent_rewards = [] then 0.0
-            else
-              List.fold_left ( +. ) 0.0 recent_rewards
-              /. float_of_int (List.length recent_rewards)
-          in
-
-          let recent_wins = take_recent !wins_history in
-          let recent_win_rate =
-            if recent_wins = [] then 0.0
-            else
-              List.fold_left ( +. ) 0.0 recent_wins
-              /. float_of_int (List.length recent_wins)
-              *. 100.0
-          in
-
-          Printf.printf
-            "Episode %d: Avg Reward = %.2f, Win Rate = %.1f%% (%.1f%%), Length \
-             = %d\n\
-             %!"
-            iteration avg_reward recent_win_rate
-            (float_of_int !total_wins /. float_of_int iteration *. 100.0)
-            metrics.episode_length;
-          Printf.printf
-            "           Entropy = %.3f, Log Prob = %.3f, Adv Mean = %.3f, Adv \
-             Std = %.3f"
-            metrics.avg_entropy metrics.avg_log_prob
-            (metrics.adv_mean /. config.reward_scale)
-            (metrics.adv_std /. config.reward_scale);
-          (match metrics.value_loss with
-          | Some v -> Printf.printf ", Value Loss = %.3f" v
-          | None -> ());
-          Printf.printf "\n%!";
-          flush stdout);
-
-        (* Continue training *)
-        true)
+            Printf.printf
+              "Episode %d: Avg Reward = %.2f, Win Rate = %.1f%% (%.1f%%), \
+               Length = %d\n\
+               %!"
+              metrics.total_episodes avg_reward recent_win_rate
+              (float_of_int !total_wins
+              /. float_of_int metrics.total_episodes
+              *. 100.0)
+              metrics.episode_length;
+            Printf.printf
+              "           Entropy = %.3f, Log Prob = %.3f, Adv Mean = %.3f, \
+               Adv Std = %.3f"
+              metrics.avg_entropy metrics.avg_log_prob
+              (metrics.adv_mean /. config.reward_scale)
+              (metrics.adv_std /. config.reward_scale);
+            (match metrics.value_loss with
+            | Some v -> Printf.printf ", Value Loss = %.3f" v
+            | None -> ());
+            Printf.printf "\n%!";
+            flush stdout));
+        `Continue)
       ()
   in
 
+  let final_episodes = if !last_episode = 0 then 1 else !last_episode in
   Printf.printf "Training complete! Final win rate: %.1f%%\n%!"
-    (float_of_int !total_wins /. float_of_int !episode *. 100.0);
+    (float_of_int !total_wins /. float_of_int final_episodes *. 100.0);
 
-  agent
+  (params, state, policy_net)
 
 (** Evaluate policy and compute win rate *)
-let evaluate_with_wins agent env ~n_episodes =
+let evaluate_with_wins ~policy_net ~params env ~n_episodes =
   let wins = ref 0 in
   let total_reward = ref 0.0 in
 
@@ -184,9 +177,20 @@ let evaluate_with_wins agent env ~n_episodes =
     let episode_reward = ref 0.0 in
 
     while not !finished do
-      let action, _ =
-        Fehu_algorithms.Reinforce.predict agent !obs_ref ~training:false
+      let obs_batched =
+        match Rune.shape !obs_ref with
+        | [| features |] -> Rune.reshape [| 1; features |] !obs_ref
+        | [| 1; _ |] -> !obs_ref
+        | _ -> !obs_ref
       in
+      let logits = apply policy_net params ~training:false obs_batched in
+      let action_idx =
+        Rune.argmax logits ~axis:(-1) ~keepdims:false |> Rune.cast Rune.int32
+      in
+      let action_scalar =
+        Rune.reshape [||] action_idx |> Rune.to_array |> fun arr -> arr.(0)
+      in
+      let action = Rune.scalar Rune.int32 action_scalar in
       let transition = Env.step env action in
       episode_reward := !episode_reward +. transition.reward;
       obs_ref := transition.observation;
@@ -215,11 +219,13 @@ let () =
 
   (* Train *)
   let config = default_config in
-  let agent = train env config in
+  let params, _state, policy_net = train env config in
 
   (* Evaluate trained policy *)
   Printf.printf "\nEvaluating trained policy...\n%!";
-  let win_rate, avg_reward = evaluate_with_wins agent env ~n_episodes:100 in
+  let win_rate, avg_reward =
+    evaluate_with_wins ~policy_net ~params env ~n_episodes:100
+  in
   Printf.printf "Evaluation: Win rate = %.1f%%, Avg reward = %.2f\n%!" win_rate
     avg_reward;
 

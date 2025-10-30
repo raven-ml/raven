@@ -136,6 +136,24 @@ module Replay : sig
       observations/actions is performed). Useful for vectorized algorithms that
       operate on homogeneous arrays. *)
 
+  val sample_tensors :
+    (('obs, 'obs_layout) Rune.t, ('act, 'act_layout) Rune.t) t ->
+    rng:Rune.Rng.key ->
+    batch_size:int ->
+    ('obs, 'obs_layout) Rune.t
+    * ('act, 'act_layout) Rune.t
+    * (float, Rune.float32_elt) Rune.t
+    * ('obs, 'obs_layout) Rune.t
+    * Rune.bool_t
+    * Rune.bool_t
+  (** [sample_tensors buffer ~rng ~batch_size] returns a struct-of-arrays batch
+      stacked into tensors.
+
+      This is a convenience wrapper over {!sample_arrays} that stacks the
+      sampled observations and actions along a leading batch dimension and
+      converts rewards/flags into tensors so downstream code can remain
+      vectorized. *)
+
   val size : ('obs, 'act) t -> int
   (** [size buffer] returns the current number of transitions stored.
 

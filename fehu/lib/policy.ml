@@ -23,8 +23,7 @@ let greedy_discrete env ~score =
   let to_action index =
     match Space.unpack action_space (Space.Value.Int index) with
     | Ok action -> action
-    | Error msg ->
-        invalid_arg ("Policy.greedy_discrete: " ^ msg)
+    | Error msg -> invalid_arg ("Policy.greedy_discrete: " ^ msg)
   in
   fun obs ->
     let scores = score obs in

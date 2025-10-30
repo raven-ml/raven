@@ -6,10 +6,9 @@ type ('obs, 'act) t = 'obs -> 'act * float option * float option
 val deterministic : ('obs -> 'act) -> ('obs, 'act) t
 (** Wrap a deterministic action function as a policy. *)
 
-val random :
-  ?rng:Rune.Rng.key -> ('obs, 'act, 'render) Env.t -> ('obs, 'act) t
-(** Epsilon-free stochastic policy that samples uniformly from the action
-    space. Reuses the environment RNG when [rng] is omitted. *)
+val random : ?rng:Rune.Rng.key -> ('obs, 'act, 'render) Env.t -> ('obs, 'act) t
+(** Epsilon-free stochastic policy that samples uniformly from the action space.
+    Reuses the environment RNG when [rng] is omitted. *)
 
 val greedy_discrete :
   ('obs, Space.Discrete.element, 'render) Env.t ->

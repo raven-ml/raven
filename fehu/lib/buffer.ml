@@ -116,6 +116,43 @@ module Replay = struct
           truncated = truncateds.(i);
         })
 
+  let sample_tensors : type obs_layout act_layout.
+      (('obs, obs_layout) Rune.t, ('act, act_layout) Rune.t) t ->
+      rng:Rune.Rng.key ->
+      batch_size:int ->
+      ('obs, obs_layout) Rune.t
+      * ('act, act_layout) Rune.t
+      * (float, Rune.float32_elt) Rune.t
+      * ('obs, obs_layout) Rune.t
+      * Rune.bool_t
+      * Rune.bool_t =
+   fun buffer ~rng ~batch_size ->
+    let ( observations,
+          actions,
+          rewards,
+          next_observations,
+          terminateds,
+          truncateds ) =
+      sample_arrays buffer ~rng ~batch_size
+    in
+    let batch_size = Array.length rewards in
+    if batch_size = 0 then
+      invalid_arg "Buffer.Replay.sample_tensors: empty batch"
+    else
+      let stack values = Rune.stack ~axis:0 (Array.to_list values) in
+      let observations_t = stack observations in
+      let actions_t = stack actions in
+      let next_observations_t = stack next_observations in
+      let rewards_t = Rune.create Rune.float32 [| batch_size |] rewards in
+      let terminateds_t = Rune.create Rune.bool [| batch_size |] terminateds in
+      let truncateds_t = Rune.create Rune.bool [| batch_size |] truncateds in
+      ( observations_t,
+        actions_t,
+        rewards_t,
+        next_observations_t,
+        terminateds_t,
+        truncateds_t )
+
   let size buffer = buffer.size
   let is_full buffer = buffer.size = buffer.capacity
 

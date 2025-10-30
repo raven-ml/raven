@@ -81,7 +81,6 @@ let render_text state =
 let cell_size = 32
 let frame_width = grid_size * cell_size
 let frame_height = grid_size * cell_size
-
 let clamp_color value = max 0 (min 255 value)
 
 let fill_rect data ~width ~x0 ~y0 ~w ~h (r, g, b) =
@@ -90,7 +89,7 @@ let fill_rect data ~width ~x0 ~y0 ~w ~h (r, g, b) =
   let b = Char.unsafe_chr (clamp_color b) in
   for dy = 0 to h - 1 do
     let y = y0 + dy in
-    let row_offset = (y * width) * 3 in
+    let row_offset = y * width * 3 in
     for dx = 0 to w - 1 do
       let x = x0 + dx in
       let base = row_offset + (x * 3) in
@@ -102,9 +101,7 @@ let fill_rect data ~width ~x0 ~y0 ~w ~h (r, g, b) =
 
 let render_image state =
   let len = frame_width * frame_height * 3 in
-  let data =
-    Bigarray.Array1.create Bigarray.char Bigarray.c_layout len
-  in
+  let data = Bigarray.Array1.create Bigarray.char Bigarray.c_layout len in
   fill_rect data ~width:frame_width ~x0:0 ~y0:0 ~w:frame_width ~h:frame_height
     (30, 33, 36);
   (* Draw grid cells with subtle borders *)
@@ -120,8 +117,8 @@ let render_image state =
   done;
   (* Overlay entities *)
   let draw_cell row col color =
-    let x0 = col * cell_size + 2 in
-    let y0 = row * cell_size + 2 in
+    let x0 = (col * cell_size) + 2 in
+    let y0 = (row * cell_size) + 2 in
     fill_rect data ~width:frame_width ~x0 ~y0 ~w:(cell_size - 4)
       ~h:(cell_size - 4) color
   in
