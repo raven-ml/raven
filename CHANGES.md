@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Add `Nx_core.Cache_dir` module with consolidated cache directory utilities respecting `RAVEN_CACHE_ROOT`, `XDG_CACHE_HOME`, and `HOME` fallback, replacing project-specific cache logic across the whole raven ecosystem (#133, @Arsalaan-Alam)
 - Add `Nx_io.save_txt` / `Nx_io.load_txt` with NumPy-compatible formatting, comments, and dtype support (#120, @six-shot)
 - Clarify `reshape` documentation to match its view-only semantics (@tmattio)
 - Provide `nx.top`, `rune.top`, and `hugin.top` libraries that auto-install pretty printers in the OCaml toplevel and update Quill to load them (@tmattio)
@@ -54,6 +55,7 @@ All notable changes to this project will be documented in this file.
 - Checkpointing overhaul: versioned `Train_state` with schema tagging, explicit `Checkpoint.{Snapshot,Artifact,Manifest,Repository}` (retention, tags, metadata), and simple save/load helpers for snapshots and params. (@tmattio)
 - Overhaul dataset combinators: derive tensor specs from Rune dtype, fix sampling/window bugs, validate weighted sampling, and respect `drop_remainder` (@tmattio)
 - Make dataset `prefetch` truly asynchronous with background domains and allow reusing an external Domainslib pool via `parallel_map ~pool` (@tmattio)
+- Update BERT and GPT-2 tokenizer cache to use `Nx.Cache` for consistent cache directory resolution (#133, @Arsalaan-Alam)
 - Honor text dataset encodings via incremental Uutf decoding (#122, @Satarupa22-SD).
 - Preserve empty sequential modules when unflattening so indices stay aligned for checkpoint round-tripping (@tmattio)
 - Prevent `Training.fit`/`evaluate` from consuming entire datasets eagerly and fail fast when a dataset yields no batches, avoiding hangs and division-by-zero crashes (@tmattio)
@@ -115,6 +117,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx-datasets
 
+- Migrate to `Nx.Cache` for cache directory resolution, enabling consistent behavior. (#133, @Arsalaan-Alam)
 - Fix cache directory resolution to respect `RAVEN_CACHE_ROOT` (or fall back to `XDG_CACHE_HOME`/`HOME`), allowing custom cache locations. (#128, @Arsalaan-Alam)
 - Switch CIFAR-10 loader to the binary archive so parsing succeeds again (@tmattio)
 - Add a CIFAR-10 example (@tmattio)

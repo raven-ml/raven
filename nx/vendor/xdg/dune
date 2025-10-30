@@ -1,6 +1,6 @@
 (library
  (name xdg)
- (public_name nx-datasets.xdg)
+ (public_name nx.xdg)
  (libraries unix)
  (foreign_stubs
   (language c)

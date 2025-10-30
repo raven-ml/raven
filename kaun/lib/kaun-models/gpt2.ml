@@ -81,17 +81,7 @@ module Tokenizer = struct
 
   let download_vocab_and_merges model_id =
     (* Download vocab and merges files from HuggingFace if not present *)
-    let cache_dir =
-      match Sys.getenv_opt "XDG_CACHE_HOME" with
-      | Some dir -> dir
-      | None -> (
-          match Sys.getenv_opt "HOME" with
-          | Some home -> Filename.concat home ".cache"
-          | None -> "/tmp/.cache")
-    in
-    let kaun_cache = Filename.concat cache_dir "kaun" in
-    let gpt2_cache = Filename.concat kaun_cache "gpt2" in
-    let model_cache = Filename.concat gpt2_cache model_id in
+    let model_cache = Nx_core.Cache_dir.get_path_in_cache ~scope:["models"; "gpt2"] model_id in
     let vocab_file = Filename.concat model_cache "vocab.json" in
     let merges_file = Filename.concat model_cache "merges.txt" in
 
