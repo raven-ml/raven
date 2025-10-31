@@ -29,3 +29,4 @@ Everything is functional and composable. Experience replay is just an array of t
 ## Learn More
 
 - [Getting Started](/docs/fehu/getting-started/) - Train your first RL agent
+- [DQN GridWorld Demo](./dqn-demo.md)

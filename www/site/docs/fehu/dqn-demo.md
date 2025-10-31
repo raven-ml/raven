@@ -30,9 +30,6 @@ If you want deeper analysis—such as episode rewards, episode length, loss curv
 ### Agent Behavior Video (After Training)
 <video src="../../../../run/gridworld_trained.mp4" controls width="480"></video>
 
-
-
-
 ---
 
 ## Prerequisites
@@ -254,31 +251,31 @@ let () =
 ```
 
 ### Episode Rewards
-![Episode Rewards](./episode_rewards.png)
+![Episode Rewards](../../../../fehu/demos/episode_rewards.png)
 
 This plot shows the total reward per episode.  
 A rising or stable reward curve indicates successful learning.
 
 #### Episode Length
-![Episode Length](./episode_length.png)
+![Episode Length](../../../../fehu/demos/episode_length.png)
 
 This plot shows the number of steps taken in each episode.  
 A decreasing or stable episode length indicates the agent is learning to reach the goal more efficiently.
 
 #### Loss Curve
-![Loss](./episode_loss.png)
+![Loss](../../../../fehu/demos/episode_loss.png)
 
 This plot shows the DQN loss over episodes.  
 A decreasing loss suggests the Q-network is learning to predict better action values.
 
 #### Epsilon Schedule
-![Epsilon](./epsilon.png)
+![Epsilon](../../../../fehu/demos/epsilon.png)
 
 This plot shows the epsilon value used for exploration.  
 Epsilon decays over time, meaning the agent explores less and exploits more as training progresses.
 
 #### Average Q-value
-![Average Q](./avg_q.png)
+![Average Q](../../../../fehu/demos/avg_q.png)
 
 #### This plot shows the average Q-value per episode. <br/> Tracking average Q helps diagnose learning stability and value estimation quality.
 ---
