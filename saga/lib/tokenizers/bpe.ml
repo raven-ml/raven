@@ -342,6 +342,19 @@ let get_unk_token model = model.unk_token
 let get_continuing_subword_prefix model = model.continuing_subword_prefix
 let get_end_of_word_suffix model = model.end_of_word_suffix
 
+let get_merges model =
+  IntPairMap.fold
+    (fun (a_id, b_id) (rank, _) acc ->
+      match
+        ( Hashtbl.find_opt model.vocab_r a_id,
+          Hashtbl.find_opt model.vocab_r b_id )
+      with
+      | Some a, Some b -> (rank, (a, b)) :: acc
+      | _ -> acc)
+    model.merges []
+  |> List.sort (fun (r1, _) (r2, _) -> Int.compare r1 r2)
+  |> List.map snd
+
 let clear_cache model =
   match model.cache with Some cache -> Hashtbl.clear cache | None -> ()
 

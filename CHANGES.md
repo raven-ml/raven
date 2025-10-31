@@ -83,6 +83,9 @@ All notable changes to this project will be documented in this file.
 
 ### Saga
 
+- Remove legacy `Normalizers.nmt` and `Normalizers.precompiled` constructors (and their JSON serializers) so the public surface only advertises supported normalizers (@tmattio)
+- Tighten template processor JSON parsing: require integer type ids, drop the legacy special-token list format, and ensure multi-id special tokens round-trip with the new record fields (@tmattio)
+- Make tokenizer JSON loading tolerant of HuggingFace quirks (missing `model.type`, string-encoded merges), restoring compatibility with upstream `tokenizer.json` files (@tmattio)
 - Cache byte-level encode/decode lookup tables to avoid rebuilding them during tokenization, trimming avoidable allocations (@tmattio)
 - Skip BPE dropout sampling when dropout is disabled, removing redundant RNG work on common hot paths (@tmattio)
 - Fix Unigram tokenization so longest matches are emitted without aborting the sequence when a vocab hit occurs (@tmattio)

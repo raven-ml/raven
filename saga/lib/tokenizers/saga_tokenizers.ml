@@ -311,10 +311,37 @@ let processor_to_encoding (pe : Processors.encoding) : Encoding.t =
     ~attention_mask:pe.attention_mask ~overflowing:[] ~sequence_ranges:seq
 
 module Tokenizer = struct
+  type pre_tokenizer_config =
+    | PreTok_byte_level of {
+        add_prefix_space : bool;
+        use_regex : bool;
+        trim_offsets : bool;
+      }
+    | PreTok_bert
+    | PreTok_whitespace
+    | PreTok_whitespace_split
+    | PreTok_punctuation of { behavior : Pre_tokenizers.behavior }
+    | PreTok_split of {
+        pattern : string;
+        behavior : Pre_tokenizers.behavior;
+        invert : bool;
+      }
+    | PreTok_char_delimiter of char
+    | PreTok_digits of { individual : bool }
+    | PreTok_metaspace of {
+        replacement : char;
+        prepend_scheme : Pre_tokenizers.prepend_scheme;
+        split : bool;
+      }
+    | PreTok_sequence of pre_tokenizer_config list
+    | PreTok_fixed_length of { length : int }
+    | PreTok_unicode_scripts
+
   type t = {
     mutable algorithm : algorithm;
     mutable normalizer : Normalizers.t option;
     mutable pre_tokenizer : Pre_tokenizers.t option;
+    mutable pre_tokenizer_config : pre_tokenizer_config option;
     mutable post_processor : Processors.t option;
     mutable decoder : Decoders.t option;
     mutable specials_config : special_config;
@@ -322,14 +349,39 @@ module Tokenizer = struct
     special_lookup : (string, unit) Hashtbl.t;
   }
 
+  let rec build_pre_tokenizer = function
+    | PreTok_byte_level { add_prefix_space; use_regex; trim_offsets } ->
+        Pre_tokenizers.byte_level ~add_prefix_space ~use_regex ~trim_offsets ()
+    | PreTok_bert -> Pre_tokenizers.bert ()
+    | PreTok_whitespace -> Pre_tokenizers.whitespace ()
+    | PreTok_whitespace_split -> Pre_tokenizers.whitespace_split ()
+    | PreTok_punctuation { behavior } -> Pre_tokenizers.punctuation ~behavior ()
+    | PreTok_split { pattern; behavior; invert } ->
+        Pre_tokenizers.split ~pattern ~behavior ~invert ()
+    | PreTok_char_delimiter delimiter ->
+        Pre_tokenizers.char_delimiter_split ~delimiter ()
+    | PreTok_digits { individual } ->
+        Pre_tokenizers.digits ~individual_digits:individual ()
+    | PreTok_metaspace { replacement; prepend_scheme; split } ->
+        Pre_tokenizers.metaspace ~replacement ~prepend_scheme ~split ()
+    | PreTok_sequence configs ->
+        let sub = List.map build_pre_tokenizer configs in
+        Pre_tokenizers.sequence sub
+    | PreTok_fixed_length { length } -> Pre_tokenizers.fixed_length ~length
+    | PreTok_unicode_scripts -> Pre_tokenizers.unicode_scripts ()
+
   let create ?normalizer ?pre ?post ?decoder ?(specials = []) algorithm =
     let config = special_list_to_config specials in
     let algorithm, config, pad_runtime = ensure_specials algorithm config in
     let lookup = build_special_lookup config in
+    let pre_tokenizer, pre_tokenizer_config =
+      match pre with Some p -> (Some p, None) | None -> (None, None)
+    in
     {
       algorithm;
       normalizer;
-      pre_tokenizer = pre;
+      pre_tokenizer;
+      pre_tokenizer_config;
       post_processor = post;
       decoder;
       specials_config = config;
@@ -353,7 +405,206 @@ module Tokenizer = struct
 
   let with_pre_tokenizer t pre_tokenizer =
     t.pre_tokenizer <- pre_tokenizer;
+    t.pre_tokenizer_config <- None;
     t
+
+  let with_pre_tokenizer_config t config =
+    t.pre_tokenizer <- Some (build_pre_tokenizer config);
+    t.pre_tokenizer_config <- Some config;
+    t
+
+  let behavior_to_string = function
+    | `Isolated -> "Isolated"
+    | `Removed -> "Removed"
+    | `Merged_with_previous -> "MergedWithPrevious"
+    | `Merged_with_next -> "MergedWithNext"
+    | `Contiguous -> "Contiguous"
+
+  let behavior_of_string = function
+    | "Isolated" -> Ok `Isolated
+    | "Removed" -> Ok `Removed
+    | "MergedWithPrevious" -> Ok `Merged_with_previous
+    | "MergedWithNext" -> Ok `Merged_with_next
+    | "Contiguous" -> Ok `Contiguous
+    | other -> Error (Printf.sprintf "Unknown punctuation behavior '%s'" other)
+
+  let scheme_to_string = function
+    | `First -> "First"
+    | `Never -> "Never"
+    | `Always -> "Always"
+
+  let scheme_of_string = function
+    | "First" -> Ok `First
+    | "Never" -> Ok `Never
+    | "Always" -> Ok `Always
+    | other ->
+        Error (Printf.sprintf "Unknown metaspace prepend_scheme '%s'" other)
+
+  let char_to_field name c = (name, `String (String.make 1 c))
+
+  let char_of_field name = function
+    | `String s when String.length s = 1 -> Ok s.[0]
+    | _ ->
+        Error
+          (Printf.sprintf "Expected single-character string for field '%s'" name)
+
+  let rec pre_tokenizer_config_to_json = function
+    | PreTok_byte_level { add_prefix_space; use_regex; trim_offsets } ->
+        `Assoc
+          [
+            ("type", `String "ByteLevel");
+            ("add_prefix_space", `Bool add_prefix_space);
+            ("use_regex", `Bool use_regex);
+            ("trim_offsets", `Bool trim_offsets);
+          ]
+    | PreTok_bert -> `Assoc [ ("type", `String "BertPreTokenizer") ]
+    | PreTok_whitespace -> `Assoc [ ("type", `String "Whitespace") ]
+    | PreTok_whitespace_split -> `Assoc [ ("type", `String "WhitespaceSplit") ]
+    | PreTok_punctuation { behavior } ->
+        `Assoc
+          [
+            ("type", `String "Punctuation");
+            ("behavior", `String (behavior_to_string behavior));
+          ]
+    | PreTok_split { pattern; behavior; invert } ->
+        `Assoc
+          [
+            ("type", `String "Split");
+            ("pattern", `String pattern);
+            ("behavior", `String (behavior_to_string behavior));
+            ("invert", `Bool invert);
+          ]
+    | PreTok_char_delimiter delimiter ->
+        `Assoc
+          [
+            ("type", `String "CharDelimiterSplit");
+            char_to_field "delimiter" delimiter;
+          ]
+    | PreTok_digits { individual } ->
+        `Assoc
+          [
+            ("type", `String "Digits"); ("individual_digits", `Bool individual);
+          ]
+    | PreTok_metaspace { replacement; prepend_scheme; split } ->
+        `Assoc
+          [
+            ("type", `String "Metaspace");
+            ("replacement", `String (String.make 1 replacement));
+            ("prepend_scheme", `String (scheme_to_string prepend_scheme));
+            ("split", `Bool split);
+          ]
+    | PreTok_sequence configs ->
+        `Assoc
+          [
+            ("type", `String "Sequence");
+            ( "pretokenizers",
+              `List (List.map pre_tokenizer_config_to_json configs) );
+          ]
+    | PreTok_fixed_length { length } ->
+        `Assoc [ ("type", `String "FixedLength"); ("length", `Int length) ]
+    | PreTok_unicode_scripts -> `Assoc [ ("type", `String "UnicodeScripts") ]
+
+  let bool_field name default fields =
+    match List.assoc_opt name fields with
+    | Some (`Bool b) -> b
+    | Some (`Int i) -> i <> 0
+    | Some (`String s) -> (
+        match String.lowercase_ascii s with
+        | "true" | "1" -> true
+        | "false" | "0" -> false
+        | _ -> default)
+    | _ -> default
+
+  let int_field name default fields =
+    match List.assoc_opt name fields with
+    | Some (`Int i) -> i
+    | Some (`Float f) -> int_of_float f
+    | Some (`String s) -> (
+        match int_of_string_opt s with Some v -> v | None -> default)
+    | _ -> default
+
+  let rec pre_tokenizer_config_of_json json =
+    match json with
+    | `Assoc fields -> (
+        match List.assoc_opt "type" fields with
+        | Some (`String "ByteLevel") ->
+            let add_prefix_space = bool_field "add_prefix_space" true fields in
+            let use_regex = bool_field "use_regex" true fields in
+            let trim_offsets = bool_field "trim_offsets" true fields in
+            Ok (PreTok_byte_level { add_prefix_space; use_regex; trim_offsets })
+        | Some (`String "BertPreTokenizer") -> Ok PreTok_bert
+        | Some (`String "Whitespace") -> Ok PreTok_whitespace
+        | Some (`String "WhitespaceSplit") -> Ok PreTok_whitespace_split
+        | Some (`String "Punctuation") -> (
+            match List.assoc_opt "behavior" fields with
+            | Some (`String s) -> (
+                match behavior_of_string s with
+                | Ok behavior -> Ok (PreTok_punctuation { behavior })
+                | Error msg -> Error msg)
+            | _ -> Error "Punctuation pre-tokenizer missing 'behavior'")
+        | Some (`String "Split") -> (
+            match
+              (List.assoc_opt "pattern" fields, List.assoc_opt "behavior" fields)
+            with
+            | Some (`String pattern), Some (`String behavior_str) -> (
+                match behavior_of_string behavior_str with
+                | Ok behavior ->
+                    let invert = bool_field "invert" false fields in
+                    Ok (PreTok_split { pattern; behavior; invert })
+                | Error msg -> Error msg)
+            | _ -> Error "Split pre-tokenizer requires 'pattern' and 'behavior'"
+            )
+        | Some (`String "CharDelimiterSplit") -> (
+            match List.assoc_opt "delimiter" fields with
+            | Some json_char -> (
+                match char_of_field "delimiter" json_char with
+                | Ok delimiter -> Ok (PreTok_char_delimiter delimiter)
+                | Error msg -> Error msg)
+            | None -> Error "CharDelimiterSplit requires 'delimiter'")
+        | Some (`String "Digits") ->
+            let individual = bool_field "individual_digits" false fields in
+            Ok (PreTok_digits { individual })
+        | Some (`String "Metaspace") -> (
+            match
+              ( List.assoc_opt "replacement" fields,
+                List.assoc_opt "prepend_scheme" fields )
+            with
+            | Some (`String repl), Some (`String scheme)
+              when String.length repl = 1 -> (
+                match scheme_of_string scheme with
+                | Ok prepend_scheme ->
+                    let split = bool_field "split" true fields in
+                    Ok
+                      (PreTok_metaspace
+                         { replacement = repl.[0]; prepend_scheme; split })
+                | Error msg -> Error msg)
+            | _ ->
+                Error
+                  "Metaspace requires 'replacement' (single char) and \
+                   'prepend_scheme'")
+        | Some (`String "Sequence") -> (
+            match List.assoc_opt "pretokenizers" fields with
+            | Some (`List elements) ->
+                let rec build acc = function
+                  | [] -> Ok (List.rev acc)
+                  | item :: rest -> (
+                      match pre_tokenizer_config_of_json item with
+                      | Ok cfg -> build (cfg :: acc) rest
+                      | Error msg -> Error msg)
+                in
+                build [] elements
+                |> Result.map (fun cfgs -> PreTok_sequence cfgs)
+            | _ -> Error "Sequence pre-tokenizer requires 'pretokenizers' list")
+        | Some (`String "FixedLength") ->
+            let length = int_field "length" 0 fields in
+            if length <= 0 then
+              Error "FixedLength pre-tokenizer requires positive length"
+            else Ok (PreTok_fixed_length { length })
+        | Some (`String "UnicodeScripts") -> Ok PreTok_unicode_scripts
+        | Some (`String other) ->
+            Error (Printf.sprintf "Unsupported pre-tokenizer type '%s'" other)
+        | _ -> Error "Pre-tokenizer JSON missing 'type'")
+    | _ -> Error "Expected JSON object for pre-tokenizer"
 
   let post_processor t = t.post_processor
 
@@ -533,13 +784,18 @@ module Tokenizer = struct
   let word_level ?normalizer ?pre ?post ?decoder ?specials ?bos_token ?eos_token
       ?pad_token ?unk_token ?vocab () =
     (* Default to whitespace pre-tokenizer for word-level tokenization *)
-    let pre =
+    let pre, pre_cfg =
       match pre with
-      | Some _ -> pre
-      | None -> Some (Pre_tokenizers.whitespace ())
+      | Some p -> (Some p, None)
+      | None -> (Some (Pre_tokenizers.whitespace ()), Some PreTok_whitespace)
     in
     let algorithm = Alg_wordlevel (Word_level.create ?vocab ?unk_token ()) in
     let tok = create ?normalizer ?pre ?post ?decoder ?specials algorithm in
+    let tok =
+      match pre_cfg with
+      | Some cfg -> with_pre_tokenizer_config tok cfg
+      | None -> tok
+    in
     let tok =
       match bos_token with Some t -> set_bos_token tok (Some t) | None -> tok
     in
@@ -1094,7 +1350,7 @@ module Tokenizer = struct
 
   let export_tiktoken t ~merges_path ~vocab_path =
     match t.algorithm with
-    | Alg_bpe _bpe ->
+    | Alg_bpe bpe ->
         let vocab =
           vocab_algorithm t.algorithm
           |> List.sort (fun (_, id1) (_, id2) -> Int.compare id1 id2)
@@ -1105,7 +1361,8 @@ module Tokenizer = struct
         Yojson.Basic.to_file vocab_path vocab_json;
         let oc = open_out merges_path in
         output_string oc "#version: 0.2\n";
-        (* TODO: Export merges - BPE model doesn't expose merges list *)
+        Bpe.get_merges bpe
+        |> List.iter (fun (a, b) -> Printf.fprintf oc "%s %s\n" a b);
         close_out oc
     | _ ->
         invalid_arg
@@ -1123,6 +1380,9 @@ module Tokenizer = struct
     let string_or_null = function
       | `Null -> None
       | json -> Some (to_string json)
+
+    let has_field name json =
+      match member name json with `Null -> false | _ -> true
 
     let special_of_json json : special =
       {
@@ -1161,13 +1421,17 @@ module Tokenizer = struct
       | `Null -> Ok None
       | json -> Ok (Some (Normalizers.of_json json))
 
-    let pre_tokenizer_to_json = function
-      | None -> `Null
-      | Some _pre -> `Null (* TODO: Add Pre_tokenizers.to_json *)
+    let pre_tokenizer_to_json pre config =
+      match config with
+      | Some cfg -> pre_tokenizer_config_to_json cfg
+      | None -> ( match pre with None -> `Null | Some _ -> `Null)
 
     let pre_tokenizer_of_json = function
-      | `Null -> Ok None
-      | _json -> Ok None (* TODO: Add Pre_tokenizers.of_json *)
+      | `Null -> Ok (None, None)
+      | json -> (
+          match pre_tokenizer_config_of_json json with
+          | Ok cfg -> Ok (Some (build_pre_tokenizer cfg), Some cfg)
+          | Error msg -> Error (Failure msg))
 
     let post_processor_to_json = function
       | None -> `Null
@@ -1204,8 +1468,11 @@ module Tokenizer = struct
           let vocab_json =
             `Assoc (List.map (fun (token, id) -> (token, `Int id)) vocab)
           in
-          (* TODO: Need to add get_merges to BPE module *)
-          let merges_json = `List [] in
+          let merges_json =
+            `List
+              (Bpe.get_merges bpe
+              |> List.map (fun (a, b) -> `List [ `String a; `String b ]))
+          in
           `Assoc
             [
               ("type", `String "BPE");
@@ -1271,6 +1538,9 @@ module Tokenizer = struct
       | Alg_chars _chars ->
           `Assoc [ ("type", `String "Chars"); ("vocab", `Assoc []) ]
     in
+    let pre_json =
+      Json_helpers.pre_tokenizer_to_json t.pre_tokenizer t.pre_tokenizer_config
+    in
     `Assoc
       [
         ("version", `String "1.0");
@@ -1278,7 +1548,7 @@ module Tokenizer = struct
         ("padding", `Null);
         ("added_tokens", `List added_tokens);
         ("normalizer", normalizer_to_json t.normalizer);
-        ("pre_tokenizer", pre_tokenizer_to_json t.pre_tokenizer);
+        ("pre_tokenizer", pre_json);
         ("post_processor", post_processor_to_json t.post_processor);
         ("decoder", decoder_to_json t.decoder);
         ("model", model_json);
@@ -1297,7 +1567,9 @@ module Tokenizer = struct
       in
       (* Parse pre-tokenizer *)
       let pre_result = pre_tokenizer_of_json (json |> member "pre_tokenizer") in
-      let pre = match pre_result with Ok p -> p | Error e -> raise e in
+      let pre, pre_config =
+        match pre_result with Ok (p, cfg) -> (p, cfg) | Error e -> raise e
+      in
       (* Parse post-processor *)
       let post_result =
         post_processor_of_json (json |> member "post_processor")
@@ -1310,7 +1582,20 @@ module Tokenizer = struct
       in
       (* Parse model *)
       let model_json = json |> member "model" in
-      let model_type = model_json |> member "type" |> to_string in
+      let model_type =
+        match string_or_null (model_json |> member "type") with
+        | Some s -> s
+        | None ->
+            if has_field "merges" model_json then "BPE"
+            else if has_field "unk_id" model_json then "Unigram"
+            else if has_field "continuing_subword_prefix" model_json
+                    || has_field "max_input_chars_per_word" model_json
+            then "WordPiece"
+            else if has_field "vocab" model_json then "WordLevel"
+            else
+              failwith
+                "Tokenizer.from_json: unable to infer model type from JSON"
+      in
       let algorithm =
         match model_type with
         | "BPE" ->
@@ -1320,10 +1605,17 @@ module Tokenizer = struct
             in
             let merges_json =
               model_json |> member "merges" |> to_list
-              |> List.map (fun arr ->
-                     match to_list arr with
-                     | [ a; b ] -> (to_string a, to_string b)
-                     | _ -> failwith "Invalid merge format")
+              |> List.map (function
+                   | `List [ a; b ] -> (to_string a, to_string b)
+                   | `String s -> (
+                       match String.split_on_char ' ' s with
+                       | [ a; b ] -> (a, b)
+                       | _ -> failwith "Invalid merge string format")
+                   | json ->
+                       failwith
+                         (Printf.sprintf
+                            "Invalid merge entry: %s"
+                            (Yojson.Basic.to_string json)))
             in
             let unk_token =
               model_json |> member "unk_token" |> string_or_null
@@ -1422,6 +1714,11 @@ module Tokenizer = struct
       (* Create tokenizer *)
       let tok =
         create ?normalizer ?pre ?post ?decoder ~specials:added_tokens algorithm
+      in
+      let tok =
+        match pre_config with
+        | Some cfg -> with_pre_tokenizer_config tok cfg
+        | None -> tok
       in
       Ok tok
     with
