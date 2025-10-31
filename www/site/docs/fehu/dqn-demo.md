@@ -7,7 +7,6 @@ This tutorial demonstrates how to train a Deep Q-Network (DQN) agent on a simple
 - See how to set up and train a DQN agent
 - Visualize episode rewards and key training metrics
 
-
 ---
 
 ## Quick Visualization: Built-in Video Recording
@@ -279,8 +278,6 @@ Epsilon decays over time, meaning the agent explores less and exploits more as t
 
 #### This plot shows the average Q-value per episode. <br/> Tracking average Q helps diagnose learning stability and value estimation quality.
 ---
-
-
 
 ## Troubleshooting
 
