@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 - Only document user-facing changes (features, bug fixes, performance improvements, API changes, etc.)
 - Add new entries at the top of the appropriate section (most recent first)
 
+## [Unreleased]
+
+### Added
+- Step-by-step DQN GridWorld demo notebook (`fehu/demos/dqn_plot_demo.mdx`) with code, explanations, and visualization instructions.
+- Instructions and workflow for generating episode reward plots using Hugin outside MDX, with markdown image display.
+
 ## [1.0.0~alpha2] - TBD
 
 ### Nx
@@ -187,6 +193,11 @@ We've expanded Kaun with high-level APIs for deep learning. These APIs are inspi
 - Data pipeline: Composable dataset operations (map, filter, batch, shuffle, cache) inspired by TensorFlow's `tf.data` for building input pipelines
 - Model zoo: Reference implementations of classic and modern architectures (LeNet5 for basic CNNs, BERT for masked language modeling, GPT2 for autoregressive generation) including reusable transformer components
 - Ecosystem integration: Load HuggingFace model architectures (`kaun.huggingface`), access common datasets like MNIST and CIFAR-10 (`kaun.datasets`), and use standardized model definitions (`kaun.models`)
+
+## [Unreleased]
+### Added
+- Implemented save/load serialization for Fehu's DQN agent.
+- Added regression tests to verify agent outputs after save/load.
 
 ### Contributors
 
