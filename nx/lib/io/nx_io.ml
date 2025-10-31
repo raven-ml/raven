@@ -1,6 +1,8 @@
 open Bigarray_ext
 open Error
 
+module Cache_dir = Cache_dir
+
 (* Type definitions *)
 
 type packed_nx = Packed_nx.t = P : ('a, 'b) Nx.t -> packed_nx

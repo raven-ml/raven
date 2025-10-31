@@ -4,6 +4,8 @@
     formats (.npy, .npz), HDF5 archives, and SafeTensors. Emphasizes safety with
     result types for error handling and labeled arguments for clarity. *)
 
+module Cache_dir = Cache_dir
+
 (** {1 Types} *)
 
 (** Existential container for an [Nx.t] of any dtype and dimensionality.

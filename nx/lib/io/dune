@@ -10,4 +10,5 @@
   zip
   npy
   stb_image
-  stb_image_write))
+  stb_image_write
+  xdg))
