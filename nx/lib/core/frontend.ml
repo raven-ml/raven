@@ -5698,14 +5698,86 @@ module Make (B : Backend_intf.S) = struct
     | [||] -> invalid_arg "multi_dot: empty array"
     | [| arr |] -> arr
     | _ ->
-        (* Simple left-to-right multiplication for now *)
-        (* TODO: Implement optimal order using dynamic programming *)
-        let rec multiply_all = function
-          | [] -> failwith "unreachable"
-          | [ x ] -> x
-          | x :: xs -> matmul x (multiply_all xs)
+        let n = Array.length arrays in
+        let dims = Array.make (n + 1) 0 in
+        let matrix_dims idx =
+          let tensor = arrays.(idx) in
+          let nd = ndim tensor in
+          match nd with
+          | 1 ->
+              let shape = shape tensor in
+              let len =
+                if Array.length shape = 0 then
+                  invalid_arg "multi_dot: 1D tensor must have non-empty shape"
+                else shape.(0)
+              in
+              if idx = 0 then (1, len)
+              else if idx = n - 1 then (len, 1)
+              else
+                invalid_arg
+                  "multi_dot: only first and last arguments may be 1D vectors"
+          | 2 ->
+              let shape = shape tensor in
+              (shape.(0), shape.(1))
+          | _ ->
+              invalid_arg
+                (Printf.sprintf
+                   "multi_dot: argument %d must be 1D (endpoints) or 2D matrix"
+                   idx)
         in
-        multiply_all (Array.to_list arrays)
+        for i = 0 to n - 1 do
+          let rows, cols = matrix_dims i in
+          if i = 0 then dims.(0) <- rows
+          else if dims.(i) <> rows then
+            invalid_arg
+              (Printf.sprintf
+                 "multi_dot: shapes not aligned between arguments %d and %d \
+                  (%d <> %d)"
+                 (i - 1) i dims.(i) rows);
+          dims.(i + 1) <- cols
+        done;
+        let dims64 = Array.map Int64.of_int dims in
+        let cost = Array.make_matrix n n Int64.zero in
+        let split = Array.make_matrix n n 0 in
+        for len = 2 to n do
+          for i = 0 to n - len do
+            let j = i + len - 1 in
+            let best_cost = ref Int64.max_int in
+            let best_split = ref i in
+            for k = i to j - 1 do
+              let candidate =
+                Int64.(
+                  add
+                    cost.(i).(k)
+                    (add
+                       cost.(k + 1).(j)
+                       (mul dims64.(i) (mul dims64.(k + 1) dims64.(j + 1)))))
+              in
+              if candidate < !best_cost then (
+                best_cost := candidate;
+                best_split := k)
+            done;
+            cost.(i).(j) <- !best_cost;
+            split.(i).(j) <- !best_split
+          done
+        done;
+        let memo = Array.init n (fun _ -> Array.make n None) in
+        let rec compute i j =
+          match memo.(i).(j) with
+          | Some t -> t
+          | None ->
+              let result =
+                if i = j then arrays.(i)
+                else
+                  let k = split.(i).(j) in
+                  let left = compute i k in
+                  let right = compute (k + 1) j in
+                  matmul left right
+              in
+              memo.(i).(j) <- Some result;
+              result
+        in
+        compute 0 (n - 1)
 
   let cross ?axis a b =
     let axis = Option.value axis ~default:(-1) in
