@@ -5,18 +5,35 @@ All notable changes to this project will be documented in this file.
 - Only document user-facing changes (features, bug fixes, performance improvements, API changes, etc.)
 - Add new entries at the top of the appropriate section (most recent first)
 
-## [Unreleased]
+## [1.0.0~alpha2] - 2025-11-03
 
-### Added
-- Step-by-step DQN GridWorld demo notebook (`fehu/demos/dqn_plot_demo.mdx`) with code, explanations, and visualization instructions.
-- Instructions and workflow for generating episode reward plots using Hugin outside MDX, with markdown image display.
+We're excited to announce the release of Raven 1.0.0~alpha2! Less than a month after alpha1, this release notably includes contributions from Outreachy applicants in preparation for the upcoming _two_ internships.
 
-## [1.0.0~alpha2] - TBD
+Some highlights from this release include:
+
+- NumPy-compatible text I/O with `Nx_io.{save,load}_text`
+- Lots of new functions in Nx/Rune, including neural-net ones `dropout`, `log_softmax`, `batch_norm`, `layer_norm`, and activation functions like `celu` and `celu`, and generic ones like `conjugate`, `index_put`, and more.
+- Addition of `.top` libraries for `nx`, `rune`, and `hugin` that auto-install pretty-printers in the OCaml toplevel. You can run e.g. `#require "nx.top"`.
+- Addition of a visualization API in Fehu via the new `fehu.visualize` library, supporting video recording.
+- Redesign of Kaun core datastructure and checkpointing subsystem for complete snapshotting.
+- Many, many bug fixes and correctness improvements.
+
+We've also made numerous performance improvements across the board:
+
+- Nx elementwise ops: 5–50× faster (e.g., Add 50×50 f32 88.81 µs → 1.83 µs, **48×**; Mul 100×100 f32 78.51 µs → 2.41 µs, **33×**).
+- Nx conv2d: **4–5×** faster on common shapes; up to **115×** on heavy f64 batched cases (e.g., B16 C64→128 16×16 K3 f64 1.61 s → 13.96 ms).
+- Rune autodiff: **1.2–3.7×** faster on core grads (e.g., MatMulGrad Medium 34.04 ms → 11.91 ms, **2.86×**; Large 190.19 ms → 50.97 ms, **3.73×**).
+- Talon dataframes: big wins in joins and group-bys (Join 805.35 ms → 26.10 ms, **31×**; Group-by 170.80 ms → 19.03 ms, **9×**; Filter 9.93 ms → 3.39 ms, **3×**).
+- Saga tokenizers: realistic workloads **4–17%** faster (e.g., WordPiece encode single 136.05 µs → 115.92 µs, **1.17×**; BPE batch_32 24.52 ms → 22.27 ms, **1.10×**)
+
+We're closing 8 user-reported issues or feature requests and are totalling 30 community contributions from 8 unique contributors.
 
 ### Nx
 
-- Add `Nx_core.Cache_dir` module with consolidated cache directory utilities respecting `RAVEN_CACHE_ROOT`, `XDG_CACHE_HOME`, and `HOME` fallback, replacing project-specific cache logic across the whole raven ecosystem (#133, @Arsalaan-Alam)
+- Add `Nx_io.Cache_dir` module with consolidated cache directory utilities respecting `RAVEN_CACHE_ROOT`, `XDG_CACHE_HOME`, and `HOME` fallback, replacing project-specific cache logic across the whole raven ecosystem (#134, @Arsalaan-Alam)
 - Add `Nx_io.save_txt` / `Nx_io.load_txt` with NumPy-compatible formatting, comments, and dtype support (#120, @six-shot)
+- Optimize `multi_dot` for matrix chains, reducing intermediate allocations and improving performance (@tmattio)
+- Add public `index_put` function for indexed updates (@tmattio)
 - Clarify `reshape` documentation to match its view-only semantics (@tmattio)
 - Provide `nx.top`, `rune.top`, and `hugin.top` libraries that auto-install pretty printers in the OCaml toplevel and update Quill to load them (@tmattio)
 - Add `ifill` for explicit in-place fills and make `fill` return a copied tensor (@tmattio)
@@ -25,7 +42,7 @@ All notable changes to this project will be documented in this file.
 - Speed up float reductions with contiguous multi-axis fast paths (@tmattio)
 - Fast-path padding-free `unfold` to lower conv2d overhead (@tmattio)
 - Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx (@tmattio)
-- Add public `conjugate` function for complex number conjugation (#123, @Arsalaan-Alam)
+- Add public `conjugate` function for complex number conjugation (#125, @Arsalaan-Alam)
 - Fix complex vdot to conjugate first tensor before multiplication, ensuring correct mathematical behavior (#123, @Arsalaan-Alam)
 - Update comparison and conditional operations to use boolean tensors (#115, @nirnayroy)
 - Add support for rcond parameter and underdetermined systems to `lstsq` (#102, @Shocker444)
@@ -58,10 +75,14 @@ All notable changes to this project will be documented in this file.
 ### Kaun
 
 - Added Similarity and Polysemy analysis to the BERT example (#137, @nirnayroy)
+- Support attention masks via the new `Kaun.Attention` module (@tmattio)
+- Support loading sharded Hugging Face safetensors (@tmattio)
+- Fix BERT and GPT‑2 model loading (@tmattio)
 - API simplification: removed type parameters from public types; `Ptree` now supports mixed‑dtype trees via packed tensors with typed getters. (@tmattio)
 - Checkpointing overhaul: versioned `Train_state` with schema tagging, explicit `Checkpoint.{Snapshot,Artifact,Manifest,Repository}` (retention, tags, metadata), and simple save/load helpers for snapshots and params. (@tmattio)
 - Overhaul dataset combinators: derive tensor specs from Rune dtype, fix sampling/window bugs, validate weighted sampling, and respect `drop_remainder` (@tmattio)
 - Make dataset `prefetch` truly asynchronous with background domains and allow reusing an external Domainslib pool via `parallel_map ~pool` (@tmattio)
+- Use `Dataset.iter` for epoch batches to reduce overhead (@tmattio)
 - Update BERT and GPT-2 tokenizer cache to use `Nx.Cache` for consistent cache directory resolution (#133, @Arsalaan-Alam)
 - Honor text dataset encodings via incremental Uutf decoding (#122, @Satarupa22-SD).
 - Preserve empty sequential modules when unflattening so indices stay aligned for checkpoint round-tripping (@tmattio)
@@ -69,7 +90,7 @@ All notable changes to this project will be documented in this file.
 - Allow metric history to tolerate metrics that appear or disappear between epochs so dynamic metric sets no longer raise during training (@tmattio)
 - Make `Optimizer.clip_by_global_norm` robust to zero gradients and empty parameter trees to avoid NaNs during training (@tmattio)
 - Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD)
-- Implement AUC-ROC and AUC-PR in Kaun metrics and simplify their signatures (#109, #131, @Shocker444)
+- Implement AUC-ROC and AUC-PR in Kaun metrics and simplify their signatures (#124, #131, @Shocker444)
 - Add mean absolute percentage error, explained variance, R² (with optional adjustment), KL-divergence, and top-k accuracy to Kaun metrics (@tmattio)
 - Add NDCG, MAP, and MRR ranking metrics to Kaun metrics (@tmattio)
 - Add BLEU, ROUGE, and METEOR metrics to Kaun for pre-tokenized sequences, removing tokenizer dependencies (@tmattio)
@@ -89,6 +110,9 @@ All notable changes to this project will be documented in this file.
 
 ### Saga
 
+- Remove legacy `Normalizers.nmt` and `Normalizers.precompiled` constructors (and their JSON serializers) so the public surface only advertises supported normalizers (@tmattio)
+- Tighten template processor JSON parsing: require integer type ids, drop the legacy special-token list format, and ensure multi-id special tokens round-trip with the new record fields (@tmattio)
+- Make tokenizer JSON loading tolerant of HuggingFace quirks (missing `model.type`, string-encoded merges), restoring compatibility with upstream `tokenizer.json` files (@tmattio)
 - Cache byte-level encode/decode lookup tables to avoid rebuilding them during tokenization, trimming avoidable allocations (@tmattio)
 - Skip BPE dropout sampling when dropout is disabled, removing redundant RNG work on common hot paths (@tmattio)
 - Fix Unigram tokenization so longest matches are emitted without aborting the sequence when a vocab hit occurs (@tmattio)

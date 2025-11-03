@@ -16,6 +16,8 @@ type params = Kaun.Ptree.t
 type metrics = {
   episode_return : float;
   episode_length : int;
+  episode_won : bool;
+  stage_desc : string;
   avg_entropy : float;
   avg_log_prob : float;
   adv_mean : float;

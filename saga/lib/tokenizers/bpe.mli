@@ -224,6 +224,11 @@ val get_end_of_word_suffix : t -> string option
 
     Returns [None] if not configured. *)
 
+val get_merges : t -> (string * string) list
+(** [get_merges model] returns the list of merge rules in priority order. Each
+    pair [(token_a, token_b)] represents a merge learned during training,
+    ordered by the rank assigned when the model was constructed. *)
+
 (** {1 Cache Management} *)
 
 val clear_cache : t -> unit

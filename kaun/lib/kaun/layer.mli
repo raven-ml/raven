@@ -362,41 +362,6 @@ val embedding :
 
 (** {1 Attention and Position Encoding} *)
 
-val multi_head_attention :
-  embed_dim:int ->
-  num_heads:int ->
-  ?num_kv_heads:int ->
-  ?head_dim:int ->
-  ?dropout:float ->
-  ?use_qk_norm:bool ->
-  ?attn_logits_soft_cap:float ->
-  ?query_pre_attn_scalar:float ->
-  unit ->
-  module_
-(** [multi_head_attention ~embed_dim ~num_heads ...] creates a multi-head
-    attention layer.
-
-    Implements the core attention mechanism from "Attention Is All You Need".
-    Supports both standard multi-head attention and grouped query attention
-    variants.
-
-    @param embed_dim Model embedding dimension
-    @param num_heads Number of attention heads
-    @param num_kv_heads
-      Number of key-value heads for grouped attention. Default: same as
-      [num_heads]
-    @param head_dim
-      Dimension per attention head. Default: [embed_dim / num_heads]
-    @param dropout Attention dropout rate. Default: [0.0]
-    @param use_qk_norm
-      Whether to apply normalization to queries and keys. Default: [false]
-    @param attn_logits_soft_cap
-      Soft capping value for attention logits. Default: [None]
-    @param query_pre_attn_scalar
-      Scaling factor applied to queries. Default: [1.0 / sqrt(head_dim)] *)
-
-(** {2 Feed-forward Networks} *)
-
 val mlp :
   in_features:int ->
   hidden_features:int ->
@@ -416,72 +381,6 @@ val mlp :
     @param out_features Output dimension
     @param activation Activation function. Default: [`gelu]
     @param dropout Dropout probability. Default: [0.0] *)
-
-(** {1 Transformer Layers} *)
-
-val transformer_encoder_layer :
-  hidden_size:int ->
-  num_attention_heads:int ->
-  intermediate_size:int ->
-  ?hidden_dropout_prob:float ->
-  ?attention_probs_dropout_prob:float ->
-  ?layer_norm_eps:float ->
-  ?hidden_act:[ `gelu | `gelu_new | `relu | `swish ] ->
-  ?use_bias:bool ->
-  unit ->
-  module_
-(** [transformer_encoder_layer ~hidden_size ~num_attention_heads
-     ~intermediate_size ...] creates a single transformer encoder layer.
-
-    Implements a standard transformer encoder layer with multi-head
-    self-attention followed by a feed-forward network, with layer normalization
-    and residual connections.
-
-    @param hidden_size Model dimension (d_model)
-    @param num_attention_heads Number of attention heads
-    @param intermediate_size Feed-forward network hidden dimension
-    @param hidden_dropout_prob Dropout rate for hidden states. Default: [0.1]
-    @param attention_probs_dropout_prob
-      Dropout rate for attention weights. Default: [0.1]
-    @param layer_norm_eps Epsilon for layer normalization. Default: [1e-12]
-    @param hidden_act
-      Activation function for feed-forward network. Default: [`gelu]
-    @param use_bias Whether to use bias in linear layers. Default: [true]
-
-    The layer performs the following operations: 1. Multi-head self-attention
-    with residual connection and layer norm 2. Feed-forward network with
-    residual connection and layer norm *)
-
-val transformer_encoder :
-  num_layers:int ->
-  hidden_size:int ->
-  num_attention_heads:int ->
-  intermediate_size:int ->
-  ?hidden_dropout_prob:float ->
-  ?attention_probs_dropout_prob:float ->
-  ?layer_norm_eps:float ->
-  ?hidden_act:[ `gelu | `gelu_new | `relu | `swish ] ->
-  ?use_bias:bool ->
-  unit ->
-  module_
-(** [transformer_encoder ~num_layers ~hidden_size ~num_attention_heads
-     ~intermediate_size ...] creates a stack of transformer encoder layers.
-
-    Composes multiple transformer encoder layers sequentially. Commonly used as
-    the encoder component in models like BERT, GPT (decoder-only), and T5
-    (encoder part).
-
-    @param num_layers Number of encoder layers to stack
-    @param hidden_size Model dimension (d_model)
-    @param num_attention_heads Number of attention heads per layer
-    @param intermediate_size Feed-forward network hidden dimension
-    @param hidden_dropout_prob Dropout rate for hidden states. Default: [0.1]
-    @param attention_probs_dropout_prob
-      Dropout rate for attention weights. Default: [0.1]
-    @param layer_norm_eps Epsilon for layer normalization. Default: [1e-12]
-    @param hidden_act
-      Activation function for feed-forward network. Default: [`gelu]
-    @param use_bias Whether to use bias in linear layers. Default: [true] *)
 
 (** {1 Recurrent Layers} *)
 
@@ -526,23 +425,3 @@ val positional_encoding_sinusoidal_table :
   (float, 'layout) Rune.t
 (** Create a [max_len; embed_dim] sinusoidal positional encoding table (not
     trainable). Can be added to token embeddings. *)
-
-val transformer_decoder_block :
-  embed_dim:int ->
-  num_heads:int ->
-  mlp_hidden:int ->
-  ?dropout:float ->
-  unit ->
-  module_
-(** Decoder-style transformer block with causal self-attention, pre-LN, MLP, and
-    residual connections. Expects/returns [batch; seq; embed_dim]. *)
-
-val transformer_decoder :
-  num_layers:int ->
-  embed_dim:int ->
-  num_heads:int ->
-  mlp_hidden:int ->
-  ?dropout:float ->
-  unit ->
-  module_
-(** Stack multiple decoder blocks sequentially. *)

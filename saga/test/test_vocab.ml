@@ -53,12 +53,26 @@ let test_vocab_special_tokens () =
   check bool "tokens emitted" true (Array.length tokens > 0)
 
 let test_vocab_save_load () =
-  (* TODO: HF module has been removed, need to update this test *)
   let tokenizer =
     Tokenizer.add_tokens (Tokenizer.word_level ()) [ "hello"; "world"; "test" ]
   in
-  let vocab = Tokenizer.vocab tokenizer in
-  check int "vocab size" 3 (List.length vocab)
+  let json = Tokenizer.to_json tokenizer in
+  match Tokenizer.from_json json with
+  | Error exn ->
+      failf "failed to round-trip tokenizer: %s" (Printexc.to_string exn)
+  | Ok reloaded ->
+      let original_vocab = Tokenizer.vocab tokenizer in
+      let loaded_vocab = Tokenizer.vocab reloaded in
+      check int "vocab size matches"
+        (List.length original_vocab)
+        (List.length loaded_vocab);
+      List.iter
+        (fun (token, _) ->
+          check bool
+            (Printf.sprintf "token %s preserved" token)
+            true
+            (Option.is_some (Tokenizer.token_to_id reloaded token)))
+        original_vocab
 
 let suite =
   [

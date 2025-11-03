@@ -26,8 +26,13 @@ let decode_bpe ~suffix tokens =
 
 (** Decode byte-level tokens *)
 let decode_byte_level tokens =
-  (* TODO: Implement proper byte-level decoding *)
-  String.concat " " tokens
+  let buffer = Buffer.create 128 in
+  List.iter
+    (fun token ->
+      let decoded = Pre_tokenizers.byte_level_decode token in
+      Buffer.add_string buffer decoded)
+    tokens;
+  Buffer.contents buffer
 
 (** Decode byte fallback tokens *)
 let decode_byte_fallback tokens =

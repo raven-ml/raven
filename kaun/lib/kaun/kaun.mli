@@ -45,6 +45,9 @@ module Loss = Loss
 module Initializers = Initializers
 (** @inline *)
 
+module Attention = Attention
+(** @inline *)
+
 module Layer = Layer
 (** @inline *)
 

@@ -22,8 +22,6 @@ type t =
   | NFKC
   | NFKD
   | Lowercase
-  | Nmt
-  | Precompiled of bytes
   | Replace of { pattern : string; replacement : string }
   | Prepend of { prepend : string }
   | ByteLevel of { add_prefix_space : bool; use_regex : bool }
@@ -252,25 +250,6 @@ let apply_byte_level ns ~add_prefix_space ~use_regex:_ =
 
   transform_string ns.original (List.rev !transformations)
 
-(** NMT normalization *)
-let do_nmt ns =
-  let ns' =
-    filter_string ns.normalized (fun c ->
-        let code = Char.code c in
-        not
-          ((code >= 0x0001 && code <= 0x0008)
-          || code = 0x000B
-          || (code >= 0x000E && code <= 0x001F)
-          || code = 0x007F || code = 0x008F || code = 0x009F))
-  in
-  map_string ns'.normalized (fun c ->
-      match Char.code c with
-      | 0x0009 | 0x000A | 0x000C | 0x000D | 0x1680 | 0x2028 | 0x2029 | 0x2581
-      | 0xFEFF | 0xFFFD ->
-          ' '
-      | 0x200B | 0x200C | 0x200D | 0x200E | 0x200F -> ' '
-      | _ -> c)
-
 (** Main normalization function *)
 let rec normalize_impl normalizer ns =
   match normalizer with
@@ -292,16 +271,88 @@ let rec normalize_impl normalizer ns =
   | NFKC -> apply_unicode_normalization Unicode.NFKC ns.normalized
   | NFKD -> apply_unicode_normalization Unicode.NFKD ns.normalized
   | Lowercase -> do_lowercase ns
-  | Nmt -> do_nmt ns
-  | Precompiled _bytes ->
-      (* TODO: Implement precompiled normalizer *)
-      ns
   | Replace { pattern; replacement } -> apply_replace ns ~pattern ~replacement
   | Prepend { prepend } -> prepend_string ns ~prepend
   | ByteLevel { add_prefix_space; use_regex } ->
       apply_byte_level ns ~add_prefix_space ~use_regex
   | Sequence normalizers ->
       List.fold_left (fun ns n -> normalize_impl n ns) ns normalizers
+
+and of_json = function
+  | `Assoc fields -> (
+      match List.assoc_opt "type" fields with
+      | Some (`String ("Bert" | "BertNormalizer")) ->
+          let get_bool name default =
+            match List.assoc_opt name fields with
+            | Some (`Bool b) -> b
+            | _ -> default
+          in
+          let strip_accents =
+            match List.assoc_opt "strip_accents" fields with
+            | Some (`Bool b) -> Some b
+            | Some `Null | None -> None
+            | _ -> None
+          in
+          Bert
+            {
+              clean_text = get_bool "clean_text" true;
+              handle_chinese_chars = get_bool "handle_chinese_chars" true;
+              strip_accents;
+              lowercase = get_bool "lowercase" true;
+            }
+      | Some (`String "Strip") ->
+          let get_bool name default =
+            match List.assoc_opt name fields with
+            | Some (`Bool b) -> b
+            | _ -> default
+          in
+          Strip
+            {
+              left = get_bool "strip_left" false;
+              right = get_bool "strip_right" true;
+            }
+      | Some (`String "StripAccents") -> StripAccents
+      | Some (`String "NFC") -> NFC
+      | Some (`String "NFD") -> NFD
+      | Some (`String "NFKC") -> NFKC
+      | Some (`String "NFKD") -> NFKD
+      | Some (`String "Lowercase") -> Lowercase
+      | Some (`String "Replace") ->
+          let pattern =
+            match List.assoc_opt "pattern" fields with
+            | Some (`Assoc [ ("String", `String p) ]) -> p
+            | _ -> failwith "Invalid Replace normalizer pattern"
+          in
+          let replacement =
+            match List.assoc_opt "content" fields with
+            | Some (`String r) -> r
+            | _ -> failwith "Invalid Replace normalizer content"
+          in
+          Replace { pattern; replacement }
+      | Some (`String "Prepend") -> (
+          match List.assoc_opt "prepend" fields with
+          | Some (`String p) -> Prepend { prepend = p }
+          | _ -> failwith "Invalid Prepend normalizer")
+      | Some (`String "ByteLevel") ->
+          let add_prefix_space =
+            match List.assoc_opt "add_prefix_space" fields with
+            | Some (`Bool b) -> b
+            | _ -> false
+          in
+          let use_regex =
+            match List.assoc_opt "use_regex" fields with
+            | Some (`Bool b) -> b
+            | _ -> false
+          in
+          ByteLevel { add_prefix_space; use_regex }
+      | Some (`String "Sequence") -> (
+          match List.assoc_opt "normalizers" fields with
+          | Some (`List l) -> Sequence (List.map of_json l)
+          | _ -> failwith "Invalid Sequence normalizer")
+      | Some (`String other) ->
+          failwith (Printf.sprintf "Unknown normalizer type: %s" other)
+      | _ -> failwith "Invalid normalizer JSON")
+  | _ -> failwith "Invalid normalizer JSON"
 
 (** Constructors *)
 let bert ?(clean_text = true) ?(handle_chinese_chars = true)
@@ -315,8 +366,6 @@ let nfd () = NFD
 let nfkc () = NFKC
 let nfkd () = NFKD
 let lowercase () = Lowercase
-let nmt () = Nmt
-let precompiled bytes = Precompiled bytes
 let replace ~pattern ~replacement () = Replace { pattern; replacement }
 let prepend ~prepend = Prepend { prepend }
 
@@ -365,13 +414,6 @@ let rec to_json = function
   | NFKC -> `Assoc [ ("type", `String "NFKC") ]
   | NFKD -> `Assoc [ ("type", `String "NFKD") ]
   | Lowercase -> `Assoc [ ("type", `String "Lowercase") ]
-  | Nmt -> `Assoc [ ("type", `String "Nmt") ]
-  | Precompiled bytes ->
-      `Assoc
-        [
-          ("type", `String "Precompiled");
-          ("data", `String (Bytes.to_string bytes));
-        ]
   | Replace { pattern; replacement } ->
       `Assoc
         [
@@ -394,85 +436,3 @@ let rec to_json = function
           ("type", `String "Sequence");
           ("normalizers", `List (List.map to_json normalizers));
         ]
-
-let rec of_json = function
-  | `Assoc fields -> (
-      match List.assoc_opt "type" fields with
-      | Some (`String ("Bert" | "BertNormalizer")) ->
-          let get_bool name default =
-            match List.assoc_opt name fields with
-            | Some (`Bool b) -> b
-            | _ -> default
-          in
-          let strip_accents =
-            match List.assoc_opt "strip_accents" fields with
-            | Some (`Bool b) -> Some b
-            | Some `Null | None -> None
-            | _ -> None
-          in
-          Bert
-            {
-              clean_text = get_bool "clean_text" true;
-              handle_chinese_chars = get_bool "handle_chinese_chars" true;
-              strip_accents;
-              lowercase = get_bool "lowercase" true;
-            }
-      | Some (`String "Strip") ->
-          let get_bool name default =
-            match List.assoc_opt name fields with
-            | Some (`Bool b) -> b
-            | _ -> default
-          in
-          Strip
-            {
-              left = get_bool "strip_left" false;
-              right = get_bool "strip_right" true;
-            }
-      | Some (`String "StripAccents") -> StripAccents
-      | Some (`String "NFC") -> NFC
-      | Some (`String "NFD") -> NFD
-      | Some (`String "NFKC") -> NFKC
-      | Some (`String "NFKD") -> NFKD
-      | Some (`String "Lowercase") -> Lowercase
-      | Some (`String "Nmt") -> Nmt
-      | Some (`String "Precompiled") -> (
-          match List.assoc_opt "data" fields with
-          | Some (`String s) -> Precompiled (Bytes.of_string s)
-          | _ -> failwith "Invalid Precompiled normalizer")
-      | Some (`String "Replace") ->
-          let pattern =
-            match List.assoc_opt "pattern" fields with
-            | Some (`Assoc [ ("String", `String s) ]) -> s
-            | Some (`String s) -> s
-            | _ -> failwith "Invalid Replace pattern"
-          in
-          let replacement =
-            match List.assoc_opt "content" fields with
-            | Some (`String s) -> s
-            | _ -> ""
-          in
-          Replace { pattern; replacement }
-      | Some (`String "Prepend") ->
-          let prepend =
-            match List.assoc_opt "prepend" fields with
-            | Some (`String s) -> s
-            | _ -> failwith "Invalid Prepend configuration"
-          in
-          Prepend { prepend }
-      | Some (`String "ByteLevel") ->
-          let get_bool name default =
-            match List.assoc_opt name fields with
-            | Some (`Bool b) -> b
-            | _ -> default
-          in
-          ByteLevel
-            {
-              add_prefix_space = get_bool "add_prefix_space" false;
-              use_regex = get_bool "use_regex" false;
-            }
-      | Some (`String "Sequence") -> (
-          match List.assoc_opt "normalizers" fields with
-          | Some (`List normalizers) -> Sequence (List.map of_json normalizers)
-          | _ -> failwith "Invalid Sequence normalizer")
-      | _ -> failwith "Unknown normalizer type")
-  | _ -> failwith "Invalid normalizer JSON"

@@ -211,26 +211,6 @@ val lowercase : unit -> t
       (* result = "hello world!" *)
     ]} *)
 
-val nmt : unit -> t
-(** [nmt ()] applies NMT (Neural Machine Translation) normalization.
-
-    Normalizes spacing around punctuation for neural translation models. Ensures
-    consistent spacing patterns.
-
-    {[
-      let normalizer = Normalizers.nmt () in
-      let result = Normalizers.normalize_str normalizer "Hello,world!" in
-      (* Adds consistent spacing around punctuation *)
-    ]} *)
-
-val precompiled : bytes -> t
-(** [precompiled bytes] creates normalizer from precompiled data.
-
-    For internal use or advanced scenarios requiring serialized normalizer
-    state.
-
-    @param bytes Precompiled normalizer data *)
-
 val replace : pattern:string -> replacement:string -> unit -> t
 (** [replace ~pattern ~replacement ()] replaces text matching regex pattern.
 

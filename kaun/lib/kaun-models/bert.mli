@@ -120,6 +120,7 @@ val forward :
   ?training:bool ->
   ?output_hidden_states:bool ->
   ?output_attentions:bool ->
+  ?rngs:Rune.Rng.key ->
   unit ->
   'a output
 (** [forward ~model ~params ~input_ids ... ()] performs a forward pass.
@@ -132,7 +133,8 @@ val forward :
     @param head_mask Mask to nullify specific attention heads
     @param training Whether in training mode (affects dropout)
     @param output_hidden_states Whether to return all hidden states
-    @param output_attentions Whether to return attention weights *)
+    @param output_attentions Whether to return attention weights
+    @param rngs Source key required when training with dropout *)
 
 (** {1 Task-Specific Heads} *)
 
@@ -145,10 +147,12 @@ module For_masked_lm : sig
     params:Kaun.params ->
     compute_dtype:(float, 'a) dtype ->
     input_ids:(int32, int32_elt) Rune.t ->
+    ?config:config ->
     ?attention_mask:(int32, int32_elt) Rune.t ->
     ?token_type_ids:(int32, int32_elt) Rune.t ->
     ?labels:(int32, int32_elt) Rune.t ->
     training:bool ->
+    ?rngs:Rune.Rng.key ->
     unit ->
     (float, 'a) Rune.t * (float, 'a) Rune.t option
   (** Returns (logits, loss) where logits has shape
@@ -164,10 +168,12 @@ module For_sequence_classification : sig
     params:Kaun.params ->
     compute_dtype:(float, 'a) dtype ->
     input_ids:(int32, int32_elt) Rune.t ->
+    ?config:config ->
     ?attention_mask:(int32, int32_elt) Rune.t ->
     ?token_type_ids:(int32, int32_elt) Rune.t ->
     ?labels:(int32, int32_elt) Rune.t ->
     training:bool ->
+    ?rngs:Rune.Rng.key ->
     unit ->
     (float, 'a) Rune.t * (float, 'a) Rune.t option
   (** Returns (logits, loss) where logits has shape [batch_size; num_labels] *)
@@ -182,10 +188,12 @@ module For_token_classification : sig
     params:Kaun.params ->
     compute_dtype:(float, 'a) dtype ->
     input_ids:(int32, int32_elt) Rune.t ->
+    ?config:config ->
     ?attention_mask:(int32, int32_elt) Rune.t ->
     ?token_type_ids:(int32, int32_elt) Rune.t ->
     ?labels:(int32, int32_elt) Rune.t ->
     training:bool ->
+    ?rngs:Rune.Rng.key ->
     unit ->
     (float, 'a) Rune.t * (float, 'a) Rune.t option
   (** Returns (logits, loss) where logits has shape

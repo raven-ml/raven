@@ -268,6 +268,82 @@ let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
   let num_layers = n_layer and n_head = n_head in
   (* Match Python: learned positional embeddings and final LayerNorm *)
   let pos = positional_embedding_learned ~max_len:block_size ~embed_dim () in
+  let transformer_decoder_block ~embed_dim ~num_heads ~mlp_hidden
+      ?(dropout = 0.0) () =
+    let attn_config =
+      Kaun.Attention.Multi_head.make_config ~embed_dim ~num_heads ~dropout ()
+    in
+    let ln1 = layer_norm ~dim:embed_dim () in
+    let ln2 = layer_norm ~dim:embed_dim () in
+    let ff =
+      sequential
+        [
+          linear ~in_features:embed_dim ~out_features:mlp_hidden ();
+          gelu ();
+          linear ~in_features:mlp_hidden ~out_features:embed_dim ();
+        ]
+    in
+    {
+      Layer.init =
+        (fun ~rngs ~dtype ->
+          let keys = Rune.Rng.split ~n:4 rngs in
+          Ptree.dict
+            [
+              ( "attn",
+                Kaun.Attention.Multi_head.init attn_config ~rngs:keys.(0) ~dtype
+              );
+              ("ln1", ln1.init ~rngs:keys.(1) ~dtype);
+              ("ln2", ln2.init ~rngs:keys.(2) ~dtype);
+              ("ff", ff.init ~rngs:keys.(3) ~dtype);
+            ]);
+      apply =
+        (fun params ~training ?rngs x ->
+          let fields =
+            match params with
+            | Ptree.Dict fields -> fields
+            | _ -> failwith "transformer_decoder_block: params must be a dict"
+          in
+          let find name =
+            match List.assoc_opt name fields with
+            | Some value -> value
+            | None ->
+                failwith
+                  (Printf.sprintf "transformer_decoder_block: missing %s" name)
+          in
+          let attn_params = find "attn" in
+          let ln1_params = find "ln1" in
+          let ln2_params = find "ln2" in
+          let ff_params = find "ff" in
+          let x_norm = ln1.apply ln1_params ~training x in
+          let batch = (Rune.shape x_norm).(0) in
+          let seq_len = (Rune.shape x_norm).(1) in
+          let positions =
+            Rune.arange Rune.int32 0 seq_len 1 |> Rune.reshape [| 1; seq_len |]
+          in
+          let query_idx = Rune.reshape [| 1; seq_len; 1 |] positions in
+          let key_idx = Rune.reshape [| 1; 1; seq_len |] positions in
+          let base_mask = Rune.less_equal key_idx query_idx in
+          let attention_mask =
+            if batch = 1 then base_mask
+            else Rune.broadcast_to [| batch; seq_len; seq_len |] base_mask
+          in
+          let attn_out =
+            Kaun.Attention.Multi_head.apply ?rngs ~attention_mask attn_config
+              attn_params ~training ~query:x_norm ~key:x_norm ~value:x_norm
+          in
+          let x = Rune.add x attn_out in
+          let x_norm_ff = ln2.apply ln2_params ~training x in
+          let ff_out = ff.apply ff_params ~training x_norm_ff in
+          Rune.add x ff_out);
+    }
+  in
+  let transformer_decoder ~num_layers ~embed_dim ~num_heads ~mlp_hidden () =
+    let blocks =
+      List.init num_layers (fun _ ->
+          transformer_decoder_block ~embed_dim ~num_heads ~mlp_hidden ())
+    in
+    sequential blocks
+  in
   let decoder =
     transformer_decoder ~num_layers ~embed_dim ~num_heads:n_head
       ~mlp_hidden:(4 * embed_dim) ()
