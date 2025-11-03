@@ -611,6 +611,7 @@ module Curriculum = struct
       window_size;
       recent_rewards = ref [];
     }
+
   let trim_to n lst =
     let rec aux idx acc = function
       | [] -> List.rev acc
@@ -632,7 +633,7 @@ module Curriculum = struct
       trim_to config.window_size (outcome :: !(config.recent_rewards));
     let count = List.length !(config.recent_rewards) in
     let minimum_samples = max 10 (config.window_size / 2) in
-    if count >= minimum_samples then (
+    if count >= minimum_samples then
       let wins = List.filter (fun r -> r > 0.5) !(config.recent_rewards) in
       let success_rate =
         float_of_int (List.length wins) /. float_of_int count
@@ -645,7 +646,7 @@ module Curriculum = struct
         incr config.current_idx;
         config.recent_rewards := [];
         true)
-      else false)
+      else false
     else false
 
   let get_current_stage config = List.nth config.stages !(config.current_idx)
@@ -670,6 +671,7 @@ type state = {
 
 module Env_table = Hashtbl.Make (struct
   type t = Obj.t
+
   let equal a b = a == b
   let hash = Hashtbl.hash
 end)
@@ -689,7 +691,6 @@ let lookup_state env =
 let max_grid_size = 10
 let observation_channels = 8
 let observation_flat_size = observation_channels * max_grid_size * max_grid_size
-
 let mask_channel_index = observation_channels - 1
 
 let cell_to_channel = function
@@ -700,6 +701,7 @@ let cell_to_channel = function
   | Core.Box_on_target -> 4
   | Core.Player -> 5
   | Core.Player_on_target -> 6
+
 let render_text state = Core.render state.game_state
 
 let tile_color = function
@@ -826,8 +828,7 @@ let action_mask state =
     can_move Core.Right state;
   |]
 
-let manhattan (x1, y1) (x2, y2) =
-  Stdlib.abs (x1 - x2) + Stdlib.abs (y1 - y2)
+let manhattan (x1, y1) (x2, y2) = Stdlib.abs (x1 - x2) + Stdlib.abs (y1 - y2)
 
 let boxes_and_targets state =
   let open Core in
@@ -836,15 +837,12 @@ let boxes_and_targets state =
   for y = 0 to state.height - 1 do
     for x = 0 to state.width - 1 do
       match state.grid.(y).(x) with
-      | Box ->
-          boxes := (x, y) :: !boxes
+      | Box -> boxes := (x, y) :: !boxes
       | Box_on_target ->
           boxes := (x, y) :: !boxes;
           targets := (x, y) :: !targets
-      | Target ->
-          targets := (x, y) :: !targets
-      | Player_on_target ->
-          targets := (x, y) :: !targets
+      | Target -> targets := (x, y) :: !targets
+      | Player_on_target -> targets := (x, y) :: !targets
       | _ -> ()
     done
   done;
@@ -856,7 +854,7 @@ let sorted_boxes state =
 
 let potential state =
   let boxes, targets = boxes_and_targets state in
-  match boxes, targets with
+  match (boxes, targets) with
   | [], _ | _, [] -> 0.0
   | _ ->
       let best_distance (x, y) =
@@ -867,9 +865,7 @@ let potential state =
       let total =
         List.fold_left (fun acc box -> acc + best_distance box) 0 boxes
       in
-      let max_per_box =
-        max 1 ((state.width - 1) + (state.height - 1))
-      in
+      let max_per_box = max 1 (state.width - 1 + (state.height - 1)) in
       let max_total = max_per_box * List.length boxes in
       let diff = max_total - total in
       float_of_int (if diff > 0 then diff else 0)
@@ -904,9 +900,7 @@ let stage_info curriculum_config =
   | None -> "1/1"
 
 let registered_curriculum env =
-  try
-    (lookup_state env).curriculum_config
-  with Invalid_argument _ -> None
+  try (lookup_state env).curriculum_config with Invalid_argument _ -> None
 
 let stage_to_string = function
   | Curriculum.Corridor len -> Printf.sprintf "corridor-%d" len
@@ -923,12 +917,8 @@ let stage_descriptor curriculum_config =
       Printf.sprintf "%s-%02d-of-%02d" (stage_to_string stage) (idx + 1) total
   | None -> "single-stage"
 
-let current_game_state env =
-  Core.copy_state (lookup_state env).game_state
-
-let has_registered_state env =
-  Env_table.mem state_registry (Obj.repr env)
-
+let current_game_state env = Core.copy_state (lookup_state env).game_state
+let has_registered_state env = Env_table.mem state_registry (Obj.repr env)
 let state_opt env = Env_table.find_opt state_registry (Obj.repr env)
 
 let current_stage env =
@@ -940,8 +930,7 @@ let current_stage env =
       Some (stage, idx, List.length config.Curriculum.stages)
   | None -> None
 
-let current_stage_label env =
-  stage_info (registered_curriculum env)
+let current_stage_label env = stage_info (registered_curriculum env)
 
 let current_stage_descriptor env =
   match state_opt env with
@@ -951,8 +940,8 @@ let current_stage_descriptor env =
 let current_stage_descriptor_opt env =
   match state_opt env with
   | None -> None
-  | Some state ->
-      (match state.curriculum_config with
+  | Some state -> (
+      match state.curriculum_config with
       | None -> None
       | Some _ -> Some (stage_descriptor state.curriculum_config))
 
@@ -993,8 +982,7 @@ let reset _env ?options:_ () state =
   let obs = make_observation level in
   let info =
     Info.empty
-    |> Info.set "stage"
-         (Info.string (stage_descriptor state.curriculum_config))
+    |> Info.set "stage" (Info.string (stage_descriptor state.curriculum_config))
     |> Info.set "action_mask" (Info.bool_array (action_mask level))
   in
   (obs, info)
@@ -1005,7 +993,7 @@ let step _env action state =
   let boxes_before = sorted_boxes state.game_state in
   let direction = action_to_direction action in
   let new_state = Core.apply_action state.game_state direction in
-  let moved = not (Stdlib.(==) new_state state.game_state) in
+  let moved = not (Stdlib.( == ) new_state state.game_state) in
   state.game_state <- new_state;
   let boxes_after = sorted_boxes state.game_state in
   let pushed = boxes_before <> boxes_after in
@@ -1013,9 +1001,7 @@ let step _env action state =
   let no_moves = not (has_any_move state.game_state) in
   let truncated = state.steps >= state.max_steps || no_moves in
 
-  let base_reward =
-    if won then 100.0 else if not moved then -0.2 else -0.01
-  in
+  let base_reward = if won then 100.0 else if not moved then -0.2 else -0.01 in
   let phi_s' = potential state.game_state in
   let shaping =
     if pushed then shaping_beta *. ((shaping_gamma *. phi_s') -. phi_s) else 0.0

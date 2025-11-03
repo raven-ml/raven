@@ -469,8 +469,7 @@ module Rng_stream = struct
     | Some key -> key
     | None ->
         failwith
-          (Printf.sprintf
-             "BERT.%s requires RNG when training and dropout > 0"
+          (Printf.sprintf "BERT.%s requires RNG when training and dropout > 0"
              context)
 end
 
@@ -502,14 +501,12 @@ let apply_transformer_layer ~config ~context ~params ~hidden_states ~training
     let tensor = Rune.contiguous tensor in
     let shape = Rune.shape tensor in
     if Array.length shape <> 3 then
-      invalid_arg
-        (Printf.sprintf "%s: expected rank-3 projection" context);
+      invalid_arg (Printf.sprintf "%s: expected rank-3 projection" context);
     let projected_dim = shape.(2) in
     if projected_dim <> heads * head_dim then
       invalid_arg
-        (Printf.sprintf
-           "%s: projection mismatch (got %d, expected %d)"
-           context projected_dim (heads * head_dim));
+        (Printf.sprintf "%s: projection mismatch (got %d, expected %d)" context
+           projected_dim (heads * head_dim));
     let reshaped =
       Rune.reshape [| shape.(0); shape.(1); heads; head_dim |] tensor
     in
@@ -543,14 +540,16 @@ let apply_transformer_layer ~config ~context ~params ~hidden_states ~training
       ?dropout_seed:attn_seed ~is_causal:false q_heads k_heads v_heads
   in
   let attention =
-    attention |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
+    attention
+    |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
     |> Rune.contiguous
     |> Rune.reshape [| batch; seq_len; hidden_size |]
   in
   let attn_out =
-    Rune.matmul attention (get "attn_out_weight")
-    |> fun x ->
-    match get_opt "attn_out_bias" with Some bias -> Rune.add x bias | None -> x
+    Rune.matmul attention (get "attn_out_weight") |> fun x ->
+    match get_opt "attn_out_bias" with
+    | Some bias -> Rune.add x bias
+    | None -> x
   in
   let hidden_dropout_rate =
     if training then config.hidden_dropout_prob else 0.0
@@ -558,30 +557,24 @@ let apply_transformer_layer ~config ~context ~params ~hidden_states ~training
   let apply_hidden_dropout suffix tensor =
     if hidden_dropout_rate = 0.0 then tensor
     else
-      let key =
-        Rng_stream.require rng_stream (context ^ suffix)
-      in
+      let key = Rng_stream.require rng_stream (context ^ suffix) in
       Rune.dropout ~seed:(Rune.Rng.to_int key) ~rate:hidden_dropout_rate tensor
   in
   let attn_out = apply_hidden_dropout ".dropout_attn" attn_out in
   let residual = Rune.add hidden_states attn_out in
   let normed =
-    Rune.layer_norm residual
-      ~gamma:(get "attn_gamma")
-      ~beta:(get "attn_beta")
+    Rune.layer_norm residual ~gamma:(get "attn_gamma") ~beta:(get "attn_beta")
       ~epsilon:config.layer_norm_eps
   in
   let intermediate =
-    Rune.matmul normed (get "inter_weight")
-    |> fun x ->
+    Rune.matmul normed (get "inter_weight") |> fun x ->
     match get_opt "inter_bias" with Some bias -> Rune.add x bias | None -> x
   in
   let inter_shape = Rune.shape intermediate in
   if inter_shape.(2) <> config.intermediate_size then
     failwith
-      (Printf.sprintf
-         "%s: intermediate_size mismatch (expected %d, got %d)" context
-         config.intermediate_size inter_shape.(2));
+      (Printf.sprintf "%s: intermediate_size mismatch (expected %d, got %d)"
+         context config.intermediate_size inter_shape.(2));
   let activated =
     match config.hidden_act with
     | `gelu | `gelu_new -> Kaun.Activations.gelu intermediate
@@ -589,15 +582,12 @@ let apply_transformer_layer ~config ~context ~params ~hidden_states ~training
     | `swish -> Kaun.Activations.swish intermediate
   in
   let output =
-    Rune.matmul activated (get "out_weight")
-    |> fun x ->
+    Rune.matmul activated (get "out_weight") |> fun x ->
     match get_opt "out_bias" with Some bias -> Rune.add x bias | None -> x
   in
   let output = apply_hidden_dropout ".dropout_ffn" output in
   let residual = Rune.add normed output in
-  Rune.layer_norm residual
-    ~gamma:(get "ffn_gamma")
-    ~beta:(get "ffn_beta")
+  Rune.layer_norm residual ~gamma:(get "ffn_gamma") ~beta:(get "ffn_beta")
     ~epsilon:config.layer_norm_eps
 
 let transformer_layer_module ~config ~layer_index =
@@ -650,9 +640,7 @@ let transformer_layer_module ~config ~layer_index =
         let attn_beta = Rune.zeros dtype [| hidden_size |] in
         let ffn_gamma = Rune.ones dtype [| hidden_size |] in
         let ffn_beta = Rune.zeros dtype [| hidden_size |] in
-        let bias name shape =
-          (name, Kaun.Ptree.tensor (zeros 0 shape dtype))
-        in
+        let bias name shape = (name, Kaun.Ptree.tensor (zeros 0 shape dtype)) in
         Kaun.Ptree.dict
           [
             ("q_weight", Kaun.Ptree.tensor q_weight);
@@ -675,8 +663,8 @@ let transformer_layer_module ~config ~layer_index =
     Kaun.apply =
       (fun params ~training ?rngs hidden_states ->
         let rng_stream = Rng_stream.create rngs in
-        apply_transformer_layer ~config ~context ~params
-          ~hidden_states ~training ~rng_stream ?attention_mask:None ());
+        apply_transformer_layer ~config ~context ~params ~hidden_states
+          ~training ~rng_stream ?attention_mask:None ());
   }
 
 let create_bert_layers ~config ~add_pooling_layer =
@@ -967,12 +955,7 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
 let forward bert inputs ?(training = false) ?(output_hidden_states = false)
     ?(output_attentions = false) ?rngs () =
   let { params; config; dtype = target_dtype; _ } = bert in
-  let {
-    input_ids;
-    attention_mask;
-    token_type_ids;
-    position_ids = _;
-  } =
+  let { input_ids; attention_mask; token_type_ids; position_ids = _ } =
     inputs
   in
   let open Rune in
@@ -985,8 +968,7 @@ let forward bert inputs ?(training = false) ?(output_hidden_states = false)
   in
   let embeddings_params, encoder_layers =
     match encoder_params with
-    | Kaun.Ptree.List
-        (embeddings :: Kaun.Ptree.List layer_params :: _rest) ->
+    | Kaun.Ptree.List (embeddings :: Kaun.Ptree.List layer_params :: _rest) ->
         (embeddings, layer_params)
     | _ -> failwith "forward: unexpected encoder params structure"
   in
@@ -1008,10 +990,10 @@ let forward bert inputs ?(training = false) ?(output_hidden_states = false)
     | Some ids -> ids
     | None -> zeros int32 [| batch_size; seq_len |]
   in
-  if (shape token_type_ids).(0) <> batch_size
-     || (shape token_type_ids).(1) <> seq_len
-  then
-    invalid_arg "forward: token_type_ids must match [batch; seq_len]";
+  if
+    (shape token_type_ids).(0) <> batch_size
+    || (shape token_type_ids).(1) <> seq_len
+  then invalid_arg "forward: token_type_ids must match [batch; seq_len]";
   let num_heads = config.num_attention_heads in
   let attention_mask =
     let mask = Kaun.Attention.normalize_mask attention_mask in
@@ -1052,8 +1034,8 @@ let forward bert inputs ?(training = false) ?(output_hidden_states = false)
             || (key_dim <> seq_len && key_dim <> 1)
           then
             invalid_arg
-              "forward: rank-4 attention mask must match \
-               [batch; num_heads; seq_q; seq_k]";
+              "forward: rank-4 attention mask must match [batch; num_heads; \
+               seq_q; seq_k]";
           mask
       | _ -> invalid_arg "forward: attention mask rank must be 2, 3, or 4"
     in
@@ -1066,8 +1048,8 @@ let forward bert inputs ?(training = false) ?(output_hidden_states = false)
         let hidden =
           apply_transformer_layer ~config
             ~context:(Printf.sprintf "encoder[%d]" idx)
-            ~params ~hidden_states:hidden ~training ~rng_stream
-            ?attention_mask ()
+            ~params ~hidden_states:hidden ~training ~rng_stream ?attention_mask
+            ()
         in
         apply_layers hidden (idx + 1) rest
   in
@@ -1075,9 +1057,7 @@ let forward bert inputs ?(training = false) ?(output_hidden_states = false)
   let hidden_states =
     if output_hidden_states then Some [ last_hidden_state ] else None
   in
-  let attentions =
-    if output_attentions then None else None
-  in
+  let attentions = if output_attentions then None else None in
   let pooler_output =
     if
       Kaun.Ptree.mem
@@ -1125,8 +1105,9 @@ module For_masked_lm = struct
           ();
       ]
 
-  let forward ~model ~params ~compute_dtype ~input_ids ?(config = default_config)
-      ?attention_mask ?token_type_ids ?labels ~training ?rngs () =
+  let forward ~model ~params ~compute_dtype ~input_ids
+      ?(config = default_config) ?attention_mask ?token_type_ids ?labels
+      ~training ?rngs () =
     ignore model;
     let mask =
       match attention_mask with
@@ -1135,7 +1116,8 @@ module For_masked_lm = struct
     in
     let bert_params, head_params =
       match params with
-      | Kaun.Ptree.List (bert_params :: head_params) -> (bert_params, head_params)
+      | Kaun.Ptree.List (bert_params :: head_params) ->
+          (bert_params, head_params)
       | _ -> failwith "For_masked_lm.forward: invalid params structure"
     in
     let linear1_params, gelu_params, layer_norm_params, linear2_params =
@@ -1144,7 +1126,8 @@ module For_masked_lm = struct
           (linear1, gelu_p, layer_norm_p, linear2)
       | _ ->
           failwith
-            "For_masked_lm.forward: expected linear/gelu/layer_norm/linear params"
+            "For_masked_lm.forward: expected linear/gelu/layer_norm/linear \
+             params"
     in
     let bert_module = bert_create ~config ~add_pooling_layer:false () in
     let bert =
@@ -1152,20 +1135,13 @@ module For_masked_lm = struct
         model = bert_module;
         params =
           Kaun.Ptree.dict
-            [
-              ("encoder", bert_params); ("pooler", Kaun.Ptree.Dict []);
-            ];
+            [ ("encoder", bert_params); ("pooler", Kaun.Ptree.Dict []) ];
         config;
         dtype = compute_dtype;
       }
     in
     let inputs =
-      {
-        input_ids;
-        attention_mask = mask;
-        token_type_ids;
-        position_ids = None;
-      }
+      { input_ids; attention_mask = mask; token_type_ids; position_ids = None }
     in
     let bert_output = bert_forward bert inputs ~training ?rngs () in
     let linear1 =
@@ -1221,8 +1197,9 @@ module For_sequence_classification = struct
         linear ~in_features:config.hidden_size ~out_features:num_labels ();
       ]
 
-  let forward ~model ~params ~compute_dtype ~input_ids ?(config = default_config)
-      ?attention_mask ?token_type_ids ?labels ~training ?rngs () =
+  let forward ~model ~params ~compute_dtype ~input_ids
+      ?(config = default_config) ?attention_mask ?token_type_ids ?labels
+      ~training ?rngs () =
     ignore model;
     let mask =
       match attention_mask with
@@ -1231,7 +1208,7 @@ module For_sequence_classification = struct
     in
     let bert_params, head_params =
       match params with
-      | Kaun.Ptree.List (bert_params :: dropout_params :: linear_params :: []) ->
+      | Kaun.Ptree.List [ bert_params; dropout_params; linear_params ] ->
           (bert_params, (dropout_params, linear_params))
       | _ ->
           failwith
@@ -1244,20 +1221,13 @@ module For_sequence_classification = struct
         model = bert_module;
         params =
           Kaun.Ptree.dict
-            [
-              ("encoder", bert_params); ("pooler", Kaun.Ptree.Dict []);
-            ];
+            [ ("encoder", bert_params); ("pooler", Kaun.Ptree.Dict []) ];
         config;
         dtype = compute_dtype;
       }
     in
     let inputs =
-      {
-        input_ids;
-        attention_mask = mask;
-        token_type_ids;
-        position_ids = None;
-      }
+      { input_ids; attention_mask = mask; token_type_ids; position_ids = None }
     in
     let bert_rng, head_rng =
       match rngs with
@@ -1271,12 +1241,10 @@ module For_sequence_classification = struct
       match bert_output.pooler_output with
       | Some pooled -> pooled
       | None ->
-          failwith
-            "For_sequence_classification.forward: expected pooler output"
+          failwith "For_sequence_classification.forward: expected pooler output"
     in
     let dropout_rate =
-      Option.value config.classifier_dropout
-        ~default:config.hidden_dropout_prob
+      Option.value config.classifier_dropout ~default:config.hidden_dropout_prob
     in
     let dropout_layer = Kaun.Layer.dropout ~rate:dropout_rate () in
     let num_labels =
@@ -1320,8 +1288,9 @@ module For_token_classification = struct
         linear ~in_features:config.hidden_size ~out_features:num_labels ();
       ]
 
-  let forward ~model ~params ~compute_dtype ~input_ids ?(config = default_config)
-      ?attention_mask ?token_type_ids ?labels ~training ?rngs () =
+  let forward ~model ~params ~compute_dtype ~input_ids
+      ?(config = default_config) ?attention_mask ?token_type_ids ?labels
+      ~training ?rngs () =
     ignore model;
     let mask =
       match attention_mask with
@@ -1330,11 +1299,10 @@ module For_token_classification = struct
     in
     let bert_params, head_params =
       match params with
-      | Kaun.Ptree.List (bert_params :: dropout_params :: linear_params :: []) ->
+      | Kaun.Ptree.List [ bert_params; dropout_params; linear_params ] ->
           (bert_params, (dropout_params, linear_params))
       | _ ->
-          failwith
-            "For_token_classification.forward: invalid params structure"
+          failwith "For_token_classification.forward: invalid params structure"
     in
     let dropout_params, linear_params = head_params in
     let bert_module = bert_create ~config ~add_pooling_layer:false () in
@@ -1343,20 +1311,13 @@ module For_token_classification = struct
         model = bert_module;
         params =
           Kaun.Ptree.dict
-            [
-              ("encoder", bert_params); ("pooler", Kaun.Ptree.Dict []);
-            ];
+            [ ("encoder", bert_params); ("pooler", Kaun.Ptree.Dict []) ];
         config;
         dtype = compute_dtype;
       }
     in
     let inputs =
-      {
-        input_ids;
-        attention_mask = mask;
-        token_type_ids;
-        position_ids = None;
-      }
+      { input_ids; attention_mask = mask; token_type_ids; position_ids = None }
     in
     let bert_rng, head_rng =
       match rngs with
@@ -1378,8 +1339,7 @@ module For_token_classification = struct
           in
           (Rune.shape weight).(1)
       | _ ->
-          failwith
-            "For_token_classification.forward: linear params not a dict"
+          failwith "For_token_classification.forward: linear params not a dict"
     in
     let linear =
       Kaun.Layer.linear ~in_features:config.hidden_size ~out_features:num_labels

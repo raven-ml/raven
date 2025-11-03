@@ -1588,8 +1588,9 @@ module Tokenizer = struct
         | None ->
             if has_field "merges" model_json then "BPE"
             else if has_field "unk_id" model_json then "Unigram"
-            else if has_field "continuing_subword_prefix" model_json
-                    || has_field "max_input_chars_per_word" model_json
+            else if
+              has_field "continuing_subword_prefix" model_json
+              || has_field "max_input_chars_per_word" model_json
             then "WordPiece"
             else if has_field "vocab" model_json then "WordLevel"
             else
@@ -1613,8 +1614,7 @@ module Tokenizer = struct
                        | _ -> failwith "Invalid merge string format")
                    | json ->
                        failwith
-                         (Printf.sprintf
-                            "Invalid merge entry: %s"
+                         (Printf.sprintf "Invalid merge entry: %s"
                             (Yojson.Basic.to_string json)))
             in
             let unk_token =

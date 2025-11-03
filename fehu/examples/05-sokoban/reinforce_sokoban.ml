@@ -40,10 +40,7 @@ let add_channel_dim ~n_channels () =
       (fun _ ~training:_ ?rngs:_ x ->
         let shape = Rune.shape x in
         let batch =
-          match Array.length shape with
-          | 1 -> 1
-          | 0 -> 1
-          | _ -> shape.(0)
+          match Array.length shape with 1 -> 1 | 0 -> 1 | _ -> shape.(0)
         in
         Rune.reshape [| batch; n_channels; grid_size; grid_size |] x);
   }
@@ -94,9 +91,11 @@ let apply_action_mask logits = function
       let len = Array.length mask in
       let mask_offsets =
         Array.init n_actions (fun idx ->
-            if idx < len && mask.(idx) then 0.0 else -.1e9)
+            if idx < len && mask.(idx) then 0.0 else -1e9)
       in
-      let mask_tensor = Rune.create Rune.float32 [| 1; n_actions |] mask_offsets in
+      let mask_tensor =
+        Rune.create Rune.float32 [| 1; n_actions |] mask_offsets
+      in
       Rune.add logits mask_tensor
   | None -> logits
 
@@ -133,7 +132,8 @@ let record_random_rollout ~path ~max_steps =
 let record_trained_rollout ~level ~path ~max_steps ~policy_net ~params =
   let env =
     Sokoban_env.sokoban ~render_mode:`Rgb_array ~max_steps
-      ~initial_state:(Sokoban_env.Core.copy_state level) ()
+      ~initial_state:(Sokoban_env.Core.copy_state level)
+      ()
   in
   let policy =
     Policy.deterministic (fun obs ->
@@ -265,18 +265,19 @@ let train ?record_dir env config =
         in
 
         Printf.printf
-          "Episode %d (Stage %s): Avg Reward = %.2f, Win Rate = %.1f%% (%.1f%%), Length = \
-           %d\n\
+          "Episode %d (Stage %s): Avg Reward = %.2f, Win Rate = %.1f%% \
+           (%.1f%%), Length = %d\n\
            %!"
           metrics.total_episodes stage_desc avg_reward recent_win_rate
-          (float_of_int !total_wins /. float_of_int metrics.total_episodes
+          (float_of_int !total_wins
+          /. float_of_int metrics.total_episodes
           *. 100.0)
           metrics.episode_length;
         Printf.printf
           "           Entropy = %.3f, Log Prob = %.3f, Adv Mean = %.3f, Adv \
            Std = %.3f"
-          metrics.avg_entropy metrics.avg_log_prob
-          metrics.adv_mean metrics.adv_std;
+          metrics.avg_entropy metrics.avg_log_prob metrics.adv_mean
+          metrics.adv_std;
         (match metrics.value_loss with
         | Some v -> Printf.printf ", Value Loss = %.3f" v
         | None -> ());
@@ -297,13 +298,11 @@ let train ?record_dir env config =
                 (Printf.sprintf "sokoban_train_ep%04d_%s.mp4"
                    metrics.total_episodes stage_desc)
             in
-            Printf.printf
-              "Recording rollout at episode %d (Stage %s) to %s\n%!"
+            Printf.printf "Recording rollout at episode %d (Stage %s) to %s\n%!"
               metrics.total_episodes stage_desc path;
             record_guard "recording training rollout" (fun () ->
                 record_trained_rollout ~level ~path ~max_steps:config.max_steps
-                  ~policy_net
-                  ~params:!params_ref)))
+                  ~policy_net ~params:!params_ref)))
         record_dir);
 
     if
@@ -398,18 +397,18 @@ let () =
         Filename.concat dir
           (Printf.sprintf "sokoban_trained_%s.mp4" final_stage_desc)
       in
-      Printf.printf "Recording trained rollout (%s) to %s\n%!"
-        final_stage_desc trained_path;
+      Printf.printf "Recording trained rollout (%s) to %s\n%!" final_stage_desc
+        trained_path;
       record_guard "recording trained rollout" (fun () ->
-      record_trained_rollout ~level:final_level ~path:trained_path
+          record_trained_rollout ~level:final_level ~path:trained_path
             ~max_steps:config.max_steps ~policy_net ~params))
     record_dir;
 
   (* Compare with random policy *)
-  Printf.printf "\nEvaluating random policy on stage %s...\n%!"
-    final_stage_desc;
+  Printf.printf "\nEvaluating random policy on stage %s...\n%!" final_stage_desc;
   let random_env =
-    Sokoban_env.sokoban ~max_steps:config.max_steps ~initial_state:final_level ()
+    Sokoban_env.sokoban ~max_steps:config.max_steps ~initial_state:final_level
+      ()
   in
   let random_policy = Policy.random random_env in
   let random_stats =

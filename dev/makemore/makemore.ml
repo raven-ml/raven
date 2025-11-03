@@ -290,8 +290,8 @@ let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
           Ptree.dict
             [
               ( "attn",
-                Kaun.Attention.Multi_head.init attn_config ~rngs:keys.(0)
-                  ~dtype );
+                Kaun.Attention.Multi_head.init attn_config ~rngs:keys.(0) ~dtype
+              );
               ("ln1", ln1.init ~rngs:keys.(1) ~dtype);
               ("ln2", ln2.init ~rngs:keys.(2) ~dtype);
               ("ff", ff.init ~rngs:keys.(3) ~dtype);
@@ -301,8 +301,7 @@ let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
           let fields =
             match params with
             | Ptree.Dict fields -> fields
-            | _ ->
-                failwith "transformer_decoder_block: params must be a dict"
+            | _ -> failwith "transformer_decoder_block: params must be a dict"
           in
           let find name =
             match List.assoc_opt name fields with
@@ -321,12 +320,8 @@ let train_transformer ~vocab_size ~block_size ~n_layer ~n_head ~n_embd ~lr
           let positions =
             Rune.arange Rune.int32 0 seq_len 1 |> Rune.reshape [| 1; seq_len |]
           in
-          let query_idx =
-            Rune.reshape [| 1; seq_len; 1 |] positions
-          in
-          let key_idx =
-            Rune.reshape [| 1; 1; seq_len |] positions
-          in
+          let query_idx = Rune.reshape [| 1; seq_len; 1 |] positions in
+          let key_idx = Rune.reshape [| 1; 1; seq_len |] positions in
           let base_mask = Rune.less_equal key_idx query_idx in
           let attention_mask =
             if batch = 1 then base_mask

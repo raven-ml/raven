@@ -371,7 +371,6 @@ let embedding ~vocab_size ~embed_dim ?(scale = true) ?embedding_init () =
         Rune.embedding ~scale ~embedding indices);
   }
 
-
 let mlp ~in_features ~hidden_features ~out_features ?(activation = `gelu)
     ?(dropout = 0.0) () =
   let act =
