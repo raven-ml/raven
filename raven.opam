@@ -22,6 +22,7 @@ depends: [
   "fehu" {= version}
   "quill" {= version}
   "hugin" {= version}
+  "mdx" {with-test}
   "odoc" {with-doc}
 ]
 build: [

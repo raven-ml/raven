@@ -18,6 +18,7 @@ depends: [
   "conf-sdl2"
   "cairo2"
   "nx" {= version}
+  "base64"
   "alcotest" {with-test}
   "odoc" {with-doc}
 ]

@@ -257,6 +257,8 @@
   cairo2
   (nx
    (= :version))
+  ; for hugin.top
+  base64
   (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
@@ -285,6 +287,8 @@
   (quill
    (= :version))
   (hugin
-   (= :version)))
+   (= :version))
+  ; for raven book
+  (mdx :with-test))
  (tags
   (machine-learning data-science numerical-computation)))
