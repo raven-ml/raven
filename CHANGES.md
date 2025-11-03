@@ -26,7 +26,7 @@ We've also made numerous performance improvements across the board:
 - Talon dataframes: big wins in joins and group-bys (Join 805.35 ms → 26.10 ms, **31×**; Group-by 170.80 ms → 19.03 ms, **9×**; Filter 9.93 ms → 3.39 ms, **3×**).
 - Saga tokenizers: realistic workloads **4–17%** faster (e.g., WordPiece encode single 136.05 µs → 115.92 µs, **1.17×**; BPE batch_32 24.52 ms → 22.27 ms, **1.10×**)
 
-We're closing 8 user-reported issues or feature requests and are totalling 30 contributions from 15 unique contributors.
+We're closing 8 user-reported issues or feature requests and are totalling 30 community contributions from 8 unique contributors.
 
 ### Nx
 
