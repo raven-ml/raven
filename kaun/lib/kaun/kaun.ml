@@ -27,6 +27,7 @@ let grad = Transformations.grad
 module Metrics = Metrics
 module Loss = Loss
 module Initializers = Initializers
+module Attention = Attention
 module Layer = Layer
 module Checkpoint = Checkpoint
 module Train_state = Train_state
