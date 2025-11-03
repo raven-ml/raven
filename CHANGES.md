@@ -83,7 +83,7 @@ We're closing 8 user-reported issues or feature requests and are totalling 30 co
 - Overhaul dataset combinators: derive tensor specs from Rune dtype, fix sampling/window bugs, validate weighted sampling, and respect `drop_remainder` (@tmattio)
 - Make dataset `prefetch` truly asynchronous with background domains and allow reusing an external Domainslib pool via `parallel_map ~pool` (@tmattio)
 - Use `Dataset.iter` for epoch batches to reduce overhead (@tmattio)
-- Update BERT and GPT-2 tokenizer cache to use `Nx.Cache` for consistent cache directory resolution (#133, @Arsalaan-Alam)
+- Update BERT and GPT-2 tokenizer cache to use `Nx.Cache` for consistent cache directory resolution (#134, @Arsalaan-Alam)
 - Honor text dataset encodings via incremental Uutf decoding (#122, @Satarupa22-SD).
 - Preserve empty sequential modules when unflattening so indices stay aligned for checkpoint round-tripping (@tmattio)
 - Prevent `Training.fit`/`evaluate` from consuming entire datasets eagerly and fail fast when a dataset yields no batches, avoiding hangs and division-by-zero crashes (@tmattio)
