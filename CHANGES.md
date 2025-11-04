@@ -96,6 +96,7 @@ We're closing 8 user-reported issues or feature requests and are totalling 30 co
 - Add NDCG, MAP, and MRR ranking metrics to Kaun metrics (@tmattio)
 - Add BLEU, ROUGE, and METEOR metrics to Kaun for pre-tokenized sequences, removing tokenizer dependencies (@tmattio)
 - Add SSIM, IoU, and Dice metrics for vision workloads in Kaun (@tmattio)
+- Fix(training): reinitialize dataset each epoch to avoid iterator exhaustion (#147, @Shocker444)
 
 ### Talon
 
