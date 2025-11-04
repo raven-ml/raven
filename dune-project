@@ -127,7 +127,7 @@
   dune
   (dune-configurator :build)
   (conf-llvm-static
-   (= 19))
+   (>= 19))
   (nx
    (= :version))
   (ctypes
@@ -139,7 +139,10 @@
    (= :os macos))
   (alcotest :with-test))
  (tags
-  (automatic-differentiation jit-compilation machine-learning deep-learning
+  (automatic-differentiation
+   jit-compilation
+   machine-learning
+   deep-learning
    optimization)))
 
 (package
@@ -224,7 +227,8 @@
   cmarkit
   vdom
   brr
-  base64
+  (base64
+   (>= 3.0.0))
   (nx
    (= :version))
   (nx-datasets
@@ -258,7 +262,8 @@
   (nx
    (= :version))
   ; for hugin.top
-  base64
+  (base64
+   (>= 3.0.0))
   (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
@@ -275,6 +280,8 @@
   (nx-datasets
    (= :version))
   (saga
+   (= :version))
+  (talon
    (= :version))
   (rune
    (= :version))
