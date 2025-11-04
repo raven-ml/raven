@@ -115,7 +115,7 @@ let check_nx (type a b) ?epsilon msg (expected : (a, b) Nx.t)
     | Complex64 -> test_complex expected actual
     | _ ->
         let equal = Nx.array_equal expected actual in
-        if not (equal |> Nx.item [] = false) then
+        if Nx.item [] equal = false then
           Alcotest.failf "%s: tensors not equal\nExpected:\n%s\nActual:\n%s" msg
             (Nx.to_string expected) (Nx.to_string actual)
 

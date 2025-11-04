@@ -5390,6 +5390,7 @@ module Make (B : Backend_intf.S) = struct
           Array.iteri
             (fun idx axis -> Hashtbl.replace map axis idx)
             combined_left_axes;
+          (* perm_left_reorder maps old -> new positions for left axes. *)
           let perm_left_reorder =
             Array.map
               (fun axis ->
@@ -5401,9 +5402,15 @@ module Make (B : Backend_intf.S) = struct
           if is_identity perm_left_reorder then result_preorder
           else
             let total_dims = total_left + total_right in
+            (* Transpose expects a permutation mapping new index -> old index.
+               Invert perm_left_reorder (which is old -> new) to build that. *)
+            let perm_left_inverse = Array.make total_left 0 in
+            Array.iteri
+              (fun old_pos new_pos -> perm_left_inverse.(new_pos) <- old_pos)
+              perm_left_reorder;
             let axes_perm =
               Array.init total_dims (fun i ->
-                  if i < total_left then perm_left_reorder.(i) else i)
+                  if i < total_left then perm_left_inverse.(i) else i)
             in
             transpose ~axes:(Array.to_list axes_perm) result_preorder)
       in
@@ -5632,10 +5639,11 @@ module Make (B : Backend_intf.S) = struct
         invalid_arg "contracted input vars '%s' must match output vars '%s'"
           current_axes output_str;
 
+      (* Build permutation mapping new index -> old index for transpose. *)
       let axes_perm =
         Array.init len_current (fun i ->
-            let c = current_axes.[i] in
-            try String.index output_str c
+            let c = output_str.[i] in
+            try String.index current_axes c
             with Not_found ->
               invalid_arg
                 "contracted input vars '%s' must match output vars '%s'"
