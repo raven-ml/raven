@@ -228,7 +228,7 @@
   vdom
   brr
   (base64
-   (>= 3.0.0))
+   (>= 3.1.0))
   (nx
    (= :version))
   (nx-datasets
@@ -263,7 +263,7 @@
    (= :version))
   ; for hugin.top
   (base64
-   (>= 3.0.0))
+   (>= 3.1.0))
   (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
