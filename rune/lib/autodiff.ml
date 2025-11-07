@@ -171,7 +171,7 @@ let apply_mask mask t =
    *)
   T.mul t (T.cast (dtype t) mask)
 
-let find_prefix_max_mask input result = 
+let find_prefix_max_mask axis input result = 
   (* 
     If an element in input is the prefix max
     the corresponding value in the mask is 1
@@ -181,24 +181,30 @@ let find_prefix_max_mask input result =
     cummax result. If they are equal then that 
     element is a prefix max.
    *)
-(*   let in_shape = T.shape input in
+  let in_shape = T.shape input in
   let pad_before_config =
     Array.mapi (fun i _ -> if i = axis then (1, 0) else (0, 0)) in_shape
   in
   let pad_after_config =
     Array.mapi (fun i _ -> if i = axis then (0, 1) else (0, 0)) in_shape
   in
- *)  (* how to get a zero based on the zero type? *)
-  (* let result_padded = T.pad pad_before_config Float.neg_infinity result in *)
-  (* let input_padded = T.pad pad_after_config Float.neg_infinity input in *)
-  let pad_mask = T.equal input result in
-  pad_mask
-(*   let except_last_axis_spec =
+  (* how to get a zero based on the zero type? *)
+  let dtype_add_identity = Dtype.zero (dtype input) in
+  let result_padded = T.pad pad_before_config dtype_add_identity result in
+  let input_padded = T.pad pad_after_config dtype_add_identity input in
+  let pad_mask = T.equal input_padded result_padded in
+  let ctx = Nx_rune.create_context () in
+  let one = T.ones ctx (dtype pad_mask) [|1|] in
+  let specs =
+    Array.mapi (fun i _ -> if i = axis then T.I 0 else T.A) in_shape
+  in
+  T.set_slice (Array.to_list specs) pad_mask one;
+  let except_last_axis_spec =
     Array.mapi (fun i _ -> if i = axis then T.R(0, in_shape.(axis)) else T.A) in_shape
   in
   let mask = T.slice (Array.to_list except_last_axis_spec) pad_mask in
   mask
- *)
+
 let create_index_tensor in_shape axis = 
   (* 
     Returns a tensor where the value of 
@@ -716,7 +722,7 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                       in
                       T.mul prefix inner
                   | `Max ->
-                    let mask = find_prefix_max_mask t_in_val result_val in
+                    let mask = find_prefix_max_mask axis t_in_val result_val in
                     let ind_t = create_index_tensor shape_in axis in
                     let win_index = T.cummax ~axis:axis (apply_mask mask ind_t) in
                     scatter_add axis d_loss_d_result win_index
