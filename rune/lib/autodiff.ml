@@ -171,7 +171,7 @@ let apply_mask mask t =
    *)
   T.mul t (T.cast (dtype t) mask)
 
-let find_prefix_max_mask axis input result = 
+let find_prefix_mask axis input result comparator =
   (* 
     If an element in input is the prefix max
     the corresponding value in the mask is 1
@@ -192,9 +192,9 @@ let find_prefix_max_mask axis input result =
   let dtype_add_identity = Dtype.zero (dtype input) in
   let result_padded = T.pad pad_before_config dtype_add_identity result in
   let input_padded = T.pad pad_after_config dtype_add_identity input in
-  let pad_mask = T.equal input_padded result_padded in
+  let pad_mask = comparator input_padded result_padded in
   let ctx = Nx_rune.create_context () in
-  let one = T.ones ctx (dtype pad_mask) [|1|] in
+  let one = T.scalar ctx (dtype pad_mask) 1 in
   let specs =
     Array.mapi (fun i _ -> if i = axis then T.I 0 else T.A) in_shape
   in
@@ -204,6 +204,7 @@ let find_prefix_max_mask axis input result =
   in
   let mask = T.slice (Array.to_list except_last_axis_spec) pad_mask in
   mask
+
 
 let create_index_tensor in_shape axis = 
   (* 
@@ -223,6 +224,38 @@ let create_index_tensor in_shape axis =
   let ind_row = T.reshape one_axis_shape (T.arange ctx Dtype.Int32 0 in_shape.(axis) 1) in
   let ind_t = T.broadcast_to in_shape ind_row in
   ind_t
+
+let apply_index_mask axis t indices =
+  (*
+    each element is replaced with the
+    the value at index(along axis) specified by indices
+    example:
+    t = |4 5|
+        |2 3|
+    indices = |0 1|
+              |1 1|
+    axis = 1
+    then return value will be
+    |4 5|
+    |3 3|
+   *)
+  let in_shape = T.shape t in
+  let ans = T.zeros_like t in
+  let axis_len = in_shape.(axis) in
+  for i = 0 to (axis_len - 1) do
+    (* for each row in axis *)
+    let i32 = (Int32.of_int i) in
+    let row_slice = Array.to_list (
+      Array.mapi (fun j _ -> if j = axis then T.R (i, i + 1) else T.A) in_shape
+    ) in
+    let t_axis_row = T.slice row_slice t in
+    let ax_mask = T.equal_s indices i32 in
+    let masked_grad = apply_mask ax_mask t_axis_row in
+    let _  = T.iadd ans masked_grad in
+    ()
+  done;
+  ans
+
 
 let scatter_add axis t indices = 
   (* 
@@ -722,12 +755,15 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                       in
                       T.mul prefix inner
                   | `Max ->
-                    let mask = find_prefix_max_mask axis t_in_val result_val in
+                    let mask = find_prefix_mask axis t_in_val result_val T.greater in
                     let ind_t = create_index_tensor shape_in axis in
                     let win_index = T.cummax ~axis:axis (apply_mask mask ind_t) in
                     scatter_add axis d_loss_d_result win_index
                   | `Min ->
-                      failwith "autodiff: cummax/cummin gradients not supported"
+                    let mask = find_prefix_mask axis t_in_val result_val T.less in
+                    let ind_t = create_index_tensor shape_in axis in
+                    let win_index = T.cummax ~axis:axis (apply_mask mask ind_t) in
+                    scatter_add axis d_loss_d_result win_index
                 in
                 twg_in.bv <- T.add twg_in.bv grad_contrib);
             forward_val)
@@ -1699,8 +1735,16 @@ let make_forward_handler primal_to_dual_map =
                   let zero_mask = T.equal t_in zero_tensor in
                   let fallback = T.mul prefix dual_in.tangent in
                   T.where zero_mask fallback inner
-              | `Max | `Min ->
-                  failwith "autodiff JVP: cummax/cummin not supported"
+              | `Max ->
+                  let mask = find_prefix_mask axis t_in result_val T.greater in
+                  let ind_t = create_index_tensor shape_in axis in
+                  let win_index = T.cummax ~axis:axis (apply_mask mask ind_t) in
+                  apply_index_mask axis dual_in.tangent win_index
+              | `Min ->
+                  let mask = find_prefix_mask axis t_in result_val T.less in
+                  let ind_t = create_index_tensor shape_in axis in
+                  let win_index = T.cummax ~axis:axis (apply_mask mask ind_t) in
+                  apply_index_mask axis dual_in.tangent win_index
             in
             let result_dual =
               { primal = result_val; tangent = result_tangent }

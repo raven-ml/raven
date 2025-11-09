@@ -429,6 +429,12 @@ let test_grad_cumsum () =
   let expected = T.create T.float32 [| 4 |] [| 4.; 3.; 2.; 1. |] in
   check_rune ~eps "cumsum gradient" expected grad
 
+let test_grad_cummax () =
+  let x = T.create T.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let grad = T.grad (fun t -> T.cummax ~axis:0 t ) x in
+  let expected = T.create T.float32 [| 4; 1 |] [| 1.; 1.; 1.; 1. |] in
+  check_rune ~eps "cummax gradient" expected grad
+
 let test_grad_cumprod () =
   let x = T.create T.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let grad = T.grad (fun x -> T.sum (T.cumprod ~axis:0 x)) x in
@@ -892,6 +898,7 @@ let suite =
     ( "cumulative",
       [
         test_case "cumsum" `Quick test_grad_cumsum;
+        test_case "cummax" `Quick test_grad_cummax;
         test_case "cumprod" `Quick test_grad_cumprod;
       ] );
     ( "compound operations",
