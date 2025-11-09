@@ -16,11 +16,14 @@ val compute_gae :
   rewards:float array ->
   values:float array ->
   dones:bool array ->
+  last_value:float ->
+  last_done:bool ->
   gamma:float ->
   gae_lambda:float ->
   float array * float array
-(** [compute_gae ~rewards ~values ~dones ~gamma ~gae_lambda] computes advantages
-    and returns using Generalized Advantage Estimation.
+(** [compute_gae ~rewards ~values ~dones ~last_value ~last_done ~gamma
+      ~gae_lambda] computes advantages and returns using Generalized Advantage
+    Estimation.
 
     Returns [(advantages, returns)] where advantages measure how much better an
     action was than expected, and returns are the advantage plus value baseline.
@@ -34,12 +37,16 @@ val compute_gae :
 
     Terminal states ([dones] = true) have zero value for the next state,
     truncating the advantage sum. This prevents bootstrapping across episode
-    boundaries.
+    boundaries. Pass [dones.(t) = terminated.(t) || truncated.(t)] for
+    compatibility with Gymnasium-style APIs.
 
     Parameters:
     - [rewards]: Immediate rewards at each timestep
     - [values]: Value estimates V(s) from the critic at each timestep
     - [dones]: Terminal flags; true if episode ended (terminated OR truncated)
+    - [last_value]: Value estimate V(s_{T}) for the state following the final
+      timestep (used for bootstrapping unfinished episodes)
+    - [last_done]: Whether the final timestep ended the episode
     - [gamma]: Discount factor, typically 0.99. Higher values increase weight of
       future rewards
     - [gae_lambda]: GAE lambda parameter, typically 0.95. Lambda = 0 gives
@@ -140,7 +147,7 @@ val ppo_clip_loss :
 val value_loss :
   values:float array ->
   returns:float array ->
-  ?clip_range:float option ->
+  ?clip:float * float array ->
   unit ->
   float
 (** [value_loss ~values ~returns ~clip_range ()] computes the value function
@@ -149,18 +156,26 @@ val value_loss :
     Returns the mean squared error between predicted values and target returns:
     {v mean((V - R)^2) v}
 
-    If [clip_range] is provided, uses clipped value loss to prevent large value
-    updates (though note: the current implementation does not yet support
-    clipping as it requires old value predictions not present in the signature).
+    - If [clip] is [None], computes the mean-squared error (MSE) between
+      [values] and [returns].
+    - If [clip = Some (clip_range, old_values)], applies PPO-style clipping:
+
+    In that case, PPO-style value clipping is applied:
+    [value_clipped = old_values + clamp(values - old_values, ±clip_range)], and
+    the loss for each element is
+    [max((values - returns)^2, (value_clipped - returns)^2)]. This prevents
+    large critic updates that destabilize training.
 
     Parameters:
     - [values]: Predicted values V(s) from the critic
     - [returns]: Target returns (from GAE or Monte Carlo)
-    - [clip_range]: Optional clipping threshold (currently unused)
+    - [(clip_range, old_values)]: Optional clip range and previous value
 
-    Time complexity: O(n) where n = length of arrays.
+    estimates before the update Time complexity: O(n) where n = length of
+    arrays.
 
-    @raise Invalid_argument if arrays have different lengths. *)
+    @raise Invalid_argument if arrays have different lengths.
+    @raise Invalid_argument if clip_range < 0 *)
 
 (** {1 Evaluation}
 
@@ -205,14 +220,17 @@ val evaluate :
 
     Helper functions for data processing and diagnostics. *)
 
-val normalize : float array -> ?eps:float -> unit -> float array
-(** [normalize arr ~eps ()] normalizes an array to zero mean and unit variance.
+val normalize :
+  float array -> ?eps:float -> ?unbiased:bool -> unit -> float array
+(** [normalize arr ~eps ~unbiased ()] normalizes an array to zero mean and unit
+    variance.
 
     Returns a new array where elements are transformed to:
     {v (x - mean) / (std + eps) v}
 
     Numerical stability constant [eps] prevents division by zero when the array
-    has no variance (default: 1e-8).
+    has no variance (default: 1e-8). When [unbiased] is [true], the standard
+    deviation uses the [n-1] denominator.
 
     Empty arrays are returned unchanged.
 

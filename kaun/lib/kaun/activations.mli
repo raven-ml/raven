@@ -140,8 +140,8 @@ val tanh : (float, 'a) t -> (float, 'a) t
     - Better than sigmoid for hidden layers
     - Used in LSTM/GRU gating mechanisms *)
 
-val softmax : ?axes:int list -> (float, 'a) t -> (float, 'a) t
-(** [softmax ?axes x] applies softmax normalization.
+val softmax : ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
+(** [softmax ?axes ?scale x] applies softmax normalization.
 
     Converts a vector of real numbers into a probability distribution. The
     output values sum to 1 and are all positive. Essential for multi-class
@@ -150,6 +150,9 @@ val softmax : ?axes:int list -> (float, 'a) t -> (float, 'a) t
     @param axes
       Axes along which to compute softmax. Defaults to last axis. Each slice
       along these axes will sum to 1.
+    @param scale
+      Optional scaling factor applied to logits before softmax. Can control
+      distribution sharpness (higher scale = sharper distribution).
     @param x Input tensor (typically logits from final layer).
 
     @return Tensor of same shape with softmax applied along specified axes.

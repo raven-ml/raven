@@ -1,79 +1,86 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any, Callable, Iterable, List, Sequence, Tuple
+
 import numpy as np
-import time
-import statistics
 
-# Measure in nanoseconds
-def measure_time(f):
-    t0 = time.perf_counter()
-    f()
-    t1 = time.perf_counter()
-    return (t1 - t0) * 1_000_000_000
+_ROOT = Path(__file__).resolve().parents[2]
+_UBENCH_DIR = _ROOT / "vendor" / "ubench"
+if str(_UBENCH_DIR) not in sys.path:
+    sys.path.insert(0, str(_UBENCH_DIR))
 
-def run_benchmark(f, iterations):
-    times = [measure_time(f) for _ in range(iterations)]
-    return statistics.mean(times)
+import ubench  # type: ignore
 
-sizes = [50, 100, 500]
-dtypes = [np.float32, np.float64]
-iterations = 3  # Reduced for consistency with OCaml benchmarks
 
-results = []
-for size in sizes:
-    for dtype in dtypes:
-        a = np.random.rand(size, size).astype(dtype)
-        b = np.random.rand(size, size).astype(dtype)
+SIZES: Sequence[int] = (50, 100, 200, 500)
+DTYPES: Sequence[np.dtype] = (np.float32, np.float64)
+BACKEND_NAME = "NumPy"
+_RNG = np.random.default_rng(seed=0)
 
-        # Fixed order to match Nx benchmarks
-        ops = [
-            ("Addition",       lambda: a + b),
-            ("Multiplication", lambda: a * b),
-            ("Square",         lambda: np.square(a)),
+
+def _dtype_label(dtype: np.dtype) -> str:
+    if dtype == np.float32:
+        return "f32"
+    if dtype == np.float64:
+        return "f64"
+    return str(dtype)
+
+
+def _benchmark_name(op_name: str, size: int, dtype: np.dtype) -> str:
+    return f"{op_name} {size}x{size} {_dtype_label(dtype)} ({BACKEND_NAME})"
+
+
+def _numpy_operations(
+    size: int, dtype: np.dtype
+) -> Iterable[Tuple[str, Callable[[], None]]]:
+    a = _RNG.random((size, size), dtype=dtype)
+    b = _RNG.random((size, size), dtype=dtype)
+
+    ops: List[Tuple[str, Callable[[], None]]] = [
+        ("Add", lambda a=a, b=b: np.add(a, b)),
+        ("Mul", lambda a=a, b=b: np.multiply(a, b)),
+    ]
+
+    ops.extend(
+        [
+            ("Sum", lambda a=a: np.sum(a)),
+            ("Transpose", lambda a=a: np.transpose(a)),
         ]
-        
-        # Matrix operations - skip for large sizes
-        if size <= 100:
-            ops.append(("MatMul", lambda: np.matmul(a, b)))
-        
-        # Reduction operations
-        ops.append(("Sum", lambda: np.sum(a)))
-        
-        # Float-specific operations
-        if dtype in [np.float32, np.float64]:
-            ops.extend([
-                ("Sqrt",       lambda: np.sqrt(a)),
-                ("Exp",        lambda: np.exp(a)),
-            ])
-        
-        for name, func in ops:
-            full_name = f"{name} on {size}x{size} {dtype.__name__}"
-            mean_ns = run_benchmark(func, iterations)
-            results.append((full_name, mean_ns))
+    )
+    return ops
 
-# Sort results by time (fastest first)
-results.sort(key=lambda x: x[1])
 
-# Find the fastest time to normalize against
-fastest_ns = min(ns for _, ns in results)
+def build_benchmarks() -> List[Any]:
+    benchmarks: List[Any] = []
+    for size in SIZES:
+        for dtype in DTYPES:
+            for op_name, fn in _numpy_operations(size, dtype):
+                bench_name = _benchmark_name(op_name, size, dtype)
+                benchmarks.append(ubench.bench(bench_name, fn))
+    return benchmarks
 
-def format_time(ns):
-    return f"{ns:,.2f}ns".replace(",", "_")
 
-formatted = [format_time(ns) for _, ns in results]
-time_col_width = max(len(s) for s in formatted) + 2
+def default_config() -> ubench.Config:
+    return (
+        ubench.Config.default()
+        .time_limit(1.0)
+        .warmup(1)
+        .min_measurements(5)
+        .min_cpu(0.01)
+        .geometric_scale(1.3)
+        .gc_stabilization(False)
+        .build()
+    )
 
-header = f"┌─────────────────────────────────────┬{'─' * time_col_width}┬────────────┐"
-divider = f"├─────────────────────────────────────┼{'─' * time_col_width}┼────────────┤"
-footer = f"└─────────────────────────────────────┴{'─' * time_col_width}┴────────────┘"
 
-print("# NumPy Benchmarks")
-print()
-print(header)
-print(f"│ Name                                │ {'Time/Run (ns)':>{time_col_width-2}} │ Percentage │")
-print(divider)
+def main() -> None:
+    benchmarks = build_benchmarks()
+    # Mirror the OCaml defaults for fair comparisons with Nx benchmarks.
+    config = default_config()
+    ubench.run(benchmarks, config=config, output_format="pretty", verbose=False)
 
-for name, ns in results:
-    pct = (ns / fastest_ns) * 100
-    tstr = format_time(ns)
-    print(f"│ {name:<35} │ {tstr:>{time_col_width-2}} │ {pct:>9.2f}% │")
 
-print(footer)
+if __name__ == "__main__":
+    main()

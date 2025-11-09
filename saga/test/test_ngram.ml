@@ -1,381 +1,68 @@
 open Alcotest
-open Saga_models
+module Ngram = Saga.Ngram
+module Sampler = Saga.Sampler
 
-(* Test helpers *)
-let float_array_testable =
-  testable
-    (fun fmt arr ->
-      Format.fprintf fmt "[%s]"
-        (String.concat "; " (Array.to_list (Array.map string_of_float arr))))
-    (fun a b ->
-      Array.length a = Array.length b
-      && Array.for_all2 (fun x y -> abs_float (x -. y) < 1e-6) a b)
+let train ~order ?(smoothing = `Add_k 1.0) sequences =
+  Ngram.of_sequences ~order ~smoothing sequences
 
-let _int_array_testable =
-  testable
-    (fun fmt arr ->
-      Format.fprintf fmt "[%s]"
-        (String.concat "; " (Array.to_list (Array.map string_of_int arr))))
-    ( = )
-
-let stats_testable =
-  testable
-    (fun fmt s ->
-      Format.fprintf fmt
-        "{ vocab_size = %d; total_tokens = %d; unique_ngrams = %d }"
-        s.Ngram.vocab_size s.Ngram.total_tokens s.Ngram.unique_ngrams)
-    ( = )
-
-(* Test data *)
-let simple_tokens = [| 0; 1; 2; 1; 3; 2; 1; 0 |]
-let _text_tokens = [| 10; 11; 12; 13; 11; 12; 14; 15; 11; 12 |]
-(* "the cat sat on cat sat mat dog cat sat" *)
-
-(* Unigram tests *)
-let test_unigram_train () =
-  let model = Ngram.create ~n:1 ~smoothing:(Ngram.Add_k 1.0) simple_tokens in
+let test_stats () =
+  let seqs = [ [| 0; 1; 2; 1 |]; [| 1; 2; 3 |]; [| 2; 3; 4 |] ] in
+  let model = train ~order:2 seqs in
   let stats = Ngram.stats model in
+  check int "vocab" 5 stats.vocab_size;
+  check int "total" 10 stats.total_tokens;
+  check bool "unique" true (stats.unique_ngrams > 0)
 
-  check int "vocab_size should be correct" 4 stats.vocab_size;
-  check int "total_tokens should be correct" 8 stats.total_tokens;
-  check int "unique_ngrams should be correct" 4 stats.unique_ngrams
+let test_logits () =
+  let seqs = [ [| 0; 1; 0; 1; 0; 2 |] ] in
+  let model = train ~order:2 seqs in
+  let context0 = Ngram.logits model ~context:[| 0 |] in
+  check bool "1 more likely after 0" true (context0.(1) > context0.(2));
+  let context1 = Ngram.logits model ~context:[| 1 |] in
+  check bool "0 more likely after 1" true (context1.(0) > context1.(2));
+  check bool "negative log probs" true (Array.for_all (( > ) 0.0) context0)
 
-let test_unigram_logits () =
-  let model = Ngram.create ~n:1 ~smoothing:(Ngram.Add_k 1.0) simple_tokens in
-  let logits = Ngram.logits model ~context:[||] in
-  (* prev token ignored *)
+let test_log_prob_perplexity () =
+  let seqs = [ [| 0; 1; 2; 1 |]; [| 1; 2; 1; 3 |] ] in
+  let model = train ~order:2 seqs in
+  let tokens = [| 0; 1; 2; 1 |] in
+  let lp = Ngram.log_prob model tokens in
+  let ppl = Ngram.perplexity model tokens in
+  check bool "log prob negative" true (lp < 0.0);
+  check bool "perplexity positive" true (ppl > 0.0)
 
-  check int "logits array should have vocab_size length" 4 (Array.length logits);
-
-  (* Token 1 appears 3 times, should have highest probability *)
-  let max_idx = ref 0 in
-  let max_val = ref logits.(0) in
-  for i = 1 to Array.length logits - 1 do
-    if logits.(i) > !max_val then (
-      max_val := logits.(i);
-      max_idx := i)
-  done;
-  check int "most frequent token should have highest logit" 1 !max_idx
-
-let test_unigram_sample () =
-  let model = Ngram.create ~n:1 ~smoothing:(Ngram.Add_k 1.0) simple_tokens in
-
-  (* With very low temperature, should be deterministic *)
-  let token1 =
-    let lp = Ngram.logits model ~context:[||] in
-    let probs = Array.map (fun x -> exp (x /. 0.01)) lp in
-    let sum = Array.fold_left ( +. ) 0.0 probs in
-    let probs = Array.map (fun p -> p /. sum) probs in
-    let rng = Random.State.make [| 42 |] in
-    let r = Random.State.float rng 1.0 in
-    let cumsum = ref 0.0 in
-    let res = ref (Array.length probs - 1) in
-    for i = 0 to Array.length probs - 1 do
-      cumsum := !cumsum +. probs.(i);
-      if !cumsum > r && !res = Array.length probs - 1 then res := i
-    done;
-    !res
+let drop n lst =
+  let rec aux n acc = function
+    | [] -> List.rev acc
+    | l when n <= 0 -> List.rev_append acc l
+    | _ :: tl -> aux (n - 1) acc tl
   in
-  let token2 = token1 in
-  check int "same seed should give same result" token1 token2;
+  aux n [] lst
 
-  (* Should sample valid tokens *)
-  for _ = 1 to 10 do
-    let token =
-      let lp = Ngram.logits model ~context:[||] in
-      let probs = Array.map exp lp in
-      let sum = Array.fold_left ( +. ) 0.0 probs in
-      let probs = Array.map (fun p -> p /. sum) probs in
-      let rng = Random.State.make [| Random.int 1000 |] in
-      let r = Random.State.float rng 1.0 in
-      let cumsum = ref 0.0 in
-      let res = ref (Array.length probs - 1) in
-      for i = 0 to Array.length probs - 1 do
-        cumsum := !cumsum +. probs.(i);
-        if !cumsum > r && !res = Array.length probs - 1 then res := i
-      done;
-      !res
-    in
-    check bool "sampled token should be in range" true (token >= 0 && token < 4)
-  done
-
-let test_unigram_from_corpus () =
-  let corpus = [ [| 1; 2; 3 |]; [| 2; 3; 4 |]; [| 1; 2; 1 |] ] in
-  let all = Array.of_list (List.concat_map Array.to_list corpus) in
-  let model = Ngram.create ~n:1 ~smoothing:(Ngram.Add_k 1.0) all in
-  let stats = Ngram.stats model in
-
-  check int "total_tokens from corpus" 9 stats.total_tokens;
-  check int "vocab_size from corpus" 5 stats.vocab_size
-
-(* Bigram tests *)
-let test_bigram_train () =
-  let model = Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 1.0) simple_tokens in
-  let stats = Ngram.stats model in
-
-  check int "vocab_size should be correct" 4 stats.vocab_size;
-  check int "total_tokens should be pairs count" 7 stats.total_tokens;
-  check bool "unique_ngrams should be positive" true (stats.unique_ngrams > 0)
-
-let test_bigram_logits () =
-  let tokens = [| 0; 1; 0; 1; 0; 2 |] in
-  (* 0->1 appears twice, 1->0 appears twice *)
-  let model = Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 0.1) tokens in
-
-  (* After 0, we should see 1 more often *)
-  let logits_after_0 = Ngram.logits model ~context:[| 0 |] in
-  check bool "1 should be more likely after 0" true
-    (logits_after_0.(1) > logits_after_0.(2));
-
-  (* After 1, we should see 0 more often *)
-  let logits_after_1 = Ngram.logits model ~context:[| 1 |] in
-  check bool "0 should be more likely after 1" true
-    (logits_after_1.(0) > logits_after_1.(2))
-
-let test_bigram_smoothing () =
-  let tokens = [| 0; 1; 2 |] in
-
-  (* Without smoothing, unseen transitions should have very low probability *)
-  let model_no_smooth =
-    Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 0.0001) tokens
+let test_generation () =
+  let seqs = [ [| 0; 1; 0; 1; 0; 1 |] ] in
+  let model = train ~order:2 seqs in
+  let logits_fn history = Ngram.logits model ~context:(Array.of_list history) in
+  let output =
+    Sampler.generate ~model:logits_fn ~input_ids:[ 0 ]
+      ~generation_config:
+        (Sampler.default
+        |> Sampler.with_temperature 0.0001
+        |> Sampler.with_max_new_tokens 2
+        |> Sampler.with_do_sample false)
+      ()
   in
-  let logits = Ngram.logits model_no_smooth ~context:[| 0 |] in
-
-  (* Token 0->2 never appears, should have very low probability *)
-  check bool "unseen transition should have low probability" true
-    (logits.(2) < logits.(1));
-
-  (* With smoothing, probabilities should be more uniform *)
-  let model_smooth = Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 1.0) tokens in
-  let logits_smooth = Ngram.logits model_smooth ~context:[| 0 |] in
-
-  (* The difference should be smaller with smoothing *)
-  let diff_no_smooth = abs_float (logits.(1) -. logits.(2)) in
-  let diff_smooth = abs_float (logits_smooth.(1) -. logits_smooth.(2)) in
-  check bool "smoothing should reduce probability differences" true
-    (diff_smooth < diff_no_smooth)
-
-let test_bigram_sample () =
-  let tokens = [| 0; 1; 0; 1; 0; 1 |] in
-  (* 0 always followed by 1 *)
-  let model = Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 0.01) tokens in
-
-  (* With very low temperature after 0, should almost always get 1 *)
-  let mut_count = ref 0 in
-  for _ = 1 to 20 do
-    let next =
-      let lp = Ngram.logits model ~context:[| 0 |] in
-      let probs = Array.map (fun x -> exp (x /. 0.01)) lp in
-      let sum = Array.fold_left ( +. ) 0.0 probs in
-      let probs = Array.map (fun p -> p /. sum) probs in
-      let rng = Random.State.make [| Random.int 1000 |] in
-      let r = Random.State.float rng 1.0 in
-      let cumsum = ref 0.0 in
-      let res = ref (Array.length probs - 1) in
-      for i = 0 to Array.length probs - 1 do
-        cumsum := !cumsum +. probs.(i);
-        if !cumsum > r && !res = Array.length probs - 1 then res := i
-      done;
-      !res
-    in
-    if next = 1 then incr mut_count
-  done;
-  check bool "should mostly sample the most likely token" true (!mut_count > 15)
-
-let test_bigram_log_prob () =
-  let tokens = [| 0; 1; 0; 1; 0; 2 |] in
-  let model = Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 1.0) tokens in
-
-  (* 0->1 appears twice, should have higher probability than 0->2 (once) *)
-  let log_prob_01 = (Ngram.logits model ~context:[| 0 |]).(1) in
-  let log_prob_02 = (Ngram.logits model ~context:[| 0 |]).(2) in
-  check bool "frequent transition should have higher log prob" true
-    (log_prob_01 > log_prob_02);
-
-  (* Log probabilities should be negative *)
-  check bool "log probabilities should be negative" true
-    (log_prob_01 < 0.0 && log_prob_02 < 0.0)
-
-(* Trigram tests *)
-let test_trigram_train () =
-  let tokens = [| 0; 1; 2; 0; 1; 2; 0; 1; 3 |] in
-  let model = Ngram.create ~n:3 ~smoothing:(Ngram.Add_k 1.0) tokens in
-  let stats = Ngram.stats model in
-
-  check int "vocab_size should be correct" 4 stats.vocab_size;
-  check bool "should have trigrams" true (stats.unique_ngrams > 0)
-
-let test_trigram_logits () =
-  let tokens = [| 0; 1; 2; 0; 1; 2; 0; 1; 3 |] in
-  (* 0,1->2 appears twice, 0,1->3 once *)
-  let model = Ngram.create ~n:3 ~smoothing:(Ngram.Add_k 0.1) tokens in
-
-  let logits = Ngram.logits model ~context:[| 0; 1 |] in
-
-  (* After 0,1 we see 2 twice and 3 once *)
-  check bool "2 should be more likely than 3 after 0,1" true
-    (logits.(2) > logits.(3))
-
-let test_trigram_sample () =
-  let tokens = [| 0; 1; 2; 0; 1; 2; 0; 1; 2 |] in
-  (* 0,1 always followed by 2 *)
-  let model = Ngram.create ~n:3 ~smoothing:(Ngram.Add_k 0.01) tokens in
-
-  (* Should almost always sample 2 after 0,1 *)
-  let mut_count = ref 0 in
-  for _ = 1 to 20 do
-    let next =
-      let lp = Ngram.logits model ~context:[| 0; 1 |] in
-      let probs = Array.map (fun x -> exp (x /. 0.01)) lp in
-      let sum = Array.fold_left ( +. ) 0.0 probs in
-      let probs = Array.map (fun p -> p /. sum) probs in
-      let rng = Random.State.make [| Random.int 1000 |] in
-      let r = Random.State.float rng 1.0 in
-      let cumsum = ref 0.0 in
-      let res = ref (Array.length probs - 1) in
-      for i = 0 to Array.length probs - 1 do
-        cumsum := !cumsum +. probs.(i);
-        if !cumsum > r && !res = Array.length probs - 1 then res := i
-      done;
-      !res
-    in
-    if next = 2 then incr mut_count
-  done;
-  check bool "should mostly sample the most likely token" true (!mut_count > 15)
-
-(* Save/Load tests *)
-let test_save_load_unigram () =
-  let model = Ngram.create ~n:1 ~smoothing:(Ngram.Add_k 1.0) simple_tokens in
-  let temp_file = Filename.temp_file "test_unigram" ".model" in
-
-  Ngram.save model temp_file;
-  let loaded = Ngram.load temp_file in
-
-  let stats1 = Ngram.stats model in
-  let stats2 = Ngram.stats loaded in
-
-  check stats_testable "loaded model should have same stats" stats1 stats2;
-
-  (* Test that logits are the same *)
-  let logits1 = Ngram.logits model ~context:[||] in
-  let logits2 = Ngram.logits loaded ~context:[||] in
-  check float_array_testable "loaded model should produce same logits" logits1
-    logits2;
-
-  Sys.remove temp_file
-
-let test_save_load_bigram () =
-  let model = Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 1.0) simple_tokens in
-  let temp_file = Filename.temp_file "test_bigram" ".model" in
-
-  Ngram.save model temp_file;
-  let loaded = Ngram.load temp_file in
-
-  let stats1 = Ngram.stats model in
-  let stats2 = Ngram.stats loaded in
-
-  check stats_testable "loaded model should have same stats" stats1 stats2;
-
-  (* Test that logits are the same *)
-  let logits1 = Ngram.logits model ~context:[| 0 |] in
-  let logits2 = Ngram.logits loaded ~context:[| 0 |] in
-  check float_array_testable "loaded model should produce same logits" logits1
-    logits2;
-
-  Sys.remove temp_file
-
-(* Generic n-gram tests *)
-let test_generic_ngram () =
-  let model = Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 1.0) simple_tokens in
-  let logits = Ngram.logits model ~context:[| 0 |] in
-  let expected_vocab = 1 + Array.fold_left max 0 simple_tokens in
-  check int "generic logits should return array" expected_vocab
-    (Array.length logits);
-
-  (* Test perplexity *)
-  let perplexity = Ngram.perplexity model simple_tokens in
-  check bool "perplexity should be positive" true (perplexity > 0.0)
-
-let test_generic_generate () =
-  let tokens = [| 0; 1; 2; 0; 1; 2; 0; 1; 2 |] in
-  let model = Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 0.1) tokens in
-
-  let generated =
-    Ngram.generate model ~max_tokens:5 ~temperature:1.0 ~seed:42 ()
+  let continuation =
+    match output.sequences with seq :: _ -> drop 1 seq | [] -> []
   in
+  check (list int) "greedy continuation" [ 1; 0 ] continuation
 
-  check int "should generate requested tokens" 5 (Array.length generated);
+let tests =
+  [
+    test_case "stats" `Quick test_stats;
+    test_case "logits" `Quick test_logits;
+    test_case "log-prob" `Quick test_log_prob_perplexity;
+    test_case "generation" `Quick test_generation;
+  ]
 
-  (* All generated tokens should be in vocabulary *)
-  let expected_vocab = 1 + Array.fold_left max 0 tokens in
-  Array.iter
-    (fun token ->
-      check bool "generated token should be in range" true
-        (token >= 0 && token < expected_vocab))
-    generated
-
-(* Edge cases *)
-let test_empty_corpus () =
-  (* Empty corpus should still create a valid model, just with no
-     observations *)
-  let model = Ngram.create ~n:1 ~smoothing:(Ngram.Add_k 1.0) [||] in
-  let stats = Ngram.stats model in
-  check int "empty corpus vocab_size" 1 stats.vocab_size;
-  (* min vocab size is 1 *)
-  check int "empty corpus total_tokens" 0 stats.total_tokens
-
-let test_single_token () =
-  let model = Ngram.create ~n:1 ~smoothing:(Ngram.Add_k 1.0) [| 5 |] in
-  let stats = Ngram.stats model in
-
-  check int "single token vocab" 6 stats.vocab_size;
-  check int "single token total" 1 stats.total_tokens
-
-let test_large_vocab () =
-  (* Test with larger vocabulary *)
-  let tokens = Array.init 1000 (fun i -> i mod 100) in
-  let model = Ngram.create ~n:2 ~smoothing:(Ngram.Add_k 1.0) tokens in
-  let stats = Ngram.stats model in
-
-  check int "large vocab size" 100 stats.vocab_size;
-  check bool "should have many bigrams" true (stats.unique_ngrams > 50)
-
-(* Test suite *)
-let () =
-  run "Ngram"
-    [
-      ( "unigram",
-        [
-          test_case "train" `Quick test_unigram_train;
-          test_case "logits" `Quick test_unigram_logits;
-          test_case "sample" `Quick test_unigram_sample;
-          test_case "from_corpus" `Quick test_unigram_from_corpus;
-          test_case "save_load" `Quick test_save_load_unigram;
-        ] );
-      ( "bigram",
-        [
-          test_case "train" `Quick test_bigram_train;
-          test_case "logits" `Quick test_bigram_logits;
-          test_case "smoothing" `Quick test_bigram_smoothing;
-          test_case "sample" `Quick test_bigram_sample;
-          test_case "log_prob" `Quick test_bigram_log_prob;
-          test_case "save_load" `Quick test_save_load_bigram;
-        ] );
-      ( "trigram",
-        [
-          test_case "train" `Quick test_trigram_train;
-          test_case "logits" `Quick test_trigram_logits;
-          test_case "sample" `Quick test_trigram_sample;
-        ] );
-      ( "generic",
-        [
-          test_case "ngram" `Quick test_generic_ngram;
-          test_case "generate" `Quick test_generic_generate;
-        ] );
-      ( "edge_cases",
-        [
-          test_case "empty_corpus" `Quick test_empty_corpus;
-          test_case "single_token" `Quick test_single_token;
-          test_case "large_vocab" `Quick test_large_vocab;
-        ] );
-    ]
+let () = Alcotest.run "saga ngram" [ ("ngram", tests) ]

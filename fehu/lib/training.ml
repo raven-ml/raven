@@ -1,4 +1,5 @@
-let compute_gae ~rewards ~values ~dones ~gamma ~gae_lambda =
+let compute_gae ~rewards ~values ~dones ~last_value ~last_done ~gamma
+    ~gae_lambda =
   let n = Array.length rewards in
   if n <> Array.length values || n <> Array.length dones then
     invalid_arg "Training.compute_gae: arrays must have same length";
@@ -8,8 +9,15 @@ let compute_gae ~rewards ~values ~dones ~gamma ~gae_lambda =
   let last_gae_lam = ref 0.0 in
 
   for t = n - 1 downto 0 do
-    let next_value = if t = n - 1 then 0.0 else values.(t + 1) in
-    let next_non_terminal = if dones.(t) then 0.0 else 1.0 in
+    let next_value =
+      if t = n - 1 then if last_done then 0.0 else last_value
+      else values.(t + 1)
+    in
+    let next_non_terminal =
+      if t = n - 1 then if last_done then 0.0 else 1.0
+      else if dones.(t) then 0.0
+      else 1.0
+    in
     let delta =
       rewards.(t) +. (gamma *. next_value *. next_non_terminal) -. values.(t)
     in
@@ -37,19 +45,30 @@ let compute_returns ~rewards ~dones ~gamma =
 
   returns
 
-let normalize_array arr ?(eps = 1e-8) () =
+let normalize_array arr ?(eps = 1e-8) ?(unbiased = false) () =
   let n = Array.length arr in
   if n = 0 then arr
   else
-    let sum = Array.fold_left ( +. ) 0.0 arr in
-    let mean = sum /. float_of_int n in
-    let variance_sum =
-      Array.fold_left (fun acc x -> acc +. ((x -. mean) ** 2.0)) 0.0 arr
+    let mean = ref 0.0 in
+    let m2 = ref 0.0 in
+    Array.iteri
+      (fun idx x ->
+        let k = float_of_int (idx + 1) in
+        let delta = x -. !mean in
+        mean := !mean +. (delta /. k);
+        let delta2 = x -. !mean in
+        m2 := !m2 +. (delta *. delta2))
+      arr;
+    let variance =
+      if unbiased && n > 1 then !m2 /. float_of_int (n - 1)
+      else !m2 /. float_of_int n
     in
-    let std = sqrt (variance_sum /. float_of_int n) +. eps in
-    Array.map (fun x -> (x -. mean) /. std) arr
+    let std = sqrt variance +. eps in
+    let mean_val = !mean in
+    Array.map (fun x -> (x -. mean_val) /. std) arr
 
-let normalize arr ?(eps = 1e-8) () = normalize_array arr ~eps ()
+let normalize arr ?(eps = 1e-8) ?unbiased () =
+  normalize_array arr ?unbiased ~eps ()
 
 let policy_gradient_loss ~log_probs ~advantages ?(normalize = true) () =
   let n = Array.length log_probs in
@@ -83,13 +102,14 @@ let ppo_clip_loss ~log_probs ~old_log_probs ~advantages ~clip_range =
     done;
     -. !sum /. float_of_int n
 
-let value_loss ~values ~returns ?clip_range () =
+let value_loss ~values ~returns ?clip () =
   let n = Array.length values in
   if n <> Array.length returns then
     invalid_arg "Training.value_loss: arrays must have same length";
+
   if n = 0 then 0.0
   else
-    match clip_range with
+    match clip with
     | None ->
         let sum = ref 0.0 in
         for i = 0 to n - 1 do
@@ -97,13 +117,21 @@ let value_loss ~values ~returns ?clip_range () =
           sum := !sum +. (diff *. diff)
         done;
         !sum /. float_of_int n
-    | Some _ ->
-        (* For clipped value loss, we'd need old_values which aren't provided in the signature *)
-        (* Fallback to unclipped for now - interface may need adjustment *)
+    | Some (clip_range, old_values) ->
+        if clip_range < 0.0 then
+          invalid_arg "Training.value_loss: clip_range must be non-negative";
+        if Array.length old_values <> n then
+          invalid_arg
+            "Training.value_loss: old_values must have same length as arrays";
+
         let sum = ref 0.0 in
         for i = 0 to n - 1 do
-          let diff = values.(i) -. returns.(i) in
-          sum := !sum +. (diff *. diff)
+          let delta = values.(i) -. old_values.(i) in
+          let clipped_delta = max (-.clip_range) (min clip_range delta) in
+          let value_clipped = old_values.(i) +. clipped_delta in
+          let unclipped = (values.(i) -. returns.(i)) ** 2.0 in
+          let clipped = (value_clipped -. returns.(i)) ** 2.0 in
+          sum := !sum +. max unclipped clipped
         done;
         !sum /. float_of_int n
 
@@ -124,7 +152,7 @@ let explained_variance ~y_pred ~y_true =
       var_y := !var_y +. ((y_true.(i) -. mean_true) ** 2.0)
     done;
 
-    if !var_y = 0.0 then 0.0 else 1.0 -. (!var_diff /. !var_y)
+    if !var_y = 0.0 then Float.nan else 1.0 -. (!var_diff /. !var_y)
 
 type stats = {
   mean_reward : float;
@@ -139,15 +167,17 @@ let evaluate env ~policy ?(n_episodes = 10) ?(max_steps = 1000) () =
 
   for _ = 1 to n_episodes do
     let obs, _ = Env.reset env () in
+    let current_obs = ref obs in
     let total_reward = ref 0.0 in
     let steps = ref 0 in
     let done_flag = ref false in
 
     while !steps < max_steps && not !done_flag do
-      let action = policy obs in
+      let action = policy !current_obs in
       let transition = Env.step env action in
       total_reward := !total_reward +. transition.Env.reward;
       steps := !steps + 1;
+      current_obs := transition.Env.observation;
       done_flag := transition.Env.terminated || transition.Env.truncated
     done;
 

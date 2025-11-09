@@ -1,5 +1,6 @@
 open Bigarray_ext
 open Error
+module Cache_dir = Cache_dir
 
 (* Type definitions *)
 
@@ -100,6 +101,10 @@ module Safe = struct
   let save_npz ?(overwrite = true) path items =
     Nx_npy.save_npz ~overwrite path items
 
+  (* Text I/O *)
+  let save_txt = Nx_txt.save
+  let load_txt = Nx_txt.load
+
   (* Conversions from packed arrays *)
 
   let as_float16 = Packed_nx.as_float16
@@ -112,6 +117,7 @@ module Safe = struct
   let as_int64 = Packed_nx.as_int64
   let as_uint8 = Packed_nx.as_uint8
   let as_uint16 = Packed_nx.as_uint16
+  let as_bool = Packed_nx.as_bool
   let as_complex32 = Packed_nx.as_complex32
   let as_complex64 = Packed_nx.as_complex64
 
@@ -138,6 +144,7 @@ let as_int32 packed = Packed_nx.as_int32 packed |> unwrap_result
 let as_int64 packed = Packed_nx.as_int64 packed |> unwrap_result
 let as_uint8 packed = Packed_nx.as_uint8 packed |> unwrap_result
 let as_uint16 packed = Packed_nx.as_uint16 packed |> unwrap_result
+let as_bool packed = Packed_nx.as_bool packed |> unwrap_result
 let as_complex32 packed = Packed_nx.as_complex32 packed |> unwrap_result
 let as_complex64 packed = Packed_nx.as_complex64 packed |> unwrap_result
 
@@ -164,3 +171,10 @@ let load_safetensor path = Safe.load_safetensor path |> unwrap_result
 
 let save_safetensor ?overwrite path items =
   Safe.save_safetensor ?overwrite path items |> unwrap_result
+
+let save_txt ?sep ?append ?newline ?header ?footer ?comments ~out arr =
+  Safe.save_txt ?sep ?append ?newline ?header ?footer ?comments ~out arr
+  |> unwrap_result
+
+let load_txt ?sep ?comments ?skiprows ?max_rows dtype path =
+  Safe.load_txt ?sep ?comments ?skiprows ?max_rows dtype path |> unwrap_result

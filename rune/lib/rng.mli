@@ -76,7 +76,7 @@ val randint : key -> min:int -> max:int -> int array -> Tensor.int32_t
     @param shape Shape of the output tensor
     @return Tensor with random integer values *)
 
-val bernoulli : key -> p:float -> int array -> Tensor.uint8_t
+val bernoulli : key -> p:float -> int array -> Tensor.bool_t
 (** Generate Bernoulli random values.
 
     [bernoulli key ~p shape] generates a tensor of boolean values where each

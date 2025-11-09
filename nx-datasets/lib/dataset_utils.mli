@@ -1,15 +1,22 @@
 (** Utilities for downloading and managing datasets. *)
 
-val get_cache_dir : string -> string
-(** Return the platform-specific cache directory path for the given dataset.
+val get_cache_dir : ?getenv:(string -> string option) -> string -> string
+(** [get_cache_dir ?getenv dataset_name] returns the cache directory path for
+    the given dataset.
 
-    The default location is "~/.cache/ocaml-nx/datasets/[dataset_name]/".
+    This is a convenience wrapper around {!Nx_core.Cache_dir.get_path_in_cache}
+    with [~scope:["datasets"]]. See {!Nx_core.Cache_dir.get_path_in_cache} for
+    details on cache directory resolution and environment variable priority.
 
     {2 Parameters}
     - dataset_name: the name of the dataset.
 
     {2 Returns}
-    - the cache directory path, including trailing slash. *)
+    - the cache directory path, including trailing slash.
+
+    @param getenv
+      optional environment lookup function (defaults to [Sys.getenv_opt]) to
+      facilitate testing. *)
 
 val download_file : string -> string -> unit
 (** Download a file from a URL to a destination path.

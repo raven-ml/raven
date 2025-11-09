@@ -72,11 +72,11 @@ module type S = sig
   val op_pow : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** Raise [base] to [exponent]. *)
 
-  val op_cmplt : ('a, 'b) t -> ('a, 'b) t -> (int, Dtype.uint8_elt) t
-  (** Compare [<]. Returns 0 or 1 as uint8. *)
+  val op_cmplt : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  (** Compare [<]. Returns False or True as bool. *)
 
-  val op_cmpne : ('a, 'b) t -> ('a, 'b) t -> (int, Dtype.uint8_elt) t
-  (** Compare [<>]. Returns 0 or 1 as uint8. *)
+  val op_cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  (** Compare [<>]. Returns False or True as bool. *)
 
   val op_xor : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** Bitwise XOR. *)
@@ -110,7 +110,7 @@ module type S = sig
   (* Ternary Op *)
 
   val op_where :
-    (int, Dtype.uint8_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+    (bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** Select from [if_true] or [if_false] based on a boolean tensor. *)
 
   (* Reduction Ops *)

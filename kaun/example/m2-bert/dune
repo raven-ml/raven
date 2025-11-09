@@ -1,0 +1,3 @@
+(executables
+ (names bert)
+ (libraries kaun kaun.models rune))

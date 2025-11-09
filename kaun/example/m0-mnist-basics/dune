@@ -1,0 +1,3 @@
+(executables
+ (names mnist)
+ (libraries rune kaun kaun.datasets unix))

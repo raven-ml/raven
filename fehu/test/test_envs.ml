@@ -164,8 +164,13 @@ let test_grid_world_render () =
   let env = Grid_world.make ~rng () in
   let _, _ = Env.reset env () in
   match Env.render env with
-  | Some str ->
-      Alcotest.(check bool) "render produces string" true (String.length str > 0)
+  | Some (Render.Text text) ->
+      Alcotest.(check bool) "render produces text" true (String.length text > 0)
+  | Some (Render.Image image) ->
+      Alcotest.(check bool) "render produces image" true (image.width > 0)
+  | Some Render.None -> Alcotest.fail "unexpected empty render frame"
+  | Some (Render.Svg svg) ->
+      Alcotest.(check bool) "render produces svg" true (String.length svg > 0)
   | None -> Alcotest.fail "expected render output"
 
 let () =

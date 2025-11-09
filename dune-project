@@ -23,7 +23,7 @@
 
 (using mdx 0.4)
 
-(version 1.0.0~alpha1)
+(version 1.0.0~alpha2)
 
 (implicit_transitive_deps false)
 
@@ -127,7 +127,7 @@
   dune
   (dune-configurator :build)
   (conf-llvm-static
-   (= 19))
+   (>= 19))
   (nx
    (= :version))
   (ctypes
@@ -139,7 +139,10 @@
    (= :os macos))
   (alcotest :with-test))
  (tags
-  (automatic-differentiation jit-compilation machine-learning deep-learning
+  (automatic-differentiation
+   jit-compilation
+   machine-learning
+   deep-learning
    optimization)))
 
 (package
@@ -224,7 +227,8 @@
   cmarkit
   vdom
   brr
-  base64
+  (base64
+   (>= 3.1.0))
   (nx
    (= :version))
   (nx-datasets
@@ -257,6 +261,9 @@
   cairo2
   (nx
    (= :version))
+  ; for hugin.top
+  (base64
+   (>= 3.1.0))
   (alcotest :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
@@ -274,6 +281,8 @@
    (= :version))
   (saga
    (= :version))
+  (talon
+   (= :version))
   (rune
    (= :version))
   (kaun
@@ -285,6 +294,8 @@
   (quill
    (= :version))
   (hugin
-   (= :version)))
+   (= :version))
+  ; for raven book
+  (mdx :with-test))
  (tags
   (machine-learning data-science numerical-computation)))

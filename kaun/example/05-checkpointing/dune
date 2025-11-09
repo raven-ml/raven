@@ -1,0 +1,3 @@
+(executables
+ (names checkpointing)
+ (libraries rune kaun unix))

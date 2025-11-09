@@ -472,6 +472,94 @@ let test_matrix_rank_tol () =
   let r = Nx.matrix_rank ~tol:1e-8 a in
   check int "matrix_rank with tol" 1 r
 
+let test_matrix_rank_hermitian () =
+  (* Create a symmetric matrix with known rank *)
+  let a =
+    Nx.create Nx.float32 [| 3; 3 |] [| 2.; 1.; 0.; 1.; 2.; 0.; 0.; 0.; 0. |]
+  in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian" 2 r;
+  (* Test that hermitian flag is actually used by checking it works on a non-square matrix *)
+  (* This will fail if hermitian flag is ignored because eigh requires square matrices *)
+  let non_square =
+    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+  in
+  check_raises "matrix_rank hermitian non-square"
+    (Failure "eig: input must be square matrix") (fun () ->
+      ignore (Nx.matrix_rank ~hermitian:true non_square))
+
+let test_matrix_rank_hermitian_negative () =
+  (* Test negative-definite matrix *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| -2.; 0.; 0.; -1. |] in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian negative" 2 r;
+  (* Compare with non-hermitian version *)
+  let r_svd = Nx.matrix_rank a in
+  check int "matrix_rank hermitian negative vs svd" r_svd r
+
+let test_matrix_rank_hermitian_complex () =
+  (* Complex Hermitian matrix with full rank *)
+  let a =
+    Nx.create Nx.complex64 [| 2; 2 |]
+      [|
+        Complex.{ re = 2.; im = 0. };
+        Complex.{ re = 0.; im = 1.5 };
+        Complex.{ re = 0.; im = -1.5 };
+        Complex.{ re = 3.; im = 0. };
+      |]
+  in
+  let r = Nx.matrix_rank ~hermitian:true a in
+  check int "matrix_rank hermitian complex" 2 r;
+  let r_svd = Nx.matrix_rank a in
+  check int "matrix_rank hermitian complex vs svd" r_svd r
+
+let test_pinv_hermitian () =
+  (* Create a symmetric matrix *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| 2.; 1.; 1.; 2. |] in
+  let pinv_a = Nx.pinv ~hermitian:true a in
+  (* Check that a @ pinv_a @ a ≈ a (pseudoinverse property) *)
+  let recon = Nx.matmul a (Nx.matmul pinv_a a) in
+  check_nx ~epsilon:1e-5 "pinv hermitian recon" a recon;
+  (* Test that hermitian flag is actually used by checking it works on a non-square matrix *)
+  (* This will fail if hermitian flag is ignored because eigh requires square matrices *)
+  let non_square =
+    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+  in
+  check_raises "pinv hermitian non-square"
+    (Failure "eig: input must be square matrix") (fun () ->
+      ignore (Nx.pinv ~hermitian:true non_square))
+
+let test_pinv_hermitian_negative () =
+  (* Test negative-definite matrix *)
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| -2.; 0.; 0.; -1. |] in
+  let pinv_a = Nx.pinv ~hermitian:true a in
+  (* Check that a @ pinv_a @ a ≈ a (pseudoinverse property) *)
+  let recon = Nx.matmul a (Nx.matmul pinv_a a) in
+  check_nx ~epsilon:1e-5 "pinv hermitian negative recon" a recon;
+  (* Compare with non-hermitian version *)
+  let pinv_svd = Nx.pinv a in
+  check_nx ~epsilon:1e-5 "pinv hermitian negative vs svd" pinv_svd pinv_a
+
+let test_pinv_hermitian_complex () =
+  (* Complex Hermitian matrix *)
+  let a =
+    Nx.create Nx.complex64 [| 2; 2 |]
+      [|
+        Complex.{ re = 4.; im = 0. };
+        Complex.{ re = 1.; im = 2. };
+        Complex.{ re = 1.; im = -2. };
+        Complex.{ re = 5.; im = 0. };
+      |]
+  in
+  let pinv_a = Nx.pinv ~hermitian:true a in
+  let identity = Nx.identity Nx.complex64 2 in
+  let product = Nx.matmul a pinv_a in
+  check_nx ~epsilon:1e-5 "pinv hermitian complex identity" identity product;
+  let recon = Nx.matmul a (Nx.matmul pinv_a a) in
+  check_nx ~epsilon:1e-5 "pinv hermitian complex recon" a recon;
+  let pinv_svd = Nx.pinv a in
+  check_nx ~epsilon:1e-5 "pinv hermitian complex vs svd" pinv_svd pinv_a
+
 (* ───── Product Ops Tests ───── *)
 
 let test_vdot () =
@@ -482,6 +570,44 @@ let test_vdot () =
   let a2 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let res2 = Nx.vdot a2 b in
   check_t "vdot flatten" [||] [| 4. +. 10. +. 18. +. 16. +. 25. +. 36. |] res2
+
+let test_vdot_complex () =
+  (* Test complex vdot with conjugation *)
+  let a =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
+  in
+  let b =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 5.; im = 6. }; Complex.{ re = 7.; im = 8. } |]
+  in
+  let result = Nx.vdot a b in
+  (* Expected: conj(a) * b = [(1-2i)(5+6i), (3-4i)(7+8i)] = [17-4i, 53-4i] =
+     70-8i *)
+  let expected = Complex.{ re = 70.; im = -8. } in
+  let actual = Nx.item [] result in
+  check (float 1e-6) "vdot complex real part" expected.re actual.re;
+  check (float 1e-6) "vdot complex imag part" expected.im actual.im
+
+let test_conjugate () =
+  (* Test complex conjugate *)
+  let x =
+    Nx.create Nx.complex32 [| 2 |]
+      [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
+  in
+  let conj_x = Nx.conjugate x in
+  let expected =
+    [| Complex.{ re = 1.; im = -2. }; Complex.{ re = 3.; im = -4. } |]
+  in
+  let actual = Nx.to_array conj_x in
+  check (float 1e-6) "conjugate[0] real" expected.(0).re actual.(0).re;
+  check (float 1e-6) "conjugate[0] imag" expected.(0).im actual.(0).im;
+  check (float 1e-6) "conjugate[1] real" expected.(1).re actual.(1).re;
+  check (float 1e-6) "conjugate[1] imag" expected.(1).im actual.(1).im;
+  (* Test that real tensors are unchanged *)
+  let real_x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+  let conj_real = Nx.conjugate real_x in
+  check_nx "conjugate real unchanged" real_x conj_real
 
 let test_vdot_mismatch () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -572,117 +698,532 @@ let test_einsum_error () =
     (Invalid_argument "einsum: multiple ellipsis in operand") (fun () ->
       ignore (Nx.einsum "i...j...->ij" [| a |]))
 
-let test_einsum () =
+(* Weighted broadcast dot retained from legacy spec *)
+let einsum_weighted_broadcast () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let b = Nx.create Nx.float32 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |] in
-  let square =
-    Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
-  in
-  let c =
-    Nx.create Nx.float32 [| 2; 2; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
-  in
-  let res_matmul = Nx.einsum "ij,jk->ik" [| a; b |] in
-  check_t "einsum matmul" [| 2; 2 |] [| 58.; 64.; 139.; 154. |] res_matmul;
-  let res_matmul_implicit = Nx.einsum "ij,jk" [| a; b |] in
-  check_nx "einsum implicit matmul" res_matmul res_matmul_implicit;
-  let res_diag = Nx.einsum "ii->i" [| square |] in
-  check_t "einsum diag" [| 3 |] [| 1.; 5.; 9. |] res_diag;
-  let res_diag_sum = Nx.einsum "ii" [| square |] in
-  check_t "einsum diag sum" [||] [| 15. |] res_diag_sum;
-  let res_reduce = Nx.einsum "ij->i" [| a |] in
-  let sum_reduce = Nx.sum ~axes:[ 1 ] a in
-  check_nx "einsum reduce axis" sum_reduce res_reduce;
-  let res_total = Nx.einsum "ij->" [| a |] in
-  let sum_total = Nx.sum a in
-  check_nx "einsum reduce all" sum_total res_total;
-  let res_trans = Nx.einsum "ij->ji" [| a |] in
-  check_t "einsum transpose" [| 3; 2 |] [| 1.; 4.; 2.; 5.; 3.; 6. |] res_trans;
-  let res_three_way = Nx.einsum "xy,yz,zkw->xkw" [| a; b; c |] in
-  check_t "einsum three-way" [| 2; 2; 2 |]
-    [| 378.; 500.; 622.; 744.; 909.; 1202.; 1495.; 1788. |]
-    res_three_way;
-  (* let res_scalar = *)
-  (* let p = Nx.create Nx.int [| 2 |] [| 1; 2 |] in *)
-  (* let q = Nx.create Nx.int [| 2; 2 |] [| 3; 4; 5; 6 |] in *)
-  (* let r = Nx.create Nx.int [| 2; 2 |] [| 7; 8; 9; 10 |] in *)
-  (* Nx.einsum "z,mz,zm->" [| p; q; r |] in *)
-  (* check_t "einsum scalar" [| 2 ; 2; 2 |] [| 253 |] res_scalar; *)
-  let res_outer = Nx.einsum "ij,km->ijkm" [| a; b |] in
-  check_t "einsum outer" [| 2; 3; 3; 2 |]
-    [|
-      7.;
-      8.;
-      9.;
-      10.;
-      11.;
-      12.;
-      14.;
-      16.;
-      18.;
-      20.;
-      22.;
-      24.;
-      21.;
-      24.;
-      27.;
-      30.;
-      33.;
-      36.;
-      28.;
-      32.;
-      36.;
-      40.;
-      44.;
-      48.;
-      35.;
-      40.;
-      45.;
-      50.;
-      55.;
-      60.;
-      42.;
-      48.;
-      54.;
-      60.;
-      66.;
-      72.;
-    |]
-    res_outer;
-  let lhs =
-    Nx.create Nx.float32 [| 2; 3; 4 |]
-      (Array.init (2 * 3 * 4) (fun i -> float_of_int (i + 1)))
-  in
-  let rhs =
-    Nx.create Nx.float32 [| 1; 4; 5 |]
-      (Array.init (1 * 4 * 5) (fun i -> float_of_int (i + 1)))
-  in
-  let einsum_ell = Nx.einsum "...ij,...jk->...ik" [| lhs; rhs |] in
-  let rhs_broadcast = Nx.broadcast_to [| 2; 4; 5 |] rhs in
-  let expected_ell = Nx.matmul lhs rhs_broadcast in
-  check_nx "einsum ellipsis" expected_ell einsum_ell;
-  let batched =
-    Nx.create Nx.float32 [| 2; 3; 3 |]
-      (Array.init (2 * 3 * 3) (fun i -> float_of_int (i + 1)))
-  in
-  let diag_batch = Nx.einsum "...ii->...i" [| batched |] in
-  check_t "einsum batch diag" [| 2; 3 |]
-    [| 1.; 5.; 9.; 10.; 14.; 18. |]
-    diag_batch;
   let vec = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let weighted = Nx.einsum "...i,i->..." [| a; vec |] in
-  let expected_weighted =
+  let got = Nx.einsum "...i,i->..." [| a; vec |] in
+  let expected =
     let mul = Nx.mul a (Nx.reshape [| 1; 3 |] vec) in
     Nx.sum ~axes:[ 1 ] mul
   in
-  check_nx "einsum broadcast dot" expected_weighted weighted;
-  let dot_scalar = Nx.einsum "i,i->" [| vec; vec |] in
-  check_t "einsum scalar" [||] [| 14. |] dot_scalar;
-  let c_mat =
-    Nx.create Nx.float32 [| 2; 4 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+  check_nx "einsum weighted broadcast ...i,i->..." expected got
+
+let einsum_complex_fro_inner () =
+  let open Complex in
+  let a =
+    Nx.create Nx.Complex32 [| 2; 2 |]
+      [|
+        { re = 1.; im = 2. };
+        { re = 3.; im = 4. };
+        { re = -1.; im = 0. };
+        { re = 0.5; im = -1.5 };
+      |]
   in
-  let chain = Nx.einsum "ab,bc,cd->ad" [| a; b; c_mat |] in
-  let expected_chain = Nx.matmul (Nx.matmul a b) c_mat in
-  check_nx "einsum chain" expected_chain chain
+  let b =
+    Nx.create Nx.Complex32 [| 2; 2 |]
+      [|
+        { re = -2.; im = 1. };
+        { re = 0.; im = 1. };
+        { re = 2.; im = -1. };
+        { re = -0.5; im = 2. };
+      |]
+  in
+  let got = Nx.einsum "ij,ij->" [| a; b |] in
+  let expected = Nx.sum (Nx.mul a b) in
+  check_nx "einsum complex fro inner ij,ij->" expected got
+
+let einsum_int_dot_scalar () =
+  let a = Nx.create Nx.int32 [| 4 |] [| 1l; 2l; 3l; 4l |] in
+  let b = Nx.create Nx.int32 [| 4 |] [| 5l; 6l; 7l; 8l |] in
+  let got = Nx.einsum "i,i->" [| a; b |] in
+  let expected = Nx.sum (Nx.mul a b) in
+  check_nx "einsum int dot scalar i,i->" expected got
+
+let test_einsum_regression_axis_order () =
+  (* Case 1: i,jk->jki should order as j, k, i *)
+  let a1 = Nx.randn Nx.float32 [| 5 |] in
+  let b1 = Nx.randn Nx.float32 [| 7; 7 |] in
+  let r1 = Nx.einsum "i,jk->jki" [| a1; b1 |] in
+  check_shape "einsum axis order i,jk->jki" [| 7; 7; 5 |] r1;
+
+  (* Case 2: ij,klj->kli should order as k, l, i *)
+  let a2 = Nx.randn Nx.float32 [| 5; 5 |] in
+  let b2 = Nx.randn Nx.float32 [| 3; 7; 5 |] in
+  let r2 = Nx.einsum "ij,klj->kli" [| a2; b2 |] in
+  check_shape "einsum axis order ij,klj->kli" [| 3; 7; 5 |] r2
+
+let einsum_dot_scalar () =
+  let a0 = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
+  let a1 = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
+  let got = Nx.einsum "i,i->" [| a0; a1 |] in
+  let expected = Nx.create Nx.float32 [||] [| 55. |] in
+  check_nx "einsum_dot_scalar i,i->" expected got
+
+let einsum_matmul () =
+  let a0 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let a1 = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let got = Nx.einsum "ij,jk->ik" [| a0; a1 |] in
+  let expected = Nx.create Nx.float32 [| 2; 2 |] [| 22.; 28.; 49.; 64. |] in
+  check_nx "einsum_matmul ij,jk->ik" expected got
+
+let einsum_transpose () =
+  let a0 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let got = Nx.einsum "ij->ji" [| a0 |] in
+  let expected = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 4.; 2.; 5.; 3.; 6. |] in
+  check_nx "einsum_transpose ij->ji" expected got
+
+let einsum_outer () =
+  let a0 = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+  let a1 = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let got = Nx.einsum "i,j->ij" [| a0; a1 |] in
+  let expected = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 2.; 4.; 6. |] in
+  check_nx "einsum_outer i,j->ij" expected got
+
+let einsum_total_sum () =
+  let a0 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let got = Nx.einsum "ij->" [| a0 |] in
+  let expected = Nx.create Nx.float32 [||] [| 21. |] in
+  check_nx "einsum_total_sum ij->" expected got
+
+let einsum_diag_extract () =
+  let a0 =
+    Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+  in
+  let got = Nx.einsum "ii->i" [| a0 |] in
+  let expected = Nx.create Nx.float32 [| 3 |] [| 1.; 5.; 9. |] in
+  check_nx "einsum_diag_extract ii->i" expected got
+
+let einsum_batched_diag () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 3 |]
+      [|
+        1.;
+        2.;
+        3.;
+        4.;
+        5.;
+        6.;
+        7.;
+        8.;
+        9.;
+        10.;
+        11.;
+        12.;
+        13.;
+        14.;
+        15.;
+        16.;
+        17.;
+        18.;
+      |]
+  in
+  let got = Nx.einsum "...ii->...i" [| a0 |] in
+  let expected =
+    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 5.; 9.; 10.; 14.; 18. |]
+  in
+  check_nx "einsum_batched_diag ...ii->...i" expected got
+
+let einsum_batched_matmul () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 4 |]
+      [|
+        1.;
+        2.;
+        3.;
+        4.;
+        5.;
+        6.;
+        7.;
+        8.;
+        9.;
+        10.;
+        11.;
+        12.;
+        13.;
+        14.;
+        15.;
+        16.;
+        17.;
+        18.;
+        19.;
+        20.;
+        21.;
+        22.;
+        23.;
+        24.;
+      |]
+  in
+  let a1 =
+    Nx.create Nx.float32 [| 1; 4; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+  in
+  let got = Nx.einsum "...ij,...jk->...ik" [| a0; a1 |] in
+  let expected =
+    Nx.create Nx.float32 [| 2; 3; 2 |]
+      [| 50.; 60.; 114.; 140.; 178.; 220.; 242.; 300.; 306.; 380.; 370.; 460. |]
+  in
+  check_nx "einsum_batched_matmul ...ij,...jk->...ik" expected got
+
+let einsum_free_order1 () =
+  let a0 = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let a1 = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let got = Nx.einsum "i,jk->jki" [| a0; a1 |] in
+  let expected =
+    Nx.create Nx.float32 [| 2; 2; 3 |]
+      [| 1.; 2.; 3.; 2.; 4.; 6.; 3.; 6.; 9.; 4.; 8.; 12. |]
+  in
+  check_nx "einsum_free_order1 i,jk->jki" expected got
+
+let einsum_free_order2 () =
+  let a0 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let a1 =
+    Nx.create Nx.float32 [| 4; 5; 3 |]
+      [|
+        1.;
+        2.;
+        3.;
+        4.;
+        5.;
+        6.;
+        7.;
+        8.;
+        9.;
+        10.;
+        11.;
+        12.;
+        13.;
+        14.;
+        15.;
+        16.;
+        17.;
+        18.;
+        19.;
+        20.;
+        21.;
+        22.;
+        23.;
+        24.;
+        25.;
+        26.;
+        27.;
+        28.;
+        29.;
+        30.;
+        31.;
+        32.;
+        33.;
+        34.;
+        35.;
+        36.;
+        37.;
+        38.;
+        39.;
+        40.;
+        41.;
+        42.;
+        43.;
+        44.;
+        45.;
+        46.;
+        47.;
+        48.;
+        49.;
+        50.;
+        51.;
+        52.;
+        53.;
+        54.;
+        55.;
+        56.;
+        57.;
+        58.;
+        59.;
+        60.;
+      |]
+  in
+  let got = Nx.einsum "ij,klj->kli" [| a0; a1 |] in
+  let expected =
+    Nx.create Nx.float32 [| 4; 5; 2 |]
+      [|
+        14.;
+        32.;
+        32.;
+        77.;
+        50.;
+        122.;
+        68.;
+        167.;
+        86.;
+        212.;
+        104.;
+        257.;
+        122.;
+        302.;
+        140.;
+        347.;
+        158.;
+        392.;
+        176.;
+        437.;
+        194.;
+        482.;
+        212.;
+        527.;
+        230.;
+        572.;
+        248.;
+        617.;
+        266.;
+        662.;
+        284.;
+        707.;
+        302.;
+        752.;
+        320.;
+        797.;
+        338.;
+        842.;
+        356.;
+        887.;
+      |]
+  in
+  check_nx "einsum_free_order2 ij,klj->kli" expected got
+
+let einsum_mix_reorder () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 2 |]
+      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
+  in
+  let a1 = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let got = Nx.einsum "abc,bd->dac" [| a0; a1 |] in
+  let expected =
+    Nx.create Nx.float32 [| 2; 2; 2 |]
+      [| 35.; 44.; 89.; 98.; 44.; 56.; 116.; 128. |]
+  in
+  check_nx "einsum_mix_reorder abc,bd->dac" expected got
+
+let einsum_chain () =
+  let a0 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let a1 = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let a2 = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let got = Nx.einsum "ab,bc,cd->ad" [| a0; a1; a2 |] in
+  let expected = Nx.create Nx.float32 [| 2; 2 |] [| 106.; 156.; 241.; 354. |] in
+  check_nx "einsum_chain ab,bc,cd->ad" expected got
+
+let einsum_diag_sum () =
+  let a0 =
+    Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
+  in
+  let got = Nx.einsum "ii" [| a0 |] in
+  let expected = Nx.create Nx.float32 [||] [| 15. |] in
+  check_nx "einsum_diag_sum ii" expected got
+
+let einsum_hadamard_vec () =
+  let a0 = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let a1 = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let got = Nx.einsum "i,i->i" [| a0; a1 |] in
+  let expected = Nx.create Nx.float32 [| 4 |] [| 1.; 4.; 9.; 16. |] in
+  check_nx "einsum_hadamard_vec i,i->i" expected got
+
+let einsum_fro_inner () =
+  let a0 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let a1 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let got = Nx.einsum "ij,ij->" [| a0; a1 |] in
+  let expected = Nx.create Nx.float32 [||] [| 91. |] in
+  check_nx "einsum_fro_inner ij,ij->" expected got
+
+let einsum_contract_last () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 4 |]
+      [|
+        1.;
+        2.;
+        3.;
+        4.;
+        5.;
+        6.;
+        7.;
+        8.;
+        9.;
+        10.;
+        11.;
+        12.;
+        13.;
+        14.;
+        15.;
+        16.;
+        17.;
+        18.;
+        19.;
+        20.;
+        21.;
+        22.;
+        23.;
+        24.;
+      |]
+  in
+  let a1 = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let got = Nx.einsum "ijk,k->ij" [| a0; a1 |] in
+  let expected =
+    Nx.create Nx.float32 [| 2; 3 |] [| 30.; 70.; 110.; 150.; 190.; 230. |]
+  in
+  check_nx "einsum_contract_last ijk,k->ij" expected got
+
+let einsum_matvec () =
+  let a0 =
+    Nx.create Nx.float32 [| 3; 4 |]
+      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
+  in
+  let a1 = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let got = Nx.einsum "ab,b->a" [| a0; a1 |] in
+  let expected = Nx.create Nx.float32 [| 3 |] [| 30.; 70.; 110. |] in
+  check_nx "einsum_matvec ab,b->a" expected got
+
+let einsum_contract_3d_vec () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 4 |]
+      [|
+        1.;
+        2.;
+        3.;
+        4.;
+        5.;
+        6.;
+        7.;
+        8.;
+        9.;
+        10.;
+        11.;
+        12.;
+        13.;
+        14.;
+        15.;
+        16.;
+        17.;
+        18.;
+        19.;
+        20.;
+        21.;
+        22.;
+        23.;
+        24.;
+      |]
+  in
+  let a1 = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let got = Nx.einsum "abc,c->ab" [| a0; a1 |] in
+  let expected =
+    Nx.create Nx.float32 [| 2; 3 |] [| 30.; 70.; 110.; 150.; 190.; 230. |]
+  in
+  check_nx "einsum_contract_3d_vec abc,c->ab" expected got
+
+let einsum_broadcast_last_dot () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 4 |]
+      [|
+        1.;
+        2.;
+        3.;
+        4.;
+        5.;
+        6.;
+        7.;
+        8.;
+        9.;
+        10.;
+        11.;
+        12.;
+        13.;
+        14.;
+        15.;
+        16.;
+        17.;
+        18.;
+        19.;
+        20.;
+        21.;
+        22.;
+        23.;
+        24.;
+      |]
+  in
+  let a1 = Nx.create Nx.float32 [| 1; 1; 4 |] [| 1.; 2.; 3.; 4. |] in
+  let got = Nx.einsum "...i,...i->..." [| a0; a1 |] in
+  let expected =
+    Nx.create Nx.float32 [| 2; 3 |] [| 30.; 70.; 110.; 150.; 190.; 230. |]
+  in
+  check_nx "einsum_broadcast_last_dot ...i,...i->..." expected got
+
+let einsum_move_first_axis_to_last () =
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3; 4 |]
+      [|
+        1.;
+        2.;
+        3.;
+        4.;
+        5.;
+        6.;
+        7.;
+        8.;
+        9.;
+        10.;
+        11.;
+        12.;
+        13.;
+        14.;
+        15.;
+        16.;
+        17.;
+        18.;
+        19.;
+        20.;
+        21.;
+        22.;
+        23.;
+        24.;
+      |]
+  in
+  let got = Nx.einsum "i...->...i" [| a0 |] in
+  let expected =
+    Nx.create Nx.float32 [| 3; 4; 2 |]
+      [|
+        1.;
+        13.;
+        2.;
+        14.;
+        3.;
+        15.;
+        4.;
+        16.;
+        5.;
+        17.;
+        6.;
+        18.;
+        7.;
+        19.;
+        8.;
+        20.;
+        9.;
+        21.;
+        10.;
+        22.;
+        11.;
+        23.;
+        12.;
+        24.;
+      |]
+  in
+  check_nx "einsum_move_first_axis_to_last i...->...i" expected got
+
+let einsum_rowwise_dot () =
+  let a0 =
+    Nx.create Nx.float32 [| 3; 4 |]
+      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
+  in
+  let a1 = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let got = Nx.einsum "ij,j->i" [| a0; a1 |] in
+  let expected = Nx.create Nx.float32 [| 3 |] [| 30.; 70.; 110. |] in
+  check_nx "einsum_rowwise_dot ij,j->i" expected got
 
 let test_kron () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
@@ -855,13 +1396,23 @@ let test_lstsq () =
   check_shape "lstsq x" [| 2 |] x;
   check int "lstsq rank" 2 rank;
   let approx_b = Nx.matmul a x in
-  check_nx "lstsq approx" b approx_b
+  check_nx ~epsilon:1e-5 "lstsq approx" b approx_b
 
 let test_lstsq_rcond () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; 1e-10 |] in
   let b = Nx.create Nx.float32 [| 2 |] [| 1.; 0. |] in
   let _, _, rank, _ = Nx.lstsq ~rcond:1e-8 a b in
   check int "lstsq rcond rank" 1 rank
+
+let test_lstsq_underdetermined () =
+  let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 0.; 2.; 3.; 2.; 4. |] in
+  let b = Nx.create Nx.float32 [| 2 |] [| 1.; 0. |] in
+
+  let x, _res, rank, _s = Nx.lstsq ~rcond:1e-8 a b in
+  check_shape "lstsq x underdetermined" [| 3 |] x;
+  check int "lstsq rank underdetermined" 2 rank;
+  let approx_b_underdetermined = Nx.matmul a x in
+  check_nx "lstsq approx underdetermined" b approx_b_underdetermined
 
 let test_pinv () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -1007,11 +1558,21 @@ let advanced_utility_tests =
     ("slogdet singular", `Quick, test_slogdet_singular);
     ("matrix rank", `Quick, test_matrix_rank);
     ("matrix rank tol", `Quick, test_matrix_rank_tol);
+    ("matrix rank hermitian", `Quick, test_matrix_rank_hermitian);
+    ( "matrix rank hermitian negative",
+      `Quick,
+      test_matrix_rank_hermitian_negative );
+    ("matrix rank hermitian complex", `Quick, test_matrix_rank_hermitian_complex);
+    ("pinv hermitian", `Quick, test_pinv_hermitian);
+    ("pinv hermitian negative", `Quick, test_pinv_hermitian_negative);
+    ("pinv hermitian complex", `Quick, test_pinv_hermitian_complex);
   ]
 
 let product_tests =
   [
     ("vdot", `Quick, test_vdot);
+    ("vdot complex", `Quick, test_vdot_complex);
+    ("conjugate", `Quick, test_conjugate);
     ("vdot mismatch", `Quick, test_vdot_mismatch);
     ("vecdot", `Quick, test_vecdot);
     ("inner", `Quick, test_inner);
@@ -1019,8 +1580,6 @@ let product_tests =
     ("outer", `Quick, test_outer);
     ("tensordot", `Quick, test_tensordot);
     ("tensordot mismatch", `Quick, test_tensordot_mismatch);
-    ("einsum error", `Quick, test_einsum_error);
-    ("einsum", `Quick, test_einsum);
     ("kron", `Quick, test_kron);
     ("multi dot", `Quick, test_multi_dot);
     ("multi dot empty", `Quick, test_multi_dot_empty);
@@ -1028,6 +1587,37 @@ let product_tests =
     ("matrix power singular", `Quick, test_matrix_power_singular);
     ("cross", `Quick, test_cross);
     ("cross invalid", `Quick, test_cross_invalid);
+  ]
+
+(* Dedicated suite for einsum; avoids duplication in product_tests *)
+let einsum_tests =
+  [
+    ("einsum error cases", `Quick, test_einsum_error);
+    ("einsum weighted broadcast", `Quick, einsum_weighted_broadcast);
+    ("einsum complex fro inner", `Quick, einsum_complex_fro_inner);
+    ("einsum int dot scalar", `Quick, einsum_int_dot_scalar);
+    ("einsum axis order regression", `Quick, test_einsum_regression_axis_order);
+    ("dot scalar i,i->", `Quick, einsum_dot_scalar);
+    ("matmul ij,jk->ik", `Quick, einsum_matmul);
+    ("transpose ij->ji", `Quick, einsum_transpose);
+    ("outer i,j->ij", `Quick, einsum_outer);
+    ("total sum ij->", `Quick, einsum_total_sum);
+    ("diag extract ii->i", `Quick, einsum_diag_extract);
+    ("batched diag ...ii->...i", `Quick, einsum_batched_diag);
+    ("batched matmul ...ij,...jk->...ik", `Quick, einsum_batched_matmul);
+    ("free order1 i,jk->jki", `Quick, einsum_free_order1);
+    ("free order2 ij,klj->kli", `Quick, einsum_free_order2);
+    ("mix reorder abc,bd->dac", `Quick, einsum_mix_reorder);
+    ("chain ab,bc,cd->ad", `Quick, einsum_chain);
+    ("diag sum ii", `Quick, einsum_diag_sum);
+    ("hadamard vec i,i->i", `Quick, einsum_hadamard_vec);
+    ("fro inner ij,ij->", `Quick, einsum_fro_inner);
+    ("contract last ijk,k->ij", `Quick, einsum_contract_last);
+    ("matvec ab,b->a", `Quick, einsum_matvec);
+    ("contract 3d vec abc,c->ab", `Quick, einsum_contract_3d_vec);
+    ("broadcast last dot ...i,...i->...", `Quick, einsum_broadcast_last_dot);
+    ("move first axis i...->...i", `Quick, einsum_move_first_axis_to_last);
+    ("rowwise dot ij,j->i", `Quick, einsum_rowwise_dot);
   ]
 
 let advanced_decomposition_tests =
@@ -1058,6 +1648,7 @@ let advanced_solve_tests =
   [
     ("lstsq", `Quick, test_lstsq);
     ("lstsq rcond", `Quick, test_lstsq_rcond);
+    ("lstsq underdetermined", `Quick, test_lstsq_underdetermined);
     ("pinv", `Quick, test_pinv);
     ("pinv singular", `Quick, test_pinv_singular);
     ("tensorsolve", `Quick, test_tensorsolve);
@@ -1076,6 +1667,7 @@ let suite =
     ("Linalg :: Utilities", utility_tests);
     ("Linalg :: Advanced Utilities", advanced_utility_tests);
     ("Linalg :: Product Ops", product_tests);
+    ("Linalg :: Einsum", einsum_tests);
     ("Linalg :: Advanced Decompositions", advanced_decomposition_tests);
     ("Linalg :: Eigen", eigen_tests);
     ("Linalg :: Advanced Norms", advanced_norm_tests);

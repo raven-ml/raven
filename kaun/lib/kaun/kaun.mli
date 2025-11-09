@@ -1,44 +1,37 @@
 type 'layout tensor = (float, 'layout) Rune.t
 type 'layout dtype = (float, 'layout) Rune.dtype
 
-type 'layout params = 'layout Ptree.t =
-  | Tensor of 'layout tensor
-  | List of 'layout params list
-  | Record of 'layout params Ptree.Record.t
+type params = Ptree.t =
+  | Tensor of Ptree.tensor
+  | List of params list
+  | Dict of (string * params) list
 
 type module_ = Layer.module_ = {
   init :
-    'layout 'dev.
-    rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t;
+    'layout. rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> Ptree.t;
   apply :
-    'layout 'dev.
-    'layout Ptree.t ->
+    'layout.
+    Ptree.t ->
     training:bool ->
     ?rngs:Rune.Rng.key ->
-    'layout tensor ->
-    'layout tensor;
+    (float, 'layout) Rune.t ->
+    (float, 'layout) Rune.t;
 }
 
-val init : module_ -> rngs:Rune.Rng.key -> dtype:'layout dtype -> 'layout params
+val init : module_ -> rngs:Rune.Rng.key -> dtype:'layout dtype -> params
 
 val apply :
   module_ ->
-  'layout params ->
+  params ->
   training:bool ->
   ?rngs:Rune.Rng.key ->
   'layout tensor ->
   'layout tensor
 
 val value_and_grad :
-  ('layout params -> 'layout tensor) ->
-  'layout params ->
-  'layout tensor * 'layout params
+  (params -> 'layout tensor) -> params -> 'layout tensor * params
 
-val grad :
-  ('layout params -> 'layout tensor) -> 'layout params -> 'layout params
-
-module Ops = Ops
-(** @inline *)
+val grad : (params -> 'layout tensor) -> params -> params
 
 module Metrics = Metrics
 (** @inline *)
@@ -52,10 +45,16 @@ module Loss = Loss
 module Initializers = Initializers
 (** @inline *)
 
+module Attention = Attention
+(** @inline *)
+
 module Layer = Layer
 (** @inline *)
 
 module Checkpoint = Checkpoint
+(** @inline *)
+
+module Train_state = Train_state
 (** @inline *)
 
 module Ptree = Ptree

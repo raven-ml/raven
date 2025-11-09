@@ -4,6 +4,25 @@
     generate synthetic datasets for testing and experimentation. Real datasets
     are downloaded and cached in the platform-specific cache directory. *)
 
+(** {2 Cache Management}
+
+    Helpers for inspecting dataset cache locations. *)
+
+val get_cache_dir : ?getenv:(string -> string option) -> string -> string
+(** Resolve the cache directory for the given dataset name.
+
+    The lookup order is: 1. [RAVEN_CACHE_ROOT] 2. [XDG_CACHE_HOME] 3.
+    [$HOME/.cache]
+
+    The returned path uses platform-specific separators, ends with a trailing
+    separator, and is rooted at either [RAVEN_CACHE_ROOT] or
+    "[XDG_CACHE_HOME or HOME]/raven", with datasets stored under a [datasets]
+    subdirectory.
+
+    @param getenv optional environment getter (defaults to [Sys.getenv_opt]).
+    @param dataset_name name of the dataset.
+    @return cache directory path with trailing separator. *)
+
 (** {2 Loading Real Datasets}
 
     Functions to load classic machine learning datasets as Nx tensors. *)

@@ -67,6 +67,12 @@ val transition :
     Defaults: [reward = 0.0], [terminated = false], [truncated = false],
     [info = Info.empty]. *)
 
+type render_mode = [ `Human | `Rgb_array | `Ansi | `Svg | `Custom of string ]
+(** Rendering modes supported by environments. *)
+
+val render_mode_to_string : render_mode -> string
+(** Convert a render mode to the metadata string representation. *)
+
 type ('obs, 'act, 'render) t
 (** Environment handle.
 
@@ -79,6 +85,8 @@ type ('obs, 'act, 'render) t
 val create :
   ?id:string ->
   ?metadata:Metadata.t ->
+  ?render_mode:render_mode ->
+  ?validate_transition:(('obs, 'act, 'render) transition -> unit) ->
   rng:Rune.Rng.key ->
   observation_space:'obs Space.t ->
   action_space:'act Space.t ->
@@ -94,6 +102,8 @@ val create :
     Parameters:
     - [id]: Optional identifier for the environment
     - [metadata]: Environment metadata (default: {!Metadata.default})
+    - [render_mode]: Optional render mode requested for the environment. When
+      provided, it must be listed in [metadata.render_modes]
     - [rng]: Random number generator key for reproducibility
     - [observation_space]: Space defining valid observations
     - [action_space]: Space defining valid actions
@@ -101,6 +111,8 @@ val create :
       reset [options] and returns initial observation and info
     - [step]: Function to advance environment by one timestep. Receives an
       action and returns a transition
+    - [validate_transition]: Optional hook invoked after each [step] to enforce
+      custom invariants (e.g., value bounds)
     - [render]: Optional function to render environment state
     - [close]: Optional cleanup function to release resources *)
 
@@ -109,6 +121,9 @@ val id : ('obs, 'act, 'render) t -> string option
 
 val metadata : ('obs, 'act, 'render) t -> Metadata.t
 (** [metadata env] returns the environment's metadata. *)
+
+val render_mode : ('obs, 'act, 'render) t -> render_mode option
+(** [render_mode env] returns the render mode chosen at construction, if any. *)
 
 val set_metadata : ('obs, 'act, 'render) t -> Metadata.t -> unit
 (** [set_metadata env metadata] updates the environment's metadata. *)
@@ -160,7 +175,9 @@ val step : ('obs, 'act, 'render) t -> 'act -> ('obs, 'act, 'render) transition
 val render : ('obs, 'act, 'render) t -> 'render option
 (** [render env] produces a visualization of the current environment state.
 
-    Returns [None] if rendering is not supported or unavailable. *)
+    Returns [None] if rendering is not supported or unavailable. In [`Human]
+    mode, environments should render during {!reset} and {!step} automatically
+    and may return [None]. *)
 
 val close : ('obs, 'act, 'render) t -> unit
 (** [close env] releases resources held by the environment.

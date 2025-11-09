@@ -603,7 +603,7 @@ module Curriculum = struct
     recent_rewards : float list ref;
   }
 
-  let create_config ?(success_threshold = 0.8) ?(window_size = 100) stages =
+  let create_config ?(success_threshold = 0.6) ?(window_size = 20) stages =
     {
       stages;
       current_idx = ref 0;
@@ -611,6 +611,14 @@ module Curriculum = struct
       window_size;
       recent_rewards = ref [];
     }
+
+  let trim_to n lst =
+    let rec aux idx acc = function
+      | [] -> List.rev acc
+      | _ when idx >= n -> List.rev acc
+      | x :: xs -> aux (idx + 1) (x :: acc) xs
+    in
+    aux 0 [] lst
 
   let generate_level = function
     | Corridor len -> Level_gen.generate_corridor len
@@ -621,18 +629,14 @@ module Curriculum = struct
   let update_and_check_advance config _reward won =
     (* Track win (1.0) or loss (0.0) for success rate calculation *)
     let outcome = if won then 1.0 else 0.0 in
-    config.recent_rewards := outcome :: !(config.recent_rewards);
-
-    if List.length !(config.recent_rewards) > config.window_size then
-      config.recent_rewards :=
-        List.filteri
-          (fun i _ -> i < config.window_size)
-          !(config.recent_rewards);
-
-    if List.length !(config.recent_rewards) >= config.window_size then
+    config.recent_rewards :=
+      trim_to config.window_size (outcome :: !(config.recent_rewards));
+    let count = List.length !(config.recent_rewards) in
+    let minimum_samples = max 10 (config.window_size / 2) in
+    if count >= minimum_samples then
       let wins = List.filter (fun r -> r > 0.5) !(config.recent_rewards) in
       let success_rate =
-        float_of_int (List.length wins) /. float_of_int config.window_size
+        float_of_int (List.length wins) /. float_of_int count
       in
 
       if
@@ -654,7 +658,7 @@ end
 
 type observation = (float, Rune.float32_elt) Rune.t
 type action = (int32, Rune.int32_elt) Rune.t
-type render = string
+type render = Render.t
 
 type state = {
   mutable game_state : Core.game_state;
@@ -665,22 +669,213 @@ type state = {
   initial_state_fn : (unit -> Core.game_state) option;
 }
 
+module Env_table = Hashtbl.Make (struct
+  type t = Obj.t
+
+  let equal a b = a == b
+  let hash = Hashtbl.hash
+end)
+
+let state_registry : state Env_table.t = Env_table.create 16
+
+let register_env env state =
+  Env_table.replace state_registry (Obj.repr env) state
+
+let unregister_env env = Env_table.remove state_registry (Obj.repr env)
+
+let lookup_state env =
+  match Env_table.find_opt state_registry (Obj.repr env) with
+  | Some state -> state
+  | None -> invalid_arg "Sokoban_env: environment not registered"
+
 let max_grid_size = 10
-let render state = Core.render state.game_state
+let observation_channels = 8
+let observation_flat_size = observation_channels * max_grid_size * max_grid_size
+let mask_channel_index = observation_channels - 1
+
+let cell_to_channel = function
+  | Core.Empty -> 0
+  | Core.Wall -> 1
+  | Core.Box -> 2
+  | Core.Target -> 3
+  | Core.Box_on_target -> 4
+  | Core.Player -> 5
+  | Core.Player_on_target -> 6
+
+let render_text state = Core.render state.game_state
+
+let tile_color = function
+  | Core.Empty -> (40, 44, 52)
+  | Core.Wall -> (80, 86, 96)
+  | Core.Box -> (196, 142, 80)
+  | Core.Target -> (220, 200, 130)
+  | Core.Box_on_target -> (120, 190, 120)
+  | Core.Player -> (82, 142, 212)
+  | Core.Player_on_target -> (120, 200, 220)
+
+let cell_size = 32
+let frame_cells = max_grid_size
+let frame_width = frame_cells * cell_size
+let frame_height = frame_cells * cell_size
+let clamp_color value = max 0 (min 255 value)
+
+let fill_rect data ~width ~x0 ~y0 ~w ~h (r, g, b) =
+  let r = Char.unsafe_chr (clamp_color r) in
+  let g = Char.unsafe_chr (clamp_color g) in
+  let b = Char.unsafe_chr (clamp_color b) in
+  for dy = 0 to h - 1 do
+    let y = y0 + dy in
+    let row_offset = y * width * 3 in
+    for dx = 0 to w - 1 do
+      let x = x0 + dx in
+      let base = row_offset + (x * 3) in
+      Bigarray.Array1.unsafe_set data (base + 0) r;
+      Bigarray.Array1.unsafe_set data (base + 1) g;
+      Bigarray.Array1.unsafe_set data (base + 2) b
+    done
+  done
+
+let render_image state =
+  let data =
+    Bigarray.Array1.create Bigarray.char Bigarray.c_layout
+      (frame_width * frame_height * 3)
+  in
+  (* Background *)
+  fill_rect data ~width:frame_width ~x0:0 ~y0:0 ~w:frame_width ~h:frame_height
+    (32, 36, 44);
+  for gy = 0 to frame_cells - 1 do
+    for gx = 0 to frame_cells - 1 do
+      let cell =
+        if gx < state.game_state.Core.width && gy < state.game_state.Core.height
+        then state.game_state.Core.grid.(gy).(gx)
+        else Core.Empty
+      in
+      let x0 = gx * cell_size in
+      let y0 = gy * cell_size in
+      let base_color = tile_color cell in
+      fill_rect data ~width:frame_width ~x0 ~y0 ~w:cell_size ~h:cell_size
+        base_color;
+      (* subtle inner highlight *)
+      fill_rect data ~width:frame_width ~x0:(x0 + 2) ~y0:(y0 + 2)
+        ~w:(cell_size - 4) ~h:(cell_size - 4)
+        (match cell with
+        | Core.Wall -> (90, 96, 108)
+        | Core.Box -> (206, 152, 90)
+        | Core.Box_on_target -> (130, 206, 130)
+        | Core.Player -> (102, 162, 232)
+        | Core.Player_on_target -> (135, 215, 230)
+        | Core.Target -> (230, 210, 150)
+        | Core.Empty -> (46, 50, 58))
+    done
+  done;
+  Render.image_u8 ~width:frame_width ~height:frame_height ~pixel_format:`RGB8
+    ~data ()
+
+let render env state =
+  match Env.render_mode env with
+  | Some `Rgb_array -> Render.Image (render_image state)
+  | Some `Human -> Render.Image (render_image state)
+  | Some `Ansi -> Render.Text (render_text state)
+  | Some (`Custom mode) when String.equal mode "rgb_array" ->
+      Render.Image (render_image state)
+  | Some (`Custom mode) when String.equal mode "ansi" ->
+      Render.Text (render_text state)
+  | _ -> Render.Text (render_text state)
 
 let observation_space =
   Space.Box.create
-    ~low:(Array.make (max_grid_size * max_grid_size) 0.0)
-    ~high:(Array.make (max_grid_size * max_grid_size) 6.0)
+    ~low:(Array.make observation_flat_size 0.0)
+    ~high:(Array.make observation_flat_size 1.0)
 
 let action_space = Space.Discrete.create 4
 
 (** Create observation tensor from game state with padding *)
 let make_observation game_state =
-  let features = Core.state_to_features game_state in
-  let padded_features = Array.make (max_grid_size * max_grid_size) 0.0 in
-  Array.blit features 0 padded_features 0 (Array.length features);
-  Rune.create Rune.float32 [| max_grid_size * max_grid_size |] padded_features
+  let g = max_grid_size in
+  let data = Array.make observation_flat_size 0.0 in
+  let open Core in
+  let height = game_state.height in
+  let width = game_state.width in
+  for y = 0 to height - 1 do
+    for x = 0 to width - 1 do
+      let base_index = (y * g) + x in
+      let mask_offset = (mask_channel_index * g * g) + base_index in
+      data.(mask_offset) <- 1.0;
+      let cell = game_state.grid.(y).(x) in
+      let channel = cell_to_channel cell in
+      let offset = (channel * g * g) + base_index in
+      data.(offset) <- 1.0
+    done
+  done;
+  Rune.create Rune.float32 [| observation_flat_size |] data
+
+let can_move direction state =
+  let open Core in
+  let next_pos = move_position state.player_pos direction in
+  match get_cell state next_pos with
+  | Empty | Target -> true
+  | Box | Box_on_target ->
+      let after_box = move_position next_pos direction in
+      is_empty (get_cell state after_box)
+  | Player | Player_on_target -> false
+  | Wall -> false
+
+let action_mask state =
+  [|
+    can_move Core.Up state;
+    can_move Core.Down state;
+    can_move Core.Left state;
+    can_move Core.Right state;
+  |]
+
+let manhattan (x1, y1) (x2, y2) = Stdlib.abs (x1 - x2) + Stdlib.abs (y1 - y2)
+
+let boxes_and_targets state =
+  let open Core in
+  let boxes = ref [] in
+  let targets = ref [] in
+  for y = 0 to state.height - 1 do
+    for x = 0 to state.width - 1 do
+      match state.grid.(y).(x) with
+      | Box -> boxes := (x, y) :: !boxes
+      | Box_on_target ->
+          boxes := (x, y) :: !boxes;
+          targets := (x, y) :: !targets
+      | Target -> targets := (x, y) :: !targets
+      | Player_on_target -> targets := (x, y) :: !targets
+      | _ -> ()
+    done
+  done;
+  (!boxes, !targets)
+
+let sorted_boxes state =
+  let boxes, _ = boxes_and_targets state in
+  List.sort Stdlib.compare boxes
+
+let potential state =
+  let boxes, targets = boxes_and_targets state in
+  match (boxes, targets) with
+  | [], _ | _, [] -> 0.0
+  | _ ->
+      let best_distance (x, y) =
+        List.fold_left
+          (fun acc target -> Stdlib.min acc (manhattan (x, y) target))
+          max_int targets
+      in
+      let total =
+        List.fold_left (fun acc box -> acc + best_distance box) 0 boxes
+      in
+      let max_per_box = max 1 (state.width - 1 + (state.height - 1)) in
+      let max_total = max_per_box * List.length boxes in
+      let diff = max_total - total in
+      float_of_int (if diff > 0 then diff else 0)
+
+let shaping_gamma = 0.99
+let shaping_beta = 0.1
+
+let has_any_move state =
+  let mask = action_mask state in
+  mask.(0) || mask.(1) || mask.(2) || mask.(3)
 
 (** Convert action tensor to direction *)
 let action_to_direction action =
@@ -704,8 +899,65 @@ let stage_info curriculum_config =
       Printf.sprintf "%d/%d" current total
   | None -> "1/1"
 
+let registered_curriculum env =
+  try (lookup_state env).curriculum_config with Invalid_argument _ -> None
+
+let stage_to_string = function
+  | Curriculum.Corridor len -> Printf.sprintf "corridor-%d" len
+  | Curriculum.Room size -> Printf.sprintf "room-%d" size
+  | Curriculum.Multi_box n -> Printf.sprintf "multi-box-%d" n
+  | Curriculum.Complex -> "complex"
+
+let stage_descriptor curriculum_config =
+  match curriculum_config with
+  | Some config ->
+      let stage = Curriculum.get_current_stage config in
+      let idx = !(config.Curriculum.current_idx) in
+      let total = List.length config.Curriculum.stages in
+      Printf.sprintf "%s-%02d-of-%02d" (stage_to_string stage) (idx + 1) total
+  | None -> "single-stage"
+
+let current_game_state env = Core.copy_state (lookup_state env).game_state
+let has_registered_state env = Env_table.mem state_registry (Obj.repr env)
+let state_opt env = Env_table.find_opt state_registry (Obj.repr env)
+
+let current_stage env =
+  let state = lookup_state env in
+  match state.curriculum_config with
+  | Some config ->
+      let idx = !(config.Curriculum.current_idx) in
+      let stage = Curriculum.get_current_stage config in
+      Some (stage, idx, List.length config.Curriculum.stages)
+  | None -> None
+
+let current_stage_label env = stage_info (registered_curriculum env)
+
+let current_stage_descriptor env =
+  match state_opt env with
+  | Some state -> stage_descriptor state.curriculum_config
+  | None -> "static-level"
+
+let current_stage_descriptor_opt env =
+  match state_opt env with
+  | None -> None
+  | Some state -> (
+      match state.curriculum_config with
+      | None -> None
+      | Some _ -> Some (stage_descriptor state.curriculum_config))
+
+let current_stage_label_opt env =
+  match state_opt env with
+  | None -> None
+  | Some state -> Some (stage_info state.curriculum_config)
+
+let current_game_state_opt env =
+  match state_opt env with
+  | None -> None
+  | Some state -> Some (Core.copy_state state.game_state)
+
 let metadata =
   Metadata.default
+  |> Metadata.add_render_mode "rgb_array"
   |> Metadata.add_render_mode "ansi"
   |> Metadata.with_description
        (Some "Sokoban puzzle game with curriculum learning support")
@@ -729,23 +981,32 @@ let reset _env ?options:_ () state =
   state.game_state <- level;
   let obs = make_observation level in
   let info =
-    Info.set "stage"
-      (Info.string (stage_info state.curriculum_config))
-      Info.empty
+    Info.empty
+    |> Info.set "stage" (Info.string (stage_descriptor state.curriculum_config))
+    |> Info.set "action_mask" (Info.bool_array (action_mask level))
   in
   (obs, info)
 
 let step _env action state =
   state.steps <- state.steps + 1;
+  let phi_s = potential state.game_state in
+  let boxes_before = sorted_boxes state.game_state in
   let direction = action_to_direction action in
-  let old_state = state.game_state in
-  state.game_state <- Core.apply_action state.game_state direction;
-
-  let moved = state.game_state != old_state in
+  let new_state = Core.apply_action state.game_state direction in
+  let moved = not (Stdlib.( == ) new_state state.game_state) in
+  state.game_state <- new_state;
+  let boxes_after = sorted_boxes state.game_state in
+  let pushed = boxes_before <> boxes_after in
   let won = Core.check_win state.game_state in
-  let truncated = state.steps >= state.max_steps in
+  let no_moves = not (has_any_move state.game_state) in
+  let truncated = state.steps >= state.max_steps || no_moves in
 
-  let reward = if won then 100.0 else if not moved then -0.1 else -0.01 in
+  let base_reward = if won then 100.0 else if not moved then -0.2 else -0.01 in
+  let phi_s' = potential state.game_state in
+  let shaping =
+    if pushed then shaping_beta *. ((shaping_gamma *. phi_s') -. phi_s) else 0.0
+  in
+  let reward = base_reward +. shaping in
 
   (* Only check advancement when episode ends (won or truncated) *)
   let advanced =
@@ -756,17 +1017,19 @@ let step _env action state =
   in
 
   let obs = make_observation state.game_state in
-
   let info =
     Info.empty
     |> Info.set "steps" (Info.int state.steps)
-    |> Info.set "stage" (Info.string (stage_info state.curriculum_config))
+    |> Info.set "stage" (Info.string (stage_descriptor state.curriculum_config))
     |> Info.set "advanced" (Info.bool advanced)
+    |> Info.set "dead_end" (Info.bool no_moves)
+    |> Info.set "action_mask" (Info.bool_array (action_mask state.game_state))
   in
 
   Env.transition ~observation:obs ~reward ~terminated:won ~truncated ~info ()
 
-let make ?(max_steps = 200) ?(rng = Rune.Rng.key 42) ?curriculum_stages () =
+let make ?(max_steps = 200) ?(rng = Rune.Rng.key 42) ?curriculum_stages
+    ?render_mode () =
   let curriculum_config =
     Option.map Curriculum.create_config curriculum_stages
   in
@@ -786,14 +1049,20 @@ let make ?(max_steps = 200) ?(rng = Rune.Rng.key 42) ?curriculum_stages () =
     }
   in
 
-  Env.create ~id:"Sokoban-v0" ~metadata ~rng ~observation_space ~action_space
-    ~reset:(fun env ?options () -> reset env ?options () state)
-    ~step:(fun env action -> step env action state)
-    ~render:(fun _ -> Some (render state))
-    ~close:(fun _ -> ())
-    ()
+  let env =
+    Env.create ~id:"Sokoban-v0" ~metadata ?render_mode ~rng ~observation_space
+      ~action_space
+      ~reset:(fun env ?options () -> reset env ?options () state)
+      ~step:(fun env action -> step env action state)
+      ~render:(fun env -> Some (render env state))
+      ~close:(fun env -> unregister_env env)
+      ()
+  in
+  register_env env state;
+  env
 
-let sokoban ?(max_steps = 200) ?initial_state ?initial_state_fn () =
+let sokoban ?(max_steps = 200) ?initial_state ?initial_state_fn ?render_mode ()
+    =
   (match (initial_state, initial_state_fn) with
   | Some _, Some _ ->
       invalid_arg
@@ -824,15 +1093,19 @@ let sokoban ?(max_steps = 200) ?initial_state ?initial_state_fn () =
     }
   in
 
-  Env.create ~id:"Sokoban-v0" ~metadata ~rng:(Rune.Rng.key 42)
-    ~observation_space ~action_space
-    ~reset:(fun env ?options () -> reset env ?options () state)
-    ~step:(fun env action -> step env action state)
-    ~render:(fun _ -> Some (render state))
-    ~close:(fun _ -> ())
-    ()
+  let env =
+    Env.create ~id:"Sokoban-v0" ~metadata ?render_mode ~rng:(Rune.Rng.key 42)
+      ~observation_space ~action_space
+      ~reset:(fun env ?options () -> reset env ?options () state)
+      ~step:(fun env action -> step env action state)
+      ~render:(fun env -> Some (render env state))
+      ~close:(fun env -> unregister_env env)
+      ()
+  in
+  register_env env state;
+  env
 
-let sokoban_curriculum ?max_steps () =
+let sokoban_curriculum ?max_steps ?render_mode () =
   let stages =
     [
       Curriculum.Corridor 3;
@@ -844,4 +1117,4 @@ let sokoban_curriculum ?max_steps () =
       Curriculum.Complex;
     ]
   in
-  make ?max_steps ~curriculum_stages:stages ()
+  make ?max_steps ?render_mode ~curriculum_stages:stages ()

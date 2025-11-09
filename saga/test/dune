@@ -1,14 +1,17 @@
+(data_only_dirs fixtures scripts)
+
 (tests
  (names
   test_tokenization
   test_vocab
   test_encoding
   test_unicode
-  test_errors
   test_bpe
   test_wordpiece
   test_ngram
-  test_gpt2_tokenizer
-  test_pretokenizers)
+  test_hf_tokenizers
+  test_processors
+  test_pretokenizers
+  test_io)
  (package saga)
- (libraries saga saga.tokenizers saga.models nx alcotest unix))
+ (libraries saga saga.tokenizers nx alcotest unix))

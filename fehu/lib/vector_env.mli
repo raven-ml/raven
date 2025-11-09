@@ -102,8 +102,20 @@ val step : ('obs, 'act, 'render) t -> 'act array -> ('obs, 'act, 'render) step
     If autoreset is enabled ([Next_step]), terminated environments automatically
     reset and return their initial observation. The [terminations] and
     [truncations] arrays indicate which environments ended before resetting.
+    Infos for terminated environments include a [`final_observation`] key with
+    the structured final observation encoded as an {!Info.value}.
 
     @raise Invalid_argument if [actions] length doesn't match {!num_envs}. *)
+
+val render : ('obs, 'act, 'render) t -> 'render option array
+(** [render vec_env] calls {!Env.render} on each underlying environment.
+
+    Returns an array of render outputs (or [None] if an environment does not
+    produce a frame). *)
+
+val envs : ('obs, 'act, 'render) t -> ('obs, 'act, 'render) Env.t array
+(** [envs vec_env] returns the array of underlying environments. Mutating the
+    array updates the vector environment in place. *)
 
 val close : ('obs, 'act, 'render) t -> unit
 (** [close vec_env] closes all constituent environments.

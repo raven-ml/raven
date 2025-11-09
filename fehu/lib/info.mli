@@ -35,6 +35,9 @@ type value =
   | Bool of bool  (** Boolean value *)
   | Int of int  (** Integer value *)
   | Float of float  (** Floating-point value *)
+  | Int_array of int array  (** Array of integers *)
+  | Float_array of float array  (** Array of floats *)
+  | Bool_array of bool array  (** Array of booleans *)
   | String of string  (** String value *)
   | List of value list  (** List of values *)
   | Dict of (string * value) list  (** Nested dictionary *)
@@ -94,7 +97,19 @@ val int : int -> value
 (** [int n] constructs an integer value. *)
 
 val float : float -> value
-(** [float x] constructs a float value. *)
+(** [float x] constructs a float value.
+
+    Non-finite values ([nan], [+∞], [-∞]) round-trip via JSON using sentinel
+    strings and are restored on deserialization. *)
+
+val int_array : int array -> value
+(** [int_array arr] constructs an integer array value. *)
+
+val float_array : float array -> value
+(** [float_array arr] constructs a float array value. *)
+
+val bool_array : bool array -> value
+(** [bool_array arr] constructs a boolean array value. *)
 
 val string : string -> value
 (** [string s] constructs a string value. *)

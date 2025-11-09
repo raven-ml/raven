@@ -26,8 +26,13 @@ let decode_bpe ~suffix tokens =
 
 (** Decode byte-level tokens *)
 let decode_byte_level tokens =
-  (* TODO: Implement proper byte-level decoding *)
-  String.concat " " tokens
+  let buffer = Buffer.create 128 in
+  List.iter
+    (fun token ->
+      let decoded = Pre_tokenizers.byte_level_decode token in
+      Buffer.add_string buffer decoded)
+    tokens;
+  Buffer.contents buffer
 
 (** Decode byte fallback tokens *)
 let decode_byte_fallback tokens =
@@ -298,9 +303,9 @@ let rec of_json = function
             | _ -> ""
           in
           BPE { suffix }
-      | Some (`String "Byte_level") -> Byte_level
-      | Some (`String "Byte_fallback") -> Byte_fallback
-      | Some (`String "Word_piece") ->
+      | Some (`String ("Byte_level" | "ByteLevel")) -> Byte_level
+      | Some (`String ("Byte_fallback" | "ByteFallback")) -> Byte_fallback
+      | Some (`String ("Word_piece" | "WordPiece")) ->
           let prefix =
             match List.assoc_opt "prefix" fields with
             | Some (`String s) -> s

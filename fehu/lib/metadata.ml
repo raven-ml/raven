@@ -45,40 +45,29 @@ let add_tag tag metadata =
 let set_tags tags metadata = { metadata with tags }
 
 let to_yojson metadata =
-  let assoc =
+  let list_field key values =
+    (key, `List (List.map (fun v -> `String v) values))
+  in
+  let base_fields =
     [
-      ( "render_modes",
-        `List (List.map (fun mode -> `String mode) metadata.render_modes) );
-      ( "supported_vector_modes",
-        `List
-          (List.map (fun mode -> `String mode) metadata.supported_vector_modes)
-      );
-      ( "authors",
-        `List (List.map (fun author -> `String author) metadata.authors) );
-      ("tags", `List (List.map (fun tag -> `String tag) metadata.tags));
+      list_field "authors" metadata.authors;
+      list_field "render_modes" metadata.render_modes;
+      list_field "supported_vector_modes" metadata.supported_vector_modes;
+      list_field "tags" metadata.tags;
     ]
   in
-  let assoc =
-    match metadata.render_fps with
-    | None -> assoc
-    | Some fps -> ("render_fps", `Int fps) :: assoc
+  let add_opt key to_json opt acc =
+    match opt with None -> acc | Some value -> (key, to_json value) :: acc
   in
-  let assoc =
-    match metadata.description with
-    | None -> assoc
-    | Some description -> ("description", `String description) :: assoc
+  let fields =
+    base_fields
+    |> add_opt "description" (fun s -> `String s) metadata.description
+    |> add_opt "extra" (fun json -> json) metadata.extra
+    |> add_opt "render_fps" (fun fps -> `Int fps) metadata.render_fps
+    |> add_opt "version" (fun v -> `String v) metadata.version
   in
-  let assoc =
-    match metadata.version with
-    | None -> assoc
-    | Some version -> ("version", `String version) :: assoc
-  in
-  let assoc =
-    match metadata.extra with
-    | None -> assoc
-    | Some extra -> ("extra", extra) :: assoc
-  in
-  `Assoc assoc
+  let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
+  `Assoc sorted
 
 let string_list_member key json =
   match member key json with
@@ -136,3 +125,20 @@ let of_yojson json =
         extra;
       }
   with Failure msg -> Error msg
+
+let with_render_modes modes metadata = { metadata with render_modes = modes }
+
+let with_supported_vector_modes modes metadata =
+  { metadata with supported_vector_modes = modes }
+
+let add_supported_vector_mode mode metadata =
+  if List.exists (String.equal mode) metadata.supported_vector_modes then
+    metadata
+  else
+    {
+      metadata with
+      supported_vector_modes = metadata.supported_vector_modes @ [ mode ];
+    }
+
+let with_authors authors metadata = { metadata with authors }
+let with_extra extra metadata = { metadata with extra }

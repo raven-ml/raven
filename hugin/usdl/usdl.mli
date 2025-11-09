@@ -88,11 +88,11 @@ val destroy_texture : Texture.t -> unit
 
 (** Event Handling *)
 module Event_type : sig
-  type t = [ `Quit | `Window_event | `Unknown of int ]
+  type t = [ `Quit | `Window_event | `Key_down | `Unknown of int ]
 end
 
 module Window_event_id : sig
-  type t = [ `Resized | `Size_changed | `Exposed | `Unknown of int ]
+  type t = [ `Resized | `Size_changed | `Exposed | `Close | `Unknown of int ]
 end
 
 val create_event : unit -> Event.t (* Allocates storage for one event *)
@@ -102,3 +102,9 @@ val wait_event : Event.t option -> bool result
 
 val get_event_type : Event.t -> Event_type.t
 val get_window_event_id : Event.t -> Window_event_id.t
+val get_event_keycode : Event.t -> int
+
+module Keycode : sig
+  val escape : int
+  val q : int
+end

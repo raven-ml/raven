@@ -1,0 +1,3 @@
+(executables
+ (names gpt2 generate)
+ (libraries rune kaun kaun.models saga))

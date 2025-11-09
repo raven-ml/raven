@@ -76,10 +76,7 @@ let shuffle key x =
   else
     let n = shape_x.(0) in
     let perm = permutation key n in
-    (* Create shuffled tensor by indexing *)
-    let perm_array = to_array perm |> Array.map Int32.to_int in
-    let results = Array.map (fun i -> get [ i ] x) perm_array in
-    concatenate ~axis:0 (Array.to_list results)
+    take ~axis:0 perm x
 
 let categorical (type a b) (key : key) ?(axis : int = -1)
     ?(shape : int array = [||]) (logits : (a, b) Tensor.t) : Tensor.int32_t =
@@ -139,13 +136,59 @@ let categorical (type a b) (key : key) ?(axis : int = -1)
       invalid_arg "categorical: float8 logits not supported"
   | _ -> invalid_arg "categorical: logits dtype must be floating point"
 
-let truncated_normal key dtype ~lower ~upper shape =
+let truncated_normal (type a b) key (dtype : (a, b) Nx_core.Dtype.t) ~lower
+    ~upper shape =
   if lower >= upper then
     invalid_arg
       (Printf.sprintf "truncated_normal: lower must be less than upper");
 
-  (* Simple clipping approach for now *)
-  let vals = normal key dtype shape in
+  let supported =
+    match dtype with
+    | Tensor.Float16 | Tensor.Float32 | Tensor.Float64 | Tensor.BFloat16 -> true
+    | _ -> false
+  in
+  if not supported then
+    invalid_arg "truncated_normal: dtype must be a floating point type";
 
-  (* Clip values to bounds *)
-  clip vals ~min:lower ~max:upper
+  let scalar_lower = scalar dtype lower in
+  let scalar_upper = scalar dtype upper in
+
+  let split2 key =
+    match split ~n:2 key with [| a; b |] -> (a, b) | _ -> assert false
+  in
+
+  let has_remaining mask =
+    let any_mask = Tensor.any mask in
+    let arr = to_array any_mask in
+    match arr with [| v |] -> v | _ -> false
+  in
+
+  let max_attempts = 1000 in
+
+  let sample_key, next_key = split2 key in
+  let initial = normal sample_key dtype shape in
+  let within_lower = greater_equal initial scalar_lower in
+  let within_upper = less_equal initial scalar_upper in
+  let accepted = logical_and within_lower within_upper in
+  let remaining = logical_not accepted in
+
+  let rec fill key acc remaining attempt =
+    if not (has_remaining remaining) then acc
+    else if attempt > max_attempts then
+      invalid_arg
+        (Printf.sprintf
+           "truncated_normal: failed to generate samples within bounds after \
+            %d attempts"
+           max_attempts)
+    else
+      let resample_key, next_key = split2 key in
+      let candidates = normal resample_key dtype shape in
+      let within_lower = greater_equal candidates scalar_lower in
+      let within_upper = less_equal candidates scalar_upper in
+      let within = logical_and within_lower within_upper in
+      let take_new = logical_and remaining within in
+      let acc = where take_new candidates acc in
+      let still_remaining = logical_and remaining (logical_not within) in
+      fill next_key acc still_remaining (attempt + 1)
+  in
+  fill next_key initial remaining 1

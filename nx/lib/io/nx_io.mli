@@ -4,6 +4,8 @@
     formats (.npy, .npz), HDF5 archives, and SafeTensors. Emphasizes safety with
     result types for error handling and labeled arguments for clarity. *)
 
+module Cache_dir = Cache_dir
+
 (** {1 Types} *)
 
 (** Existential container for an [Nx.t] of any dtype and dimensionality.
@@ -57,6 +59,10 @@ val as_uint8 : packed_nx -> Nx.uint8_t
 val as_uint16 : packed_nx -> Nx.uint16_t
 (** [as_uint16 packed] converts a packed Nx to a [Nx.uint16_t], or [Error] if
     dtype mismatch. *)
+
+val as_bool : packed_nx -> Nx.bool_t
+(** [as_bool packed] converts a packed Nx to a [Nx.bool_t], or [Error] if dtype
+    mismatch. *)
 
 val as_complex32 : packed_nx -> Nx.complex32_t
 (** [as_complex32 packed] converts a packed Nx to a [Nx.complex32_t], or [Error]
@@ -191,6 +197,44 @@ val save_npz : ?overwrite:bool -> string -> (string * packed_nx) list -> unit
 
     Save multiple named nxs to a NumPy `.npz` archive. *)
 
+(** {1 Text Format} *)
+
+val save_txt :
+  ?sep:string ->
+  ?append:bool ->
+  ?newline:string ->
+  ?header:string ->
+  ?footer:string ->
+  ?comments:string ->
+  out:string ->
+  ('a, 'b) Nx.t ->
+  unit
+(** [save_txt ?sep ?append ?newline ?header ?footer ?comments ~out t]
+
+    Save a scalar, 1D, or 2D tensor to a text file. Each row is written on a new
+    line, values separated by [sep] (default: a single space). If [append] is
+    [true], data is appended to [out]; otherwise the file is truncated/created.
+    Optional [header] and [footer] strings are emitted before and after the
+    data, prefixed with [comments] (default: ["# "]). The [newline] argument
+    controls the end-of-line separator. Only numeric and boolean dtypes are
+    supported. *)
+
+val load_txt :
+  ?sep:string ->
+  ?comments:string ->
+  ?skiprows:int ->
+  ?max_rows:int ->
+  ('a, 'b) Nx.dtype ->
+  string ->
+  ('a, 'b) Nx.t
+(** [load_txt ?sep ?comments ?skiprows ?max_rows dtype path]
+
+    Load a tensor from a text file previously written by [save_txt] or a
+    compatible format. Lines beginning with [comments] (after trimming leading
+    whitespace) are ignored. Leading [skiprows] raw lines are skipped. When data
+    has a single row or a single column, the result is 1D; otherwise a 2D tensor
+    of shape [|rows; cols|] is returned. *)
+
 (** {1 SafeTensors Format} *)
 
 val load_safetensor : string -> archive
@@ -245,6 +289,9 @@ module Safe : sig
   val as_uint16 : packed_nx -> (Nx.uint16_t, error) result
   (** Safe alias for [as_uint16] *)
 
+  val as_bool : packed_nx -> (Nx.bool_t, error) result
+  (** Safe alias for [as_bool] *)
+
   val as_complex32 : packed_nx -> (Nx.complex32_t, error) result
   (** Safe alias for [as_complex32] *)
 
@@ -287,6 +334,30 @@ module Safe : sig
     (string * packed_nx) list ->
     (unit, error) result
   (** Safe alias for [save_npz] *)
+
+  (** {2 Text Format} *)
+
+  val save_txt :
+    ?sep:string ->
+    ?append:bool ->
+    ?newline:string ->
+    ?header:string ->
+    ?footer:string ->
+    ?comments:string ->
+    out:string ->
+    ('a, 'b) Nx.t ->
+    (unit, error) result
+  (** Safe alias for [save_txt] *)
+
+  val load_txt :
+    ?sep:string ->
+    ?comments:string ->
+    ?skiprows:int ->
+    ?max_rows:int ->
+    ('a, 'b) Nx.dtype ->
+    string ->
+    (('a, 'b) Nx.t, error) result
+  (** Safe alias for [load_txt] *)
 
   (** {2 SafeTensors Format} *)
 

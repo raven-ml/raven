@@ -1,18 +1,24 @@
 (tests
  (names
   test_checkpoint
+  test_checkpoint_tree
   test_ptree
   test_dataset
   test_metrics
   test_optimizer
-  test_gradients_vs_jax)
+  test_training
+  test_gradients_vs_jax
+  test_huggingface)
  (package kaun)
  (libraries
   rune
   nx
   nx.io
+  nx.core
   kaun
   kaun.huggingface
   kaun.models
   bigarray_ext
+  yojson
+  unix
   alcotest))

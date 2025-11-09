@@ -21,7 +21,7 @@
       let rng = Rune.Rng.key 42 in
       let env = Fehu_envs.Random_walk.make ~rng () in
       let obs, info = Env.reset env () in
-      let action = Space.sample (Env.action_space env) in
+      let action, _ = Space.sample (Env.action_space env) in
       let transition = Env.step env action in
       Printf.printf "Reward: %.2f\n" transition.reward
     ]}
@@ -120,8 +120,11 @@
         let rewards = Buffer.get_rewards data in
         let values = Buffer.get_values data in
         let dones = Buffer.get_dones data in
+        let last_value = 0.0 in
+        let last_done = true in
         let advantages, returns = Training.compute_gae
-          ~rewards ~values ~dones ~gamma:0.99 ~gae_lambda:0.95
+          ~rewards ~values ~dones ~last_value ~last_done ~gamma:0.99
+          ~gae_lambda:0.95
         in
         (* update policy with advantages and returns *)
     ]}
@@ -173,6 +176,9 @@ module Metadata = Metadata
     Metadata includes supported render modes, environment version, author
     information, and tags. *)
 
+module Render = Render
+(** Typed render payloads shared across environments. *)
+
 module Space = Space
 (** Observation and action space definitions.
 
@@ -213,6 +219,10 @@ module Training = Training
     Provides advantage estimation (GAE, Monte Carlo returns), policy gradient
     losses, value losses, and evaluation functions. See {!Training} for
     computational tools. *)
+
+module Policy = Policy
+(** Lightweight helpers for constructing policies (random, deterministic, or
+    greedy discrete). *)
 
 module Trajectory = Trajectory
 (** Trajectory management for experience sequences.

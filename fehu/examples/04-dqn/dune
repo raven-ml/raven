@@ -1,3 +1,3 @@
 (executable
  (name dqn)
- (libraries kaun rune fehu fehu.envs))
+ (libraries kaun rune fehu fehu.envs fehu.algorithms fehu.visualize unix))

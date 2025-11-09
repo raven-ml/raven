@@ -1,6 +1,16 @@
-(include_subdirs unqualified)
+(include_subdirs qualified)
 
 (library
  (name kaun)
  (public_name kaun)
- (libraries rune unix str nx nx.core nx.io yojson domainslib))
+ (libraries
+  rune
+  unix
+  str
+  nx
+  bigarray_ext
+  nx.core
+  nx.io
+  yojson
+  domainslib
+  uutf))

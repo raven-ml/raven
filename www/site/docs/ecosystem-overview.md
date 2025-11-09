@@ -220,7 +220,7 @@ let train_step model opt x y =
     let logits = model x in
     Kaun.cross_entropy_loss logits y
   ) model in
-  let model = Kaun.Optimizer.update opt model grads in
+  let updates, opt_state = Kaun.Optimizer.step opt opt_state params grads in
   model, loss
 ```
 

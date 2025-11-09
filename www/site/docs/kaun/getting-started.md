@@ -71,8 +71,9 @@ let train () =
       let loss, grads = value_and_grad loss_fn model in
       
       (* Update parameters *)
-      let model', opt_state' = Optimizer.update optimizer opt_state model grads in
-      
+      let updates, opt_state' = Optimizer.step optimizer opt_state model grads in
+      let model' = Optimizer.apply_updates model updates in
+
       (* Print progress *)
       if step mod 100 = 0 then
         Printf.printf "Step %d, Loss: %.4f\n" step (Tensor.to_float loss);

@@ -1,5 +1,4 @@
 (* High-level tensor operations built on backend [B]. *)
-
 open Bigarray_ext
 
 module Make (B : Backend_intf.S) = struct
@@ -74,6 +73,7 @@ module Make (B : Backend_intf.S) = struct
   type std_nativeint_t = (nativeint, nativeint_elt) t
   type complex32_t = (Complex.t, complex32_elt) t
   type complex64_t = (Complex.t, complex64_elt) t
+  type bool_t = (bool, bool_elt) t
 
   (* Constructor shortcuts *)
   let float16 = Float16
@@ -97,7 +97,7 @@ module Make (B : Backend_intf.S) = struct
     | R of int * int (* Range [start, stop) *)
     | Rs of int * int * int (* Range with step *)
     | A (* All indices *)
-    | M of (int, uint8_elt) t (* Boolean mask *)
+    | M of (bool, bool_elt) t (* Boolean mask *)
     | N (* New axis *)
 
   (* ───── Basic Tensor Properties ───── *)
@@ -613,11 +613,16 @@ module Make (B : Backend_intf.S) = struct
   let scalar ctx dt value = B.op_const_scalar ctx value dt
   let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
 
-  let fill value x =
+  let ifill value x =
     let value_tensor = scalar_like x value in
     let value_broadcasted = broadcast_to (shape x) value_tensor in
     B.op_assign x value_broadcasted;
     x
+
+  let fill value x =
+    let copied = B.op_copy x in
+    ignore (ifill value copied);
+    copied
 
   let empty ctx dtype shape_arr =
     let numel = array_prod shape_arr in
@@ -630,21 +635,24 @@ module Make (B : Backend_intf.S) = struct
     let buf = B.op_buffer ctx dtype numel in
     let t = reshape shape_arr buf in
     (* Explicitly clear the newly allocated buffer. *)
-    fill (Dtype.zero dtype) t
+    ignore (ifill (Dtype.zero dtype) t);
+    t
 
   let ones ctx dtype shape_arr =
     (* Create actual ones, not broadcast *)
     let numel = array_prod shape_arr in
     let buf = B.op_buffer ctx dtype numel in
     let t = reshape shape_arr buf in
-    fill (Dtype.one dtype) t
+    ignore (ifill (Dtype.one dtype) t);
+    t
 
   let full ctx dt target_shape fill_value =
     (* Create actual filled tensor, not broadcast *)
     let numel = array_prod target_shape in
     let buf = B.op_buffer ctx dt numel in
     let t = reshape target_shape buf in
-    fill fill_value t
+    ignore (ifill fill_value t);
+    t
 
   (* Generic _like helper *)
   let create_like x_ref fill_fn =
@@ -923,8 +931,8 @@ module Make (B : Backend_intf.S) = struct
     B.op_xor a_b b_b
 
   let logical_not (type a b) (a : (a, b) t) =
-    (* For boolean tensors (uint8), logical not is 1 - x *)
-    (* But sub doesn't support uint8, so we use XOR with 1 *)
+    (* For boolean tensors, logical not should flip the bit *)
+    (* But subtraction isn't supported for bool, so we use XOR with 1 *)
     let dt = dtype a in
     match dt with
     | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 | Dtype.QUInt8 ->
@@ -1231,7 +1239,7 @@ module Make (B : Backend_intf.S) = struct
 
   let isinf x =
     let dt = dtype x in
-    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.uint8 (shape x)
+    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.bool (shape x)
     else
       let pos_inf_const = B.op_const_scalar (B.context x) Float.infinity dt in
       let neg_inf_const =
@@ -1243,12 +1251,12 @@ module Make (B : Backend_intf.S) = struct
 
   let isnan x =
     let dt = dtype x in
-    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.uint8 (shape x)
+    if not (Dtype.is_float dt) then zeros (B.context x) Dtype.bool (shape x)
     else cmpne x x
 
   let isfinite x =
     let dt = dtype x in
-    if not (Dtype.is_float dt) then ones (B.context x) Dtype.uint8 (shape x)
+    if not (Dtype.is_float dt) then ones (B.context x) Dtype.bool (shape x)
     else logical_not (logical_or (isinf x) (isnan x))
 
   let lerp start_tensor end_tensor weight =
@@ -1594,7 +1602,7 @@ module Make (B : Backend_intf.S) = struct
     if not can_broadcast then
       (* If shapes can't be broadcast, arrays are not equal Return a scalar
          False (0) *)
-      zeros (B.context x) Dtype.uint8 [||]
+      zeros (B.context x) Dtype.bool [||]
     else
       (* Check element-wise equality and then check if all are true *)
       let eq_result = equal x y in
@@ -3508,6 +3516,103 @@ module Make (B : Backend_intf.S) = struct
         in
         blit result t
 
+  let index_put ~indices ~values ?(mode = `raise) t =
+    let context = B.context t in
+    let t_shape = shape t in
+    let ndim = Array.length t_shape in
+
+    if ndim = 0 then
+      Error.invalid ~op:"index_put" ~what:"tensor rank"
+        ~reason:"cannot index into scalar tensor" ();
+
+    let indices_count = Array.length indices in
+    if indices_count <> ndim then
+      Error.invalid ~op:"index_put" ~what:"indices"
+        ~reason:
+          (Printf.sprintf "expected %d index tensors, got %d" ndim indices_count)
+        ();
+
+    (* Ensure all indices are int32 and broadcastable to a common shape *)
+    let indices_int32 =
+      Array.map
+        (fun idx -> if dtype idx = Int32 then idx else astype Int32 idx)
+        indices
+    in
+    let indices_broadcasted =
+      indices_int32 |> Array.to_list |> broadcast_arrays |> Array.of_list
+    in
+
+    (* Apply bounds handling per-axis and validate zero-sized axes *)
+    let indices_processed =
+      Array.mapi
+        (fun axis idx ->
+          let axis_size = t_shape.(axis) in
+          let has_updates = numel idx <> 0 in
+          if axis_size = 0 && has_updates then
+            Error.invalid ~op:"index_put"
+              ~what:(Printf.sprintf "axis %d" axis)
+              ~reason:"cannot index into zero-sized dimension" ();
+
+          if not has_updates then idx
+          else
+            match mode with
+            | `raise -> idx
+            | `wrap ->
+                if axis_size = 0 then idx
+                else
+                  let modulus_scalar =
+                    scalar (B.context idx) Int32 (Int32.of_int axis_size)
+                  in
+                  let modulus = broadcast_to (shape idx) modulus_scalar in
+                  let wrapped = mod_ idx modulus in
+                  let zeros_idx = zeros (B.context idx) Int32 (shape idx) in
+                  let needs_fix = cmplt wrapped zeros_idx in
+                  let wrapped_plus_mod = add wrapped modulus in
+                  where needs_fix wrapped_plus_mod wrapped
+            | `clip ->
+                if axis_size = 0 then idx
+                else
+                  let zeros_idx = zeros (B.context idx) Int32 (shape idx) in
+                  let max_idx =
+                    full (B.context idx) Int32 (shape idx)
+                      (Int32.of_int (axis_size - 1))
+                  in
+                  minimum (maximum idx zeros_idx) max_idx)
+        indices_broadcasted
+    in
+
+    let target_shape = shape indices_processed.(0) in
+    let num_updates = array_prod target_shape in
+
+    if num_updates = 0 then ()
+    else
+      let values =
+        if shape values = target_shape then values
+        else broadcast_to target_shape values
+      in
+
+      let strides = Shape.c_contiguous_strides t_shape in
+      let flat_indices =
+        let acc = ref (zeros context Int32 target_shape) in
+        for axis = 0 to ndim - 1 do
+          let idx = indices_processed.(axis) in
+          let stride = strides.(axis) in
+          let contribution =
+            if stride = 0 || stride = 1 then idx
+            else
+              let stride_tensor =
+                full context Int32 target_shape (Int32.of_int stride)
+              in
+              mul idx stride_tensor
+          in
+          acc := add !acc contribution
+        done;
+        !acc
+      in
+
+      (* Flatten scatter into the original tensor *)
+      put ~indices:flat_indices ~values ~mode:`raise t
+
   let put_along_axis ~axis ~indices ~values t =
     let axis = resolve_single_axis t axis in
 
@@ -3535,8 +3640,9 @@ module Make (B : Backend_intf.S) = struct
      are NOT differentiable. They use unsafe_get to materialize values. *)
 
   (* Forward declaration for mutual recursion *)
-  let nonzero_indices_only (condition : (int, uint8_elt) t) =
-    (* Special version for compress that only returns indices for uint8 masks *)
+  let nonzero_indices_only (condition : (bool, bool_elt) t) =
+    (* Special version for compress that only returns indices for boolean
+       masks *)
     let total = numel condition in
     let cond_flat = reshape [| total |] condition in
 
@@ -3557,13 +3663,13 @@ module Make (B : Backend_intf.S) = struct
       let idx = ref 0 in
       for i = 0 to total - 1 do
         let elem_val = unsafe_get [ i ] cond_flat in
-        if elem_val <> 0 then (
+        if elem_val then (
           set_item [ !idx ] (Int32.of_int i) indices;
           incr idx)
       done;
       [| indices |]
 
-  let compress ?axis ~(condition : (int, uint8_elt) t) t =
+  let compress ?axis ~(condition : (bool, bool_elt) t) t =
     match axis with
     | None ->
         (* Flatten and compress *)
@@ -3592,9 +3698,9 @@ module Make (B : Backend_intf.S) = struct
                (numel condition) axis axis_size);
 
         (* Get indices where condition is true *)
-        let true_indices =
-          nonzero_indices_only (reshape [| axis_size |] condition)
-        in
+        let cond_1d = reshape [| axis_size |] condition in
+        let true_indices = nonzero_indices_only cond_1d in
+
         if Array.length true_indices = 0 || numel true_indices.(0) = 0 then (
           (* No true values - return empty tensor *)
           let new_shape = Array.copy (shape t) in
@@ -3621,7 +3727,7 @@ module Make (B : Backend_intf.S) = struct
     let total = numel mask in
     let mask_flat = reshape [| total |] mask in
 
-    (* Count non-zeros - mask is uint8 (0 or 1) *)
+    (* Count non-zeros - mask is boolean (true or false) *)
     let n_nonzero =
       let sum_result = sum (astype Int32 mask_flat) in
       let scalar_val = squeeze sum_result |> unsafe_get [] in
@@ -3652,7 +3758,7 @@ module Make (B : Backend_intf.S) = struct
           let is_nonzero_tensor = not_equal elem zero_scalar in
           (* We need to materialize this to iterate - this breaks
              differentiability *)
-          let is_nonzero = unsafe_get [] is_nonzero_tensor <> 0 in
+          let is_nonzero = unsafe_get [] is_nonzero_tensor <> false in
 
           if is_nonzero then (
             (* Store coordinates *)
@@ -3918,6 +4024,28 @@ module Make (B : Backend_intf.S) = struct
 
       (* Cast to target integer dtype *)
       cast dtype floored
+
+  let dropout ?seed ~rate x =
+    if rate < 0.0 || rate >= 1.0 then
+      Error.invalid ~op:"dropout" ~what:"rate"
+        ~reason:"must satisfy 0.0 ≤ rate < 1.0" ();
+    let tensor_dtype = dtype x in
+    if not (Dtype.is_float tensor_dtype) then
+      Error.invalid ~op:"dropout" ~what:"tensor"
+        ~reason:"requires floating point dtype" ();
+    if rate = 0.0 then x
+    else
+      let keep_prob = 1.0 -. rate in
+      let ctx = B.context x in
+      let seed =
+        match seed with Some explicit -> explicit | None -> Random.bits ()
+      in
+      let random_vals = rand ctx tensor_dtype ~seed (shape x) in
+      let threshold = scalar ctx tensor_dtype keep_prob in
+      let keep_mask = cmplt random_vals threshold in
+      let keep_mask_float = cast tensor_dtype keep_mask in
+      let scale = scalar ctx tensor_dtype (1.0 /. keep_prob) in
+      mul x (mul keep_mask_float scale)
 
   (* ───── Sorting and Searching ───── *)
 
@@ -4398,6 +4526,110 @@ module Make (B : Backend_intf.S) = struct
     let nd = ndim x in
     if nd < 2 then x else swapaxes (nd - 2) (nd - 1) x
 
+  (* ───── Complex Helpers ───── *)
+
+  let complex (type a b) ~(real : (a, b) t) ~(imag : (a, b) t) =
+    let real_shape = shape real in
+    let imag_shape = shape imag in
+    if real_shape <> imag_shape then
+      Error.shape_mismatch ~op:"complex" ~expected:real_shape ~actual:imag_shape
+        ();
+    let size = Array.fold_left ( * ) 1 real_shape in
+    match dtype real with
+    | Float32 ->
+        let real = (real : (float, float32_elt) t) in
+        let imag = (imag : (float, float32_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex32 real_shape complex_data)
+    | Float64 ->
+        let real = (real : (float, float64_elt) t) in
+        let imag = (imag : (float, float64_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex64 real_shape complex_data)
+    | _ ->
+        Error.invalid ~op:"complex" ~what:"dtype"
+          ~reason:"real and imag must be float32 or float64" ()
+
+  let real (type a b) (x : (a, b) t) =
+    match dtype x with
+    | Complex32 ->
+        let x = (x : (Complex.t, complex32_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let real_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.re)
+        in
+        Obj.magic (create (B.context x) float32 shape_x real_data)
+    | Complex64 ->
+        let x = (x : (Complex.t, complex64_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let real_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.re)
+        in
+        Obj.magic (create (B.context x) float64 shape_x real_data)
+    | _ ->
+        Error.invalid ~op:"real" ~what:"dtype"
+          ~reason:"input must be complex32 or complex64" ()
+
+  let imag (type a b) (x : (a, b) t) =
+    match dtype x with
+    | Complex32 ->
+        let x = (x : (Complex.t, complex32_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let imag_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.im)
+        in
+        Obj.magic (create (B.context x) float32 shape_x imag_data)
+    | Complex64 ->
+        let x = (x : (Complex.t, complex64_elt) t) in
+        let shape_x = shape x in
+        let size = Array.fold_left ( * ) 1 shape_x in
+        let imag_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i shape_x |> Array.to_list in
+              let c = unsafe_get idx x in
+              c.Complex.im)
+        in
+        Obj.magic (create (B.context x) float64 shape_x imag_data)
+    | _ ->
+        Error.invalid ~op:"imag" ~what:"dtype"
+          ~reason:"input must be complex32 or complex64" ()
+
+  let conjugate (type a b) (x : (a, b) t) =
+    match dtype x with
+    | Complex32 ->
+        let real_part = real x in
+        let imag_part = imag x |> neg in
+        complex ~real:real_part ~imag:imag_part
+    | Complex64 ->
+        let real_part = real x in
+        let imag_part = imag x |> neg in
+        complex ~real:real_part ~imag:imag_part
+    | _ -> x
+
   let vdot (type a b) (a : (a, b) t) (b : (a, b) t) =
     (* Try to broadcast inputs to compatible shapes first *)
     let a', b' =
@@ -4419,8 +4651,7 @@ module Make (B : Backend_intf.S) = struct
     (* For complex types, conjugate first vector *)
     match dtype a with
     | (Complex32 | Complex64) when dtype a = dtype b ->
-        (* TODO: implement conj when available *)
-        sum (mul flat_a flat_b)
+        sum (mul (conjugate flat_a) flat_b)
     | _ -> sum (mul flat_a flat_b)
 
   let vecdot ?axis x1 x2 =
@@ -5159,6 +5390,7 @@ module Make (B : Backend_intf.S) = struct
           Array.iteri
             (fun idx axis -> Hashtbl.replace map axis idx)
             combined_left_axes;
+          (* perm_left_reorder maps old -> new positions for left axes. *)
           let perm_left_reorder =
             Array.map
               (fun axis ->
@@ -5170,9 +5402,15 @@ module Make (B : Backend_intf.S) = struct
           if is_identity perm_left_reorder then result_preorder
           else
             let total_dims = total_left + total_right in
+            (* Transpose expects a permutation mapping new index -> old index.
+               Invert perm_left_reorder (which is old -> new) to build that. *)
+            let perm_left_inverse = Array.make total_left 0 in
+            Array.iteri
+              (fun old_pos new_pos -> perm_left_inverse.(new_pos) <- old_pos)
+              perm_left_reorder;
             let axes_perm =
               Array.init total_dims (fun i ->
-                  if i < total_left then perm_left_reorder.(i) else i)
+                  if i < total_left then perm_left_inverse.(i) else i)
             in
             transpose ~axes:(Array.to_list axes_perm) result_preorder)
       in
@@ -5401,10 +5639,11 @@ module Make (B : Backend_intf.S) = struct
         invalid_arg "contracted input vars '%s' must match output vars '%s'"
           current_axes output_str;
 
+      (* Build permutation mapping new index -> old index for transpose. *)
       let axes_perm =
         Array.init len_current (fun i ->
-            let c = current_axes.[i] in
-            try String.index output_str c
+            let c = output_str.[i] in
+            try String.index current_axes c
             with Not_found ->
               invalid_arg
                 "contracted input vars '%s' must match output vars '%s'"
@@ -5467,14 +5706,86 @@ module Make (B : Backend_intf.S) = struct
     | [||] -> invalid_arg "multi_dot: empty array"
     | [| arr |] -> arr
     | _ ->
-        (* Simple left-to-right multiplication for now *)
-        (* TODO: Implement optimal order using dynamic programming *)
-        let rec multiply_all = function
-          | [] -> failwith "unreachable"
-          | [ x ] -> x
-          | x :: xs -> matmul x (multiply_all xs)
+        let n = Array.length arrays in
+        let dims = Array.make (n + 1) 0 in
+        let matrix_dims idx =
+          let tensor = arrays.(idx) in
+          let nd = ndim tensor in
+          match nd with
+          | 1 ->
+              let shape = shape tensor in
+              let len =
+                if Array.length shape = 0 then
+                  invalid_arg "multi_dot: 1D tensor must have non-empty shape"
+                else shape.(0)
+              in
+              if idx = 0 then (1, len)
+              else if idx = n - 1 then (len, 1)
+              else
+                invalid_arg
+                  "multi_dot: only first and last arguments may be 1D vectors"
+          | 2 ->
+              let shape = shape tensor in
+              (shape.(0), shape.(1))
+          | _ ->
+              invalid_arg
+                (Printf.sprintf
+                   "multi_dot: argument %d must be 1D (endpoints) or 2D matrix"
+                   idx)
         in
-        multiply_all (Array.to_list arrays)
+        for i = 0 to n - 1 do
+          let rows, cols = matrix_dims i in
+          if i = 0 then dims.(0) <- rows
+          else if dims.(i) <> rows then
+            invalid_arg
+              (Printf.sprintf
+                 "multi_dot: shapes not aligned between arguments %d and %d \
+                  (%d <> %d)"
+                 (i - 1) i dims.(i) rows);
+          dims.(i + 1) <- cols
+        done;
+        let dims64 = Array.map Int64.of_int dims in
+        let cost = Array.make_matrix n n Int64.zero in
+        let split = Array.make_matrix n n 0 in
+        for len = 2 to n do
+          for i = 0 to n - len do
+            let j = i + len - 1 in
+            let best_cost = ref Int64.max_int in
+            let best_split = ref i in
+            for k = i to j - 1 do
+              let candidate =
+                Int64.(
+                  add
+                    cost.(i).(k)
+                    (add
+                       cost.(k + 1).(j)
+                       (mul dims64.(i) (mul dims64.(k + 1) dims64.(j + 1)))))
+              in
+              if candidate < !best_cost then (
+                best_cost := candidate;
+                best_split := k)
+            done;
+            cost.(i).(j) <- !best_cost;
+            split.(i).(j) <- !best_split
+          done
+        done;
+        let memo = Array.init n (fun _ -> Array.make n None) in
+        let rec compute i j =
+          match memo.(i).(j) with
+          | Some t -> t
+          | None ->
+              let result =
+                if i = j then arrays.(i)
+                else
+                  let k = split.(i).(j) in
+                  let left = compute i k in
+                  let right = compute (k + 1) j in
+                  matmul left right
+              in
+              memo.(i).(j) <- Some result;
+              result
+        in
+        compute 0 (n - 1)
 
   let cross ?axis a b =
     let axis = Option.value axis ~default:(-1) in
@@ -5738,19 +6049,31 @@ module Make (B : Backend_intf.S) = struct
 
   let matrix_rank ?tol ?rtol ?hermitian a =
     check_float_or_complex ~op:"matrix_rank" a;
-    let _ = hermitian in
-    (* TODO: use for optimization *)
-    let s = svdvals a in
+    let s =
+      match hermitian with
+      | Some true ->
+          (* Use eigenvalue decomposition for hermitian matrices *)
+          let vals, _ = B.op_eigh ~vectors:false a in
+          (* Use absolute values to match SVD behavior for tolerance
+             computation *)
+          abs vals
+      | _ ->
+          (* Use SVD for general matrices *)
+          svdvals a
+    in
     let max_s = max s |> unsafe_get [] in
     let m, n =
       shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
     in
     (* Use appropriate epsilon for the dtype *)
+    let dtype_a = dtype a in
     let eps =
-      if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
-        (* Machine epsilon for float32 *)
-      else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
-        (* Machine epsilon for float64 *)
+      if
+        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
+      then 1.2e-7
+      else if
+        Dtype.equal dtype_a Dtype.float64 || Dtype.equal dtype_a Dtype.complex64
+      then 2.2e-16
       else 1e-15 (* Default for other types *)
     in
     let tol =
@@ -5819,23 +6142,136 @@ module Make (B : Backend_intf.S) = struct
     (* Squeeze result if we expanded b *)
     if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
-  let lstsq ?rcond a b =
-    check_float_or_complex ~op:"lstsq" a;
-    check_float_or_complex ~op:"lstsq" b;
-    let _ = rcond in
-    (* TODO: use for rank determination *)
+  (* Complex helpers placed before pinv to allow conjugation support *)
 
-    (* Use QR decomposition *)
-    let q, r = B.op_qr ~reduced:true a in
-    let y = matmul (matrix_transpose q) b in
+  let complex (type a b) ~(real : (a, b) t) ~(imag : (a, b) t) =
+    (* Check shapes match *)
+    let real_shape = shape real in
+    let imag_shape = shape imag in
+    if real_shape <> imag_shape then
+      Error.shape_mismatch ~op:"complex" ~expected:real_shape ~actual:imag_shape
+        ();
 
-    (* Solve upper triangular system *)
+    (* Create complex tensor based on the input dtype *)
+    let size = Array.fold_left ( * ) 1 real_shape in
+    match dtype real with
+    | Float32 ->
+        let real = (real : (float, float32_elt) t) in
+        let imag = (imag : (float, float32_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex32 real_shape complex_data)
+    | Float64 ->
+        let real = (real : (float, float64_elt) t) in
+        let imag = (imag : (float, float64_elt) t) in
+        let complex_data =
+          Array.init size (fun i ->
+              let idx = Shape.unravel_index i real_shape |> Array.to_list in
+              let re = unsafe_get idx real in
+              let im = unsafe_get idx imag in
+              Complex.{ re; im })
+        in
+        Obj.magic (create (B.context real) complex64 real_shape complex_data)
+    | _ ->
+        Error.invalid ~op:"complex" ~what:"dtype"
+          ~reason:"real and imag must be float32 or float64" ()
+
+  let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
+    check_float_or_complex ~op:"pinv" a;
     let m, n =
       shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
     in
+
+    let dtype_a = dtype a in
+
+    let eps_for_dtype =
+      if
+        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
+      then 1.2e-7
+      else if
+        Dtype.equal dtype_a Dtype.float64 || Dtype.equal dtype_a Dtype.complex64
+      then 2.2e-16
+      else 1e-15
+    in
+
+    let max_dim = float_of_int (Stdlib.max m n) in
+
+    let cutoff ~max_s =
+      match rtol with
+      | Some rtol_value -> rtol_value *. max_s *. max_dim
+      | None -> max_dim *. eps_for_dtype *. max_s
+    in
+
+    let pinv_from_factors u s vh =
+      let max_s = max s |> unsafe_get [] in
+      let cutoff = cutoff ~max_s in
+      let ones_s = ones (B.context s) (dtype s) (shape s) in
+      let threshold = scalar (B.context s) (dtype s) cutoff in
+      let mask = greater s threshold in
+      let safe_s = where mask s ones_s in
+      let s_inv = div ones_s safe_s in
+      let mask_float = cast (dtype s) mask in
+      let s_inv = mul s_inv mask_float |> cast dtype_a in
+      let s_inv_expanded = unsqueeze ~axes:[ 0 ] s_inv in
+      let v = matrix_transpose vh in
+      let vs = mul v s_inv_expanded in
+      if Dtype.is_complex dtype_a then
+        let u_adj = matrix_transpose (conjugate u) in
+        matmul vs u_adj
+      else matmul vs (matrix_transpose u)
+    in
+
+    let pinv_via_svd () =
+      let u, s, vh = B.op_svd ~full_matrices:false a in
+      pinv_from_factors u s vh
+    in
+
+    match hermitian with
+    | Some true -> (
+        let vals, vecs_opt = B.op_eigh ~vectors:true a in
+        match vecs_opt with
+        | None -> pinv_via_svd ()
+        | Some vecs ->
+            let abs_vals = abs vals in
+            let sign_vals = sign vals in
+            let ones_vals = ones (B.context vals) (dtype vals) (shape vals) in
+            let zeros_vals = zeros (B.context vals) (dtype vals) (shape vals) in
+            let sign_vals =
+              where (cmpeq sign_vals zeros_vals) ones_vals sign_vals
+            in
+            let sign_cast = cast dtype_a sign_vals in
+            let sign_expanded = expand_dims [ -1 ] sign_cast in
+            let vh = mul sign_expanded (matrix_transpose vecs) in
+            pinv_from_factors vecs abs_vals vh)
+    | _ -> pinv_via_svd ()
+
+  let lstsq ?rcond a b =
+    check_float_or_complex ~op:"lstsq" a;
+    check_float_or_complex ~op:"lstsq" b;
+    let m, n =
+      shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
+    in
+    let rcond_value =
+      match rcond with
+      | Some v -> v
+      | None ->
+          let eps =
+            if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
+            else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
+            else 1e-15
+          in
+          let max_s = max (svdvals a) |> unsafe_get [] in
+          float_of_int (Stdlib.max m n) *. eps *. max_s
+    in
     let x =
       if m >= n then
-        (* For overdetermined systems, r is [n, n] when reduced=true *)
+        let q, r = B.op_qr ~reduced:true a in
+        let y = matmul (matrix_transpose q) b in
         let r_square =
           if ndim r = 2 then slice_internal [ R (0, n); R (0, n) ] r
           else slice_internal [ A; R (0, n); R (0, n) ] r
@@ -5848,21 +6284,17 @@ module Make (B : Backend_intf.S) = struct
         B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false
           r_square y_top
       else
-        Error.failed ~op:"lstsq" ~what:"underdetermined systems not implemented"
-          ()
+        let a_pseudo = pinv a ~rtol:rcond_value in
+        matmul a_pseudo b
     in
-
-    (* Compute residuals *)
     let residuals =
       if m > n then
         let res = sub b (matmul a x) in
         sum (square res) ~axes:[ ndim res - 2 ] ~keepdims:false
       else zeros (B.context a) (dtype b) [||]
     in
-
     let rank = matrix_rank a in
     let s = svdvals a in
-
     (x, residuals, rank, s)
 
   let inv a =
@@ -5951,52 +6383,6 @@ module Make (B : Backend_intf.S) = struct
         let norm_inv = norm ~ord:`Inf inv_x in
         mul norm_x norm_inv
     | _ -> Error.failed ~op:"cond" ~what:"unsupported norm" ()
-
-  let pinv (type a b) ?rtol:_ ?hermitian (a : (a, b) t) =
-    check_float_or_complex ~op:"pinv" a;
-    let _ = hermitian in
-    (* TODO: use for optimization *)
-
-    let u, s, vh = B.op_svd ~full_matrices:false a in
-
-    (* Determine cutoff *)
-    let cutoff =
-      let max_s = max s |> unsafe_get [] in
-      (* Default cutoff is max(m,n) * eps * max_s *)
-      let m, n =
-        shape a |> fun sh -> (sh.(Array.length sh - 2), sh.(Array.length sh - 1))
-      in
-      (* Use appropriate epsilon for the dtype *)
-      let eps =
-        if Dtype.equal (dtype a) Dtype.float32 then 1.2e-7
-          (* Machine epsilon for float32 *)
-        else if Dtype.equal (dtype a) Dtype.float64 then 2.2e-16
-          (* Machine epsilon for float64 *)
-        else 1e-15 (* Default for other types *)
-      in
-      float_of_int (Stdlib.max m n) *. eps *. max_s
-    in
-
-    (* Compute pseudoinverse *)
-    let ones_s = ones (B.context s) (dtype s) (shape s) in
-    let threshold = scalar (B.context a) (dtype s) cutoff in
-    let mask = greater s threshold in
-    let safe_s = where mask s ones_s in
-    let s_inv = div ones_s safe_s in
-    let mask = cast (dtype s) mask in
-    let s_inv = mul s_inv mask in
-
-    (* Cast s_inv to match input type *)
-    let s_inv = cast (dtype a) s_inv in
-
-    (* Compute V @ S^-1 @ U^H *)
-    (* We need to multiply each column of vh.T by corresponding s_inv element *)
-    (* vh.T has shape [n, k], s_inv has shape [k] *)
-    (* We want broadcasting [n, k] * [1, k] -> [n, k] *)
-    let s_inv_expanded = unsqueeze ~axes:[ 0 ] s_inv in
-    (* Shape [1, k] *)
-    let vs = mul (matrix_transpose vh) s_inv_expanded in
-    matmul vs (matrix_transpose u)
 
   let tensorsolve ?axes a b =
     check_float_or_complex ~op:"tensorsolve" a;
@@ -6105,104 +6491,6 @@ module Make (B : Backend_intf.S) = struct
     reshape out_shape inv_mat
 
   (* ───── Complex Operations and FFT ───── *)
-
-  (* Create complex tensor from real and imaginary parts *)
-  let complex (type a b) ~(real : (a, b) t) ~(imag : (a, b) t) =
-    (* Check shapes match *)
-    let real_shape = shape real in
-    let imag_shape = shape imag in
-    if real_shape <> imag_shape then
-      Error.shape_mismatch ~op:"complex" ~expected:real_shape ~actual:imag_shape
-        ();
-
-    (* Create complex tensor based on the input dtype *)
-    let size = Array.fold_left ( * ) 1 real_shape in
-    match dtype real with
-    | Float32 ->
-        let real = (real : (float, float32_elt) t) in
-        let imag = (imag : (float, float32_elt) t) in
-        let complex_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i real_shape |> Array.to_list in
-              let re = unsafe_get idx real in
-              let im = unsafe_get idx imag in
-              Complex.{ re; im })
-        in
-        Obj.magic (create (B.context real) complex32 real_shape complex_data)
-    | Float64 ->
-        let real = (real : (float, float64_elt) t) in
-        let imag = (imag : (float, float64_elt) t) in
-        let complex_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i real_shape |> Array.to_list in
-              let re = unsafe_get idx real in
-              let im = unsafe_get idx imag in
-              Complex.{ re; im })
-        in
-        Obj.magic (create (B.context real) complex64 real_shape complex_data)
-    | _ ->
-        Error.invalid ~op:"complex" ~what:"dtype"
-          ~reason:"real and imag must be float32 or float64" ()
-
-  (* Extract real part of complex tensor *)
-  let real (type a b) (x : (a, b) t) =
-    match dtype x with
-    | Complex32 ->
-        let x = (x : (Complex.t, complex32_elt) t) in
-        (* Extract real part by creating a new tensor *)
-        let shape_x = shape x in
-        let size = Array.fold_left ( * ) 1 shape_x in
-        let real_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i shape_x |> Array.to_list in
-              let c = unsafe_get idx x in
-              c.Complex.re)
-        in
-        Obj.magic (create (B.context x) float32 shape_x real_data)
-    | Complex64 ->
-        let x = (x : (Complex.t, complex64_elt) t) in
-        let shape_x = shape x in
-        let size = Array.fold_left ( * ) 1 shape_x in
-        let real_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i shape_x |> Array.to_list in
-              let c = unsafe_get idx x in
-              c.Complex.re)
-        in
-        Obj.magic (create (B.context x) float64 shape_x real_data)
-    | _ ->
-        Error.invalid ~op:"real" ~what:"dtype"
-          ~reason:"input must be complex32 or complex64" ()
-
-  (* Extract imaginary part of complex tensor *)
-  let imag (type a b) (x : (a, b) t) =
-    match dtype x with
-    | Complex32 ->
-        let x = (x : (Complex.t, complex32_elt) t) in
-        (* Extract imaginary part by creating a new tensor *)
-        let shape_x = shape x in
-        let size = Array.fold_left ( * ) 1 shape_x in
-        let imag_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i shape_x |> Array.to_list in
-              let c = unsafe_get idx x in
-              c.Complex.im)
-        in
-        Obj.magic (create (B.context x) float32 shape_x imag_data)
-    | Complex64 ->
-        let x = (x : (Complex.t, complex64_elt) t) in
-        let shape_x = shape x in
-        let size = Array.fold_left ( * ) 1 shape_x in
-        let imag_data =
-          Array.init size (fun i ->
-              let idx = Shape.unravel_index i shape_x |> Array.to_list in
-              let c = unsafe_get idx x in
-              c.Complex.im)
-        in
-        Obj.magic (create (B.context x) float64 shape_x imag_data)
-    | _ ->
-        Error.invalid ~op:"imag" ~what:"dtype"
-          ~reason:"input must be complex32 or complex64" ()
 
   (* FFT operations *)
 
@@ -6662,17 +6950,12 @@ module Make (B : Backend_intf.S) = struct
 
   (* Hard Sigmoid: relu6(x + 3) / 6 *)
   let hard_sigmoid ?(alpha = 1.0 /. 6.0) ?(beta = 0.5) x =
-    let dt = dtype x in
-    let alpha_x = B.op_const_scalar (B.context x) alpha dt in
-    let beta_x = B.op_const_scalar (B.context x) beta dt in
-    let one_x = B.op_const_scalar (B.context x) 1.0 dt in
-
-    let term1_arg = add (mul alpha_x x) beta_x in
-    let term1 = relu term1_arg in
-
-    let term2_arg = sub term1_arg one_x in
-    let term2 = relu term2_arg in
-    sub term1 term2
+    let alpha_tensor = scalar_like x alpha in
+    let beta_tensor = scalar_like x beta in
+    let linear = add (mul alpha_tensor x) beta_tensor in
+    let zero = scalar_like x 0. in
+    let one = scalar_like x 1. in
+    minimum one (maximum zero linear)
 
   (* Softplus: log(1 + exp(x)) *)
   let softplus x =
@@ -6686,10 +6969,20 @@ module Make (B : Backend_intf.S) = struct
     let sig_x = sigmoid x in
     mul x sig_x
 
+  let swish x = silu x
+
   (* Hard SiLU: x * hard_sigmoid(x) *)
   let hard_silu x =
     let y = hard_sigmoid x in
     mul x y
+
+  let hard_swish x = hard_silu x
+
+  let prelu alpha x =
+    let zero = zeros_like x in
+    let positive = maximum zero x in
+    let negative = minimum zero x in
+    add positive (mul alpha negative)
 
   (* Log-Sigmoid: log(sigmoid(x)) *)
   let log_sigmoid x =
@@ -6746,17 +7039,495 @@ module Make (B : Backend_intf.S) = struct
     let lambda_scalar = scalar_like x lambda in
     mul lambda_scalar elu_x
 
-  (* Softmax: exp(x - max(x)) / sum(exp(x - max(x))) along specified axes *)
-  let softmax ?(axes = [ -1 ]) x =
+  let celu ?(alpha = 1.0) x =
+    let zero = zeros_like x in
+    let pos = maximum zero x in
+    let neg = minimum zero x in
+    let alpha_tensor = scalar_like x alpha in
+    let one = scalar_like x 1. in
+    let neg_term = mul alpha_tensor (sub (exp (div neg alpha_tensor)) one) in
+    add pos neg_term
+
+  let squareplus ?(b = 4.0) x =
+    let half = scalar_like x 0.5 in
+    let b_tensor = scalar_like x b in
+    let inside = add (square x) b_tensor in
+    let sqrt_term = sqrt inside in
+    mul half (add x sqrt_term)
+
+  let glu ?(axis = -1) x =
+    match split ~axis 2 x with
+    | [ left; right ] -> mul left (sigmoid right)
+    | _ ->
+        Error.failed ~op:"glu" ~what:"split" ~reason:"expected two partitions"
+          ()
+
+  let sparse_plus x =
+    let zero = zeros_like x in
+    let one = scalar_like x 1. in
+    let neg_one = scalar_like x (-1.) in
+    let quadratic = mul (scalar_like x 0.25) (square (add x one)) in
+    let res = where (greater_equal x one) x quadratic in
+    where (less_equal x neg_one) zero res
+
+  let sparse_sigmoid x =
+    let zero = zeros_like x in
+    let one = scalar_like x 1. in
+    let neg_one = scalar_like x (-1.) in
+    let half = scalar_like x 0.5 in
+    let linear = mul half (add x one) in
+    let res = where (greater_equal x one) one linear in
+    where (less_equal x neg_one) zero res
+
+  (* Softmax: exp(scale * (x - max(x))) / sum(exp(scale * (x - max(x)))) along
+     specified axes *)
+  let softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
     let ndim = Array.length (shape x) in
     let axes_normalized =
       List.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
     in
     let max_x = max x ~axes:axes_normalized ~keepdims:true in
-    let x_shifted = sub x max_x in
+    let x_shifted =
+      if scale = 1.0 then sub x max_x
+      else
+        let scaled = mul (scalar_like x scale) (sub x max_x) in
+        scaled
+    in
     let exp_x = exp x_shifted in
     let sum_exp = sum exp_x ~axes:axes_normalized ~keepdims:true in
     div exp_x sum_exp
+
+  let log_softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
+    let ndim = ndim x in
+    let axes_sorted =
+      List.map
+        (fun ax ->
+          let axis = if ax < 0 then ndim + ax else ax in
+          if axis < 0 || axis >= ndim then
+            Error.axis_out_of_bounds ~op:"log_softmax" ~axis:ax ~ndim ()
+          else axis)
+        axes
+      |> List.sort compare
+    in
+    let rec dedup prev acc = function
+      | [] -> List.rev acc
+      | h :: t when Some h = prev -> dedup prev acc t
+      | h :: t -> dedup (Some h) (h :: acc) t
+    in
+    let axes_norm = dedup None [] axes_sorted in
+    if axes_norm = [] then zeros_like x
+    else
+      let max_x = max x ~axes:axes_norm ~keepdims:true in
+      let shifted = sub x max_x in
+      let scaled_shifted =
+        if scale = 1.0 then shifted else mul (scalar_like shifted scale) shifted
+      in
+      let log_den =
+        let sum_exp = sum (exp scaled_shifted) ~axes:axes_norm ~keepdims:true in
+        log sum_exp
+      in
+      sub scaled_shifted log_den
+
+  let logsumexp ?axes ?(keepdims = false) x =
+    let ndim = ndim x in
+    let axes_list =
+      match axes with
+      | None -> List.init ndim Fun.id
+      | Some lst ->
+          List.map
+            (fun ax ->
+              let axis = if ax < 0 then ndim + ax else ax in
+              if axis < 0 || axis >= ndim then
+                Error.axis_out_of_bounds ~op:"logsumexp" ~axis:ax ~ndim ()
+              else axis)
+            lst
+    in
+    let axes_sorted = List.sort compare axes_list in
+    let rec dedup prev acc = function
+      | [] -> List.rev acc
+      | h :: t when Some h = prev -> dedup prev acc t
+      | h :: t -> dedup (Some h) (h :: acc) t
+    in
+    let axes_norm = dedup None [] axes_sorted in
+    if axes_norm = [] then x
+    else
+      let max_x = max x ~axes:axes_norm ~keepdims:true in
+      let shifted = sub x max_x in
+      let sum_exp = sum (exp shifted) ~axes:axes_norm ~keepdims:true in
+      let log_sum = add (log sum_exp) max_x in
+      if keepdims then log_sum
+      else
+        let axes_desc = List.rev axes_norm in
+        squeeze ~axes:axes_desc log_sum
+
+  let logmeanexp ?axes ?(keepdims = false) x =
+    let ndim = ndim x in
+    let axes_list =
+      match axes with
+      | None -> List.init ndim Fun.id
+      | Some lst ->
+          List.map
+            (fun ax ->
+              let axis = if ax < 0 then ndim + ax else ax in
+              if axis < 0 || axis >= ndim then
+                Error.axis_out_of_bounds ~op:"logmeanexp" ~axis:ax ~ndim ()
+              else axis)
+            lst
+    in
+    let axes_sorted = List.sort compare axes_list in
+    let rec dedup prev acc = function
+      | [] -> List.rev acc
+      | h :: t when Some h = prev -> dedup prev acc t
+      | h :: t -> dedup (Some h) (h :: acc) t
+    in
+    let axes_norm = dedup None [] axes_sorted in
+    if axes_norm = [] then x
+    else
+      let log_sum = logsumexp ~axes:axes_norm ~keepdims:true x in
+      let count = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_norm in
+      let count_tensor = scalar_like log_sum (float_of_int count) in
+      let log_mean = sub log_sum (log count_tensor) in
+      if keepdims then log_mean
+      else
+        let axes_desc = List.rev axes_norm in
+        squeeze ~axes:axes_desc log_mean
+
+  let standardize ?axes ?mean:mean_param ?variance:variance_param
+      ?(epsilon = 1e-5) x =
+    let ndim = ndim x in
+    let axes_list =
+      match axes with
+      | None -> List.init ndim Fun.id
+      | Some lst ->
+          List.map
+            (fun ax ->
+              let axis = if ax < 0 then ndim + ax else ax in
+              if axis < 0 || axis >= ndim then
+                Error.axis_out_of_bounds ~op:"standardize" ~axis:ax ~ndim ()
+              else axis)
+            lst
+    in
+    let axes_sorted = List.sort compare axes_list in
+    let rec dedup prev acc = function
+      | [] -> List.rev acc
+      | h :: t when Some h = prev -> dedup prev acc t
+      | h :: t -> dedup (Some h) (h :: acc) t
+    in
+    let axes_norm = dedup None [] axes_sorted in
+    let x_shape = shape x in
+    let keep_shape =
+      Array.mapi
+        (fun idx dim -> if List.exists (( = ) idx) axes_norm then 1 else dim)
+        x_shape
+    in
+    let unaffected_axes =
+      List.filter
+        (fun idx -> not (List.exists (( = ) idx) axes_norm))
+        (List.init ndim Fun.id)
+    in
+    let core_shape =
+      Array.of_list (List.map (fun idx -> x_shape.(idx)) unaffected_axes)
+    in
+    let broadcast_param name param =
+      let param_shape = shape param in
+      if param_shape = x_shape then param
+      else if param_shape = keep_shape then param
+      else if param_shape = core_shape then reshape keep_shape param
+      else
+        Error.invalid ~op:"standardize" ~what:name
+          ~reason:"shape must match normalized axes" ()
+    in
+    let mean_tensor =
+      match mean_param with
+      | Some m -> broadcast_param "mean" m
+      | None ->
+          if axes_norm = [] then x else mean x ~axes:axes_norm ~keepdims:true
+    in
+    let variance_tensor =
+      match variance_param with
+      | Some v -> broadcast_param "variance" v
+      | None ->
+          if axes_norm = [] then zeros_like x
+          else var x ~axes:axes_norm ~keepdims:true
+    in
+    let eps = scalar_like x epsilon in
+    let denom = sqrt (add variance_tensor eps) in
+    let centered = sub x mean_tensor in
+    div centered denom
+
+  let batch_norm ?axes ?(epsilon = 1e-5) ~scale ~bias x =
+    let rank = ndim x in
+    let axes_normalized =
+      let default_axes =
+        match axes with
+        | Some ax -> ax
+        | None ->
+            if rank = 2 then [ 0 ] else if rank = 4 then [ 0; 2; 3 ] else [ 0 ]
+      in
+      let normalize_axis ax =
+        let axis = if ax < 0 then rank + ax else ax in
+        if axis < 0 || axis >= rank then
+          Error.axis_out_of_bounds ~op:"batch_norm" ~axis:ax ~ndim:rank ()
+        else axis
+      in
+      match default_axes with
+      | [] ->
+          Error.invalid ~op:"batch_norm" ~what:"axes"
+            ~reason:"must contain at least one axis" ()
+      | lst -> List.map normalize_axis lst
+    in
+    let x_shape = shape x in
+    let keep_shape =
+      Array.mapi
+        (fun idx dim ->
+          if List.exists (fun ax -> ax = idx) axes_normalized then 1 else dim)
+        x_shape
+    in
+    let unaffected_axes =
+      Array.init rank Fun.id |> Array.to_list
+      |> List.filter (fun ax -> not (List.exists (( = ) ax) axes_normalized))
+    in
+    let core_shape =
+      Array.of_list (List.map (fun ax -> x_shape.(ax)) unaffected_axes)
+    in
+    let broadcast_param name param =
+      let param =
+        if dtype param <> dtype x then cast (dtype x) param else param
+      in
+      let param_shape = shape param in
+      if param_shape = keep_shape then param
+      else if param_shape = core_shape then reshape keep_shape param
+      else if param_shape = x_shape then param
+      else
+        Error.invalid ~op:"batch_norm" ~what:name
+          ~reason:"shape must match normalized axes or remaining axes" ()
+    in
+    let mean_x = mean x ~axes:axes_normalized ~keepdims:true in
+    let variance = var x ~axes:axes_normalized ~keepdims:true in
+    let eps = scalar_like x epsilon in
+    let normalized = mul (sub x mean_x) (rsqrt (add variance eps)) in
+    let scale_b = broadcast_param "scale" scale in
+    let bias_b = broadcast_param "bias" bias in
+    add (mul normalized scale_b) bias_b
+
+  let rms_norm ?axes ?(epsilon = 1e-5) ?gamma x =
+    let ndim = ndim x in
+    let axes_normalized =
+      let default_axes = match axes with Some ax -> ax | None -> [ -1 ] in
+      let normalize_axis ax =
+        let axis = if ax < 0 then ndim + ax else ax in
+        if axis < 0 || axis >= ndim then
+          Error.axis_out_of_bounds ~op:"rms_norm" ~axis:ax ~ndim ()
+        else axis
+      in
+      match default_axes with
+      | [] ->
+          Error.invalid ~op:"rms_norm" ~what:"axes"
+            ~reason:"must contain at least one axis" ()
+      | lst -> List.map normalize_axis lst
+    in
+    let x_shape = shape x in
+    let keep_shape =
+      Array.mapi
+        (fun idx dim ->
+          if List.exists (fun ax -> ax = idx) axes_normalized then 1 else dim)
+        x_shape
+    in
+    let mean_square = mean (mul x x) ~axes:axes_normalized ~keepdims:true in
+    let eps = scalar_like x epsilon in
+    let normalized = mul x (rsqrt (add mean_square eps)) in
+    match gamma with
+    | None -> normalized
+    | Some gamma ->
+        let gamma_shape = shape gamma in
+        let gamma =
+          if gamma_shape = keep_shape then gamma
+          else
+            let unaffected_axes =
+              Array.init ndim Fun.id |> Array.to_list
+              |> List.filter (fun ax ->
+                     not (List.exists (( = ) ax) axes_normalized))
+            in
+            let core_shape =
+              Array.of_list (List.map (fun ax -> x_shape.(ax)) unaffected_axes)
+            in
+            if gamma_shape = core_shape then reshape keep_shape gamma
+            else if gamma_shape = x_shape then gamma
+            else
+              Error.invalid ~op:"rms_norm" ~what:"gamma"
+                ~reason:"shape must match normalized axes or remaining axes" ()
+        in
+        mul normalized gamma
+
+  let layer_norm ?(axes = [ -1 ]) ?(epsilon = 1e-5) ?gamma ?beta x =
+    let ndim = ndim x in
+    let axes_normalized =
+      List.map
+        (fun ax ->
+          let axis = if ax < 0 then ndim + ax else ax in
+          if axis < 0 || axis >= ndim then
+            Error.axis_out_of_bounds ~op:"layer_norm" ~axis:ax ~ndim ()
+          else axis)
+        axes
+    in
+    let x_shape = shape x in
+    let keep_shape =
+      Array.mapi
+        (fun idx dim -> if List.mem idx axes_normalized then dim else 1)
+        x_shape
+    in
+    let broadcast_param name param =
+      let param_shape = shape param in
+      if param_shape = x_shape then param
+      else if param_shape = keep_shape then param
+      else
+        let axes_shape =
+          Array.of_list (List.map (fun ax -> x_shape.(ax)) axes_normalized)
+        in
+        if param_shape = axes_shape then reshape keep_shape param
+        else
+          Error.invalid ~op:"layer_norm" ~what:name
+            ~reason:"shape must match normalized axes" ()
+    in
+    let mean_x = mean x ~axes:axes_normalized ~keepdims:true in
+    let centered = sub x mean_x in
+    let variance =
+      mean (mul centered centered) ~axes:axes_normalized ~keepdims:true
+    in
+    let eps = scalar_like x epsilon in
+    let inv_std = rsqrt (add variance eps) in
+    let normalized = mul centered inv_std in
+    let with_scale =
+      match gamma with
+      | None -> normalized
+      | Some gamma ->
+          let gamma_broadcast = broadcast_param "gamma" gamma in
+          mul normalized gamma_broadcast
+    in
+    match beta with
+    | None -> with_scale
+    | Some beta ->
+        let beta_broadcast = broadcast_param "beta" beta in
+        add with_scale beta_broadcast
+
+  let dot_product_attention (type b)
+      ?(attention_mask : (bool, bool_elt) t option) ?scale ?dropout_rate
+      ?dropout_seed ?(is_causal = false) (q : (float, b) t) (k : (float, b) t)
+      (v : (float, b) t) =
+    let check_float_tensor name (t : (float, b) t) =
+      match dtype t with
+      | Float16 -> ()
+      | Float32 -> ()
+      | Float64 -> ()
+      | _ ->
+          Error.invalid ~op:"dot_product_attention" ~what:name
+            ~reason:"requires floating point dtype" ()
+    in
+    check_float_tensor "query" q;
+    check_float_tensor "key" k;
+    check_float_tensor "value" v;
+    let q_shape = shape q in
+    let k_shape = shape k in
+    let v_shape = shape v in
+    let q_rank = Array.length q_shape in
+    if q_rank < 2 then
+      Error.invalid ~op:"dot_product_attention" ~what:"query"
+        ~reason:"must have rank >= 2" ();
+    if Array.length k_shape <> q_rank || Array.length v_shape <> q_rank then
+      Error.invalid ~op:"dot_product_attention" ~what:"key/value"
+        ~reason:"must match query rank" ();
+    let depth = q_shape.(q_rank - 1) in
+    if k_shape.(q_rank - 1) <> depth then
+      Error.shape_mismatch ~op:"dot_product_attention" ~expected:q_shape
+        ~actual:k_shape ();
+    let scale_factor =
+      match scale with
+      | Some s -> s
+      | None -> 1.0 /. Stdlib.sqrt (float_of_int depth)
+    in
+    let transpose_last_two tensor =
+      let nd = Array.length (shape tensor) in
+      if nd < 2 then
+        Error.invalid ~op:"dot_product_attention" ~what:"key/value"
+          ~reason:"must have rank >= 2" ();
+      let axes = Array.init nd Fun.id in
+      let tmp = axes.(nd - 1) in
+      axes.(nd - 1) <- axes.(nd - 2);
+      axes.(nd - 2) <- tmp;
+      transpose tensor ~axes:(Array.to_list axes)
+    in
+    let k_t = transpose_last_two k in
+    let scores = matmul q k_t in
+    let scores =
+      if scale_factor = 1.0 then scores
+      else
+        let scale_tensor = scalar_like scores scale_factor in
+        mul scores scale_tensor
+    in
+    let scores =
+      if is_causal then (
+        let scores_shape = shape scores in
+        let seq_len_q = scores_shape.(q_rank - 2) in
+        let seq_len_k = scores_shape.(q_rank - 1) in
+        if seq_len_q <> seq_len_k then
+          Error.invalid ~op:"dot_product_attention" ~what:"causal masking"
+            ~reason:"requires seq_len_q == seq_len_k" ();
+        (* Create lower triangular mask using tril *)
+        let ones_matrix =
+          full (B.context scores) (dtype scores) [| seq_len_q; seq_len_k |] 1.0
+        in
+        let causal_mask = tril ones_matrix in
+        let causal_mask = cast Bool causal_mask in
+        (* Broadcast causal mask to scores shape *)
+        let causal_mask = broadcast_to scores_shape causal_mask in
+        let neg_inf = scalar_like scores (-1e9) in
+        where causal_mask scores neg_inf)
+      else scores
+    in
+    let scores =
+      match attention_mask with
+      | None -> scores
+      | Some mask ->
+          let neg_inf = scalar_like scores (-1e9) in
+          where mask scores neg_inf
+    in
+    let probs = softmax ~axes:[ -1 ] scores in
+    let probs =
+      match dropout_rate with
+      | None -> probs
+      | Some rate -> dropout ?seed:dropout_seed ~rate probs
+    in
+    matmul probs v
+
+  let embedding ?(scale = true) ~embedding indices =
+    let embed_shape = shape embedding in
+    if Array.length embed_shape <> 2 then
+      Error.invalid ~op:"embedding" ~what:"embedding matrix"
+        ~reason:"must have shape [vocab_size; embed_dim]" ();
+    let embed_dim = embed_shape.(1) in
+    let indices_shape = shape indices in
+    let is_scalar = Array.length indices_shape = 0 in
+    let vocab_size = embed_shape.(0) in
+    if vocab_size <= 0 then
+      Error.invalid ~op:"embedding" ~what:"embedding matrix"
+        ~reason:"vocabulary dimension must be positive" ();
+    let flat_size = Array.fold_left ( * ) 1 indices_shape in
+    let indices_flat =
+      if is_scalar then reshape [| 1 |] indices
+      else reshape [| flat_size |] indices
+    in
+    let gathered = take ~axis:0 indices_flat embedding in
+    let output_shape =
+      if is_scalar then [| embed_dim |]
+      else Array.append indices_shape [| embed_dim |]
+    in
+    let embedded = reshape output_shape gathered in
+    if not scale then embedded
+    else
+      let factor =
+        scalar_like embedding (Stdlib.sqrt (float_of_int embed_dim))
+      in
+      mul embedded factor
 
   (* Approximated Gaussian Error Linear Unit: 0.5 * x * (1 + tanh(x *
      0.7978845608 * (1 + 0.044715 * x * x))) *)
@@ -7653,7 +8424,12 @@ module Make (B : Backend_intf.S) = struct
     shape_for_arange.(ndim_expanded - 1) <- num_classes;
     let arange_b = reshape shape_for_arange arange_x in
 
-    cmpeq index_expanded arange_b (* Broadcasts to one-hot mask *)
+    (* Broadcasts to one-hot mask *)
+    let bool_to_uint (x : (bool, bool_elt) t) : (int, uint8_elt) t =
+      cast Dtype.uint8 x
+    in
+    let bool_tensor = cmpeq index_expanded arange_b in
+    bool_to_uint bool_tensor
 
   (** Internal N-Dimensional max unpooling. *)
   let max_unpool_nd ~kernel_size ?stride ?dilation ~padding_spec

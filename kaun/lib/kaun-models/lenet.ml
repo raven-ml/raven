@@ -114,7 +114,7 @@ let forward ~model ~params ~training ~input =
   Kaun.apply model params ~training input
 
 let extract_features ~model:_ ~params:_ ~input:_ =
-  (* Simplified version - would need to modify model to extract intermediate features *)
+  (* TODO: would need to modify model to extract intermediate features *)
   (* For now, just return a dummy tensor *)
   failwith "extract_features not implemented yet"
 
@@ -123,7 +123,7 @@ let extract_features ~model:_ ~params:_ ~input:_ =
 let num_parameters params =
   let tensors = Kaun.Ptree.flatten_with_paths params in
   List.fold_left
-    (fun acc (_, t) -> acc + Array.fold_left ( * ) 1 (shape t))
+    (fun acc (_, tensor) -> acc + Kaun.Ptree.Tensor.numel tensor)
     0 tensors
 
 let parameter_breakdown params =
@@ -136,7 +136,8 @@ let parameter_breakdown params =
 
   (* Group parameters by layer *)
   List.iter
-    (fun (name, tensor) ->
+    (fun (path, tensor) ->
+      let name = Kaun.Ptree.Path.to_string path in
       let layer_name =
         (* Extract layer name from parameter path *)
         try
@@ -144,7 +145,7 @@ let parameter_breakdown params =
           String.sub name 0 idx
         with Not_found -> name
       in
-      let size = Array.fold_left ( * ) 1 (shape tensor) in
+      let size = Kaun.Ptree.Tensor.numel tensor in
       let current =
         try Hashtbl.find layer_params layer_name with Not_found -> 0
       in

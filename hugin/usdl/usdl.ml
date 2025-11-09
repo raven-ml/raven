@@ -103,6 +103,9 @@ external ml_sdl_get_event_type : Event.t -> int = "caml_sdl_get_event_type"
 external ml_sdl_get_window_event_id : Event.t -> int
   = "caml_sdl_get_window_event_id"
 
+external ml_sdl_get_event_keycode : Event.t -> int
+  = "caml_sdl_get_event_keycode"
+
 (* Wrappers for error handling and flag combining *)
 let get_error () = ml_sdl_get_error ()
 let init flags = if ml_sdl_init flags = 0 then Ok () else Error (get_error ())
@@ -165,21 +168,23 @@ let wait_event event_opt =
       | _ -> Error (get_error ()))
 
 module Event_type = struct
-  type t = [ `Quit | `Window_event | `Unknown of int ]
+  type t = [ `Quit | `Window_event | `Key_down | `Unknown of int ]
 
   let from_int = function
     | 0x100 -> `Quit (* SDL_QUIT *)
     | 0x200 -> `Window_event (* SDL_WINDOWEVENT *)
+    | 0x300 -> `Key_down (* SDL_KEYDOWN *)
     | other -> `Unknown other
 end
 
 module Window_event_id = struct
-  type t = [ `Resized | `Size_changed | `Exposed | `Unknown of int ]
+  type t = [ `Resized | `Size_changed | `Exposed | `Close | `Unknown of int ]
 
   let from_int = function
     | 5 -> `Resized (* SDL_WINDOWEVENT_RESIZED *)
     | 6 -> `Size_changed (* SDL_WINDOWEVENT_SIZE_CHANGED *)
     | 2 -> `Exposed (* SDL_WINDOWEVENT_EXPOSED *)
+    | 14 -> `Close (* SDL_WINDOWEVENT_CLOSE *)
     | other -> `Unknown other
 end
 
@@ -187,3 +192,10 @@ let get_event_type event = Event_type.from_int (ml_sdl_get_event_type event)
 
 let get_window_event_id event =
   Window_event_id.from_int (ml_sdl_get_window_event_id event)
+
+let get_event_keycode event = ml_sdl_get_event_keycode event
+
+module Keycode = struct
+  let escape = 27
+  let q = int_of_char 'q'
+end

@@ -1,189 +1,89 @@
-(** Orbax-style checkpoint management for Kaun/Rune models.
+module Snapshot = Snapshot
 
-    This module provides checkpoint functionality for saving and loading model
-    parameters, optimizer states, and training metadata.
+type artifact_kind =
+  | Params
+  | Optimizer
+  | Rng
+  | Payload of string
+  | Custom of string
+  | Unknown of string
 
-    The default format is now Safetensors, which provides efficient, safe
-    serialization of tensors. JSON format is still supported for backward
-    compatibility. *)
+(* TODO: why do we have artifact and artifact_descriptor? seems redundant *)
+type artifact
 
-(** {1 Types} *)
-
-type metadata = (string * string) list
-(** Metadata as key-value pairs *)
-
-type checkpoint_info = {
-  step : int;  (** Training step number *)
-  timestamp : float;  (** Unix timestamp when checkpoint was created *)
-  metadata : metadata;  (** User-defined metadata *)
+type artifact_descriptor = {
+  kind : artifact_kind;
+  label : string;
+  slug : string;
 }
-(** Information about a checkpoint *)
 
-type format =
-  | Safetensors
-      (** Checkpoint format - currently only Safetensors is supported *)
+type manifest = {
+  version : int;
+  step : int option;
+  created_at : float;
+  tags : string list;
+  metadata : (string * string) list;
+  artifacts : artifact_descriptor list;
+}
 
-val default_format : format
-(** Default format for new checkpoints (Safetensors) *)
+type repository
+type retention = { max_to_keep : int option; keep_every : int option }
+type metadata = (string * string) list
 
-val infer_format_from_path : string -> format
-(** Infer format from file extension (.safetensors) *)
+type error =
+  | Io of string
+  | Json of string
+  | Corrupt of string
+  | Not_found of string
+  | Duplicate_slug of string
+  | Invalid of string
 
-(** {1 Core Checkpointing} *)
+val error_to_string : error -> string
 
-module Checkpointer : sig
-  type t
-  (** Checkpointer handles saving and restoring of parameters *)
+val artifact :
+  ?label:string -> kind:artifact_kind -> snapshot:Snapshot.t -> unit -> artifact
 
-  val create : ?format:format -> unit -> t
-  (** Create a new checkpointer with specified format (default: Safetensors) *)
+val artifact_kind : artifact -> artifact_kind
+val artifact_label : artifact -> string
+val artifact_slug : artifact -> string
+val artifact_snapshot : artifact -> Snapshot.t
 
-  val save :
-    t ->
-    path:string ->
-    params:'layout Ptree.t ->
-    ?metadata:metadata ->
-    unit ->
-    unit
-  (** [save checkpointer ~path ~params ?metadata ()] saves parameters to disk.
+val create_repository :
+  directory:string -> ?retention:retention -> unit -> repository
 
-      @param path Directory path where checkpoint will be saved
-      @param params Parameter tree to save
-      @param metadata Optional metadata to store with checkpoint *)
+val write :
+  step:int ->
+  ?tags:string list ->
+  ?metadata:metadata ->
+  artifacts:artifact list ->
+  repository ->
+  (manifest, error) result
 
-  val restore :
-    t -> path:string -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t
-  (** [restore checkpointer ~path ~dtype] loads parameters from disk.
+val read : repository -> step:int -> (manifest * artifact list, error) result
+val read_latest : repository -> (manifest * artifact list, error) result
+val steps : repository -> int list
+val latest_step : repository -> int option
+val mem : repository -> step:int -> bool
+val delete : repository -> step:int -> (unit, error) result
 
-      @param path Directory path to load checkpoint from
-      @param device Device to load tensors onto
-      @param dtype Data type for tensors
-      @return Restored parameter tree *)
+val filter_artifacts :
+  ?kinds:artifact_kind list -> artifact list -> artifact list
 
-  val save_file :
-    t ->
-    path:string ->
-    params:'layout Ptree.t ->
-    ?metadata:metadata ->
-    unit ->
-    unit
-  (** [save_file checkpointer ~path ~params ?metadata ()] saves to a single
-      file.
+val read_artifact_snapshot :
+  repository -> step:int -> slug:string -> (Snapshot.t, error) result
 
-      Like [save] but uses a single file format instead of directory structure.
-  *)
+val save_snapshot_file :
+  path:string -> snapshot:Snapshot.t -> (unit, error) result
 
-  val restore_file :
-    t -> path:string -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t
-  (** [restore_file checkpointer ~path ~dtype] loads from a single file. *)
-end
+val load_snapshot_file : path:string -> (Snapshot.t, error) result
 
-(** {1 Checkpoint Management} *)
+val write_snapshot_file_with :
+  path:string -> encode:(unit -> Snapshot.t) -> (unit, error) result
 
-module CheckpointManager : sig
-  type t
-  (** Manages multiple checkpoints with automatic versioning and cleanup *)
+val load_snapshot_file_with :
+  path:string ->
+  decode:(Snapshot.t -> ('a, string) result) ->
+  ('a, error) result
 
-  type options = {
-    max_to_keep : int option;
-        (** Maximum number of checkpoints to keep (None = keep all) *)
-    keep_checkpoint_every_n_steps : int option;
-        (** Keep checkpoint every N steps regardless of max_to_keep *)
-    best_fn : (checkpoint_info -> float) option;
-        (** Function to compute metric for best checkpoint selection *)
-    best_mode : [ `min | `max ];
-        (** Whether to minimize or maximize the best_fn metric *)
-  }
-  (** Configuration options for checkpoint manager *)
-
-  val default_options : options
-  (** Default options: keep 5 checkpoints, no periodic keeping, no best tracking
-  *)
-
-  val create :
-    directory:string ->
-    ?options:options ->
-    ?checkpointer:Checkpointer.t ->
-    unit ->
-    t
-  (** [create ~directory ?options ?checkpointer ()] creates a checkpoint
-      manager.
-
-      @param directory Base directory for all checkpoints
-      @param options Configuration options
-      @param checkpointer Custom checkpointer (default: new one created) *)
-
-  val save :
-    t ->
-    step:int ->
-    params:'layout Ptree.t ->
-    ?metadata:metadata ->
-    ?metrics:(string * float) list ->
-    unit ->
-    unit
-  (** [save manager ~step ~params ?metadata ?metrics ()] saves a checkpoint.
-
-      The manager handles versioning, cleanup of old checkpoints, and tracking
-      of best checkpoints based on metrics.
-
-      @param step Current training step
-      @param params Parameters to save
-      @param metadata Optional metadata
-      @param metrics Optional metrics for best checkpoint selection *)
-
-  val restore :
-    t ->
-    dtype:(float, 'layout) Rune.dtype ->
-    ?step:int ->
-    unit ->
-    'layout Ptree.t * checkpoint_info
-  (** [restore manager ?step ~dtype] restores a checkpoint.
-
-      @param step Specific step to restore (default: latest)
-      @param device Device to load tensors onto
-      @param dtype Data type for tensors
-      @return Restored parameters and checkpoint info *)
-
-  val restore_best :
-    t -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t * checkpoint_info
-  (** [restore_best manager ~dtype] restores the best checkpoint.
-
-      Requires [best_fn] to be set in options.
-      @raise Invalid_argument if no best_fn is configured *)
-
-  val latest_step : t -> int option
-  (** Get the latest checkpoint step number, if any *)
-
-  val best_step : t -> int option
-  (** Get the best checkpoint step number, if any *)
-
-  val all_steps : t -> int list
-  (** Get all available checkpoint steps, sorted in ascending order *)
-
-  val checkpoint_exists : t -> step:int -> bool
-  (** Check if a checkpoint exists for a given step *)
-
-  val delete : t -> step:int -> unit
-  (** Delete a specific checkpoint *)
-
-  val cleanup : t -> unit
-  (** Manually trigger cleanup based on retention policy *)
-end
-
-(** {1 Utilities} *)
-
-val save_params :
-  path:string -> params:'layout Ptree.t -> ?metadata:metadata -> unit -> unit
-(** Convenience function to save parameters without a manager.
-
-    @param path File or directory path for checkpoint
-    @param params Parameters to save
-    @param metadata Optional metadata *)
-
-val load_params :
-  path:string -> dtype:(float, 'layout) Rune.dtype -> 'layout Ptree.t
-(** Convenience function to load parameters without a manager.
-
-    @param path File or directory path to load from
-    @param device Device to load tensors onto
-    @param dtype Data type for tensors *)
+val save_params_file : path:string -> params:Ptree.t -> (unit, error) result
+val load_params_file : path:string -> (Ptree.t, error) result
