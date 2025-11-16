@@ -30,6 +30,7 @@ We're closing 8 user-reported issues or feature requests and are totalling 30 co
 
 ### Nx
 
+- Fix fancy slicing so `L [...]` with full axis length correctly supports permutations and duplicates; only identity order is a no‑op (#152, @Arsalaan-Alam)
 - Fix einsum output axis ordering for free axes (e.g., `i,jk->jki`, `ij,klj->kli`) by correcting final transpose permutation and intermediate left-axis reordering. (@tmattio)
 - Add `Nx_io.Cache_dir` module with consolidated cache directory utilities respecting `RAVEN_CACHE_ROOT`, `XDG_CACHE_HOME`, and `HOME` fallback, replacing project-specific cache logic across the whole raven ecosystem (#134, @Arsalaan-Alam)
 - Add `Nx_io.save_txt` / `Nx_io.load_txt` with NumPy-compatible formatting, comments, and dtype support (#120, @six-shot)
