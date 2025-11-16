@@ -2969,7 +2969,15 @@ module Make (B : Backend_intf.S) = struct
                           let dim_size = (shape tensor).(working_dim) in
                           let indices = indices_of_spec dim_size spec in
                           let tensor' =
-                            if List.length indices = dim_size then tensor
+                            (* If indices cover the whole dimension in identity
+                               order, this is a no-op. Otherwise we must gather
+                               (to support permutations and duplicates). *)
+                            let is_identity =
+                              List.length indices = dim_size
+                              && List.for_all2 ( = ) indices
+                                   (List.init dim_size (fun i -> i))
+                            in
+                            if is_identity then tensor
                             else if List.length indices = 0 then (
                               (* Empty slice - create tensor with 0 size in this
                                  dimension *)

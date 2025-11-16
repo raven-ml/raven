@@ -78,6 +78,18 @@ let test_index_mixed () =
     [| 20.; 21.; 22.; 23.; 24.; 30.; 31.; 32.; 33.; 34. |]
     indexed
 
+(* Fancy indexing along axis 0 should reorder rows (and support duplicates) *)
+let test_index_idx_reorder_rows () =
+  let t = Nx.create Nx.float32 [| 3; 2 |] (Array.init 6 float_of_int) in
+  let indexed = Nx.slice [ Nx.L [ 2; 0; 1 ]; Nx.A ] t in
+  check_t "index idx reorder rows" [| 3; 2 |] [| 4.; 5.; 0.; 1.; 2.; 3. |] indexed
+
+let test_index_idx_duplicate_rows () =
+  let t = Nx.create Nx.float32 [| 3; 2 |] (Array.init 6 float_of_int) in
+  let indexed = Nx.slice [ Nx.L [ 1; 1; 0 ]; Nx.A ] t in
+  check_t "index idx duplicate rows" [| 3; 2 |] [| 2.; 3.; 2.; 3.; 0.; 1. |]
+    indexed
+
 (* Note: `new_ and `mask require implementation *)
 (* let test_index_new_axis  () =
     let t = Nx.create  Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
@@ -396,6 +408,8 @@ let index_tests =
     ("index idx", `Quick, test_index_idx);
     ("index idx repeated", `Quick, test_index_idx_repeated);
     ("index mixed", `Quick, test_index_mixed);
+    ("index idx reorder rows", `Quick, test_index_idx_reorder_rows);
+    ("index idx duplicate rows", `Quick, test_index_idx_duplicate_rows);
     ("set_slice at", `Quick, test_set_slice_at);
     ("set_slice rng", `Quick, test_set_slice_rng);
     ("set_slice idx", `Quick, test_set_slice_idx);
