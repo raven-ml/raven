@@ -2972,12 +2972,15 @@ module Make (B : Backend_intf.S) = struct
                             (* If indices cover the whole dimension in identity
                                order, this is a no-op. Otherwise we must gather
                                (to support permutations and duplicates). *)
-                            let is_identity =
-                              List.length indices = dim_size
-                              && List.for_all2 ( = ) indices
-                                   (List.init dim_size (fun i -> i))
+                            let is_range n indices =
+                              let rec traverse id = function
+                                | [] -> id = n
+                                | hd :: tl when hd = id -> traverse (succ id) tl
+                                | _ -> false
+                              in
+                              traverse 0 indices
                             in
-                            if is_identity then tensor
+                            if is_range dim_size indices then tensor
                             else if List.length indices = 0 then (
                               (* Empty slice - create tensor with 0 size in this
                                  dimension *)
