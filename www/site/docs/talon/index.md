@@ -50,3 +50,4 @@ let df = df
 ## learn more
 
 - [Getting Started](/docs/talon/getting-started/) - Installation and first steps
+- [Comparision with Pandas](/docs/talon/pandas-comparison/) - Coming from Python

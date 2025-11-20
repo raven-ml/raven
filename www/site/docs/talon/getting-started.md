@@ -178,3 +178,5 @@ let sales = create [
 
 let pivoted = pivot sales ~index:"date" ~columns:"product" ~values:"amount" ()
 ```
+## Next Steps
+Check out the [Comparision with Pandas](/docs/talon/pandas-comparison/) to see how Talon's functional approach differs from Pandas.
