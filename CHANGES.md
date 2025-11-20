@@ -138,6 +138,7 @@ We're closing 8 user-reported issues or feature requests and are totalling 30 co
 - Respect null masks when serializing numeric columns to JSON, emitting JSON `null` instead of sentinel values (@tmattio)
 - Detect big integers as int64 in Talon CSV loader (#121, @Arsalaan-Alam)
 - Allow forcing column types in Talon JSON loader (#104, @nirnayroy)
+- Add documentation to compare Talon and Pandas (#154, Satarupa22-SD)
 
 ### Saga
 
