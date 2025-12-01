@@ -2,9 +2,10 @@ open Rune
 
 let () =
   (* Simple test case *)
-  let x = randn Float32 [| 2; 1; 5; 5 |] in
+  let keys = Rng.split (Rng.key 42) in
+  let x = randn Float32 ~key:keys.(0) [| 2; 1; 5; 5 |] in
   (* batch=2, channels=1, 5x5 *)
-  let w = randn Float32 [| 3; 1; 3; 3 |] in
+  let w = randn Float32 ~key:keys.(1) [| 3; 1; 3; 3 |] in
   (* 3 output channels, 3x3 kernel *)
 
   Printf.printf "Input shape: %s\n"

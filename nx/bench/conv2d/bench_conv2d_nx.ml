@@ -53,8 +53,16 @@ let setup_f32 spec =
       spec.out_channels; spec.in_channels; spec.kernel_size; spec.kernel_size;
     |]
   in
-  let input = Nx.rand Nx.Float32 input_shape in
-  let kernel = Nx.rand Nx.Float32 kernel_shape in
+  let input =
+    Nx.rand Nx.Float32
+      ~key:(Nx.Rng.key (Hashtbl.hash (spec.name, 0)))
+      input_shape
+  in
+  let kernel =
+    Nx.rand Nx.Float32
+      ~key:(Nx.Rng.key (Hashtbl.hash (spec.name, 1)))
+      kernel_shape
+  in
   (input, kernel)
 
 (** Setup tensors for Float64 *)
@@ -67,8 +75,16 @@ let setup_f64 spec =
       spec.out_channels; spec.in_channels; spec.kernel_size; spec.kernel_size;
     |]
   in
-  let input = Nx.rand Nx.Float64 input_shape in
-  let kernel = Nx.rand Nx.Float64 kernel_shape in
+  let input =
+    Nx.rand Nx.Float64
+      ~key:(Nx.Rng.key (Hashtbl.hash (spec.name, 2)))
+      input_shape
+  in
+  let kernel =
+    Nx.rand Nx.Float64
+      ~key:(Nx.Rng.key (Hashtbl.hash (spec.name, 3)))
+      kernel_shape
+  in
   (input, kernel)
 
 (** Build all benchmarks *)

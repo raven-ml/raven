@@ -991,21 +991,21 @@ let neural_network_tests =
 let random_tests =
   [
     test_case "rand" `Quick (fun () ->
-        let t = Nx.rand Nx.float32 shape_2x3 in
+        let t = Nx.rand Nx.float32 ~key:(Nx.Rng.key 0) shape_2x3 in
         check_shape "rand shape" shape_2x3 t;
         let vals = Nx.to_array t in
         Array.iter
           (fun v -> check bool "rand in range" true (v >= 0.0 && v < 1.0))
           vals);
     test_case "randn" `Quick (fun () ->
-        let t = Nx.randn Nx.float32 [| 100 |] in
+        let t = Nx.randn Nx.float32 ~key:(Nx.Rng.key 1) [| 100 |] in
         check_shape "randn shape" [| 100 |] t;
         (* Check that values are roughly normally distributed *)
         let vals = Nx.to_array t in
         let mean = Array.fold_left ( +. ) 0.0 vals /. 100.0 in
         check bool "randn mean" true (abs_float mean < 0.5));
     test_case "randint" `Quick (fun () ->
-        let t = Nx.randint Nx.int32 shape_2x3 0 ~high:10 in
+        let t = Nx.randint Nx.int32 ~key:(Nx.Rng.key 2) shape_2x3 0 ~high:10 in
         check_shape "randint shape" shape_2x3 t;
         (* Check all values are in range *)
         for i = 0 to 1 do

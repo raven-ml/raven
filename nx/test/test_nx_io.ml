@@ -102,7 +102,7 @@ let test_npy_overwrite_protection () =
 
 (* Test NPZ format *)
 let test_npz_save_load_multiple () =
-  let weights = Nx.randn Nx.float32 [| 5; 3 |] in
+  let weights = Nx.randn Nx.float32 ~key:(Nx.Rng.key 0) [| 5; 3 |] in
   let bias = Nx.zeros Nx.float32 [| 3 |] in
   let scale = Nx.ones Nx.float64 [| 3 |] in
   let path = temp_file "test_npz_" ".npz" in
@@ -305,9 +305,9 @@ let txt_tests =
   ]
 
 let test_safetensors_save_load () =
-  let weights = Nx.randn Nx.float32 [| 10; 5 |] in
+  let weights = Nx.randn Nx.float32 ~key:(Nx.Rng.key 10) [| 10; 5 |] in
   let bias = Nx.zeros Nx.float32 [| 5 |] in
-  let embeddings = Nx.randn Nx.float32 [| 100; 64 |] in
+  let embeddings = Nx.randn Nx.float32 ~key:(Nx.Rng.key 11) [| 100; 64 |] in
   let path = temp_file "test_safetensors_" ".safetensors" in
 
   (* Save tensors *)

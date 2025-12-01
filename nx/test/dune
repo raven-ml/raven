@@ -14,7 +14,8 @@
   test_nx_extended_dtypes
   test_nx_neural_net
   test_nx_fft
-  test_nx_ops)
+  test_nx_ops
+  test_nx_rng)
  (package nx)
  (modules :standard \ test_nx_support)
  (libraries bigarray_ext nx nx_core alcotest test_nx_support))

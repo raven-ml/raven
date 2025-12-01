@@ -1,5 +1,5 @@
 (tests
- (names test_vjp test_gradcheck test_jvp test_rng)
+ (names test_vjp test_gradcheck test_jvp)
  (package rune)
  (libraries rune nx_core alcotest test_rune_support))
 

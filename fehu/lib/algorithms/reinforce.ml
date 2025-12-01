@@ -485,7 +485,7 @@ let step ~env ~params ~state =
   let logits = apply state.policy_network params ~training:true obs_batched in
   let logits = add_mask_to_logits logits mask_tensor in
   let indices =
-    Rune.Rng.categorical sample_key logits |> Rune.reshape [| 1 |]
+    Rune.Rng.categorical ~key:sample_key logits |> Rune.reshape [| 1 |]
   in
   let idx_array = Rune.to_array indices in
   let action_index = Int32.to_int idx_array.(0) in

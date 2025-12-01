@@ -42,13 +42,13 @@ let run_q_learning () =
   in
 
   let sample_uniform () =
-    let tensor = Rune.Rng.uniform (take_key ()) Rune.float32 [| 1 |] in
+    let tensor = Rune.rand Rune.float32 ~key:(take_key ()) [| 1 |] in
     let values = Rune.to_array tensor in
     values.(0)
   in
 
   let sample_action () =
-    let tensor = Rune.Rng.randint (take_key ()) ~min:0 ~max:2 [| 1 |] in
+    let tensor = Rune.randint Rune.int32 ~key:(take_key ()) ~high:2 [| 1 |] 0 in
     let values : Int32.t array = Rune.to_array tensor in
     Int32.to_int values.(0)
   in

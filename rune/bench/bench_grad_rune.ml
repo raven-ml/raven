@@ -32,9 +32,11 @@ let scalar_grad_benchmarks () =
 
 (** 2. Vector→Scalar: f(x) = sum(x^2) (L2 norm squared) *)
 let vector_scalar_grad_benchmarks () =
-  List.map
-    (fun (size_name, size) ->
-      let x = randn float32 [| size |] in
+  let key = Rng.key 42 in
+  List.mapi
+    (fun i (size_name, size) ->
+      let key = Rng.fold_in key i in
+      let x = randn float32 ~key [| size |] in
       let f x = sum (square x) in
       let bench_name = benchmark_name "VectorGrad" size_name in
       Ubench.bench bench_name (fun () -> ignore (grad f x)))
@@ -42,10 +44,12 @@ let vector_scalar_grad_benchmarks () =
 
 (** 3. MatMul gradient: f(x) = sum(matmul(x, W)) *)
 let matmul_grad_benchmarks () =
-  List.map
-    (fun (size_name, size) ->
-      let x = randn float32 [| size; size |] in
-      let w = randn float32 [| size; size |] in
+  let key = Rng.key 43 in
+  List.mapi
+    (fun i (size_name, size) ->
+      let keys = Rng.split (Rng.fold_in key i) in
+      let x = randn float32 ~key:keys.(0) [| size; size |] in
+      let w = randn float32 ~key:keys.(1) [| size; size |] in
       let f x = sum (matmul x w) in
       let bench_name = benchmark_name "MatMulGrad" size_name in
       Ubench.bench bench_name (fun () -> ignore (grad f x)))
@@ -53,9 +57,11 @@ let matmul_grad_benchmarks () =
 
 (** 4. Chain of operations: f(x) = sum(exp(tanh(x^2))) *)
 let chain_grad_benchmarks () =
-  List.map
-    (fun (size_name, size) ->
-      let x = randn float32 [| size; size |] in
+  let key = Rng.key 44 in
+  List.mapi
+    (fun i (size_name, size) ->
+      let key = Rng.fold_in key i in
+      let x = randn float32 ~key [| size; size |] in
       let f x = sum (exp (tanh (square x))) in
       let bench_name = benchmark_name "ChainGrad" size_name in
       Ubench.bench bench_name (fun () -> ignore (grad f x)))
@@ -63,9 +69,11 @@ let chain_grad_benchmarks () =
 
 (** 5. Higher-order gradient: grad(grad(f)) where f(x) = sum(x^3) *)
 let higher_order_grad_benchmarks () =
-  List.map
-    (fun (size_name, size) ->
-      let x = randn float32 [| size |] in
+  let key = Rng.key 45 in
+  List.mapi
+    (fun i (size_name, size) ->
+      let key = Rng.fold_in key i in
+      let x = randn float32 ~key [| size |] in
       let f x = sum (mul (mul x x) x) in
       (* x^3 as x * x * x *)
       let grad_f = grad f in
