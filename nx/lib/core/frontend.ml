@@ -830,85 +830,41 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Logical Operations ───── *)
 
-  let logical_and a b =
-    let a_b, b_b = broadcasted a b in
-    B.op_and a_b b_b
+  let logical_and a b = binop B.op_and a b
+  let logical_or a b = binop B.op_or a b
+  let logical_xor a b = binop B.op_xor a b
 
-  let logical_or a b =
-    let a_b, b_b = broadcasted a b in
-    B.op_or a_b b_b
-
-  let logical_xor a b =
-    let a_b, b_b = broadcasted a b in
-    B.op_xor a_b b_b
-
-  let logical_not (type a b) (a : (a, b) t) =
-    (* For boolean tensors, logical not should flip the bit *)
-    (* But subtraction isn't supported for bool, so we use XOR with 1 *)
-    let dt = dtype a in
+  let logical_not (type a b) (x : (a, b) t) =
+    let dt = dtype x in
+    let one = full (B.context x) dt (shape x) (Dtype.one dt) in
     match dt with
-    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 | Dtype.QUInt8 ->
-        let one_val = Dtype.one dt in
-        let one_tensor = full (B.context a) dt (shape a) one_val in
-        B.op_xor a one_tensor
-    | Dtype.Float16 | Dtype.Float32 | Dtype.Float64 | Dtype.Int32 | Dtype.Int64
-    | Dtype.Int8 | Dtype.Int16 | Dtype.UInt16 | Dtype.Int | Dtype.NativeInt
-    | Dtype.Complex32 | Dtype.Complex64 | Dtype.BFloat16 | Dtype.Int4
-    | Dtype.Float8_e4m3 | Dtype.Float8_e5m2 | Dtype.Complex16 | Dtype.QInt8 ->
-        let one_val = Dtype.one dt in
-        let one_tensor = full (B.context a) dt (shape a) one_val in
-        sub one_tensor a
+    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 | Dtype.QUInt8 -> B.op_xor x one
+    | _ -> sub one x
 
   (* ───── Comparison Operations ───── *)
 
-  let cmplt a b =
-    let a', b' = broadcasted a b in
-    B.op_cmplt a' b'
-
-  let less a b = cmplt a b
-
-  let cmpne a b =
-    let a', b' = broadcasted a b in
-    B.op_cmpne a' b'
-
-  let not_equal a b = cmpne a b
-
-  let cmpeq a b =
-    let ne_result = cmpne a b in
-    logical_not ne_result
-
-  let equal a b = cmpeq a b
+  let cmplt a b = binop B.op_cmplt a b
+  let cmpne a b = binop B.op_cmpne a b
+  let cmpeq a b = logical_not (cmpne a b)
   let cmpgt a b = cmplt b a
-  let greater a b = cmpgt a b
   let cmple a b = logical_not (cmpgt a b)
-  let less_equal a b = cmple a b
   let cmpge a b = logical_not (cmplt a b)
-  let greater_equal a b = cmpge a b
+
+  (* Aliases *)
+  let less = cmplt
+  let less_equal = cmple
+  let greater = cmpgt
+  let greater_equal = cmpge
+  let equal = cmpeq
+  let not_equal = cmpne
 
   (* Scalar comparison operations *)
-  let equal_s a s =
-    let s_tensor = scalar (B.context a) (dtype a) s in
-    equal a s_tensor
-
-  let not_equal_s a s =
-    let s_tensor = scalar (B.context a) (dtype a) s in
-    not_equal a s_tensor
-
-  let less_s a s =
-    let s_tensor = scalar (B.context a) (dtype a) s in
-    less a s_tensor
-
-  let greater_s a s =
-    let s_tensor = scalar (B.context a) (dtype a) s in
-    greater a s_tensor
-
-  let less_equal_s a s =
-    let s_tensor = scalar (B.context a) (dtype a) s in
-    less_equal a s_tensor
-
-  let greater_equal_s a s =
-    let s_tensor = scalar (B.context a) (dtype a) s in
-    greater_equal a s_tensor
+  let equal_s a s = equal a (scalar_like a s)
+  let not_equal_s a s = not_equal a (scalar_like a s)
+  let less_s a s = less a (scalar_like a s)
+  let greater_s a s = greater a (scalar_like a s)
+  let less_equal_s a s = less_equal a (scalar_like a s)
+  let greater_equal_s a s = greater_equal a (scalar_like a s)
 
   (* ───── Element-wise Unary Operations ───── *)
 
@@ -5163,9 +5119,7 @@ module Make (B : Backend_intf.S) = struct
           let target_chars =
             match output_token_opt with
             | Some tokens ->
-                let output_has_ellipsis =
-                  List.exists (( = ) Ellipsis) tokens
-                in
+                let output_has_ellipsis = List.exists (( = ) Ellipsis) tokens in
                 if output_has_ellipsis && not inputs_have_ellipsis then
                   invalid_arg
                     "einsum: output ellipsis requires ellipsis in inputs";
@@ -5209,16 +5163,14 @@ module Make (B : Backend_intf.S) = struct
 
           (* Validate that all output indices exist in inputs *)
           let all_input_chars =
-            Array.fold_left
-              (fun acc info -> acc @ info.axis_labels)
-              [] ops_info
+            Array.fold_left (fun acc info -> acc @ info.axis_labels) [] ops_info
           in
           List.iter
             (fun c ->
               if not (List.mem c all_input_chars) then
                 invalid_arg
-                  (Printf.sprintf "einsum: output index '%c' not found in inputs"
-                     c))
+                  (Printf.sprintf
+                     "einsum: output index '%c' not found in inputs" c))
             target_chars;
 
           let plan = optimize_path (Array.to_list ops_info) target_chars in
