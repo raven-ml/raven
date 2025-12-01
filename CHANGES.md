@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 - Only document user-facing changes (features, bug fixes, performance improvements, API changes, etc.)
 - Add new entries at the top of the appropriate section (most recent first)
 
+## [1.0.0~alpha3] - Unreleased
+
+### Nx
+
+- Improve `einsum` performance **8–20×** with greedy contraction path optimizer (e.g., MatMul 100×100 f32 207.83 µs → 10.76 µs, **19×**; BatchMatMul 200×200 f32 8.78 ms → 435.39 µs, **20×**) (@tmattio)
+- Rewrite `diagonal` using flatten + gather approach instead of O(N²) eye matrix masking, reducing memory from O(N²) to O(N) (@tmattio)
+
 ## [1.0.0~alpha2] - 2025-11-03
 
 We're excited to announce the release of Raven 1.0.0~alpha2! Less than a month after alpha1, this release notably includes contributions from Outreachy applicants in preparation for the upcoming _two_ internships.
