@@ -54,6 +54,8 @@ let jit = Jit.jit
 
 (* ───── Autodiff ───── *)
 
+let vjp = Autodiff.vjp
+let vjps = Autodiff.vjps
 let grad = Autodiff.grad
 let grads = Autodiff.grads
 let value_and_grad = Autodiff.value_and_grad

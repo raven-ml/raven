@@ -211,6 +211,37 @@ type _ Effect.t +=
     }
       -> (float, Dtype.float64_elt) t Effect.t
   | E_psum : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
+  | E_cholesky : { t_in : ('a, 'b) t; upper : bool } -> ('a, 'b) t Effect.t
+  | E_qr : {
+      t_in : ('a, 'b) t;
+      reduced : bool;
+    }
+      -> (('a, 'b) t * ('a, 'b) t) Effect.t
+  | E_svd : {
+      t_in : ('a, 'b) t;
+      full_matrices : bool;
+    }
+      -> (('a, 'b) t * (float, Dtype.float64_elt) t * ('a, 'b) t) Effect.t
+  | E_eig : {
+      t_in : ('a, 'b) t;
+      vectors : bool;
+    }
+      -> ((Complex.t, Dtype.complex64_elt) t
+         * (Complex.t, Dtype.complex64_elt) t option)
+         Effect.t
+  | E_eigh : {
+      t_in : ('a, 'b) t;
+      vectors : bool;
+    }
+      -> ((float, Dtype.float64_elt) t * ('a, 'b) t option) Effect.t
+  | E_triangular_solve : {
+      a : ('a, 'b) t;
+      b : ('a, 'b) t;
+      upper : bool;
+      transpose : bool;
+      unit_diag : bool;
+    }
+      -> ('a, 'b) t Effect.t
 
 (* Native_context creation *)
 let create_context () : context = Native_context (Nx_c.create_context ())
@@ -608,19 +639,58 @@ let op_irfft (type a c) (t : (Complex.t, a) t) ~(dtype : (float, c) Dtype.t)
 
 (* Linear algebra operations *)
 
-let op_cholesky ~upper:_ _ =
-  failwith "op_cholesky: not implemented in Rune backend"
+let op_cholesky ~upper t_in =
+  try Effect.perform (E_cholesky { t_in; upper })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Native_tensor t -> Native_tensor (Nx_c.op_cholesky ~upper t)
+    | Symbolic_tensor _ -> failwith "Cannot perform cholesky on symbolic tensor")
 
-let op_qr ~reduced:_ _ = failwith "op_qr: not implemented in Rune backend"
+let op_qr ~reduced t_in =
+  try Effect.perform (E_qr { t_in; reduced })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Native_tensor t ->
+        let q, r = Nx_c.op_qr ~reduced t in
+        (Native_tensor q, Native_tensor r)
+    | Symbolic_tensor _ -> failwith "Cannot perform qr on symbolic tensor")
 
-let op_svd ~full_matrices:_ _ =
-  failwith "op_svd: not implemented in Rune backend"
+let op_svd ~full_matrices t_in =
+  try Effect.perform (E_svd { t_in; full_matrices })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Native_tensor t ->
+        let u, s, vt = Nx_c.op_svd ~full_matrices t in
+        (Native_tensor u, Native_tensor s, Native_tensor vt)
+    | Symbolic_tensor _ -> failwith "Cannot perform svd on symbolic tensor")
 
-let op_eig ~vectors:_ _ = failwith "op_eig: not implemented in Rune backend"
-let op_eigh ~vectors:_ _ = failwith "op_eigh: not implemented in Rune backend"
+let op_eig ~vectors t_in =
+  try Effect.perform (E_eig { t_in; vectors })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Native_tensor t ->
+        let vals, vecs_opt = Nx_c.op_eig ~vectors t in
+        (Native_tensor vals, Option.map (fun v -> Native_tensor v) vecs_opt)
+    | Symbolic_tensor _ -> failwith "Cannot perform eig on symbolic tensor")
 
-let op_triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
-  failwith "op_triangular_solve: not implemented in Rune backend"
+let op_eigh ~vectors t_in =
+  try Effect.perform (E_eigh { t_in; vectors })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Native_tensor t ->
+        let vals, vecs_opt = Nx_c.op_eigh ~vectors t in
+        (Native_tensor vals, Option.map (fun v -> Native_tensor v) vecs_opt)
+    | Symbolic_tensor _ -> failwith "Cannot perform eigh on symbolic tensor")
+
+let op_triangular_solve ~upper ~transpose ~unit_diag a b =
+  try Effect.perform (E_triangular_solve { a; b; upper; transpose; unit_diag })
+  with Effect.Unhandled _ -> (
+    let a', b' = ensure_same_device a b in
+    match (a', b') with
+    | Native_tensor a_t, Native_tensor b_t ->
+        Native_tensor
+          (Nx_c.op_triangular_solve ~upper ~transpose ~unit_diag a_t b_t)
+    | _ -> assert false)
 
 let op_as_strided t_in new_shape new_strides_in_elements offset_in_elements =
   (* Rune backend implementation of as_strided *)

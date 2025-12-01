@@ -4119,7 +4119,8 @@ module Make (B : Backend_intf.S) = struct
       let prefix_shape = Array.sub (shape x_trans) 0 (nd - 2) in
       let flat_last_dim = d1 * d2 in
       let flat_shape = Array.append prefix_shape [| flat_last_dim |] in
-      let x_flat = reshape flat_shape x_trans in
+      (* Make contiguous before reshape to handle strided views *)
+      let x_flat = reshape flat_shape (contiguous x_trans) in
 
       (* 4. Construct indices for gather *)
       (*

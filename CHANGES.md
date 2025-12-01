@@ -17,7 +17,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
-- Implement `as_strided` backward pass for autodiff, enabling gradients through slicing and indexing operations (@tmattio)
+- Rewrite `Autodiff` module to fix critical JVP correctness issues, enable higher-order derivatives (nested gradients), and introduce `vjp` as a first-class primitive. (@tmattio)
+- Add autodiff support for `as_strided`, enabling gradients through slicing and indexing operations (@tmattio)
+- Add autodiff support for `cummax` and `cummin` cumulative operations (@tmattio)
+- Add autodiff support for FFT operations (@tmattio)
+- Add autodiff support for some linear algebra operations: QR decomposition (`qr`), Cholesky decomposition (`cholesky`), and triangular solve (`triangular_solve`). (@tmattio)
 
 ## [1.0.0~alpha2] - 2025-11-03
 

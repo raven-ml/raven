@@ -120,6 +120,46 @@ val jvps :
       - : float * float = (6., 3.5)
     ]} *)
 
+val vjp :
+  (('a, 'b) t -> ('c, 'd) t) ->
+  ('a, 'b) t ->
+  ('c, 'd) t ->
+  ('c, 'd) t * ('a, 'b) t
+(** [vjp f primal cotangent] computes a vector-Jacobian product (reverse-mode
+    AD).
+
+    Returns a tuple of (primal_output, gradient) where:
+    - primal_output = f(primal)
+    - gradient = cotangent · Jf(primal)
+
+    This is like [grad] but allows specifying a custom cotangent instead of the
+    implicit all-ones vector.
+
+    {@ocaml[
+      # let x = scalar float32 2. in
+        let cot = scalar float32 1. in
+        let f x = mul x x in
+        vjp f x cot |> (fun (p, g) -> (item p [], item g []))
+      - : float * float = (4., 4.)
+    ]} *)
+
+val vjps :
+  (('a, 'b) t list -> ('c, 'd) t) ->
+  ('a, 'b) t list ->
+  ('c, 'd) t ->
+  ('c, 'd) t * ('a, 'b) t list
+(** [vjps f primals cotangent] computes VJP for functions with multiple inputs.
+
+    Returns (primal_output, gradients) for the list of inputs.
+
+    {@ocaml[
+      # let xs = [scalar float32 3.; scalar float32 2.] in
+        let cot = scalar float32 1. in
+        let f inputs = mul (List.hd inputs) (List.nth inputs 1) in
+        vjps f xs cot |> (fun (p, gs) -> (item p [], List.map (fun g -> item g []) gs))
+      - : float * float list = (6., [2.; 3.])
+    ]} *)
+
 val no_grad : (unit -> 'a) -> 'a
 (** [no_grad f] evaluates [f ()] without recording operations for automatic
     differentiation. This mirrors JAX's [lax.stop_gradient] semantics when

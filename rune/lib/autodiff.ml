@@ -2,2087 +2,1690 @@ open Nx_core
 open Nx_rune
 module T = Tensor
 
-(* Custom hashtable module that uses physical equality to distinguish tensors *)
-module PhysicalTbl = struct
+(* ───── Type Definitions & Utils ───── *)
+
+module Physical_tbl = struct
   module Tbl = Hashtbl.Make (struct
     type t = Obj.t
 
     let equal = ( == )
-    let hash obj = Hashtbl.hash obj
+    let hash = Hashtbl.hash
   end)
 
-  type ('a, 'b) t = 'b Tbl.t
+  type ('k, 'v) t = 'v Tbl.t
 
   let create size = Tbl.create size
-  let find_opt tbl key = Tbl.find_opt tbl (Obj.repr key)
+  let find tbl key = Tbl.find_opt tbl (Obj.repr key)
   let add tbl key value = Tbl.replace tbl (Obj.repr key) value
-
-  let find tbl key =
-    match find_opt tbl key with Some v -> v | None -> raise Not_found
 end
 
-(* Global ID generator for t_with_grad instances *)
-let next_twg_id_counter = ref 0
-
-let fresh_twg_id () =
-  incr next_twg_id_counter;
-  !next_twg_id_counter
-
-(* Global switch to temporarily disable autodiff effects (e.g. during
-   backward) *)
 let autodiff_enabled = ref true
-let reverse_depth = ref 0
 
 let without_autodiff f =
-  let previous = !autodiff_enabled in
+  let prev = !autodiff_enabled in
   autodiff_enabled := false;
-  Fun.protect f ~finally:(fun () -> autodiff_enabled := previous)
+  Fun.protect f ~finally:(fun () -> autodiff_enabled := prev)
 
-(* Type to store a tensor's forward value and its accumulated gradient *)
-type ('a, 'b) t_with_grad = {
-  v : ('a, 'b) t;
-  mutable bv : ('a, 'b) t;
-  id : int;
-}
+(* ───── Forward Mode (JVP) ───── *)
 
-type any_t_with_grad =
-  | Any_t_with_grad : ('a, 'b) t_with_grad -> any_t_with_grad
-
-let value_of twg = twg.v
-let grad_of twg = twg.bv
-
-let unwrap_twg (type a b) (_dtype : (a, b) Dtype.t) (any : any_t_with_grad) :
-    (a, b) t_with_grad =
-  match any with Any_t_with_grad m -> Obj.magic m
-
-(* Forward mode AD: dual numbers storing value and tangent *)
 type ('a, 'b) dual = { primal : ('a, 'b) t; tangent : ('a, 'b) t }
 type any_dual = Any_dual : ('a, 'b) dual -> any_dual
 
-let primal_of dual = dual.primal
-let tangent_of dual = dual.tangent
+let unwrap_dual (type a b) (_ : (a, b) Dtype.t) (Any_dual d) : (a, b) dual =
+  Obj.magic d
 
-let unwrap_dual (type a b) (_dtype : (a, b) Dtype.t) (any : any_dual) :
-    (a, b) dual =
-  match any with Any_dual d -> Obj.magic d
-
-(* --- Derivative definitions for UOps --- *)
-
+(* Derivative helpers for transcendental functions. *)
 let ln2 = 0.693147180559945309417
-let deriv_neg x = T.neg (T.ones_like x)
 
-let deriv_log2 (type a b) (x : (a, b) T.t) : (a, b) T.t =
-  (* d/dx log2(x) = 1 / (x * ln(2)) where ln(2) ≈ 0.6931 *)
-  match T.dtype x with
-  | Float16 ->
-      let ln2_tensor = T.full (context x) (T.dtype x) (T.shape x) ln2 in
-      T.div (T.ones_like x) (T.mul x ln2_tensor)
-  | Float32 ->
-      let ln2_tensor = T.full (context x) (T.dtype x) (T.shape x) ln2 in
-      T.div (T.ones_like x) (T.mul x ln2_tensor)
-  | Float64 ->
-      let ln2_tensor = T.full (context x) (T.dtype x) (T.shape x) ln2 in
-      T.div (T.ones_like x) (T.mul x ln2_tensor)
-  | _ -> failwith "deriv_log2: unsupported dtype"
+let float_scalar_like (type a b) (x : (a, b) t) (v : float) : (a, b) t =
+  Obj.magic (T.full (context x) (dtype x) [||] (Obj.magic v : a))
 
-let deriv_exp2 (type a b) (exp2_x : (a, b) T.t) (_x : (a, b) T.t) : (a, b) T.t =
-  match T.dtype exp2_x with
-  | Float16 ->
-      let ln2_tensor =
-        T.full (context exp2_x) (T.dtype exp2_x) (T.shape exp2_x) ln2
-      in
-      T.mul exp2_x ln2_tensor
-  | Float32 ->
-      let ln2_tensor =
-        T.full (context exp2_x) (T.dtype exp2_x) (T.shape exp2_x) ln2
-      in
-      T.mul exp2_x ln2_tensor
-  | Float64 ->
-      let ln2_tensor =
-        T.full (context exp2_x) (T.dtype exp2_x) (T.shape exp2_x) ln2
-      in
-      T.mul exp2_x ln2_tensor
-  | _ -> failwith "deriv_exp2: unsupported dtype"
+let deriv_log2 (type a b) (x : (a, b) t) : (a, b) t =
+  (* d/dx log2(x) = 1 / (x * ln(2)) *)
+  T.div (T.ones_like x) (T.mul x (float_scalar_like x ln2))
 
-let deriv_sin (type a b) (x : (a, b) T.t) : (a, b) T.t =
-  match T.dtype x with
-  | Float16 ->
-      let cos_x = T.cos x in
-      T.cast (T.dtype x) cos_x
-  | Float32 ->
-      let cos_x = T.cos x in
-      T.cast (T.dtype x) cos_x
-  | Float64 ->
-      let cos_x = T.cos x in
-      T.cast (T.dtype x) cos_x
-  | _ -> failwith "deriv_sin: unsupported dtype"
+let deriv_exp2 (type a b) (exp2_x : (a, b) t) : (a, b) t =
+  (* d/dx exp2(x) = exp2(x) * ln(2) *)
+  T.mul exp2_x (float_scalar_like exp2_x ln2)
 
-let deriv_sqrt sqrt_x _x =
-  let one = T.ones_like sqrt_x in
-  let two = T.add one one in
-  T.div one (T.mul two sqrt_x)
+let deriv_sin (type a b) (x : (a, b) t) : (a, b) t =
+  (* d/dx sin(x) = cos(x) *)
+  Obj.magic (T.cos (Obj.magic x))
 
-let deriv_recip x =
-  let x_squared = T.mul x x in
-  T.neg (T.recip x_squared)
+let deriv_sqrt (type a b) (sqrt_x : (a, b) t) : (a, b) t =
+  (* d/dx sqrt(x) = 1 / (2 * sqrt(x)) *)
+  T.div (T.ones_like sqrt_x) (T.mul (float_scalar_like sqrt_x 2.0) sqrt_x)
 
-let deriv_fdiv_wrt_op1 _op1 op2 = T.recip op2
+let deriv_recip (type a b) (x : (a, b) t) : (a, b) t =
+  (* d/dx (1/x) = -1/x^2 *)
+  T.neg (T.recip (T.mul x x))
 
-let deriv_fdiv_wrt_op2 op1 op2 =
-  let op2_sq = T.mul op2 op2 in
-  T.div (T.neg op1) op2_sq
-
-let deriv_pow_wrt_op1 op1 op2 =
-  let exp_minus_1 = T.sub op2 (T.ones_like op2) in
-  let op1_pow_exp_minus_1 = T.pow op1 exp_minus_1 in
-  T.mul op2 op1_pow_exp_minus_1
-
-let log_e_float x =
-  let ctx = context x in
-  let log2_x = T.log2 x in
-  let log_2 = T.full ctx (dtype x) (T.shape x) ln2 in
-  T.mul log2_x log_2
-
-let deriv_pow_wrt_op2_float result_val op1 =
-  let log_op1 = log_e_float op1 in
-  T.mul result_val log_op1
-
-let deriv_max_wrt_op1 op1 op2 op1_dtype = T.cast op1_dtype (T.greater op1 op2)
-
-let deriv_max_wrt_op2 op1 op2 op2_dtype =
-  T.cast op2_dtype (T.greater_equal op2 op1)
-
-let normalize_axis axis shape =
-  let rank = Array.length shape in
-  let axis = if axis < 0 then axis + rank else axis in
-  if axis < 0 || axis >= rank then
-    invalid_arg (Printf.sprintf "axis %d out of bounds for rank %d" axis rank)
-  else axis
-
-let reverse_cumsum tensor axis =
-  let flipped = T.flip tensor ~axes:[ axis ] in
-  let scanned = T.cumsum ~axis flipped in
-  T.flip scanned ~axes:[ axis ]
-
-let prefix_exclusive axis tensor =
-  let shape = T.shape tensor in
-  let pad_config =
-    Array.mapi (fun i _ -> if i = axis then (1, 0) else (0, 0)) shape
-  in
-  let one = Dtype.one (T.dtype tensor) in
-  let padded = T.pad pad_config one tensor in
-  let cumprod_padded = T.cumprod ~axis padded in
-  let slice_specs =
-    Array.mapi
-      (fun i dim -> if i = axis then T.R (0, dim) else T.R (0, dim))
-      shape
-  in
-  T.slice (Array.to_list slice_specs) cumprod_padded
-
-let suffix_exclusive axis tensor =
-  let shape = T.shape tensor in
-  let one = Dtype.one (T.dtype tensor) in
-  let flipped = T.flip tensor ~axes:[ axis ] in
-  let flipped_cumprod = T.cumprod ~axis flipped in
-  let suffix_inclusive = T.flip flipped_cumprod ~axes:[ axis ] in
-  let pad_config =
-    Array.mapi (fun i _ -> if i = axis then (0, 1) else (0, 0)) shape
-  in
-  let padded = T.pad pad_config one suffix_inclusive in
-  let slice_specs =
-    Array.mapi
-      (fun i dim -> if i = axis then T.R (1, dim + 1) else T.R (0, dim))
-      shape
-  in
-  T.slice (Array.to_list slice_specs) padded
-
-let divide_no_nan num denom =
-  let zero_scalar = Dtype.zero (T.dtype denom) in
-  let zero_tensor =
-    T.full (context denom) (T.dtype denom) (T.shape denom) zero_scalar
-  in
-  let zero_mask = T.equal denom zero_tensor in
-  let safe_denom = T.where zero_mask (T.ones_like denom) denom in
-  let base = T.div num safe_denom in
-  T.where zero_mask (T.zeros_like base) base
-
-let prepare_grad_for_broadcast grad_output input_tensor_val axes op_keepdims
-    reduction_op_for_shape =
-  if op_keepdims then grad_output
-  else
-    let dummy_input_like = T.zeros_like input_tensor_val in
-    let reduced_shape_with_kept_dims =
-      T.shape (reduction_op_for_shape dummy_input_like ~axes ~keepdims:true)
-    in
-    T.reshape reduced_shape_with_kept_dims grad_output
-
-(* Helper functions to reduce boilerplate *)
-let handle_identity_gradient_op ~op_name ~op get_or_init_twg t_in_val k_continue
+let deriv_pow_wrt_base (type a b) (base : (a, b) t) (exp : (a, b) t) : (a, b) t
     =
-  let result_val = op t_in_val in
-  let forward_val = Effect.Deep.continue k_continue result_val in
-  Debug.with_context ("∇" ^ op_name) (fun () ->
-      let twg_in = get_or_init_twg t_in_val in
-      let twg_res = get_or_init_twg result_val in
-      let d_loss_d_result = grad_of twg_res in
-      twg_in.bv <- T.add twg_in.bv d_loss_d_result);
-  forward_val
+  (* d/da (a^b) = b * a^(b-1) *)
+  T.mul exp (T.pow base (T.sub exp (T.ones_like exp)))
 
-let handle_unary_op ~op_name ~op ~deriv get_or_init_twg t_in_val k_continue =
-  let result_val = op t_in_val in
-  let forward_val = Effect.Deep.continue k_continue result_val in
-  Debug.with_context ("∇" ^ op_name) (fun () ->
-      let twg_in = get_or_init_twg t_in_val in
-      let twg_res = get_or_init_twg result_val in
-      let d_loss_d_result = grad_of twg_res in
-      let grad_contrib = T.mul d_loss_d_result (deriv (value_of twg_in)) in
-      twg_in.bv <- T.add twg_in.bv grad_contrib);
-  forward_val
-
-let handle_binary_op ~op_name ~op ~deriv_wrt_op1 ~deriv_wrt_op2 get_or_init_twg
-    op1_val op2_val k_continue =
-  let result_val = op op1_val op2_val in
-  let forward_val = Effect.Deep.continue k_continue result_val in
-  Debug.with_context ("∇" ^ op_name) (fun () ->
-      let twg_op1 = get_or_init_twg op1_val in
-      let twg_op2 = get_or_init_twg op2_val in
-      let twg_res = get_or_init_twg result_val in
-      let d_loss_d_result = grad_of twg_res in
-
-      let grad_op1 =
-        T.mul d_loss_d_result
-          (deriv_wrt_op1 (value_of twg_op1) (value_of twg_op2))
-      in
-      twg_op1.bv <- T.add twg_op1.bv grad_op1;
-
-      let grad_op2 =
-        T.mul d_loss_d_result
-          (deriv_wrt_op2 (value_of twg_op1) (value_of twg_op2))
-      in
-      twg_op2.bv <- T.add twg_op2.bv grad_op2);
-  forward_val
-
-(* The main reverse-mode AD effect handler *)
-let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
-  let open Effect.Deep in
-  let get_or_init_twg tensor_val =
-    match PhysicalTbl.find_opt val_to_twg_id_map tensor_val with
-    | Some twg_id -> (
-        match Hashtbl.find_opt tape_by_twg_id twg_id with
-        | Some any_twg -> unwrap_twg (dtype tensor_val) any_twg
-        | None -> failwith "Rune.Autodiff inconsistency")
-    | None ->
-        let zero_grad = T.zeros_like tensor_val in
-        let new_id = fresh_twg_id () in
-        let new_twg = { v = tensor_val; bv = zero_grad; id = new_id } in
-        Hashtbl.add tape_by_twg_id new_id (Any_t_with_grad new_twg);
-        PhysicalTbl.add val_to_twg_id_map tensor_val new_id;
-        new_twg
+let deriv_pow_wrt_exp (type a b) (base : (a, b) t) (result : (a, b) t) :
+    (a, b) t =
+  (* d/db (a^b) = a^b * ln(a) = a^b * log2(a) * ln(2) *)
+  let ln_base =
+    T.mul (Obj.magic (T.log2 (Obj.magic base))) (float_scalar_like base ln2)
   in
+  T.mul result ln_base
 
-  let effc : type a. a Effect.t -> ((a, _) continuation -> _) option =
+let make_jvp_handler dual_map =
+  let open Effect.Deep in
+  let get_dual (type a b) (t : (a, b) t) : (a, b) dual =
+    match Physical_tbl.find dual_map t with
+    | Some (Any_dual d) -> unwrap_dual (dtype t) (Any_dual d)
+    | None -> { primal = t; tangent = T.zeros_like t }
+  in
+  let register t dual = Physical_tbl.add dual_map t (Any_dual dual) in
+
+  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
    fun eff ->
     if not !autodiff_enabled then None
     else
       match eff with
-      | E_buffer { context = effect_ctx; dtype = dt; size_in_elements } ->
+      (* Sources *)
+      | E_const_scalar { context = ctx; value; dtype = dt } ->
           Some
             (fun k ->
-              let result_val = op_buffer effect_ctx dt size_in_elements in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇buffer" (fun () ->
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_const_scalar { context = effect_ctx; value; dtype = dt } ->
+              let res = T.full ctx dt [||] value in
+              register res { primal = res; tangent = T.zeros_like res };
+              continue k res)
+      | E_const_array { context = ctx; array } ->
           Some
             (fun k ->
-              let result_val = op_const_scalar effect_ctx value dt in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇const_scalar" (fun () ->
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_add { a = op1_val; b = op2_val } ->
+              let res = op_const_array ctx array in
+              register res { primal = res; tangent = T.zeros_like res };
+              continue k res)
+      | E_buffer { context = ctx; dtype = dt; size_in_elements } ->
           Some
             (fun k ->
-              let result_val = op_add op1_val op2_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇add" (fun () ->
-                  let twg_op1 = get_or_init_twg op1_val in
-                  let twg_op2 = get_or_init_twg op2_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  twg_op1.bv <- T.add twg_op1.bv d_loss_d_result;
-                  twg_op2.bv <- T.add twg_op2.bv d_loss_d_result);
-              forward_val)
-      | E_mul { a = op1_val; b = op2_val } ->
-          Some
-            (handle_binary_op ~op_name:"mul" ~op:op_mul
-               ~deriv_wrt_op1:(fun _ op2 -> op2)
-               ~deriv_wrt_op2:(fun op1 _ -> op1)
-               get_or_init_twg op1_val op2_val)
-      | E_neg { t_in } ->
-          Some
-            (handle_unary_op ~op_name:"neg" ~op:op_neg ~deriv:deriv_neg
-               get_or_init_twg t_in)
-      | E_log2 { t_in } ->
-          Some
-            (handle_unary_op ~op_name:"log2" ~op:op_log2 ~deriv:deriv_log2
-               get_or_init_twg t_in)
-      | E_exp2 { t_in = t_in_val } ->
+              let res = op_buffer ctx dt size_in_elements in
+              register res { primal = res; tangent = T.zeros_like res };
+              continue k res)
+      | E_threefry { key; ctr } ->
           Some
             (fun k ->
-              let result_val = op_exp2 t_in_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇exp2" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let d_result_d_input =
-                    deriv_exp2 result_val (value_of twg_in)
-                  in
-                  let grad_contrib = T.mul d_loss_d_result d_result_d_input in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib);
-              forward_val)
-      | E_sin { t_in } ->
-          Some
-            (handle_unary_op ~op_name:"sin" ~op:op_sin ~deriv:deriv_sin
-               get_or_init_twg t_in)
-      | E_sqrt { t_in = t_in_val } ->
+              let res = op_threefry key ctr in
+              register res { primal = res; tangent = T.zeros_like res };
+              continue k res)
+      (* Binary Arithmetic *)
+      | E_add { a; b } ->
           Some
             (fun k ->
-              let result_val = T.sqrt t_in_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇sqrt" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let d_result_d_input =
-                    deriv_sqrt result_val (value_of twg_in)
-                  in
-                  let grad_contrib = T.mul d_loss_d_result d_result_d_input in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib);
-              forward_val)
-      | E_recip { t_in } ->
-          Some
-            (handle_unary_op ~op_name:"recip" ~op:op_recip ~deriv:deriv_recip
-               get_or_init_twg t_in)
-      | E_fdiv { a; b } ->
-          Some
-            (handle_binary_op ~op_name:"fdiv" ~op:op_fdiv
-               ~deriv_wrt_op1:deriv_fdiv_wrt_op1
-               ~deriv_wrt_op2:deriv_fdiv_wrt_op2 get_or_init_twg a b)
-      | E_pow { a = op1_val; b = op2_val } ->
+              let res = op_add a b in
+              let da = get_dual a in
+              let db = get_dual b in
+              let tan = T.add da.tangent db.tangent in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_mul { a; b } ->
           Some
             (fun k ->
-              let result_val = op_pow op1_val op2_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇pow" (fun () ->
-                  let twg_op1 = get_or_init_twg op1_val in
-                  let twg_op2 = get_or_init_twg op2_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-
-                  let d_result_d_op1 =
-                    deriv_pow_wrt_op1 (value_of twg_op1) (value_of twg_op2)
-                  in
-                  let grad_contrib_to_op1 =
-                    T.mul d_loss_d_result d_result_d_op1
-                  in
-                  twg_op1.bv <- T.add twg_op1.bv grad_contrib_to_op1;
-
-                  match dtype (value_of twg_op1) with
-                  | Dtype.Float32 | Dtype.Float64 ->
-                      let op1_float = T.cast Dtype.float32 (value_of twg_op1) in
-                      let result_float = T.cast Dtype.float32 result_val in
-                      let d_result_d_op2 =
-                        deriv_pow_wrt_op2_float result_float op1_float
-                      in
-                      let d_result_d_op2_orig_dtype =
-                        T.cast (dtype (value_of twg_op2)) d_result_d_op2
-                      in
-                      let grad_contrib_to_op2 =
-                        T.mul d_loss_d_result d_result_d_op2_orig_dtype
-                      in
-                      twg_op2.bv <- T.add twg_op2.bv grad_contrib_to_op2
-                  | _ -> ());
-              forward_val)
-      | E_max { a = op1_val; b = op2_val } ->
-          Some
-            (fun k ->
-              let result_val = op_max op1_val op2_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇max" (fun () ->
-                  let twg_op1 = get_or_init_twg op1_val in
-                  let twg_op2 = get_or_init_twg op2_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let val_op1 = value_of twg_op1 in
-                  let val_op2 = value_of twg_op2 in
-                  let d_result_d_op1 =
-                    deriv_max_wrt_op1 val_op1 val_op2 (dtype val_op1)
-                  in
-                  let grad_contrib_to_op1 =
-                    T.mul d_loss_d_result d_result_d_op1
-                  in
-                  twg_op1.bv <- T.add twg_op1.bv grad_contrib_to_op1;
-                  let d_result_d_op2 =
-                    deriv_max_wrt_op2 val_op1 val_op2 (dtype val_op2)
-                  in
-                  let grad_contrib_to_op2 =
-                    T.mul d_loss_d_result d_result_d_op2
-                  in
-                  twg_op2.bv <- T.add twg_op2.bv grad_contrib_to_op2);
-              forward_val)
-      | E_reshape { t_in = t_in_val; new_shape } ->
-          Some
-            (fun k ->
-              let result_val = op_reshape t_in_val new_shape in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇reshape" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let original_shape_in = T.shape (value_of twg_in) in
-                  let grad_contrib_in =
-                    T.reshape original_shape_in d_loss_d_result
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_in);
-              forward_val)
-      | E_expand { t_in = t_in_val; new_target_shape } ->
-          Some
-            (fun k ->
-              let result_val = op_expand t_in_val new_target_shape in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇expand" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_expanded_result = grad_of twg_res in
-
-                  let grad_contrib_to_original_input =
-                    let original_input_shape = T.shape (value_of twg_in) in
-                    let expanded_output_shape =
-                      match Symbolic_shape.eval new_target_shape with
-                      | Some arr -> arr
-                      | None ->
-                          failwith "expand grad requires concrete target shape"
-                    in
-                    if original_input_shape = expanded_output_shape then
-                      d_loss_d_expanded_result
-                    else
-                      let rank_orig_in = Array.length original_input_shape in
-                      let rank_expanded_out =
-                        Array.length expanded_output_shape
-                      in
-                      let axes_to_sum_list = ref [] in
-
-                      if rank_expanded_out > rank_orig_in then
-                        for i = 0 to rank_expanded_out - rank_orig_in - 1 do
-                          axes_to_sum_list := i :: !axes_to_sum_list
-                        done;
-
-                      for i = 0 to rank_orig_in - 1 do
-                        let orig_in_dim_size = original_input_shape.(i) in
-                        let expanded_out_dim_idx =
-                          i + (rank_expanded_out - rank_orig_in)
-                        in
-                        let expanded_out_dim_size =
-                          expanded_output_shape.(expanded_out_dim_idx)
-                        in
-                        if orig_in_dim_size = 1 && expanded_out_dim_size > 1
-                        then
-                          axes_to_sum_list :=
-                            expanded_out_dim_idx :: !axes_to_sum_list
-                      done;
-
-                      let summed_grad =
-                        if !axes_to_sum_list <> [] then
-                          T.sum d_loss_d_expanded_result
-                            ~axes:(List.rev !axes_to_sum_list)
-                            ~keepdims:true
-                        else d_loss_d_expanded_result
-                      in
-                      if T.shape summed_grad <> original_input_shape then
-                        T.reshape original_input_shape summed_grad
-                      else summed_grad
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_original_input);
-              forward_val)
-      | E_reduce_sum { t_in = t_in_val; axes; keepdims } ->
-          Some
-            (fun k ->
-              let result_val = op_reduce_sum ~axes ~keepdims t_in_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇reduce_sum" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let original_input_shape = T.shape (value_of twg_in) in
-                  let grad_prepared_for_broadcast =
-                    prepare_grad_for_broadcast d_loss_d_result (value_of twg_in)
-                      (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
-                        T.sum t ~axes ~keepdims)
-                  in
-                  let grad_contrib_to_input =
-                    T.broadcast_to original_input_shape
-                      grad_prepared_for_broadcast
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-              forward_val)
-      | E_reduce_max { t_in = t_in_val; axes; keepdims } ->
-          Some
-            (fun k ->
-              let result_val = op_reduce_max ~axes ~keepdims t_in_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇reduce_max" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let val_in = value_of twg_in in
-                  let original_input_shape = T.shape val_in in
-
-                  let grad_prepared_for_broadcast =
-                    prepare_grad_for_broadcast d_loss_d_result val_in
-                      (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
-                        T.max t ~axes ~keepdims)
-                  in
-                  let d_loss_d_result_broadcasted =
-                    T.broadcast_to original_input_shape
-                      grad_prepared_for_broadcast
-                  in
-
-                  let result_val_prepared_for_broadcast =
-                    prepare_grad_for_broadcast result_val val_in
-                      (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
-                        T.max t ~axes ~keepdims)
-                  in
-                  let result_val_broadcasted_for_compare =
-                    T.broadcast_to original_input_shape
-                      result_val_prepared_for_broadcast
-                  in
-
-                  let mask =
-                    T.equal val_in result_val_broadcasted_for_compare
-                  in
-                  let d_result_d_input_mask_casted =
-                    T.cast (dtype d_loss_d_result) mask
-                  in
-                  let grad_contrib_to_input =
-                    T.mul d_loss_d_result_broadcasted
-                      d_result_d_input_mask_casted
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-              forward_val)
-      | E_reduce_prod { t_in = t_in_val; axes; keepdims } ->
-          Some
-            (fun k ->
-              let result_val = op_reduce_prod ~axes ~keepdims t_in_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "reduce_prod" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let val_in = value_of twg_in in
-                  let original_input_shape = T.shape val_in in
-
-                  let grad_prepared_for_broadcast =
-                    prepare_grad_for_broadcast d_loss_d_result val_in
-                      (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
-                        T.prod t ~axes ~keepdims)
-                  in
-                  let d_loss_d_result_broadcasted =
-                    T.broadcast_to original_input_shape
-                      grad_prepared_for_broadcast
-                  in
-
-                  let result_val_prepared_for_broadcast =
-                    prepare_grad_for_broadcast result_val val_in
-                      (Array.to_list axes) keepdims (fun t ~axes ~keepdims ->
-                        T.prod t ~axes ~keepdims)
-                  in
-                  let result_val_broadcasted =
-                    T.broadcast_to original_input_shape
-                      result_val_prepared_for_broadcast
-                  in
-
-                  let epsilon = T.zeros_like val_in in
-                  let t_in_val_safe = T.add val_in epsilon in
-                  let d_result_d_input_term =
-                    T.div result_val_broadcasted t_in_val_safe
-                  in
-                  let grad_contrib_to_input =
-                    T.mul d_loss_d_result_broadcasted d_result_d_input_term
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-              forward_val)
-      | E_associative_scan { t_in = t_in_val; axis; op } ->
-          Some
-            (fun k ->
-              let result_val = op_associative_scan ~axis ~op t_in_val in
-              let forward_val = continue k result_val in
-              let shape_in = T.shape t_in_val in
-              let axis_norm = normalize_axis axis shape_in in
-              Debug.with_context "∇associative_scan" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let grad_contrib =
-                    match op with
-                    | `Sum -> reverse_cumsum d_loss_d_result axis_norm
-                    | `Prod ->
-                        let prefix = prefix_exclusive axis_norm t_in_val in
-                        let suffix = suffix_exclusive axis_norm t_in_val in
-                        let h = divide_no_nan d_loss_d_result suffix in
-                        let tail_sum = T.sub (reverse_cumsum h axis_norm) h in
-                        let inner =
-                          T.add d_loss_d_result (T.mul suffix tail_sum)
-                        in
-                        T.mul prefix inner
-                    | `Max | `Min ->
-                        failwith
-                          "autodiff: cummax/cummin gradients not supported"
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib);
-              forward_val)
-      | E_permute { t_in = t_in_val; axes = permute_axes } ->
-          Some
-            (fun k ->
-              let result_val = op_permute t_in_val permute_axes in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇permute" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-
-                  let rank = Array.length permute_axes in
-                  let un_permute_axes = Array.make rank 0 in
-                  Array.iteri
-                    (fun i original_pos -> un_permute_axes.(original_pos) <- i)
-                    permute_axes;
-
-                  let grad_contrib_to_input =
-                    T.transpose d_loss_d_result
-                      ~axes:(Array.to_list un_permute_axes)
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-              forward_val)
-      | E_pad { t_in = t_in_val; padding_config; fill_value } ->
-          Some
-            (fun k ->
-              let result_val = op_pad t_in_val padding_config fill_value in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇pad" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let original_input_shape = T.shape (value_of twg_in) in
-
-                  let shrink_limits =
-                    Array.mapi
-                      (fun dim_idx (pad_before, _) ->
-                        (pad_before, pad_before + original_input_shape.(dim_idx)))
-                      padding_config
-                  in
-                  let grad_contrib_to_input =
-                    T.shrink shrink_limits d_loss_d_result
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-              forward_val)
-      | E_shrink { t_in = t_in_val; limits = shrink_limits } ->
-          Some
-            (fun k ->
-              let result_val = op_shrink t_in_val shrink_limits in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇shrink" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let original_input_shape = T.shape (value_of twg_in) in
-
-                  let padding_config =
-                    Array.mapi
-                      (fun dim_idx (start, stop_exclusive) ->
-                        let original_dim_size =
-                          original_input_shape.(dim_idx)
-                        in
-                        (start, original_dim_size - stop_exclusive))
-                      shrink_limits
-                  in
-                  let zero_val = Dtype.zero (dtype d_loss_d_result) in
-                  let grad_contrib_to_input =
-                    T.pad padding_config zero_val d_loss_d_result
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-              forward_val)
-      | E_as_strided { t_in = t_in_val; new_shape; new_strides; offset } ->
-          Some
-            (fun k ->
-              let result_val =
-                op_as_strided t_in_val
-                  (Nx_core.Symbolic_shape.of_ints new_shape)
-                  new_strides offset
-              in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇as_strided" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-
-                  (* Backward pass for as_strided: accumulate gradients back to
-                     input positions defined by strides and offset.
-
-                     For each output position, compute the corresponding input
-                     index using: input_idx = offset + sum(output_indices *
-                     strides)
-
-                     We build flat indices for scatter_add. *)
-                  let input_shape = T.shape (value_of twg_in) in
-                  let input_numel = Array.fold_left ( * ) 1 input_shape in
-                  let output_numel = Array.fold_left ( * ) 1 new_shape in
-                  let ndim = Array.length new_shape in
-
-                  (* Compute input strides (C-contiguous) for index
-                     calculation *)
-                  let input_strides = Array.make (Array.length input_shape) 1 in
-                  for i = Array.length input_shape - 2 downto 0 do
-                    input_strides.(i) <-
-                      input_strides.(i + 1) * input_shape.(i + 1)
-                  done;
-
-                  (* Build flat indices: for each output element, compute its
-                     corresponding flat index in the input *)
-                  let ctx = context t_in_val in
-                  let flat_indices =
-                    T.init ctx Nx_core.Dtype.Int32 [| output_numel |]
-                      (fun out_coords ->
-                        let out_flat = out_coords.(0) in
-                        (* Convert flat output index to multi-dimensional *)
-                        let out_idx = Array.make ndim 0 in
-                        let temp = ref out_flat in
-                        for i = ndim - 1 downto 0 do
-                          if new_shape.(i) > 0 then (
-                            out_idx.(i) <- !temp mod new_shape.(i);
-                            temp := !temp / new_shape.(i))
-                        done;
-                        (* Compute flat input index using strides and offset *)
-                        let in_flat = ref offset in
-                        for i = 0 to ndim - 1 do
-                          in_flat := !in_flat + (out_idx.(i) * new_strides.(i))
-                        done;
-                        Int32.of_int !in_flat)
-                  in
-
-                  (* Flatten gradient and accumulate to input positions *)
-                  let d_loss_flat =
-                    T.reshape [| output_numel |] d_loss_d_result
-                  in
-                  let zeros_input =
-                    T.zeros ctx (T.dtype t_in_val) [| input_numel |]
-                  in
-                  let grad_contrib =
-                    op_scatter ~mode:`Add zeros_input flat_indices d_loss_flat 0
-                  in
-                  let grad_contrib_reshaped =
-                    T.reshape input_shape grad_contrib
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_reshaped);
-              forward_val)
-      | E_flip { t_in = t_in_val; dims_to_flip } ->
-          Some
-            (fun k ->
-              let axes_to_flip =
-                dims_to_flip |> Array.to_list
-                |> List.mapi (fun i flip -> if flip then Some i else None)
-                |> List.filter_map Fun.id |> Array.of_list
-              in
-              let result_val = op_flip t_in_val dims_to_flip in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇flip" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let grad_contrib_to_input =
-                    T.flip d_loss_d_result ~axes:(Array.to_list axes_to_flip)
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-              forward_val)
-      | E_cat { t_list; axis } ->
-          Some
-            (fun k ->
-              let result_val = op_cat t_list axis in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇cat" (fun () ->
-                  let twg_inputs = List.map get_or_init_twg t_list in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let d_loss_result_shape = T.shape d_loss_d_result in
-
-                  let current_offset = ref 0 in
-                  List.iter
-                    (fun twg_in_current ->
-                      let input_val = value_of twg_in_current in
-                      let input_shape = T.shape input_val in
-                      let size_along_axis = input_shape.(axis) in
-                      let shrink_limits =
-                        Array.mapi
-                          (fun i dim_size ->
-                            if i = axis then
-                              ( !current_offset,
-                                !current_offset + size_along_axis )
-                            else (0, dim_size))
-                          d_loss_result_shape
-                      in
-                      let grad_slice_for_input =
-                        T.shrink shrink_limits d_loss_d_result
-                      in
-                      twg_in_current.bv <-
-                        T.add twg_in_current.bv grad_slice_for_input;
-                      current_offset := !current_offset + size_along_axis)
-                    twg_inputs);
-              forward_val)
-      | E_cast { t_in = t_in_val; target_dtype } ->
-          Some
-            (fun k ->
-              let result_val = op_cast t_in_val target_dtype in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇cast" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let original_dtype = dtype (value_of twg_in) in
-                  let grad_contrib_to_input =
-                    T.cast original_dtype d_loss_d_result
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-              forward_val)
-      | E_contiguous { t_in = t_in_val } ->
-          Some
-            (handle_identity_gradient_op ~op_name:"contiguous" ~op:op_contiguous
-               get_or_init_twg t_in_val)
-      | E_copy { t_in = t_in_val } ->
-          Some
-            (handle_identity_gradient_op ~op_name:"copy" ~op:op_copy
-               get_or_init_twg t_in_val)
-      | E_where
-          { condition = cond_val; if_true = true_val; if_false = false_val } ->
-          Some
-            (fun k ->
-              let result_val = op_where cond_val true_val false_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇where" (fun () ->
-                  let _twg_cond = get_or_init_twg cond_val in
-                  let twg_true = get_or_init_twg true_val in
-                  let twg_false = get_or_init_twg false_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-
-                  let condition_mask_casted =
-                    T.cast (dtype d_loss_d_result) cond_val
-                  in
-                  let grad_contrib_to_true =
-                    T.mul d_loss_d_result condition_mask_casted
-                  in
-                  twg_true.bv <- T.add twg_true.bv grad_contrib_to_true;
-
-                  let ones_for_mask_dtype = T.ones_like condition_mask_casted in
-                  let not_condition_mask_casted =
-                    T.sub ones_for_mask_dtype condition_mask_casted
-                  in
-                  let grad_contrib_to_false =
-                    T.mul d_loss_d_result not_condition_mask_casted
-                  in
-                  twg_false.bv <- T.add twg_false.bv grad_contrib_to_false);
-              forward_val)
-      | E_gather { data = data_val; indices = indices_val; axis } ->
-          Some
-            (fun k ->
-              let result_val = op_gather data_val indices_val axis in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇gather" (fun () ->
-                  let twg_data = get_or_init_twg data_val in
-                  let _twg_indices = get_or_init_twg indices_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-
-                  let zeros_data = T.zeros_like (value_of twg_data) in
-                  let scattered_grads =
-                    op_scatter ~mode:`Add zeros_data indices_val d_loss_d_result
-                      axis
-                  in
-                  twg_data.bv <- T.add twg_data.bv scattered_grads);
-              forward_val)
-      | E_scatter
-          { data_template = dt_val; indices = idx_val; updates = upd_val; axis }
-        ->
-          Some
-            (fun k ->
-              let result_val = op_scatter dt_val idx_val upd_val axis in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇scatter" (fun () ->
-                  let twg_dt = get_or_init_twg dt_val in
-                  let twg_upd = get_or_init_twg upd_val in
-                  let _twg_idx = get_or_init_twg idx_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-
-                  let grad_contrib_to_updates =
-                    op_gather d_loss_d_result idx_val axis
-                  in
-                  twg_upd.bv <- T.add twg_upd.bv grad_contrib_to_updates;
-
-                  let mask_for_dt_grad =
-                    op_scatter (T.ones_like dt_val) idx_val
-                      (T.zeros_like upd_val) axis
-                  in
-                  let grad_contrib_to_dt =
-                    T.mul d_loss_d_result mask_for_dt_grad
-                  in
-                  twg_dt.bv <- T.add twg_dt.bv grad_contrib_to_dt);
-              forward_val)
-      | E_assign { dst = dst_val; src = src_val } ->
-          Some
-            (fun k ->
-              let old_dst_val = T.copy dst_val in
-              op_assign dst_val src_val;
-              let forward_val = continue k () in
-              Debug.with_context "∇assign" (fun () ->
-                  let twg_src = get_or_init_twg src_val in
-                  let twg_dst = get_or_init_twg dst_val in
-                  let _twg_old_dst = get_or_init_twg old_dst_val in
-                  twg_src.bv <- T.add twg_src.bv (grad_of twg_dst));
-              forward_val)
-      | E_idiv { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_idiv a b in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇idiv" (fun () ->
-                  let _twg_a = get_or_init_twg a in
-                  let _twg_b = get_or_init_twg b in
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_mod { a; b } ->
-          Some
-            (fun k ->
-              let result_val = T.mod_ a b in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇mod" (fun () ->
-                  let _twg_a = get_or_init_twg a in
-                  let _twg_b = get_or_init_twg b in
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_cmplt { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_cmplt a b in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇cmplt" (fun () ->
-                  let _twg_a = get_or_init_twg a in
-                  let _twg_b = get_or_init_twg b in
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_cmpne { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_cmpne a b in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇cmpne" (fun () ->
-                  let _twg_a = get_or_init_twg a in
-                  let _twg_b = get_or_init_twg b in
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_xor { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_xor a b in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇xor" (fun () ->
-                  let _twg_a = get_or_init_twg a in
-                  let _twg_b = get_or_init_twg b in
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_or { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_or a b in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇or" (fun () ->
-                  let _twg_a = get_or_init_twg a in
-                  let _twg_b = get_or_init_twg b in
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_and { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_and a b in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇and" (fun () ->
-                  let _twg_a = get_or_init_twg a in
-                  let _twg_b = get_or_init_twg b in
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_const_array { context = effect_ctx; array } ->
-          Some
-            (fun k ->
-              let result_val = op_const_array effect_ctx array in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇const_array" (fun () ->
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_threefry { key = key_val; ctr = ctr_val } ->
-          Some
-            (fun k ->
-              let result_val = op_threefry key_val ctr_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇threefry" (fun () ->
-                  let _twg_key = get_or_init_twg key_val in
-                  let _twg_ctr = get_or_init_twg ctr_val in
-                  let _twg_res = get_or_init_twg result_val in
-                  ());
-              forward_val)
-      | E_unfold { t_in = t_in_val; kernel_size; stride; dilation; padding } ->
-          Some
-            (fun k ->
-              let result_val =
-                op_unfold t_in_val ~kernel_size ~stride ~dilation ~padding
-              in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇unfold" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  (* Gradient of unfold is fold operation *)
-                  let input_shape = T.shape (value_of twg_in) in
-                  let num_spatial_dims = Array.length kernel_size in
-                  let output_size =
-                    Array.sub input_shape
-                      (Array.length input_shape - num_spatial_dims)
-                      num_spatial_dims
-                  in
-                  let grad_contrib_in =
-                    Nx_rune.op_fold d_loss_d_result ~output_size ~kernel_size
-                      ~stride ~dilation ~padding
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_in);
-              forward_val)
-      | E_fold
-          {
-            t_in = t_in_val;
-            output_size;
-            kernel_size;
-            stride;
-            dilation;
-            padding;
-          } ->
-          Some
-            (fun k ->
-              let result_val =
-                op_fold t_in_val ~output_size ~kernel_size ~stride ~dilation
-                  ~padding
-              in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇fold" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  (* Gradient of fold is unfold operation *)
-                  let grad_contrib_in =
-                    Nx_rune.op_unfold d_loss_d_result ~kernel_size ~stride
-                      ~dilation ~padding
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_in);
-              forward_val)
-      | E_matmul { a = a_val; b = b_val } ->
-          Some
-            (fun k ->
-              let result_val = op_matmul a_val b_val in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇matmul" (fun () ->
-                  let twg_a = get_or_init_twg a_val in
-                  let twg_b = get_or_init_twg b_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  (* For C = A @ B: dL/dA = dL/dC @ B^T dL/dB = A^T @ dL/dC *)
-                  (* Handle broadcasting for matmul gradients *)
-                  let a_ndim = Array.length (T.shape a_val) in
-                  let b_ndim = Array.length (T.shape b_val) in
-                  let grad_contrib_to_a, grad_contrib_to_b =
-                    if a_ndim = 2 && b_ndim = 3 then
-                      (* Special case: A is 2D, B is 3D - this is a broadcasted matmul *)
-                      (* For C = A @ B where A:[m,k] B:[b,k,n] -> C:[b,m,n] *)
-                      (* grad_A = sum(grad_C @ B^T, axis=0) *)
-                      (* grad_B = A^T @ grad_C *)
-                      let b_transposed = T.transpose ~axes:[ 0; 2; 1 ] b_val in
-                      let grad_a_3d = T.matmul d_loss_d_result b_transposed in
-                      let grad_a = T.sum grad_a_3d ~axes:[ 0 ] in
-                      let a_expanded = T.expand_dims [ 0 ] a_val in
-                      let a_transposed =
-                        T.transpose ~axes:[ 0; 2; 1 ] a_expanded
-                      in
-                      let grad_b = T.matmul a_transposed d_loss_d_result in
-                      (grad_a, grad_b)
-                    else if a_ndim = 3 && b_ndim = 2 then
-                      (* Special case: A is 3D, B is 2D - this is a broadcasted matmul *)
-                      (* For C = A @ B where A:[b,m,k] B:[k,n] -> C:[b,m,n] *)
-                      (* grad_A = grad_C @ B^T *)
-                      (* grad_B = sum(A^T @ grad_C, axis=0) *)
-                      let grad_a =
-                        T.matmul d_loss_d_result (T.transpose b_val)
-                      in
-                      let a_transposed = T.transpose ~axes:[ 0; 2; 1 ] a_val in
-                      let grad_b_3d = T.matmul a_transposed d_loss_d_result in
-                      let grad_b = T.sum grad_b_3d ~axes:[ 0 ] in
-                      (grad_a, grad_b)
-                    else
-                      (* Standard case - both same dimensionality *)
-                      (* For matmul, we need to transpose the last two dimensions *)
-                      let ndim = Array.length (T.shape a_val) in
-                      let transpose_last_two tensor =
-                        if ndim >= 2 then (
-                          let axes = Array.init ndim (fun i -> i) in
-                          (* Swap last two dimensions *)
-                          axes.(ndim - 2) <- ndim - 1;
-                          axes.(ndim - 1) <- ndim - 2;
-                          T.transpose ~axes:(Array.to_list axes) tensor)
-                        else T.transpose tensor
-                      in
-                      let grad_a =
-                        T.matmul d_loss_d_result (transpose_last_two b_val)
-                      in
-                      let grad_b =
-                        T.matmul (transpose_last_two a_val) d_loss_d_result
-                      in
-                      (grad_a, grad_b)
-                  in
-                  twg_a.bv <- T.add twg_a.bv grad_contrib_to_a;
-                  twg_b.bv <- T.add twg_b.bv grad_contrib_to_b);
-              forward_val)
-      | _ -> None
-  in
-
-  {
-    retc =
-      (fun final_result_val ->
-        Debug.with_context "∇grad_init" (fun () ->
-            let twg_final_result = get_or_init_twg final_result_val in
-            twg_final_result.bv <- T.ones_like final_result_val);
-        final_result_val);
-    exnc = raise;
-    effc;
-  }
-
-(* --- User-facing grad functions --- *)
-
-let grad (f : ('a, 'b) t -> ('c, 'd) t) (input_val : ('a, 'b) t) : ('a, 'b) t =
-  let tape_by_twg_id : (int, any_t_with_grad) Hashtbl.t = Hashtbl.create 16 in
-  let val_to_twg_id_map = PhysicalTbl.create 16 in
-  let initial_grad_for_input = T.zeros_like input_val in
-  let twg_input_id = fresh_twg_id () in
-  let twg_input =
-    { v = input_val; bv = initial_grad_for_input; id = twg_input_id }
-  in
-  Hashtbl.add tape_by_twg_id twg_input_id (Any_t_with_grad twg_input);
-  PhysicalTbl.add val_to_twg_id_map input_val twg_input_id;
-  let ad_handler = make_reverse_handler tape_by_twg_id val_to_twg_id_map in
-  let result_value_from_f = Effect.Deep.match_with f input_val ad_handler in
-
-  (* Initialize output gradient to 1.0 *)
-  (match PhysicalTbl.find_opt val_to_twg_id_map result_value_from_f with
-  | Some twg_id -> (
-      match Hashtbl.find_opt tape_by_twg_id twg_id with
-      | Some any_twg ->
-          let twg_res = unwrap_twg (dtype result_value_from_f) any_twg in
-          twg_res.bv <- T.ones_like result_value_from_f
-      | None -> ())
-  | None -> ());
-
-  let final_twg_input_id = PhysicalTbl.find val_to_twg_id_map input_val in
-  let final_twg_input_any = Hashtbl.find tape_by_twg_id final_twg_input_id in
-  let final_twg_input = unwrap_twg (dtype input_val) final_twg_input_any in
-  final_twg_input.bv
-
-let value_and_grad (f : ('a, 'b) t -> ('c, 'd) t) (input_val : ('a, 'b) t) :
-    ('c, 'd) t * ('a, 'b) t =
-  let tape_by_twg_id : (int, any_t_with_grad) Hashtbl.t = Hashtbl.create 16 in
-  let val_to_twg_id_map = PhysicalTbl.create 16 in
-  let initial_grad_for_input = T.zeros_like input_val in
-  let twg_input_id = fresh_twg_id () in
-  let twg_input =
-    { v = input_val; bv = initial_grad_for_input; id = twg_input_id }
-  in
-  Hashtbl.add tape_by_twg_id twg_input_id (Any_t_with_grad twg_input);
-  PhysicalTbl.add val_to_twg_id_map input_val twg_input_id;
-  let ad_handler = make_reverse_handler tape_by_twg_id val_to_twg_id_map in
-  let result_value_from_f = Effect.Deep.match_with f input_val ad_handler in
-
-  (* Initialize output gradient to 1.0 *)
-  (match PhysicalTbl.find_opt val_to_twg_id_map result_value_from_f with
-  | Some twg_id -> (
-      match Hashtbl.find_opt tape_by_twg_id twg_id with
-      | Some any_twg ->
-          let twg_res = unwrap_twg (dtype result_value_from_f) any_twg in
-          twg_res.bv <- T.ones_like result_value_from_f
-      | None -> ())
-  | None -> ());
-
-  let final_twg_input_id = PhysicalTbl.find val_to_twg_id_map input_val in
-  let final_twg_input_any = Hashtbl.find tape_by_twg_id final_twg_input_id in
-  let final_twg_input = unwrap_twg (dtype input_val) final_twg_input_any in
-  (result_value_from_f, final_twg_input.bv)
-
-(* New functions for multiple inputs *)
-
-let grads (f : ('a, 'b) t list -> ('c, 'd) t) (input_vals : ('a, 'b) t list) :
-    ('a, 'b) t list =
-  let tape_by_twg_id : (int, any_t_with_grad) Hashtbl.t = Hashtbl.create 16 in
-  let val_to_twg_id_map = PhysicalTbl.create 16 in
-
-  (* Initialize all inputs *)
-  let input_twgs =
-    List.map
-      (fun input_val ->
-        let initial_grad = T.zeros_like input_val in
-        let twg_id = fresh_twg_id () in
-        let twg = { v = input_val; bv = initial_grad; id = twg_id } in
-        Hashtbl.add tape_by_twg_id twg_id (Any_t_with_grad twg);
-        PhysicalTbl.add val_to_twg_id_map input_val twg_id;
-        twg)
-      input_vals
-  in
-
-  let ad_handler = make_reverse_handler tape_by_twg_id val_to_twg_id_map in
-  let result_value_from_f = Effect.Deep.match_with f input_vals ad_handler in
-
-  (* Initialize output gradient to 1.0 *)
-  (match PhysicalTbl.find_opt val_to_twg_id_map result_value_from_f with
-  | Some twg_id -> (
-      match Hashtbl.find_opt tape_by_twg_id twg_id with
-      | Some any_twg ->
-          let twg_res = unwrap_twg (dtype result_value_from_f) any_twg in
-          twg_res.bv <- T.ones_like result_value_from_f
-      | None -> ())
-  | None -> ());
-
-  (* Extract gradients for all inputs *)
-  List.map2
-    (fun input_val _ ->
-      let twg_id = PhysicalTbl.find val_to_twg_id_map input_val in
-      let any_twg = Hashtbl.find tape_by_twg_id twg_id in
-      let twg = unwrap_twg (dtype input_val) any_twg in
-      twg.bv)
-    input_vals input_twgs
-
-let value_and_grads (f : ('a, 'b) t list -> ('c, 'd) t)
-    (input_vals : ('a, 'b) t list) : ('c, 'd) t * ('a, 'b) t list =
-  let tape_by_twg_id : (int, any_t_with_grad) Hashtbl.t = Hashtbl.create 16 in
-  let val_to_twg_id_map = PhysicalTbl.create 16 in
-
-  (* Initialize all inputs *)
-  let input_twgs =
-    List.map
-      (fun input_val ->
-        let initial_grad = T.zeros_like input_val in
-        let twg_id = fresh_twg_id () in
-        let twg = { v = input_val; bv = initial_grad; id = twg_id } in
-        Hashtbl.add tape_by_twg_id twg_id (Any_t_with_grad twg);
-        PhysicalTbl.add val_to_twg_id_map input_val twg_id;
-        twg)
-      input_vals
-  in
-
-  let ad_handler = make_reverse_handler tape_by_twg_id val_to_twg_id_map in
-  let result_value_from_f = Effect.Deep.match_with f input_vals ad_handler in
-
-  (* Initialize output gradient to 1.0 *)
-  (match PhysicalTbl.find_opt val_to_twg_id_map result_value_from_f with
-  | Some twg_id -> (
-      match Hashtbl.find_opt tape_by_twg_id twg_id with
-      | Some any_twg ->
-          let twg_res = unwrap_twg (dtype result_value_from_f) any_twg in
-          twg_res.bv <- T.ones_like result_value_from_f
-      | None -> ())
-  | None -> ());
-
-  (* Extract gradients for all inputs *)
-  let grads =
-    List.map2
-      (fun input_val _ ->
-        let twg_id = PhysicalTbl.find val_to_twg_id_map input_val in
-        let any_twg = Hashtbl.find tape_by_twg_id twg_id in
-        let twg = unwrap_twg (dtype input_val) any_twg in
-        twg.bv)
-      input_vals input_twgs
-  in
-  (result_value_from_f, grads)
-
-let no_grad f = without_autodiff f
-
-let detach (type a b) (tensor : (a, b) t) : (a, b) t =
-  without_autodiff (fun () -> T.copy tensor)
-
-(* --- Forward mode AD implementation --- *)
-
-(* The main forward-mode AD effect handler *)
-let make_forward_handler primal_to_dual_map =
-  let open Effect.Deep in
-  let get_dual (type a b) (tensor_val : (a, b) t) : (a, b) dual =
-    match PhysicalTbl.find_opt primal_to_dual_map tensor_val with
-    | Some (Any_dual d) -> unwrap_dual (dtype tensor_val) (Any_dual d)
-    | None ->
-        (* Non-differentiable tensors have zero tangent *)
-        let zero_tangent = T.zeros_like tensor_val in
-        let dual = { primal = tensor_val; tangent = zero_tangent } in
-        PhysicalTbl.add primal_to_dual_map tensor_val (Any_dual dual);
-        dual
-  in
-
-  let effc : type a. a Effect.t -> ((a, _) continuation -> _) option =
-   fun eff ->
-    if not !autodiff_enabled then None
-    else
-      match eff with
-      | E_buffer { context = effect_ctx; dtype = dt; size_in_elements } ->
-          Some
-            (fun k ->
-              let result_val = op_buffer effect_ctx dt size_in_elements in
-              let forward_val = continue k result_val in
-              (* Buffer creates new tensor - initialize with zero tangent *)
-              let zero_tangent = T.zeros_like result_val in
-              let dual = { primal = result_val; tangent = zero_tangent } in
-              PhysicalTbl.add primal_to_dual_map result_val (Any_dual dual);
-              forward_val)
-      | E_const_scalar { context = effect_ctx; value; dtype = dt } ->
-          Some
-            (fun k ->
-              let result_val = op_const_scalar effect_ctx value dt in
-              let forward_val = continue k result_val in
-              (* Constants have zero tangent *)
-              let zero_tangent = T.zeros_like result_val in
-              let dual = { primal = result_val; tangent = zero_tangent } in
-              PhysicalTbl.add primal_to_dual_map result_val (Any_dual dual);
-              forward_val)
-      | E_add { a = op1_val; b = op2_val } ->
-          Some
-            (fun k ->
-              let result_val = op_add op1_val op2_val in
-              let dual1 = get_dual op1_val in
-              let dual2 = get_dual op2_val in
-              let result_tangent = T.add dual1.tangent dual2.tangent in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_mul { a = op1_val; b = op2_val } ->
-          Some
-            (fun k ->
-              let result_val = op_mul op1_val op2_val in
-              let dual1 = get_dual op1_val in
-              let dual2 = get_dual op2_val in
+              let res = op_mul a b in
+              let da = get_dual a in
+              let db = get_dual b in
               (* d(a*b) = da*b + a*db *)
-              let tangent1 = T.mul dual1.tangent dual2.primal in
-              let tangent2 = T.mul dual1.primal dual2.tangent in
-              let result_tangent = T.add tangent1 tangent2 in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
+              let tan =
+                T.add (T.mul da.tangent db.primal) (T.mul da.primal db.tangent)
               in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_neg { t_in } ->
-          Some
-            (fun k ->
-              let result_val = op_neg t_in in
-              let dual_in = get_dual t_in in
-              let result_tangent = T.neg dual_in.tangent in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_log2 { t_in } ->
-          Some
-            (fun k ->
-              let result_val = op_log2 t_in in
-              let dual_in = get_dual t_in in
-              let deriv = deriv_log2 dual_in.primal in
-              let result_tangent = T.mul dual_in.tangent deriv in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_exp2 { t_in } ->
-          Some
-            (fun k ->
-              let result_val = op_exp2 t_in in
-              let dual_in = get_dual t_in in
-              let deriv = deriv_exp2 result_val dual_in.primal in
-              let result_tangent = T.mul dual_in.tangent deriv in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_sin { t_in } ->
-          Some
-            (fun k ->
-              let result_val = op_sin t_in in
-              let dual_in = get_dual t_in in
-              let deriv = deriv_sin dual_in.primal in
-              let result_tangent = T.mul dual_in.tangent deriv in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_sqrt { t_in } ->
-          Some
-            (fun k ->
-              let result_val = T.sqrt t_in in
-              let dual_in = get_dual t_in in
-              let deriv = deriv_sqrt result_val dual_in.primal in
-              let result_tangent = T.mul dual_in.tangent deriv in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_recip { t_in } ->
-          Some
-            (fun k ->
-              let result_val = op_recip t_in in
-              let dual_in = get_dual t_in in
-              let deriv = deriv_recip dual_in.primal in
-              let result_tangent = T.mul dual_in.tangent deriv in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
+              register res { primal = res; tangent = tan };
+              continue k res)
       | E_fdiv { a; b } ->
           Some
             (fun k ->
-              let result_val = op_fdiv a b in
-              let dual_a = get_dual a in
-              let dual_b = get_dual b in
+              let res = op_fdiv a b in
+              let da = get_dual a in
+              let db = get_dual b in
               (* d(a/b) = da/b - a*db/b^2 *)
-              let term1 = T.div dual_a.tangent dual_b.primal in
-              let term2_num = T.mul dual_a.primal dual_b.tangent in
-              let term2_den = T.mul dual_b.primal dual_b.primal in
-              let term2 = T.div term2_num term2_den in
-              let result_tangent = T.sub term1 term2 in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
+              let term1 = T.div da.tangent db.primal in
+              let term2 =
+                T.div (T.mul da.primal db.tangent) (T.mul db.primal db.primal)
               in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
+              let tan = T.sub term1 term2 in
+              register res { primal = res; tangent = tan };
+              continue k res)
       | E_pow { a; b } ->
           Some
             (fun k ->
-              let result_val = op_pow a b in
-              let dual_a = get_dual a in
-              let dual_b = get_dual b in
-              (* d(a^b) = b*a^(b-1)*da + a^b*log(a)*db *)
-              let deriv_wrt_a = deriv_pow_wrt_op1 dual_a.primal dual_b.primal in
-              let term1 = T.mul dual_a.tangent deriv_wrt_a in
-              let term2 =
-                match dtype dual_a.primal with
-                | Dtype.Float32 | Dtype.Float64 ->
-                    let a_float = T.cast Dtype.float32 dual_a.primal in
-                    let result_float = T.cast Dtype.float32 result_val in
-                    let deriv_wrt_b =
-                      deriv_pow_wrt_op2_float result_float a_float
-                    in
-                    let deriv_wrt_b_orig =
-                      T.cast (dtype dual_b.primal) deriv_wrt_b
-                    in
-                    T.mul dual_b.tangent deriv_wrt_b_orig
-                | _ -> T.zeros_like result_val
+              let res = op_pow a b in
+              let da = get_dual a in
+              let db = get_dual b in
+              let term1 =
+                T.mul da.tangent (deriv_pow_wrt_base da.primal db.primal)
               in
-              let result_tangent = T.add term1 term2 in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
+              let term2 = T.mul db.tangent (deriv_pow_wrt_exp da.primal res) in
+              let tan = T.add term1 term2 in
+              register res { primal = res; tangent = tan };
+              continue k res)
       | E_max { a; b } ->
           Some
             (fun k ->
-              let result_val = op_max a b in
-              let dual_a = get_dual a in
-              let dual_b = get_dual b in
-              let mask_a =
-                deriv_max_wrt_op1 dual_a.primal dual_b.primal
-                  (dtype dual_a.primal)
+              let res = op_max a b in
+              let da = get_dual a in
+              let db = get_dual b in
+              (* Use cmpgt for mask_a: tangent flows from a only when a > b This
+                 ensures that when a == b, tangent flows from b (not a) which
+                 gives correct behavior for relu(x) = max(x, 0) at x=0 *)
+              let mask_a = T.cast (dtype a) (T.cmpgt a b) in
+              let mask_b = T.sub (T.ones_like mask_a) mask_a in
+              let tan =
+                T.add (T.mul da.tangent mask_a) (T.mul db.tangent mask_b)
               in
-              let mask_b =
-                deriv_max_wrt_op2 dual_a.primal dual_b.primal
-                  (dtype dual_b.primal)
-              in
-              let term1 = T.mul mask_a dual_a.tangent in
-              let term2 = T.mul mask_b dual_b.tangent in
-              let result_tangent = T.add term1 term2 in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Unary Arithmetic *)
+      | E_neg { t_in } ->
+          Some
+            (fun k ->
+              let res = op_neg t_in in
+              let d = get_dual t_in in
+              let tan = T.neg d.tangent in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_sin { t_in } ->
+          Some
+            (fun k ->
+              let res = op_sin t_in in
+              let d = get_dual t_in in
+              let tan = T.mul d.tangent (deriv_sin d.primal) in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_log2 { t_in } ->
+          Some
+            (fun k ->
+              let res = op_log2 t_in in
+              let d = get_dual t_in in
+              let tan = T.mul d.tangent (deriv_log2 d.primal) in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_exp2 { t_in } ->
+          Some
+            (fun k ->
+              let res = op_exp2 t_in in
+              let d = get_dual t_in in
+              let tan = T.mul d.tangent (deriv_exp2 res) in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_sqrt { t_in } ->
+          Some
+            (fun k ->
+              let res = op_sqrt t_in in
+              let d = get_dual t_in in
+              let tan = T.mul d.tangent (deriv_sqrt res) in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_recip { t_in } ->
+          Some
+            (fun k ->
+              let res = op_recip t_in in
+              let d = get_dual t_in in
+              let tan = T.mul d.tangent (deriv_recip d.primal) in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Shape Operations *)
       | E_reshape { t_in; new_shape } ->
           Some
             (fun k ->
-              let result_val = op_reshape t_in new_shape in
-              let dual_in = get_dual t_in in
-              let shape_array =
-                match Symbolic_shape.eval new_shape with
-                | Some arr -> arr
-                | None -> failwith "reshape tangent requires concrete shape"
-              in
-              let result_tangent = T.reshape shape_array dual_in.tangent in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_expand { t_in; new_target_shape } ->
-          Some
-            (fun k ->
-              let result_val = op_expand t_in new_target_shape in
-              let dual_in = get_dual t_in in
-              let result_tangent =
-                let target_shape =
-                  match Symbolic_shape.eval new_target_shape with
-                  | Some arr -> arr
-                  | None ->
-                      failwith "expand tangent requires concrete target shape"
-                in
-                T.broadcast_to target_shape dual_in.tangent
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_reduce_sum { t_in; axes; keepdims } ->
-          Some
-            (fun k ->
-              let result_val = op_reduce_sum ~axes ~keepdims t_in in
-              let dual_in = get_dual t_in in
-              let result_tangent =
-                T.sum dual_in.tangent ~axes:(Array.to_list axes) ~keepdims
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_reduce_max { t_in; axes; keepdims } ->
-          Some
-            (fun k ->
-              let result_val = op_reduce_max ~axes ~keepdims t_in in
-              let dual_in = get_dual t_in in
-              (* For reduce_max, gradient flows only through the max elements *)
-              let original_shape = T.shape t_in in
-              let result_broadcasted =
-                if keepdims then result_val
-                else
-                  let dummy = T.zeros_like t_in in
-                  let shape_with_dims =
-                    T.shape
-                      (T.max dummy ~axes:(Array.to_list axes) ~keepdims:true)
-                  in
-                  let reshaped = T.reshape shape_with_dims result_val in
-                  T.broadcast_to original_shape reshaped
-              in
-              let mask = T.equal t_in result_broadcasted in
-              let mask_float = T.cast (dtype dual_in.tangent) mask in
-              let masked_tangent = T.mul dual_in.tangent mask_float in
-              let result_tangent =
-                T.sum masked_tangent ~axes:(Array.to_list axes) ~keepdims
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_reduce_prod { t_in; axes; keepdims } ->
-          Some
-            (fun k ->
-              let result_val = op_reduce_prod ~axes ~keepdims t_in in
-              let forward_val = continue k result_val in
-              let dual_in = get_dual t_in in
-              (* d(prod(x)) = sum(prod(x)/x_i * dx_i) *)
-              let original_shape = T.shape t_in in
-              let result_broadcasted =
-                if keepdims then result_val
-                else
-                  let dummy = T.zeros_like t_in in
-                  let shape_with_dims =
-                    T.shape
-                      (T.prod dummy ~axes:(Array.to_list axes) ~keepdims:true)
-                  in
-                  let reshaped = T.reshape shape_with_dims result_val in
-                  T.broadcast_to original_shape reshaped
-              in
-              let epsilon = T.zeros_like t_in in
-              let safe_input = T.add t_in epsilon in
-              let grad_term = T.div result_broadcasted safe_input in
-              let result_tangent_full = T.mul dual_in.tangent grad_term in
-              let result_tangent =
-                T.sum result_tangent_full ~axes:(Array.to_list axes) ~keepdims
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_associative_scan { t_in; axis; op } ->
-          Some
-            (fun k ->
-              let result_val = op_associative_scan ~axis ~op t_in in
-              let dual_in = get_dual t_in in
-              let shape_in = T.shape t_in in
-              let axis_norm = normalize_axis axis shape_in in
-              let result_tangent =
-                match op with
-                | `Sum -> T.cumsum ~axis:axis_norm dual_in.tangent
-                | `Prod ->
-                    let prefix = prefix_exclusive axis_norm t_in in
-                    let dx_over_x = divide_no_nan dual_in.tangent t_in in
-                    let cum = T.cumsum ~axis:axis_norm dx_over_x in
-                    let inner = T.mul result_val cum in
-                    let zero_tensor =
-                      T.full (context t_in) (T.dtype t_in) shape_in
-                        (Dtype.zero (T.dtype t_in))
-                    in
-                    let zero_mask = T.equal t_in zero_tensor in
-                    let fallback = T.mul prefix dual_in.tangent in
-                    T.where zero_mask fallback inner
-                | `Max | `Min ->
-                    failwith "autodiff JVP: cummax/cummin not supported"
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
+              let res = op_reshape t_in new_shape in
+              let d = get_dual t_in in
+              let tan = op_reshape d.tangent new_shape in
+              register res { primal = res; tangent = tan };
+              continue k res)
       | E_permute { t_in; axes } ->
           Some
             (fun k ->
-              let result_val = op_permute t_in axes in
-              let dual_in = get_dual t_in in
-              let result_tangent =
-                T.transpose dual_in.tangent ~axes:(Array.to_list axes)
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              let forward_val = continue k result_val in
-              forward_val)
-      | E_pad { t_in; padding_config; fill_value } ->
+              let res = op_permute t_in axes in
+              let d = get_dual t_in in
+              let tan = op_permute d.tangent axes in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_expand { t_in; new_target_shape } ->
           Some
             (fun k ->
-              let result_val = op_pad t_in padding_config fill_value in
-              let forward_val = continue k result_val in
-              let dual_in = get_dual t_in in
-              let zero_val = Dtype.zero (dtype dual_in.tangent) in
-              let result_tangent =
-                T.pad padding_config zero_val dual_in.tangent
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
+              let res = op_expand t_in new_target_shape in
+              let d = get_dual t_in in
+              let tan = op_expand d.tangent new_target_shape in
+              register res { primal = res; tangent = tan };
+              continue k res)
       | E_shrink { t_in; limits } ->
           Some
             (fun k ->
-              let result_val = op_shrink t_in limits in
-              let forward_val = continue k result_val in
-              let dual_in = get_dual t_in in
-              let result_tangent = T.shrink limits dual_in.tangent in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
+              let res = op_shrink t_in limits in
+              let d = get_dual t_in in
+              let tan = op_shrink d.tangent limits in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_flip { t_in; dims_to_flip } ->
+          Some
+            (fun k ->
+              let res = op_flip t_in dims_to_flip in
+              let d = get_dual t_in in
+              let tan = op_flip d.tangent dims_to_flip in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_pad { t_in; padding_config; fill_value } ->
+          Some
+            (fun k ->
+              let res = op_pad t_in padding_config fill_value in
+              let d = get_dual t_in in
+              let tan =
+                op_pad d.tangent padding_config (Dtype.zero (dtype t_in))
               in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_cat { t_list; axis } ->
+          Some
+            (fun k ->
+              let res = op_cat t_list axis in
+              let tangents = List.map (fun t -> (get_dual t).tangent) t_list in
+              let tan = op_cat tangents axis in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Reductions *)
+      | E_reduce_sum { t_in; axes; keepdims } ->
+          Some
+            (fun k ->
+              let res = op_reduce_sum ~axes ~keepdims t_in in
+              let d = get_dual t_in in
+              let tan = op_reduce_sum ~axes ~keepdims d.tangent in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_reduce_max { t_in; axes; keepdims } ->
+          Some
+            (fun k ->
+              let res = op_reduce_max ~axes ~keepdims t_in in
+              let d = get_dual t_in in
+              let shape_in = T.shape t_in in
+              (* Broadcast result back to input shape to create mask *)
+              let res_bc =
+                if keepdims then T.broadcast_to shape_in res
+                else
+                  let kept = op_reduce_max ~axes ~keepdims:true t_in in
+                  T.broadcast_to shape_in kept
+              in
+              let mask = T.cast (dtype res) (T.equal d.primal res_bc) in
+              let tan = op_reduce_sum ~axes ~keepdims (T.mul d.tangent mask) in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Matrix Operations *)
+      | E_matmul { a; b } ->
+          Some
+            (fun k ->
+              let res = op_matmul a b in
+              let da = get_dual a in
+              let db = get_dual b in
+              (* d(A@B) = dA@B + A@dB *)
+              let tan =
+                T.add
+                  (T.matmul da.tangent db.primal)
+                  (T.matmul da.primal db.tangent)
+              in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Selection *)
+      | E_where { condition; if_true; if_false } ->
+          Some
+            (fun k ->
+              let res = op_where condition if_true if_false in
+              let dt = get_dual if_true in
+              let df = get_dual if_false in
+              let tan = T.where condition dt.tangent df.tangent in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Comparisons (no gradient) *)
+      | E_cmplt { a; b } ->
+          Some
+            (fun k ->
+              let res = op_cmplt a b in
+              continue k res)
+      | E_cmpne { a; b } ->
+          Some
+            (fun k ->
+              let res = op_cmpne a b in
+              continue k res)
+      | E_xor { a; b } -> Some (fun k -> continue k (op_xor a b))
+      | E_or { a; b } -> Some (fun k -> continue k (op_or a b))
+      | E_and { a; b } -> Some (fun k -> continue k (op_and a b))
+      (* Other *)
+      | E_copy { t_in } ->
+          Some
+            (fun k ->
+              let res = op_copy t_in in
+              let d = get_dual t_in in
+              let tan = op_copy d.tangent in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_contiguous { t_in } ->
+          Some
+            (fun k ->
+              let res = op_contiguous t_in in
+              let d = get_dual t_in in
+              let tan = op_contiguous d.tangent in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_cast { t_in; target_dtype } ->
+          Some
+            (fun k ->
+              let res = op_cast t_in target_dtype in
+              let d = get_dual t_in in
+              let tan = op_cast d.tangent target_dtype in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Reduce Prod *)
+      | E_reduce_prod { t_in; axes; keepdims } ->
+          Some
+            (fun k ->
+              let res = op_reduce_prod ~axes ~keepdims t_in in
+              let d = get_dual t_in in
+              (* d(prod(x)) = prod(x) * sum(dx/x) over reduction axes *)
+              let shape_in = T.shape t_in in
+              let res_bc =
+                if keepdims then T.broadcast_to shape_in res
+                else
+                  let kept = op_reduce_prod ~axes ~keepdims:true t_in in
+                  T.broadcast_to shape_in kept
+              in
+              (* Gradient contribution: res / x_i * dx_i, summed over axes *)
+              let contrib = T.mul (T.div res_bc d.primal) d.tangent in
+              let tan = op_reduce_sum ~axes ~keepdims contrib in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Associative Scan (cumsum/cumprod/cummax/cummin) *)
+      | E_associative_scan { t_in; axis; op } ->
+          Some
+            (fun k ->
+              let res = op_associative_scan ~axis ~op t_in in
+              let d = get_dual t_in in
+              let tan =
+                match op with
+                | `Sum ->
+                    (* cumsum is linear: d(cumsum(x)) = cumsum(dx) *)
+                    op_associative_scan ~axis ~op:`Sum d.tangent
+                | `Prod ->
+                    (* cumprod tangent: d(cumprod(x))_i = sum_{j<=i}
+                       cumprod(x)_i / x_j * dx_j = cumprod(x)_i * cumsum(dx /
+                       x)_i *)
+                    let ratio = T.div d.tangent d.primal in
+                    let cumsum_ratio =
+                      op_associative_scan ~axis ~op:`Sum ratio
+                    in
+                    T.mul res cumsum_ratio
+                | `Max ->
+                    (* cummax tangent: flows where new max is established *)
+                    let ndim = Array.length (T.shape res) in
+                    let axis_norm = if axis < 0 then axis + ndim else axis in
+                    let shape = T.shape res in
+                    let dt = dtype t_in in
+                    let min_val = Dtype.min_value dt in
+                    let pad_left =
+                      Array.mapi
+                        (fun i _ -> if i = axis_norm then (1, 0) else (0, 0))
+                        shape
+                    in
+                    let padded = T.pad pad_left min_val res in
+                    let slice_right =
+                      Array.mapi
+                        (fun i dim ->
+                          if i = axis_norm then T.R (0, dim) else T.R (0, dim))
+                        shape
+                    in
+                    let shifted_res =
+                      T.slice (Array.to_list slice_right) padded
+                    in
+                    let active_mask = T.cast dt (T.cmpgt res shifted_res) in
+                    T.mul d.tangent active_mask
+                | `Min ->
+                    (* cummin tangent: flows where new min is established *)
+                    let ndim = Array.length (T.shape res) in
+                    let axis_norm = if axis < 0 then axis + ndim else axis in
+                    let shape = T.shape res in
+                    let dt = dtype t_in in
+                    let max_val = Dtype.max_value dt in
+                    let pad_left =
+                      Array.mapi
+                        (fun i _ -> if i = axis_norm then (1, 0) else (0, 0))
+                        shape
+                    in
+                    let padded = T.pad pad_left max_val res in
+                    let slice_right =
+                      Array.mapi
+                        (fun i dim ->
+                          if i = axis_norm then T.R (0, dim) else T.R (0, dim))
+                        shape
+                    in
+                    let shifted_res =
+                      T.slice (Array.to_list slice_right) padded
+                    in
+                    let active_mask = T.cast dt (T.cmplt res shifted_res) in
+                    T.mul d.tangent active_mask
+              in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* As Strided (for slicing/indexing) *)
       | E_as_strided { t_in; new_shape; new_strides; offset } ->
           Some
             (fun k ->
-              let result_val =
+              let res =
                 op_as_strided t_in
                   (Nx_core.Symbolic_shape.of_ints new_shape)
                   new_strides offset
               in
-              let forward_val = continue k result_val in
-              (* For JVP, as_strided applies the same transformation to the tangent *)
-              (* TODO: This needs proper implementation for strided tangent propagation *)
-              let () = failwith "as_strided JVP not yet implemented" in
-              forward_val)
-      | E_flip { t_in; dims_to_flip } ->
-          Some
-            (fun k ->
-              let result_val = op_flip t_in dims_to_flip in
-              let forward_val = continue k result_val in
-              let dual_in = get_dual t_in in
-              let axes_to_flip =
-                dims_to_flip |> Array.to_list
-                |> List.mapi (fun i flip -> if flip then Some i else None)
-                |> List.filter_map Fun.id |> Array.of_list
+              let d = get_dual t_in in
+              (* Apply same striding to tangent *)
+              let tan =
+                op_as_strided d.tangent
+                  (Nx_core.Symbolic_shape.of_ints new_shape)
+                  new_strides offset
               in
-              let result_tangent =
-                T.flip dual_in.tangent ~axes:(Array.to_list axes_to_flip)
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_cat { t_list; axis } ->
-          Some
-            (fun k ->
-              let result_val = op_cat t_list axis in
-              let forward_val = continue k result_val in
-              let duals = List.map get_dual t_list in
-              let tangents = List.map (fun d -> d.tangent) duals in
-              let result_tangent = op_cat tangents axis in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_cast { t_in; target_dtype } ->
-          Some
-            (fun k ->
-              let result_val = op_cast t_in target_dtype in
-              let forward_val = continue k result_val in
-              let dual_in = get_dual t_in in
-              let result_tangent = T.cast target_dtype dual_in.tangent in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_contiguous { t_in } ->
-          Some
-            (fun k ->
-              let result_val = op_contiguous t_in in
-              let forward_val = continue k result_val in
-              let dual_in = get_dual t_in in
-              let result_tangent = T.contiguous dual_in.tangent in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_copy { t_in } ->
-          Some
-            (fun k ->
-              let result_val = op_copy t_in in
-              let forward_val = continue k result_val in
-              let dual_in = get_dual t_in in
-              let result_tangent = T.copy dual_in.tangent in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_where { condition; if_true; if_false } ->
-          Some
-            (fun k ->
-              let result_val = op_where condition if_true if_false in
-              let forward_val = continue k result_val in
-              let dual_true = get_dual if_true in
-              let dual_false = get_dual if_false in
-              let result_tangent =
-                T.where condition dual_true.tangent dual_false.tangent
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Gather *)
       | E_gather { data; indices; axis } ->
           Some
             (fun k ->
-              let result_val = op_gather data indices axis in
-              let forward_val = continue k result_val in
-              let dual_data = get_dual data in
-              let result_tangent = op_gather dual_data.tangent indices axis in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
+              let res = op_gather data indices axis in
+              let d = get_dual data in
+              (* Gather from tangent using same indices *)
+              let tan = op_gather d.tangent indices axis in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* Scatter *)
       | E_scatter { data_template; indices; updates; axis } ->
           Some
             (fun k ->
-              let result_val = op_scatter data_template indices updates axis in
-              let forward_val = continue k result_val in
-              let dual_template = get_dual data_template in
-              let dual_updates = get_dual updates in
-              let result_tangent =
-                op_scatter dual_template.tangent indices dual_updates.tangent
-                  axis
+              let res = op_scatter data_template indices updates axis in
+              let d_template = get_dual data_template in
+              let d_updates = get_dual updates in
+              (* Scatter tangent: mask template tangent and add scattered update
+                 tangent *)
+              let mask =
+                op_scatter
+                  (T.ones_like data_template)
+                  indices (T.zeros_like updates) axis
               in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
+              let tan_template = T.mul d_template.tangent mask in
+              let tan_updates =
+                op_scatter
+                  (T.zeros_like data_template)
+                  indices d_updates.tangent axis
               in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_matmul { a; b } ->
+              let tan = T.add tan_template tan_updates in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      (* FFT Operations *)
+      | E_fft { t; axes } ->
           Some
             (fun k ->
-              let result_val = op_matmul a b in
-              let forward_val = continue k result_val in
-              let dual_a = get_dual a in
-              let dual_b = get_dual b in
-              (* d(A @ B) = dA @ B + A @ dB *)
-              let term1 = op_matmul dual_a.tangent dual_b.primal in
-              let term2 = op_matmul dual_a.primal dual_b.tangent in
-              let result_tangent = op_add term1 term2 in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
+              let res = op_fft t ~axes in
+              let d = get_dual t in
+              (* d(FFT(x)) = FFT(dx) *)
+              let tan = op_fft d.tangent ~axes in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | E_ifft { t; axes } ->
           Some
             (fun k ->
-              let result_val =
-                op_unfold t_in ~kernel_size ~stride ~dilation ~padding
-              in
-              let forward_val = continue k result_val in
-              let dual_in = get_dual t_in in
-              let result_tangent =
-                op_unfold dual_in.tangent ~kernel_size ~stride ~dilation
-                  ~padding
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_fold { t_in; output_size; kernel_size; stride; dilation; padding } ->
+              let res = op_ifft t ~axes in
+              let d = get_dual t in
+              (* d(IFFT(x)) = IFFT(dx) *)
+              let tan = op_ifft d.tangent ~axes in
+              register res { primal = res; tangent = tan };
+              continue k res)
+      | _ -> None
+  in
+  { retc = Fun.id; exnc = raise; effc }
+
+(* ───── Reverse Mode (VJP) ───── *)
+
+type any_tensor = Any : ('a, 'b) t -> any_tensor
+
+let unwrap (type a b) (_ : (a, b) Dtype.t) (Any t) : (a, b) t = Obj.magic t
+
+type ('a, 'b) t_with_grad = {
+  v : ('a, 'b) t;
+  mutable grad : ('a, 'b) t;
+  id : int;
+}
+
+type any_twg = Any_twg : ('a, 'b) t_with_grad -> any_twg
+
+let unwrap_twg (type a b) (_ : (a, b) Dtype.t) (Any_twg twg) :
+    (a, b) t_with_grad =
+  Obj.magic twg
+
+let twg_id_counter = ref 0
+
+let fresh_twg_id () =
+  incr twg_id_counter;
+  !twg_id_counter
+
+(** Reduce gradient to match source shape (for broadcasting). *)
+let unbroadcast_grad (type a b) (g : (a, b) t) (src_shape : int array) :
+    (a, b) t =
+  let dst_shape = T.shape g in
+  if src_shape = dst_shape then g
+  else
+    let src_rank = Array.length src_shape in
+    let dst_rank = Array.length dst_shape in
+    let axes = ref [] in
+    (* Leading dimensions added by broadcast *)
+    for i = 0 to dst_rank - src_rank - 1 do
+      axes := i :: !axes
+    done;
+    (* Dimensions that were 1 in source but expanded *)
+    for i = 0 to src_rank - 1 do
+      if src_shape.(i) = 1 && dst_shape.(i + (dst_rank - src_rank)) > 1 then
+        axes := (i + (dst_rank - src_rank)) :: !axes
+    done;
+    match !axes with
+    | [] -> g
+    | ax ->
+        let summed = T.sum g ~axes:ax ~keepdims:true in
+        if T.shape summed <> src_shape then T.reshape src_shape summed
+        else summed
+
+let make_vjp_handler tape_by_id val_to_id seed_output =
+  let open Effect.Deep in
+  let get_or_init (type a b) (t : (a, b) t) : (a, b) t_with_grad =
+    match Physical_tbl.find val_to_id t with
+    | Some id -> (
+        match Hashtbl.find_opt tape_by_id id with
+        | Some (Any_twg twg) -> unwrap_twg (dtype t) (Any_twg twg)
+        | None -> failwith "VJP: inconsistent tape")
+    | None ->
+        let id = fresh_twg_id () in
+        let twg = { v = t; grad = T.zeros_like t; id } in
+        Hashtbl.add tape_by_id id (Any_twg twg);
+        Physical_tbl.add val_to_id t id;
+        twg
+  in
+
+  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+   fun eff ->
+    if not !autodiff_enabled then None
+    else
+      match eff with
+      (* Sources *)
+      | E_const_scalar { context = ctx; value; dtype = dt } ->
           Some
             (fun k ->
-              let result_val =
-                op_fold t_in ~output_size ~kernel_size ~stride ~dilation
-                  ~padding
-              in
-              let forward_val = continue k result_val in
-              let dual_in = get_dual t_in in
-              let result_tangent =
-                op_fold dual_in.tangent ~output_size ~kernel_size ~stride
-                  ~dilation ~padding
-              in
-              let result_dual =
-                { primal = result_val; tangent = result_tangent }
-              in
-              PhysicalTbl.add primal_to_dual_map result_val
-                (Any_dual result_dual);
-              forward_val)
-      | E_assign { dst; src } ->
+              let res = T.full ctx dt [||] value in
+              let fwd = continue k res in
+              let _ = get_or_init res in
+              fwd)
+      | E_const_array { context = ctx; array } ->
           Some
             (fun k ->
-              op_assign dst src;
-              let forward_val = continue k () in
-              let dual_src = get_dual src in
-              let dual_dst = get_dual dst in
-              op_assign dual_dst.tangent dual_src.tangent;
-              forward_val)
-      (* Non-differentiable operations *)
-      | E_idiv { a; b } ->
+              let res = op_const_array ctx array in
+              let fwd = continue k res in
+              let _ = get_or_init res in
+              fwd)
+      | E_buffer { context = ctx; dtype = dt; size_in_elements } ->
           Some
             (fun k ->
-              let result_val = op_idiv a b in
-              let forward_val = continue k result_val in
-              let _ = get_dual result_val in
-              forward_val)
-      | E_mod { a; b } ->
-          Some
-            (fun k ->
-              let result_val = T.mod_ a b in
-              let forward_val = continue k result_val in
-              let _ = get_dual result_val in
-              forward_val)
-      | E_cmplt { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_cmplt a b in
-              let forward_val = continue k result_val in
-              let _ = get_dual result_val in
-              forward_val)
-      | E_cmpne { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_cmpne a b in
-              let forward_val = continue k result_val in
-              let _ = get_dual result_val in
-              forward_val)
-      | E_xor { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_xor a b in
-              let forward_val = continue k result_val in
-              let _ = get_dual result_val in
-              forward_val)
-      | E_or { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_or a b in
-              let forward_val = continue k result_val in
-              let _ = get_dual result_val in
-              forward_val)
-      | E_and { a; b } ->
-          Some
-            (fun k ->
-              let result_val = op_and a b in
-              let forward_val = continue k result_val in
-              let _ = get_dual result_val in
-              forward_val)
-      | E_const_array { context; array } ->
-          Some
-            (fun k ->
-              let result_val = op_const_array context array in
-              let forward_val = continue k result_val in
-              (* Constants have zero tangent *)
-              let zero_tangent = T.zeros_like result_val in
-              let dual = { primal = result_val; tangent = zero_tangent } in
-              PhysicalTbl.add primal_to_dual_map result_val (Any_dual dual);
-              forward_val)
+              let res = op_buffer ctx dt size_in_elements in
+              let fwd = continue k res in
+              let _ = get_or_init res in
+              fwd)
       | E_threefry { key; ctr } ->
           Some
             (fun k ->
-              let result_val = op_threefry key ctr in
-              let forward_val = continue k result_val in
-              (* Random generation has zero tangent *)
-              let zero_tangent = T.zeros_like result_val in
-              let dual = { primal = result_val; tangent = zero_tangent } in
-              PhysicalTbl.add primal_to_dual_map result_val (Any_dual dual);
-              forward_val)
+              let res = op_threefry key ctr in
+              let fwd = continue k res in
+              let _ = get_or_init res in
+              fwd)
+      (* Binary Arithmetic *)
+      | E_add { a; b } ->
+          Some
+            (fun k ->
+              let res = op_add a b in
+              let fwd = continue k res in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              twg_a.grad <- T.add twg_a.grad (unbroadcast_grad g (T.shape a));
+              twg_b.grad <- T.add twg_b.grad (unbroadcast_grad g (T.shape b));
+              fwd)
+      | E_mul { a; b } ->
+          Some
+            (fun k ->
+              let res = op_mul a b in
+              let fwd = continue k res in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              twg_a.grad <-
+                T.add twg_a.grad (unbroadcast_grad (T.mul g b) (T.shape a));
+              twg_b.grad <-
+                T.add twg_b.grad (unbroadcast_grad (T.mul g a) (T.shape b));
+              fwd)
+      | E_fdiv { a; b } ->
+          Some
+            (fun k ->
+              let res = op_fdiv a b in
+              let fwd = continue k res in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              (* d/da = 1/b, d/db = -a/b^2 *)
+              let ga = T.div g b in
+              let gb = T.mul (T.neg g) (T.div a (T.mul b b)) in
+              twg_a.grad <- T.add twg_a.grad (unbroadcast_grad ga (T.shape a));
+              twg_b.grad <- T.add twg_b.grad (unbroadcast_grad gb (T.shape b));
+              fwd)
+      | E_pow { a; b } ->
+          Some
+            (fun k ->
+              let res = op_pow a b in
+              let fwd = continue k res in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              let ga = T.mul g (deriv_pow_wrt_base a b) in
+              let gb = T.mul g (deriv_pow_wrt_exp a res) in
+              twg_a.grad <- T.add twg_a.grad (unbroadcast_grad ga (T.shape a));
+              twg_b.grad <- T.add twg_b.grad (unbroadcast_grad gb (T.shape b));
+              fwd)
+      | E_max { a; b } ->
+          Some
+            (fun k ->
+              let res = op_max a b in
+              let fwd = continue k res in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              (* Use cmpgt for mask_a: gradient flows to a only when a > b This
+                 ensures that when a == b, gradient flows to b (not a) which
+                 gives correct behavior for relu(x) = max(x, 0) at x=0 *)
+              let mask_a = T.cast (dtype g) (T.cmpgt a b) in
+              let mask_b = T.sub (T.ones_like mask_a) mask_a in
+              let ga = T.mul g mask_a in
+              let gb = T.mul g mask_b in
+              twg_a.grad <- T.add twg_a.grad (unbroadcast_grad ga (T.shape a));
+              twg_b.grad <- T.add twg_b.grad (unbroadcast_grad gb (T.shape b));
+              fwd)
+      (* Unary Arithmetic *)
+      | E_neg { t_in } ->
+          Some
+            (fun k ->
+              let res = op_neg t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              twg_in.grad <- T.add twg_in.grad (T.neg twg_res.grad);
+              fwd)
+      | E_sin { t_in } ->
+          Some
+            (fun k ->
+              let res = op_sin t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = T.mul twg_res.grad (deriv_sin t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_log2 { t_in } ->
+          Some
+            (fun k ->
+              let res = op_log2 t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = T.mul twg_res.grad (deriv_log2 t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_exp2 { t_in } ->
+          Some
+            (fun k ->
+              let res = op_exp2 t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = T.mul twg_res.grad (deriv_exp2 res) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_sqrt { t_in } ->
+          Some
+            (fun k ->
+              let res = op_sqrt t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = T.mul twg_res.grad (deriv_sqrt res) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_recip { t_in } ->
+          Some
+            (fun k ->
+              let res = op_recip t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = T.mul twg_res.grad (deriv_recip t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      (* Shape Operations *)
+      | E_reshape { t_in; new_shape } ->
+          Some
+            (fun k ->
+              let res = op_reshape t_in new_shape in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = T.reshape (T.shape t_in) twg_res.grad in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_permute { t_in; axes } ->
+          Some
+            (fun k ->
+              let res = op_permute t_in axes in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              (* Inverse permutation *)
+              let inv = Array.make (Array.length axes) 0 in
+              Array.iteri (fun i d -> inv.(d) <- i) axes;
+              let g = T.transpose twg_res.grad ~axes:(Array.to_list inv) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_expand { t_in; new_target_shape } ->
+          Some
+            (fun k ->
+              let res = op_expand t_in new_target_shape in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = unbroadcast_grad twg_res.grad (T.shape t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_shrink { t_in; limits } ->
+          Some
+            (fun k ->
+              let res = op_shrink t_in limits in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let pads =
+                Array.mapi
+                  (fun i (start, _) ->
+                    let total = (T.shape t_in).(i) in
+                    let len = (T.shape res).(i) in
+                    (start, total - start - len))
+                  limits
+              in
+              let g = op_pad twg_res.grad pads (Dtype.zero (dtype t_in)) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_flip { t_in; dims_to_flip } ->
+          Some
+            (fun k ->
+              let res = op_flip t_in dims_to_flip in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = op_flip twg_res.grad dims_to_flip in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_pad { t_in; padding_config; fill_value = _ } ->
+          Some
+            (fun k ->
+              let res = op_pad t_in padding_config (Dtype.zero (dtype t_in)) in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let limits =
+                Array.mapi
+                  (fun i (pre, _) ->
+                    let dim = (T.shape t_in).(i) in
+                    (pre, pre + dim))
+                  padding_config
+              in
+              let g = T.shrink limits twg_res.grad in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_cat { t_list; axis } ->
+          Some
+            (fun k ->
+              let res = op_cat t_list axis in
+              let fwd = continue k res in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              let g_shape = T.shape g in
+              let off = ref 0 in
+              List.iter
+                (fun t ->
+                  let twg = get_or_init t in
+                  let len = (T.shape t).(axis) in
+                  let limits =
+                    Array.init (Array.length g_shape) (fun i ->
+                        if i = axis then (!off, !off + len) else (0, g_shape.(i)))
+                  in
+                  off := !off + len;
+                  twg.grad <- T.add twg.grad (T.shrink limits g))
+                t_list;
+              fwd)
+      (* Reductions *)
+      | E_reduce_sum { t_in; axes; keepdims } ->
+          Some
+            (fun k ->
+              let res = op_reduce_sum ~axes ~keepdims t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g =
+                if keepdims then twg_res.grad
+                else
+                  let kept_shape =
+                    T.shape (op_reduce_sum ~axes ~keepdims:true t_in)
+                  in
+                  T.reshape kept_shape twg_res.grad
+              in
+              let g_bc = T.broadcast_to (T.shape t_in) g in
+              twg_in.grad <- T.add twg_in.grad g_bc;
+              fwd)
+      | E_reduce_max { t_in; axes; keepdims } ->
+          Some
+            (fun k ->
+              let res = op_reduce_max ~axes ~keepdims t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let shape_in = T.shape t_in in
+              let res_bc =
+                if keepdims then T.broadcast_to shape_in res
+                else
+                  let kept = op_reduce_max ~axes ~keepdims:true t_in in
+                  T.broadcast_to shape_in kept
+              in
+              let g_bc =
+                if keepdims then T.broadcast_to shape_in twg_res.grad
+                else
+                  let kept_shape =
+                    T.shape (op_reduce_max ~axes ~keepdims:true t_in)
+                  in
+                  T.broadcast_to shape_in (T.reshape kept_shape twg_res.grad)
+              in
+              let mask = T.cast (dtype res) (T.equal t_in res_bc) in
+              twg_in.grad <- T.add twg_in.grad (T.mul g_bc mask);
+              fwd)
+      (* Matrix Operations *)
+      | E_matmul { a; b } ->
+          Some
+            (fun k ->
+              let res = op_matmul a b in
+              let fwd = continue k res in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              let a_shape = T.shape a in
+              let b_shape = T.shape b in
+              let g_shape = T.shape g in
+              let a_ndim = Array.length a_shape in
+              let b_ndim = Array.length b_shape in
+              let g_ndim = Array.length g_shape in
+              (* Helper to transpose last two dimensions (for batched matmul) *)
+              let transpose_last2 t =
+                let nd = Array.length (T.shape t) in
+                if nd < 2 then t
+                else
+                  let axes =
+                    List.init nd (fun i ->
+                        if i = nd - 2 then -1 else if i = nd - 1 then -2 else i)
+                  in
+                  T.transpose ~axes t
+              in
+              (* Handle broadcasting in matmul backward: When 2D @ 3D or 3D @
+                 2D, we need to properly broadcast/reduce gradients *)
+              let grad_a =
+                if a_ndim = 2 && b_ndim >= 3 then
+                  (* a was broadcast: g @ B^T, then sum over batch dimensions *)
+                  let b_t = transpose_last2 b in
+                  let g_bt = T.matmul g b_t in
+                  (* g_bt has shape [...batch, m, k], reduce to [m, k] *)
+                  let batch_dims = List.init (g_ndim - 2) Fun.id in
+                  if batch_dims = [] then g_bt
+                  else T.sum g_bt ~axes:batch_dims ~keepdims:false
+                else if a_ndim >= 3 && b_ndim >= 3 then
+                  T.matmul g (transpose_last2 b)
+                else T.matmul g (T.transpose b)
+              in
+              let grad_b =
+                if b_ndim = 2 && a_ndim >= 3 then
+                  (* b was broadcast: A^T @ g, then sum over batch dimensions *)
+                  let at_g = T.matmul (transpose_last2 a) g in
+                  (* at_g has shape [...batch, k, n], reduce to [k, n] *)
+                  let batch_dims = List.init (g_ndim - 2) Fun.id in
+                  if batch_dims = [] then at_g
+                  else T.sum at_g ~axes:batch_dims ~keepdims:false
+                else if a_ndim = 2 && b_ndim >= 3 then
+                  (* a is 2D, b is 3D+: need to expand a for matmul *)
+                  (* A^T @ g where A is [m, k] and g is [..., m, n] *)
+                  (* We need [..., k, m] @ [..., m, n] = [..., k, n] *)
+                  let a_t = T.transpose a in
+                  (* [k, m] *)
+                  (* Expand a_t to match g's batch dimensions *)
+                  let batch_shape = Array.sub g_shape 0 (g_ndim - 2) in
+                  let a_t_shape = T.shape a_t in
+                  let target_shape = Array.concat [ batch_shape; a_t_shape ] in
+                  let a_t_expanded =
+                    T.broadcast_to target_shape
+                      (T.reshape (Array.concat [ [| 1 |]; a_t_shape ]) a_t)
+                  in
+                  T.matmul a_t_expanded g
+                else if a_ndim >= 3 && b_ndim >= 3 then
+                  T.matmul (transpose_last2 a) g
+                else T.matmul (T.transpose a) g
+              in
+              twg_a.grad <- T.add twg_a.grad grad_a;
+              twg_b.grad <- T.add twg_b.grad grad_b;
+              fwd)
+      (* Selection *)
+      | E_where { condition; if_true; if_false } ->
+          Some
+            (fun k ->
+              let res = op_where condition if_true if_false in
+              let fwd = continue k res in
+              let twg_t = get_or_init if_true in
+              let twg_f = get_or_init if_false in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              let mask = T.cast (dtype g) condition in
+              let inv_mask = T.sub (T.ones_like mask) mask in
+              twg_t.grad <- T.add twg_t.grad (T.mul g mask);
+              twg_f.grad <- T.add twg_f.grad (T.mul g inv_mask);
+              fwd)
+      (* Comparisons (no gradient) *)
+      | E_cmplt { a; b } -> Some (fun k -> continue k (op_cmplt a b))
+      | E_cmpne { a; b } -> Some (fun k -> continue k (op_cmpne a b))
+      | E_xor { a; b } -> Some (fun k -> continue k (op_xor a b))
+      | E_or { a; b } -> Some (fun k -> continue k (op_or a b))
+      | E_and { a; b } -> Some (fun k -> continue k (op_and a b))
+      (* Other *)
+      | E_copy { t_in } ->
+          Some
+            (fun k ->
+              let res = op_copy t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              twg_in.grad <- T.add twg_in.grad twg_res.grad;
+              fwd)
+      | E_contiguous { t_in } ->
+          Some
+            (fun k ->
+              let res = op_contiguous t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              twg_in.grad <- T.add twg_in.grad twg_res.grad;
+              fwd)
+      | E_cast { t_in; target_dtype } ->
+          Some
+            (fun k ->
+              let res = op_cast t_in target_dtype in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = T.cast (dtype t_in) twg_res.grad in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      (* Reduce Prod *)
+      | E_reduce_prod { t_in; axes; keepdims } ->
+          Some
+            (fun k ->
+              let res = op_reduce_prod ~axes ~keepdims t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let shape_in = T.shape t_in in
+              (* Prepare gradient for broadcasting *)
+              let g_prepared =
+                if keepdims then twg_res.grad
+                else
+                  let kept_shape =
+                    T.shape (op_reduce_prod ~axes ~keepdims:true t_in)
+                  in
+                  T.reshape kept_shape twg_res.grad
+              in
+              let g_bc = T.broadcast_to shape_in g_prepared in
+              (* Prepare result for broadcasting *)
+              let res_prepared =
+                if keepdims then res
+                else
+                  let kept_shape =
+                    T.shape (op_reduce_prod ~axes ~keepdims:true t_in)
+                  in
+                  T.reshape kept_shape res
+              in
+              let res_bc = T.broadcast_to shape_in res_prepared in
+              (* d(prod)/dx_i = prod / x_i *)
+              let grad_contrib = T.mul g_bc (T.div res_bc t_in) in
+              twg_in.grad <- T.add twg_in.grad grad_contrib;
+              fwd)
+      (* Associative Scan (cumsum/cumprod) *)
+      | E_associative_scan { t_in; axis; op } ->
+          Some
+            (fun k ->
+              let res = op_associative_scan ~axis ~op t_in in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              let shape_in = T.shape t_in in
+              let axis_norm =
+                let rank = Array.length shape_in in
+                if axis < 0 then axis + rank else axis
+              in
+              let grad_contrib =
+                match op with
+                | `Sum ->
+                    (* Reverse cumsum of gradient *)
+                    let flipped = T.flip g ~axes:[ axis_norm ] in
+                    let scanned = T.cumsum ~axis:axis_norm flipped in
+                    T.flip scanned ~axes:[ axis_norm ]
+                | `Prod ->
+                    (* More complex gradient for cumprod *)
+                    let prefix_exclusive axis tensor =
+                      let shape = T.shape tensor in
+                      let pad_config =
+                        Array.mapi
+                          (fun i _ -> if i = axis then (1, 0) else (0, 0))
+                          shape
+                      in
+                      let one = Dtype.one (T.dtype tensor) in
+                      let padded = T.pad pad_config one tensor in
+                      let cumprod_padded = T.cumprod ~axis padded in
+                      let slice_specs =
+                        Array.mapi
+                          (fun i dim ->
+                            if i = axis then T.R (0, dim) else T.R (0, dim))
+                          shape
+                      in
+                      T.slice (Array.to_list slice_specs) cumprod_padded
+                    in
+                    let suffix_exclusive axis tensor =
+                      let shape = T.shape tensor in
+                      let one = Dtype.one (T.dtype tensor) in
+                      let flipped = T.flip tensor ~axes:[ axis ] in
+                      let flipped_cumprod = T.cumprod ~axis flipped in
+                      let suffix_inclusive =
+                        T.flip flipped_cumprod ~axes:[ axis ]
+                      in
+                      let pad_config =
+                        Array.mapi
+                          (fun i _ -> if i = axis then (0, 1) else (0, 0))
+                          shape
+                      in
+                      let padded = T.pad pad_config one suffix_inclusive in
+                      let slice_specs =
+                        Array.mapi
+                          (fun i dim ->
+                            if i = axis then T.R (1, dim + 1) else T.R (0, dim))
+                          shape
+                      in
+                      T.slice (Array.to_list slice_specs) padded
+                    in
+                    let divide_no_nan num denom =
+                      let zero_tensor = T.zeros_like denom in
+                      let zero_mask = T.equal denom zero_tensor in
+                      let safe_denom =
+                        T.where zero_mask (T.ones_like denom) denom
+                      in
+                      let base = T.div num safe_denom in
+                      T.where zero_mask (T.zeros_like base) base
+                    in
+                    let reverse_cumsum tensor axis =
+                      let flipped = T.flip tensor ~axes:[ axis ] in
+                      let scanned = T.cumsum ~axis flipped in
+                      T.flip scanned ~axes:[ axis ]
+                    in
+                    let prefix = prefix_exclusive axis_norm t_in in
+                    let suffix = suffix_exclusive axis_norm t_in in
+                    let h = divide_no_nan g suffix in
+                    let tail_sum = T.sub (reverse_cumsum h axis_norm) h in
+                    let inner = T.add g (T.mul suffix tail_sum) in
+                    T.mul prefix inner
+                | `Max ->
+                    (* cummax gradient: gradient flows to input positions where
+                       a new maximum is established.
+
+                       We detect this by comparing res with shifted res: where
+                       res > prev_res, a new max was set at that position. *)
+                    let shape = T.shape res in
+                    let dt = dtype t_in in
+                    let min_val = Dtype.min_value dt in
+                    let pad_left =
+                      Array.mapi
+                        (fun i _ -> if i = axis_norm then (1, 0) else (0, 0))
+                        shape
+                    in
+                    let padded = T.pad pad_left min_val res in
+                    let slice_right =
+                      Array.mapi
+                        (fun i dim ->
+                          if i = axis_norm then T.R (0, dim) else T.R (0, dim))
+                        shape
+                    in
+                    let shifted_res =
+                      T.slice (Array.to_list slice_right) padded
+                    in
+                    (* Gradient flows where res > prev_res (new max
+                       established) *)
+                    let active_mask = T.cast dt (T.cmpgt res shifted_res) in
+                    T.mul g active_mask
+                | `Min ->
+                    (* cummin gradient: same logic but detecting new minimums *)
+                    let shape = T.shape res in
+                    let dt = dtype t_in in
+                    let max_val = Dtype.max_value dt in
+                    let pad_left =
+                      Array.mapi
+                        (fun i _ -> if i = axis_norm then (1, 0) else (0, 0))
+                        shape
+                    in
+                    let padded = T.pad pad_left max_val res in
+                    let slice_right =
+                      Array.mapi
+                        (fun i dim ->
+                          if i = axis_norm then T.R (0, dim) else T.R (0, dim))
+                        shape
+                    in
+                    let shifted_res =
+                      T.slice (Array.to_list slice_right) padded
+                    in
+                    (* Gradient flows where res < prev_res (new min
+                       established) *)
+                    let active_mask = T.cast dt (T.cmplt res shifted_res) in
+                    T.mul g active_mask
+              in
+              twg_in.grad <- T.add twg_in.grad grad_contrib;
+              fwd)
+      (* As Strided (for slicing/indexing) *)
+      | E_as_strided { t_in; new_shape; new_strides; offset } ->
+          Some
+            (fun k ->
+              let res =
+                op_as_strided t_in
+                  (Nx_core.Symbolic_shape.of_ints new_shape)
+                  new_strides offset
+              in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              let input_shape = T.shape t_in in
+              let input_numel = Array.fold_left ( * ) 1 input_shape in
+              let output_numel = Array.fold_left ( * ) 1 new_shape in
+              let ndim = Array.length new_shape in
+              let ctx = context t_in in
+              let flat_indices =
+                T.init ctx Nx_core.Dtype.Int32 [| output_numel |]
+                  (fun out_coords ->
+                    let out_flat = out_coords.(0) in
+                    let out_idx = Array.make ndim 0 in
+                    let temp = ref out_flat in
+                    for i = ndim - 1 downto 0 do
+                      if new_shape.(i) > 0 then (
+                        out_idx.(i) <- !temp mod new_shape.(i);
+                        temp := !temp / new_shape.(i))
+                    done;
+                    let in_flat = ref offset in
+                    for i = 0 to ndim - 1 do
+                      in_flat := !in_flat + (out_idx.(i) * new_strides.(i))
+                    done;
+                    Int32.of_int !in_flat)
+              in
+              let g_flat = T.reshape [| output_numel |] g in
+              let zeros_input = T.zeros ctx (T.dtype t_in) [| input_numel |] in
+              let grad_contrib =
+                op_scatter ~mode:`Add zeros_input flat_indices g_flat 0
+              in
+              let grad_contrib_reshaped = T.reshape input_shape grad_contrib in
+              twg_in.grad <- T.add twg_in.grad grad_contrib_reshaped;
+              fwd)
+      (* Gather *)
+      | E_gather { data; indices; axis } ->
+          Some
+            (fun k ->
+              let res = op_gather data indices axis in
+              let fwd = continue k res in
+              let twg_data = get_or_init data in
+              let _ = get_or_init indices in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              let zeros_data = T.zeros_like data in
+              let scattered_grads =
+                op_scatter ~mode:`Add zeros_data indices g axis
+              in
+              twg_data.grad <- T.add twg_data.grad scattered_grads;
+              fwd)
+      (* Scatter *)
+      | E_scatter { data_template; indices; updates; axis } ->
+          Some
+            (fun k ->
+              let res = op_scatter data_template indices updates axis in
+              let fwd = continue k res in
+              let twg_dt = get_or_init data_template in
+              let twg_upd = get_or_init updates in
+              let _ = get_or_init indices in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              (* Gradient for updates: gather from result gradient *)
+              let grad_upd = op_gather g indices axis in
+              twg_upd.grad <- T.add twg_upd.grad grad_upd;
+              (* Gradient for data_template: masked by scatter *)
+              let mask =
+                op_scatter
+                  (T.ones_like data_template)
+                  indices (T.zeros_like updates) axis
+              in
+              let grad_dt = T.mul g mask in
+              twg_dt.grad <- T.add twg_dt.grad grad_dt;
+              fwd)
+      (* Unfold (for conv) *)
+      | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
+          Some
+            (fun k ->
+              let res =
+                op_unfold t_in ~kernel_size ~stride ~dilation ~padding
+              in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              let input_shape = T.shape t_in in
+              let num_spatial_dims = Array.length kernel_size in
+              let output_size =
+                Array.sub input_shape
+                  (Array.length input_shape - num_spatial_dims)
+                  num_spatial_dims
+              in
+              let grad_contrib =
+                op_fold g ~output_size ~kernel_size ~stride ~dilation ~padding
+              in
+              twg_in.grad <- T.add twg_in.grad grad_contrib;
+              fwd)
+      (* Fold (for conv transpose) *)
+      | E_fold { t_in; output_size; kernel_size; stride; dilation; padding } ->
+          Some
+            (fun k ->
+              let res =
+                op_fold t_in ~output_size ~kernel_size ~stride ~dilation
+                  ~padding
+              in
+              let fwd = continue k res in
+              let twg_in = get_or_init t_in in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+              let grad_contrib =
+                op_unfold g ~kernel_size ~stride ~dilation ~padding
+              in
+              twg_in.grad <- T.add twg_in.grad grad_contrib;
+              fwd)
+      (* Cholesky decomposition *)
+      | E_cholesky { t_in; upper } ->
+          Some
+            (fun k ->
+              let l = op_cholesky ~upper t_in in
+              let fwd = continue k l in
+              let twg_in = get_or_init t_in in
+              let twg_l = get_or_init l in
+              let dl = twg_l.grad in
+
+              (* VJP for Cholesky: Let L be lower-triangular with A = L L^T.
+                 Using Murray (2016), eqs. (9)–(10):
+
+                 P = Φ(L^T L̄) S = L^{-T} P L^{-1} Ā = S + S^T - diag(S)
+
+                 where Φ takes the lower triangular part and halves the
+                 diagonal. *)
+
+              (* Normalize to lower-triangular form if op returns upper *)
+              let l_lower, dl_lower =
+                if upper then (T.transpose l, T.transpose dl) else (l, dl)
+              in
+
+              (* C = L^T @ L̄ *)
+              let c = T.matmul (T.transpose l_lower) dl_lower in
+
+              (* P = Φ(C) = tril(C) - 0.5 * diag(C) *)
+              let p =
+                let tril_c = T.tril c in
+                let diag_c = T.diagonal c in
+                let two = T.add (T.ones_like diag_c) (T.ones_like diag_c) in
+                let half_diag = T.div diag_c two in
+                T.sub tril_c (T.diag half_diag)
+              in
+
+              (* Solve L^T Z = P => Z = L^{-T} P *)
+              let z =
+                op_triangular_solve ~upper:false ~transpose:true
+                  ~unit_diag:false l_lower p
+              in
+
+              (* Compute S = Z @ L^{-1} Solve L^T Y = Z^T => Y^T = L^{-T} Z =
+                 S *)
+              let y =
+                op_triangular_solve ~upper:false ~transpose:true
+                  ~unit_diag:false l_lower (T.transpose z)
+              in
+              let s = T.transpose y in
+
+              (* Ā = S + Sᵀ - diag(S) *)
+              let s_t = T.transpose s in
+              let sum = T.add s s_t in
+              let diag_s = T.diagonal s in
+              let diag_mat = T.diag diag_s in
+              let da_sym = T.sub sum diag_mat in
+              (* Cholesky only reads the lower triangle of A, so gradient should
+                 be lower triangular to match finite differences. *)
+              let da = T.tril da_sym in
+
+              twg_in.grad <- T.add twg_in.grad da;
+              fwd)
+          (* Triangular solve *)
+      | E_triangular_solve { a; b; upper; transpose; unit_diag } ->
+          Some
+            (fun k ->
+              let res = op_triangular_solve ~upper ~transpose ~unit_diag a b in
+              let fwd = continue k res in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_res = get_or_init res in
+              let g = twg_res.grad in
+
+              (* op(A) X = B, where op(A) = A (transpose=false) or A^T
+                 (transpose=true) *)
+
+              (* dB = op(A)^{-T} dX *)
+              let grad_b =
+                if transpose then
+                  (* op(A) = A^T => dB = A^{-1} dX *)
+                  op_triangular_solve ~upper ~transpose:false ~unit_diag a g
+                else
+                  (* op(A) = A => dB = A^{-T} dX *)
+                  op_triangular_solve ~upper ~transpose:true ~unit_diag a g
+              in
+              twg_b.grad <- T.add twg_b.grad grad_b;
+
+              (* Grad w.r.t A. For op(A) X = B, left-side:
+
+                 transpose=false: Ā = -grad_b @ Xᵀ transpose=true: Ā = -X @
+                 grad_bᵀ
+
+                 We also zero out entries outside the specified triangle. *)
+
+              (* Handle vector RHS by promoting to 2D *)
+              let res_2d, grad_b_2d =
+                let g_ndim = Array.length (T.shape g) in
+                if g_ndim = 1 then
+                  (T.expand_dims [ -1 ] res, T.expand_dims [ -1 ] grad_b)
+                else (res, grad_b)
+              in
+
+              let grad_a_full =
+                if transpose then
+                  (* op(A) = A^T: Ā = -X @ grad_bᵀ *)
+                  T.neg (T.matmul res_2d (T.transpose grad_b_2d))
+                else
+                  (* op(A) = A: Ā = -grad_b @ Xᵀ *)
+                  T.neg (T.matmul grad_b_2d (T.transpose res_2d))
+              in
+
+              (* Keep only the triangular part that actually exists in A *)
+              let grad_a =
+                if upper then T.triu grad_a_full else T.tril grad_a_full
+              in
+
+              twg_a.grad <- T.add twg_a.grad grad_a;
+              fwd)
+          (* QR decomposition *)
+      | E_qr { t_in; reduced } ->
+          Some
+            (fun k ->
+              (* Forward pass: compute Q, R *)
+              let q, r = op_qr ~reduced t_in in
+              let fwd = continue k (q, r) in
+
+              (* Ensure input is on the tape *)
+              let twg_in = get_or_init t_in in
+              let twg_q = get_or_init q in
+              let twg_r = get_or_init r in
+
+              (* Incoming cotangents *)
+              let gq = twg_q.grad in
+              let gr_full = twg_r.grad in
+
+              (* 1. Project R-grad to upper triangular (R is
+                 upper-triangular) *)
+              let gr =
+                let rt = T.transpose gr_full in
+                (* tril(rt) is lower-triangular, transpose again -> upper *)
+                T.transpose (T.tril rt)
+              in
+
+              (* 2. M = R @ gr^T - gq^T @ Q *)
+              let m =
+                let term1 = T.matmul r (T.transpose gr) in
+                let term2 = T.matmul (T.transpose gq) q in
+                T.sub term1 term2
+              in
+
+              (* 3. copyltu(M): copy lower (incl. diag) to upper This creates a
+                 symmetric matrix from the lower triangular part. copyltu(M) =
+                 tril_{-1}(M) + tril_{-1}(M)^T + diag(M) *)
+              let lower_strict = T.tril ~k:(-1) m in
+              let diag_m = T.contiguous (T.diagonal m) in
+              let diag_mat = T.diag diag_m in
+              let copyltu =
+                T.add (T.add lower_strict (T.transpose lower_strict)) diag_mat
+              in
+
+              (* 4. rhs = gQ + Q @ copyltu(M) *)
+              let rhs = T.add gq (T.matmul q copyltu) in
+
+              (* 5. barA = rhs @ R^{-T} Implement via triangular_solve: solve R
+                 @ barA^T = rhs^T -> barA^T = R^{-1} rhs^T *)
+              let da_t =
+                op_triangular_solve ~upper:true ~transpose:false
+                  ~unit_diag:false r (T.transpose rhs)
+              in
+              let da = T.transpose da_t in
+
+              (* Accumulate into gradient of input A *)
+              twg_in.grad <- T.add twg_in.grad da;
+
+              fwd)
+      (* FFT Operations *)
+      | E_fft { t; axes } ->
+          Some
+            (fun k ->
+              let res = op_fft t ~axes in
+              let fwd = continue k res in
+              let twg_in = get_or_init t in
+              let twg_res = get_or_init res in
+              (* VJP for FFT: The adjoint of raw DFT is raw IDFT (no scaling).
+                 op_fft/op_ifft are raw operations without normalization. *)
+              let g = twg_res.grad in
+              let grad_contrib = op_ifft g ~axes in
+              twg_in.grad <- T.add twg_in.grad grad_contrib;
+              fwd)
+      | E_ifft { t; axes } ->
+          Some
+            (fun k ->
+              let res = op_ifft t ~axes in
+              let fwd = continue k res in
+              let twg_in = get_or_init t in
+              let twg_res = get_or_init res in
+              (* VJP for IFFT: The adjoint of raw IDFT is raw DFT (no scaling).
+                 op_fft/op_ifft are raw operations without normalization. *)
+              let g = twg_res.grad in
+              let grad_contrib = op_fft g ~axes in
+              twg_in.grad <- T.add twg_in.grad grad_contrib;
+              fwd)
       | _ -> None
   in
+  {
+    retc =
+      (fun final_result ->
+        (* Seed the output gradient before stack unwinds *)
+        let twg_final = get_or_init final_result in
+        twg_final.grad <- seed_output final_result;
+        final_result);
+    exnc = raise;
+    effc;
+  }
 
-  { retc = (fun x -> x); exnc = raise; effc }
+(* ───── API ───── *)
 
-(* JVP function following JAX API *)
 let jvp (type a b c d) (f : (a, b) t -> (c, d) t) (primals : (a, b) t)
     (tangents : (a, b) t) : (c, d) t * (c, d) t =
-  let primal_to_dual_map = PhysicalTbl.create 16 in
-  (* Initialize input dual *)
-  let input_dual = { primal = primals; tangent = tangents } in
-  PhysicalTbl.add primal_to_dual_map primals (Any_dual input_dual);
+  let dual_map = Physical_tbl.create 16 in
+  Physical_tbl.add dual_map primals
+    (Any_dual { primal = primals; tangent = tangents });
+  let handler = make_jvp_handler dual_map in
+  let result = Effect.Deep.match_with f primals handler in
+  match Physical_tbl.find dual_map result with
+  | Some (Any_dual d) ->
+      let d = unwrap_dual (dtype result) (Any_dual d) in
+      (d.primal, d.tangent)
+  | None -> (result, T.zeros_like result)
 
-  let handler = make_forward_handler primal_to_dual_map in
-  let result_primal = Effect.Deep.match_with f primals handler in
-
-  (* Get result tangent *)
-  let result_dual =
-    match PhysicalTbl.find_opt primal_to_dual_map result_primal with
-    | Some (Any_dual d) -> unwrap_dual (dtype result_primal) (Any_dual d)
-    | None -> { primal = result_primal; tangent = T.zeros_like result_primal }
-  in
-
-  (result_dual.primal, result_dual.tangent)
-
-(* JVP with auxiliary output *)
-let jvp_aux (type a b c d e) (f : (a, b) t -> (c, d) t * e) (primals : (a, b) t)
-    (tangents : (a, b) t) : (c, d) t * (c, d) t * e =
-  let primal_to_dual_map = PhysicalTbl.create 16 in
-  (* Initialize input dual *)
-  let input_dual = { primal = primals; tangent = tangents } in
-  PhysicalTbl.add primal_to_dual_map primals (Any_dual input_dual);
-
-  let handler = make_forward_handler primal_to_dual_map in
-  let result_primal, aux = Effect.Deep.match_with f primals handler in
-
-  (* Get result tangent *)
-  let result_dual =
-    match PhysicalTbl.find_opt primal_to_dual_map result_primal with
-    | Some (Any_dual d) -> unwrap_dual (dtype result_primal) (Any_dual d)
-    | None -> { primal = result_primal; tangent = T.zeros_like result_primal }
-  in
-
-  (result_dual.primal, result_dual.tangent, aux)
-
-(* Multiple inputs version *)
 let jvps (type a b c d) (f : (a, b) t list -> (c, d) t)
     (primals : (a, b) t list) (tangents : (a, b) t list) : (c, d) t * (c, d) t =
-  if List.length primals <> List.length tangents then
-    failwith "jvps: primals and tangents must have the same length";
-
-  let primal_to_dual_map = PhysicalTbl.create 16 in
-  (* Initialize input duals *)
+  let dual_map = Physical_tbl.create 16 in
   List.iter2
-    (fun primal tangent ->
-      let dual = { primal; tangent } in
-      PhysicalTbl.add primal_to_dual_map primal (Any_dual dual))
+    (fun p t ->
+      Physical_tbl.add dual_map p (Any_dual { primal = p; tangent = t }))
     primals tangents;
+  let handler = make_jvp_handler dual_map in
+  let result = Effect.Deep.match_with f primals handler in
+  match Physical_tbl.find dual_map result with
+  | Some (Any_dual d) ->
+      let d = unwrap_dual (dtype result) (Any_dual d) in
+      (d.primal, d.tangent)
+  | None -> (result, T.zeros_like result)
 
-  let handler = make_forward_handler primal_to_dual_map in
-  let result_primal = Effect.Deep.match_with f primals handler in
+let jvp_aux (type a b c d e) (f : (a, b) t -> (c, d) t * e) (primals : (a, b) t)
+    (tangents : (a, b) t) : (c, d) t * (c, d) t * e =
+  let dual_map = Physical_tbl.create 16 in
+  Physical_tbl.add dual_map primals
+    (Any_dual { primal = primals; tangent = tangents });
+  let handler = make_jvp_handler dual_map in
+  let result, aux = Effect.Deep.match_with f primals handler in
+  match Physical_tbl.find dual_map result with
+  | Some (Any_dual d) ->
+      let d = unwrap_dual (dtype result) (Any_dual d) in
+      (d.primal, d.tangent, aux)
+  | None -> (result, T.zeros_like result, aux)
 
-  (* Get result tangent *)
-  let result_dual =
-    match PhysicalTbl.find_opt primal_to_dual_map result_primal with
-    | Some (Any_dual d) -> unwrap_dual (dtype result_primal) (Any_dual d)
-    | None -> { primal = result_primal; tangent = T.zeros_like result_primal }
+let vjp (type a b c d) (f : (a, b) t -> (c, d) t) (x : (a, b) t)
+    (cotangent : (c, d) t) : (c, d) t * (a, b) t =
+  let tape_by_id = Hashtbl.create 32 in
+  let val_to_id = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape_by_id val_to_id (fun _ -> cotangent) in
+  let y = Effect.Deep.match_with f x handler in
+  let grad_x =
+    match Physical_tbl.find val_to_id x with
+    | Some id -> (
+        match Hashtbl.find_opt tape_by_id id with
+        | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
+        | None -> T.zeros_like x)
+    | None -> T.zeros_like x
   in
+  (y, grad_x)
 
-  (result_dual.primal, result_dual.tangent)
+let vjps (type a b c d) (f : (a, b) t list -> (c, d) t) (xs : (a, b) t list)
+    (cotangent : (c, d) t) : (c, d) t * (a, b) t list =
+  let tape_by_id = Hashtbl.create 32 in
+  let val_to_id = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape_by_id val_to_id (fun _ -> cotangent) in
+  let y = Effect.Deep.match_with f xs handler in
+  let grads =
+    List.map
+      (fun x ->
+        match Physical_tbl.find val_to_id x with
+        | Some id -> (
+            match Hashtbl.find_opt tape_by_id id with
+            | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
+            | None -> T.zeros_like x)
+        | None -> T.zeros_like x)
+      xs
+  in
+  (y, grads)
+
+let grad (type a b c d) (f : (a, b) t -> (c, d) t) (x : (a, b) t) : (a, b) t =
+  let tape_by_id = Hashtbl.create 32 in
+  let val_to_id = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape_by_id val_to_id T.ones_like in
+  let _ = Effect.Deep.match_with f x handler in
+  match Physical_tbl.find val_to_id x with
+  | Some id -> (
+      match Hashtbl.find_opt tape_by_id id with
+      | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
+      | None -> T.zeros_like x)
+  | None -> T.zeros_like x
+
+let grads (type a b c d) (f : (a, b) t list -> (c, d) t) (xs : (a, b) t list) :
+    (a, b) t list =
+  let tape_by_id = Hashtbl.create 32 in
+  let val_to_id = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape_by_id val_to_id T.ones_like in
+  let _ = Effect.Deep.match_with f xs handler in
+  List.map
+    (fun x ->
+      match Physical_tbl.find val_to_id x with
+      | Some id -> (
+          match Hashtbl.find_opt tape_by_id id with
+          | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
+          | None -> T.zeros_like x)
+      | None -> T.zeros_like x)
+    xs
+
+let value_and_grad (type a b c d) (f : (a, b) t -> (c, d) t) (x : (a, b) t) :
+    (c, d) t * (a, b) t =
+  let tape_by_id = Hashtbl.create 32 in
+  let val_to_id = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape_by_id val_to_id T.ones_like in
+  let y = Effect.Deep.match_with f x handler in
+  let grad_x =
+    match Physical_tbl.find val_to_id x with
+    | Some id -> (
+        match Hashtbl.find_opt tape_by_id id with
+        | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
+        | None -> T.zeros_like x)
+    | None -> T.zeros_like x
+  in
+  (y, grad_x)
+
+let value_and_grads (type a b c d) (f : (a, b) t list -> (c, d) t)
+    (xs : (a, b) t list) : (c, d) t * (a, b) t list =
+  let tape_by_id = Hashtbl.create 32 in
+  let val_to_id = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape_by_id val_to_id T.ones_like in
+  let y = Effect.Deep.match_with f xs handler in
+  let grads =
+    List.map
+      (fun x ->
+        match Physical_tbl.find val_to_id x with
+        | Some id -> (
+            match Hashtbl.find_opt tape_by_id id with
+            | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
+            | None -> T.zeros_like x)
+        | None -> T.zeros_like x)
+      xs
+  in
+  (y, grads)
+
+let detach t = without_autodiff (fun () -> T.copy t)
+let no_grad f = without_autodiff f

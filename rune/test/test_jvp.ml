@@ -466,6 +466,154 @@ let test_jvp_identity () =
   check_rune ~eps "jvp(identity) primal" x primal;
   check_rune ~eps "jvp(identity) tangent" v tangent
 
+(* ───── Indexing Operations ───── *)
+
+let test_jvp_slice () =
+  let x = T.create T.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let v = T.create T.float32 [| 4 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let f x = T.slice [ T.R (1, 3) ] x in
+  let primal, tangent = T.jvp f x v in
+  let expected_primal = T.create T.float32 [| 2 |] [| 2.; 3. |] in
+  let expected_tangent = T.create T.float32 [| 2 |] [| 0.2; 0.3 |] in
+  check_rune ~eps "jvp(slice) primal" expected_primal primal;
+  check_rune ~eps "jvp(slice) tangent" expected_tangent tangent
+
+let test_jvp_gather () =
+  let x = T.create T.float32 [| 4 |] [| 10.; 20.; 30.; 40. |] in
+  let v = T.create T.float32 [| 4 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let indices = T.create T.int32 [| 3 |] [| 2l; 0l; 3l |] in
+  let f x = T.take ~axis:0 indices x in
+  let primal, tangent = T.jvp f x v in
+  let expected_primal = T.create T.float32 [| 3 |] [| 30.; 10.; 40. |] in
+  let expected_tangent = T.create T.float32 [| 3 |] [| 0.3; 0.1; 0.4 |] in
+  check_rune ~eps "jvp(gather) primal" expected_primal primal;
+  check_rune ~eps "jvp(gather) tangent" expected_tangent tangent
+
+let test_jvp_get () =
+  let x = T.create T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let v = T.create T.float32 [| 2; 3 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |] in
+  let f x = T.get [ 1; 2 ] x in
+  let primal, tangent = T.jvp f x v in
+  check_scalar ~eps "jvp(get) primal" 6.0 (scalar_value primal);
+  check_scalar ~eps "jvp(get) tangent" 0.6 (scalar_value tangent)
+
+let test_jvp_take_along_axis () =
+  let x =
+    T.create T.float32 [| 3; 4 |]
+      [| 10.; 20.; 30.; 40.; 50.; 60.; 70.; 80.; 90.; 100.; 110.; 120. |]
+  in
+  let v =
+    T.create T.float32 [| 3; 4 |]
+      [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8; 0.9; 1.0; 1.1; 1.2 |]
+  in
+  let indices = T.create T.int32 [| 3; 2 |] [| 1l; 3l; 0l; 2l; 2l; 1l |] in
+  let f x = T.take_along_axis ~axis:1 indices x in
+  let primal, tangent = T.jvp f x v in
+  let expected_primal =
+    T.create T.float32 [| 3; 2 |] [| 20.; 40.; 50.; 70.; 110.; 100. |]
+  in
+  let expected_tangent =
+    T.create T.float32 [| 3; 2 |] [| 0.2; 0.4; 0.5; 0.7; 1.1; 1.0 |]
+  in
+  check_rune ~eps "jvp(take_along_axis) primal" expected_primal primal;
+  check_rune ~eps "jvp(take_along_axis) tangent" expected_tangent tangent
+
+(* ───── FFT Operations ───── *)
+
+(* Check complex tensors for approximate equality using magnitude of
+   difference *)
+let check_complex_close ~eps msg expected actual =
+  let diff = T.sub expected actual in
+  (* |z|^2 = z * conj(z) for complex numbers *)
+  let mag_sq = T.mul diff (T.conjugate diff) in
+  (* Sum of squared magnitudes *)
+  let total_err = T.sum mag_sq in
+  let err_val = (T.item [] total_err : Complex.t).re in
+  if
+    err_val
+    > eps *. eps *. Float.of_int (Array.fold_left ( * ) 1 (T.shape expected))
+  then
+    Alcotest.failf "%s: complex tensors differ, total squared error = %.6e" msg
+      err_val
+
+let test_jvp_fft () =
+  (* FFT is linear, so JVP should be FFT of tangent *)
+  let x =
+    T.create T.complex64 [| 4 |]
+      [|
+        Complex.{ re = 1.0; im = 0.0 };
+        Complex.{ re = 2.0; im = 0.0 };
+        Complex.{ re = 3.0; im = 0.0 };
+        Complex.{ re = 4.0; im = 0.0 };
+      |]
+  in
+  let v =
+    T.create T.complex64 [| 4 |]
+      [|
+        Complex.{ re = 0.1; im = 0.0 };
+        Complex.{ re = 0.2; im = 0.0 };
+        Complex.{ re = 0.3; im = 0.0 };
+        Complex.{ re = 0.4; im = 0.0 };
+      |]
+  in
+  let f x = T.fft ~axis:0 x in
+  let primal, tangent = T.jvp f x v in
+  let expected_tangent = T.fft ~axis:0 v in
+  check_complex_close ~eps:1e-5 "jvp(fft) primal" (f x) primal;
+  check_complex_close ~eps:1e-5 "jvp(fft) tangent" expected_tangent tangent
+
+let test_jvp_ifft () =
+  (* IFFT is linear, so JVP should be IFFT of tangent *)
+  let x =
+    T.create T.complex64 [| 4 |]
+      [|
+        Complex.{ re = 10.0; im = 0.0 };
+        Complex.{ re = -2.0; im = 2.0 };
+        Complex.{ re = -2.0; im = 0.0 };
+        Complex.{ re = -2.0; im = -2.0 };
+      |]
+  in
+  let v =
+    T.create T.complex64 [| 4 |]
+      [|
+        Complex.{ re = 1.0; im = 0.0 };
+        Complex.{ re = 0.0; im = 1.0 };
+        Complex.{ re = -1.0; im = 0.0 };
+        Complex.{ re = 0.0; im = -1.0 };
+      |]
+  in
+  let f x = T.ifft ~axis:0 x in
+  let primal, tangent = T.jvp f x v in
+  let expected_tangent = T.ifft ~axis:0 v in
+  check_complex_close ~eps:1e-5 "jvp(ifft) primal" (f x) primal;
+  check_complex_close ~eps:1e-5 "jvp(ifft) tangent" expected_tangent tangent
+
+let test_jvp_fft_roundtrip () =
+  (* FFT followed by IFFT should be identity, tangent should pass through *)
+  let x =
+    T.create T.complex64 [| 4 |]
+      [|
+        Complex.{ re = 1.0; im = 0.5 };
+        Complex.{ re = 2.0; im = -0.5 };
+        Complex.{ re = 3.0; im = 0.2 };
+        Complex.{ re = 4.0; im = -0.2 };
+      |]
+  in
+  let v =
+    T.create T.complex64 [| 4 |]
+      [|
+        Complex.{ re = 0.1; im = 0.05 };
+        Complex.{ re = 0.2; im = -0.05 };
+        Complex.{ re = 0.3; im = 0.02 };
+        Complex.{ re = 0.4; im = -0.02 };
+      |]
+  in
+  let f x = T.ifft ~axis:0 (T.fft ~axis:0 x) in
+  let primal, tangent = T.jvp f x v in
+  (* Roundtrip should give back original *)
+  check_complex_close ~eps:1e-5 "jvp(fft roundtrip) primal" x primal;
+  check_complex_close ~eps:1e-5 "jvp(fft roundtrip) tangent" v tangent
+
 (* Test suite *)
 let () =
   run "Rune JVP Comprehensive Tests"
@@ -531,5 +679,18 @@ let () =
           test_case "zero tangent" `Quick test_jvp_zero_tangent;
           test_case "constant function" `Quick test_jvp_constant_function;
           test_case "identity" `Quick test_jvp_identity;
+        ] );
+      ( "fft operations",
+        [
+          test_case "fft" `Quick test_jvp_fft;
+          test_case "ifft" `Quick test_jvp_ifft;
+          test_case "fft roundtrip" `Quick test_jvp_fft_roundtrip;
+        ] );
+      ( "indexing operations",
+        [
+          test_case "slice" `Quick test_jvp_slice;
+          test_case "gather" `Quick test_jvp_gather;
+          test_case "get" `Quick test_jvp_get;
+          test_case "take_along_axis" `Quick test_jvp_take_along_axis;
         ] );
     ]
