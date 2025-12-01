@@ -164,6 +164,140 @@ let reverse_cumsum tensor axis =
   let scanned = T.cumsum ~axis flipped in
   T.flip scanned ~axes:[ axis ]
 
+let apply_mask mask t =
+  (* 
+    Only keep the values where
+    mask is 1. Other values are
+    zeroed out.
+    Example:
+    t = |1 2 3|
+        |2 3 4|
+        |0 0 1|
+    mask = |0 0 1|
+           |1 0 1|
+           |1 1 1|
+    return is |0 0 3|
+              |2 0 4|
+              |0 0 1|
+   *)
+  T.mul t (T.cast (dtype t) mask)
+
+let find_prefix_mask axis input result comparator =
+  (* 
+    If an element in input is the prefix max
+    the corresponding value in the mask is 1
+    and 0 otherwise.
+    Algorithm:
+    Compare each element in input with the
+    cummax result. If they are equal then that 
+    element is a prefix max.
+   *)
+  let in_shape = T.shape input in
+  let pad_before_config =
+    Array.mapi (fun i _ -> if i = axis then (1, 0) else (0, 0)) in_shape
+  in
+  let pad_after_config =
+    Array.mapi (fun i _ -> if i = axis then (0, 1) else (0, 0)) in_shape
+  in
+  (* how to get a zero based on the zero type? *)
+  let dtype_add_identity = Dtype.zero (dtype input) in
+  let result_padded = T.pad pad_before_config dtype_add_identity result in
+  let input_padded = T.pad pad_after_config dtype_add_identity input in
+  let pad_mask = comparator input_padded result_padded in
+  let ctx = Nx_rune.create_context () in
+  let one = T.scalar ctx (dtype pad_mask) 1 in
+  let specs =
+    Array.mapi (fun i _ -> if i = axis then T.I 0 else T.A) in_shape
+  in
+  T.set_slice (Array.to_list specs) pad_mask one;
+  let except_last_axis_spec =
+    Array.mapi (fun i _ -> if i = axis then T.R(0, in_shape.(axis)) else T.A) in_shape
+  in
+  let mask = T.slice (Array.to_list except_last_axis_spec) pad_mask in
+  mask
+
+
+let create_index_tensor in_shape axis = 
+  (* 
+    Returns a tensor where the value of 
+    the element is it's index along axis.
+    Example:
+    in_shape = [|3; 3|]
+    axis = 0
+    return is |0 0 0|
+              |1 1 1|
+              |2 2 2|
+   *)
+  let ctx = Nx_rune.create_context () in
+  let one_axis_shape =
+    Array.mapi (fun i _ -> if i = axis then in_shape.(axis) else 1) in_shape
+  in
+  let ind_row = T.reshape one_axis_shape (T.arange ctx Dtype.Int32 0 in_shape.(axis) 1) in
+  let ind_t = T.broadcast_to in_shape ind_row in
+  ind_t
+
+let apply_index_mask axis t indices =
+  (*
+    each element is replaced with the
+    the value at index(along axis) specified by indices
+    example:
+    t = |4 5|
+        |2 3|
+    indices = |0 1|
+              |1 1|
+    axis = 1
+    then return value will be
+    |4 5|
+    |3 3|
+   *)
+  let in_shape = T.shape t in
+  let ans = T.zeros_like t in
+  let axis_len = in_shape.(axis) in
+  for i = 0 to (axis_len - 1) do
+    (* for each row in axis *)
+    let i32 = (Int32.of_int i) in
+    let row_slice = Array.to_list (
+      Array.mapi (fun j _ -> if j = axis then T.R (i, i + 1) else T.A) in_shape
+    ) in
+    let t_axis_row = T.slice row_slice t in
+    let ax_mask = T.equal_s indices i32 in
+    let masked_grad = apply_mask ax_mask t_axis_row in
+    let _  = T.iadd ans masked_grad in
+    ()
+  done;
+  ans
+
+
+let scatter_add axis t indices = 
+  (* 
+    each element is accumulated at
+    the index(along axis) specified by indices
+    example:
+    t = |1 0|
+        |2 3|
+    indices = |0 1|
+              |1 1|
+    axis = 1
+    then return value will be
+    |1 0|
+    |5 0|   
+   *)
+  let in_shape = T.shape t in
+  let ans = T.zeros_like t in
+  let axis_len = in_shape.(axis) in
+  for i = 0 to (axis_len - 1) do
+    (* for each row in axis *)
+    let i32 = (Int32.of_int i) in
+    let ax_mask = T.equal_s indices i32 in
+    let masked_grad = apply_mask ax_mask t in
+    let grad_in_row = T.sum ~axes: [axis] ~keepdims: true masked_grad in
+    let row_slice = Array.to_list (
+      Array.mapi (fun j _ -> if j = axis then T.R (i, i + 1) else T.A) in_shape
+    ) in
+    T.set_slice row_slice ans grad_in_row;
+  done;
+  ans
+
 let prefix_exclusive axis tensor =
   let shape = T.shape tensor in
   let pad_config =
@@ -606,54 +740,61 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
                       result_val_prepared_for_broadcast
                   in
 
-                  let epsilon = T.zeros_like val_in in
-                  let t_in_val_safe = T.add val_in epsilon in
-                  let d_result_d_input_term =
-                    T.div result_val_broadcasted t_in_val_safe
-                  in
-                  let grad_contrib_to_input =
-                    T.mul d_loss_d_result_broadcasted d_result_d_input_term
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
-              forward_val)
-      | E_associative_scan { t_in = t_in_val; axis; op } ->
-          Some
-            (fun k ->
-              let result_val = op_associative_scan ~axis ~op t_in_val in
-              let forward_val = continue k result_val in
-              let shape_in = T.shape t_in_val in
-              let axis_norm = normalize_axis axis shape_in in
-              Debug.with_context "∇associative_scan" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
-                  let grad_contrib =
-                    match op with
-                    | `Sum -> reverse_cumsum d_loss_d_result axis_norm
-                    | `Prod ->
-                        let prefix = prefix_exclusive axis_norm t_in_val in
-                        let suffix = suffix_exclusive axis_norm t_in_val in
-                        let h = divide_no_nan d_loss_d_result suffix in
-                        let tail_sum = T.sub (reverse_cumsum h axis_norm) h in
-                        let inner =
-                          T.add d_loss_d_result (T.mul suffix tail_sum)
-                        in
-                        T.mul prefix inner
-                    | `Max | `Min ->
-                        failwith
-                          "autodiff: cummax/cummin gradients not supported"
-                  in
-                  twg_in.bv <- T.add twg_in.bv grad_contrib);
-              forward_val)
-      | E_permute { t_in = t_in_val; axes = permute_axes } ->
-          Some
-            (fun k ->
-              let result_val = op_permute t_in_val permute_axes in
-              let forward_val = continue k result_val in
-              Debug.with_context "∇permute" (fun () ->
-                  let twg_in = get_or_init_twg t_in_val in
-                  let twg_res = get_or_init_twg result_val in
-                  let d_loss_d_result = grad_of twg_res in
+                let epsilon = T.zeros_like val_in in
+                let t_in_val_safe = T.add val_in epsilon in
+                let d_result_d_input_term =
+                  T.div result_val_broadcasted t_in_val_safe
+                in
+                let grad_contrib_to_input =
+                  T.mul d_loss_d_result_broadcasted d_result_d_input_term
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib_to_input);
+            forward_val)
+    | E_associative_scan { t_in = t_in_val; axis; op } ->
+        Some
+          (fun k ->
+            let result_val = op_associative_scan ~axis ~op t_in_val in
+            let forward_val = continue k result_val in
+            let shape_in = T.shape t_in_val in
+            let axis_norm = normalize_axis axis shape_in in
+            Debug.with_context "∇associative_scan" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
+                let grad_contrib =
+                  match op with
+                  | `Sum -> reverse_cumsum d_loss_d_result axis_norm
+                  | `Prod ->
+                      let prefix = prefix_exclusive axis_norm t_in_val in
+                      let suffix = suffix_exclusive axis_norm t_in_val in
+                      let h = divide_no_nan d_loss_d_result suffix in
+                      let tail_sum = T.sub (reverse_cumsum h axis_norm) h in
+                      let inner =
+                        T.add d_loss_d_result (T.mul suffix tail_sum)
+                      in
+                      T.mul prefix inner
+                  | `Max ->
+                    let mask = find_prefix_mask axis t_in_val result_val T.greater in
+                    let ind_t = create_index_tensor shape_in axis in
+                    let win_index = T.cummax ~axis:axis (apply_mask mask ind_t) in
+                    scatter_add axis d_loss_d_result win_index
+                  | `Min ->
+                    let mask = find_prefix_mask axis t_in_val result_val T.less in
+                    let ind_t = create_index_tensor shape_in axis in
+                    let win_index = T.cummax ~axis:axis (apply_mask mask ind_t) in
+                    scatter_add axis d_loss_d_result win_index
+                in
+                twg_in.bv <- T.add twg_in.bv grad_contrib);
+            forward_val)
+    | E_permute { t_in = t_in_val; axes = permute_axes } ->
+        Some
+          (fun k ->
+            let result_val = op_permute t_in_val permute_axes in
+            let forward_val = continue k result_val in
+            Debug.with_context "∇permute" (fun () ->
+                let twg_in = get_or_init_twg t_in_val in
+                let twg_res = get_or_init_twg result_val in
+                let d_loss_d_result = grad_of twg_res in
 
                   let rank = Array.length permute_axes in
                   let un_permute_axes = Array.make rank 0 in
