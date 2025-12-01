@@ -5,40 +5,40 @@ Comparative benchmarks of Nx einsum operations against NumPy.
 ## Results Nx
 
 ```
-┌──────────────────────────────────┬──────────┬─────────┬─────────┬────────────┐
-│ Name                             │ Time/Run │ mWd/Run │ Speedup │ vs Fastest │
-├──────────────────────────────────┼──────────┼─────────┼─────────┼────────────┤
-│ InnerProduct 50x50 f64 (Nx)      │   4.35μs │  2.87kw │   1.00x │       100% │
-│ InnerProduct 100x100 f64 (Nx)    │   4.43μs │  2.87kw │   0.98x │       102% │
-│ InnerProduct 200x200 f64 (Nx)    │   4.94μs │  2.87kw │   0.88x │       113% │
-│ InnerProduct 50x50 f32 (Nx)      │   5.24μs │  2.87kw │   0.83x │       120% │
-│ InnerProduct 100x100 f32 (Nx)    │   5.39μs │  2.87kw │   0.81x │       124% │
-│ InnerProduct 200x200 f32 (Nx)    │   5.41μs │  2.87kw │   0.80x │       124% │
-│ MatMul 50x50 f32 (Nx)            │  10.79μs │  2.90kw │   0.40x │       248% │
-│ MatMul 50x50 f64 (Nx)            │  11.22μs │  2.90kw │   0.39x │       258% │
-│ ContractReduce2 50x50 f32 (Nx)   │  12.28μs │  3.74kw │   0.35x │       282% │
-│ ContractReduce2 50x50 f64 (Nx)   │  13.69μs │  3.74kw │   0.32x │       314% │
-│ ContractReduce1 50x50 f64 (Nx)   │  23.10μs │  4.22kw │   0.19x │       531% │
-│ ContractReduce1 50x50 f32 (Nx)   │  25.83μs │  4.22kw │   0.17x │       593% │
-│ BatchMatMul 50x50 f32 (Nx)       │  30.14μs │  3.52kw │   0.14x │       692% │
-│ BatchMatMul 50x50 f64 (Nx)       │  52.01μs │  3.51kw │   0.08x │      1194% │
-│ MatMul 100x100 f32 (Nx)          │ 207.83μs │  2.90kw │   0.02x │      4773% │
-│ ContractReduce2 100x100 f32 (Nx) │ 258.34μs │  3.74kw │   0.02x │      5933% │
-│ MatMul 100x100 f64 (Nx)          │ 273.68μs │  2.89kw │   0.02x │      6285% │
-│ ContractReduce2 100x100 f64 (Nx) │ 277.56μs │  3.73kw │   0.02x │      6374% │
-│ ContractReduce1 100x100 f32 (Nx) │ 278.82μs │  4.22kw │   0.02x │      6403% │
-│ ContractReduce1 100x100 f64 (Nx) │ 344.83μs │  4.20kw │   0.01x │      7919% │
-│ BatchMatMul 100x100 f32 (Nx)     │ 906.04μs │  3.51kw │   0.00x │     20807% │
-│ BatchMatMul 100x100 f64 (Nx)     │   1.05ms │  3.51kw │   0.00x │     24216% │
-│ ContractReduce2 200x200 f32 (Nx) │   1.89ms │  3.73kw │   0.00x │     43342% │
-│ MatMul 200x200 f32 (Nx)          │   1.94ms │  2.89kw │   0.00x │     44474% │
-│ ContractReduce2 200x200 f64 (Nx) │   2.52ms │  3.73kw │   0.00x │     57954% │
-│ ContractReduce1 200x200 f64 (Nx) │   2.80ms │  4.20kw │   0.00x │     64313% │
-│ MatMul 200x200 f64 (Nx)          │   2.81ms │  2.89kw │   0.00x │     64496% │
-│ ContractReduce1 200x200 f32 (Nx) │   3.26ms │  4.20kw │   0.00x │     74760% │
-│ BatchMatMul 200x200 f32 (Nx)     │   8.78ms │  3.51kw │   0.00x │    201622% │
-│ BatchMatMul 200x200 f64 (Nx)     │  11.95ms │  3.51kw │   0.00x │    274388% │
-└──────────────────────────────────┴──────────┴─────────┴─────────┴────────────┘
+┌──────────────────────────────────┬──────────┬──────────┬─────────┬─────────┬────────────┐
+│ Name                             │ Wall/Run │  CPU/Run │ mWd/Run │ Speedup │ vs Fastest │
+├──────────────────────────────────┼──────────┼──────────┼─────────┼─────────┼────────────┤
+│ InnerProduct 100x100 f64 (Nx)    │   3.57μs │   3.51μs │ 973.00w │   1.00x │       100% │
+│ InnerProduct 100x100 f32 (Nx)    │   3.76μs │   3.79μs │ 973.00w │   0.95x │       105% │
+│ InnerProduct 50x50 f64 (Nx)      │   3.93μs │   3.73μs │ 973.00w │   0.91x │       110% │
+│ InnerProduct 50x50 f32 (Nx)      │   3.96μs │   3.91μs │ 973.00w │   0.90x │       111% │
+│ InnerProduct 200x200 f64 (Nx)    │   4.18μs │   4.08μs │ 973.00w │   0.85x │       117% │
+│ InnerProduct 200x200 f32 (Nx)    │   4.60μs │   4.31μs │ 973.00w │   0.78x │       129% │
+│ MatMul 50x50 f32 (Nx)            │   4.84μs │   4.86μs │ 759.00w │   0.74x │       135% │
+│ MatMul 50x50 f64 (Nx)            │   7.37μs │   7.37μs │ 759.00w │   0.48x │       206% │
+│ MatMul 100x100 f32 (Nx)          │  10.76μs │  10.65μs │ 759.00w │   0.33x │       301% │
+│ ContractReduce2 50x50 f32 (Nx)   │  16.79μs │  16.56μs │  3.72kw │   0.21x │       470% │
+│ ContractReduce2 50x50 f64 (Nx)   │  19.57μs │  19.62μs │  3.72kw │   0.18x │       548% │
+│ BatchMatMul 50x50 f32 (Nx)       │  20.00μs │  19.90μs │  3.28kw │   0.18x │       560% │
+│ ContractReduce1 50x50 f64 (Nx)   │  36.42μs │  36.28μs │  4.05kw │   0.10x │      1020% │
+│ ContractReduce1 50x50 f32 (Nx)   │  41.74μs │  41.51μs │  4.05kw │   0.09x │      1169% │
+│ MatMul 100x100 f64 (Nx)          │  53.92μs │  53.05μs │ 752.00w │   0.07x │      1510% │
+│ BatchMatMul 50x50 f64 (Nx)       │  66.27μs │  65.17μs │  3.27kw │   0.05x │      1856% │
+│ MatMul 200x200 f32 (Nx)          │  97.01μs │  96.41μs │ 752.00w │   0.04x │      2716% │
+│ BatchMatMul 100x100 f32 (Nx)     │ 115.59μs │ 110.53μs │  3.27kw │   0.03x │      3237% │
+│ ContractReduce2 100x100 f32 (Nx) │ 151.21μs │ 354.03μs │  3.72kw │   0.02x │      4234% │
+│ ContractReduce2 100x100 f64 (Nx) │ 202.63μs │ 407.80μs │  3.71kw │   0.02x │      5674% │
+│ BatchMatMul 100x100 f64 (Nx)     │ 216.94μs │ 212.00μs │  3.27kw │   0.02x │      6075% │
+│ MatMul 200x200 f64 (Nx)          │ 246.41μs │ 242.44μs │ 752.00w │   0.01x │      6900% │
+│ ContractReduce1 100x100 f32 (Nx) │ 261.97μs │ 480.96μs │  4.05kw │   0.01x │      7336% │
+│ ContractReduce2 200x200 f32 (Nx) │ 318.78μs │ 614.09μs │  3.71kw │   0.01x │      8927% │
+│ ContractReduce1 100x100 f64 (Nx) │ 321.52μs │ 543.43μs │  4.04kw │   0.01x │      9003% │
+│ BatchMatMul 200x200 f32 (Nx)     │ 435.39μs │ 352.82μs │  3.27kw │   0.01x │     12192% │
+│ ContractReduce2 200x200 f64 (Nx) │ 544.39μs │ 801.98μs │  3.71kw │   0.01x │     15244% │
+│ BatchMatMul 200x200 f64 (Nx)     │ 735.71μs │ 682.68μs │  3.27kw │   0.00x │     20602% │
+│ ContractReduce1 200x200 f32 (Nx) │ 855.36μs │   1.08ms │  4.04kw │   0.00x │     23953% │
+│ ContractReduce1 200x200 f64 (Nx) │   1.08ms │   1.37ms │  4.04kw │   0.00x │     30147% │
+└──────────────────────────────────┴──────────┴──────────┴─────────┴─────────┴────────────┘
 ```
 
 ## Results NumPy

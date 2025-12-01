@@ -4431,96 +4431,75 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Additional Linear Algebra Operations ───── *)
 
-  let diagonal ?offset ?axis1 ?axis2 a =
-    let offset = Option.value offset ~default:0 in
-    let ndim_a = ndim a in
-    let axis1 = Option.value axis1 ~default:(ndim_a - 2) in
-    let axis2 = Option.value axis2 ~default:(ndim_a - 1) in
-    let axis1 = if axis1 < 0 then ndim_a + axis1 else axis1 in
-    let axis2 = if axis2 < 0 then ndim_a + axis2 else axis2 in
+  let diagonal ?(offset = 0) ?axis1 ?axis2 x =
+    let nd = ndim x in
+    let ax1 = Option.value axis1 ~default:(nd - 2) in
+    let ax2 = Option.value axis2 ~default:(nd - 1) in
+    let ax1 = if ax1 < 0 then nd + ax1 else ax1 in
+    let ax2 = if ax2 < 0 then nd + ax2 else ax2 in
 
-    if axis1 = axis2 then Error.failed ~op:"diagonal" ~what:"axis1 = axis2" ();
-
-    (* For now, only implement last two axes case *)
-    if axis1 <> ndim_a - 2 || axis2 <> ndim_a - 1 then
-      Error.failed ~op:"diagonal" ~what:"non-default axes not yet implemented"
+    if ax1 = ax2 then
+      Error.invalid ~op:"diagonal" ~what:"axes" ~reason:"axes must be different"
         ();
 
-    let shape_a = shape a in
-    if ndim_a < 2 then
-      Error.invalid ~op:"diagonal" ~what:"input must be at least 2D" ();
+    (* 1. Permute axes so the diagonal dimensions are at the end *)
+    let perm =
+      let axes_list = List.init nd Fun.id in
+      let others = List.filter (fun a -> a <> ax1 && a <> ax2) axes_list in
+      others @ [ ax1; ax2 ]
+    in
+    let x_trans = transpose ~axes:perm x in
 
-    let m = shape_a.(ndim_a - 2) in
-    let n = shape_a.(ndim_a - 1) in
+    (* Get dimensions of the 2D plane *)
+    let d1 = dim (nd - 2) x_trans in
+    let d2 = dim (nd - 1) x_trans in
 
-    (* Compute diagonal length considering offset *)
+    (* 2. Calculate diagonal length *)
     let diag_len =
-      if offset >= 0 then Stdlib.min m (n - offset)
-      else Stdlib.min (m + offset) n
+      if offset >= 0 then Stdlib.max 0 (Stdlib.min d1 (d2 - offset))
+      else Stdlib.max 0 (Stdlib.min (d1 + offset) d2)
     in
 
-    (* Handle empty diagonal case *)
-    if diag_len <= 0 then
-      (* Return empty tensor with correct shape *)
-      let new_shape =
-        Array.init (ndim_a - 1) (fun i ->
-            if i < ndim_a - 2 then shape_a.(i) else 0)
-      in
-      zeros (B.context a) (dtype a) new_shape
+    if diag_len = 0 then
+      (* Return empty tensor with correct shape (batch_dims @ [0]) *)
+      let prefix_shape = Array.sub (shape x_trans) 0 (nd - 2) in
+      let final_shape = Array.append prefix_shape [| 0 |] in
+      empty (B.context x) (dtype x) final_shape
     else
-      (* Extract diagonal using slicing and eye matrix masking *)
-      let row_start = if offset < 0 then -offset else 0 in
-      let col_start = if offset > 0 then offset else 0 in
+      (* 3. Flatten the last two dimensions to 1D *)
+      let prefix_shape = Array.sub (shape x_trans) 0 (nd - 2) in
+      let flat_last_dim = d1 * d2 in
+      let flat_shape = Array.append prefix_shape [| flat_last_dim |] in
+      let x_flat = reshape flat_shape x_trans in
 
-      (* Slice the matrix to get the region containing the diagonal *)
-      let sliced =
-        if
-          row_start > 0 || col_start > 0
-          || row_start + diag_len < m
-          || col_start + diag_len < n
-        then
-          (* shrink uses exclusive upper bounds *)
-          let slice_spec =
-            Array.init ndim_a (fun i ->
-                if i = ndim_a - 2 then (row_start, row_start + diag_len)
-                else if i = ndim_a - 1 then (col_start, col_start + diag_len)
-                else (0, shape_a.(i)))
-          in
-          shrink slice_spec a
-        else if diag_len < m || diag_len < n then
-          (* Need to shrink to square - shrink uses exclusive upper bounds *)
-          let slice_spec =
-            Array.init ndim_a (fun i ->
-                if i = ndim_a - 2 then (0, diag_len)
-                else if i = ndim_a - 1 then (0, diag_len)
-                else (0, shape_a.(i)))
-          in
-          shrink slice_spec a
-        else a
+      (* 4. Construct indices for gather *)
+      (*
+         In a flattened (d1 * d2) array:
+         - Moving down 1 row adds d2 to index
+         - Moving right 1 col adds 1 to index
+         - Diagonal move (+1 row, +1 col) adds (d2 + 1) to index
+         
+         Start index:
+         - If offset >= 0 (upper): start at (0, offset) -> index = offset
+         - If offset < 0  (lower): start at (-offset, 0) -> index = -offset * d2
+      *)
+      let start_linear_idx = if offset >= 0 then offset else -offset * d2 in
+      let step = d2 + 1 in
+
+      (* Generate indices: [start, start+step, ..., start+(len-1)*step] *)
+      let ctx = B.context x in
+      (* Use int32 for indexing *)
+      let indices_base = arange ctx Dtype.int32 0 diag_len 1 in
+      let step_tensor = scalar ctx Dtype.int32 (Int32.of_int step) in
+      let start_tensor =
+        scalar ctx Dtype.int32 (Int32.of_int start_linear_idx)
       in
 
-      (* Create identity matrix for masking *)
-      let eye_mat = eye (B.context a) (dtype a) diag_len in
+      let gather_indices = add (mul indices_base step_tensor) start_tensor in
 
-      (* Broadcast eye matrix to match batch dimensions if needed *)
-      let eye_broadcasted =
-        if ndim_a > 2 then
-          let eye_shape =
-            Array.init ndim_a (fun i ->
-                if i < ndim_a - 2 then 1
-                else if i = ndim_a - 2 then diag_len
-                else diag_len)
-          in
-          let eye_reshaped = reshape eye_shape eye_mat in
-          broadcast_to (shape sliced) eye_reshaped
-        else eye_mat
-      in
-
-      (* Multiply by eye matrix to zero out non-diagonal elements *)
-      let masked = mul sliced eye_broadcasted in
-
-      (* Sum along last axis to extract diagonal *)
-      sum masked ~axes:[ ndim_a - 1 ] ~keepdims:false
+      (* 5. Gather along the flattened axis (index nd-2, since the last two
+         dimensions were merged into one) *)
+      take ~axis:(nd - 2) gather_indices x_flat
 
   let matrix_transpose x =
     let nd = ndim x in
@@ -4804,869 +4783,581 @@ module Make (B : Backend_intf.S) = struct
         else reshape result_shape result_mat
 
   module Einsum = struct
-    let invalid_arg fmt =
-      Printf.ksprintf (fun s -> invalid_arg ("einsum: " ^ s)) fmt
-
-    module CharSet = Set.Make (Char)
-
+    (* Token type for einsum subscript parsing. *)
     type token = Axis of char | Ellipsis
-
-    let string_contains str c =
-      try
-        ignore (String.index str c);
-        true
-      with Not_found -> false
-
-    let list_init n f =
-      let rec aux acc i =
-        if i = n then List.rev acc else aux (f i :: acc) (i + 1)
-      in
-      aux [] 0
-
-    let same_shape a b =
-      let len_a = Array.length a in
-      if len_a <> Array.length b then false
-      else
-        let rec aux i =
-          if i = len_a then true
-          else if a.(i) <> b.(i) then false
-          else aux (i + 1)
-        in
-        aux 0
-
-    let product dims =
-      let acc = ref 1 in
-      Array.iter (fun d -> acc := !acc * d) dims;
-      !acc
-
-    let slice arr start len = if len = 0 then [||] else Array.sub arr start len
-
-    let is_identity perm =
-      let len = Array.length perm in
-      let rec aux i =
-        if i = len then true else if perm.(i) <> i then false else aux (i + 1)
-      in
-      aux 0
-
-    let concat_arrays arrs = Array.concat arrs
-    let char_set_of_string str = CharSet.of_seq (String.to_seq str)
-
-    let all_distinct str =
-      String.length str = CharSet.cardinal (char_set_of_string str)
-
-    let permutes str str' =
-      CharSet.equal (char_set_of_string str) (char_set_of_string str')
-
-    let count_named tokens =
-      List.fold_left
-        (fun acc -> function Axis _ -> acc + 1 | Ellipsis -> acc)
-        0 tokens
 
     let parse_operand str =
       let len = String.length str in
-      if len = 0 then invalid_arg "empty subscript";
-      let rec loop idx acc ellipsis_seen =
-        if idx >= len then List.rev acc
-        else
-          match str.[idx] with
-          | '.' ->
-              if idx + 2 >= len || str.[idx + 1] <> '.' || str.[idx + 2] <> '.'
-              then invalid_arg "ellipsis must be '...'";
-              if ellipsis_seen then invalid_arg "multiple ellipsis in operand";
-              loop (idx + 3) (Ellipsis :: acc) true
-          | c
-            when (Char.code c >= Char.code 'a' && Char.code c <= Char.code 'z')
-                 || Char.code c >= Char.code 'A'
-                    && Char.code c <= Char.code 'Z'
-                 || Char.code c >= Char.code '0'
-                    && Char.code c <= Char.code '9'
-                 || Char.equal c '_' ->
-              loop (idx + 1) (Axis c :: acc) ellipsis_seen
-          | c -> invalid_arg "invalid character '%c' in subscript" c
-      in
-      loop 0 [] false
-
-    let find_arrow str =
-      let len = String.length str in
-      let rec aux idx =
-        if idx + 1 >= len then None
-        else if str.[idx] = '-' && str.[idx + 1] = '>' then Some idx
-        else aux (idx + 1)
-      in
-      aux 0
+      if len = 0 then []
+      else
+        let rec loop idx acc ellipsis_seen =
+          if idx >= len then List.rev acc
+          else
+            match str.[idx] with
+            | '.' ->
+                if
+                  idx + 2 >= len || str.[idx + 1] <> '.' || str.[idx + 2] <> '.'
+                then invalid_arg "einsum: ellipsis must be '...'";
+                if ellipsis_seen then
+                  invalid_arg "einsum: multiple ellipsis in operand";
+                loop (idx + 3) (Ellipsis :: acc) true
+            | c
+              when (c >= 'a' && c <= 'z')
+                   || (c >= 'A' && c <= 'Z')
+                   || (c >= '0' && c <= '9')
+                   || c = '_' ->
+                loop (idx + 1) (Axis c :: acc) ellipsis_seen
+            | c ->
+                invalid_arg (Printf.sprintf "einsum: invalid character '%c'" c)
+        in
+        loop 0 [] false
 
     let parse_equation subscripts =
-      let subscripts = String.trim subscripts in
-      let arrow_pos = find_arrow subscripts in
-      let inputs_part, output_part_opt =
-        match arrow_pos with
-        | None -> (subscripts, None)
-        | Some idx ->
-            let inputs = String.sub subscripts 0 idx in
-            let output =
-              String.sub subscripts (idx + 2)
-                (String.length subscripts - idx - 2)
-            in
-            (inputs, Some (String.trim output))
-      in
-      let parse_inputs str =
-        str |> String.split_on_char ',' |> List.map String.trim
-        |> List.filter (fun s -> String.length s > 0)
-      in
-      let input_strs = parse_inputs inputs_part in
-      if input_strs = [] then invalid_arg "no input operands";
-      let input_tokens = Array.of_list (List.map parse_operand input_strs) in
-      let output_tokens_opt =
-        match output_part_opt with
-        | None -> None
-        | Some output_str ->
-            if String.length output_str = 0 then Some []
-            else Some (parse_operand output_str)
-      in
-      (input_tokens, output_tokens_opt)
+      let parts = String.split_on_char '-' subscripts in
+      match parts with
+      | [ lhs; rhs ] when String.length rhs > 0 && rhs.[0] = '>' ->
+          let inputs =
+            String.split_on_char ',' lhs
+            |> List.map String.trim
+            |> List.filter (( <> ) "")
+          in
+          let output = String.trim (String.sub rhs 1 (String.length rhs - 1)) in
+          ( Array.of_list (List.map parse_operand inputs),
+            Some (parse_operand output) )
+      | [ lhs ] ->
+          (* Implicit mode *)
+          let inputs =
+            String.split_on_char ',' lhs
+            |> List.map String.trim
+            |> List.filter (( <> ) "")
+          in
+          (Array.of_list (List.map parse_operand inputs), None)
+      | _ -> invalid_arg "einsum: invalid format, expected inputs->output"
 
-    type axis_label = Named of char | Ell of int
-
-    let remove_index list idx_to_remove =
-      let rec aux idx acc = function
-        | [] -> List.rev acc
-        | _x :: xs when idx = idx_to_remove -> List.rev_append acc xs
-        | x :: xs -> aux (idx + 1) (x :: acc) xs
-      in
-      aux 0 [] list
-
-    let diagonal_axes tensor axis1 axis2 =
-      let ndim_tensor = ndim tensor in
-      if axis1 < 0 || axis1 >= ndim_tensor || axis2 < 0 || axis2 >= ndim_tensor
-      then invalid_arg "diagonal axis out of bounds";
-      if axis1 = axis2 then invalid_arg "diagonal axes must differ";
-      let axis1, axis2 =
-        if axis1 < axis2 then (axis1, axis2) else (axis2, axis1)
-      in
-      let identity = Array.init ndim_tensor Fun.id in
-      let same_as_identity arr =
-        Array.length arr = Array.length identity
-        && Array.for_all2 ( = ) arr identity
-      in
-      let others =
-        List.filter
-          (fun ax -> ax <> axis1 && ax <> axis2)
-          (Array.to_list identity)
-      in
-      let perm = Array.of_list (others @ [ axis1; axis2 ]) in
-      let tensor_permuted =
-        if same_as_identity perm then tensor
-        else transpose ~axes:(Array.to_list perm) tensor
-      in
-      let shape_perm = shape tensor_permuted in
-      if
-        shape_perm.(Array.length shape_perm - 1)
-        <> shape_perm.(Array.length shape_perm - 2)
-      then invalid_arg "diagonal requires equal dimensions for repeated index";
-      let diag_tensor = diagonal tensor_permuted in
-      let current_order = others @ [ axis1 ] in
-      let target_order =
-        List.filter (fun ax -> ax <> axis2) (Array.to_list identity)
-      in
-      let index_map = Hashtbl.create (List.length current_order) in
-      List.iteri (fun idx ax -> Hashtbl.add index_map ax idx) current_order;
-      let axes_reorder =
-        Array.of_list
-          (List.map
-             (fun ax ->
-               match Hashtbl.find_opt index_map ax with
-               | Some idx -> idx
-               | None -> assert false)
-             target_order)
-      in
-      if Array.length axes_reorder <= 1 then diag_tensor
-      else transpose ~axes:(Array.to_list axes_reorder) diag_tensor
-
-    let find_duplicate_named labels =
-      let seen = Hashtbl.create 16 in
-      let rec aux idx = function
+    (* Extracts diagonal for repeated indices (e.g., "ii->i"). Applies diagonal
+       iteratively until no repeated axis labels remain. *)
+    let handle_repeated_indices tensor tokens =
+      let rec find_dups acc idx = function
         | [] -> None
-        | Named c :: rest -> (
-            match Hashtbl.find_opt seen c with
-            | Some first -> Some (first, idx, c)
-            | None ->
-                Hashtbl.add seen c idx;
-                aux (idx + 1) rest)
-        | Ell _ :: rest -> aux (idx + 1) rest
+        | Axis c :: rest -> (
+            match List.find_opt (fun (char, _) -> char = c) acc with
+            | Some (_, prev_idx) -> Some (prev_idx, idx, c)
+            | None -> find_dups ((c, idx) :: acc) (idx + 1) rest)
+        | Ellipsis :: rest ->
+            (* Ellipsis is expanded before this function is called *)
+            find_dups acc (idx + 1) rest
       in
-      aux 0 labels
-
-    let diagonalize_operand tensor tokens =
-      let ndim_tensor = ndim tensor in
-      let named_count = count_named tokens in
-      let ell_count = ndim_tensor - named_count in
-      if ell_count < 0 then invalid_arg "operand rank too small for subscripts";
-      let axis_labels =
-        let rec build tokens axis_idx acc =
-          match tokens with
-          | [] -> List.rev acc
-          | Axis c :: rest -> build rest (axis_idx + 1) (Named c :: acc)
-          | Ellipsis :: rest ->
-              let rec add acc i =
-                if i = ell_count then acc else add (Ell i :: acc) (i + 1)
-              in
-              build rest (axis_idx + ell_count) (add acc 0)
-        in
-        build tokens 0 []
-      in
-      let rec loop tensor labels =
-        match find_duplicate_named labels with
-        | None -> tensor
-        | Some (axis1, axis2, c) ->
-            let shape_tensor = shape tensor in
-            if shape_tensor.(axis1) <> shape_tensor.(axis2) then
+      let rec process t current_tokens =
+        match find_dups [] 0 current_tokens with
+        | None -> (t, current_tokens)
+        | Some (ax1, ax2, c) ->
+            (* Validate dimensions match before diagonalization *)
+            let s = shape t in
+            let dim1 = s.(ax1) in
+            let dim2 = s.(ax2) in
+            if dim1 <> dim2 then
               invalid_arg
-                "index var '%c' must have consistent dimensions (%d vs %d)" c
-                shape_tensor.(axis1) shape_tensor.(axis2);
-            let tensor' = diagonal_axes tensor axis1 axis2 in
-            let labels' = remove_index labels axis2 in
-            loop tensor' labels'
-      in
-      let tensor' = loop tensor axis_labels in
-      let deduped_tokens =
-        let seen = Hashtbl.create 16 in
-        let rec aux acc = function
-          | [] -> List.rev acc
-          | Axis c :: rest ->
-              if Hashtbl.mem seen c then aux acc rest
-              else (
-                Hashtbl.add seen c ();
-                aux (Axis c :: acc) rest)
-          | Ellipsis :: rest -> aux (Ellipsis :: acc) rest
-        in
-        aux [] tokens
-      in
-      (tensor', deduped_tokens)
+                (Printf.sprintf
+                   "einsum: index var '%c' must have consistent dimensions (%d \
+                    vs %d)"
+                   c dim1 dim2);
+            let t' = diagonal ~axis1:ax1 ~axis2:ax2 t in
 
-    let expand_operand tensor tokens ell_rank =
-      let named_count = count_named tokens in
-      let ndim_tensor = ndim tensor in
-      let ell_count = ndim_tensor - named_count in
-      if ell_count < 0 then invalid_arg "operand rank too small for subscripts";
-      let ell_pad = ell_rank - ell_count in
-      if ell_pad < 0 then invalid_arg "ellipsis rank mismatch";
-      let shape_tensor = shape tensor in
-      let shape_idx = ref 0 in
-      let axis_pos = ref 0 in
-      let axis_labels_rev = ref [] in
-      let inserted_positions = ref [] in
-      List.iter
-        (function
-          | Axis c ->
-              if !shape_idx >= Array.length shape_tensor then
-                invalid_arg "subscripts rank mismatch";
-              incr shape_idx;
-              axis_labels_rev := Named c :: !axis_labels_rev;
-              incr axis_pos
-          | Ellipsis ->
-              let _ell_dims =
-                if ell_count = 0 then [||]
-                else Array.sub shape_tensor !shape_idx ell_count
-              in
-              shape_idx := !shape_idx + ell_count;
-              for idx = 0 to ell_rank - 1 do
-                axis_labels_rev := Ell idx :: !axis_labels_rev;
-                if idx < ell_pad then
-                  inserted_positions := !axis_pos :: !inserted_positions;
-                incr axis_pos
-              done)
-        tokens;
-      if !shape_idx <> Array.length shape_tensor then
-        invalid_arg "operand tensor rank mismatch";
-      let axis_labels = List.rev !axis_labels_rev in
-      let insert_axes =
-        !inserted_positions |> List.sort compare |> Array.of_list
+            (* Remove the second occurrence from tokens *)
+            let rec remove_at i lst =
+              match (i, lst) with
+              | 0, _ :: xs -> xs
+              | n, x :: xs -> x :: remove_at (n - 1) xs
+              | _, [] -> []
+            in
+            process t' (remove_at ax2 current_tokens)
       in
-      let tensor' =
-        if Array.length insert_axes = 0 then tensor
-        else unsqueeze ~axes:(Array.to_list insert_axes) tensor
-      in
-      (tensor', axis_labels)
+      process tensor tokens
 
-    let available_axis_chars =
-      let range a b =
-        let rec aux acc c =
-          if c < a then acc else aux (Char.chr c :: acc) (c - 1)
-        in
-        aux [] b
-      in
-      Array.of_list
-        (range (Char.code 'a') (Char.code 'z')
-        @ range (Char.code 'A') (Char.code 'Z')
-        @ range (Char.code '0') (Char.code '9')
-        @ [ '_'; '$'; '%'; '&'; '#'; '@'; '!'; '?'; ':'; ';'; '~'; '+'; '-' ])
-
-    let axis_char_mapping axes_lists output_axes =
-      let mapping = Hashtbl.create 32 in
-      let inverse = Hashtbl.create 32 in
-      let next = ref 0 in
-      let register axis =
-        if not (Hashtbl.mem mapping axis) then (
-          if !next >= Array.length available_axis_chars then
-            invalid_arg "too many distinct indices";
-          let c = available_axis_chars.(!next) in
-          incr next;
-          Hashtbl.add mapping axis c;
-          Hashtbl.add inverse c axis)
-      in
-      Array.iter (fun axes -> List.iter register (snd axes)) axes_lists;
-      List.iter register output_axes;
-      (mapping, inverse)
-
-    let string_of_axes mapping axes =
-      let len = List.length axes in
-      let bytes = Bytes.create len in
-      List.iteri
-        (fun idx axis ->
-          let c = Hashtbl.find mapping axis in
-          Bytes.set bytes idx c)
-        axes;
-      Bytes.unsafe_to_string bytes
-
-    type binary_result = {
-      left_axes : int array;
-      right_axes : int array;
-      left_free_axes : int array;
-      right_free_axes : int array;
-      shared_left_axes : int array;
-      shared_right_axes : int array;
-      noncontracted_left_axes : int array;
+    (* Metadata for path optimization: tracks shape and axis labels for each
+       intermediate tensor in the contraction tree. *)
+    type tensor_info = {
+      id : int;
       shape : int array;
-      vars : string;
+      axis_labels : char list; (* mapped to chars for internal processing *)
     }
 
-    (* As an example, consider (shape_a, str_a) = ([| 1; 2; 3; 4 |], "ijkl")
-       (shape_b, str_b) = ([| 1; 3; 5 |] , "iks").
+    type contraction_path =
+      | Leaf of int (* index in operands array *)
+      | Node of
+          contraction_path
+          * contraction_path
+          * tensor_info (* left, right, result *)
 
-       First we create a mapping for "iks" to their indices. kept_b_vars = ['i'
-       -> 0; 'k' -> 1; 's' -> 2].
-
-       Then we iterate through "ijkl" Case: axis_a = 0, 'i'. 'i' -> 0 is in
-       kept_b_vars (and dimensions match). shape_a.(axis_a) = 1 =
-       shape_b.(axis_b) (0, 0) are the left and right axes, added to
-       contractions. 'i' is removed from kept_b_vars (we'll see why later).
-       Case: axis_a = 1, 'j'. 'j' is not in kept_b_vars. (2, 'j') is added to
-       rev_var_shape (for final output). Case: axis_a = 2, 'k'. 'k' -> 1 in
-       kept_b_vars (and dimensions match). shape_a.(axis_a) = 3 =
-       shape_b.(axis_b) (2, 1) are the left and right axes, added to
-       contractions. 'i' is removed from kept_b_vars (we'll see why later).
-       Case: axis_a = 3, 'l'. 'l' is not in kept_b_vars. (4, 'l') is added to
-       rev_var_shape (for final output).
-
-       Now, kept_b_vars = [ 's' -> 2 ] contractions = [ (2, 1); (0, 0) ]
-       rev_var_shape = [ (4, 'l'); (2, 'j') ].
-
-       Next, we iterate through "iks". Case: axis_b = 0, 'i'. 'i' is not in
-       kept_b_vars, skip. Case: axis_b = 1, 'k'. 'k' is not in kept_b_vars,
-       skip. Case: axis_b = 2, 's'. 'm' is in kept_b_vars. shape_b.(axis_b) = 5.
-       (5, 's') is added to rev_var_shape.
-
-       Hence rev_var_shape = [ (5, 's'); (4, 'l'); (2, 'j') ]. Reminder:
-       contractions = [ (2, 1); (0, 0) ].
-
-       From this, we conclude: left_axes = [ 0; 2 ] right_axes = [ 1; 2 ] shape
-       = [ 2; 4; 5 ] vars = "jls".
-
-       NOTE: If we don't ensure all the letters are distinct, we will observe
-       strange behaviour with the kept_b_vars : (_, _) Hashtbl.t. Specifically,
-       - Mappings from letter to index will be hidden (but not lost). - Removing
-       a mapping will 'unhide' previous mappings. *)
-
-    let binary_einsum ~keep_axes ~left:(shape_a, str_a) ~right:(shape_b, str_b)
-        =
-      assert (all_distinct str_a);
-      assert (all_distinct str_b);
-      assert (String.length str_a = Array.length shape_a);
-      assert (String.length str_b = Array.length shape_b);
-      let kept_b_vars =
-        let map = Hashtbl.create (String.length str_b) in
-        StringLabels.iteri str_b ~f:(fun i char -> Hashtbl.add map char i);
-        map
-      in
-      let rev_var_shape = ref [] in
-      let contractions = ref [] in
-      let shared_left_rev = ref [] in
-      let shared_right_rev = ref [] in
-      let left_free_rev = ref [] in
-      let right_free_rev = ref [] in
-      let noncontracted_left_rev = ref [] in
-      (* Iterate through index vars in str_a, in order. For each var, check if
-       * it's shared (in kept_b_vars, constructed from str_b).
-       * 1. Not shared: store output var, and its dimension.
-       * 2. Shared means contracted: record contraction for a & b,
-       *      and _REMOVE IT_ from kept_b_vars. *)
-      StringLabels.iteri str_a ~f:(fun axis_a char ->
-          let dim_a = shape_a.(axis_a) in
-          match Hashtbl.find_opt kept_b_vars char with
-          | None ->
-              left_free_rev := axis_a :: !left_free_rev;
-              noncontracted_left_rev := axis_a :: !noncontracted_left_rev;
-              rev_var_shape := (dim_a, char) :: !rev_var_shape
-          | Some axis_b ->
-              let dim_b = shape_b.(axis_b) in
-              if dim_a <> dim_b then
-                invalid_arg
-                  "index var '%c' must have consistent dimensions (%d on the \
-                   left, %d on the right)"
-                  char dim_a dim_b;
-              if CharSet.mem char keep_axes then (
-                shared_left_rev := axis_a :: !shared_left_rev;
-                shared_right_rev := axis_b :: !shared_right_rev;
-                noncontracted_left_rev := axis_a :: !noncontracted_left_rev;
-                rev_var_shape := (dim_a, char) :: !rev_var_shape;
-                Hashtbl.remove kept_b_vars char)
-              else (
-                contractions := (axis_a, axis_b) :: !contractions;
-                Hashtbl.remove kept_b_vars char));
-      (* Iterate through index_vars in str_b, in order. For each var, check
-       * if it's to be kept and if so, keep output var and dimension *)
-      StringLabels.iter str_b ~f:(fun char ->
-          match Hashtbl.find_opt kept_b_vars char with
-          | None -> ()
-          | Some axis_b ->
-              right_free_rev := axis_b :: !right_free_rev;
-              rev_var_shape := (shape_b.(axis_b), char) :: !rev_var_shape);
-      let left_axes, right_axes =
-        let as_, bs = List.split !contractions in
-        (Array.of_list as_, Array.of_list bs)
-      in
-      let left_free_axes = Array.of_list (List.rev !left_free_rev) in
-      let right_free_axes = Array.of_list (List.rev !right_free_rev) in
-      let shared_left_axes = Array.of_list (List.rev !shared_left_rev) in
-      let shared_right_axes = Array.of_list (List.rev !shared_right_rev) in
-      let noncontracted_left_axes =
-        Array.of_list (List.rev !noncontracted_left_rev)
-      in
-      let shape, vars =
-        let shape, vars = List.split @@ List.rev !rev_var_shape in
-        (Array.of_list shape, String.of_seq (List.to_seq vars))
-      in
-      assert (all_distinct vars);
-      {
-        left_axes;
-        right_axes;
-        left_free_axes;
-        right_free_axes;
-        shared_left_axes;
-        shared_right_axes;
-        noncontracted_left_axes;
-        shape;
-        vars;
-      }
-
-    type ('a, 'b) plan =
-      | Operand of ('a, 'b) t * string
-      | Contract of ('a, 'b) plan * ('a, 'b) plan * binary_result
-
-    let get_shape_vars = function
-      | Operand (x, str) -> (shape x, str)
-      | Contract (_, _, result) -> (result.shape, result.vars)
-
-    let add_to_plan ~keep_axes plan (op_b, str_b) =
-      let shape_a, str_a = get_shape_vars plan in
-      let result =
-        binary_einsum ~keep_axes ~left:(shape_a, str_a)
-          ~right:(shape op_b, str_b)
-      in
-      Contract (plan, Operand (op_b, str_b), result)
-
-    let make_plan ~keep_axes vars_operands =
-      let len = Array.length vars_operands in
-      assert (len > 0);
-      let op, str = vars_operands.(0) in
-      let plan_so_far = ref (Operand (op, str)) in
-      for i = 1 to len - 1 do
-        plan_so_far := add_to_plan ~keep_axes !plan_so_far vars_operands.(i)
-      done;
-      !plan_so_far
-
-    let contract_pair op_a op_b result =
-      let {
-        left_axes;
-        right_axes;
-        left_free_axes;
-        right_free_axes;
-        shared_left_axes;
-        shared_right_axes;
-        noncontracted_left_axes;
-        shape = target_shape;
-        vars = _;
-      } =
-        result
+    let estimate_cost (t1 : tensor_info) (t2 : tensor_info)
+        (common_chars : char list) =
+      (* Returns (operation_cost, output_size) where operation_cost is the
+         product of all dimensions involved (standard M*N*K approximation). *)
+      let get_dim t char =
+        let rec find_dim dims labels i =
+          match labels with
+          | [] -> 1 (* Should not happen if char exists *)
+          | c :: rest ->
+              if c = char then dims.(i) else find_dim dims rest (i + 1)
+        in
+        find_dim t.shape t.axis_labels 0
       in
 
-      let perm_left =
-        concat_arrays [ shared_left_axes; left_free_axes; left_axes ]
-      in
-      let perm_right =
-        concat_arrays [ shared_right_axes; right_axes; right_free_axes ]
-      in
+      (* Identify dimensions *)
+      let dim_map = Hashtbl.create 16 in
+      List.iter
+        (fun c -> Hashtbl.replace dim_map c (get_dim t1 c))
+        t1.axis_labels;
+      List.iter
+        (fun c -> Hashtbl.replace dim_map c (get_dim t2 c))
+        t2.axis_labels;
 
-      let reorder_if_needed tensor perm =
-        if Array.length perm <= 1 || is_identity perm then tensor
-        else transpose ~axes:(Array.to_list perm) tensor
-      in
-
-      let op_a_perm = reorder_if_needed op_a perm_left |> contiguous in
-      let op_b_perm = reorder_if_needed op_b perm_right |> contiguous in
-
-      let shape_a = shape op_a_perm in
-      let shape_b = shape op_b_perm in
-
-      let batch_len = Array.length shared_left_axes in
-      let left_free_len = Array.length left_free_axes in
-      let right_free_len = Array.length right_free_axes in
-      let contract_len = Array.length left_axes in
-      let contract_len_right = Array.length right_axes in
-
-      if contract_len <> contract_len_right then
-        invalid_arg "einsum: internal contract axes mismatch";
-      if Array.length shared_right_axes <> batch_len then
-        invalid_arg "einsum: internal shared axes mismatch";
-
-      let batch_dims_left = slice shape_a 0 batch_len in
-      let left_only_dims = slice shape_a batch_len left_free_len in
-      let contract_dims_left =
-        slice shape_a (batch_len + left_free_len) contract_len
+      let all_chars =
+        List.sort_uniq Char.compare (t1.axis_labels @ t2.axis_labels)
       in
 
-      let batch_dims_right = slice shape_b 0 batch_len in
-      let contract_dims_right = slice shape_b batch_len contract_len_right in
-      let right_only_dims =
-        slice shape_b (batch_len + contract_len_right) right_free_len
+      let output_size =
+        List.fold_left
+          (fun acc c ->
+            if List.mem c common_chars then acc (* Contracted *)
+            else acc * Hashtbl.find dim_map c)
+          1 all_chars
       in
 
-      if not (same_shape batch_dims_left batch_dims_right) then
-        invalid_arg "einsum: shared axes must have identical dimensions";
-      if not (same_shape contract_dims_left contract_dims_right) then
-        invalid_arg "einsum: contracted axes must have identical dimensions";
-
-      let left_m = product left_only_dims in
-      let left_k = product contract_dims_left in
-      let right_n = product right_only_dims in
-
-      let left_shape_mat =
-        concat_arrays [ batch_dims_left; [| left_m |]; [| left_k |] ]
-      in
-      let right_shape_mat =
-        concat_arrays [ batch_dims_right; [| left_k |]; [| right_n |] ]
+      let operation_cost =
+        List.fold_left (fun acc c -> acc * Hashtbl.find dim_map c) 1 all_chars
       in
 
-      let op_a_ready =
-        if same_shape (shape op_a_perm) left_shape_mat then op_a_perm
-        else reshape left_shape_mat op_a_perm
-      in
-      let op_b_ready =
-        if same_shape (shape op_b_perm) right_shape_mat then op_b_perm
-        else reshape right_shape_mat op_b_perm
-      in
+      (float_of_int operation_cost, float_of_int output_size)
 
-      let result_mat = matmul op_a_ready op_b_ready in
+    (* Greedy contraction path optimizer. Repeatedly contracts the pair with
+       lowest estimated cost (product of all involved dimensions) until a single
+       result remains. Returns a binary tree of contractions. *)
+    let optimize_path inputs output_chars =
+      let workset = ref (List.mapi (fun i t -> (Leaf i, t)) inputs) in
 
-      let preorder_shape =
-        concat_arrays [ batch_dims_left; left_only_dims; right_only_dims ]
-      in
-      let result_preorder =
-        if same_shape (shape result_mat) preorder_shape then result_mat
-        else reshape preorder_shape result_mat
-      in
-
-      let combined_left_axes =
-        concat_arrays [ shared_left_axes; left_free_axes ]
-      in
-      let total_left = Array.length combined_left_axes in
-      let total_right = Array.length right_free_axes in
-      let result_reordered =
-        if total_left <= 1 then result_preorder
-        else (
-          if Array.length noncontracted_left_axes <> total_left then
-            invalid_arg "einsum: left axis bookkeeping mismatch";
-          let map = Hashtbl.create total_left in
-          Array.iteri
-            (fun idx axis -> Hashtbl.replace map axis idx)
-            combined_left_axes;
-          (* perm_left_reorder maps old -> new positions for left axes. *)
-          let perm_left_reorder =
-            Array.map
-              (fun axis ->
-                match Hashtbl.find_opt map axis with
-                | Some idx -> idx
-                | None -> invalid_arg "einsum: missing axis while reordering")
-              noncontracted_left_axes
+      (* Helper to compute result info for a pair *)
+      let contract_info (path1, t1) (path2, t2) =
+        let common =
+          List.filter (fun c -> List.mem c t2.axis_labels) t1.axis_labels
+        in
+        (* Indices kept: unique to t1, unique to t2, or in output_chars *)
+        let new_labels =
+          let all =
+            List.sort_uniq Char.compare (t1.axis_labels @ t2.axis_labels)
           in
-          if is_identity perm_left_reorder then result_preorder
-          else
-            let total_dims = total_left + total_right in
-            (* Transpose expects a permutation mapping new index -> old index.
-               Invert perm_left_reorder (which is old -> new) to build that. *)
-            let perm_left_inverse = Array.make total_left 0 in
-            Array.iteri
-              (fun old_pos new_pos -> perm_left_inverse.(new_pos) <- old_pos)
-              perm_left_reorder;
-            let axes_perm =
-              Array.init total_dims (fun i ->
-                  if i < total_left then perm_left_inverse.(i) else i)
-            in
-            transpose ~axes:(Array.to_list axes_perm) result_preorder)
-      in
-      let result_reordered = contiguous result_reordered in
-      if same_shape (shape result_reordered) target_shape then result_reordered
-      else reshape target_shape result_reordered
+          List.filter
+            (fun c -> (not (List.mem c common)) || List.mem c output_chars)
+            all
+        in
 
-    let rec eval_plan = function
-      | Operand (op, str) -> (op, str)
-      | Contract (a, b, result) ->
-          let op_a, _ = eval_plan a in
-          let op_b, _ = eval_plan b in
-          let tensor = contract_pair op_a op_b result in
-          (tensor, result.vars)
+        let find_index x lst =
+          let rec aux i = function
+            | [] -> raise Not_found
+            | h :: t -> if h = x then i else aux (i + 1) t
+          in
+          aux 0 lst
+        in
+        let get_dim c =
+          if List.mem c t1.axis_labels then
+            let idx = find_index c t1.axis_labels in
+            t1.shape.(idx)
+          else
+            let idx = find_index c t2.axis_labels in
+            t2.shape.(idx)
+        in
+        let new_shape = Array.of_list (List.map get_dim new_labels) in
+
+        let info = { id = -1; shape = new_shape; axis_labels = new_labels } in
+        let cost, size =
+          estimate_cost t1 t2
+            (List.filter (fun c -> not (List.mem c new_labels)) common)
+        in
+        (cost, size, Node (path1, path2, info), info)
+      in
+
+      while List.length !workset > 1 do
+        let current_items = !workset in
+        let best_pair = ref None in
+        let min_cost = ref Float.infinity in
+
+        (* Iterate all pairs *)
+        let rec iter_pairs = function
+          | [] -> ()
+          | x :: rest ->
+              List.iter
+                (fun y ->
+                  let cost, _size, path, info = contract_info x y in
+                  if cost < !min_cost then (
+                    min_cost := cost;
+                    best_pair := Some (x, y, path, info)))
+                rest;
+              iter_pairs rest
+        in
+        iter_pairs current_items;
+
+        match !best_pair with
+        | None -> failwith "einsum: could not find valid contraction"
+        | Some (item1, item2, new_path, new_info) ->
+            let remaining =
+              List.filter (fun x -> x != item1 && x != item2) current_items
+            in
+            workset := (new_path, new_info) :: remaining
+      done;
+
+      match !workset with
+      | [ (final_path, _) ] -> final_path
+      | _ -> failwith "einsum: optimization failed"
+
+    (* Contracts two tensors by: (1) transposing to [batch, free, contract]
+       layout, (2) broadcasting batch dims, (3) flattening to 3D for batched
+       matmul, (4) unflattening and transposing to match the target axis
+       order. *)
+    let contract_pair op_a str_a op_b str_b result_str =
+      let sa = shape op_a in
+      let sb = shape op_b in
+
+      (* Map chars to indices *)
+      let chars_a = String.to_seq str_a |> List.of_seq in
+      let chars_b = String.to_seq str_b |> List.of_seq in
+      let chars_out = String.to_seq result_str |> List.of_seq in
+
+      (* Identify axes *)
+      let batch_chars =
+        List.filter
+          (fun c -> List.mem c chars_b && List.mem c chars_out)
+          chars_a
+      in
+      let contract_chars =
+        List.filter
+          (fun c -> List.mem c chars_b && not (List.mem c chars_out))
+          chars_a
+      in
+      let a_free_chars =
+        List.filter (fun c -> not (List.mem c chars_b)) chars_a
+      in
+      let b_free_chars =
+        List.filter (fun c -> not (List.mem c chars_a)) chars_b
+      in
+
+      (* Build Permutations: [Batch, Free, Contract] *)
+      let get_axes source_chars target_order =
+        List.map
+          (fun c ->
+            let rec find_idx i = function
+              | [] -> failwith "char not found"
+              | x :: xs -> if x = c then i else find_idx (i + 1) xs
+            in
+            find_idx 0 source_chars)
+          target_order
+      in
+
+      let perm_a =
+        get_axes chars_a (batch_chars @ a_free_chars @ contract_chars)
+      in
+      let perm_b =
+        get_axes chars_b (batch_chars @ contract_chars @ b_free_chars)
+      in
+
+      let a_t = contiguous (transpose ~axes:perm_a op_a) in
+      let b_t = contiguous (transpose ~axes:perm_b op_b) in
+
+      (* Flatten Dimensions for Matmul *)
+      let prod dims = Array.fold_left ( * ) 1 dims in
+
+      (* Broadcast batch dimensions *)
+      let batch_dims =
+        Array.init (List.length batch_chars) (fun i ->
+            let dim_a = sa.(List.nth perm_a i) in
+            let dim_b = sb.(List.nth perm_b i) in
+            if dim_a = dim_b then dim_a
+            else if dim_a = 1 then dim_b
+            else if dim_b = 1 then dim_a
+            else
+              invalid_arg
+                (Printf.sprintf
+                   "einsum: incompatible broadcast dimensions (%d vs %d)" dim_a
+                   dim_b))
+      in
+      let a_free_dims =
+        Array.init (List.length a_free_chars) (fun i ->
+            sa.(List.nth perm_a (List.length batch_chars + i)))
+      in
+      let contract_dims =
+        Array.init (List.length contract_chars) (fun i ->
+            sa.(List.nth perm_a
+                  (List.length batch_chars + List.length a_free_chars + i)))
+      in
+      let b_free_dims =
+        Array.init (List.length b_free_chars) (fun i ->
+            sb.(List.nth perm_b
+                  (List.length batch_chars + List.length contract_chars + i)))
+      in
+
+      let b_size = prod batch_dims in
+      let m = prod a_free_dims in
+      let k = prod contract_dims in
+      let n = prod b_free_dims in
+
+      (* Broadcast tensors to match batch dims if needed *)
+      let broadcast_batch tensor perm src_shape =
+        let needs_broadcast = ref false in
+        let target_shape =
+          Array.init (ndim tensor) (fun i ->
+              if i < List.length batch_chars then (
+                let src_dim = src_shape.(List.nth perm i) in
+                let target_dim = batch_dims.(i) in
+                if src_dim <> target_dim then needs_broadcast := true;
+                target_dim)
+              else
+                let src_dim = src_shape.(List.nth perm i) in
+                src_dim)
+        in
+        if !needs_broadcast then broadcast_to target_shape tensor else tensor
+      in
+
+      let a_t_broadcast = broadcast_batch a_t perm_a sa in
+      let b_t_broadcast = broadcast_batch b_t perm_b sb in
+
+      (* Reshape to 3D for batched matmul: [batch, rows, cols] *)
+      let a_mat = reshape [| b_size; m; k |] a_t_broadcast in
+      let b_mat = reshape [| b_size; k; n |] b_t_broadcast in
+
+      let result_mat = matmul a_mat b_mat in
+
+      (* Restore original dimension structure *)
+      let result_intermediate_shape =
+        Array.concat [ batch_dims; a_free_dims; b_free_dims ]
+      in
+      let result_unflat = reshape result_intermediate_shape result_mat in
+
+      let intermediate_chars = batch_chars @ a_free_chars @ b_free_chars in
+      if intermediate_chars = chars_out then result_unflat
+      else
+        let final_perm = get_axes intermediate_chars chars_out in
+        transpose ~axes:final_perm result_unflat
 
     let calculate subscripts operands =
-      let operand_count = Array.length operands in
-      if operand_count = 0 then invalid_arg "no input operands";
-      let input_tokens, output_tokens_opt = parse_equation subscripts in
-      if Array.length input_tokens <> operand_count then
-        invalid_arg "number of inputs must equal number of operands";
+      let n_ops = Array.length operands in
+      if n_ops = 0 then invalid_arg "einsum: no input operands";
 
-      let axis_occurrences = Hashtbl.create 32 in
-      Array.iter
-        (fun tokens ->
-          List.iter
-            (function
-              | Axis c ->
-                  let count =
-                    match Hashtbl.find_opt axis_occurrences c with
-                    | Some n -> n + 1
-                    | None -> 1
-                  in
-                  Hashtbl.replace axis_occurrences c count
-              | Ellipsis -> ())
-            tokens)
-        input_tokens;
+      (* Fast paths for common operations *)
+      match (subscripts, n_ops) with
+      | "i,i->", 2 -> dot operands.(0) operands.(1)
+      | "ij,jk->ik", 2 -> matmul operands.(0) operands.(1)
+      | "ij->ji", 1 -> transpose operands.(0)
+      | _ ->
+          let input_tokens, output_token_opt = parse_equation subscripts in
 
-      let diag_results =
-        Array.mapi
-          (fun i tokens -> diagonalize_operand operands.(i) tokens)
-          input_tokens
-      in
+          if Array.length input_tokens <> n_ops then
+            invalid_arg "einsum: number of inputs must equal number of operands";
 
-      let ell_rank =
-        Array.fold_left
-          (fun acc (tensor, tokens) ->
-            let ell_count = ndim tensor - count_named tokens in
-            if ell_count < 0 then
-              invalid_arg "operand rank too small for subscripts";
-            Stdlib.max acc ell_count)
-          0 diag_results
-      in
-
-      let output_has_ellipsis =
-        match output_tokens_opt with
-        | Some tokens ->
-            List.exists (function Ellipsis -> true | _ -> false) tokens
-        | None -> false
-      in
-      if output_has_ellipsis && ell_rank = 0 then
-        invalid_arg "output ellipsis requires ellipsis in inputs";
-
-      let expanded =
-        Array.map
-          (fun (tensor, tokens) -> expand_operand tensor tokens ell_rank)
-          diag_results
-      in
-
-      let axis_dims = Hashtbl.create 32 in
-      let update_axis_dim axis dim =
-        match Hashtbl.find_opt axis_dims axis with
-        | None -> Hashtbl.add axis_dims axis dim
-        | Some existing -> (
-            if existing = dim then ()
-            else if existing = 1 then Hashtbl.replace axis_dims axis dim
-            else if dim = 1 then ()
-            else
-              match axis with
-              | Named c ->
-                  invalid_arg
-                    "index var '%c' must have consistent dimensions (%d vs %d)"
-                    c existing dim
-              | Ell idx ->
-                  invalid_arg
-                    "ellipsis dimension %d must have consistent dimensions (%d \
-                     vs %d)"
-                    idx existing dim)
-      in
-
-      Array.iter
-        (fun (tensor, axes) ->
-          let shape_tensor = shape tensor in
-          let rank = Array.length shape_tensor in
-          let axes_len = List.length axes in
-          if rank <> axes_len then invalid_arg "internal einsum shape mismatch";
-          List.iteri
-            (fun idx axis -> update_axis_dim axis shape_tensor.(idx))
-            axes)
-        expanded;
-
-      let broadcasted =
-        Array.map
-          (fun (tensor, axes) ->
-            let target_shape =
-              Array.of_list
-                (List.map (fun axis -> Hashtbl.find axis_dims axis) axes)
-            in
-            let tensor' =
-              let current_shape = shape tensor in
-              if same_shape current_shape target_shape then tensor
-              else broadcast_to target_shape tensor
-            in
-            (tensor', axes))
-          expanded
-      in
-
-      let output_axes =
-        match output_tokens_opt with
-        | Some tokens ->
-            let seen_named = Hashtbl.create 16 in
-            let ell_seen = ref false in
-            let acc_rev = ref [] in
-            List.iter
-              (function
-                | Axis c ->
-                    if Hashtbl.mem seen_named c then
-                      invalid_arg "output must have distinct indices";
-                    Hashtbl.add seen_named c true;
-                    if not (Hashtbl.mem axis_dims (Named c)) then
-                      invalid_arg "output index '%c' not found in inputs" c;
-                    acc_rev := Named c :: !acc_rev
-                | Ellipsis ->
-                    if !ell_seen then invalid_arg "multiple ellipsis in output";
-                    ell_seen := true;
-                    if ell_rank = 0 then
-                      invalid_arg "ellipsis not present in inputs";
-                    let ell_axes = list_init ell_rank (fun idx -> Ell idx) in
-                    List.iter (fun axis -> acc_rev := axis :: !acc_rev) ell_axes)
-              tokens;
-            List.rev !acc_rev
-        | None ->
-            let ell_axes =
-              if ell_rank = 0 then []
-              else list_init ell_rank (fun idx -> Ell idx)
-            in
-            let named_axes =
-              Hashtbl.fold
-                (fun c count acc ->
-                  if count = 1 && Hashtbl.mem axis_dims (Named c) then
-                    Named c :: acc
-                  else acc)
-                axis_occurrences []
-            in
-            let named_axes_sorted =
-              List.sort
-                (fun axis1 axis2 ->
-                  match (axis1, axis2) with
-                  | Named c1, Named c2 -> Char.compare c1 c2
-                  | _ -> 0)
-                named_axes
-            in
-            ell_axes @ named_axes_sorted
-      in
-
-      let mapping, inverse = axis_char_mapping broadcasted output_axes in
-
-      let keep_axes =
-        Hashtbl.fold
-          (fun c axis acc ->
-            match axis with
-            | Ell _ -> CharSet.add c acc
-            | Named name ->
-                let count =
-                  match Hashtbl.find_opt axis_occurrences name with
-                  | Some cnt -> cnt
-                  | None -> 0
-                in
-                if
-                  count > 1
-                  && List.exists
-                       (function
-                         | Named name' -> Char.equal name name' | Ell _ -> false)
-                       output_axes
-                then CharSet.add c acc
-                else acc)
-          inverse CharSet.empty
-      in
-
-      let vars_operands =
-        Array.map
-          (fun (tensor, axes) -> (tensor, string_of_axes mapping axes))
-          broadcasted
-      in
-
-      let plan = make_plan ~keep_axes vars_operands in
-      let result_tensor, result_axes = eval_plan plan in
-      let output_str = string_of_axes mapping output_axes in
-
-      let axes_to_reduce =
-        let len = String.length result_axes in
-        let indices = ref [] in
-        for i = 0 to len - 1 do
-          let c = result_axes.[i] in
-          if not (string_contains output_str c) then indices := i :: !indices
-        done;
-        List.sort (fun a b -> compare b a) !indices
-      in
-
-      let result_tensor =
-        List.fold_left
-          (fun acc axis_idx -> sum ~axes:[ axis_idx ] acc)
-          result_tensor axes_to_reduce
-      in
-
-      let current_axes =
-        let buf = Buffer.create (String.length result_axes) in
-        String.iter
-          (fun c -> if string_contains output_str c then Buffer.add_char buf c)
-          result_axes;
-        Buffer.contents buf
-      in
-
-      let len_current = String.length current_axes in
-      if len_current <> String.length output_str then
-        invalid_arg "contracted input vars '%s' must match output vars '%s'"
-          current_axes output_str;
-
-      (* Build permutation mapping new index -> old index for transpose. *)
-      let axes_perm =
-        Array.init len_current (fun i ->
-            let c = output_str.[i] in
-            try String.index current_axes c
-            with Not_found ->
-              invalid_arg
-                "contracted input vars '%s' must match output vars '%s'"
-                current_axes output_str)
-      in
-
-      let need_transpose =
-        let len = Array.length axes_perm in
-        if len <= 1 then false
-        else
-          let rec check i =
-            if i = len then true
-            else if axes_perm.(i) = i then check (i + 1)
-            else false
+          (* Compute ellipsis rank from max difference between operand rank and
+             named axes. This determines how many dimensions "..." expands
+             to. *)
+          let ell_rank =
+            let max_rank = ref 0 in
+            for i = 0 to n_ops - 1 do
+              let n_named =
+                List.length
+                  (List.filter
+                     (function Axis _ -> true | _ -> false)
+                     input_tokens.(i))
+              in
+              let r = ndim operands.(i) - n_named in
+              if r < 0 then
+                invalid_arg "einsum: operand rank too small for subscripts";
+              if r > !max_rank then max_rank := r
+            done;
+            !max_rank
           in
-          not (check 0)
-      in
-      let result_tensor =
-        if need_transpose then
-          transpose ~axes:(Array.to_list axes_perm) result_tensor
-        else result_tensor
-      in
-      result_tensor
+
+          (* Maps ellipsis dimension index to a reserved char (200+i) to avoid
+             collision with user-specified axis labels. *)
+          let get_ell_char i = char_of_int (200 + i) in
+
+          let normalized_inputs =
+            Array.mapi
+              (fun i tokens ->
+                let op = operands.(i) in
+                (* Expand Ellipsis tokens *)
+                let expanded_tokens =
+                  let n_named =
+                    List.length
+                      (List.filter
+                         (function Axis _ -> true | _ -> false)
+                         tokens)
+                  in
+                  let ell_dim = ndim op - n_named in
+                  List.flatten
+                    (List.map
+                       (function
+                         | Axis c -> [ Axis c ]
+                         | Ellipsis ->
+                             List.init ell_dim (fun k ->
+                                 Axis (get_ell_char (ell_rank - ell_dim + k))))
+                       tokens)
+                in
+                (* Diagonalize *)
+                let op_diag, final_tokens =
+                  handle_repeated_indices op expanded_tokens
+                in
+
+                (* Convert tokens to char list *)
+                let chars =
+                  List.map
+                    (function Axis c -> c | _ -> assert false)
+                    final_tokens
+                in
+                ({ id = i; shape = shape op_diag; axis_labels = chars }, op_diag))
+              input_tokens
+          in
+
+          let ops_info = Array.map fst normalized_inputs in
+          let ops_tensors = Array.map snd normalized_inputs in
+
+          (* Validate dimension consistency across operands. Dimensions must
+             either match exactly or be 1 (broadcastable). *)
+          let char_dims = Hashtbl.create 16 in
+          Array.iter
+            (fun info ->
+              List.iteri
+                (fun idx c ->
+                  let dim = info.shape.(idx) in
+                  match Hashtbl.find_opt char_dims c with
+                  | None -> Hashtbl.add char_dims c dim
+                  | Some prev_dim ->
+                      (* Allow broadcasting: 1 is compatible with any dim *)
+                      if prev_dim <> dim && prev_dim <> 1 && dim <> 1 then
+                        invalid_arg
+                          (Printf.sprintf
+                             "einsum: index var '%c' must have consistent \
+                              dimensions (%d vs %d)"
+                             c prev_dim dim)
+                      else if dim > prev_dim then
+                        (* Keep the larger dimension for broadcasting *)
+                        Hashtbl.replace char_dims c dim)
+                info.axis_labels)
+            ops_info;
+
+          (* Check if any input has ellipsis *)
+          let inputs_have_ellipsis =
+            Array.exists
+              (fun tokens -> List.exists (( = ) Ellipsis) tokens)
+              input_tokens
+          in
+
+          (* Determine Output Chars *)
+          let target_chars =
+            match output_token_opt with
+            | Some tokens ->
+                let output_has_ellipsis =
+                  List.exists (( = ) Ellipsis) tokens
+                in
+                if output_has_ellipsis && not inputs_have_ellipsis then
+                  invalid_arg
+                    "einsum: output ellipsis requires ellipsis in inputs";
+                List.flatten
+                  (List.map
+                     (function
+                       | Axis c -> [ c ]
+                       | Ellipsis ->
+                           List.init ell_rank (fun k -> get_ell_char k))
+                     tokens)
+            | None ->
+                (* Implicit mode: chars appearing exactly once in the original
+                   input are kept in output, sorted alphabetically. We count in
+                   the original tokens (before diagonalization) per NumPy
+                   spec. *)
+                let all_original_chars =
+                  List.concat
+                    (Array.to_list
+                       (Array.map
+                          (fun tokens ->
+                            List.filter_map
+                              (function Axis c -> Some c | Ellipsis -> None)
+                              tokens)
+                          input_tokens))
+                in
+                let counts = Hashtbl.create 16 in
+                List.iter
+                  (fun c ->
+                    Hashtbl.replace counts c
+                      ((Hashtbl.find_opt counts c |> Option.value ~default:0)
+                      + 1))
+                  all_original_chars;
+                let ell_chars = List.init ell_rank (fun k -> get_ell_char k) in
+                let named =
+                  List.filter (fun c -> int_of_char c < 200) all_original_chars
+                  |> List.sort_uniq Char.compare
+                  |> List.filter (fun c -> Hashtbl.find counts c = 1)
+                in
+                ell_chars @ named
+          in
+
+          (* Validate that all output indices exist in inputs *)
+          let all_input_chars =
+            Array.fold_left
+              (fun acc info -> acc @ info.axis_labels)
+              [] ops_info
+          in
+          List.iter
+            (fun c ->
+              if not (List.mem c all_input_chars) then
+                invalid_arg
+                  (Printf.sprintf "einsum: output index '%c' not found in inputs"
+                     c))
+            target_chars;
+
+          let plan = optimize_path (Array.to_list ops_info) target_chars in
+
+          let rec execute = function
+            | Leaf idx ->
+                ( ops_tensors.(idx),
+                  ops_info.(idx).axis_labels |> List.to_seq |> String.of_seq )
+            | Node (left, right, info) ->
+                let res_a, str_a = execute left in
+                let res_b, str_b = execute right in
+                let str_out =
+                  info.axis_labels |> List.to_seq |> String.of_seq
+                in
+                let res = contract_pair res_a str_a res_b str_b str_out in
+                (res, str_out)
+          in
+
+          let result, result_str = execute plan in
+          let current_chars = String.to_seq result_str |> List.of_seq in
+
+          (* Sum over any axes not present in the target output *)
+          let axes_to_reduce =
+            List.mapi
+              (fun i c ->
+                if not (List.mem c target_chars) then Some i else None)
+              current_chars
+            |> List.filter_map Fun.id
+          in
+          let result_reduced =
+            if axes_to_reduce = [] then result
+            else sum ~axes:axes_to_reduce result
+          in
+
+          (* Transpose to match target axis order if needed *)
+          let final_chars =
+            List.filter (fun c -> List.mem c target_chars) current_chars
+          in
+          if final_chars = target_chars then result_reduced
+          else
+            let perm =
+              List.map
+                (fun c ->
+                  let rec find i = function
+                    | [] -> 0
+                    | x :: xs -> if x = c then i else find (i + 1) xs
+                  in
+                  find 0 final_chars)
+                target_chars
+            in
+            transpose ~axes:perm result_reduced
   end
 
   let einsum subscripts operands = Einsum.calculate subscripts operands

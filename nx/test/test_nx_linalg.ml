@@ -418,7 +418,7 @@ let test_diagonal_edge () =
   let d_empty = Nx.diagonal a_empty in
   check_shape "diagonal empty" [| 0 |] d_empty;
   check_raises "diagonal invalid axes"
-    (Invalid_argument "diagonal: axis1 = axis2") (fun () ->
+    (Invalid_argument "diagonal: invalid axes (axes must be different)") (fun () ->
       ignore (Nx.diagonal ~axis1:0 ~axis2:0 a_empty))
 
 let test_matrix_transpose () =
@@ -671,7 +671,7 @@ let test_einsum_error () =
     (Invalid_argument "einsum: no input operands") (fun () ->
       ignore (Nx.einsum "" [||]));
   check_raises "einsum bad format"
-    (Invalid_argument "einsum: invalid character '-' in subscript") (fun () ->
+    (Invalid_argument "einsum: invalid format, expected inputs->output") (fun () ->
       ignore (Nx.einsum "IJ,JK-IK" [| a; b |]));
   check_raises "einsum wrong inputs"
     (Invalid_argument "einsum: number of inputs must equal number of operands")
