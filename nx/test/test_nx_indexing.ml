@@ -70,6 +70,13 @@ let test_index_idx_repeated () =
   let indexed = Nx.slice [ Nx.L [ 0; 1; 1; 0; 2 ] ] t in
   check_t "index idx repeated" [| 5 |] [| 10.; 20.; 20.; 10.; 30. |] indexed
 
+(* Regression test: fancy indexing should reorder even when length matches dim size *)
+let test_index_idx_reorder () =
+  let t = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  (* L [1; 2; 0] should reorder rows, not return unchanged *)
+  let indexed = Nx.slice [ Nx.L [ 1; 2; 0 ]; Nx.A ] t in
+  check_t "index idx reorder" [| 3; 2 |] [| 3.; 4.; 5.; 6.; 1.; 2. |] indexed
+
 let test_index_mixed () =
   let t = Nx.create Nx.float32 [| 3; 4; 5 |] (Array.init 60 float_of_int) in
   (* Select row 1, columns 0 and 2, all in last dimension *)
@@ -395,6 +402,7 @@ let index_tests =
     ("index rngs", `Quick, test_index_rngs);
     ("index idx", `Quick, test_index_idx);
     ("index idx repeated", `Quick, test_index_idx_repeated);
+    ("index idx reorder", `Quick, test_index_idx_reorder);
     ("index mixed", `Quick, test_index_mixed);
     ("set_slice at", `Quick, test_set_slice_at);
     ("set_slice rng", `Quick, test_set_slice_rng);

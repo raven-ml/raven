@@ -725,20 +725,68 @@ let make_reverse_handler tape_by_twg_id val_to_twg_id_map =
               in
               let forward_val = continue k result_val in
               Debug.with_context "∇as_strided" (fun () ->
-                  let _twg_in = get_or_init_twg t_in_val in
+                  let twg_in = get_or_init_twg t_in_val in
                   let twg_res = get_or_init_twg result_val in
-                  let _d_loss_d_result = grad_of twg_res in
+                  let d_loss_d_result = grad_of twg_res in
 
-                  (* For as_strided, gradients need to be accumulated back to the original
-                   tensor following the strided access pattern. For now, we'll raise an
-                   error for non-contiguous strides during autodiff. *)
-                  (* TODO: Implement proper gradient accumulation for strided views *)
-                  let () =
-                    failwith
-                      "as_strided gradient not yet implemented - use \
-                       contiguous tensors in autodiff"
+                  (* Backward pass for as_strided: accumulate gradients back to
+                     input positions defined by strides and offset.
+
+                     For each output position, compute the corresponding input
+                     index using: input_idx = offset + sum(output_indices *
+                     strides)
+
+                     We build flat indices for scatter_add. *)
+                  let input_shape = T.shape (value_of twg_in) in
+                  let input_numel = Array.fold_left ( * ) 1 input_shape in
+                  let output_numel = Array.fold_left ( * ) 1 new_shape in
+                  let ndim = Array.length new_shape in
+
+                  (* Compute input strides (C-contiguous) for index
+                     calculation *)
+                  let input_strides = Array.make (Array.length input_shape) 1 in
+                  for i = Array.length input_shape - 2 downto 0 do
+                    input_strides.(i) <-
+                      input_strides.(i + 1) * input_shape.(i + 1)
+                  done;
+
+                  (* Build flat indices: for each output element, compute its
+                     corresponding flat index in the input *)
+                  let ctx = context t_in_val in
+                  let flat_indices =
+                    T.init ctx Nx_core.Dtype.Int32 [| output_numel |]
+                      (fun out_coords ->
+                        let out_flat = out_coords.(0) in
+                        (* Convert flat output index to multi-dimensional *)
+                        let out_idx = Array.make ndim 0 in
+                        let temp = ref out_flat in
+                        for i = ndim - 1 downto 0 do
+                          if new_shape.(i) > 0 then (
+                            out_idx.(i) <- !temp mod new_shape.(i);
+                            temp := !temp / new_shape.(i))
+                        done;
+                        (* Compute flat input index using strides and offset *)
+                        let in_flat = ref offset in
+                        for i = 0 to ndim - 1 do
+                          in_flat := !in_flat + (out_idx.(i) * new_strides.(i))
+                        done;
+                        Int32.of_int !in_flat)
                   in
-                  ());
+
+                  (* Flatten gradient and accumulate to input positions *)
+                  let d_loss_flat =
+                    T.reshape [| output_numel |] d_loss_d_result
+                  in
+                  let zeros_input =
+                    T.zeros ctx (T.dtype t_in_val) [| input_numel |]
+                  in
+                  let grad_contrib =
+                    op_scatter ~mode:`Add zeros_input flat_indices d_loss_flat 0
+                  in
+                  let grad_contrib_reshaped =
+                    T.reshape input_shape grad_contrib
+                  in
+                  twg_in.bv <- T.add twg_in.bv grad_contrib_reshaped);
               forward_val)
       | E_flip { t_in = t_in_val; dims_to_flip } ->
           Some
