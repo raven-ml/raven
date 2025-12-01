@@ -4,8 +4,8 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, List, Sequence, Tuple
 
-import numpy as np
-from scipy import signal
+import torch
+import torch.nn.functional as F
 
 _ROOT = Path(__file__).resolve().parents[3]
 _UBENCH_DIR = _ROOT / "vendor" / "ubench"
@@ -22,15 +22,14 @@ CONFIGS: Sequence[Tuple[int, int, int, int, int]] = (
     (16, 64, 128, 16, 3), # Large: deep layer, larger batch
 )
 
-DTYPES: Sequence[np.dtype] = (np.float32, np.float64)
-BACKEND_NAME = "NumPy"
-_RNG = np.random.default_rng(seed=0)
+DTYPES: Sequence[torch.dtype] = (torch.float32, torch.float64)
+BACKEND_NAME = "PyTorch"
 
 
-def _dtype_label(dtype: np.dtype) -> str:
-    if dtype == np.float32:
+def _dtype_label(dtype: torch.dtype) -> str:
+    if dtype == torch.float32:
         return "f32"
-    if dtype == np.float64:
+    if dtype == torch.float64:
         return "f64"
     return str(dtype)
 
@@ -42,7 +41,7 @@ def _benchmark_name(
     out_ch: int,
     img_size: int,
     kernel_size: int,
-    dtype: np.dtype,
+    dtype: torch.dtype,
 ) -> str:
     return (
         f"{op_name} B{batch} C{in_ch}->{out_ch} {img_size}x{img_size} "
@@ -78,49 +77,30 @@ def create_conv_specs() -> List[ConvSpec]:
     ]
 
 
-def conv2d_numpy(input: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-    """Perform 2D convolution using scipy for each batch and output channel."""
-    batch, in_ch, h, w = input.shape
-    out_ch, _, kh, kw = kernel.shape
-
-    # Calculate output size (valid convolution)
-    out_h = h - kh + 1
-    out_w = w - kw + 1
-
-    output = np.zeros((batch, out_ch, out_h, out_w), dtype=input.dtype)
-
-    for b in range(batch):
-        for o in range(out_ch):
-            for i in range(in_ch):
-                output[b, o] += signal.convolve2d(
-                    input[b, i], kernel[o, i], mode='valid'
-                )
-
-    return output
-
-
 def build_benchmarks() -> List[Any]:
     """Build all conv2d benchmarks."""
     benchmarks: List[Any] = []
     specs = create_conv_specs()
+
+    torch.manual_seed(0)
 
     for spec in specs:
         for dtype in DTYPES:
             input_shape = (spec.batch, spec.in_channels, spec.img_size, spec.img_size)
             kernel_shape = (spec.out_channels, spec.in_channels, spec.kernel_size, spec.kernel_size)
 
-            input_arr = _RNG.random(input_shape, dtype=dtype)
-            kernel_arr = _RNG.random(kernel_shape, dtype=dtype)
+            input_tensor = torch.rand(input_shape, dtype=dtype)
+            kernel_tensor = torch.rand(kernel_shape, dtype=dtype)
 
             bench_name = _benchmark_name(
                 spec.name, spec.batch, spec.in_channels, spec.out_channels,
                 spec.img_size, spec.kernel_size, dtype
             )
 
-            def make_fn(inp: np.ndarray, kern: np.ndarray) -> Callable[[], None]:
-                return lambda: conv2d_numpy(inp, kern)
+            def make_fn(inp: torch.Tensor, kern: torch.Tensor) -> Callable[[], None]:
+                return lambda: F.conv2d(inp, kern)
 
-            benchmarks.append(ubench.bench(bench_name, make_fn(input_arr, kernel_arr)))
+            benchmarks.append(ubench.bench(bench_name, make_fn(input_tensor, kernel_tensor)))
 
     return benchmarks
 
