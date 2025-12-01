@@ -297,17 +297,8 @@ let of_bigarray_ext ba =
 
 let to_array t = T.to_array t
 
-(* Binary operations with scalars *)
+(* Binary operations *)
 
-let binop op a b = Debug.with_context "binop" (fun () -> T.binop op a b)
-
-let scalar_op op a b =
-  Debug.with_context "scalar_op" (fun () -> T.scalar_op op a b)
-
-let inplace_op op a b =
-  Debug.with_context "inplace_op" (fun () -> T.inplace_op op a b)
-
-(* Already defined: add, sub, mul, div, pow, mod_, maximum, minimum *)
 let sub_s a s = Debug.with_context "sub_s" (fun () -> T.sub_s a s)
 let isub a b = Debug.with_context "isub" (fun () -> T.isub a b)
 let isub_s a s = Debug.with_context "isub_s" (fun () -> T.isub_s a s)

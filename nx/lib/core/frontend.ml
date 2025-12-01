@@ -713,208 +713,120 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Element-wise Binary Operations ───── *)
 
+  (* Binary operation with broadcasting *)
   let binop op a b =
     let a', b' = broadcasted a b in
     op a' b'
 
-  let scalar_op op tensor scalar_val =
-    let scalar_tensor = scalar_like tensor scalar_val in
-    op tensor scalar_tensor
-
-  (* Generic scalar binary operation helper *)
-  let scalar_binop op tensor scalar_val =
-    let scalar_tensor = scalar_like tensor scalar_val in
-    op tensor scalar_tensor
-
-  (* Generic reverse scalar operation helper *)
-  let reverse_scalar_op op scalar_val tensor =
-    let scalar_tensor = scalar_like tensor scalar_val in
-    op scalar_tensor tensor
-
-  let inplace_op op target value =
+  (* In-place binary operation *)
+  let inplace_binop op target value =
     let value_broadcasted = broadcast_to (shape target) value in
     let result = op target value_broadcasted in
     B.op_assign target result;
     target
 
-  (* Generic in-place scalar operation helper *)
-  let inplace_scalar_op op target scalar_val =
-    let scalar_tensor = scalar_like target scalar_val in
-    inplace_op op target scalar_tensor
-
+  (* Addition *)
   let add a b = binop B.op_add a b
-  let add_s tensor scalar = scalar_op add tensor scalar
-  let iadd target value = inplace_op B.op_add target value
-  let radd_s tensor value = reverse_scalar_op add tensor value
-  let iadd_s tensor value = inplace_scalar_op B.op_add tensor value
+  let add_s t s = add t (scalar_like t s)
+  let radd_s s t = add (scalar_like t s) t
+  let iadd target value = inplace_binop B.op_add target value
+  let iadd_s t s = iadd t (scalar_like t s)
 
+  (* Subtraction: a - b = a + (-b) *)
   let sub a b =
     let a', b' = broadcasted a b in
-    let neg_b = B.op_neg b' in
-    B.op_add a' neg_b
+    B.op_add a' (B.op_neg b')
 
-  let sub_s tensor_a scalar_b_val = scalar_binop sub tensor_a scalar_b_val
-  let rsub_s tensor value = reverse_scalar_op sub tensor value
+  let sub_s t s = sub t (scalar_like t s)
+  let rsub_s s t = sub (scalar_like t s) t
 
-  let isub target_tensor value_tensor =
-    let value_tensor_broadcasted =
-      broadcast_to (shape target_tensor) value_tensor
-    in
-    let neg_value_tensor = B.op_neg value_tensor_broadcasted in
-    let result = B.op_add target_tensor neg_value_tensor in
-    B.op_assign target_tensor result;
-    target_tensor
+  let isub target value =
+    let value_broadcasted = broadcast_to (shape target) value in
+    let result = B.op_add target (B.op_neg value_broadcasted) in
+    B.op_assign target result;
+    target
 
-  let isub_s target_tensor scalar_val =
-    let scalar_tensor = scalar_like target_tensor scalar_val in
-    let neg_scalar = B.op_neg scalar_tensor in
-    inplace_op B.op_add target_tensor neg_scalar
+  let isub_s t s = isub t (scalar_like t s)
 
-  let mul a b =
-    let a', b' = broadcasted a b in
-    B.op_mul a' b'
+  (* Multiplication *)
+  let mul a b = binop B.op_mul a b
+  let mul_s t s = mul t (scalar_like t s)
+  let rmul_s s t = mul (scalar_like t s) t
+  let imul target value = inplace_binop B.op_mul target value
+  let imul_s t s = imul t (scalar_like t s)
 
-  let mul_s tensor_a scalar_b_val = scalar_binop mul tensor_a scalar_b_val
-  let rmul_s tensor value = reverse_scalar_op mul tensor value
-
-  let imul target_tensor value_tensor =
-    let value_tensor_broadcasted =
-      broadcast_to (shape target_tensor) value_tensor
-    in
-    let result = B.op_mul target_tensor value_tensor_broadcasted in
-    B.op_assign target_tensor result;
-    target_tensor
-
-  let imul_s tensor value = inplace_scalar_op B.op_mul tensor value
-
+  (* Division: uses fdiv for float/complex, idiv for integers *)
   let div a b =
     let dt = dtype a in
-    let a_b, b_b = broadcasted a b in
-    match dt with
-    | dt when Dtype.is_float dt || Dtype.is_complex dt ->
-        (* True division for float/complex *)
-        B.op_fdiv a_b b_b
-    | dt when Dtype.is_int dt || Dtype.is_uint dt ->
-        (* Integer division for integers *)
-        B.op_idiv a_b b_b
-    | _ ->
-        (* should not happen *)
-        failwith "Unsupported dtype for division"
+    let a', b' = broadcasted a b in
+    if Dtype.is_float dt || Dtype.is_complex dt then B.op_fdiv a' b'
+    else if Dtype.is_int dt || Dtype.is_uint dt then B.op_idiv a' b'
+    else failwith "Unsupported dtype for division"
 
-  let div_s tensor_a scalar_b_val = scalar_binop div tensor_a scalar_b_val
-  let rdiv_s tensor value = reverse_scalar_op div tensor value
+  let div_s t s = div t (scalar_like t s)
+  let rdiv_s s t = div (scalar_like t s) t
 
   let idiv target value =
     let value_broadcasted = broadcast_to (shape target) value in
     let dt = dtype target in
     let result =
-      match dt with
-      | dt when Dtype.is_float dt || Dtype.is_complex dt ->
-          B.op_fdiv target value_broadcasted
-      | dt when Dtype.is_int dt || Dtype.is_uint dt ->
-          B.op_idiv target value_broadcasted
-      | _ ->
-          Error.invalid ~op:"idiv"
-            ~what:("dtype " ^ Dtype.to_string dt)
-            ~reason:"not supported" ()
+      if Dtype.is_float dt || Dtype.is_complex dt then
+        B.op_fdiv target value_broadcasted
+      else if Dtype.is_int dt || Dtype.is_uint dt then
+        B.op_idiv target value_broadcasted
+      else
+        Error.invalid ~op:"idiv"
+          ~what:("dtype " ^ Dtype.to_string dt)
+          ~reason:"not supported" ()
     in
     B.op_assign target result;
     target
 
-  let idiv_s target scalar_val =
-    let scalar_tensor = scalar_like target scalar_val in
-    idiv target scalar_tensor
+  let idiv_s t s = idiv t (scalar_like t s)
 
-  let pow a b =
-    let a', b' = broadcasted a b in
-    B.op_pow a' b'
+  (* Power *)
+  let pow a b = binop B.op_pow a b
+  let pow_s t s = pow t (scalar_like t s)
+  let rpow_s s t = pow (scalar_like t s) t
+  let ipow target value = inplace_binop B.op_pow target value
+  let ipow_s t s = ipow t (scalar_like t s)
 
-  let pow_s tensor_a scalar_b_val = scalar_binop pow tensor_a scalar_b_val
-  let rpow_s tensor value = reverse_scalar_op pow tensor value
+  (* Maximum *)
+  let maximum a b = binop B.op_max a b
+  let maximum_s t s = maximum t (scalar_like t s)
+  let rmaximum_s s t = maximum (scalar_like t s) t
+  let imaximum target value = inplace_binop B.op_max target value
+  let imaximum_s t s = imaximum t (scalar_like t s)
 
-  let ipow target_tensor value_tensor =
-    let value_tensor_broadcasted =
-      broadcast_to (shape target_tensor) value_tensor
-    in
-    let result = B.op_pow target_tensor value_tensor_broadcasted in
-    B.op_assign target_tensor result;
-    target_tensor
-
-  let ipow_s tensor value = inplace_scalar_op B.op_pow tensor value
-
-  let maximum a b =
-    let a', b' = broadcasted a b in
-    B.op_max a' b'
-
-  let maximum_s tensor_a scalar_b_val =
-    scalar_binop maximum tensor_a scalar_b_val
-
-  let rmaximum_s tensor value = reverse_scalar_op maximum tensor value
-
-  let imaximum target_tensor value_tensor =
-    let value_tensor_broadcasted =
-      broadcast_to (shape target_tensor) value_tensor
-    in
-    let result = B.op_max target_tensor value_tensor_broadcasted in
-    B.op_assign target_tensor result;
-    target_tensor
-
-  let imaximum_s tensor value = inplace_scalar_op B.op_max tensor value
-
+  (* Minimum: min(a, b) = where(a < b, a, b) *)
   let minimum a b =
     let a', b' = broadcasted a b in
-    (* Use comparison and where to implement minimum without negation *)
-    let mask = B.op_cmplt a' b' in
-    B.op_where mask a' b'
+    B.op_where (B.op_cmplt a' b') a' b'
 
-  let minimum_s tensor_a scalar_b_val =
-    scalar_binop minimum tensor_a scalar_b_val
+  let minimum_s t s = minimum t (scalar_like t s)
+  let rminimum_s s t = minimum (scalar_like t s) t
 
-  let rminimum_s tensor value = reverse_scalar_op minimum tensor value
-
-  let iminimum target_tensor value_tensor =
-    let value_tensor_broadcasted =
-      broadcast_to (shape target_tensor) value_tensor
+  let iminimum target value =
+    let value_broadcasted = broadcast_to (shape target) value in
+    let result =
+      B.op_where (B.op_cmplt target value_broadcasted) target value_broadcasted
     in
-    let target_neg = B.op_neg target_tensor in
-    let value_b_neg = B.op_neg value_tensor_broadcasted in
-    let max_of_negs = B.op_max target_neg value_b_neg in
-    let result = B.op_neg max_of_negs in
-    B.op_assign target_tensor result;
-    target_tensor
+    B.op_assign target result;
+    target
 
-  let iminimum_s target_tensor scalar_val =
-    let scalar_value_tensor = scalar_like target_tensor scalar_val in
-    let scalar_broadcasted =
-      broadcast_to (shape target_tensor) scalar_value_tensor
-    in
-    let target_neg = B.op_neg target_tensor in
-    let scalar_b_neg = B.op_neg scalar_broadcasted in
-    let max_of_negs = B.op_max target_neg scalar_b_neg in
-    let result = B.op_neg max_of_negs in
-    B.op_assign target_tensor result;
-    target_tensor
+  let iminimum_s t s = iminimum t (scalar_like t s)
 
-  let mod_ a b =
-    let a', b' = broadcasted a b in
-    B.op_mod a' b'
+  (* Modulo *)
+  let mod_ a b = binop B.op_mod a b
+  let mod_s t s = mod_ t (scalar_like t s)
+  let rmod_s s t = mod_ (scalar_like t s) t
+  let imod target value = inplace_binop B.op_mod target value
+  let imod_s t s = imod t (scalar_like t s)
 
-  let mod_s tensor_a scalar_b_val = scalar_binop mod_ tensor_a scalar_b_val
-  let rmod_s tensor value = reverse_scalar_op mod_ tensor value
-  let imod target value = inplace_op B.op_mod target value
-  let imod_s tensor value = inplace_scalar_op B.op_mod tensor value
-
-  let bitwise_xor a b =
-    let a', b' = broadcasted a b in
-    B.op_xor a' b'
-
-  let bitwise_or a b =
-    let a', b' = broadcasted a b in
-    B.op_or a' b'
-
-  let bitwise_and a b =
-    let a', b' = broadcasted a b in
-    B.op_and a' b'
+  (* Bitwise operations *)
+  let bitwise_xor a b = binop B.op_xor a b
+  let bitwise_or a b = binop B.op_or a b
+  let bitwise_and a b = binop B.op_and a b
 
   (* ───── Logical Operations ───── *)
 
