@@ -5,7 +5,7 @@ module Make (B : Backend_intf.S) = struct
   module B = B
 
   let span ?attrs ~op () =
-    let hook = !(Instrumentation.current_hook) in
+    let hook = !Instrumentation.current_hook in
     if hook.enabled then hook.with_span ~op ?attrs else fun f -> f ()
 
   let ( let@ ) m f = m f
@@ -1262,8 +1262,8 @@ module Make (B : Backend_intf.S) = struct
           maximum x min_x
     in
     match max with
-    | None ->
-        (match out with
+    | None -> (
+        match out with
         | Some o ->
             B.op_add ~out:o x_clamped_min (zeros_like x_clamped_min);
             o
@@ -1294,7 +1294,8 @@ module Make (B : Backend_intf.S) = struct
     let out =
       match out with
       | Some o -> o
-      | None -> empty (B.context if_true_b) (B.dtype if_true_b) final_target_shape
+      | None ->
+          empty (B.context if_true_b) (B.dtype if_true_b) final_target_shape
     in
     B.op_where ~out cond_b if_true_b if_false_b;
     out
@@ -1383,8 +1384,7 @@ module Make (B : Backend_intf.S) = struct
     let rank = Array.length input_shape in
     if keepdims then
       Array.mapi
-        (fun i dim ->
-          if Array.exists (( = ) i) axes_to_reduce then 1 else dim)
+        (fun i dim -> if Array.exists (( = ) i) axes_to_reduce then 1 else dim)
         input_shape
     else
       let filtered = ref [] in
@@ -1421,7 +1421,9 @@ module Make (B : Backend_intf.S) = struct
       match out with
       | Some o -> o
       | None ->
-          let out_shape = reduce_output_shape input_shape axes_to_reduce keepdims in
+          let out_shape =
+            reduce_output_shape input_shape axes_to_reduce keepdims
+          in
           empty (B.context x) (B.dtype x) out_shape
     in
     backend_op ~out ~axes:axes_to_reduce ~keepdims x;
@@ -4233,26 +4235,26 @@ module Make (B : Backend_intf.S) = struct
         (* 1D x 1D -> scalar (sum of element-wise product) *)
         let product = mul x_tensor w_tensor in
         sum ?out product
-    | 1, _ ->
+    | 1, _ -> (
         (* 1D x ND -> contract on first axis of w *)
         (* Reshape x to (1, k) and use matmul *)
         let x_2d = unsqueeze ~axes:[ 0 ] x_tensor in
         let result = matmul_with_alloc x_2d w_tensor in
         (* Result has shape (..., 1, n) -> squeeze the 1 *)
         let squeezed = squeeze ~axes:[ ndim result - 2 ] result in
-        (match out with
+        match out with
         | Some o ->
             B.op_add ~out:o squeezed (zeros_like squeezed);
             o
         | None -> squeezed)
-    | _, 1 ->
+    | _, 1 -> (
         (* ND x 1D -> contract on last axis of x *)
         (* Reshape w to (k, 1) and use matmul *)
         let w_2d = unsqueeze ~axes:[ 1 ] w_tensor in
         let result = matmul_with_alloc x_tensor w_2d in
         (* Result has shape (..., m, 1) -> squeeze the 1 *)
         let squeezed = squeeze ~axes:[ ndim result - 1 ] result in
-        (match out with
+        match out with
         | Some o ->
             B.op_add ~out:o squeezed (zeros_like squeezed);
             o
@@ -5409,7 +5411,8 @@ module Make (B : Backend_intf.S) = struct
             Array.init (ndim tensor) (fun i ->
                 if i = ax then R (idx, idx + 1) else A)
           in
-          set_slice_internal (Array.to_list slices) tensor (expand_dims [ ax ] value)
+          set_slice_internal (Array.to_list slices) tensor
+            (expand_dims [ ax ] value)
         in
         write_at_index result axis 0 c1;
         write_at_index result axis 1 c2;
@@ -6284,14 +6287,17 @@ module Make (B : Backend_intf.S) = struct
     (* Use Complex64 as default - matches NumPy behavior *)
     if norm_scale <> 1.0 then
       let result =
-        B.op_rfft x_padded ~dtype:Dtype.Complex64 ~axes:(Array.of_list axes_list)
+        B.op_rfft x_padded ~dtype:Dtype.Complex64
+          ~axes:(Array.of_list axes_list)
       in
       let scale_value = Complex.{ re = norm_scale; im = 0.0 } in
       let scale_tensor =
         scalar (B.context result) (B.dtype result) scale_value
       in
       mul ?out result scale_tensor
-    else B.op_rfft ?out x_padded ~dtype:Dtype.Complex64 ~axes:(Array.of_list axes_list)
+    else
+      B.op_rfft ?out x_padded ~dtype:Dtype.Complex64
+        ~axes:(Array.of_list axes_list)
 
   let irfftn ?out ?axes ?s ?(norm = `Backward) x =
     let@ _ = span ~op:"irfftn" () in
@@ -6991,8 +6997,8 @@ module Make (B : Backend_intf.S) = struct
     let eps = scalar_like x epsilon in
     let normalized = mul x (rsqrt (add mean_square eps)) in
     match gamma with
-    | None ->
-        (match out with
+    | None -> (
+        match out with
         | Some o ->
             B.op_add ~out:o normalized (zeros_like normalized);
             o
@@ -7065,8 +7071,8 @@ module Make (B : Backend_intf.S) = struct
           mul normalized gamma_broadcast
     in
     match beta with
-    | None ->
-        (match out with
+    | None -> (
+        match out with
         | Some o ->
             B.op_add ~out:o with_scale (zeros_like with_scale);
             o

@@ -34,9 +34,7 @@ let of_bigarray_ext ba = of_bigarray_ext (Lazy.force context) ba
 let to_bigarray = to_bigarray
 let to_bigarray_ext = to_bigarray_ext
 let rand dtype ?seed shape = rand (Lazy.force context) dtype ?seed shape
-
-let randn dtype ?seed shape =
-  randn (Lazy.force context) dtype ?seed shape
+let randn dtype ?seed shape = randn (Lazy.force context) dtype ?seed shape
 
 let randint dtype ?seed ?high shape low =
   randint (Lazy.force context) dtype ?seed ?high shape low

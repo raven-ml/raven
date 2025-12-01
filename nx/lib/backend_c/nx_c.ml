@@ -484,8 +484,7 @@ let reduce_op _op_name ffi_op ~out ~axes ~keepdims x =
   let ndim = Array.length input_shape in
 
   (* Special case: if input is already a scalar (0-dimensional), just copy *)
-  if ndim = 0 then
-    Array1.set out.buffer 0 (Array1.get x.buffer 0)
+  if ndim = 0 then Array1.set out.buffer 0 (Array1.get x.buffer 0)
   else
     (* Normalize axes *)
     let normalized_axes =

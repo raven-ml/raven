@@ -50,7 +50,6 @@ let debug_hook =
   }
 
 let () = Nx_core.Instrumentation.set_hook (Some debug_hook)
-
 let enable_debug () = Nx_core.Instrumentation.set_hook (Some debug_hook)
 let disable_debug () = Nx_core.Instrumentation.set_hook None
 let with_debug f = Nx_core.Instrumentation.with_hook (Some debug_hook) f

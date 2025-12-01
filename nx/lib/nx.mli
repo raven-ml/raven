@@ -1664,8 +1664,10 @@ val atan : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
 
     @param out Optional pre-allocated output tensor. *)
 
-val atan2 : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [atan2 ?out y x] computes arctangent of y/x using signs to determine quadrant.
+val atan2 :
+  ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [atan2 ?out y x] computes arctangent of y/x using signs to determine
+    quadrant.
 
     Returns angle in radians in range [-π, π]. Handles x=0 correctly.
 
@@ -1786,7 +1788,8 @@ val round : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
       - : (float, float32_elt) t = [3, 4, -3, -4]
     ]} *)
 
-val lerp : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+val lerp :
+  ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [lerp ?out start end_ weight] computes linear interpolation.
 
     Returns start + weight * (end_ - start). Weight typically in [0, 1].
@@ -1806,7 +1809,8 @@ val lerp : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b)
       - : (float, float32_elt) t = [2, 5]
     ]} *)
 
-val lerp_scalar_weight : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+val lerp_scalar_weight :
+  ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [lerp_scalar_weight ?out start end_ weight] interpolates with scalar weight.
 
     @param out Optional pre-allocated output tensor. *)
@@ -1816,67 +1820,50 @@ val lerp_scalar_weight : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> 'a -> ('
     Element-wise comparisons and logical operations. *)
 
 val cmplt :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmplt ?out t1 t2] returns [true] where [t1 < t2], [false] elsewhere.
 
     @param out Optional pre-allocated output tensor. *)
 
 val less :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [less ?out t1 t2] is synonym for {!cmplt}.
 
     @param out Optional pre-allocated output tensor. *)
 
 val less_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [less_s ?out t scalar] checks if each element is less than scalar and returns
-    booleans.
+(** [less_s ?out t scalar] checks if each element is less than scalar and
+    returns booleans.
 
     @param out Optional pre-allocated output tensor. *)
 
 val cmpne :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpne ?out t1 t2] returns [true] where [t1 ≠ t2], [false] elsewhere.
 
     @param out Optional pre-allocated output tensor. *)
 
 val not_equal :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [not_equal ?out t1 t2] is synonym for {!cmpne}.
 
     @param out Optional pre-allocated output tensor. *)
 
-val not_equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [not_equal_s ?out t scalar] compares each element with scalar for inequality and
-    returns booleans.
+val not_equal_s :
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [not_equal_s ?out t scalar] compares each element with scalar for inequality
+    and returns booleans.
 
     @param out Optional pre-allocated output tensor. *)
 
 val cmpeq :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpeq ?out t1 t2] returns [true] where [t1 = t2], [false] elsewhere.
 
     @param out Optional pre-allocated output tensor. *)
 
 val equal :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [equal ?out t1 t2] is synonym for {!cmpeq}.
 
     @param out Optional pre-allocated output tensor. *)
@@ -1888,72 +1875,57 @@ val equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
     @param out Optional pre-allocated output tensor. *)
 
 val cmpgt :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpgt ?out t1 t2] returns [true] where [t1 > t2], [false] elsewhere.
 
     @param out Optional pre-allocated output tensor. *)
 
 val greater :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [greater ?out t1 t2] is synonym for {!cmpgt}.
 
     @param out Optional pre-allocated output tensor. *)
 
-val greater_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+val greater_s :
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [greater_s ?out t scalar] checks if each element is greater than scalar and
     returns booleans.
 
     @param out Optional pre-allocated output tensor. *)
 
 val cmple :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmple ?out t1 t2] returns [true] where [t1 ≤ t2], [false] elsewhere.
 
     @param out Optional pre-allocated output tensor. *)
 
 val less_equal :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [less_equal ?out t1 t2] is synonym for {!cmple}.
 
     @param out Optional pre-allocated output tensor. *)
 
-val less_equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+val less_equal_s :
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [less_equal_s ?out t scalar] checks if each element is less than or equal to
     scalar and returns booleans.
 
     @param out Optional pre-allocated output tensor. *)
 
 val cmpge :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [cmpge ?out t1 t2] returns [true] where [t1 ≥ t2], [false] elsewhere.
 
     @param out Optional pre-allocated output tensor. *)
 
 val greater_equal :
-  ?out:(bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [greater_equal t1 t2] is synonym for {!cmpge}. *)
 
-val greater_equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [greater_equal_s ?out t scalar] checks if each element is greater than or equal
-    to scalar and returns booleans.
+val greater_equal_s :
+  ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [greater_equal_s ?out t scalar] checks if each element is greater than or
+    equal to scalar and returns booleans.
 
     @param out Optional pre-allocated output tensor. *)
 
@@ -3220,7 +3192,8 @@ val ifftn :
   (Complex.t, 'a) t
 (** [ifftn ?out ?axes ?s ?norm x] computes N-dimensional inverse FFT.
 
-    @param out Optional pre-allocated output tensor for zero-allocation usage. *)
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
+*)
 
 val rfft :
   ?out:(Complex.t, complex64_elt) t ->
@@ -3298,7 +3271,8 @@ val rfftn :
   (Complex.t, complex64_elt) t
 (** [rfftn ?out ?axes ?s ?norm x] computes N-dimensional FFT of real input.
 
-    @param out Optional pre-allocated output tensor for zero-allocation usage. *)
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
+*)
 
 val irfftn :
   ?out:(float, float64_elt) t ->
@@ -3473,7 +3447,8 @@ val hard_swish : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
 
     @param out Optional pre-allocated output tensor. *)
 
-val prelu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val prelu :
+  ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
 (** [prelu ?out alpha x] applies Parametric ReLU: max(0,x) + alpha * min(0,x).
 
     [alpha] must broadcast across the shape of [x].
@@ -3556,7 +3531,8 @@ val celu : ?out:(float, 'a) t -> ?alpha:float -> (float, 'a) t -> (float, 'a) t
 
     @param out Optional pre-allocated output tensor. *)
 
-val squareplus : ?out:(float, 'a) t -> ?b:float -> (float, 'a) t -> (float, 'a) t
+val squareplus :
+  ?out:(float, 'a) t -> ?b:float -> (float, 'a) t -> (float, 'a) t
 (** [squareplus ?out ?b x] applies smooth ReLU: 0.5 * (x + sqrt(x² + b)).
 
     Default [b = 4].

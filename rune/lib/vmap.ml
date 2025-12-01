@@ -592,7 +592,8 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                       (* Allocate output tensor *)
                       let dt = dtype t_in in
                       let result = T.empty dt out_shape in
-                      op_reduce_sum ~out:result ~axes:[| p |] ~keepdims:false t_in;
+                      op_reduce_sum ~out:result ~axes:[| p |] ~keepdims:false
+                        t_in;
                       (* Update bdim mappings: current level removed; others
                          after p shift left *)
                       PhysicalTbl.set_bdim env.shared result ~level:env.level

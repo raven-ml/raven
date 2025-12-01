@@ -547,7 +547,8 @@ val swiglu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
     - Requires even-dimensional input
     - Combines gating with SiLU's smooth properties *)
 
-val geglu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val geglu :
+  ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
 (** [geglu ?out x gate] applies GeGLU (GELU Gated Linear Unit).
 
     Uses GELU activation for gating instead of sigmoid. Combines GELU's smooth
@@ -580,7 +581,8 @@ val geglu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) 
     - Provides sophisticated gating mechanism
     - Popular in transformer feed-forward networks *)
 
-val reglu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val reglu :
+  ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
 (** [reglu ?out x gate] applies ReGLU (ReLU Gated Linear Unit).
 
     Uses ReLU activation for gating, providing sparse gating where only positive

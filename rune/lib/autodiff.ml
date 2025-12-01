@@ -215,7 +215,9 @@ let make_jvp_handler dual_map =
               op_cos ~out t_in;
               let d = get_dual t_in in
               (* d/dx cos(x) = -sin(x) *)
-              let tan = T.mul d.tangent (T.neg (Obj.magic (T.sin (Obj.magic d.primal)))) in
+              let tan =
+                T.mul d.tangent (T.neg (Obj.magic (T.sin (Obj.magic d.primal))))
+              in
               register out { primal = out; tangent = tan };
               continue k ())
       | E_log { out; t_in } ->
@@ -339,11 +341,16 @@ let make_jvp_handler dual_map =
               let out_bc =
                 if keepdims then T.broadcast_to shape_in out
                 else
-                  let kept = T.max t_in ~axes:(Array.to_list axes) ~keepdims:true in
+                  let kept =
+                    T.max t_in ~axes:(Array.to_list axes) ~keepdims:true
+                  in
                   T.broadcast_to shape_in kept
               in
               let mask = T.cast (dtype out) (T.equal d.primal out_bc) in
-              let tan = T.sum (T.mul d.tangent mask) ~axes:(Array.to_list axes) ~keepdims in
+              let tan =
+                T.sum (T.mul d.tangent mask) ~axes:(Array.to_list axes)
+                  ~keepdims
+              in
               register out { primal = out; tangent = tan };
               continue k ())
       | E_reduce_min { out; t_in; axes; keepdims } ->
@@ -356,11 +363,16 @@ let make_jvp_handler dual_map =
               let out_bc =
                 if keepdims then T.broadcast_to shape_in out
                 else
-                  let kept = T.min t_in ~axes:(Array.to_list axes) ~keepdims:true in
+                  let kept =
+                    T.min t_in ~axes:(Array.to_list axes) ~keepdims:true
+                  in
                   T.broadcast_to shape_in kept
               in
               let mask = T.cast (dtype out) (T.equal d.primal out_bc) in
-              let tan = T.sum (T.mul d.tangent mask) ~axes:(Array.to_list axes) ~keepdims in
+              let tan =
+                T.sum (T.mul d.tangent mask) ~axes:(Array.to_list axes)
+                  ~keepdims
+              in
               register out { primal = out; tangent = tan };
               continue k ())
       (* Matrix Operations *)
@@ -460,7 +472,9 @@ let make_jvp_handler dual_map =
               let out_bc =
                 if keepdims then T.broadcast_to shape_in out
                 else
-                  let kept = T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true in
+                  let kept =
+                    T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true
+                  in
                   T.broadcast_to shape_in kept
               in
               (* Gradient contribution: res / x_i * dx_i, summed over axes *)
@@ -735,7 +749,8 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               let twg_out = get_or_init out in
               let g = twg_out.grad in
               twg_a.grad <- T.add twg_a.grad (unbroadcast_grad g (T.shape a));
-              twg_b.grad <- T.add twg_b.grad (unbroadcast_grad (T.neg g) (T.shape b));
+              twg_b.grad <-
+                T.add twg_b.grad (unbroadcast_grad (T.neg g) (T.shape b));
               fwd)
       | E_mul { out; a; b } ->
           Some
@@ -844,7 +859,9 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               (* d/dx cos(x) = -sin(x) *)
-              let g = T.mul twg_out.grad (T.neg (Obj.magic (T.sin (Obj.magic t_in)))) in
+              let g =
+                T.mul twg_out.grad (T.neg (Obj.magic (T.sin (Obj.magic t_in))))
+              in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
       | E_log { out; t_in } ->
@@ -1012,7 +1029,8 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
                 if keepdims then twg_out.grad
                 else
                   let kept_shape =
-                    T.shape (T.sum t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                    T.shape
+                      (T.sum t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
                   T.reshape kept_shape twg_out.grad
               in
@@ -1030,14 +1048,17 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               let out_bc =
                 if keepdims then T.broadcast_to shape_in out
                 else
-                  let kept = T.max t_in ~axes:(Array.to_list axes) ~keepdims:true in
+                  let kept =
+                    T.max t_in ~axes:(Array.to_list axes) ~keepdims:true
+                  in
                   T.broadcast_to shape_in kept
               in
               let g_bc =
                 if keepdims then T.broadcast_to shape_in twg_out.grad
                 else
                   let kept_shape =
-                    T.shape (T.max t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                    T.shape
+                      (T.max t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
                   T.broadcast_to shape_in (T.reshape kept_shape twg_out.grad)
               in
@@ -1055,14 +1076,17 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               let out_bc =
                 if keepdims then T.broadcast_to shape_in out
                 else
-                  let kept = T.min t_in ~axes:(Array.to_list axes) ~keepdims:true in
+                  let kept =
+                    T.min t_in ~axes:(Array.to_list axes) ~keepdims:true
+                  in
                   T.broadcast_to shape_in kept
               in
               let g_bc =
                 if keepdims then T.broadcast_to shape_in twg_out.grad
                 else
                   let kept_shape =
-                    T.shape (T.min t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                    T.shape
+                      (T.min t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
                   T.broadcast_to shape_in (T.reshape kept_shape twg_out.grad)
               in
@@ -1235,7 +1259,8 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
                 if keepdims then twg_out.grad
                 else
                   let kept_shape =
-                    T.shape (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                    T.shape
+                      (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
                   T.reshape kept_shape twg_out.grad
               in
@@ -1245,7 +1270,8 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
                 if keepdims then out
                 else
                   let kept_shape =
-                    T.shape (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                    T.shape
+                      (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
                   T.reshape kept_shape out
               in
@@ -1410,8 +1436,7 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               let output_numel = Array.fold_left ( * ) 1 new_shape in
               let ndim = Array.length new_shape in
               let flat_indices =
-                T.init Nx_core.Dtype.Int32 [| output_numel |]
-                  (fun out_coords ->
+                T.init Nx_core.Dtype.Int32 [| output_numel |] (fun out_coords ->
                     let out_flat = out_coords.(0) in
                     let out_idx = Array.make ndim 0 in
                     let temp = ref out_flat in

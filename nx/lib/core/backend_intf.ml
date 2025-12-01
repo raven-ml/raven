@@ -1,23 +1,24 @@
 (** Backend interface that every Nx backend must implement.
 
-    This module type defines the contract between Nx's frontend and its pluggable
-    backends. Backends may execute operations eagerly (C backend), raise effects
-    for JIT compilation (Rune), build computation graphs, or implement other
-    execution strategies.
+    This module type defines the contract between Nx's frontend and its
+    pluggable backends. Backends may execute operations eagerly (C backend),
+    raise effects for JIT compilation (Rune), build computation graphs, or
+    implement other execution strategies.
 
-    The frontend handles broadcasting, shape validation, and dtype promotion before
-    invoking backend operations, ensuring backends receive well-formed inputs.
+    The frontend handles broadcasting, shape validation, and dtype promotion
+    before invoking backend operations, ensuring backends receive well-formed
+    inputs.
 
     {1 Design Philosophy}
 
-    Inspired by tinygrad's minimalism, but operating at an abstraction level closer
-    to XLA for reasonable eager CPU performance. Rune's JIT pipeline deconstructs
-    these operations into lower primitives, so this interface sits at a higher level
-    than JIT operations.
+    Inspired by tinygrad's minimalism, but operating at an abstraction level
+    closer to XLA for reasonable eager CPU performance. Rune's JIT pipeline
+    deconstructs these operations into lower primitives, so this interface sits
+    at a higher level than JIT operations.
 
-    Binary and unary operations write to caller-provided output buffers for memory
-    reuse. Movement operations manipulate view metadata without copying data when
-    possible. *)
+    Binary and unary operations write to caller-provided output buffers for
+    memory reuse. Movement operations manipulate view metadata without copying
+    data when possible. *)
 module type S = sig
   (** {1 Types} *)
 
@@ -30,8 +31,8 @@ module type S = sig
   type context
   (** Backend execution context.
 
-      Carries backend-specific state such as memory pools, device handles, command
-      queues, or computation graphs. *)
+      Carries backend-specific state such as memory pools, device handles,
+      command queues, or computation graphs. *)
 
   (** {1 Tensor Properties} *)
 
@@ -56,7 +57,8 @@ module type S = sig
   (** {1 Buffer Allocation} *)
 
   val op_buffer : context -> ('a, 'b) Dtype.t -> int -> ('a, 'b) t
-  (** [op_buffer context dtype size_in_elements] allocates an uninitialized buffer.
+  (** [op_buffer context dtype size_in_elements] allocates an uninitialized
+      buffer.
 
       Returns a tensor with [size_in_elements] elements of [dtype]. The buffer
       contents are undefined. *)
@@ -91,8 +93,8 @@ module type S = sig
   (** [op_mul ~out a b] computes [a * b] element-wise, writing to [out]. *)
 
   val op_idiv : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_idiv ~out a b] computes integer division [a / b] with truncation toward
-      zero, writing to [out]. *)
+  (** [op_idiv ~out a b] computes integer division [a / b] with truncation
+      toward zero, writing to [out]. *)
 
   val op_fdiv : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [op_fdiv ~out a b] computes floating-point division [a / b], writing to
@@ -111,19 +113,23 @@ module type S = sig
 
   (** {2 Comparison Operations} *)
 
-  val op_cmpeq : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  val op_cmpeq :
+    out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [op_cmpeq ~out a b] computes [a = b] element-wise, writing bool result to
       [out]. *)
 
-  val op_cmpne : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  val op_cmpne :
+    out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [op_cmpne ~out a b] computes [a <> b] element-wise, writing bool result to
       [out]. *)
 
-  val op_cmplt : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  val op_cmplt :
+    out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [op_cmplt ~out a b] computes [a < b] element-wise, writing bool result to
       [out]. *)
 
-  val op_cmple : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  val op_cmple :
+    out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [op_cmple ~out a b] computes [a <= b] element-wise, writing bool result to
       [out]. *)
 
@@ -174,8 +180,8 @@ module type S = sig
       to [out]. *)
 
   val op_log : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_log ~out x] computes natural logarithm [ln(x)] element-wise, writing to
-      [out]. *)
+  (** [op_log ~out x] computes natural logarithm [ln(x)] element-wise, writing
+      to [out]. *)
 
   (** {2 Trigonometric Operations} *)
 
@@ -240,9 +246,9 @@ module type S = sig
 
   (** {1 Movement Operations}
 
-      Movement operations manipulate tensor view metadata (shape, strides, offset)
-      without copying data when possible. They return new tensor handles with
-      updated views over the same or new buffers. *)
+      Movement operations manipulate tensor view metadata (shape, strides,
+      offset) without copying data when possible. They return new tensor handles
+      with updated views over the same or new buffers. *)
 
   val op_expand : ('a, 'b) t -> Symbolic_shape.t -> ('a, 'b) t
   (** [op_expand t shape] broadcasts dimensions of size 1 to [shape].
@@ -279,9 +285,9 @@ module type S = sig
   val op_pad : ('a, 'b) t -> (int * int) array -> 'a -> ('a, 'b) t
   (** [op_pad t padding fill_value] pads [t] with [fill_value].
 
-      Returns a new tensor with padding applied. [padding.(i)] is [(before, after)]
-      for dimension [i], specifying the number of elements to add. Requires
-      allocating a new buffer. *)
+      Returns a new tensor with padding applied. [padding.(i)] is
+      [(before, after)] for dimension [i], specifying the number of elements to
+      add. Requires allocating a new buffer. *)
 
   val op_cat : ('a, 'b) t list -> int -> ('a, 'b) t
   (** [op_cat tensors axis] concatenates [tensors] along [axis].
@@ -307,7 +313,8 @@ module type S = sig
   val op_copy : ('a, 'b) t -> ('a, 'b) t
   (** [op_copy t] duplicates [t].
 
-      Returns a new tensor with its own buffer containing a copy of [t]'s data. *)
+      Returns a new tensor with its own buffer containing a copy of [t]'s data.
+  *)
 
   val op_assign : ('a, 'b) t -> ('a, 'b) t -> unit
   (** [op_assign dst src] copies elements from [src] into [dst].
@@ -319,10 +326,10 @@ module type S = sig
   (** [op_as_strided t shape strides offset] creates a view with custom
       [strides] and [offset].
 
-      Returns a new view over [t]'s buffer with the specified shape, strides
-      (in elements), and offset (in elements). Backends supporting arbitrary
-      strided views implement this as zero-copy. Other backends may copy data
-      if necessary.
+      Returns a new view over [t]'s buffer with the specified shape, strides (in
+      elements), and offset (in elements). Backends supporting arbitrary strided
+      views implement this as zero-copy. Other backends may copy data if
+      necessary.
 
       @raise Invalid_argument if the view would access out-of-bounds memory. *)
 
@@ -332,7 +339,8 @@ module type S = sig
     (int32, Dtype.int32_elt) t ->
     (int32, Dtype.int32_elt) t ->
     (int32, Dtype.int32_elt) t
-  (** [op_threefry key counter] applies the Threefry-2x32 random number generator.
+  (** [op_threefry key counter] applies the Threefry-2x32 random number
+      generator.
 
       Takes a [key] and [counter] tensor, both int32, and returns pseudo-random
       int32 values with the same shape as [counter]. Used as the foundation for
@@ -344,8 +352,7 @@ module type S = sig
       premature realization and CPU-device transfers. They are primarily used
       internally by Nx's slice and put_slice implementations. *)
 
-  val op_gather :
-    ('a, 'b) t -> (int32, Dtype.int32_elt) t -> int -> ('a, 'b) t
+  val op_gather : ('a, 'b) t -> (int32, Dtype.int32_elt) t -> int -> ('a, 'b) t
   (** [op_gather data indices axis] gathers elements from [data] along [axis]
       using [indices].
 
@@ -382,8 +389,8 @@ module type S = sig
     dilation:int array ->
     padding:(int * int) array ->
     ('a, 'b) t
-  (** [op_unfold ?out t ~kernel_size ~stride ~dilation ~padding] extracts sliding
-      local blocks (im2col operation).
+  (** [op_unfold ?out t ~kernel_size ~stride ~dilation ~padding] extracts
+      sliding local blocks (im2col operation).
 
       For input shape [(N, C, ...spatial_dims)], returns shape
       [(N, C * prod(kernel_size), L)] where [L] is the number of blocks. Works
@@ -401,8 +408,8 @@ module type S = sig
     dilation:int array ->
     padding:(int * int) array ->
     ('a, 'b) t
-  (** [op_fold ?out t ~output_size ~kernel_size ~stride ~dilation ~padding] combines
-      sliding local blocks into a tensor (col2im operation).
+  (** [op_fold ?out t ~output_size ~kernel_size ~stride ~dilation ~padding]
+      combines sliding local blocks into a tensor (col2im operation).
 
       For input shape [(N, C * prod(kernel_size), L)], returns shape
       [(N, C, ...output_size)]. Inverse of {!op_unfold}. Overlapping values are
@@ -478,8 +485,8 @@ module type S = sig
     axes:int array ->
     s:int array option ->
     (float, 'b) t
-  (** [op_irfft ?out t ~dtype ~axes ~s] computes the inverse real-valued discrete
-      Fourier transform (IRDFT) along [axes].
+  (** [op_irfft ?out t ~dtype ~axes ~s] computes the inverse real-valued
+      discrete Fourier transform (IRDFT) along [axes].
 
       Takes a complex input (assumed conjugate-symmetric) and returns a real
       output with [dtype]. The parameter [s] specifies output sizes along
@@ -489,8 +496,9 @@ module type S = sig
 
   (** {1 Linear Algebra Operations}
 
-      Linear algebra operations support batching: the last two dimensions contain
-      the matrices, and earlier dimensions are treated as batch dimensions. *)
+      Linear algebra operations support batching: the last two dimensions
+      contain the matrices, and earlier dimensions are treated as batch
+      dimensions. *)
 
   val op_cholesky : upper:bool -> ('a, 'b) t -> ('a, 'b) t
   (** [op_cholesky ~upper t] computes the Cholesky decomposition of [t].
@@ -514,19 +522,21 @@ module type S = sig
     full_matrices:bool ->
     ('a, 'b) t ->
     ('a, 'b) t * (float, Dtype.float64_elt) t * ('a, 'b) t
-  (** [op_svd ~full_matrices t] computes the singular value decomposition of [t].
+  (** [op_svd ~full_matrices t] computes the singular value decomposition of
+      [t].
 
       For an [m × n] matrix [A], returns [(U, S, V^H)] where [A = U * S * V^H].
       [S] is a 1D vector of singular values in descending order, always float64.
-      When [full_matrices = false], returns thin SVD; when [full_matrices = true],
-      returns full SVD. *)
+      When [full_matrices = false], returns thin SVD; when
+      [full_matrices = true], returns full SVD. *)
 
   val op_eig :
     vectors:bool ->
     ('a, 'b) t ->
     (Complex.t, Dtype.complex64_elt) t
     * (Complex.t, Dtype.complex64_elt) t option
-  (** [op_eig ~vectors t] computes eigenvalues and optionally eigenvectors of [t].
+  (** [op_eig ~vectors t] computes eigenvalues and optionally eigenvectors of
+      [t].
 
       Returns [(eigenvalues, optional eigenvectors)] as complex64. When
       [vectors = true], computes eigenvectors; when [vectors = false], returns
