@@ -1,6 +1,6 @@
 (* JAX-style splittable random number generation *)
 
-open Tensor_with_debug
+open Tensor
 
 type key = int
 

@@ -1,5 +1,4 @@
 include Tensor
-include Tensor_with_debug
 
 type ('a, 'b) t = ('a, 'b) Tensor.t
 type float16_t = (float, float16_elt) t
@@ -37,6 +36,24 @@ let float8_e5m2 = Nx_core.Dtype.float8_e5m2
 let complex16 = Nx_core.Dtype.complex16
 let qint8 = Nx_core.Dtype.qint8
 let quint8 = Nx_core.Dtype.quint8
+
+(* ───── Instrumentation Helpers ───── *)
+
+let debug_hook =
+  {
+    Nx_core.Instrumentation.enabled = true;
+    with_span =
+      (fun ~op ?attrs:_ f ->
+        (* Attributes ignored for now; Debug logs tensor stats/shapes. *)
+        Debug.with_context op f);
+    emit = (fun _ -> ());
+  }
+
+let () = Nx_core.Instrumentation.set_hook (Some debug_hook)
+
+let enable_debug () = Nx_core.Instrumentation.set_hook (Some debug_hook)
+let disable_debug () = Nx_core.Instrumentation.set_hook None
+let with_debug f = Nx_core.Instrumentation.with_hook (Some debug_hook) f
 
 (* ───── JIT ───── *)
 

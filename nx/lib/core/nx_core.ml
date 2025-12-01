@@ -3,5 +3,6 @@ module Shape = Shape
 module Symbolic_shape = Symbolic_shape
 module View = View
 module Backend_intf = Backend_intf
+module Instrumentation = Instrumentation
 module Make_frontend = Frontend.Make
 module Error = Error

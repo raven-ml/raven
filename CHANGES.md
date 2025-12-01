@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Add instrumentation support with `Nx_core.Instrumentation` module for tracing and profiling Nx operations. All frontend functions now emit spans via configurable hooks. (@tmattio)
 - Add optional `?out` parameter to every relevant Nx function to allow users to provide pre-allocated output buffers. (@tmattio)
 - Fix critical correctness issue in fancy slicing (`L`) where permutations were ignored if the number of indices matched the dimension size (e.g., `slice [L [1; 0]] x` returned `x` unmodified). (@tmattio)
 - Rewrite `slice` implementation to use `as_strided` for contiguous operations, reducing overhead to **O(1)** for view-based slices and separating gather operations for better performance. (@tmattio)
